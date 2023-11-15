@@ -48,7 +48,7 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 		// Crawl each URL
 		for _, url := range urlsToCrawl {
 			fmt.Println("Crawling URL:", url)
-			crawlWebsite(url, wd)
+			crawlWebsite(db, url, wd)
 		}
 	}
 }
