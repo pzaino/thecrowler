@@ -22,8 +22,9 @@ go.work
 
 # API configuration files
 app_config.go
+config.yaml
+.DS_Store
 
 # build artefacts
 .vscode/
-AppStoreSearch
 

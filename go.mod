@@ -9,4 +9,5 @@ require (
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/tebeka/selenium v0.9.9 // indirect
 	golang.org/x/net v0.7.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

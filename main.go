@@ -2,12 +2,18 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"runtime"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/tebeka/selenium"
+	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -15,9 +21,10 @@ const (
 )
 
 func checkSources(db *sql.DB, wd selenium.WebDriver) {
+	fmt.Println("Checking sources...")
 	for {
-		// Define the SQL query to find URLs not crawled in the last 3 days
-		query := `SELECT url FROM Sources WHERE last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days'`
+		// Update the SQL query to fetch all necessary fields
+		query := `SELECT url, restricted FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
 
 		// Execute the query
 		rows, err := db.Query(query)
@@ -27,36 +34,56 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 			continue
 		}
 
-		var urlsToCrawl []string
+		var sourcesToCrawl []Source
 		for rows.Next() {
-			var url string
-			if err := rows.Scan(&url); err != nil {
+			var src Source
+			if err := rows.Scan(&src.URL, &src.Restricted); err != nil {
 				log.Println("Error scanning rows:", err)
 				continue
 			}
-			urlsToCrawl = append(urlsToCrawl, url)
+			sourcesToCrawl = append(sourcesToCrawl, src)
 		}
 		rows.Close()
 
-		// Check if there are URLs to crawl
-		if len(urlsToCrawl) == 0 {
-			fmt.Println("No URLs to crawl, sleeping...")
+		// Check if there are sources to crawl
+		if len(sourcesToCrawl) == 0 {
+			fmt.Println("No sources to crawl, sleeping...")
 			time.Sleep(sleepTime)
 			continue
 		}
 
-		// Crawl each URL
-		for _, url := range urlsToCrawl {
-			fmt.Println("Crawling URL:", url)
-			crawlWebsite(db, url, wd)
+		// Crawl each source
+		for _, source := range sourcesToCrawl {
+			fmt.Println("Crawling URL:", source.URL)
+			crawlWebsite(db, source, wd)
 		}
 	}
 }
 
 func main() {
+
+	configFile := flag.String("config", "./config.yaml", "Path to the configuration file")
+	flag.Parse()
+
+	// Reading the configuration file
+	config = Config{}
+	data, err := os.ReadFile(*configFile)
+	if err != nil {
+		log.Fatalf("Error reading config file: %v", err)
+	}
+
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		log.Fatalf("Error parsing config file: %v", err)
+	}
+
+	// Set the OS variable
+	config.OS = runtime.GOOS
+
 	// Database connection setup
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+		config.Database.Host, config.Database.Port,
+		config.Database.User, config.Database.Password, config.Database.DBName)
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		log.Fatal(err)
@@ -82,9 +109,39 @@ func main() {
 	}
 	defer quitSelenium(wd)
 
+	// Setting up a channel to listen for termination signals
+	signals := make(chan os.Signal, 1)
+	// Catch SIGINT (Ctrl+C) and SIGTERM signals
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	// Use a select statement to block until a signal is received
+	go func() {
+		sig := <-signals
+		fmt.Printf("Received %v signal, shutting down...\n", sig)
+
+		// Close resources
+		closeResources(db, wd) // Assuming db is your DB connection and wd is the WebDriver
+
+		os.Exit(0)
+	}()
+
 	// Start the checkSources function in a goroutine
 	go checkSources(db, wd)
 
 	// Keep the main function alive
 	select {} // Infinite empty select block to keep the main goroutine running
+}
+
+func closeResources(db *sql.DB, wd selenium.WebDriver) {
+	// Close the database connection
+	if db != nil {
+		db.Close()
+		fmt.Println("Database connection closed.")
+	}
+
+	// Close the WebDriver
+	if wd != nil {
+		wd.Quit()
+		fmt.Println("WebDriver closed.")
+	}
 }
