@@ -132,7 +132,9 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	// Assuming keywords are part of pageInfo (e.g., extracted from MetaTags)
 	for _, keyword := range extractKeywords(pageInfo) {
 		// Insert or find keyword ID
-		fmt.Println("Inserting keyword:", keyword)
+		if cfg.DebugLevel > 0 {
+			fmt.Println("Inserting keyword:", keyword)
+		}
 		var keywordID int
 		err = tx.QueryRow(`INSERT INTO Keywords (keyword)
                            VALUES ($1) ON CONFLICT (keyword) DO UPDATE
@@ -245,11 +247,12 @@ func isExternalLink(sourceURL, linkURL string) bool {
 		return false // Handle parsing error
 	}
 
-	fmt.Println("Source URL:", sourceURL)
-	fmt.Println("Link URL:", linkURL)
-	fmt.Println("Source hostname:", sourceParsed.Hostname())
-	fmt.Println("Link hostname:", linkParsed.Hostname())
-
+	if cfg.DebugLevel > 0 {
+		fmt.Println("Source URL:", sourceURL)
+		fmt.Println("Link URL:", linkURL)
+		fmt.Println("Source hostname:", sourceParsed.Hostname())
+		fmt.Println("Link hostname:", linkParsed.Hostname())
+	}
 	// Compare hostnames
 	return sourceParsed.Hostname() != linkParsed.Hostname()
 }

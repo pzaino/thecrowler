@@ -41,3 +41,7 @@ func LoadConfig(confName string) (Config, error) {
 
 	return config, nil
 }
+
+const (
+	DebugLevel = 0
+)
