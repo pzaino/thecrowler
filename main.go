@@ -11,13 +11,20 @@ import (
 	"syscall"
 	"time"
 
+	cfg "TheCrow/pkg/config"
+	crowler "TheCrow/pkg/crawler"
+	database "TheCrow/pkg/database"
+
 	_ "github.com/lib/pq"
 	"github.com/tebeka/selenium"
-	"gopkg.in/yaml.v2"
 )
 
 const (
 	sleepTime = 1 * time.Minute // Time to sleep when no URLs are found
+)
+
+var (
+	config cfg.Config
 )
 
 func checkSources(db *sql.DB, wd selenium.WebDriver) {
@@ -34,9 +41,9 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 			continue
 		}
 
-		var sourcesToCrawl []Source
+		var sourcesToCrawl []database.Source
 		for rows.Next() {
-			var src Source
+			var src database.Source
 			if err := rows.Scan(&src.URL, &src.Restricted); err != nil {
 				log.Println("Error scanning rows:", err)
 				continue
@@ -55,7 +62,7 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 		// Crawl each source
 		for _, source := range sourcesToCrawl {
 			fmt.Println("Crawling URL:", source.URL)
-			crawlWebsite(db, source, wd)
+			crowler.CrawlWebsite(db, source, wd)
 		}
 	}
 }
@@ -66,15 +73,11 @@ func main() {
 	flag.Parse()
 
 	// Reading the configuration file
-	config = Config{}
-	data, err := os.ReadFile(*configFile)
+	var err error
+	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
-		log.Fatalf("Error reading config file: %v", err)
-	}
-
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		log.Fatalf("Error parsing config file: %v", err)
+		log.Fatal("Error loading configuration file:", err)
+		os.Exit(1)
 	}
 
 	// Set the OS variable
@@ -97,17 +100,17 @@ func main() {
 	}
 	fmt.Println("Successfully connected to the database!")
 
-	sel, err := startSelenium()
+	sel, err := crowler.StartSelenium()
 	if err != nil {
 		log.Fatal("Error starting Selenium:", err)
 	}
-	defer stopSelenium(sel)
+	defer crowler.StopSelenium(sel)
 
-	wd, err := connectSelenium(sel)
+	wd, err := crowler.ConnectSelenium(sel, config)
 	if err != nil {
 		log.Fatal("Error connecting to Selenium:", err)
 	}
-	defer quitSelenium(wd)
+	defer crowler.QuitSelenium(wd)
 
 	// Setting up a channel to listen for termination signals
 	signals := make(chan os.Signal, 1)

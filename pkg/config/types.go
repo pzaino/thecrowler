@@ -1,4 +1,10 @@
-package main
+package config
+
+import (
+	"os"
+
+	"gopkg.in/yaml.v2"
+)
 
 // Config represents the structure of the configuration file
 type Config struct {
@@ -21,13 +27,17 @@ type Config struct {
 	OS string `yaml:"os"`
 }
 
-var (
-	config Config
-)
+func LoadConfig(confName string) (Config, error) {
+	var config Config
+	data, err := os.ReadFile(confName)
+	if err != nil {
+		return config, err
+	}
 
-// Source represents the structure of the Sources table
-// for a record we have decided we need to crawl
-type Source struct {
-	URL        string
-	Restricted bool
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return config, err
+	}
+
+	return config, nil
 }

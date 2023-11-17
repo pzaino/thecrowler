@@ -1,4 +1,4 @@
-package main
+package crawler
 
 import (
 	"log"
@@ -9,6 +9,10 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+const (
+	p string = ".,?!:;\"'()[]{}<>"
+)
+
 // Function that returns false if the keyword is
 // an English language stop word, article, or preposition
 // and true otherwise
@@ -16,13 +20,13 @@ func isKeyword(keyword string) bool {
 	// List of English language stop words, articles, and prepositions
 	stopWords := []string{"a", "about", "above", "across", "after", "afterwards", "again", "against",
 		"all", "almost", "alone", "along", "already", "also", "although", "always", "am", "among",
-		"amongst", "amoungst", "amount", "an", "and", "another", "any", "anyhow", "anyone", "anything",
+		"amongst", "amongst", "amount", "an", "and", "another", "any", "anyhow", "anyone", "anything",
 		"anyway", "anywhere", "are", "around", "as", "at", "back", "be", "became", "because", "become",
 		"becomes", "becoming", "been", "before", "beforehand", "behind", "being", "below", "beside",
 		"besides", "between", "beyond", "bill", "both", "bottom", "but", "by", "call", "can",
 		"cannot", "can't", "co", "computer", "con", "could", "couldn't", "cry", "de", "describe",
 		"detail", "do", "doesn't", "done", "down", "due", "during", "each", "eg", "eight", "either", "eleven", "else",
-		"elsewhere", "empty", "enough", "etc", "even", "ever", "every", "everyone", "everything", "everywhere", "except", "few", "fifteen", "fify",
+		"elsewhere", "empty", "enough", "etc", "even", "ever", "every", "everyone", "everything", "everywhere", "except", "few", "fifteen", "fifty",
 		"fill", "find", "fire", "first", "five", "for", "former", "formerly", "forty", "found", "four",
 		"from", "front", "full", "further", "get", "give", "go", "had", "has", "hasn't", "have",
 		"he", "hence", "her", "here", "hereafter", "hereby", "herein", "hereupon", "hers", "herself",
@@ -54,10 +58,10 @@ func isKeyword(keyword string) bool {
 	keyword = strings.TrimSpace(keyword)
 
 	// remove trailing punctuation
-	keyword = strings.TrimRight(keyword, ".,?!:;\"'()[]{}<>")
+	keyword = strings.TrimRight(keyword, p)
 
 	// remove leading punctuation
-	keyword = strings.TrimLeft(keyword, ".,?!:;\"'()[]{}<>")
+	keyword = strings.TrimLeft(keyword, p)
 
 	// basic checks:
 	if len(keyword) < 3 {
@@ -94,10 +98,10 @@ func extractFromMetaTag(metaTags map[string]string, tagName string) []string {
 			trimmedKeyword = strings.ToLower(trimmedKeyword) // Convert to lowercase
 
 			// remove trailing punctuation
-			trimmedKeyword = strings.TrimRight(trimmedKeyword, ".,?!:;\"'()[]{}<>")
+			trimmedKeyword = strings.TrimRight(trimmedKeyword, p)
 
 			// remove leading punctuation
-			trimmedKeyword = strings.TrimLeft(trimmedKeyword, ".,?!:;\"'()[]{}<>")
+			trimmedKeyword = strings.TrimLeft(trimmedKeyword, p)
 
 			// remove leading and trailing whitespace
 			trimmedKeyword = strings.TrimSpace(trimmedKeyword)
@@ -127,10 +131,10 @@ func extractContentKeywords(content string) []string {
 		trimmedWord = strings.ToLower(trimmedWord) // Convert to lowercase
 
 		// remove trailing punctuation
-		trimmedWord = strings.TrimRight(trimmedWord, ".,?!:;\"'()[]{}<>")
+		trimmedWord = strings.TrimRight(trimmedWord, p)
 
 		// remove leading punctuation
-		trimmedWord = strings.TrimLeft(trimmedWord, ".,?!:;\"'()[]{}<>")
+		trimmedWord = strings.TrimLeft(trimmedWord, p)
 
 		// remove leading and trailing whitespace
 		trimmedWord = strings.TrimSpace(trimmedWord)

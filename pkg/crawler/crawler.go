@@ -1,4 +1,4 @@
-package main
+package crawler
 
 import (
 	"database/sql"
@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	cfg "TheCrow/pkg/config"
+	db "TheCrow/pkg/database"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
@@ -27,7 +30,7 @@ type PageInfo struct {
 	MetaTags        map[string]string // Add a field for meta tags
 }
 
-func crawlWebsite(db *sql.DB, source Source, wd selenium.WebDriver) {
+func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
 	pageSource, err := getHTMLContent(source.URL, wd)
@@ -251,7 +254,7 @@ func isExternalLink(sourceURL, linkURL string) bool {
 	return sourceParsed.Hostname() != linkParsed.Hostname()
 }
 
-func worker(db *sql.DB, wd selenium.WebDriver, id int, jobs <-chan string, wg *sync.WaitGroup, source *Source) {
+func worker(db *sql.DB, wd selenium.WebDriver, id int, jobs <-chan string, wg *sync.WaitGroup, source *db.Source) {
 	defer wg.Done()
 	for url := range jobs {
 		if source.Restricted {
@@ -309,7 +312,7 @@ func combineURLs(baseURL, relativeURL string) (string, error) {
 	return relativeURL, nil
 }
 
-func startSelenium() (*selenium.Service, error) {
+func StartSelenium() (*selenium.Service, error) {
 	log.Println("Configuring Selenium...")
 	// Start a Selenium WebDriver server instance (e.g., chromedriver)
 	/*
@@ -355,11 +358,11 @@ func startSelenium() (*selenium.Service, error) {
 	return service, err
 }
 
-func stopSelenium(sel *selenium.Service) {
+func StopSelenium(sel *selenium.Service) {
 	sel.Stop()
 }
 
-func connectSelenium(sel *selenium.Service) (selenium.WebDriver, error) {
+func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriver, error) {
 	// Connect to the WebDriver instance running locally.
 	caps := selenium.Capabilities{"browserName": config.Selenium.Type}
 	caps.AddChrome(chrome.Capabilities{
@@ -375,6 +378,6 @@ func connectSelenium(sel *selenium.Service) (selenium.WebDriver, error) {
 	return wd, err
 }
 
-func quitSelenium(wd selenium.WebDriver) {
+func QuitSelenium(wd selenium.WebDriver) {
 	wd.Quit()
 }
