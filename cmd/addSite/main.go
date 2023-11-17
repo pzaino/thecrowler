@@ -7,32 +7,13 @@ import (
 	"log"
 	"os"
 
+	cfg "TheCrow/pkg/config"
+
 	_ "github.com/lib/pq"
-	"gopkg.in/yaml.v2"
 )
 
-// Config represents the structure of the configuration file
-type Config struct {
-	Database struct {
-		Host     string `yaml:"host"`
-		Port     int    `yaml:"port"`
-		User     string `yaml:"user"`
-		Password string `yaml:"password"`
-		DBName   string `yaml:"dbname"`
-	} `yaml:"database"`
-	Workers  int `yaml:"workers"`
-	Selenium struct {
-		Path       string `yaml:"path"`
-		DriverPath string `yaml:"driver_path"`
-		Type       string `yaml:"type"`
-		Port       int    `yaml:"port"`
-		Host       string `yaml:"host"`
-	} `yaml:"selenium"`
-	OS string `yaml:"os"`
-}
-
 var (
-	config Config
+	config cfg.Config
 )
 
 func insertWebsite(db *sql.DB, url string) error {
@@ -55,14 +36,11 @@ func main() {
 	flag.Parse()
 
 	// Read the configuration file
-	data, err := os.ReadFile(*configFile)
+	var err error
+	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
-		log.Fatalf("Error reading config file: %v", err)
-	}
-
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		log.Fatalf("Error parsing config file: %v", err)
+		log.Fatal(err)
+		os.Exit(1)
 	}
 
 	// Check if the URL is provided
