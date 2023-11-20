@@ -71,6 +71,82 @@ Where URL is the URL of the site you want to remove and it's listed in the Sourc
 
 The CROWler provides an API to query the database. The API is a REST API and is documented using Swagger. To access the Swagger documentation, go to `http://localhost:8080/search?q=<your query>` with a RESTFUL client.
 
+To startup the API, run the following command:
+
+```bash
+./api
+```
+
+#### Configuration
+
+To configure both the API and the Crawler, you'll need to create a config.yaml file in the root directory of the repository. The config.yaml file should look like this:
+
+```yaml
+database:
+  host: <database host>
+  port: <database port>
+  user: <database user>
+  password: <database password>
+  dbname: <database name>
+api:
+  port: <api port>
+crawler:
+  workers: <max workers number>
+selenium:
+  type: chrome
+  port: 4444
+  headless: true
+  host: localhost
+```
+
+Keep in mind that every section of the config.yaml file tells the CROWler how to configure a specific component (which is required to be installed in a container).
+
+The sections are:
+
+- The database section configures the database
+- The crawler section configures the number of workers the CROWler will use
+- The selenium section configures the Selenium Chrome container
+- The API section configures the API
+
+## Production
+
+If you want to use the CROWler in production, you'll need to build the following targets:
+
+- The CROWler
+- The API
+- The addSite command
+- The removeSite command
+
+You'll also need to create a config.yaml file and configure it as described in the Configuration section.
+
+Finally, you'll need to create a Dockerfile to build a Docker image for the CROWler. The Dockerfile should look like this:
+
+```Dockerfile
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY config.yaml .
+COPY TheCrow .
+COPY cmd/addSite .
+COPY cmd/removeSite .
+COPY services/api .
+CMD ["./TheCrow"]
+```
+
+Then, build the Docker image using the following command:
+
+```bash
+docker build -t <image name> .
+```
+
+Finally, run the Docker image using the following command:
+
+```bash
+docker run -d -p 8080:8080 <image name>
+```
+
+For better security I strongly recommend to deploy the API in a separate container than the CROWler one. Also, there is no need to expose the CROWler container to the outside world, it will need internet access thought.
+
 ## DB Maintenance
 
 The CROWler default configuration uses PostgreSQL as its database. The database is stored in a Docker volume and is persistent.
