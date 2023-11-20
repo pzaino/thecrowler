@@ -57,6 +57,22 @@ For the actual crawling to take place ensure you have the Selenium Chrome contai
 
 Finally, make sure that The CROWler is running.
 
+#### Removing a site
+
+To remove a site from the Sources list, run the following command:
+
+```bash
+./removeSite --url <url>
+```
+
+Where URL is the URL of the site you want to remove and it's listed in the Sources list.
+
 #### API
 
 The CROWler provides an API to query the database. The API is a REST API and is documented using Swagger. To access the Swagger documentation, go to `http://localhost:8080/search?q=<your query>` with a RESTFUL client.
+
+## DB Maintenance
+
+The CROWler default configuration uses PostgreSQL as its database. The database is stored in a Docker volume and is persistent.
+
+The DB should need no maintenance, The CROWler will take care of that. Any time there is no crawling activity and it's passed 1 hours from the previous maintenance activity, The CROWler will clean up the database and optimize the indexes.
