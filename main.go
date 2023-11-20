@@ -27,8 +27,30 @@ var (
 	config cfg.Config
 )
 
+func performDBMaintenance(db *sql.DB) error {
+	maintenanceCommands := []string{
+		"VACUUM searchindex",
+		"VACUUM keywords",
+		"VACUUM keywordindex",
+		"REINDEX TABLE searchindex",
+		"REINDEX TABLE keywordindex",
+	}
+
+	for _, cmd := range maintenanceCommands {
+		_, err := db.Exec(cmd)
+		if err != nil {
+			return fmt.Errorf("error executing maintenance command (%s): %w", cmd, err)
+		}
+	}
+
+	return nil
+}
+
 func checkSources(db *sql.DB, wd selenium.WebDriver) {
-	fmt.Println("Checking sources...")
+	if cfg.DebugLevel > 0 {
+		fmt.Println("Checking sources...")
+	}
+	maintenanceTime := time.Now().Add(24 * time.Hour)
 	for {
 		// Update the SQL query to fetch all necessary fields
 		query := `SELECT url, restricted FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
@@ -54,7 +76,18 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
-			fmt.Println("No sources to crawl, sleeping...")
+			if cfg.DebugLevel > 0 {
+				fmt.Println("No sources to crawl, sleeping...")
+			}
+			// Perform database maintenance if it's time
+			if time.Now().After(maintenanceTime) {
+				log.Printf("Performing database maintenance...")
+				if err := performDBMaintenance(db); err != nil {
+					log.Printf("Error performing database maintenance: %v", err)
+				} else {
+					log.Printf("Database maintenance completed successfully.")
+				}
+			}
 			time.Sleep(sleepTime)
 			continue
 		}
