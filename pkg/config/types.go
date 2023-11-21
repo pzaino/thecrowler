@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"runtime"
 
 	"gopkg.in/yaml.v2"
 )
@@ -15,7 +16,17 @@ type Config struct {
 		Password string `yaml:"password"`
 		DBName   string `yaml:"dbname"`
 	} `yaml:"database"`
-	Workers  int `yaml:"workers"`
+	Crawler struct {
+		Workers     int `yaml:"workers"`
+		Interval    int `yaml:"interval"`
+		Timeout     int `yaml:"timeout"`
+		Maintenance int `yaml:"maintenance"`
+	} `yaml:"crawler"`
+	Api struct {
+		Host    string `yaml:"host"`
+		Port    int    `yaml:"port"`
+		Timeout int    `yaml:"timeout"`
+	} `yaml:"api"`
 	Selenium struct {
 		Path       string `yaml:"path"`
 		DriverPath string `yaml:"driver_path"`
@@ -24,24 +35,90 @@ type Config struct {
 		Host       string `yaml:"host"`
 		Headless   bool   `yaml:"headless"`
 	} `yaml:"selenium"`
-	OS string `yaml:"os"`
+	OS         string `yaml:"os"`
+	DebugLevel int    `yaml:"debug_level"`
 }
 
-func LoadConfig(confName string) (Config, error) {
-	var config Config
+func getConfigFile(confName string) (Config, error) {
 	data, err := os.ReadFile(confName)
-	if err != nil {
-		return config, err
+
+	// If the configuration file has been found and is not empty, unmarshal it
+	var config Config
+	if data != nil && err == nil {
+		err = yaml.Unmarshal(data, &config)
+		if err != nil {
+			return config, err
+		}
+	}
+	return config, nil
+}
+
+// This function is responsible for loading the configuration file
+// and return the Config struct
+func LoadConfig(confName string) (Config, error) {
+
+	// Get the configuration file
+	config, _ := getConfigFile(confName)
+
+	// Set the OS variable
+	config.OS = runtime.GOOS
+
+	// Set default values
+	if config.Database.Host == "" {
+		config.Database.Host = "localhost"
 	}
 
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return config, err
+	if config.Database.Port == 0 {
+		config.Database.Port = 5432
+	}
+
+	if config.Database.User == "" {
+		config.Database.User = "postgres"
+	}
+
+	if config.Database.Password == "" {
+		config.Database.Password = "postgres"
+	}
+
+	if config.Database.DBName == "" {
+		config.Database.DBName = "SitesIndex"
+	}
+
+	if config.Crawler.Workers == 0 {
+		config.Crawler.Workers = 1
+	}
+
+	if config.Crawler.Interval == 0 {
+		config.Crawler.Interval = 2
+	}
+
+	if config.Crawler.Timeout == 0 {
+		config.Crawler.Timeout = 10
+	}
+
+	if config.Crawler.Maintenance == 0 {
+		config.Crawler.Maintenance = 60
+	}
+
+	if config.Api.Host == "" {
+		config.Api.Host = "localhost"
+	}
+
+	if config.Api.Port == 0 {
+		config.Api.Port = 8080
+	}
+
+	if config.Api.Timeout == 0 {
+		config.Api.Timeout = 10
+	}
+
+	if config.Selenium.Port == 0 {
+		config.Selenium.Port = 4444
+	}
+
+	if config.Selenium.Host == "" {
+		config.Selenium.Host = "localhost"
 	}
 
 	return config, nil
 }
-
-const (
-	DebugLevel = 0
-)

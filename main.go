@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -24,9 +23,11 @@ const (
 )
 
 var (
-	config cfg.Config
+	config cfg.Config // Configuration "object"
 )
 
+// This function is responsible for performing database maintenance
+// to keep it lean and fast. Note: it's specific for PostgreSQL.
 func performDBMaintenance(db *sql.DB) error {
 	maintenanceCommands := []string{
 		"VACUUM searchindex",
@@ -46,37 +47,51 @@ func performDBMaintenance(db *sql.DB) error {
 	return nil
 }
 
+// This function simply query the database for URLs that need to be crawled
+func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
+	// Update the SQL query to fetch all necessary fields
+	query := `SELECT url, restricted FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
+
+	// Execute the query
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate over the results and store them in a slice
+	var sourcesToCrawl []database.Source
+	for rows.Next() {
+		var src database.Source
+		if err := rows.Scan(&src.URL, &src.Restricted); err != nil {
+			log.Println("Error scanning rows:", err)
+			continue
+		}
+		sourcesToCrawl = append(sourcesToCrawl, src)
+	}
+	rows.Close()
+
+	return sourcesToCrawl, nil
+}
+
+// This function is responsible for checking the database for URLs that need to be crawled
+// and kickstart the crawling process for each of them
 func checkSources(db *sql.DB, wd selenium.WebDriver) {
-	if cfg.DebugLevel > 0 {
+	if config.DebugLevel > 0 {
 		fmt.Println("Checking sources...")
 	}
-	maintenanceTime := time.Now().Add(24 * time.Hour)
+	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	for {
-		// Update the SQL query to fetch all necessary fields
-		query := `SELECT url, restricted FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
-
-		// Execute the query
-		rows, err := db.Query(query)
+		// Retrieve the sources to crawl
+		sourcesToCrawl, err := retrieveAvailableSources(db)
 		if err != nil {
-			log.Println("Error querying database:", err)
+			log.Println("Error retrieving sources:", err)
 			time.Sleep(sleepTime)
 			continue
 		}
 
-		var sourcesToCrawl []database.Source
-		for rows.Next() {
-			var src database.Source
-			if err := rows.Scan(&src.URL, &src.Restricted); err != nil {
-				log.Println("Error scanning rows:", err)
-				continue
-			}
-			sourcesToCrawl = append(sourcesToCrawl, src)
-		}
-		rows.Close()
-
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
-			if cfg.DebugLevel > 0 {
+			if config.DebugLevel > 0 {
 				fmt.Println("No sources to crawl, sleeping...")
 			}
 			// Perform database maintenance if it's time
@@ -87,6 +102,7 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 				} else {
 					log.Printf("Database maintenance completed successfully.")
 				}
+				maintenanceTime = time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 			}
 			time.Sleep(sleepTime)
 			continue
@@ -94,14 +110,14 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 
 		// Crawl each source
 		for _, source := range sourcesToCrawl {
-			fmt.Println("Crawling URL:", source.URL)
+			log.Println("Crawling URL:", source.URL)
 			crowler.CrawlWebsite(db, source, wd)
 		}
 	}
 }
 
 func main() {
-
+	// Reading command line arguments
 	configFile := flag.String("config", "./config.yaml", "Path to the configuration file")
 	flag.Parse()
 
@@ -112,9 +128,6 @@ func main() {
 		log.Fatal("Error loading configuration file:", err)
 		os.Exit(1)
 	}
-
-	// Set the OS variable
-	config.OS = runtime.GOOS
 
 	// Database connection setup
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -131,7 +144,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Successfully connected to the database!")
+	log.Println("Successfully connected to the database!")
+
+	crowler.StartCrawler(config)
 
 	sel, err := crowler.StartSelenium()
 	if err != nil {
@@ -172,12 +187,12 @@ func closeResources(db *sql.DB, wd selenium.WebDriver) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
-		fmt.Println("Database connection closed.")
+		log.Println("Database connection closed.")
 	}
 
 	// Close the WebDriver
 	if wd != nil {
 		wd.Quit()
-		fmt.Println("WebDriver closed.")
+		log.Println("WebDriver closed.")
 	}
 }
