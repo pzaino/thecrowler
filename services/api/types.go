@@ -9,7 +9,17 @@ type Config struct {
 		Password string `yaml:"password"`
 		DBName   string `yaml:"dbname"`
 	} `yaml:"database"`
-	Workers  int `yaml:"workers"`
+	Crawler struct {
+		Workers     int `yaml:"workers"`
+		Interval    int `yaml:"interval"`
+		Timeout     int `yaml:"timeout"`
+		Maintenance int `yaml:"maintenance"`
+	} `yaml:"crawler"`
+	Api struct {
+		Host    string `yaml:"host"`
+		Port    int    `yaml:"port"`
+		Timeout int    `yaml:"timeout"`
+	} `yaml:"api"`
 	Selenium struct {
 		Path       string `yaml:"path"`
 		DriverPath string `yaml:"driver_path"`
@@ -18,11 +28,12 @@ type Config struct {
 		Host       string `yaml:"host"`
 		Headless   bool   `yaml:"headless"`
 	} `yaml:"selenium"`
-	OS string `yaml:"os"`
+	OS         string `yaml:"os"`
+	DebugLevel int    `yaml:"debug_level"`
 }
 
 var (
-	config Config
+	config Config // Global variable to store the configuration
 )
 
 type SearchResult struct {

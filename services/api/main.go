@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -32,8 +33,8 @@ func main() {
 	config.OS = runtime.GOOS
 
 	http.HandleFunc("/search", searchHandler)
-	log.Println("Starting server on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Printf("Starting server on %s:%d\n", config.Api.Host, config.Api.Port)
+	log.Fatal(http.ListenAndServe(config.Api.Host+":"+fmt.Sprintf("%d", config.Api.Port), nil))
 }
 
 func searchHandler(w http.ResponseWriter, r *http.Request) {
