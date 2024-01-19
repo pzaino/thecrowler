@@ -1,0 +1,53 @@
+- site: example.com
+  rule_groups:
+    - group_name: "Group1"
+      valid_from: "2021-01-01"
+      valid_to: "2029-12-31"
+      is_enabled: true
+      rules:
+        - path: "/articles"
+          elements:
+            - key: "title"
+              selector_type: "css"
+              selector: "h1.article-title"
+            - key: "content"
+              selector_type: "css"
+              selector: "div.article-content"
+            - key: "date"
+              selector_type: "css"
+              selector: "span.date"
+          js_files: true
+          technology_patterns:
+            - "jquery"
+            - "bootstrap"
+
+    - group_name: "Group2"
+      valid_from: "2021-01-01"
+      valid_to: "2021-12-31"
+      is_enabled: false
+      rules:
+        - path: "/news"
+          elements:
+            - key: "headline"
+              selector_type: "css"
+              selector: "h1.headline"
+            - key: "summary"
+              selector_type: "css"
+              selector: "p.summary"
+          js_files: false
+
+- site: anotherexample.com
+  rule_groups:
+    - group_name: "GroupA"
+      valid_from: "2021-01-01"
+      valid_to: "2023-12-31"
+      is_enabled: true
+      rules:
+        - path: "/products"
+          elements:
+            - key: "name"
+              selector_type: "css"
+              selector: "div.product-name"
+            - key: "price"
+              selector_type: "css"
+              selector: "span.price"
