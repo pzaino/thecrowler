@@ -27,5 +27,7 @@ config.yaml
 
 # build artefacts
 .vscode/
-sonar-project.properties
 
+# Testing environments
+sonar-project.properties
+.scannerwork/**
