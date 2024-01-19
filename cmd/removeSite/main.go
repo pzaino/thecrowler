@@ -40,7 +40,10 @@ func removeSite(db *sql.DB, siteURL string) error {
 	// Delete from Sources
 	_, err = tx.Exec(`DELETE FROM Sources WHERE url = $1`, siteURL)
 	if err != nil {
-		tx.Rollback()
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Printf("Error rolling back transaction: %v\n", err2)
+		}
 		return err
 	}
 
@@ -49,14 +52,20 @@ func removeSite(db *sql.DB, siteURL string) error {
 	var indexIDs []int
 	rows, err := tx.Query(`SELECT index_id FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
 	if err != nil {
-		tx.Rollback()
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Printf("Error rolling back transaction: %v\n", err2)
+		}
 		return err
 	}
 	for rows.Next() {
 		var indexID int
 		if err := rows.Scan(&indexID); err != nil {
 			rows.Close()
-			tx.Rollback()
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Printf("Error rolling back transaction: %v\n", err2)
+			}
 			return err
 		}
 		indexIDs = append(indexIDs, indexID)
@@ -65,7 +74,10 @@ func removeSite(db *sql.DB, siteURL string) error {
 
 	_, err = tx.Exec(`DELETE FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
 	if err != nil {
-		tx.Rollback()
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Printf("Error rolling back transaction: %v\n", err2)
+		}
 		return err
 	}
 
@@ -73,28 +85,37 @@ func removeSite(db *sql.DB, siteURL string) error {
 	for _, id := range indexIDs {
 		_, err = tx.Exec(`DELETE FROM MetaTags WHERE index_id = $1`, id)
 		if err != nil {
-			tx.Rollback()
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Printf("Error rolling back transaction: %v\n", err2)
+			}
 			return err
 		}
 	}
 
 	// Delete from KeywordIndex only if the keyword is not associated with other sources
 	_, err = tx.Exec(`
-		DELETE FROM KeywordIndex 
-		WHERE index_id = ANY($1) 
+		DELETE FROM KeywordIndex
+		WHERE index_id = ANY($1)
 		AND NOT EXISTS (
-			SELECT 1 FROM SearchIndex 
-			WHERE index_id = KeywordIndex.index_id 
+			SELECT 1 FROM SearchIndex
+			WHERE index_id = KeywordIndex.index_id
 			AND source_id != (SELECT source_id FROM Sources WHERE url = $2)
 		)`, pq.Array(indexIDs), siteURL)
 	if err != nil {
-		tx.Rollback()
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Printf("Error rolling back transaction: %v\n", err2)
+		}
 		return err
 	}
 
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
-		tx.Rollback()
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Printf("Error rolling back transaction: %v\n", err2)
+		}
 		return err
 	}
 

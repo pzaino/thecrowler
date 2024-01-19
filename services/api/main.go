@@ -68,5 +68,9 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Respond with JSON
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	err = json.NewEncoder(w).Encode(results)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

@@ -206,7 +206,11 @@ func closeResources(db *sql.DB, wd selenium.WebDriver) {
 
 	// Close the WebDriver
 	if wd != nil {
-		wd.Quit()
+		err := wd.Quit()
+		if err != nil {
+			log.Printf("Error closing WebDriver: %v", err)
+			return
+		}
 		log.Println("WebDriver closed.")
 	}
 }

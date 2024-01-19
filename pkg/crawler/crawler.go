@@ -106,12 +106,12 @@ func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
 
 	if crawlError != nil {
 		// Update the source with error details
-		_, err = db.Exec(`UPDATE Sources SET last_crawled_at = NOW(), status = 'error', 
-                          last_error = $1, last_error_at = NOW() 
+		_, err = db.Exec(`UPDATE Sources SET last_crawled_at = NOW(), status = 'error',
+                          last_error = $1, last_error_at = NOW()
                           WHERE url = $2`, crawlError.Error(), sourceURL)
 	} else {
 		// Update the source as successfully crawled
-		_, err = db.Exec(`UPDATE Sources SET last_crawled_at = NOW(), status = 'completed' 
+		_, err = db.Exec(`UPDATE Sources SET last_crawled_at = NOW(), status = 'completed'
                           WHERE url = $1`, sourceURL)
 	}
 
@@ -150,7 +150,10 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 		Scan(&indexID)
 	if err != nil {
 		log.Printf("Error inserting into or updating SearchIndex: %v\n", err)
-		tx.Rollback()
+		err := tx.Rollback()
+		if err != nil {
+			log.Printf("Error rolling back transaction: %v\n", err)
+		}
 		return
 	}
 
@@ -160,7 +163,10 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
                           VALUES ($1, $2, $3)`, indexID, name, content)
 		if err != nil {
 			log.Printf("Error inserting meta tag: %v\n", err)
-			tx.Rollback()
+			err := tx.Rollback()
+			if err != nil {
+				log.Printf("Error rolling back transaction: %v\n", err)
+			}
 			return
 		}
 	}
@@ -175,7 +181,10 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
 			log.Printf("Error inserting or finding keyword: %v\n", err)
-			tx.Rollback()
+			err := tx.Rollback()
+			if err != nil {
+				log.Printf("Error rolling back transaction: %v\n", err)
+			}
 			return
 		}
 
@@ -184,7 +193,10 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
                           VALUES ($1, $2)`, keywordID, indexID)
 		if err != nil {
 			log.Printf("Error inserting into KeywordIndex: %v\n", err)
-			tx.Rollback()
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Printf("Error rolling back transaction: %v\n", err2)
+			}
 			return
 		}
 	}
@@ -192,7 +204,10 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
 		log.Printf("Error committing transaction: %v\n", err)
-		tx.Rollback()
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Printf("Error rolling back transaction: %v\n", err2)
+		}
 		return
 	}
 }
@@ -443,7 +458,10 @@ func StartSelenium() (*selenium.Service, error) {
 
 // Stop the Selenium server instance (if local)
 func StopSelenium(sel *selenium.Service) {
-	sel.Stop()
+	err := sel.Stop()
+	if err != nil {
+		log.Printf("Error stopping Selenium: %v\n", err)
+	}
 }
 
 // This function is responsible for connecting to the Selenium server instance
@@ -465,5 +483,8 @@ func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriv
 
 // This function is responsible for quitting the Selenium server instance
 func QuitSelenium(wd selenium.WebDriver) {
-	wd.Quit()
+	err := wd.Quit()
+	if err != nil {
+		log.Printf("Error quitting Selenium: %v\n", err)
+	}
 }

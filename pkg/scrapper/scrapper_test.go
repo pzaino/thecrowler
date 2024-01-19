@@ -17,6 +17,7 @@ package scrapper
 import (
 	"log"
 	"testing"
+	"time"
 )
 
 const (
@@ -57,15 +58,32 @@ func TestIsGroupValid(t *testing.T) {
 	const layoutFrom = "2021-01-01"
 	const layoutTo = "2023-12-31"
 
+	LayoutToFuture := time.Now().AddDate(0, 0, 1).Format(layoutTo)
+
 	// Test cases
 	testCases := []struct {
 		name     string
 		group    RuleGroup
 		expected bool
 	}{
-		{"ValidGroup", RuleGroup{IsEnabled: true, ValidFrom: layoutFrom, ValidTo: layoutTo}, true},
-		{"InvalidGroupDisabled", RuleGroup{IsEnabled: false, ValidFrom: layoutFrom, ValidTo: layoutTo}, false},
-		{"InvalidGroupDate", RuleGroup{IsEnabled: true, ValidFrom: layoutFrom, ValidTo: layoutTo}, true},
+		{"ValidGroup", RuleGroup{
+			GroupName: "ValidGroup",
+			IsEnabled: true,
+			ValidFrom: layoutFrom,
+			ValidTo:   LayoutToFuture},
+			false},
+		{"InvalidGroupDisabled", RuleGroup{
+			GroupName: "InvalidGroupDisabled",
+			IsEnabled: false,
+			ValidFrom: layoutFrom,
+			ValidTo:   layoutTo},
+			false},
+		{"InvalidGroupDate", RuleGroup{
+			GroupName: "InvalidGroupDate",
+			IsEnabled: true,
+			ValidFrom: layoutFrom,
+			ValidTo:   layoutTo},
+			false},
 		// Add more test cases as needed
 	}
 
