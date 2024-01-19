@@ -27,4 +27,5 @@ config.yaml
 
 # build artefacts
 .vscode/
+sonar-project.properties
 
