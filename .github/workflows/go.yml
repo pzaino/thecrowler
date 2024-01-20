@@ -9,8 +9,7 @@ on:
   pull_request:
     branches: [ "main" ]
 
-permissions:
-  contents: read
+permissions: read-all
 
 jobs:
 
@@ -35,4 +34,3 @@ jobs:
 
     - name: Go report card
       uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
-      
