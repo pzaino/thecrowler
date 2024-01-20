@@ -18,9 +18,6 @@ jobs:
     steps:
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
-    - name: Harden-Runner
-      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.6.1
-
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
@@ -34,3 +31,6 @@ jobs:
 
     - name: Go report card
       uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
+
+    - name: Harden-Runner
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.6.1
