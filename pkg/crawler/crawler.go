@@ -140,76 +140,90 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert or update the page in SearchIndex
+	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
+	if err != nil {
+		log.Printf("Error inserting or updating SearchIndex: %v\n", err)
+		rollbackTransaction(tx)
+		return
+	}
+
+	// Insert MetaTags
+	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
+	if err != nil {
+		log.Printf("Error inserting meta tags: %v\n", err)
+		rollbackTransaction(tx)
+		return
+	}
+
+	// Insert into KeywordIndex
+	err = insertKeywords(tx, db, indexID, pageInfo)
+	if err != nil {
+		log.Printf("Error inserting keywords: %v\n", err)
+		rollbackTransaction(tx)
+		return
+	}
+
+	// Commit the transaction
+	err = commitTransaction(tx)
+	if err != nil {
+		log.Printf("Error committing transaction: %v\n", err)
+		rollbackTransaction(tx)
+		return
+	}
+}
+
+func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, error) {
 	var indexID int
-	err = tx.QueryRow(`
+	err := tx.QueryRow(`
         INSERT INTO SearchIndex (page_url, title, summary, content, indexed_at)
         VALUES ($1, $2, $3, $4, NOW())
         ON CONFLICT (page_url) DO UPDATE
         SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, indexed_at = NOW()
         RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText).
 		Scan(&indexID)
-	if err != nil {
-		log.Printf("Error inserting into or updating SearchIndex: %v\n", err)
-		err := tx.Rollback()
-		if err != nil {
-			log.Printf("Error rolling back transaction: %v\n", err)
-		}
-		return
-	}
+	return indexID, err
+}
 
-	// Insert MetaTags
-	for name, content := range pageInfo.MetaTags {
-		_, err = tx.Exec(`INSERT INTO MetaTags (index_id, name, content)
+func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
+	for name, content := range metaTags {
+		_, err := tx.Exec(`INSERT INTO MetaTags (index_id, name, content)
                           VALUES ($1, $2, $3)`, indexID, name, content)
 		if err != nil {
-			log.Printf("Error inserting meta tag: %v\n", err)
-			err := tx.Rollback()
-			if err != nil {
-				log.Printf("Error rolling back transaction: %v\n", err)
-			}
-			return
+			return err
 		}
 	}
+	return nil
+}
 
-	// Insert into KeywordIndex
+func insertKeywords(tx *sql.Tx, db *sql.DB, indexID int, pageInfo PageInfo) error {
 	for _, keyword := range extractKeywords(pageInfo) {
-		// Insert or find keyword ID
-		if config.DebugLevel > 0 {
-			fmt.Println("Inserting keyword:", keyword)
-		}
-		var keywordID int
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
-			log.Printf("Error inserting or finding keyword: %v\n", err)
-			err := tx.Rollback()
-			if err != nil {
-				log.Printf("Error rolling back transaction: %v\n", err)
-			}
-			return
+			return err
 		}
-
-		// Insert into KeywordIndex
 		_, err = tx.Exec(`INSERT INTO KeywordIndex (keyword_id, index_id)
                           VALUES ($1, $2)`, keywordID, indexID)
 		if err != nil {
-			log.Printf("Error inserting into KeywordIndex: %v\n", err)
-			err2 := tx.Rollback()
-			if err2 != nil {
-				log.Printf("Error rolling back transaction: %v\n", err2)
-			}
-			return
+			return err
 		}
 	}
+	return nil
+}
 
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		log.Printf("Error committing transaction: %v\n", err)
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Printf("Error rolling back transaction: %v\n", err2)
-		}
-		return
+func rollbackTransaction(tx *sql.Tx) {
+	err := tx.Rollback()
+	if err != nil {
+		log.Printf("Error rolling back transaction: %v\n", err)
 	}
+}
+
+func commitTransaction(tx *sql.Tx) error {
+	err := tx.Commit()
+	if err != nil {
+		log.Printf("Error committing transaction: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 // This function is responsible for storing the extracted keywords in the database
