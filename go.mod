@@ -1,6 +1,6 @@
 module TheCrow
 
-go 1.21.3
+go 1.21.5
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.1
