@@ -1,5 +1,7 @@
 # The CROWler
 
+<img align="right" width="320" height="280" src="/images/TheCROWler_v1JPG.jpg">
+
 ![Go build: ](https://github.com/pzaino/TheCROWler/actions/workflows/go.yml/badge.svg)
 ![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
 ![Scorecard supply-chain security: ](https://github.com/pzaino/TheCROWler/actions/workflows/scorecard.yml/badge.svg)
