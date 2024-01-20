@@ -2,7 +2,8 @@
 
 ![Go build: ](https://github.com/pzaino/TheCROWler/actions/workflows/go.yml/badge.svg)
 ![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
-![Docker build: ]()
+![Scorecard supply-chain security: ](https://github.com/pzaino/TheCROWler/actions/workflows/scorecard.yml/badge.svg)
+<!-- ![Docker build: ]() -->
 ![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
 
