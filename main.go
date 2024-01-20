@@ -110,12 +110,7 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 			}
 			// Perform database maintenance if it's time
 			if time.Now().After(maintenanceTime) {
-				log.Printf("Performing database maintenance...")
-				if err := performDBMaintenance(db); err != nil {
-					log.Printf("Error performing database maintenance: %v", err)
-				} else {
-					log.Printf("Database maintenance completed successfully.")
-				}
+				performDatabaseMaintenance(db)
 				maintenanceTime = time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 			}
 			time.Sleep(sleepTime)
@@ -123,10 +118,23 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 		}
 
 		// Crawl each source
-		for _, source := range sourcesToCrawl {
-			log.Println("Crawling URL:", source.URL)
-			crowler.CrawlWebsite(db, source, wd)
-		}
+		crawlSources(db, wd, sourcesToCrawl)
+	}
+}
+
+func performDatabaseMaintenance(db *sql.DB) {
+	log.Printf("Performing database maintenance...")
+	if err := performDBMaintenance(db); err != nil {
+		log.Printf("Error performing database maintenance: %v", err)
+	} else {
+		log.Printf("Database maintenance completed successfully.")
+	}
+}
+
+func crawlSources(db *sql.DB, wd selenium.WebDriver, sources []database.Source) {
+	for _, source := range sources {
+		log.Println("Crawling URL:", source.URL)
+		crowler.CrawlWebsite(db, source, wd)
 	}
 }
 

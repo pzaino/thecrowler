@@ -30,6 +30,11 @@ var (
 	config cfg.Config
 )
 
+// removeSite removes a site from the database along with its associated entries in other tables.
+// It takes a *sql.DB as the database connection and a siteURL string as the URL of the site to be removed.
+// It starts a transaction, deletes the site from the Sources table, and then deletes the associated entries
+// in the SearchIndex, MetaTags, and KeywordIndex tables. Finally, it commits the transaction.
+// If any error occurs during the process, the transaction is rolled back and the error is returned.
 func removeSite(db *sql.DB, siteURL string) error {
 	// Start a transaction
 	tx, err := db.Begin()
@@ -38,63 +43,102 @@ func removeSite(db *sql.DB, siteURL string) error {
 	}
 
 	// Delete from Sources
-	_, err = tx.Exec(`DELETE FROM Sources WHERE url = $1`, siteURL)
+	err = deleteFromSources(tx, siteURL)
 	if err != nil {
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Printf("Error rolling back transaction: %v\n", err2)
-		}
 		return err
 	}
 
 	// Find and delete associated entries in SearchIndex, MetaTags, and KeywordIndex
-	// Delete associated entries in SearchIndex and get their IDs
+	err = deleteAssociatedEntries(tx, siteURL)
+	if err != nil {
+		return err
+	}
+
+	// Commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func deleteFromSources(tx *sql.Tx, siteURL string) error {
+	_, err := tx.Exec(`DELETE FROM Sources WHERE url = $1`, siteURL)
+	if err != nil {
+		rollbackTransaction(tx)
+		return err
+	}
+	return nil
+}
+
+func deleteAssociatedEntries(tx *sql.Tx, siteURL string) error {
+	indexIDs, err := getAssociatedIndexIDs(tx, siteURL)
+	if err != nil {
+		rollbackTransaction(tx)
+		return err
+	}
+
+	err = deleteFromSearchIndex(tx, siteURL)
+	if err != nil {
+		rollbackTransaction(tx)
+		return err
+	}
+
+	err = deleteFromMetaTags(tx, indexIDs)
+	if err != nil {
+		rollbackTransaction(tx)
+		return err
+	}
+
+	err = deleteFromKeywordIndex(tx, indexIDs, siteURL)
+	if err != nil {
+		rollbackTransaction(tx)
+		return err
+	}
+
+	return nil
+}
+
+func getAssociatedIndexIDs(tx *sql.Tx, siteURL string) ([]int, error) {
 	var indexIDs []int
 	rows, err := tx.Query(`SELECT index_id FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
 	if err != nil {
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Printf("Error rolling back transaction: %v\n", err2)
-		}
-		return err
+		return nil, err
 	}
+	defer rows.Close()
+
 	for rows.Next() {
 		var indexID int
 		if err := rows.Scan(&indexID); err != nil {
-			rows.Close()
-			err2 := tx.Rollback()
-			if err2 != nil {
-				log.Printf("Error rolling back transaction: %v\n", err2)
-			}
-			return err
+			return nil, err
 		}
 		indexIDs = append(indexIDs, indexID)
 	}
-	rows.Close()
 
-	_, err = tx.Exec(`DELETE FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
+	return indexIDs, nil
+}
+
+func deleteFromSearchIndex(tx *sql.Tx, siteURL string) error {
+	_, err := tx.Exec(`DELETE FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
 	if err != nil {
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Printf("Error rolling back transaction: %v\n", err2)
-		}
 		return err
 	}
+	return nil
+}
 
-	// Delete associated entries in MetaTags
+func deleteFromMetaTags(tx *sql.Tx, indexIDs []int) error {
 	for _, id := range indexIDs {
-		_, err = tx.Exec(`DELETE FROM MetaTags WHERE index_id = $1`, id)
+		_, err := tx.Exec(`DELETE FROM MetaTags WHERE index_id = $1`, id)
 		if err != nil {
-			err2 := tx.Rollback()
-			if err2 != nil {
-				log.Printf("Error rolling back transaction: %v\n", err2)
-			}
 			return err
 		}
 	}
+	return nil
+}
 
-	// Delete from KeywordIndex only if the keyword is not associated with other sources
-	_, err = tx.Exec(`
+func deleteFromKeywordIndex(tx *sql.Tx, indexIDs []int, siteURL string) error {
+	_, err := tx.Exec(`
 		DELETE FROM KeywordIndex
 		WHERE index_id = ANY($1)
 		AND NOT EXISTS (
@@ -103,23 +147,16 @@ func removeSite(db *sql.DB, siteURL string) error {
 			AND source_id != (SELECT source_id FROM Sources WHERE url = $2)
 		)`, pq.Array(indexIDs), siteURL)
 	if err != nil {
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Printf("Error rolling back transaction: %v\n", err2)
-		}
 		return err
 	}
-
-	// Commit the transaction
-	if err := tx.Commit(); err != nil {
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Printf("Error rolling back transaction: %v\n", err2)
-		}
-		return err
-	}
-
 	return nil
+}
+
+func rollbackTransaction(tx *sql.Tx) {
+	err := tx.Rollback()
+	if err != nil {
+		log.Printf("Error rolling back transaction: %v\n", err)
+	}
 }
 
 func main() {
