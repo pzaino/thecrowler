@@ -49,6 +49,7 @@ jobs:
             fulcio.sigstore.dev:443
             github.com:443
             oss-fuzz-build-logs.storage.googleapis.com:443
+            tuf-repo-cdn.sigstore.dev:443
             www.bestpractices.dev:443
 
       - name: "Run analysis"
