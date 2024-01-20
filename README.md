@@ -26,13 +26,13 @@ The CROWler is designed to be micro-services based, so you'll need to install th
 
 ### Build from source
 
-To check which buildable targets are available, run the following command:
+To check which targets can be built and are available, run the following command:
 
 ```bash
 go build -v ./...
 ```
 
-This will list all the buildable targets. To build a target, run the following command:
+This will list all the targets that can be built and are available. To build a target, run the following command:
 
 ```bash
 TheCrow/cmd/removeSite
