@@ -11,9 +11,9 @@
 
 ## What is it?
 
-The CROWler is a web crawler that uses Selenium and Google's Chrome browser to crawl and index web pages as specified by the user.
+The CROWler is a specialized web crawler developed to efficiently navigate and index web pages. This tool leverages the robust capabilities of Selenium and Google Chrome (to covertly crawl a site), offering a reliable and precise crawling experience. It is designed with user customization in mind, allowing users to specify the scope and targets of their crawling tasks.
 
-It also provides a bunch of command line utilities to add and remove sites from the Sources list in its database and an API to query the database.
+To enhance its functionality, CROWler includes a suite of command-line utilities. These utilities facilitate seamless management of the crawler's database, enabling users to effortlessly add or remove websites from the Sources list. Additionally, the system is equipped with an API, providing a streamlined interface for database queries. This feature ensures easy integration and access to indexed data for various applications.
 
 ## How to use it?
 
