@@ -15,6 +15,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 
@@ -53,18 +54,30 @@ type Config struct {
 	DebugLevel int    `yaml:"debug_level"`
 }
 
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
+}
+
 func getConfigFile(confName string) (Config, error) {
+
+	// Check if the configuration file exists
+	if !fileExists(confName) {
+		return Config{}, fmt.Errorf("file does not exist: %s", confName)
+	}
+
+	// Read the configuration file
 	data, err := os.ReadFile(confName)
 
 	// If the configuration file has been found and is not empty, unmarshal it
 	var config Config
-	if data != nil && err == nil {
+	if (data != nil) && (err == nil) {
 		err = yaml.Unmarshal(data, &config)
-		if err != nil {
-			return config, err
-		}
 	}
-	return config, nil
+	return config, err
 }
 
 // This function is responsible for loading the configuration file
@@ -72,7 +85,7 @@ func getConfigFile(confName string) (Config, error) {
 func LoadConfig(confName string) (Config, error) {
 
 	// Get the configuration file
-	config, _ := getConfigFile(confName)
+	config, err := getConfigFile(confName)
 
 	// Set the OS variable
 	config.OS = runtime.GOOS
@@ -134,5 +147,10 @@ func LoadConfig(confName string) (Config, error) {
 		config.Selenium.Host = "localhost"
 	}
 
-	return config, nil
+	return config, err
+}
+
+// This function is responsible for returning true if the config is empty or false otherwise
+func ConfigIsEmpty(config Config) bool {
+	return config == Config{}
 }
