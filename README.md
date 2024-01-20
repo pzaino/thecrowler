@@ -1,5 +1,11 @@
 # The CROWler
 
+![Go build: ](https://github.com/pzaino/TheCROWler/actions/workflows/go.yml/badge.svg)
+![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
+![Docker build: ]()
+![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
+![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
+
 ## What is it?
 
 The CROWler is a web crawler that uses Selenium and Google's Chrome browser to crawl and index web pages as specified by the user.
