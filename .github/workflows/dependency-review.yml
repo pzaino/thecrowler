@@ -1,0 +1,20 @@
+name: Dependency Review
+
+on: [pull_request]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Review Dependencies
+        uses: github/dependency-review-action@<SHA> # Replace <SHA> with the latest commit SHA
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
