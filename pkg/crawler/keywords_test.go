@@ -58,7 +58,6 @@ func TestExtractFromMetaTag(t *testing.T) {
 		args args
 		want []string
 	}{
-		// TODO: Add more test cases.
 		{"test1", args{keywords, "keywords"}, []string{"test1", "test2", "test3"}},
 		{"test2", args{keywords, "description"}, []string{}},
 		{"test3", args{keywords, "test"}, []string{}},
@@ -82,7 +81,6 @@ func TestExtractContentKeywords(t *testing.T) {
 		args args
 		want []string
 	}{
-		// TODO: Add more test cases:
 		{"test1", args{"test1, test2, test3"}, []string{"test1", "test2", "test3"}},
 		{"test2", args{"test1, test2, test3"}, []string{"test1", "test2", "test3"}},
 		{"test3", args{"test1, test2, test3"}, []string{"test1", "test2", "test3"}},
@@ -105,7 +103,6 @@ func TestUnique(t *testing.T) {
 		args args
 		want []string
 	}{
-		// TODO: Add more test cases:
 		{"test1", args{[]string{"test1", "test2", "test3"}}, []string{"test1", "test2", "test3"}},
 		{"test2", args{[]string{"test1", "test2", "test3"}}, []string{"test1", "test2", "test3"}},
 		{"test3", args{[]string{"test1", "test2", "test3"}}, []string{"test1", "test2", "test3"}},
@@ -134,7 +131,6 @@ func TestExtractKeywords(t *testing.T) {
 		args args
 		want []string
 	}{
-		// TODO: Fix the following test cases and add test cases:
 		{"test1", args{pageInfo}, []string{"test1", "test2", "test3"}},
 		{"test2", args{pageInfo}, []string{"test1", "test2", "test3"}},
 		{"test3", args{pageInfo}, []string{"test1", "test2", "test3"}},
