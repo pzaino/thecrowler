@@ -21,7 +21,7 @@ import (
 	"log"
 	"os"
 
-	cfg "TheCrow/pkg/config"
+	cfg "TheCrowler/pkg/config"
 
 	_ "github.com/lib/pq"
 )

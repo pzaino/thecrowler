@@ -37,10 +37,10 @@ go build -v ./...
 This will list all the targets that can be built and are available. To build a target, run the following command:
 
 ```bash
-TheCrow/cmd/removeSite
-TheCrow/cmd/addSite
-TheCrow/services/api
-TheCrow
+TheCrowler/cmd/removeSite
+TheCrowler/cmd/addSite
+TheCrowler/services/api
+TheCrowler
 ```
 
 Build them as you need them.
@@ -135,11 +135,11 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 COPY config.yaml .
-COPY TheCrow .
+COPY TheCrowler .
 COPY cmd/addSite .
 COPY cmd/removeSite .
 COPY services/api .
-CMD ["./TheCrow"]
+CMD ["./TheCrowler"]
 ```
 
 Then, build the Docker image using the following command:

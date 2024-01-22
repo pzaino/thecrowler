@@ -24,9 +24,9 @@ import (
 	"syscall"
 	"time"
 
-	cfg "TheCrow/pkg/config"
-	crowler "TheCrow/pkg/crawler"
-	database "TheCrow/pkg/database"
+	cfg "TheCrowler/pkg/config"
+	crowler "TheCrowler/pkg/crawler"
+	database "TheCrowler/pkg/database"
 
 	_ "github.com/lib/pq"
 	"github.com/tebeka/selenium"

@@ -1,4 +1,4 @@
-module TheCrow
+module TheCrowler
 
 go 1.21.5
 

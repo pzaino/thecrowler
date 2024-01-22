@@ -8,13 +8,13 @@ mkdir ./bin
 go build
 rval=$?
 if [ "${rval}" == "0" ]; then
-    echo "TheCrow built successfully!"
+    echo "TheCrowler built successfully!"
 else
-    echo "TheCrow build failed!"
+    echo "TheCrowler build failed!"
     exit $rval
 fi
 
-mv TheCrow ./bin
+mv TheCrowler ./bin
 
 go build ./cmd/addSite
 rval=$?
