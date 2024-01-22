@@ -15,9 +15,33 @@ We use GitHub to host code, to track issues and feature requests, as well as acc
 
 ## We Use [Github Flow](https://guides.github.com/introduction/flow/index.html), So All Code Changes Happen Through Pull Requests
 
-Pull requests are the best way to propose changes to the codebase (we use [Github Flow](https://guides.github.com/introduction/flow/index.html)). We actively welcome your pull requests:
+Pull requests are the best way to propose changes to the codebase (we use [Github Flow](https://guides.github.com/introduction/flow/index.html)).
 
-1. Fork the repo and create your branch from `master`.
+Before you start, make sure you have installed pre-commit on your development machine. To install pre-commit, run the following command:
+
+On most OSes:
+
+```bash
+pip install pre-commit
+```
+
+On the Mac:
+
+```bash
+brew install pre-commit
+```
+
+Once you have pre-commit installed, fork TheCROWler and clone it to your development machine. Then, in the root directory of the repository of the project, run the following command to install the pre-commit hooks:
+
+```bash
+pre-commit install
+```
+
+This will install the pre-commit hooks and will run them on every commit you make. If any of the hooks fail, the commit will fail and you'll have to fix the issues before you can commit.
+
+We actively welcome your pull requests:
+
+1. Fork the repo and create your branch from our `develop` branch.
 2. If you've added code that should be tested, add tests.
 3. If you've changed APIs, update the documentation.
 4. Ensure the test suite passes.
@@ -48,8 +72,8 @@ People *love* thorough bug reports.
 
 ## Use a Consistent Coding Style
 
-* 4 spaces for indentation rather than tabs
-* You can try running `gofmt` for style unification
+- 4 spaces for indentation rather than tabs
+- You can try running `gofmt` for style unification
 
 ## Code of Conduct
 
