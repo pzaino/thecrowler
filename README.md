@@ -28,7 +28,21 @@ The CROWler is designed to be micro-services based, so you'll need to install th
 
 ### Build from source
 
-To check which targets can be built and are available, run the following command:
+To build the CROWler from source, you'll need to install the following:
+
+- [Go](https://golang.org/doc/install)
+
+Then you'll need to clone the repository and build the targets you need.
+
+To build everything at once run the following command:
+
+```bash
+./autobuild.sh
+```
+
+To build individual targets:
+
+First, check which targets can be built and are available, run the following command:
 
 ```bash
 go build -v ./...
