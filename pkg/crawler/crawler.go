@@ -39,16 +39,6 @@ var (
 	config cfg.Config
 )
 
-// This struct represents the information that we want to extract from a page
-// and store in the database.
-type PageInfo struct {
-	Title           string
-	Summary         string
-	BodyText        string
-	ContainsAppInfo bool
-	MetaTags        map[string]string // Add a field for meta tags
-}
-
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
 // This function is responsible for crawling a website, it's the main entry point
@@ -349,8 +339,16 @@ func isExternalLink(sourceURL, linkURL string) bool {
 		fmt.Println("Source hostname:", sourceParsed.Hostname())
 		fmt.Println("Link hostname:", linkParsed.Hostname())
 	}
+
+	// Takes the substring that correspond to the 1st and 2nd level domain (e.g., google.com)
+	// regardless the number of subdomains
+	srcFqdnArr := strings.Split(sourceParsed.Hostname(), ".")
+	srcDomainName := strings.Join(srcFqdnArr[len(srcFqdnArr)-2:], ".")
+	linkFqdnArr := strings.Split(linkParsed.Hostname(), ".")
+	linkDomainName := strings.Join(linkFqdnArr[len(linkFqdnArr)-2:], ".")
+
 	// Compare hostnames
-	return sourceParsed.Hostname() != linkParsed.Hostname()
+	return srcDomainName != linkDomainName
 }
 
 // This is the worker function that is responsible for crawling a page
