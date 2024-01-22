@@ -41,7 +41,7 @@ func TestExtractLinks(t *testing.T) {
 	}
 }
 
-func Test_isExternalLink(t *testing.T) {
+func TestIsExternalLink(t *testing.T) {
 	type args struct {
 		sourceURL string
 		linkURL   string
@@ -57,6 +57,7 @@ func Test_isExternalLink(t *testing.T) {
 		{"test3", args{"https://www.google.com", "https://www.google.com/test/test"}, false},
 		{"test4", args{"https://www.example.com", "https://www.google.com/test/test/test"}, true},
 		{"test5", args{"https://data.example.com", "https://www.example.com"}, false},
+		{"test6", args{"www.apps.com", "javascript:void(0)"}, false},
 	}
 
 	for _, tt := range tests {
