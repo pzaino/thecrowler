@@ -38,6 +38,17 @@ fi
 
 mv removeSite ./bin
 
+go build ./services/api
+rval=$?
+if [ "${rval}" == "0" ]; then
+    echo "api command line tool built successfully!"
+else
+    echo "api command line tool build failed!"
+    exit $rval
+fi
+
+mv api ./bin
+
 exit $rval
 
 # Path: autobuild.sh
