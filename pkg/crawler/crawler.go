@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	cfg "github.com/pzaino/TheCROWler/pkg/config"
-	db "github.com/pzaino/TheCROWler/pkg/database"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+	db "github.com/pzaino/thecrowler/pkg/database"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
