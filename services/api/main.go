@@ -47,8 +47,8 @@ func main() {
 	config.OS = runtime.GOOS
 
 	http.HandleFunc("/search", searchHandler)
-	log.Printf("Starting server on %s:%d\n", config.Api.Host, config.Api.Port)
-	log.Fatal(http.ListenAndServe(config.Api.Host+":"+fmt.Sprintf("%d", config.Api.Port), nil))
+	log.Printf("Starting server on %s:%d\n", config.API.Host, config.API.Port)
+	log.Fatal(http.ListenAndServe(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), nil))
 }
 
 func searchHandler(w http.ResponseWriter, r *http.Request) {

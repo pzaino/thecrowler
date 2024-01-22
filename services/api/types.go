@@ -29,7 +29,7 @@ type Config struct {
 		Timeout     int `yaml:"timeout"`
 		Maintenance int `yaml:"maintenance"`
 	} `yaml:"crawler"`
-	Api struct {
+	API struct {
 		Host    string `yaml:"host"`
 		Port    int    `yaml:"port"`
 		Timeout int    `yaml:"timeout"`

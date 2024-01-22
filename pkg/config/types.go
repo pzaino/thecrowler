@@ -37,7 +37,7 @@ type Config struct {
 		Timeout     int `yaml:"timeout"`
 		Maintenance int `yaml:"maintenance"`
 	} `yaml:"crawler"`
-	Api struct {
+	API struct {
 		Host    string `yaml:"host"`
 		Port    int    `yaml:"port"`
 		Timeout int    `yaml:"timeout"`
@@ -127,16 +127,16 @@ func LoadConfig(confName string) (Config, error) {
 		config.Crawler.Maintenance = 60
 	}
 
-	if config.Api.Host == "" {
-		config.Api.Host = "localhost"
+	if config.API.Host == "" {
+		config.API.Host = "localhost"
 	}
 
-	if config.Api.Port == 0 {
-		config.Api.Port = 8080
+	if config.API.Port == 0 {
+		config.API.Port = 8080
 	}
 
-	if config.Api.Timeout == 0 {
-		config.Api.Timeout = 10
+	if config.API.Timeout == 0 {
+		config.API.Timeout = 10
 	}
 
 	if config.Selenium.Port == 0 {

@@ -1,3 +1,6 @@
+-- PostgreSQL setup script for the search engine database.
+-- This script should be run as the postgres user.
+
 CREATE TABLE Sources (
     source_id SERIAL PRIMARY KEY,
     url VARCHAR(255) NOT NULL,
