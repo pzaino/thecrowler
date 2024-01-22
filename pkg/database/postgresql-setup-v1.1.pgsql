@@ -49,7 +49,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_url') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_sources_url ON Sources(url);
+        CREATE INDEX idx_sources_url ON Sources(url text_pattern_ops);
     END IF;
 END
 $$;
@@ -82,7 +82,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_title') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_title ON SearchIndex(title);
+        CREATE INDEX idx_searchindex_title ON SearchIndex(title text_pattern_ops) WHERE title IS NOT NULL;
     END IF;
 END
 $$;
@@ -93,7 +93,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_summary') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_summary ON SearchIndex(summary);
+        CREATE INDEX idx_searchindex_summary ON SearchIndex(left(summary, 1000) text_pattern_ops) WHERE summary IS NOT NULL;
     END IF;
 END
 $$;
@@ -104,7 +104,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_content') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_content ON SearchIndex(content);
+        CREATE INDEX idx_searchindex_content ON SearchIndex(left(content, 1000) text_pattern_ops) WHERE content IS NOT NULL;
     END IF;
 END
 $$;
@@ -115,7 +115,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_snapshot_url') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_snapshot_url ON SearchIndex(snapshot_url);
+        CREATE INDEX idx_searchindex_snapshot_url ON SearchIndex(snapshot_url) WHERE snapshot_url IS NOT NULL;
     END IF;
 END
 $$;
@@ -148,7 +148,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatags_name') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_metatags_name ON MetaTags(name);
+        CREATE INDEX idx_metatags_name ON MetaTags(name text_pattern_ops) WHERE name IS NOT NULL;
     END IF;
 END
 $$;
