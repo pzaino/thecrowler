@@ -34,46 +34,63 @@ func tokenize(input string) []string {
 	for _, r := range input {
 		switch {
 		case r == '"':
-			inQuotes = !inQuotes
-			if !inQuotes {
-				tokens = append(tokens, currentToken.String())
-				currentToken.Reset()
-			} else {
-				//currentToken.WriteRune(r)
-				continue
-			}
+			inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
 		case r == ':' && !inQuotes:
-			// Complete the field specifier token
-			if currentToken.Len() > 0 {
-				tokens = append(tokens, currentToken.String()+":")
-				currentToken.Reset()
-			}
+			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
-			if currentToken.Len() > 0 {
-				tokens = append(tokens, currentToken.String())
-				currentToken.Reset()
-			}
+			handleSpace(&tokens, &currentToken)
 		case r == '|' || r == '&':
-			if currentToken.Len() > 0 {
-				if currentToken.String() != "|" && currentToken.String() != "&" {
-					tokens = append(tokens, currentToken.String())
-					currentToken.Reset()
-				} else {
-					tokens = append(tokens, currentToken.String()+string(r))
-					currentToken.Reset()
-					continue
-				}
-			}
-			currentToken.WriteRune(r)
+			handlePipeAnd(&tokens, &currentToken, r)
 		default:
 			currentToken.WriteRune(r)
 		}
 	}
-	if currentToken.Len() > 0 {
-		tokens = append(tokens, currentToken.String())
-	}
+	handleRemainingToken(&tokens, &currentToken)
 
 	return tokens
+}
+
+func toggleQuotes(inQuotes bool, tokens *[]string, currentToken *strings.Builder) bool {
+	inQuotes = !inQuotes
+	if !inQuotes {
+		*tokens = append(*tokens, currentToken.String())
+		currentToken.Reset()
+	}
+	return inQuotes
+}
+
+func completeFieldSpecifier(tokens *[]string, currentToken *strings.Builder) {
+	if currentToken.Len() > 0 {
+		*tokens = append(*tokens, currentToken.String()+":")
+		currentToken.Reset()
+	}
+}
+
+func handleSpace(tokens *[]string, currentToken *strings.Builder) {
+	if currentToken.Len() > 0 {
+		*tokens = append(*tokens, currentToken.String())
+		currentToken.Reset()
+	}
+}
+
+func handlePipeAnd(tokens *[]string, currentToken *strings.Builder, r rune) {
+	if currentToken.Len() > 0 {
+		if currentToken.String() != "|" && currentToken.String() != "&" {
+			*tokens = append(*tokens, currentToken.String())
+			currentToken.Reset()
+		} else {
+			*tokens = append(*tokens, currentToken.String()+string(r))
+			currentToken.Reset()
+			return
+		}
+	}
+	currentToken.WriteRune(r)
+}
+
+func handleRemainingToken(tokens *[]string, currentToken *strings.Builder) {
+	if currentToken.Len() > 0 {
+		*tokens = append(*tokens, currentToken.String())
+	}
 }
 
 func isFieldSpecifier(input string) bool {
@@ -143,9 +160,7 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 			} else {
 				value = token
 			}
-
-			if currentField != "" {
-				condition := fmt.Sprintf("LOWER(%s) LIKE $%d", currentField, paramCounter)
+			addCondition := func(condition string) {
 				if queryGroup == -1 {
 					queryGroup = 0
 					queryParts = append(queryParts, []string{condition})
@@ -154,6 +169,11 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 				}
 				queryParams = append(queryParams, "%"+strings.ToLower(value)+"%")
 				paramCounter++
+			}
+
+			if currentField != "" {
+				condition := fmt.Sprintf("LOWER(%s) LIKE $%d", currentField, paramCounter)
+				addCondition(condition)
 			} else {
 				// Handle default fields
 				var conditions []string
@@ -162,14 +182,7 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 					conditions = append(conditions, condition)
 				}
 				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
-				if queryGroup == -1 {
-					queryGroup = 0
-					queryParts = append(queryParts, []string{combinedCondition})
-				} else {
-					queryParts[queryGroup] = append(queryParts[queryGroup], combinedCondition)
-				}
-				queryParams = append(queryParams, "%"+strings.ToLower(value)+"%")
-				paramCounter++
+				addCondition(combinedCondition)
 			}
 
 			if len(tokens) > i+1 && !isFieldSpecifier(tokens[i+1]) && tokens[i+1] != "&&" && tokens[i+1] != "||" {
@@ -195,16 +208,22 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 		return "", nil, errors.New("no valid query provided")
 	}
 
+	combinedQuery := buildCombinedQuery(queryParts)
+
+	return combinedQuery, queryParams, nil
+}
+
+func buildCombinedQuery(queryParts [][]string) string {
 	combinedQuery := `
-	SELECT DISTINCT 
-		si.title, si.page_url, si.summary, si.content 
-	FROM 
-		SearchIndex si 
+	SELECT DISTINCT
+		si.title, si.page_url, si.summary, si.content
+	FROM
+		SearchIndex si
 	LEFT JOIN
 		KeywordIndex ki ON si.index_id = ki.index_id
 	LEFT JOIN
 		Keywords k ON ki.keyword_id = k.keyword_id
-	WHERE 
+	WHERE
 		`
 
 	for i, group := range queryParts {
@@ -225,7 +244,7 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 	}
 	combinedQuery += ";"
 
-	return combinedQuery, queryParams, nil
+	return combinedQuery
 }
 
 // Helper function to determine if a string is a logical operator
