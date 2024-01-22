@@ -1,4 +1,4 @@
-module github.com/pzaino/TheCROWler
+module github.com/pzaino/thecrowler
 
 go 1.21.5
 
