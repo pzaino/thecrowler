@@ -342,10 +342,20 @@ func isExternalLink(sourceURL, linkURL string) bool {
 
 	// Takes the substring that correspond to the 1st and 2nd level domain (e.g., google.com)
 	// regardless the number of subdomains
+	var srcDomainName string
 	srcFqdnArr := strings.Split(sourceParsed.Hostname(), ".")
-	srcDomainName := strings.Join(srcFqdnArr[len(srcFqdnArr)-2:], ".")
+	if len(srcFqdnArr) < 3 {
+		srcDomainName = strings.Join(srcFqdnArr, ".")
+	} else {
+		srcDomainName = strings.Join(srcFqdnArr[len(srcFqdnArr)-2:], ".")
+	}
 	linkFqdnArr := strings.Split(linkParsed.Hostname(), ".")
-	linkDomainName := strings.Join(linkFqdnArr[len(linkFqdnArr)-2:], ".")
+	var linkDomainName string
+	if len(linkFqdnArr) < 3 {
+		linkDomainName = strings.Join(linkFqdnArr, ".")
+	} else {
+		linkDomainName = strings.Join(linkFqdnArr[len(linkFqdnArr)-2:], ".")
+	}
 
 	// Compare hostnames
 	return srcDomainName != linkDomainName
