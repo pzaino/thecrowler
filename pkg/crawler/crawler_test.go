@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+const (
+	testFQDN string = "https://www.google.com"
+)
+
 func TestExtractLinks(t *testing.T) {
 	type args struct {
 		htmlContent string
@@ -28,9 +32,9 @@ func TestExtractLinks(t *testing.T) {
 		args args
 		want []string
 	}{
-		{"test1", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{"https://www.google.com"}},
-		{"test2", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{"https://www.google.com", "https://www.google.com"}},
-		{"test3", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{"https://www.google.com", "https://www.google.com", "https://www.google.com"}},
+		{"test1", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{testFQDN}},
+		{"test2", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{testFQDN, testFQDN}},
+		{"test3", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{testFQDN, testFQDN, testFQDN}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,10 +56,10 @@ func TestIsExternalLink(t *testing.T) {
 		want bool
 	}{
 		// Add test cases
-		{"test1", args{"https://www.google.com", "https://www.google.com"}, false},
-		{"test2", args{"https://www.google.com", "https://www.google.com/test"}, false},
-		{"test3", args{"https://www.google.com", "https://www.google.com/test/test"}, false},
-		{"test4", args{"https://www.example.com", "https://www.google.com/test/test/test"}, true},
+		{"test1", args{testFQDN, testFQDN}, false},
+		{"test2", args{testFQDN, "https://www.google.com/test2"}, false},
+		{"test3", args{testFQDN, "https://www.google.com/test3/test"}, false},
+		{"test4", args{testFQDN, "https://www.google.com/test4/test/test"}, false},
 		{"test5", args{"https://data.example.com", "https://www.example.com"}, false},
 		{"test6", args{"www.apps.com", "javascript:void(0)"}, false},
 	}
@@ -81,9 +85,9 @@ func TestCombineURLs(t *testing.T) {
 		wantErr bool
 	}{
 		// Add test cases.
-		{"test1", args{"https://www.google.com", "https://www.google.com"}, "https://www.google.com", false},
-		{"test2", args{"https://www.google.com", "https://www.google.com/test"}, "https://www.google.com/test", false},
-		{"test3", args{"https://www.google.com", "https://www.google.com/test/test"}, "https://www.google.com/test/test", false},
+		{"test1", args{testFQDN, testFQDN}, testFQDN, false},
+		{"test2", args{testFQDN, "https://www.google.com/test"}, "https://www.google.com/test", false},
+		{"test3", args{testFQDN, "https://www.google.com/test/test"}, "https://www.google.com/test/test", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

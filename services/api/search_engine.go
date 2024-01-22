@@ -154,12 +154,6 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 			}
 
 		default:
-			var value string
-			if isQuotedString(token) {
-				value = strings.Trim(token, `"`)
-			} else {
-				value = token
-			}
 			addCondition := func(condition string) {
 				if queryGroup == -1 {
 					queryGroup = 0
@@ -167,15 +161,18 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 				} else {
 					queryParts[queryGroup] = append(queryParts[queryGroup], condition)
 				}
-				queryParams = append(queryParams, "%"+strings.ToLower(value)+"%")
+				queryParams = append(queryParams, "%"+strings.ToLower(token)+"%")
 				paramCounter++
 			}
 
-			if currentField != "" {
+			if isQuotedString(token) {
+				token = strings.Trim(token, `"`)
+			}
+
+			if isFieldSpecifier(currentField) {
 				condition := fmt.Sprintf("LOWER(%s) LIKE $%d", currentField, paramCounter)
 				addCondition(condition)
 			} else {
-				// Handle default fields
 				var conditions []string
 				for _, field := range defaultFields {
 					condition := fmt.Sprintf("LOWER(%s) LIKE $%d", field, paramCounter)
