@@ -41,7 +41,7 @@ var (
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
-// This function is responsible for crawling a website, it's the main entry point
+// CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
 func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
 	// Crawl the initial URL and get the HTML content
@@ -89,7 +89,7 @@ func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
 	updateSourceState(db, source.URL, nil)
 }
 
-// This function is responsible for updating the state of a Source in
+// updateSourceState is responsible for updating the state of a Source in
 // the database after crawling it (it does consider errors too)
 func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
 	var err error
@@ -110,7 +110,7 @@ func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
 	}
 }
 
-// This function is responsible for indexing a crawled page in the database
+// indexPage is responsible for indexing a crawled page in the database
 // I had to write this function quickly, so it's not very efficient.
 // In an ideal world, I would have used multiple transactions to index the page
 // and avoid deadlocks when inserting keywords. However, using a mutex to enter
@@ -130,7 +130,7 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert or update the page in SearchIndex
-	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
+	indexId, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
 		log.Printf("Error inserting or updating SearchIndex: %v\n", err)
 		rollbackTransaction(tx)
@@ -138,7 +138,7 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert MetaTags
-	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
+	err = insertMetaTags(tx, indexId, pageInfo.MetaTags)
 	if err != nil {
 		log.Printf("Error inserting meta tags: %v\n", err)
 		rollbackTransaction(tx)
@@ -146,7 +146,7 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert into KeywordIndex
-	err = insertKeywords(tx, db, indexID, pageInfo)
+	err = insertKeywords(tx, db, indexId, pageInfo)
 	if err != nil {
 		log.Printf("Error inserting keywords: %v\n", err)
 		rollbackTransaction(tx)
@@ -162,18 +162,25 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 }
 
+// insertOrUpdateSearchIndex inserts or updates a search index entry in the database.
+// It takes a transaction object (tx), the URL of the page (url), and the page information (pageInfo).
+// It returns the index ID of the inserted or updated entry and an error, if any.
 func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, error) {
-	var indexID int
+	var indexId int
 	err := tx.QueryRow(`
-        INSERT INTO SearchIndex (page_url, title, summary, content, indexed_at)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO SearchIndex (source_id, page_url, title, summary, content, indexed_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
         ON CONFLICT (page_url) DO UPDATE
         SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, indexed_at = NOW()
-        RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText).
-		Scan(&indexID)
-	return indexID, err
+        RETURNING index_id`, pageInfo.sourceId, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText).
+		Scan(&indexId)
+	return indexId, err
 }
 
+// insertMetaTags inserts meta tags into the database for a given index ID.
+// It takes a transaction, index ID, and a map of meta tags as parameters.
+// Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
+// Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
 	for name, content := range metaTags {
 		_, err := tx.Exec(`INSERT INTO MetaTags (index_id, name, content)
@@ -185,6 +192,11 @@ func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
 	return nil
 }
 
+// insertKeywords inserts keywords extracted from a web page into the database.
+// It takes a transaction `tx` and a database connection `db` as parameters.
+// The `indexID` parameter represents the ID of the index associated with the keywords.
+// The `pageInfo` parameter contains information about the web page.
+// It returns an error if there is any issue with inserting the keywords into the database.
 func insertKeywords(tx *sql.Tx, db *sql.DB, indexID int, pageInfo PageInfo) error {
 	for _, keyword := range extractKeywords(pageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
@@ -200,6 +212,9 @@ func insertKeywords(tx *sql.Tx, db *sql.DB, indexID int, pageInfo PageInfo) erro
 	return nil
 }
 
+// rollbackTransaction rolls back a transaction.
+// It takes a pointer to a sql.Tx as input and rolls back the transaction.
+// If an error occurs during the rollback, it logs the error.
 func rollbackTransaction(tx *sql.Tx) {
 	err := tx.Rollback()
 	if err != nil {
@@ -207,6 +222,8 @@ func rollbackTransaction(tx *sql.Tx) {
 	}
 }
 
+// commitTransaction commits the given SQL transaction.
+// It returns an error if the commit fails.
 func commitTransaction(tx *sql.Tx) error {
 	err := tx.Commit()
 	if err != nil {
@@ -216,7 +233,7 @@ func commitTransaction(tx *sql.Tx) error {
 	return nil
 }
 
-// This function is responsible for storing the extracted keywords in the database
+// insertKeywordWithRetries is responsible for storing the extracted keywords in the database
 // It's written to be efficient and avoid deadlocks, but this right now is not required
 // because indexPage uses a mutex to ensure that only one goroutine is indexing a page
 // at a time. However, when implementing multiple transactions in indexPage, this function
@@ -244,7 +261,7 @@ func insertKeywordWithRetries(db *sql.DB, keyword string) (int, error) {
 	return 0, fmt.Errorf("failed to insert keyword after retries: %s", keyword)
 }
 
-// This function is responsible for retrieving the HTML content of a page
+// getHTMLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
 func getHTMLContent(url string, wd selenium.WebDriver) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
@@ -255,7 +272,7 @@ func getHTMLContent(url string, wd selenium.WebDriver) (selenium.WebDriver, erro
 	return wd, nil
 }
 
-// This function is responsible for extracting information from a collected page.
+// extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
 func extractPageInfo(webPage selenium.WebDriver) PageInfo {
@@ -285,6 +302,10 @@ func extractPageInfo(webPage selenium.WebDriver) PageInfo {
 	}
 }
 
+// extractMetaTags is a function that extracts meta tags from a goquery.Document.
+// It iterates over each "meta" element in the document and retrieves the "name" and "content" attributes.
+// The extracted meta tags are stored in a map[string]string, where the "name" attribute is the key and the "content" attribute is the value.
+// The function returns the map of extracted meta tags.
 func extractMetaTags(doc *goquery.Document) map[string]string {
 	metaTags := make(map[string]string)
 	doc.Find("meta").Each(func(_ int, s *goquery.Selection) {
@@ -296,6 +317,9 @@ func extractMetaTags(doc *goquery.Document) map[string]string {
 	return metaTags
 }
 
+// extractLinks extracts all the links from the given HTML content.
+// It uses the goquery library to parse the HTML and find all the <a> tags.
+// Each link is then added to a slice and returned.
 func extractLinks(htmlContent string) []string {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
@@ -311,7 +335,7 @@ func extractLinks(htmlContent string) []string {
 	return links
 }
 
-// Check if the link is external (aka outside the Source domain)
+// isExternalLink checks if the link is external (aka outside the Source domain)
 func isExternalLink(sourceURL, linkURL string) bool {
 	// remove trailing spaces from linkURL
 	linkURL = strings.TrimSpace(linkURL)
@@ -361,7 +385,7 @@ func isExternalLink(sourceURL, linkURL string) bool {
 	return srcDomainName != linkDomainName
 }
 
-// This is the worker function that is responsible for crawling a page
+// worker is the worker function that is responsible for crawling a page
 func worker(db *sql.DB, wd selenium.WebDriver,
 	id int, jobs <-chan string, wg *sync.WaitGroup, source *db.Source) {
 	defer wg.Done()
@@ -399,13 +423,14 @@ func worker(db *sql.DB, wd selenium.WebDriver,
 		pageCache := extractPageInfo(htmlContent)
 
 		// Index the page content in the database
+		pageCache.sourceId = source.Id
 		indexPage(db, url, pageCache)
 
 		log.Printf("Worker %d: finished job %s\n", id, url)
 	}
 }
 
-// Utility function to combine a base URL with a relative URL
+// combineURLs is a utility function to combine a base URL with a relative URL
 func combineURLs(baseURL, relativeURL string) (string, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
@@ -422,12 +447,12 @@ func combineURLs(baseURL, relativeURL string) (string, error) {
 	return relativeURL, nil
 }
 
-// This function is responsible for initializing the crawler
+// StartCrawler is responsible for initializing the crawler
 func StartCrawler(cf cfg.Config) {
 	config = cf
 }
 
-// This function is responsible for initializing Selenium Driver
+// StartSelenium is responsible for initializing Selenium Driver
 // The commented out code could be used to initialize a local Selenium server
 // instead of using only a container based one. However, I found that the container
 // based Selenium server is more stable and reliable than the local one.
@@ -478,7 +503,7 @@ func StartSelenium() (*selenium.Service, error) {
 	return service, err
 }
 
-// Stop the Selenium server instance (if local)
+// StopSelenium Stops the Selenium server instance (if local)
 func StopSelenium(sel *selenium.Service) {
 	err := sel.Stop()
 	if err != nil {
@@ -486,7 +511,7 @@ func StopSelenium(sel *selenium.Service) {
 	}
 }
 
-// This function is responsible for connecting to the Selenium server instance
+// ConnectSelenium is responsible for connecting to the Selenium server instance
 func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriver, error) {
 	// Connect to the WebDriver instance running locally.
 	caps := selenium.Capabilities{"browserName": config.Selenium.Type}
@@ -503,7 +528,7 @@ func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriv
 	return wd, err
 }
 
-// This function is responsible for quitting the Selenium server instance
+// QuitSelenium is responsible for quitting the Selenium server instance
 func QuitSelenium(wd selenium.WebDriver) {
 	err := wd.Quit()
 	if err != nil {
