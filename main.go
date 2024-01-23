@@ -64,7 +64,7 @@ func performDBMaintenance(db *sql.DB) error {
 // This function simply query the database for URLs that need to be crawled
 func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
 	// Update the SQL query to fetch all necessary fields
-	query := `SELECT url, restricted FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
+	query := `SELECT source_id, url, restricted, 0 AS flags FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
 
 	// Execute the query
 	rows, err := db.Query(query)
@@ -76,7 +76,7 @@ func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
 	var sourcesToCrawl []database.Source
 	for rows.Next() {
 		var src database.Source
-		if err := rows.Scan(&src.URL, &src.Restricted); err != nil {
+		if err := rows.Scan(&src.Id, &src.URL, &src.Restricted, &src.Flags); err != nil {
 			log.Println("Error scanning rows:", err)
 			continue
 		}

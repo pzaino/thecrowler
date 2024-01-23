@@ -24,36 +24,46 @@ import (
 
 // Config represents the structure of the configuration file
 type Config struct {
+	// Database configuration
 	Database struct {
-		Host     string `yaml:"host"`
-		Port     int    `yaml:"port"`
-		User     string `yaml:"user"`
-		Password string `yaml:"password"`
-		DBName   string `yaml:"dbname"`
+		Host     string `yaml:"host"`     // Hostname of the database server
+		Port     int    `yaml:"port"`     // Port number of the database server
+		User     string `yaml:"user"`     // Username for database authentication
+		Password string `yaml:"password"` // Password for database authentication
+		DBName   string `yaml:"dbname"`   // Name of the database
 	} `yaml:"database"`
+
+	// Crawler configuration
 	Crawler struct {
-		Workers     int `yaml:"workers"`
-		Interval    int `yaml:"interval"`
-		Timeout     int `yaml:"timeout"`
-		Maintenance int `yaml:"maintenance"`
+		Workers     int `yaml:"workers"`     // Number of crawler workers
+		Interval    int `yaml:"interval"`    // Interval between crawler requests (in seconds)
+		Timeout     int `yaml:"timeout"`     // Timeout for crawler requests (in seconds)
+		Maintenance int `yaml:"maintenance"` // Interval between crawler maintenance tasks (in seconds)
 	} `yaml:"crawler"`
+
+	// API configuration
 	API struct {
-		Host    string `yaml:"host"`
-		Port    int    `yaml:"port"`
-		Timeout int    `yaml:"timeout"`
+		Host    string `yaml:"host"`    // Hostname of the API server
+		Port    int    `yaml:"port"`    // Port number of the API server
+		Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
 	} `yaml:"api"`
+
+	// Selenium configuration
 	Selenium struct {
-		Path       string `yaml:"path"`
-		DriverPath string `yaml:"driver_path"`
-		Type       string `yaml:"type"`
-		Port       int    `yaml:"port"`
-		Host       string `yaml:"host"`
-		Headless   bool   `yaml:"headless"`
+		Path       string `yaml:"path"`        // Path to the Selenium executable
+		DriverPath string `yaml:"driver_path"` // Path to the Selenium driver executable
+		Type       string `yaml:"type"`        // Type of Selenium driver
+		Port       int    `yaml:"port"`        // Port number for Selenium server
+		Host       string `yaml:"host"`        // Hostname of the Selenium server
+		Headless   bool   `yaml:"headless"`    // Whether to run Selenium in headless mode
 	} `yaml:"selenium"`
-	OS         string `yaml:"os"`
-	DebugLevel int    `yaml:"debug_level"`
+
+	OS         string `yaml:"os"`          // Operating system name
+	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
 }
 
+// fileExists checks if a file exists at the given filename.
+// It returns true if the file exists and is not a directory, and false otherwise.
 func fileExists(filename string) bool {
 	info, err := os.Stat(filename)
 	if os.IsNotExist(err) {
@@ -62,6 +72,9 @@ func fileExists(filename string) bool {
 	return !info.IsDir()
 }
 
+// getConfigFile reads and unmarshals a configuration file with the given name.
+// It checks if the file exists, reads its contents, and unmarshals it into a Config struct.
+// If the file does not exist or an error occurs during reading or unmarshaling, an error is returned.
 func getConfigFile(confName string) (Config, error) {
 
 	// Check if the configuration file exists
@@ -80,7 +93,7 @@ func getConfigFile(confName string) (Config, error) {
 	return config, err
 }
 
-// This function is responsible for loading the configuration file
+// LoadConfig is responsible for loading the configuration file
 // and return the Config struct
 func LoadConfig(confName string) (Config, error) {
 
@@ -150,7 +163,6 @@ func LoadConfig(confName string) (Config, error) {
 	return config, err
 }
 
-// This function is responsible for returning true if the config is empty or false otherwise
 func ConfigIsEmpty(config Config) bool {
 	return config == Config{}
 }

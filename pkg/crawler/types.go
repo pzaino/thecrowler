@@ -1,11 +1,11 @@
 package crawler
 
-// This struct represents the information that we want to extract from a page
-// and store in the database.
+// PageInfo represents the information of a web page.
 type PageInfo struct {
-	Title           string
-	Summary         string
-	BodyText        string
-	ContainsAppInfo bool
-	MetaTags        map[string]string // Add a field for meta tags
+	sourceId        int               // The ID of the source.
+	Title           string            // The title of the web page.
+	Summary         string            // A summary of the web page content.
+	BodyText        string            // The main body text of the web page.
+	ContainsAppInfo bool              // Indicates whether the web page contains app information.
+	MetaTags        map[string]string // The meta tags of the web page.
 }

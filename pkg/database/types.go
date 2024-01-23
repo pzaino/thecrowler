@@ -15,8 +15,14 @@
 package database
 
 // Source represents the structure of the Sources table
-// for a record we have decided we need to crawl
+// for a record we have decided we need to crawl.
+// Id represents the unique identifier of the source.
+// URL represents the URL of the source.
+// Restricted indicates whether the crawling has to be restricted to the source domain or not.
+// Flags represents additional flags associated with the source.
 type Source struct {
+	Id         int
 	URL        string
 	Restricted bool
+	Flags      int
 }
