@@ -29,7 +29,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 
 	// Check if the returned structure matches the expected output
-	if ConfigIsEmpty(config) {
+	if IsEmpty(config) {
 		t.Errorf("No config was loaded")
 	}
 

@@ -130,7 +130,7 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert or update the page in SearchIndex
-	indexId, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
+	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
 		log.Printf("Error inserting or updating SearchIndex: %v\n", err)
 		rollbackTransaction(tx)
@@ -138,7 +138,7 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert MetaTags
-	err = insertMetaTags(tx, indexId, pageInfo.MetaTags)
+	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
 	if err != nil {
 		log.Printf("Error inserting meta tags: %v\n", err)
 		rollbackTransaction(tx)
@@ -146,7 +146,7 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 	}
 
 	// Insert into KeywordIndex
-	err = insertKeywords(tx, db, indexId, pageInfo)
+	err = insertKeywords(tx, db, indexID, pageInfo)
 	if err != nil {
 		log.Printf("Error inserting keywords: %v\n", err)
 		rollbackTransaction(tx)
@@ -166,15 +166,15 @@ func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
 // It takes a transaction object (tx), the URL of the page (url), and the page information (pageInfo).
 // It returns the index ID of the inserted or updated entry and an error, if any.
 func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, error) {
-	var indexId int
+	var indexID int
 	err := tx.QueryRow(`
         INSERT INTO SearchIndex (source_id, page_url, title, summary, content, indexed_at)
         VALUES ($1, $2, $3, $4, $5, NOW())
         ON CONFLICT (page_url) DO UPDATE
         SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, indexed_at = NOW()
-        RETURNING index_id`, pageInfo.sourceId, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText).
-		Scan(&indexId)
-	return indexId, err
+        RETURNING index_id`, pageInfo.sourceID, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText).
+		Scan(&indexID)
+	return indexID, err
 }
 
 // insertMetaTags inserts meta tags into the database for a given index ID.
@@ -423,7 +423,7 @@ func worker(db *sql.DB, wd selenium.WebDriver,
 		pageCache := extractPageInfo(htmlContent)
 
 		// Index the page content in the database
-		pageCache.sourceId = source.Id
+		pageCache.sourceID = source.Id
 		indexPage(db, url, pageCache)
 
 		log.Printf("Worker %d: finished job %s\n", id, url)

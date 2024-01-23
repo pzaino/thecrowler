@@ -163,6 +163,6 @@ func LoadConfig(confName string) (Config, error) {
 	return config, err
 }
 
-func ConfigIsEmpty(config Config) bool {
+func IsEmpty(config Config) bool {
 	return config == Config{}
 }
