@@ -8,11 +8,11 @@ RUN ./autobuild.sh
 # Run stage
 FROM alpine:20231219
 WORKDIR /app
-COPY --from=builder ./bin/Thecrowler /app/
-COPY --from=builder ./config.yaml /app/
+COPY --from=builder /app/bin/thecrowler /app/
+COPY --from=builder /app/config.yaml /app/
 
 # Expose port 8080 to the outside world
 EXPOSE 8081
 
 # Command to run the executable
-CMD ["./Thecrowler"]
+CMD ["./thecrowler"]

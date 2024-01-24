@@ -8,10 +8,10 @@ RUN ./autobuild.sh
 # Run stage
 FROM alpine:20231219
 WORKDIR /app
-COPY --from=builder ./bin/api /app/
-COPY --from=builder ./bin/addSite /app/
-COPY --from=builder ./bin/removeSite /app/
-COPY --from=builder ./config.yaml /app/
+COPY --from=builder /app/bin/api /app/
+COPY --from=builder /app/bin/addSite /app/
+COPY --from=builder /app/bin/removeSite /app/
+COPY --from=builder /app/config.yaml /app/
 
 # Expose port 8080 to the outside world
 EXPOSE 8080

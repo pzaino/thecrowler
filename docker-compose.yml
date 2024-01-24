@@ -8,6 +8,7 @@ services:
       - POSTGRES_PASSWORD=secret
     volumes:
       - db_data:/var/lib/postgresql/data
+      - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/init.sql
 
   searchapi:
     build:
@@ -28,4 +29,6 @@ services:
       - thecrowler_data:/app/data
 
 volumes:
+  db_data:
+  searchapi_data:
   thecrowler_data:
