@@ -15,10 +15,14 @@
 package crawler
 
 import (
+	"bytes"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -423,7 +427,7 @@ func worker(db *sql.DB, wd selenium.WebDriver,
 		pageCache := extractPageInfo(htmlContent)
 
 		// Index the page content in the database
-		pageCache.sourceID = source.Id
+		pageCache.sourceID = source.ID
 		indexPage(db, url, pageCache)
 
 		log.Printf("Worker %d: finished job %s\n", id, url)
@@ -497,7 +501,7 @@ func StartSelenium() (*selenium.Service, error) {
 	//service, err := selenium.NewSeleniumService(config.Selenium.Path, config.Selenium.Port, opts...)
 	//service, err := selenium.NewChromeDriverService(config.Selenium.DriverPath, config.Selenium.Port)
 	var service *selenium.Service
-	var err error = nil
+	var err error // = nil
 	log.Printf("Done!\n")
 
 	return service, err
@@ -534,4 +538,111 @@ func QuitSelenium(wd selenium.WebDriver) {
 	if err != nil {
 		log.Printf("Error quitting Selenium: %v\n", err)
 	}
+}
+
+// TakeScreenshot is responsible for taking a screenshot of the current page
+func TakeScreenshot(wd selenium.WebDriver, filename string) error {
+	// Take a screenshot of the current page
+	screenshot, err := wd.Screenshot()
+	if err != nil {
+		return err
+	}
+
+	// Save the screenshot to a file
+	err = saveScreenshot(filename, screenshot)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// saveScreenshot is responsible for saving a screenshot to a file
+func saveScreenshot(filename string, screenshot []byte) error {
+	// Check if ImageStorageAPI is set
+	if config.ImageStorageAPI.Host != "" {
+		// Validate the ImageStorageAPI configuration
+		if err := validateImageStorageAPIConfig(config); err != nil {
+			return err
+		}
+
+		// Determine storage method and call appropriate function
+		switch config.ImageStorageAPI.Type {
+		case "http":
+			return saveScreenshotViaHTTP(filename, screenshot)
+		// Add cases for other types if needed, e.g., shared volume, message queue, etc.
+		default:
+			return errors.New("unsupported storage type")
+		}
+	} else {
+		// Fallback to local file saving
+		return writeToFile(config.ImageStorageAPI.Path+filename, screenshot)
+	}
+}
+
+// validateImageStorageAPIConfig validates the ImageStorageAPI configuration
+func validateImageStorageAPIConfig(checkCfg cfg.Config) error {
+	if checkCfg.ImageStorageAPI.Host == "" || checkCfg.ImageStorageAPI.Port == 0 {
+		return errors.New("invalid ImageStorageAPI configuration: host and port must be set")
+	}
+	// Add additional validation as needed
+	return nil
+}
+
+// saveScreenshotViaHTTP sends the screenshot to a remote API
+func saveScreenshotViaHTTP(filename string, screenshot []byte) error {
+	// Construct the API endpoint URL
+	apiURL := fmt.Sprintf("http://%s:%d/store_image", config.ImageStorageAPI.Host, config.ImageStorageAPI.Port)
+
+	// Prepare the request
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(screenshot))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Filename", filename)
+	req.Header.Set("Authorization", "Bearer "+config.ImageStorageAPI.Token) // Assuming token-based auth
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Check for a successful response
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to save file, status code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// writeToFile is responsible for writing data to a file
+func writeToFile(filename string, data []byte) error {
+	// Write data to a file
+	err := writeDataToFile(filename, data)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writeDataToFile is responsible for writing data to a file
+func writeDataToFile(filename string, data []byte) error {
+	// open file using READ & WRITE permission
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0755)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// write data to file
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

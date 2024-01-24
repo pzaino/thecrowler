@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	test_data   string = "test1, test2, test3"
-	test_result string = "test1 test2 test3"
+	testData   string = "test1, test2, test3"
+	testResult string = "test1 test2 test3"
 )
 
 func TestIsKeyword(t *testing.T) {
@@ -57,7 +57,7 @@ func TestExtractFromMetaTag(t *testing.T) {
 		tagName  string
 	}
 	keywords := make(map[string]string)
-	keywords["keywords"] = test_data
+	keywords["keywords"] = testData
 	tests := []struct {
 		name string
 		args args
@@ -86,9 +86,9 @@ func TestExtractContentKeywords(t *testing.T) {
 		args args
 		want []string
 	}{
-		{"test1", args{test_data}, []string{"test1", "test2", "test3"}},
-		{"test2", args{test_data}, []string{"test1", "test2", "test3"}},
-		{"test3", args{test_data}, []string{"test1", "test2", "test3"}},
+		{"test1", args{testData}, []string{"test1", "test2", "test3"}},
+		{"test2", args{testData}, []string{"test1", "test2", "test3"}},
+		{"test3", args{testData}, []string{"test1", "test2", "test3"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestExtractKeywords(t *testing.T) {
 		pageInfo PageInfo
 	}
 	keywords := make(map[string]string)
-	keywords["keywords"] = test_data
+	keywords["keywords"] = testData
 	pageInfo := PageInfo{
 		MetaTags: keywords,
 	}
@@ -159,9 +159,9 @@ func TestNormalizeText(t *testing.T) {
 		want string
 	}{
 		// Add test cases:
-		{"test1", args{test_data}, test_result},
-		{"test2", args{test_data}, test_result},
-		{"test3", args{test_data}, test_result},
+		{"test1", args{testData}, testResult},
+		{"test2", args{testData}, testResult},
+		{"test3", args{testData}, testResult},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -182,9 +182,9 @@ func TestRemovePunctuation(t *testing.T) {
 		want string
 	}{
 		// Add test cases:
-		{"test1", args{test_data}, test_result},
-		{"test2", args{"test1. test2. test3."}, test_result},
-		{"test3", args{"test1; test2; test3;"}, test_result},
+		{"test1", args{testData}, testResult},
+		{"test2", args{"test1. test2. test3."}, testResult},
+		{"test3", args{"test1; test2; test3;"}, testResult},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

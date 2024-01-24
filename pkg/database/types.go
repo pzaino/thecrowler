@@ -21,7 +21,7 @@ package database
 // Restricted indicates whether the crawling has to be restricted to the source domain or not.
 // Flags represents additional flags associated with the source.
 type Source struct {
-	Id         int
+	ID         int
 	URL        string
 	Restricted bool
 	Flags      int

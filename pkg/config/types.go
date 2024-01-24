@@ -58,6 +58,16 @@ type Config struct {
 		Headless   bool   `yaml:"headless"`    // Whether to run Selenium in headless mode
 	} `yaml:"selenium"`
 
+	// Image storage API configuration (to store images on a separate server)
+	ImageStorageAPI struct {
+		Host    string `yaml:"host"`    // Hostname of the API server
+		Port    int    `yaml:"port"`    // Port number of the API server
+		Token   string `yaml:"token"`   // Token for API authentication
+		Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
+		Type    string `yaml:"type"`    // Type of storage (e.g., "http", "volume", "queue")
+		Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images")
+	} `yaml:"image_storage_api"`
+
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
 }

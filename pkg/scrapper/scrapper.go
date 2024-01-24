@@ -28,6 +28,8 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// ParseRules parses a YAML file containing site rules and returns a slice of SiteRules.
+// It takes a file path as input and returns the parsed site rules or an error if the file cannot be read or parsed.
 func ParseRules(file string) ([]SiteRules, error) {
 	var sites []SiteRules
 
@@ -44,6 +46,9 @@ func ParseRules(file string) ([]SiteRules, error) {
 	return sites, nil
 }
 
+// InitializeLibrary initializes the library by parsing the rules from the specified file
+// and creating a new rule engine with the parsed sites.
+// It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
 	sites, err := ParseRules(rulesFile)
 	if err != nil {
@@ -54,6 +59,8 @@ func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
 	return engine, nil
 }
 
+// NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
+// It initializes the RuleEngine with the given sites and returns a pointer to the created RuleEngine.
 func NewRuleEngine(sites []SiteRules) *RuleEngine {
 	// Implementation of the RuleEngine initialization
 	return &RuleEngine{
@@ -61,6 +68,8 @@ func NewRuleEngine(sites []SiteRules) *RuleEngine {
 	}
 }
 
+// GetEnabledRuleGroups returns a slice of RuleGroup containing only the enabled rule groups.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled ones to the result slice.
 func (s *SiteRules) GetEnabledRuleGroups() []RuleGroup {
 	var enabledRuleGroups []RuleGroup
 
@@ -73,6 +82,8 @@ func (s *SiteRules) GetEnabledRuleGroups() []RuleGroup {
 	return enabledRuleGroups
 }
 
+// GetEnabledRules returns a slice of Rule containing only the enabled rules.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled rules to the result slice.
 func (s *SiteRules) GetEnabledRules() []Rule {
 	var enabledRules []Rule
 
@@ -85,6 +96,8 @@ func (s *SiteRules) GetEnabledRules() []Rule {
 	return enabledRules
 }
 
+// GetEnabledRulesByGroup returns a slice of Rule containing only the enabled rules for the specified group.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified group to the result slice.
 func (s *SiteRules) GetEnabledRulesByGroup(groupName string) []Rule {
 	var enabledRules []Rule
 
@@ -97,6 +110,8 @@ func (s *SiteRules) GetEnabledRulesByGroup(groupName string) []Rule {
 	return enabledRules
 }
 
+// GetEnabledRulesByPath returns a slice of Rule containing only the enabled rules for the specified path.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path to the result slice.
 func (s *SiteRules) GetEnabledRulesByPath(path string) []Rule {
 	var enabledRules []Rule
 
@@ -113,6 +128,8 @@ func (s *SiteRules) GetEnabledRulesByPath(path string) []Rule {
 	return enabledRules
 }
 
+// GetEnabledRulesByPathAndGroup returns a slice of Rule containing only the enabled rules for the specified path and group.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path and group to the result slice.
 func (s *SiteRules) GetEnabledRulesByPathAndGroup(path, groupName string) []Rule {
 	var enabledRules []Rule
 
@@ -129,6 +146,8 @@ func (s *SiteRules) GetEnabledRulesByPathAndGroup(path, groupName string) []Rule
 	return enabledRules
 }
 
+// ApplyRules applies the rules to the provided URL and HTML content.
+// It returns a map containing the extracted data or an error if any occurred during the extraction.
 func (re *RuleEngine) ApplyRules(url string, htmlContent string) (map[string]interface{}, error) {
 	siteRules, err := re.findRulesForSite(url)
 	if err != nil {
@@ -148,6 +167,8 @@ func (re *RuleEngine) ApplyRules(url string, htmlContent string) (map[string]int
 	return nil, fmt.Errorf("no valid rule groups found for URL: %s", url)
 }
 
+// isGroupValid checks if the provided RuleGroup is valid.
+// It checks if the group is enabled and if the valid_from and valid_to dates are valid.
 func (re *RuleEngine) isGroupValid(group RuleGroup) bool {
 	// Check if the group is enabled
 	if !group.IsEnabled {
@@ -205,6 +226,8 @@ func (re *RuleEngine) isGroupValid(group RuleGroup) bool {
 	return false
 }
 
+// findRulesForSite finds the rules for the provided URL.
+// It returns a pointer to the SiteRules for the provided URL or an error if no rules are found.
 func (re *RuleEngine) findRulesForSite(inputURL string) (*SiteRules, error) {
 	if inputURL == "" {
 		return nil, fmt.Errorf("empty URL provided")
@@ -227,6 +250,8 @@ func (re *RuleEngine) findRulesForSite(inputURL string) (*SiteRules, error) {
 	return nil, fmt.Errorf("no rules found for URL: %s", inputURL)
 }
 
+// extractJSFiles extracts the JavaScript files from the provided document.
+// It returns a slice of strings containing the JavaScript files.
 func (re *RuleEngine) extractJSFiles(doc *goquery.Document) []string {
 	var jsFiles []string
 	doc.Find("script[src]").Each(func(_ int, s *goquery.Selection) {
@@ -237,6 +262,8 @@ func (re *RuleEngine) extractJSFiles(doc *goquery.Document) []string {
 	return jsFiles
 }
 
+// extractData extracts the data from the provided HTML content using the provided RuleGroup.
+// It returns a map containing the extracted data or an error if any occurred during the extraction.
 func (re *RuleEngine) extractData(group RuleGroup, pageURL string, htmlContent string) (map[string]interface{}, error) {
 	// Parse the HTML content
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
