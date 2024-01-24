@@ -19,7 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
@@ -169,7 +168,6 @@ func main() {
 	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 
 	// Check if the URL is provided
