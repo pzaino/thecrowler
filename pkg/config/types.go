@@ -14,13 +14,17 @@
 
 package config
 
-import (
-	"fmt"
-	"os"
-	"runtime"
-
-	"gopkg.in/yaml.v2"
-)
+// Generic File Storage API configuration
+type FileStorageAPI struct {
+	Host    string `yaml:"host"`    // Hostname of the API server
+	Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images" or Bucket name)
+	Port    int    `yaml:"port"`    // Port number of the API server
+	Region  string `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+}
 
 // Config represents the structure of the configuration file
 type Config struct {
@@ -59,122 +63,8 @@ type Config struct {
 	} `yaml:"selenium"`
 
 	// Image storage API configuration (to store images on a separate server)
-	ImageStorageAPI struct {
-		Host    string `yaml:"host"`    // Hostname of the API server
-		Port    int    `yaml:"port"`    // Port number of the API server
-		Token   string `yaml:"token"`   // Token for API authentication
-		Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
-		Type    string `yaml:"type"`    // Type of storage (e.g., "http", "volume", "queue")
-		Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images")
-	} `yaml:"image_storage_api"`
+	ImageStorageAPI FileStorageAPI `yaml:"image_storage_api"`
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
-}
-
-// fileExists checks if a file exists at the given filename.
-// It returns true if the file exists and is not a directory, and false otherwise.
-func fileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
-}
-
-// getConfigFile reads and unmarshals a configuration file with the given name.
-// It checks if the file exists, reads its contents, and unmarshals it into a Config struct.
-// If the file does not exist or an error occurs during reading or unmarshaling, an error is returned.
-func getConfigFile(confName string) (Config, error) {
-
-	// Check if the configuration file exists
-	if !fileExists(confName) {
-		return Config{}, fmt.Errorf("file does not exist: %s", confName)
-	}
-
-	// Read the configuration file
-	data, err := os.ReadFile(confName)
-
-	// If the configuration file has been found and is not empty, unmarshal it
-	var config Config
-	if (data != nil) && (err == nil) {
-		err = yaml.Unmarshal(data, &config)
-	}
-	return config, err
-}
-
-// LoadConfig is responsible for loading the configuration file
-// and return the Config struct
-func LoadConfig(confName string) (Config, error) {
-
-	// Get the configuration file
-	config, err := getConfigFile(confName)
-
-	// Set the OS variable
-	config.OS = runtime.GOOS
-
-	// Set default values
-	if config.Database.Host == "" {
-		config.Database.Host = "localhost"
-	}
-
-	if config.Database.Port == 0 {
-		config.Database.Port = 5432
-	}
-
-	if config.Database.User == "" {
-		config.Database.User = "postgres"
-	}
-
-	if config.Database.Password == "" {
-		config.Database.Password = "postgres"
-	}
-
-	if config.Database.DBName == "" {
-		config.Database.DBName = "SitesIndex"
-	}
-
-	if config.Crawler.Workers == 0 {
-		config.Crawler.Workers = 1
-	}
-
-	if config.Crawler.Interval == 0 {
-		config.Crawler.Interval = 2
-	}
-
-	if config.Crawler.Timeout == 0 {
-		config.Crawler.Timeout = 10
-	}
-
-	if config.Crawler.Maintenance == 0 {
-		config.Crawler.Maintenance = 60
-	}
-
-	if config.API.Host == "" {
-		config.API.Host = "localhost"
-	}
-
-	if config.API.Port == 0 {
-		config.API.Port = 8080
-	}
-
-	if config.API.Timeout == 0 {
-		config.API.Timeout = 10
-	}
-
-	if config.Selenium.Port == 0 {
-		config.Selenium.Port = 4444
-	}
-
-	if config.Selenium.Host == "" {
-		config.Selenium.Host = "localhost"
-	}
-
-	return config, err
-}
-
-// IsEmpty checks if the given config is empty.
-// It returns true if the config is empty, false otherwise.
-func IsEmpty(config Config) bool {
-	return config == Config{}
 }
