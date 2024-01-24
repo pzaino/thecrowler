@@ -256,10 +256,9 @@ func performSearch(query string) (SearchResult, error) {
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		return SearchResult{}, err
-	} else {
-		log.Println("Successfully connected to the database!")
-		log.Println("Performing search for:", query)
 	}
+	log.Println("Successfully connected to the database!")
+	log.Println("Performing search for:", query)
 	defer db.Close()
 
 	// Parse the user input
