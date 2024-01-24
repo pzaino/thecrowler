@@ -14,11 +14,13 @@
 
 package scrapper
 
+// SiteRules represents the structure of the site_rules.yaml file
 type SiteRules struct {
 	Site       string      `yaml:"site"`
 	RuleGroups []RuleGroup `yaml:"rule_groups"`
 }
 
+// RuleGroup represents the structure of the rule_groups section in the site_rules.yaml file
 type RuleGroup struct {
 	GroupName string `yaml:"group_name"`
 	ValidFrom string `yaml:"valid_from"`
@@ -27,6 +29,7 @@ type RuleGroup struct {
 	Rules     []Rule `yaml:"rules"`
 }
 
+// Rule represents the structure of the rules section in the site_rules.yaml file
 type Rule struct {
 	Path               string    `yaml:"path"`
 	Elements           []Element `yaml:"elements"`
@@ -34,12 +37,14 @@ type Rule struct {
 	TechnologyPatterns []string  `yaml:"technology_patterns"` // If still needed
 }
 
+// Element represents the structure of the elements section in the site_rules.yaml file
 type Element struct {
 	Key          string `yaml:"key"`
 	SelectorType string `yaml:"selector_type"`
 	Selector     string `yaml:"selector"`
 }
 
+// RuleEngine represents the structure of the site_rules.yaml file
 type RuleEngine struct {
 	SiteRules []SiteRules
 }
