@@ -6,7 +6,7 @@ RUN chmod +x autobuild.sh
 RUN ./autobuild.sh
 
 # Run stage
-FROM alpine:latest
+FROM alpine:20231219
 WORKDIR /app
 COPY --from=builder ./bin/Thecrowler /app/
 COPY --from=builder ./config.yaml /app/
