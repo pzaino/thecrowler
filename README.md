@@ -144,7 +144,8 @@ selenium:
 ```
 
 Keep in mind that every section of the config.yaml file tells the CROWler how to
-configure a specific component (which is required to be installed in a container).
+configure a specific component (which is required to be installed in a container
+).
 
 The sections are:
 
@@ -155,19 +156,19 @@ The sections are:
 
 ## Production
 
-If you want to use the CROWler in production, you'll need to build the following
-targets:
+If you want to use the CROWler in production, you'll need to build the
+following targets:
 
 - The CROWler
 - The API
 - The addSite command
 - The removeSite command
 
-You'll also need to create a config.yaml file and configure it as described in the
-Configuration section.
+You'll also need to create a config.yaml file and configure it as described in
+the Configuration section.
 
-Finally, you'll need to create a Dockerfile to build a Docker image for the CROWler.
-The Dockerfile should look like this:
+Finally, you'll need to create a Dockerfile to build a Docker image for the
+CROWler. The Dockerfile should look like this:
 
 ```Dockerfile
 FROM alpine:latest
