@@ -33,6 +33,11 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
 	"github.com/tebeka/selenium/chrome"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 const (
@@ -565,10 +570,14 @@ func saveScreenshot(filename string, screenshot []byte) error {
 			return err
 		}
 
+		saveCfg := config.ImageStorageAPI
+
 		// Determine storage method and call appropriate function
 		switch config.ImageStorageAPI.Type {
 		case "http":
-			return saveScreenshotViaHTTP(filename, screenshot)
+			return writeDataViaHTTP(filename, screenshot, saveCfg)
+		case "s3":
+			return writeDataToToS3(filename, screenshot, saveCfg)
 		// Add cases for other types if needed, e.g., shared volume, message queue, etc.
 		default:
 			return errors.New("unsupported storage type")
@@ -589,18 +598,18 @@ func validateImageStorageAPIConfig(checkCfg cfg.Config) error {
 }
 
 // saveScreenshotViaHTTP sends the screenshot to a remote API
-func saveScreenshotViaHTTP(filename string, screenshot []byte) error {
+func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) error {
 	// Construct the API endpoint URL
-	apiURL := fmt.Sprintf("http://%s:%d/store_image", config.ImageStorageAPI.Host, config.ImageStorageAPI.Port)
+	apiURL := fmt.Sprintf("http://%s:%d/store_image", saveCfg.Host, saveCfg.Port)
 
 	// Prepare the request
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(screenshot))
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Filename", filename)
-	req.Header.Set("Authorization", "Bearer "+config.ImageStorageAPI.Token) // Assuming token-based auth
+	req.Header.Set("Authorization", "Bearer "+saveCfg.Token) // Assuming token-based auth
 
 	// Send the request
 	client := &http.Client{}
@@ -645,4 +654,34 @@ func writeDataToFile(filename string, data []byte) error {
 	}
 
 	return nil
+}
+
+// writeDataToToS3 is responsible for saving a screenshot to an S3 bucket
+func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) error {
+	// saveScreenshotToS3 uses:
+	// - config.ImageStorageAPI.Region as AWS region
+	// - config.ImageStorageAPI.Token as AWS access key ID
+	// - config.ImageStorageAPI.Secret as AWS secret access key
+	// - config.ImageStorageAPI.Path as S3 bucket name
+	// - filename as S3 object key
+
+	// Create an AWS session
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String(saveCfg.Region),
+		Credentials: credentials.NewStaticCredentials(saveCfg.Token, saveCfg.Secret, ""),
+	})
+	if err != nil {
+		return err
+	}
+
+	// Create an S3 service client
+	svc := s3.New(sess)
+
+	// Upload the screenshot to the S3 bucket
+	_, err = svc.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(saveCfg.Path),
+		Key:    aws.String(filename),
+		Body:   bytes.NewReader(data),
+	})
+	return err
 }

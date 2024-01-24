@@ -22,6 +22,18 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// Generic File Storage API configuration
+type FileStorageAPI struct {
+	Host    string `yaml:"host"`    // Hostname of the API server
+	Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images" or Bucket name)
+	Port    int    `yaml:"port"`    // Port number of the API server
+	Region  string `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+}
+
 // Config represents the structure of the configuration file
 type Config struct {
 	// Database configuration
@@ -59,14 +71,7 @@ type Config struct {
 	} `yaml:"selenium"`
 
 	// Image storage API configuration (to store images on a separate server)
-	ImageStorageAPI struct {
-		Host    string `yaml:"host"`    // Hostname of the API server
-		Port    int    `yaml:"port"`    // Port number of the API server
-		Token   string `yaml:"token"`   // Token for API authentication
-		Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
-		Type    string `yaml:"type"`    // Type of storage (e.g., "http", "volume", "queue")
-		Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images")
-	} `yaml:"image_storage_api"`
+	ImageStorageAPI FileStorageAPI `yaml:"image_storage_api"`
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
