@@ -148,7 +148,6 @@ func main() {
 	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
 		log.Fatal("Error loading configuration file:", err)
-		os.Exit(1)
 	}
 
 	// Database connection setup
