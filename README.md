@@ -1,6 +1,6 @@
 # The CROWler
 
-<img align="right" width="320" height="280" src="/images/TheCROWler_v1JPG.jpg">
+<img align="right" width="320" height="280" src="/images/TheCROWler_v1JPG.jpg" alt="TheCROWLer Logo">
 
 ![Go build: ](https://github.com/pzaino/TheCROWler/actions/workflows/go.yml/badge.svg)
 ![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
