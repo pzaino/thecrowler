@@ -90,9 +90,9 @@ can do this by running the following command:
 This will add the site to the Sources list and the crawler will start crawling
 it. The crawler will crawl the site to the specified depth and then stop.
 
-For the actual crawling to take place ensure you have the Selenium Chrome container
-running, the database container running and you have created a config.yaml configuration
-to allow The CROWler to access both.
+For the actual crawling to take place ensure you have the Selenium Chrome
+container running, the database container running and you have created a
+config.yaml configuration to allow The CROWler to access both.
 
 Finally, make sure that The CROWler is running.
 
@@ -104,8 +104,8 @@ To remove a site from the Sources list, run the following command:
 ./removeSite --url <url>
 ```
 
-Where URL is the URL of the site you want to remove and it's listed in the Sources
-list.
+Where URL is the URL of the site you want to remove and it's listed in the
+Sources list.
 
 #### API
 
