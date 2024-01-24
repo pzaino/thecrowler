@@ -173,6 +173,8 @@ func LoadConfig(confName string) (Config, error) {
 	return config, err
 }
 
+// IsEmpty checks if the given config is empty.
+// It returns true if the config is empty, false otherwise.
 func IsEmpty(config Config) bool {
 	return config == Config{}
 }
