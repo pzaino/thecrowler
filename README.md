@@ -80,15 +80,15 @@ Build them as you need them.
 
 #### Crawling
 
-To crawl a site, you'll need to add it to the Sources list in the database. You can do
-this by running the following command:
+To crawl a site, you'll need to add it to the Sources list in the database. You
+can do this by running the following command:
 
 ```bash
 ./addSite --url <url> --depth <depth>
 ```
 
-This will add the site to the Sources list and the crawler will start crawling it. The
-crawler will crawl the site to the specified depth and then stop.
+This will add the site to the Sources list and the crawler will start crawling
+it. The crawler will crawl the site to the specified depth and then stop.
 
 For the actual crawling to take place ensure you have the Selenium Chrome container
 running, the database container running and you have created a config.yaml configuration
@@ -121,8 +121,9 @@ To startup the API, run the following command:
 
 #### Configuration
 
-To configure both the API and the Crawler, you'll need to create a config.yaml file in
-the root directory of the repository. The config.yaml file should look like this:
+To configure both the API and the Crawler, you'll need to create a config.yaml
+file in the root directory of the repository. The config.yaml file should look
+like this:
 
 ```yaml
 database:
