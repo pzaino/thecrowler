@@ -42,3 +42,4 @@ jobs:
           api.github.com:443
           github-releases.githubusercontent.com:443
           goreportcard.com:443
+          proxy.golang.org:443
