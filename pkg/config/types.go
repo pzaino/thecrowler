@@ -14,7 +14,7 @@
 
 package config
 
-// Generic File Storage API configuration
+// FileStorageAPI is a generic File Storage API configuration
 type FileStorageAPI struct {
 	Host    string `yaml:"host"`    // Hostname of the API server
 	Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images" or Bucket name)

@@ -15,11 +15,16 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
 
 // Test LoadConfig
 func TestLoadConfig(t *testing.T) {
+	// Set the environment variables
+	os.Setenv("DB_USER", "testuser")
+	os.Setenv("DB_PASSWORD", "testpassword")
+
 	// Call the function
 	config, err := LoadConfig("./test_config.yml")
 
@@ -33,7 +38,17 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("No config was loaded")
 	}
 
-	// Additional checks can be added to validate the contents of 'config'
+	// Check if the database credentials are correct
+	// aka verify that the environment variables are read correctly
+	if config.Database.User != "testuser" {
+		t.Errorf("Expected testuser, got %v", config.Database.User)
+	}
+
+	// Check if the database credentials are correct
+	// aka verify that the environment variables are read correctly
+	if config.Database.Password != "testpassword" {
+		t.Errorf("Expected testpassword, got %v", config.Database.Password)
+	}
 }
 
 // Test LoadConfigInvalidFile
