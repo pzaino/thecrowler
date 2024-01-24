@@ -72,8 +72,6 @@ else
     exit $rval
 fi
 
-ls -al /app/bin
-
 exit $rval
 
 # Path: autobuild.sh
