@@ -1,0 +1,31 @@
+version: '3.8'
+services:
+  database:
+    image: postgres:latest
+    environment:
+      - POSTGRES_DB=SitesIndex
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=secret
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  searchapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.searchapi
+    ports:
+      - "8080:8080"
+    volumes:
+      - searchapi_data:/app/data
+
+  thecrowler:
+    build:
+      context: .
+      dockerfile: Dockerfile.thecrowler
+    ports:
+      - "8081:8081"
+    volumes:
+      - thecrowler_data:/app/data
+
+volumes:
+  thecrowler_data:

@@ -76,7 +76,7 @@ func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
 	var sourcesToCrawl []database.Source
 	for rows.Next() {
 		var src database.Source
-		if err := rows.Scan(&src.Id, &src.URL, &src.Restricted, &src.Flags); err != nil {
+		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags); err != nil {
 			log.Println("Error scanning rows:", err)
 			continue
 		}

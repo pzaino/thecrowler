@@ -1,0 +1,18 @@
+# Build stage
+FROM golang:1.21.5 AS builder
+WORKDIR /app
+COPY . .
+RUN chmod +x autobuild.sh
+RUN ./autobuild.sh
+
+# Run stage
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder ./bin/Thecrowler /app/
+COPY --from=builder ./config.yaml /app/
+
+# Expose port 8080 to the outside world
+EXPOSE 8081
+
+# Command to run the executable
+CMD ["./Thecrowler"]

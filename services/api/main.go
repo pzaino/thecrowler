@@ -20,10 +20,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"runtime"
 
-	"gopkg.in/yaml.v2"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 func main() {
@@ -32,15 +31,9 @@ func main() {
 	flag.Parse()
 
 	// Reading the configuration file
-	config = Config{}
-	data, err := os.ReadFile(*configFile)
+	config, err := cfg.LoadConfig(*configFile)
 	if err != nil {
 		log.Fatalf("Error reading config file: %v", err)
-	}
-
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		log.Fatalf("Error parsing config file: %v", err)
 	}
 
 	// Set the OS variable
