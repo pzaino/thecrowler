@@ -95,6 +95,17 @@ docker build -t <image name> .
 
 ### Installation
 
+The easiest way to install the CROWler is to use the docker compose file. To do so,
+follow these steps:
+
+Before you start, there are a bunch of ENV variables you can set to customize the
+CROWler deployment. These ENV vars allow you to set up your username and password
+for the database, the database name, the port the API will listen on, etc.
+
+To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
+
+Once you've set your ENV vars, follow these steps:
+
 1. Clone the repository
 2. Create your config.yaml file (see [here](doc/config_yaml.md) for more info)
 3. Run `./docker-build.sh` to build the with Docker compose and the right
