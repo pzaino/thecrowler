@@ -7,14 +7,6 @@ RUN ./autobuild.sh
 
 # Run stage
 FROM alpine:latest
-# Install glibc
-RUN apk --no-cache add ca-certificates wget && \
-    wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
-    wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.31-r0/glibc-2.31-r0.apk && \
-    mv /etc/nsswitch.conf /etc/nsswitch.conf.backup && \
-    apk --no-cache add glibc-2.31-r0.apk && \
-    mv /etc/nsswitch.conf.backup /etc/nsswitch.conf
-
 WORKDIR /app
 COPY --from=builder /app/bin/api /app/
 COPY --from=builder /app/bin/addSite /app/
