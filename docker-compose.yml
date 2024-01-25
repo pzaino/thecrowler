@@ -2,16 +2,17 @@ version: '3.8'
 services:
   database:
     image: postgres:latest
-    platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_DB=SitesIndex
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
+      - POSTGRES_USER=${DOCKER_POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${DOCKER_POSTGRES_PASSWORD:-changeme}
+      - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/init.sql
+      - ./pkg/database/postgresql-setup-v1.1.sh:/docker-entrypoint-initdb.d/init.sql
 
   searchapi:
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -34,7 +35,7 @@ services:
       - thecrowler_data:/app/data
 
   selenium:
-    image: selenium/standalone-chrome
+    image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome-debug:latest}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "4444:4444"

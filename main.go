@@ -12,6 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// This is the main package of the application.
+// It's responsible for starting the crawler and kickstart the configuration
+// reading and the database connection.
+// Actual crawling is performed by the pkg/crawler package.
+// The database connection is handled by the pkg/database package.
+// The configuration is handled by the pkg/config package.
+// Page info extraction is handled by the pkg/scrapper package.
 package main
 
 import (

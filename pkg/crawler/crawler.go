@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// crawler.go implements the crawling logic of the application.
+// It's responsible for crawling a website and extracting information from it.
 package crawler
 
 import (
@@ -292,22 +294,19 @@ func extractPageInfo(webPage selenium.WebDriver) PageInfo {
 		return PageInfo{} // Return an empty struct in case of an error
 	}
 
-	//title := doc.Find("title").Text()
 	title, _ := webPage.Title()
 	summary := doc.Find("meta[name=description]").AttrOr("content", "")
 	bodyText := doc.Find("body").Text()
-	//bodyText, _ := webPage.PageSource()
 
-	containsAppInfo := strings.Contains(bodyText, "app") || strings.Contains(bodyText, "mobile")
+	//containsAppInfo := strings.Contains(bodyText, "app") || strings.Contains(bodyText, "mobile")
 
 	metaTags := extractMetaTags(doc)
 
 	return PageInfo{
-		Title:           title,
-		Summary:         summary,
-		BodyText:        bodyText,
-		ContainsAppInfo: containsAppInfo,
-		MetaTags:        metaTags,
+		Title:    title,
+		Summary:  summary,
+		BodyText: bodyText,
+		MetaTags: metaTags,
 	}
 }
 

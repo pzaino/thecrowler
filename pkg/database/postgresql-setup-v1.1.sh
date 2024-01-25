@@ -1,3 +1,10 @@
+#!/bin/bash
+set -e
+
+# Perform all actions as $DOCKER_POSTGRES_USER
+export PGPASSWORD=$POSTGRES_PASSWORD
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+
 -- PostgreSQL setup script for the search engine database.
 -- Adjusted for better performance and best practices.
 
@@ -212,3 +219,15 @@ BEGIN
     END IF;
 END
 $$;
+
+-- Create a new user
+CREATE USER $CROWLER_DB_USER WITH ENCRYPTED PASSWORD '$CROWLER_DB_PASSWORD';
+
+-- Grant permissions to the user on the '$POSTGRES_DB' database
+GRANT CONNECT ON DATABASE "$POSTGRES_DB" TO $CROWLER_DB_USER;
+GRANT USAGE ON SCHEMA public TO $CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $CROWLER_DB_USER;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $CROWLER_DB_USER;
+ALTER ROLE $CROWLER_DB_USER SET search_path TO public;
+
+EOSQL
