@@ -23,6 +23,8 @@ services:
       - "8080:8080"
     volumes:
       - searchapi_data:/app/data
+    user: apiuser
+    read_only: true
 
   thecrowler:
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -33,6 +35,7 @@ services:
       - "8081:8081"
     volumes:
       - thecrowler_data:/app/data
+    user: crowler
 
   selenium:
     image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome-debug:latest}
