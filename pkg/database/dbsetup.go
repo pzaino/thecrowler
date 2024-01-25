@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The database package is responsible for handling the database
+// Package database is responsible for handling the database
 // setup and configuration.
 package database
 
