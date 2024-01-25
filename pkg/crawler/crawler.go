@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// crawler.go implements the crawling logic of the application.
+// The crawler package implements the crawling logic of the application.
 // It's responsible for crawling a website and extracting information from it.
 package crawler
 

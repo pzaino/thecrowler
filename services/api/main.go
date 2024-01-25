@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The api package implements the API server for the Crowler search engine.
 package main
 
 import (
