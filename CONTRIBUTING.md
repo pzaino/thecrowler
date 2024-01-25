@@ -29,7 +29,19 @@ On most OSes:
 pip install pre-commit
 ```
 
-On the Mac:
+On some Linux distributions (like for example OpenSUSE), you may need to
+install pre-commit using the following command:
+
+```bash
+sudo zypper install python311-pre-commit
+```
+
+To have pre-commit available system wide.
+
+**Please Note:** zypper is the package manager for OpenSUSE. You may need to
+use a different package manager depending on your Linux distribution.
+
+On the **Mac**, you can install pre-commit using Homebrew:
 
 ```bash
 brew install pre-commit
