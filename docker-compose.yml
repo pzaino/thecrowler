@@ -2,6 +2,7 @@ version: '3.8'
 services:
   database:
     image: postgres:latest
+    platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     environment:
       - POSTGRES_DB=SitesIndex
       - POSTGRES_USER=postgres
@@ -11,6 +12,7 @@ services:
       - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/init.sql
 
   searchapi:
+    platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -20,6 +22,7 @@ services:
       - searchapi_data:/app/data
 
   thecrowler:
+    platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -27,6 +30,12 @@ services:
       - "8081:8081"
     volumes:
       - thecrowler_data:/app/data
+
+  selenium:
+    image: selenium/standalone-chrome
+    platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ports:
+      - "4444:4444"
 
 volumes:
   db_data:
