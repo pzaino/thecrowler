@@ -8,9 +8,16 @@ RUN ./autobuild.sh
 # Run stage
 FROM alpine:latest
 WORKDIR /app
+
+# Create a non-root user and switch to it
+RUN adduser -D crowler
+USER crowler
+
 COPY --from=builder /app/bin/thecrowler /app/
 COPY --from=builder /app/config.yaml /app/
 RUN chmod +x thecrowler
+RUN mkdir /app/data
+RUN chmod 644 /app/data
 
 # Expose port 8080 to the outside world
 EXPOSE 8081
