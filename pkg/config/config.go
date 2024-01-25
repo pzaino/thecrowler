@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The config package contains the configuration file parsing logic.
+// Package config contains the configuration file parsing logic.
 package config
 
 import (

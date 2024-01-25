@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This is the main package of the application.
+// Package main (TheCROWler) is the application.
 // It's responsible for starting the crawler and kickstart the configuration
 // reading and the database connection.
 // Actual crawling is performed by the pkg/crawler package.
