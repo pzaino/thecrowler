@@ -32,7 +32,7 @@ checkError "Go is not installed!"
 rm -rf ./bin
 mkdir ./bin
 
-go build
+CGO_ENABLED=0 go build
 rval=$?
 if [ "${rval}" == "0" ]; then
     echo "TheCrowler built successfully!"
@@ -42,7 +42,7 @@ else
     exit $rval
 fi
 
-go build ./cmd/addSite
+CGO_ENABLED=0 go build ./cmd/addSite
 rval=$?
 if [ "${rval}" == "0" ]; then
     echo "addSite command line tool built successfully!"
@@ -52,7 +52,7 @@ else
     exit $rval
 fi
 
-go build ./cmd/removeSite
+CGO_ENABLED=0 go build ./cmd/removeSite
 rval=$?
 if [ "${rval}" == "0" ]; then
     echo "removeSite command line tool built successfully!"
@@ -62,7 +62,7 @@ else
     exit $rval
 fi
 
-go build ./services/api
+CGO_ENABLED=0 go build ./services/api
 rval=$?
 if [ "${rval}" == "0" ]; then
     echo "api command line tool built successfully!"
