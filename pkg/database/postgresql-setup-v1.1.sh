@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS KeywordIndex (
 );
 
 -- Create an index for the Sources url column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_url') THEN
@@ -59,10 +59,10 @@ BEGIN
         CREATE INDEX idx_sources_url ON Sources(url text_pattern_ops);
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the Sources status column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_status') THEN
@@ -70,10 +70,10 @@ BEGIN
         CREATE INDEX idx_sources_status ON Sources(status);
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the Sources source_id column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_source_id') THEN
@@ -81,10 +81,10 @@ BEGIN
         CREATE INDEX idx_sources_source_id ON Sources(source_id);
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the SearchIndex title column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_title') THEN
@@ -92,10 +92,10 @@ BEGIN
         CREATE INDEX idx_searchindex_title ON SearchIndex(title text_pattern_ops) WHERE title IS NOT NULL;
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the SearchIndex summary column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_summary') THEN
@@ -103,10 +103,10 @@ BEGIN
         CREATE INDEX idx_searchindex_summary ON SearchIndex(left(summary, 1000) text_pattern_ops) WHERE summary IS NOT NULL;
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the SearchIndex content column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_content') THEN
@@ -114,10 +114,10 @@ BEGIN
         CREATE INDEX idx_searchindex_content ON SearchIndex(left(content, 1000) text_pattern_ops) WHERE content IS NOT NULL;
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the SearchIndex snapshot_url column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_snapshot_url') THEN
@@ -125,10 +125,10 @@ BEGIN
         CREATE INDEX idx_searchindex_snapshot_url ON SearchIndex(snapshot_url) WHERE snapshot_url IS NOT NULL;
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the SearchIndex indexed_at column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_indexed_at') THEN
@@ -136,10 +136,10 @@ BEGIN
         CREATE INDEX idx_searchindex_indexed_at ON SearchIndex(indexed_at);
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the MetaTags index_id column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatags_index_id') THEN
@@ -147,10 +147,10 @@ BEGIN
         CREATE INDEX idx_metatags_index_id ON MetaTags(index_id);
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index for the MetaTags name column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatags_name') THEN
@@ -158,10 +158,10 @@ BEGIN
         CREATE INDEX idx_metatags_name ON MetaTags(name text_pattern_ops) WHERE name IS NOT NULL;
     END IF;
 END
-$$;
+\$$;
 
 -- KeywordIndex foreign keys are already indexed due to the REFERENCES constraint
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywordindex_occurrences') THEN
@@ -169,10 +169,10 @@ BEGIN
         CREATE INDEX idx_keywordindex_occurrences ON KeywordIndex(occurrences);
     END IF;
 END
-$$;
+\$$;
 
 -- Add a tsvector column for full-text search
-DO $$
+DO \$$
 BEGIN
     -- Check and add the content_fts column if it does not exist
     IF NOT EXISTS (
@@ -187,10 +187,10 @@ BEGIN
         ALTER TABLE SearchIndex ADD COLUMN content_fts tsvector;
     END IF;
 END
-$$;
+\$$;
 
 -- Create an index on the tsvector column
-DO $$
+DO \$$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_content_fts') THEN
@@ -198,18 +198,18 @@ BEGIN
         CREATE INDEX idx_searchindex_content_fts ON SearchIndex USING gin(content_fts);
     END IF;
 END
-$$;
+\$$;
 
 -- Create a function to update the tsvector column
-CREATE OR REPLACE FUNCTION searchindex_content_trigger() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION searchindex_content_trigger() RETURNS trigger AS \$$
 BEGIN
   NEW.content_fts := to_tsvector('english', coalesce(NEW.content, ''));
   RETURN NEW;
 END
-$$ LANGUAGE plpgsql;
+\$$ LANGUAGE plpgsql;
 
 -- Create a trigger to update the tsvector column
-DO $$
+DO \$$
 BEGIN
     -- Check if the trigger already exists
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_searchindex_content') THEN
@@ -218,7 +218,7 @@ BEGIN
         ON SearchIndex FOR EACH ROW EXECUTE FUNCTION searchindex_content_trigger();
     END IF;
 END
-$$;
+\$$;
 
 -- Create a new user
 CREATE USER $CROWLER_DB_USER WITH ENCRYPTED PASSWORD '$CROWLER_DB_PASSWORD';
