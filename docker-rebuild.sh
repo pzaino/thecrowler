@@ -7,4 +7,4 @@ docker-compose down -v
 docker image prune -a -f
 
 # Rebuild and start containers
-docker-compose up --build
+./docker-build.sh
