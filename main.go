@@ -98,7 +98,7 @@ func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
 // and kickstart the crawling process for each of them
 func checkSources(db *sql.DB, wd selenium.WebDriver) {
 	if config.DebugLevel > 0 {
-		fmt.Println("Checking sources...")
+		log.Println("Checking sources...")
 	}
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	for {
@@ -113,7 +113,7 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
 			if config.DebugLevel > 0 {
-				fmt.Println("No sources to crawl, sleeping...")
+				log.Println("No sources to crawl, sleeping...")
 			}
 			// Perform database maintenance if it's time
 			if time.Now().After(maintenanceTime) {
@@ -157,12 +157,33 @@ func main() {
 		log.Fatal("Error loading configuration file:", err)
 	}
 
+	// Define wd and db before we set up the termination signals listener
+	var wd selenium.WebDriver
+	var db *sql.DB
+
+	// Setting up a channel to listen for termination signals
+	log.Println("Setting up termination signals listener...")
+	signals := make(chan os.Signal, 1)
+	// Catch SIGINT (Ctrl+C) and SIGTERM signals
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	// Use a select statement to block until a signal is received
+	go func() {
+		sig := <-signals
+		fmt.Printf("Received %v signal, shutting down...\n", sig)
+
+		// Close resources
+		closeResources(db, wd) // Assuming db is your DB connection and wd is the WebDriver
+
+		os.Exit(0)
+	}()
+
 	// Database connection setup
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		config.Database.Host, config.Database.Port,
 		config.Database.User, config.Database.Password, config.Database.DBName)
 
-	var db *sql.DB
+	// Connect to the database
 	for {
 		db, err = sql.Open("postgres", psqlInfo)
 		if err != nil {
@@ -193,29 +214,20 @@ func main() {
 	}
 	defer crowler.StopSelenium(sel)
 
-	wd, err := crowler.ConnectSelenium(sel, config)
-	if err != nil {
-		log.Fatal("Error connecting to Selenium:", err)
+	// Connect to Selenium
+	for {
+		wd, err = crowler.ConnectSelenium(sel, config)
+		if err != nil {
+			log.Println("Error connecting to Selenium:", err)
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
 	}
 	defer crowler.QuitSelenium(wd)
 
-	// Setting up a channel to listen for termination signals
-	signals := make(chan os.Signal, 1)
-	// Catch SIGINT (Ctrl+C) and SIGTERM signals
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
-	// Use a select statement to block until a signal is received
-	go func() {
-		sig := <-signals
-		fmt.Printf("Received %v signal, shutting down...\n", sig)
-
-		// Close resources
-		closeResources(db, wd) // Assuming db is your DB connection and wd is the WebDriver
-
-		os.Exit(0)
-	}()
-
 	// Start the checkSources function in a goroutine
+	log.Println("Starting processing data (if any)...")
 	go checkSources(db, wd)
 
 	// Keep the main function alive
