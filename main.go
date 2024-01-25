@@ -161,9 +161,16 @@ func main() {
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		config.Database.Host, config.Database.Port,
 		config.Database.User, config.Database.Password, config.Database.DBName)
-	db, err := sql.Open("postgres", psqlInfo)
-	if err != nil {
-		log.Fatal(err)
+
+	var db *sql.DB
+	for {
+		db, err = sql.Open("postgres", psqlInfo)
+		if err != nil {
+			log.Fatal(err)
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
 	}
 	defer db.Close()
 
