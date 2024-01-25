@@ -166,20 +166,24 @@ func main() {
 	for {
 		db, err = sql.Open("postgres", psqlInfo)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 			time.Sleep(5 * time.Second)
 		} else {
+			for {
+				// Check database connection
+				err = db.Ping()
+				if err != nil {
+					log.Println(err)
+					time.Sleep(5 * time.Second)
+				} else {
+					log.Println("Successfully connected to the database!")
+					break
+				}
+			}
 			break
 		}
 	}
 	defer db.Close()
-
-	// Check database connection
-	err = db.Ping()
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Successfully connected to the database!")
 
 	crowler.StartCrawler(config)
 
