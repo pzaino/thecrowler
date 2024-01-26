@@ -21,10 +21,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +67,33 @@ func CrawlWebsite(db cdb.DatabaseHandler, source cdb.Source, wd selenium.WebDriv
 		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
+	}
+
+	// Extract necessary information from the content
+	pageInfo := extractPageInfo(pageSource)
+
+	// Index the page content in the database
+	pageInfo.sourceID = source.ID
+	indexPage(db, source.URL, pageInfo)
+
+	// Get screenshot of the page
+	if config.Crawler.SourceScreenshot {
+		log.Printf("Taking screenshot of %s...\n", source.URL)
+		// Get the current date and time
+		currentTime := time.Now()
+		// For example, using the format yyyyMMddHHmmss
+		timeStr := currentTime.Format("20060102150405")
+		// Create imageName
+		imageName := fmt.Sprintf("%d_%s.png", source.ID, timeStr)
+		err = TakeScreenshot(wd, imageName)
+		if err != nil {
+			log.Println("Error taking screenshot:", err)
+		}
+		// Update DB SearchIndex Table with the screenshot filename
+		_, err = db.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, source.URL)
+		if err != nil {
+			log.Printf("Error updating database with screenshot URL: %v\n", err)
+		}
 	}
 
 	// Parse the HTML and extract links
@@ -592,11 +622,104 @@ func QuitSelenium(wd selenium.WebDriver) {
 
 // TakeScreenshot is responsible for taking a screenshot of the current page
 func TakeScreenshot(wd selenium.WebDriver, filename string) error {
-	// Take a screenshot of the current page
-	screenshot, err := wd.Screenshot()
+	// Execute JavaScript to get the viewport height and width
+	var windowHeight, windowWidth int
+	viewportSizeScript := "return [window.innerHeight, window.innerWidth]"
+	viewportSizeRes, err := wd.ExecuteScript(viewportSizeScript, nil)
 	if err != nil {
 		return err
 	}
+	viewportSize, ok := viewportSizeRes.([]interface{})
+	if !ok || len(viewportSize) != 2 {
+		return fmt.Errorf("unexpected result format for viewport size: %+v", viewportSizeRes)
+	}
+	windowHeight, err = strconv.Atoi(fmt.Sprint(viewportSize[0]))
+	if err != nil {
+		return err
+	}
+	windowWidth, err = strconv.Atoi(fmt.Sprint(viewportSize[1]))
+	if err != nil {
+		return err
+	}
+
+	// Execute JavaScript to get the total height of the page
+	var totalHeight int
+	totalHeightScript := "return document.body.parentNode.scrollHeight"
+	totalHeightRes, err := wd.ExecuteScript(totalHeightScript, nil)
+	if err != nil {
+		return err
+	}
+	totalHeight, err = strconv.Atoi(fmt.Sprint(totalHeightRes))
+	if err != nil {
+		return err
+	}
+
+	// Scroll and capture the screenshot
+	var screenshots [][]byte
+	for y := 0; y < totalHeight; y += windowHeight {
+		// Scroll to the next part of the page
+		scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
+		_, err = wd.ExecuteScript(scrollScript, nil)
+		if err != nil {
+			return err
+		}
+
+		// Take screenshot of the current view
+		screenshot, err := wd.Screenshot()
+		if err != nil {
+			return err
+		}
+
+		screenshots = append(screenshots, screenshot)
+	}
+
+	// Stitch these screenshots together
+	finalImg := image.NewRGBA(image.Rect(0, 0, windowWidth, totalHeight))
+	currentY := 0
+	for i, screenshot := range screenshots {
+		img, _, err := image.Decode(bytes.NewReader(screenshot))
+		if err != nil {
+			return err
+		}
+
+		// If this is the last screenshot, we may need to adjust the y offset to avoid duplication
+		if i == len(screenshots)-1 {
+			// Calculate the remaining height to capture
+			remainingHeight := totalHeight - currentY
+			bounds := img.Bounds()
+			imgHeight := bounds.Dy()
+
+			// If the remaining height is less than the image height, adjust the bounds
+			if remainingHeight < imgHeight {
+				bounds = image.Rect(bounds.Min.X, bounds.Max.Y-remainingHeight, bounds.Max.X, bounds.Max.Y)
+			}
+
+			// Draw the remaining part of the image onto the final image
+			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					finalImg.Set(x, currentY, img.At(x, y))
+				}
+				currentY++
+			}
+		} else {
+			bounds := img.Bounds()
+			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					finalImg.Set(x, currentY, img.At(x, y))
+				}
+				currentY++
+			}
+		}
+	}
+
+	// Encode the image to PNG
+	var screenshot []byte
+	buffer := new(bytes.Buffer)
+	err = png.Encode(buffer, finalImg)
+	if err != nil {
+		return err
+	}
+	screenshot = buffer.Bytes()
 
 	// Save the screenshot to a file
 	err = saveScreenshot(filename, screenshot)
@@ -629,7 +752,7 @@ func saveScreenshot(filename string, screenshot []byte) error {
 		}
 	} else {
 		// Fallback to local file saving
-		return writeToFile(config.ImageStorageAPI.Path+filename, screenshot)
+		return writeToFile(config.ImageStorageAPI.Path+"/"+filename, screenshot)
 	}
 }
 

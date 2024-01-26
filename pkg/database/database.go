@@ -35,8 +35,8 @@ import (
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	// Construct the connection string from the Config struct
-	connectionString := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		c.Database.Host, c.Database.Port, c.Database.User, c.Database.Password, c.Database.DBName)
+	connectionString := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.Database.Host, c.Database.Port, c.Database.User, c.Database.Password, c.Database.DBName, c.Database.SSLMode)
 
 	var err error
 	//handler.db, err = sql.Open("postgres", connectionString)

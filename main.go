@@ -233,11 +233,19 @@ func closeResources(db cdb.DatabaseHandler, wd selenium.WebDriver) {
 
 	// Close the WebDriver
 	if wd != nil {
-		err := wd.Quit()
+		// Attempt a simple operation to check if the session is still valid
+		_, err := wd.CurrentURL()
 		if err != nil {
-			log.Printf("Error closing WebDriver: %v", err)
+			log.Printf("WebDriver session may have already ended: %v", err)
 			return
 		}
-		log.Println("WebDriver closed.")
+
+		// Close the WebDriver if the session is still active
+		err = wd.Quit()
+		if err != nil {
+			log.Printf("Error closing WebDriver: %v", err)
+		} else {
+			log.Println("WebDriver closed successfully.")
+		}
 	}
 }
