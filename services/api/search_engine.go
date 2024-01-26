@@ -252,7 +252,7 @@ func isLogicalOperator(op string) bool {
 
 func performSearch(query string) (SearchResult, error) {
 	// Initialize the database handler
-	db, err := cdb.NewDatabaseHandler(config)
+	db, err := cdb.NewHandler(config)
 	if err != nil {
 		return SearchResult{}, err
 	}

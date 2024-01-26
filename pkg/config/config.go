@@ -116,6 +116,7 @@ func getConfigFile(confName string) (Config, error) {
 	return config, err
 }
 
+// NewConfig returns a new Config struct with default values.
 func NewConfig() Config {
 	return Config{
 		Database: struct {

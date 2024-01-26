@@ -22,7 +22,7 @@ import (
 
 // DatabaseHandler is the interface that wraps the basic methods
 // to interact with the database.
-type DatabaseHandler interface {
+type Handler interface {
 	Connect(c cfg.Config) error
 	Close() error
 	Ping() error

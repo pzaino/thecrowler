@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package database is responsible for handling the database
-// setup and configuration.
+// setup, configuration and abstraction.
 package database
 
 import (
@@ -196,9 +196,9 @@ func (handler *SQLiteHandler) CheckConnection(c cfg.Config) error {
 // Database abstraction layer
 // ---------------------------------------------------------------
 
-// NewDatabaseHandler returns a new DatabaseHandler based on the
+// NewHandler returns a new Handler based on the
 // database type specified in the Config struct.
-func NewDatabaseHandler(c cfg.Config) (DatabaseHandler, error) {
+func NewHandler(c cfg.Config) (Handler, error) {
 	dbms := strings.ToLower(strings.TrimSpace(c.Database.Type))
 	switch dbms {
 	case "postgres":

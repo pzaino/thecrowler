@@ -48,7 +48,7 @@ var (
 
 // This function is responsible for performing database maintenance
 // to keep it lean and fast. Note: it's specific for PostgreSQL.
-func performDBMaintenance(db cdb.DatabaseHandler) error {
+func performDBMaintenance(db cdb.Handler) error {
 	if db.DBMS() == "sqlite" {
 		return nil
 	}
@@ -77,7 +77,7 @@ func performDBMaintenance(db cdb.DatabaseHandler) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db cdb.DatabaseHandler) ([]cdb.Source, error) {
+func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	// Update the SQL query to fetch all necessary fields
 	query := `SELECT source_id, url, restricted, 0 AS flags FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
 
@@ -104,7 +104,7 @@ func retrieveAvailableSources(db cdb.DatabaseHandler) ([]cdb.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db cdb.DatabaseHandler, wd selenium.WebDriver) {
+func checkSources(db cdb.Handler, wd selenium.WebDriver) {
 	if config.DebugLevel > 0 {
 		log.Println("Checking sources...")
 	}
@@ -137,7 +137,7 @@ func checkSources(db cdb.DatabaseHandler, wd selenium.WebDriver) {
 	}
 }
 
-func performDatabaseMaintenance(db cdb.DatabaseHandler) {
+func performDatabaseMaintenance(db cdb.Handler) {
 	log.Printf("Performing database maintenance...")
 	if err := performDBMaintenance(db); err != nil {
 		log.Printf("Error performing database maintenance: %v", err)
@@ -146,7 +146,7 @@ func performDatabaseMaintenance(db cdb.DatabaseHandler) {
 	}
 }
 
-func crawlSources(db cdb.DatabaseHandler, wd selenium.WebDriver, sources []cdb.Source) {
+func crawlSources(db cdb.Handler, wd selenium.WebDriver, sources []cdb.Source) {
 	for _, source := range sources {
 		log.Println("Crawling URL:", source.URL)
 		crowler.CrawlWebsite(db, source, wd)
@@ -167,7 +167,7 @@ func main() {
 
 	// Define wd and db before we set
 	var wd selenium.WebDriver
-	db, err := cdb.NewDatabaseHandler(config)
+	db, err := cdb.NewHandler(config)
 	if err != nil {
 		log.Fatal("Error creating database handler:", err)
 	}
@@ -224,7 +224,7 @@ func main() {
 	select {} // Infinite empty select block to keep the main goroutine running
 }
 
-func closeResources(db cdb.DatabaseHandler, wd selenium.WebDriver) {
+func closeResources(db cdb.Handler, wd selenium.WebDriver) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
