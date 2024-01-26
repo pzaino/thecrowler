@@ -395,7 +395,7 @@ func isExternalLink(sourceURL, linkURL string) bool {
 
 // worker is the worker function that is responsible for crawling a page
 func worker(db *sql.DB, wd selenium.WebDriver,
-	id int, jobs <-chan string, wg *sync.WaitGroup, source *db.Source) {
+	id int, jobs chan string, wg *sync.WaitGroup, source *db.Source) {
 	defer wg.Done()
 	for url := range jobs {
 		if source.Restricted {
@@ -433,6 +433,14 @@ func worker(db *sql.DB, wd selenium.WebDriver,
 		// Index the page content in the database
 		pageCache.sourceID = source.ID
 		indexPage(db, url, pageCache)
+
+		// Extract links from the page
+		links := extractLinks(pageCache.BodyText)
+
+		// Enqueue jobs (links)
+		for _, link := range links {
+			jobs <- link
+		}
 
 		log.Printf("Worker %d: finished job %s\n", id, url)
 	}
