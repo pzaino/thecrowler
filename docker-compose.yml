@@ -15,6 +15,13 @@ services:
       - ./pkg/database/postgresql-setup-v1.1.sh:/docker-entrypoint-initdb.d/init.sh
 
   searchapi:
+    environment:
+      - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
+      - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
+      - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
+      - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
@@ -27,6 +34,13 @@ services:
     read_only: true
 
   thecrowler:
+    environment:
+      - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
+      - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
+      - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
+      - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
