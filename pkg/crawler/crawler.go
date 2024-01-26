@@ -30,7 +30,7 @@ import (
 	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	db "github.com/pzaino/thecrowler/pkg/database"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
@@ -54,7 +54,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
+func CrawlWebsite(db cdb.DatabaseHandler, source cdb.Source, wd selenium.WebDriver) {
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
 	pageSource, err := getHTMLContent(source.URL, wd)
@@ -102,7 +102,7 @@ func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
 
 // updateSourceState is responsible for updating the state of a Source in
 // the database after crawling it (it does consider errors too)
-func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
+func updateSourceState(db cdb.DatabaseHandler, sourceURL string, crawlError error) {
 	var err error
 
 	if crawlError != nil {
@@ -128,7 +128,7 @@ func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
 // this function (and so treat it as a critical section) should be enough for now.
 // Another thought is, the mutex also helps slow down the crawling process, which
 // is a good thing. You don't want to overwhelm the Source site with requests.
-func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
+func indexPage(db cdb.DatabaseHandler, url string, pageInfo PageInfo) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
@@ -208,7 +208,7 @@ func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
 // The `indexID` parameter represents the ID of the index associated with the keywords.
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
-func insertKeywords(tx *sql.Tx, db *sql.DB, indexID int, pageInfo PageInfo) error {
+func insertKeywords(tx *sql.Tx, db cdb.DatabaseHandler, indexID int, pageInfo PageInfo) error {
 	for _, keyword := range extractKeywords(pageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
@@ -249,7 +249,7 @@ func commitTransaction(tx *sql.Tx) error {
 // because indexPage uses a mutex to ensure that only one goroutine is indexing a page
 // at a time. However, when implementing multiple transactions in indexPage, this function
 // will be way more useful than it is now.
-func insertKeywordWithRetries(db *sql.DB, keyword string) (int, error) {
+func insertKeywordWithRetries(db cdb.DatabaseHandler, keyword string) (int, error) {
 	const maxRetries = 3
 	var keywordID int
 	for i := 0; i < maxRetries; i++ {
@@ -325,6 +325,18 @@ func extractMetaTags(doc *goquery.Document) map[string]string {
 	return metaTags
 }
 
+// IsValidURL checks if the string is a valid URL.
+func IsValidURL(u string) bool {
+	// Prepend a scheme if it's missing
+	if !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+
+	// Parse the URL and check for errors
+	_, err := url.ParseRequestURI(u)
+	return err == nil
+}
+
 // extractLinks extracts all the links from the given HTML content.
 // It uses the goquery library to parse the HTML and find all the <a> tags.
 // Each link is then added to a slice and returned.
@@ -338,7 +350,10 @@ func extractLinks(htmlContent string) []string {
 	doc.Find("a").Each(func(index int, item *goquery.Selection) {
 		linkTag := item
 		link, _ := linkTag.Attr("href")
-		links = append(links, link)
+		link = strings.TrimSpace(link)
+		if link != "" && IsValidURL(link) {
+			links = append(links, link)
+		}
 	})
 	return links
 }
@@ -394,8 +409,8 @@ func isExternalLink(sourceURL, linkURL string) bool {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(db *sql.DB, wd selenium.WebDriver,
-	id int, jobs chan string, wg *sync.WaitGroup, source *db.Source) {
+func worker(db cdb.DatabaseHandler, wd selenium.WebDriver,
+	id int, jobs chan string, wg *sync.WaitGroup, source *cdb.Source) {
 	defer wg.Done()
 	for url := range jobs {
 		if source.Restricted {

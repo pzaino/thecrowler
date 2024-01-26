@@ -15,13 +15,14 @@
 package main
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"regexp"
 	"strings"
 	"unicode"
+
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	_ "github.com/lib/pq"
 )
@@ -250,16 +251,21 @@ func isLogicalOperator(op string) bool {
 }
 
 func performSearch(query string) (SearchResult, error) {
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		config.Database.Host, config.Database.Port,
-		config.Database.User, config.Database.Password, config.Database.DBName)
-	db, err := sql.Open("postgres", psqlInfo)
+	// Initialize the database handler
+	db, err := cdb.NewDatabaseHandler(config)
 	if err != nil {
 		return SearchResult{}, err
 	}
-	log.Println("Successfully connected to the database!")
-	log.Println("Performing search for:", query)
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		log.Println(err)
+		return SearchResult{}, err
+	}
 	defer db.Close()
+
+	log.Println("Performing search for:", query)
 
 	// Parse the user input
 	sqlQuery, sqlParams, err := parseAdvancedQuery(query)
@@ -273,7 +279,7 @@ func performSearch(query string) (SearchResult, error) {
 	}
 
 	// Execute the query
-	rows, err := db.Query(sqlQuery, sqlParams...)
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return SearchResult{}, err
 	}

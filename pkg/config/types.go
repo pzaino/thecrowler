@@ -30,11 +30,14 @@ type FileStorageAPI struct {
 type Config struct {
 	// Database configuration
 	Database struct {
-		Host     string `yaml:"host"`     // Hostname of the database server
-		Port     int    `yaml:"port"`     // Port number of the database server
-		User     string `yaml:"user"`     // Username for database authentication
-		Password string `yaml:"password"` // Password for database authentication
-		DBName   string `yaml:"dbname"`   // Name of the database
+		Type      string `yaml:"type"`       // Type of database (e.g., "postgres", "mysql", "sqlite")
+		Host      string `yaml:"host"`       // Hostname of the database server
+		Port      int    `yaml:"port"`       // Port number of the database server
+		User      string `yaml:"user"`       // Username for database authentication
+		Password  string `yaml:"password"`   // Password for database authentication
+		DBName    string `yaml:"dbname"`     // Name of the database
+		RetryTime int    `yaml:"retry_time"` // Time to wait before retrying to connect to the database (in seconds)
+		PingTime  int    `yaml:"ping_time"`  // Time to wait before retrying to ping the database (in seconds)
 	} `yaml:"database"`
 
 	// Crawler configuration

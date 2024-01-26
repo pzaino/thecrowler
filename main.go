@@ -22,7 +22,6 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -33,7 +32,7 @@ import (
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
-	database "github.com/pzaino/thecrowler/pkg/database"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	_ "github.com/lib/pq"
 	"github.com/tebeka/selenium"
@@ -49,13 +48,22 @@ var (
 
 // This function is responsible for performing database maintenance
 // to keep it lean and fast. Note: it's specific for PostgreSQL.
-func performDBMaintenance(db *sql.DB) error {
-	maintenanceCommands := []string{
-		"VACUUM searchindex",
-		"VACUUM keywords",
-		"VACUUM keywordindex",
-		"REINDEX TABLE searchindex",
-		"REINDEX TABLE keywordindex",
+func performDBMaintenance(db cdb.DatabaseHandler) error {
+	if db.DBMS() == "sqlite" {
+		return nil
+	}
+
+	// Define the maintenance commands
+	var maintenanceCommands []string
+
+	if db.DBMS() == "postgres" {
+		maintenanceCommands = []string{
+			"VACUUM searchindex",
+			"VACUUM keywords",
+			"VACUUM keywordindex",
+			"REINDEX TABLE searchindex",
+			"REINDEX TABLE keywordindex",
+		}
 	}
 
 	for _, cmd := range maintenanceCommands {
@@ -69,20 +77,20 @@ func performDBMaintenance(db *sql.DB) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
+func retrieveAvailableSources(db cdb.DatabaseHandler) ([]cdb.Source, error) {
 	// Update the SQL query to fetch all necessary fields
 	query := `SELECT source_id, url, restricted, 0 AS flags FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
 
 	// Execute the query
-	rows, err := db.Query(query)
+	rows, err := db.ExecuteQuery(query)
 	if err != nil {
 		return nil, err
 	}
 
 	// Iterate over the results and store them in a slice
-	var sourcesToCrawl []database.Source
+	var sourcesToCrawl []cdb.Source
 	for rows.Next() {
-		var src database.Source
+		var src cdb.Source
 		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags); err != nil {
 			log.Println("Error scanning rows:", err)
 			continue
@@ -96,7 +104,7 @@ func retrieveAvailableSources(db *sql.DB) ([]database.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db *sql.DB, wd selenium.WebDriver) {
+func checkSources(db cdb.DatabaseHandler, wd selenium.WebDriver) {
 	if config.DebugLevel > 0 {
 		log.Println("Checking sources...")
 	}
@@ -129,7 +137,7 @@ func checkSources(db *sql.DB, wd selenium.WebDriver) {
 	}
 }
 
-func performDatabaseMaintenance(db *sql.DB) {
+func performDatabaseMaintenance(db cdb.DatabaseHandler) {
 	log.Printf("Performing database maintenance...")
 	if err := performDBMaintenance(db); err != nil {
 		log.Printf("Error performing database maintenance: %v", err)
@@ -138,7 +146,7 @@ func performDatabaseMaintenance(db *sql.DB) {
 	}
 }
 
-func crawlSources(db *sql.DB, wd selenium.WebDriver, sources []database.Source) {
+func crawlSources(db cdb.DatabaseHandler, wd selenium.WebDriver, sources []cdb.Source) {
 	for _, source := range sources {
 		log.Println("Crawling URL:", source.URL)
 		crowler.CrawlWebsite(db, source, wd)
@@ -157,9 +165,12 @@ func main() {
 		log.Fatal("Error loading configuration file:", err)
 	}
 
-	// Define wd and db before we set up the termination signals listener
+	// Define wd and db before we set
 	var wd selenium.WebDriver
-	var db *sql.DB
+	db, err := cdb.NewDatabaseHandler(config)
+	if err != nil {
+		log.Fatal("Error creating database handler:", err)
+	}
 
 	// Setting up a channel to listen for termination signals
 	log.Println("Setting up termination signals listener...")
@@ -178,31 +189,10 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// Database connection setup
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		config.Database.Host, config.Database.Port,
-		config.Database.User, config.Database.Password, config.Database.DBName)
-
 	// Connect to the database
-	for {
-		db, err = sql.Open("postgres", psqlInfo)
-		if err != nil {
-			log.Println(err)
-			time.Sleep(5 * time.Second)
-		} else {
-			for {
-				// Check database connection
-				err = db.Ping()
-				if err != nil {
-					log.Println(err)
-					time.Sleep(5 * time.Second)
-				} else {
-					log.Println("Successfully connected to the database!")
-					break
-				}
-			}
-			break
-		}
+	err = db.Connect(config)
+	if err != nil {
+		log.Fatal(err)
 	}
 	defer db.Close()
 
@@ -234,7 +224,7 @@ func main() {
 	select {} // Infinite empty select block to keep the main goroutine running
 }
 
-func closeResources(db *sql.DB, wd selenium.WebDriver) {
+func closeResources(db cdb.DatabaseHandler, wd selenium.WebDriver) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
