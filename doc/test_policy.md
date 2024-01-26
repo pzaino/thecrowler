@@ -15,9 +15,12 @@ of the application.
 
 - Unit Testing: To test individual components in isolation.
 - Integration Testing: To ensure modules work together as expected.
-- Functional Testing: To verify the software performs its intended functions.
-- Regression Testing: To confirm that a recent program change has not adversely affected existing features.
-- Browser Compatibility Testing: Using Selenium WebDriver to ensure compatibility across different web browsers.
+- Functional Testing: To verify the software performs its intended
+ functions.
+- Regression Testing: To confirm that a recent program change has not
+ adversely affected existing features.
+- Browser Compatibility Testing: Using Selenium WebDriver to ensure
+ compatibility across different web browsers.
 
 ## Test Coverage
 
@@ -48,9 +51,10 @@ Track bugs and fixes in a dedicated system (e.g., GitHub Issues).
 
 ## Responsibility
 
-All contributors are responsible for writing and maintaining tests for their code.
-Project maintainers will oversee adherence to this policy.
+All contributors are responsible for writing and maintaining tests for their
+code. Project maintainers will oversee adherence to this policy.
 
 ## Policy Review
 
-This policy will be reviewed and updated regularly to adapt to project needs and technological advancements.
+This policy will be reviewed and updated regularly to adapt to project needs
+ and technological advancements.
