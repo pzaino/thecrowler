@@ -156,13 +156,15 @@ func NewConfig() Config {
 			FullSiteScreenshot: false,
 		},
 		API: struct {
-			Host    string `yaml:"host"`
-			Port    int    `yaml:"port"`
-			Timeout int    `yaml:"timeout"`
+			Host          string `yaml:"host"`
+			Port          int    `yaml:"port"`
+			Timeout       int    `yaml:"timeout"`
+			ContentSearch bool   `yaml:"content_search"`
 		}{
-			Host:    "localhost",
-			Port:    8080,
-			Timeout: 10,
+			Host:          "localhost",
+			Port:          8080,
+			Timeout:       10,
+			ContentSearch: false,
 		},
 		Selenium: struct {
 			Path       string `yaml:"path"`

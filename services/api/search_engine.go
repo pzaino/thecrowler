@@ -127,15 +127,24 @@ func isQuotedString(input string) bool {
 }
 
 func parseAdvancedQuery(input string) (string, []interface{}, error) {
-	defaultFields := []string{"title", "summary", "content"}
+
+	// Define default fields
+	var defaultFields []string
+	if config.API.ContentSearch {
+		defaultFields = []string{"title", "summary", "content"}
+	} else {
+		defaultFields = []string{"title", "summary"}
+	}
+
+	// Tokenize the input string
 	tokens := tokenize(input)
 
+	// Parse the tokens
 	var queryParts [][]string
 	var queryParams []interface{}
 	paramCounter := 1
 	var currentField string
 	queryGroup := -1 // Initialize to -1, so the first group starts at index 0
-
 	for i, token := range tokens {
 		switch {
 		case isFieldSpecifier(token):
@@ -201,11 +210,11 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 		keywordGroup := "(" + strings.Join(keywordConditions, " OR ") + ")"
 		queryParts = append(queryParts, []string{keywordGroup})
 	}
-
 	if len(queryParts) == 0 {
 		return "", nil, errors.New("no valid query provided")
 	}
 
+	// Build the combined query
 	combinedQuery := buildCombinedQuery(queryParts)
 
 	return combinedQuery, queryParams, nil

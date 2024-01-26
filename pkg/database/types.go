@@ -20,7 +20,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-// DatabaseHandler is the interface that wraps the basic methods
+// Handler is the interface that wraps the basic methods
 // to interact with the database.
 type Handler interface {
 	Connect(c cfg.Config) error

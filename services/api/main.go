@@ -32,9 +32,13 @@ func main() {
 	flag.Parse()
 
 	// Reading the configuration file
-	config, err := cfg.LoadConfig(*configFile)
+	var err error
+	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
 		log.Fatalf("Error reading config file: %v", err)
+	}
+	if cfg.IsEmpty(config) {
+		log.Fatalf("Config file is empty")
 	}
 
 	// Set the OS variable
@@ -56,6 +60,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	// Perform the search
 	results, err := performSearch(query)
 	if err != nil {
+		log.Printf("Error performing search: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
