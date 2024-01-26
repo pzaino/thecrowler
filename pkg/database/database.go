@@ -211,6 +211,6 @@ func NewHandler(c cfg.Config) (Handler, error) {
 		return handler, nil
 	// Add cases for MySQL, Snowflake, etc.
 	default:
-		return nil, fmt.Errorf("unsupported database type: %s", c.Database.Type)
+		return nil, fmt.Errorf("unsupported database type: '%s'", c.Database.Type)
 	}
 }

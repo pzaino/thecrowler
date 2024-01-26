@@ -53,9 +53,10 @@ type Config struct {
 
 	// API configuration
 	API struct {
-		Host    string `yaml:"host"`    // Hostname of the API server
-		Port    int    `yaml:"port"`    // Port number of the API server
-		Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
+		Host          string `yaml:"host"`           // Hostname of the API server
+		Port          int    `yaml:"port"`           // Port number of the API server
+		Timeout       int    `yaml:"timeout"`        // Timeout for API requests (in seconds)
+		ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
 	} `yaml:"api"`
 
 	// Selenium configuration
