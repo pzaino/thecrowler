@@ -58,7 +58,24 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db cdb.Handler, source cdb.Source, wd selenium.WebDriver) {
+func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
+
+	// Define wd
+	var wd selenium.WebDriver
+	var err error
+
+	// Connect to Selenium
+	for {
+		wd, err = ConnectSelenium(sel, config)
+		if err != nil {
+			log.Println("Error connecting to Selenium:", err)
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
+	}
+	defer QuitSelenium(wd)
+
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
 	pageSource, err := getHTMLContent(source.URL, wd)
@@ -614,9 +631,22 @@ func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriv
 
 // QuitSelenium is responsible for quitting the Selenium server instance
 func QuitSelenium(wd selenium.WebDriver) {
-	err := wd.Quit()
-	if err != nil {
-		log.Printf("Error quitting Selenium: %v\n", err)
+	// Close the WebDriver
+	if wd != nil {
+		// Attempt a simple operation to check if the session is still valid
+		_, err := wd.CurrentURL()
+		if err != nil {
+			log.Printf("WebDriver session may have already ended: %v", err)
+			return
+		}
+
+		// Close the WebDriver if the session is still active
+		err = wd.Quit()
+		if err != nil {
+			log.Printf("Error closing WebDriver: %v", err)
+		} else {
+			log.Println("WebDriver closed successfully.")
+		}
 	}
 }
 
