@@ -6,7 +6,8 @@
 ![Go build: ](https://github.com/pzaino/TheCROWler/actions/workflows/go.yml/badge.svg)
 ![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
 ![Scorecard supply-chain security: ](https://github.com/pzaino/TheCROWler/actions/workflows/scorecard.yml/badge.svg)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8344/badge)](https://www.bestpractices.dev/projects/8344)
+<a href="https://www.bestpractices.dev/projects/8344"><img
+src="https://www.bestpractices.dev/projects/8344/badge"></a>
 <!-- ![Docker build: ]() -->
 ![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
