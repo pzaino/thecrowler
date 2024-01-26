@@ -75,6 +75,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
 		}
 	}
 	defer QuitSelenium(wd)
+	log.Println("Connected to Selenium WebDriver successfully.")
 
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content

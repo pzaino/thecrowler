@@ -27,6 +27,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -147,10 +148,18 @@ func performDatabaseMaintenance(db cdb.Handler) {
 }
 
 func crawlSources(db cdb.Handler, sel *selenium.Service, sources []cdb.Source) {
+	var wg sync.WaitGroup // Declare a WaitGroup
+
 	for _, source := range sources {
+		wg.Add(1) // Increment the WaitGroup counter
 		log.Println("Crawling URL:", source.URL)
-		crowler.CrawlWebsite(db, source, sel)
+		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
+			defer wg.Done() // Decrement the counter when the goroutine completes
+			crowler.CrawlWebsite(db, src, sel)
+		}(source) // Pass the current source
 	}
+
+	wg.Wait() // Block until all goroutines have decremented the counter
 }
 
 func main() {
@@ -205,10 +214,10 @@ func main() {
 
 	// Start the checkSources function in a goroutine
 	log.Println("Starting processing data (if any)...")
-	go checkSources(db, sel)
+	checkSources(db, sel)
 
 	// Keep the main function alive
-	select {} // Infinite empty select block to keep the main goroutine running
+	//select {} // Infinite empty select block to keep the main goroutine running
 }
 
 func closeResources(db cdb.Handler) {
