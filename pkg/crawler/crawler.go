@@ -735,23 +735,33 @@ func stitchScreenshots(screenshots [][]byte, windowWidth, totalHeight int) (*ima
 			}
 
 			// Draw the remaining part of the image onto the final image
-			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-				for x := bounds.Min.X; x < bounds.Max.X; x++ {
-					finalImg.Set(x, currentY, img.At(x, y))
-				}
-				currentY++
-			}
+			currentY = drawRemainingImage(finalImg, img, bounds, currentY)
 		} else {
-			bounds := img.Bounds()
-			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-				for x := bounds.Min.X; x < bounds.Max.X; x++ {
-					finalImg.Set(x, currentY, img.At(x, y))
-				}
-				currentY++
-			}
+			currentY = drawImage(finalImg, img, currentY)
 		}
 	}
 	return finalImg, nil
+}
+
+func drawRemainingImage(finalImg *image.RGBA, img image.Image, bounds image.Rectangle, currentY int) int {
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			finalImg.Set(x, currentY, img.At(x, y))
+		}
+		currentY++
+	}
+	return currentY
+}
+
+func drawImage(finalImg *image.RGBA, img image.Image, currentY int) int {
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			finalImg.Set(x, currentY, img.At(x, y))
+		}
+		currentY++
+	}
+	return currentY
 }
 
 func encodeImage(img *image.RGBA) ([]byte, error) {

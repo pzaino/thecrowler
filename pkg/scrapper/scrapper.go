@@ -27,6 +27,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
+	"golang.org/x/net/html"
 	"gopkg.in/yaml.v2"
 )
 
@@ -292,49 +293,64 @@ func (re *RuleEngine) extractData(group RuleGroup, pageURL string, htmlContent s
 	for _, rule := range group.Rules {
 		// Apply rule only if the path matches
 		if strings.HasSuffix(path, rule.Path) || strings.HasSuffix(path, rule.Path+"/") {
-			// Iterate over the elements to be extracted
-			for _, element := range rule.Elements {
-				key := element.Key
-				selectorType := element.SelectorType
-				selector := element.Selector
-
-				var extracted string
-				switch selectorType {
-				case "css":
-					extracted = doc.Find(selector).Text()
-				case "xpath":
-					//extracted = htmlquery.FindOne(node, selector).Data
-					extractedNode := htmlquery.FindOne(node, selector)
-					if extractedNode != nil {
-						extracted = htmlquery.InnerText(extractedNode)
-					} else {
-						extracted = ""
-					}
-				case "regex":
-					re, err := regexp.Compile(selector)
-					if err != nil {
-						// handle regex compilation error
-						return nil, fmt.Errorf("error compiling regex: %s", err)
-					}
-					matches := re.FindStringSubmatch(htmlContent)
-					if len(matches) > 1 { // matches[0] is the full match, matches[1] is the first group
-						extracted = matches[1]
-					}
-				default:
-					// handle unknown selector type
-					extracted = ""
-				}
-				extractedData[key] = extracted
-			}
-
-			// Optional: Extract JavaScript files if required
-			// JS file extraction logic
-			if rule.JsFiles {
-				jsFiles := re.extractJSFiles(doc)
-				extractedData["js_files"] = jsFiles
-			}
+			extractedData = re.applyRule(rule, doc, node, htmlContent, extractedData)
 		}
 	}
 
 	return extractedData, nil
+}
+
+func (re *RuleEngine) applyRule(rule Rule, doc *goquery.Document, node *html.Node, htmlContent string, extractedData map[string]interface{}) map[string]interface{} {
+	// Iterate over the elements to be extracted
+	for _, element := range rule.Elements {
+		key := element.Key
+		selectorType := element.SelectorType
+		selector := element.Selector
+
+		var extracted string
+		switch selectorType {
+		case "css":
+			extracted = re.extractByCSS(doc, selector)
+		case "xpath":
+			extracted = re.extractByXPath(node, selector)
+		case "regex":
+			extracted = re.extractByRegex(htmlContent, selector)
+		default:
+			extracted = ""
+		}
+		extractedData[key] = extracted
+	}
+
+	// Optional: Extract JavaScript files if required
+	if rule.JsFiles {
+		jsFiles := re.extractJSFiles(doc)
+		extractedData["js_files"] = jsFiles
+	}
+
+	return extractedData
+}
+
+func (re *RuleEngine) extractByCSS(doc *goquery.Document, selector string) string {
+	return doc.Find(selector).Text()
+}
+
+func (re *RuleEngine) extractByXPath(node *html.Node, selector string) string {
+	extractedNode := htmlquery.FindOne(node, selector)
+	if extractedNode != nil {
+		return htmlquery.InnerText(extractedNode)
+	}
+	return ""
+}
+
+func (re *RuleEngine) extractByRegex(htmlContent string, selector string) string {
+	regex, err := regexp.Compile(selector)
+	if err != nil {
+		// handle regex compilation error
+		return ""
+	}
+	matches := regex.FindStringSubmatch(htmlContent)
+	if len(matches) > 1 { // matches[0] is the full match, matches[1] is the first group
+		return matches[1]
+	}
+	return ""
 }
