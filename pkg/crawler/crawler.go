@@ -623,63 +623,103 @@ func QuitSelenium(wd selenium.WebDriver) {
 // TakeScreenshot is responsible for taking a screenshot of the current page
 func TakeScreenshot(wd selenium.WebDriver, filename string) error {
 	// Execute JavaScript to get the viewport height and width
-	var windowHeight, windowWidth int
+	windowHeight, windowWidth, err := getWindowSize(wd)
+	if err != nil {
+		return err
+	}
+
+	totalHeight, err := getTotalHeight(wd)
+	if err != nil {
+		return err
+	}
+
+	screenshots, err := captureScreenshots(wd, totalHeight, windowHeight)
+	if err != nil {
+		return err
+	}
+
+	finalImg, err := stitchScreenshots(screenshots, windowWidth, totalHeight)
+	if err != nil {
+		return err
+	}
+
+	screenshot, err := encodeImage(finalImg)
+	if err != nil {
+		return err
+	}
+
+	err = saveScreenshot(filename, screenshot)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getWindowSize(wd selenium.WebDriver) (int, int, error) {
+	// Execute JavaScript to get the viewport height and width
 	viewportSizeScript := "return [window.innerHeight, window.innerWidth]"
 	viewportSizeRes, err := wd.ExecuteScript(viewportSizeScript, nil)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	viewportSize, ok := viewportSizeRes.([]interface{})
 	if !ok || len(viewportSize) != 2 {
-		return fmt.Errorf("unexpected result format for viewport size: %+v", viewportSizeRes)
+		return 0, 0, fmt.Errorf("unexpected result format for viewport size: %+v", viewportSizeRes)
 	}
-	windowHeight, err = strconv.Atoi(fmt.Sprint(viewportSize[0]))
+	windowHeight, err := strconv.Atoi(fmt.Sprint(viewportSize[0]))
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	windowWidth, err = strconv.Atoi(fmt.Sprint(viewportSize[1]))
+	windowWidth, err := strconv.Atoi(fmt.Sprint(viewportSize[1]))
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
+	return windowHeight, windowWidth, nil
+}
 
+func getTotalHeight(wd selenium.WebDriver) (int, error) {
 	// Execute JavaScript to get the total height of the page
-	var totalHeight int
 	totalHeightScript := "return document.body.parentNode.scrollHeight"
 	totalHeightRes, err := wd.ExecuteScript(totalHeightScript, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	totalHeight, err = strconv.Atoi(fmt.Sprint(totalHeightRes))
+	totalHeight, err := strconv.Atoi(fmt.Sprint(totalHeightRes))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	return totalHeight, nil
+}
 
-	// Scroll and capture the screenshot
+func captureScreenshots(wd selenium.WebDriver, totalHeight, windowHeight int) ([][]byte, error) {
 	var screenshots [][]byte
 	for y := 0; y < totalHeight; y += windowHeight {
 		// Scroll to the next part of the page
 		scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
-		_, err = wd.ExecuteScript(scrollScript, nil)
+		_, err := wd.ExecuteScript(scrollScript, nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// Take screenshot of the current view
 		screenshot, err := wd.Screenshot()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		screenshots = append(screenshots, screenshot)
 	}
+	return screenshots, nil
+}
 
-	// Stitch these screenshots together
+func stitchScreenshots(screenshots [][]byte, windowWidth, totalHeight int) (*image.RGBA, error) {
 	finalImg := image.NewRGBA(image.Rect(0, 0, windowWidth, totalHeight))
 	currentY := 0
 	for i, screenshot := range screenshots {
 		img, _, err := image.Decode(bytes.NewReader(screenshot))
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// If this is the last screenshot, we may need to adjust the y offset to avoid duplication
@@ -711,22 +751,16 @@ func TakeScreenshot(wd selenium.WebDriver, filename string) error {
 			}
 		}
 	}
+	return finalImg, nil
+}
 
-	// Encode the image to PNG
-	var screenshot []byte
+func encodeImage(img *image.RGBA) ([]byte, error) {
 	buffer := new(bytes.Buffer)
-	err = png.Encode(buffer, finalImg)
+	err := png.Encode(buffer, img)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	screenshot = buffer.Bytes()
-
-	// Save the screenshot to a file
-	err = saveScreenshot(filename, screenshot)
-	if err != nil {
-		return err
-	}
-	return nil
+	return buffer.Bytes(), nil
 }
 
 // saveScreenshot is responsible for saving a screenshot to a file
