@@ -27,6 +27,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -104,7 +105,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db cdb.Handler, wd selenium.WebDriver) {
+func checkSources(db cdb.Handler, sel *selenium.Service) {
 	if config.DebugLevel > 0 {
 		log.Println("Checking sources...")
 	}
@@ -133,7 +134,7 @@ func checkSources(db cdb.Handler, wd selenium.WebDriver) {
 		}
 
 		// Crawl each source
-		crawlSources(db, wd, sourcesToCrawl)
+		crawlSources(db, sel, sourcesToCrawl)
 	}
 }
 
@@ -146,11 +147,19 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func crawlSources(db cdb.Handler, wd selenium.WebDriver, sources []cdb.Source) {
+func crawlSources(db cdb.Handler, sel *selenium.Service, sources []cdb.Source) {
+	var wg sync.WaitGroup // Declare a WaitGroup
+
 	for _, source := range sources {
+		wg.Add(1) // Increment the WaitGroup counter
 		log.Println("Crawling URL:", source.URL)
-		crowler.CrawlWebsite(db, source, wd)
+		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
+			defer wg.Done() // Decrement the counter when the goroutine completes
+			crowler.CrawlWebsite(db, src, sel)
+		}(source) // Pass the current source
 	}
+
+	wg.Wait() // Block until all goroutines have decremented the counter
 }
 
 func main() {
@@ -165,8 +174,7 @@ func main() {
 		log.Fatal("Error loading configuration file:", err)
 	}
 
-	// Define wd and db before we set
-	var wd selenium.WebDriver
+	// Define db before we set
 	db, err := cdb.NewHandler(config)
 	if err != nil {
 		log.Fatal("Error creating database handler:", err)
@@ -184,7 +192,7 @@ func main() {
 		fmt.Printf("Received %v signal, shutting down...\n", sig)
 
 		// Close resources
-		closeResources(db, wd) // Assuming db is your DB connection and wd is the WebDriver
+		closeResources(db) // Assuming db is your DB connection and wd is the WebDriver
 
 		os.Exit(0)
 	}()
@@ -204,48 +212,18 @@ func main() {
 	}
 	defer crowler.StopSelenium(sel)
 
-	// Connect to Selenium
-	for {
-		wd, err = crowler.ConnectSelenium(sel, config)
-		if err != nil {
-			log.Println("Error connecting to Selenium:", err)
-			time.Sleep(5 * time.Second)
-		} else {
-			break
-		}
-	}
-	defer crowler.QuitSelenium(wd)
-
 	// Start the checkSources function in a goroutine
 	log.Println("Starting processing data (if any)...")
-	go checkSources(db, wd)
+	checkSources(db, sel)
 
 	// Keep the main function alive
-	select {} // Infinite empty select block to keep the main goroutine running
+	//select {} // Infinite empty select block to keep the main goroutine running
 }
 
-func closeResources(db cdb.Handler, wd selenium.WebDriver) {
+func closeResources(db cdb.Handler) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
 		log.Println("Database connection closed.")
-	}
-
-	// Close the WebDriver
-	if wd != nil {
-		// Attempt a simple operation to check if the session is still valid
-		_, err := wd.CurrentURL()
-		if err != nil {
-			log.Printf("WebDriver session may have already ended: %v", err)
-			return
-		}
-
-		// Close the WebDriver if the session is still active
-		err = wd.Quit()
-		if err != nil {
-			log.Printf("Error closing WebDriver: %v", err)
-		} else {
-			log.Println("WebDriver closed successfully.")
-		}
 	}
 }
