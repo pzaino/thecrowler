@@ -21,16 +21,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	db "github.com/pzaino/thecrowler/pkg/database"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
@@ -44,6 +47,7 @@ import (
 
 const (
 	numberOfWorkers = 5 // Adjust this based on your needs
+	dbConnCheckErr  = "Error checking database connection: %v\n"
 )
 
 var (
@@ -54,7 +58,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
+func CrawlWebsite(db cdb.Handler, source cdb.Source, wd selenium.WebDriver) {
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
 	pageSource, err := getHTMLContent(source.URL, wd)
@@ -63,6 +67,33 @@ func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
 		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
+	}
+
+	// Extract necessary information from the content
+	pageInfo := extractPageInfo(pageSource)
+
+	// Index the page content in the database
+	pageInfo.sourceID = source.ID
+	indexPage(db, source.URL, pageInfo)
+
+	// Get screenshot of the page
+	if config.Crawler.SourceScreenshot {
+		log.Printf("Taking screenshot of %s...\n", source.URL)
+		// Get the current date and time
+		currentTime := time.Now()
+		// For example, using the format yyyyMMddHHmmss
+		timeStr := currentTime.Format("20060102150405")
+		// Create imageName
+		imageName := fmt.Sprintf("%d_%s.png", source.ID, timeStr)
+		err = TakeScreenshot(wd, imageName)
+		if err != nil {
+			log.Println("Error taking screenshot:", err)
+		}
+		// Update DB SearchIndex Table with the screenshot filename
+		_, err = db.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, source.URL)
+		if err != nil {
+			log.Printf("Error updating database with screenshot URL: %v\n", err)
+		}
 	}
 
 	// Parse the HTML and extract links
@@ -102,8 +133,15 @@ func CrawlWebsite(db *sql.DB, source db.Source, wd selenium.WebDriver) {
 
 // updateSourceState is responsible for updating the state of a Source in
 // the database after crawling it (it does consider errors too)
-func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
+func updateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 	var err error
+
+	// Before updating the source state, check if the database connection is still alive
+	err = db.CheckConnection(config)
+	if err != nil {
+		log.Printf(dbConnCheckErr, err)
+		return
+	}
 
 	if crawlError != nil {
 		// Update the source with error details
@@ -128,10 +166,17 @@ func updateSourceState(db *sql.DB, sourceURL string, crawlError error) {
 // this function (and so treat it as a critical section) should be enough for now.
 // Another thought is, the mutex also helps slow down the crawling process, which
 // is a good thing. You don't want to overwhelm the Source site with requests.
-func indexPage(db *sql.DB, url string, pageInfo PageInfo) {
+func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
+
+	// Before updating the source state, check if the database connection is still alive
+	err := db.CheckConnection(config)
+	if err != nil {
+		log.Printf(dbConnCheckErr, err)
+		return
+	}
 
 	// Start a transaction
 	tx, err := db.Begin()
@@ -208,7 +253,7 @@ func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
 // The `indexID` parameter represents the ID of the index associated with the keywords.
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
-func insertKeywords(tx *sql.Tx, db *sql.DB, indexID int, pageInfo PageInfo) error {
+func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int, pageInfo PageInfo) error {
 	for _, keyword := range extractKeywords(pageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
@@ -249,9 +294,17 @@ func commitTransaction(tx *sql.Tx) error {
 // because indexPage uses a mutex to ensure that only one goroutine is indexing a page
 // at a time. However, when implementing multiple transactions in indexPage, this function
 // will be way more useful than it is now.
-func insertKeywordWithRetries(db *sql.DB, keyword string) (int, error) {
+func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 	const maxRetries = 3
 	var keywordID int
+
+	// Before updating the source state, check if the database connection is still alive
+	err := db.CheckConnection(config)
+	if err != nil {
+		log.Printf(dbConnCheckErr, err)
+		return 0, err
+	}
+
 	for i := 0; i < maxRetries; i++ {
 		err := db.QueryRow(`INSERT INTO Keywords (keyword)
                             VALUES ($1) ON CONFLICT (keyword) DO UPDATE
@@ -325,6 +378,18 @@ func extractMetaTags(doc *goquery.Document) map[string]string {
 	return metaTags
 }
 
+// IsValidURL checks if the string is a valid URL.
+func IsValidURL(u string) bool {
+	// Prepend a scheme if it's missing
+	if !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+
+	// Parse the URL and check for errors
+	_, err := url.ParseRequestURI(u)
+	return err == nil
+}
+
 // extractLinks extracts all the links from the given HTML content.
 // It uses the goquery library to parse the HTML and find all the <a> tags.
 // Each link is then added to a slice and returned.
@@ -338,7 +403,10 @@ func extractLinks(htmlContent string) []string {
 	doc.Find("a").Each(func(index int, item *goquery.Selection) {
 		linkTag := item
 		link, _ := linkTag.Attr("href")
-		links = append(links, link)
+		link = strings.TrimSpace(link)
+		if link != "" && IsValidURL(link) {
+			links = append(links, link)
+		}
 	})
 	return links
 }
@@ -394,8 +462,8 @@ func isExternalLink(sourceURL, linkURL string) bool {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(db *sql.DB, wd selenium.WebDriver,
-	id int, jobs chan string, wg *sync.WaitGroup, source *db.Source) {
+func worker(db cdb.Handler, wd selenium.WebDriver,
+	id int, jobs chan string, wg *sync.WaitGroup, source *cdb.Source) {
 	defer wg.Done()
 	for url := range jobs {
 		if source.Restricted {
@@ -554,18 +622,155 @@ func QuitSelenium(wd selenium.WebDriver) {
 
 // TakeScreenshot is responsible for taking a screenshot of the current page
 func TakeScreenshot(wd selenium.WebDriver, filename string) error {
-	// Take a screenshot of the current page
-	screenshot, err := wd.Screenshot()
+	// Execute JavaScript to get the viewport height and width
+	windowHeight, windowWidth, err := getWindowSize(wd)
 	if err != nil {
 		return err
 	}
 
-	// Save the screenshot to a file
+	totalHeight, err := getTotalHeight(wd)
+	if err != nil {
+		return err
+	}
+
+	screenshots, err := captureScreenshots(wd, totalHeight, windowHeight)
+	if err != nil {
+		return err
+	}
+
+	finalImg, err := stitchScreenshots(screenshots, windowWidth, totalHeight)
+	if err != nil {
+		return err
+	}
+
+	screenshot, err := encodeImage(finalImg)
+	if err != nil {
+		return err
+	}
+
 	err = saveScreenshot(filename, screenshot)
 	if err != nil {
 		return err
 	}
+
 	return nil
+}
+
+func getWindowSize(wd selenium.WebDriver) (int, int, error) {
+	// Execute JavaScript to get the viewport height and width
+	viewportSizeScript := "return [window.innerHeight, window.innerWidth]"
+	viewportSizeRes, err := wd.ExecuteScript(viewportSizeScript, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	viewportSize, ok := viewportSizeRes.([]interface{})
+	if !ok || len(viewportSize) != 2 {
+		return 0, 0, fmt.Errorf("unexpected result format for viewport size: %+v", viewportSizeRes)
+	}
+	windowHeight, err := strconv.Atoi(fmt.Sprint(viewportSize[0]))
+	if err != nil {
+		return 0, 0, err
+	}
+	windowWidth, err := strconv.Atoi(fmt.Sprint(viewportSize[1]))
+	if err != nil {
+		return 0, 0, err
+	}
+	return windowHeight, windowWidth, nil
+}
+
+func getTotalHeight(wd selenium.WebDriver) (int, error) {
+	// Execute JavaScript to get the total height of the page
+	totalHeightScript := "return document.body.parentNode.scrollHeight"
+	totalHeightRes, err := wd.ExecuteScript(totalHeightScript, nil)
+	if err != nil {
+		return 0, err
+	}
+	totalHeight, err := strconv.Atoi(fmt.Sprint(totalHeightRes))
+	if err != nil {
+		return 0, err
+	}
+	return totalHeight, nil
+}
+
+func captureScreenshots(wd selenium.WebDriver, totalHeight, windowHeight int) ([][]byte, error) {
+	var screenshots [][]byte
+	for y := 0; y < totalHeight; y += windowHeight {
+		// Scroll to the next part of the page
+		scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
+		_, err := wd.ExecuteScript(scrollScript, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		// Take screenshot of the current view
+		screenshot, err := wd.Screenshot()
+		if err != nil {
+			return nil, err
+		}
+
+		screenshots = append(screenshots, screenshot)
+	}
+	return screenshots, nil
+}
+
+func stitchScreenshots(screenshots [][]byte, windowWidth, totalHeight int) (*image.RGBA, error) {
+	finalImg := image.NewRGBA(image.Rect(0, 0, windowWidth, totalHeight))
+	currentY := 0
+	for i, screenshot := range screenshots {
+		img, _, err := image.Decode(bytes.NewReader(screenshot))
+		if err != nil {
+			return nil, err
+		}
+
+		// If this is the last screenshot, we may need to adjust the y offset to avoid duplication
+		if i == len(screenshots)-1 {
+			// Calculate the remaining height to capture
+			remainingHeight := totalHeight - currentY
+			bounds := img.Bounds()
+			imgHeight := bounds.Dy()
+
+			// If the remaining height is less than the image height, adjust the bounds
+			if remainingHeight < imgHeight {
+				bounds = image.Rect(bounds.Min.X, bounds.Max.Y-remainingHeight, bounds.Max.X, bounds.Max.Y)
+			}
+
+			// Draw the remaining part of the image onto the final image
+			currentY = drawRemainingImage(finalImg, img, bounds, currentY)
+		} else {
+			currentY = drawImage(finalImg, img, currentY)
+		}
+	}
+	return finalImg, nil
+}
+
+func drawRemainingImage(finalImg *image.RGBA, img image.Image, bounds image.Rectangle, currentY int) int {
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			finalImg.Set(x, currentY, img.At(x, y))
+		}
+		currentY++
+	}
+	return currentY
+}
+
+func drawImage(finalImg *image.RGBA, img image.Image, currentY int) int {
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			finalImg.Set(x, currentY, img.At(x, y))
+		}
+		currentY++
+	}
+	return currentY
+}
+
+func encodeImage(img *image.RGBA) ([]byte, error) {
+	buffer := new(bytes.Buffer)
+	err := png.Encode(buffer, img)
+	if err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }
 
 // saveScreenshot is responsible for saving a screenshot to a file
@@ -591,7 +796,7 @@ func saveScreenshot(filename string, screenshot []byte) error {
 		}
 	} else {
 		// Fallback to local file saving
-		return writeToFile(config.ImageStorageAPI.Path+filename, screenshot)
+		return writeToFile(config.ImageStorageAPI.Path+"/"+filename, screenshot)
 	}
 }
 

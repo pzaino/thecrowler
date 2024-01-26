@@ -7,7 +7,7 @@ RUN ./autobuild.sh
 
 
 # Run stage
-FROM alpine:latest
+FROM alpine:3.14.2
 WORKDIR /app
 
 # Create a non-root user and switch to it

@@ -14,6 +14,40 @@
 
 package database
 
+import (
+	"database/sql"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+)
+
+// DatabaseHandler is the interface that wraps the basic methods
+// to interact with the database.
+type Handler interface {
+	Connect(c cfg.Config) error
+	Close() error
+	Ping() error
+	ExecuteQuery(query string, args ...interface{}) (*sql.Rows, error)
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	DBMS() string
+	Begin() (*sql.Tx, error)
+	Commit(tx *sql.Tx) error
+	Rollback(tx *sql.Tx) error
+	QueryRow(query string, args ...interface{}) *sql.Row
+	CheckConnection(c cfg.Config) error
+}
+
+// PostgresHandler is the implementation of the DatabaseHandler interface
+type PostgresHandler struct {
+	db   *sql.DB
+	dbms string
+}
+
+// SQLiteHandler is the implementation of the DatabaseHandler interface
+type SQLiteHandler struct {
+	db   *sql.DB
+	dbms string
+}
+
 // Source represents the structure of the Sources table
 // for a record we have decided we need to crawl.
 // Id represents the unique identifier of the source.

@@ -30,19 +30,25 @@ type FileStorageAPI struct {
 type Config struct {
 	// Database configuration
 	Database struct {
-		Host     string `yaml:"host"`     // Hostname of the database server
-		Port     int    `yaml:"port"`     // Port number of the database server
-		User     string `yaml:"user"`     // Username for database authentication
-		Password string `yaml:"password"` // Password for database authentication
-		DBName   string `yaml:"dbname"`   // Name of the database
+		Type      string `yaml:"type"`       // Type of database (e.g., "postgres", "mysql", "sqlite")
+		Host      string `yaml:"host"`       // Hostname of the database server
+		Port      int    `yaml:"port"`       // Port number of the database server
+		User      string `yaml:"user"`       // Username for database authentication
+		Password  string `yaml:"password"`   // Password for database authentication
+		DBName    string `yaml:"dbname"`     // Name of the database
+		RetryTime int    `yaml:"retry_time"` // Time to wait before retrying to connect to the database (in seconds)
+		PingTime  int    `yaml:"ping_time"`  // Time to wait before retrying to ping the database (in seconds)
+		SSLMode   string `yaml:"sslmode"`    // SSL mode for database connection (e.g., "disable")
 	} `yaml:"database"`
 
 	// Crawler configuration
 	Crawler struct {
-		Workers     int `yaml:"workers"`     // Number of crawler workers
-		Interval    int `yaml:"interval"`    // Interval between crawler requests (in seconds)
-		Timeout     int `yaml:"timeout"`     // Timeout for crawler requests (in seconds)
-		Maintenance int `yaml:"maintenance"` // Interval between crawler maintenance tasks (in seconds)
+		Workers            int  `yaml:"workers"`              // Number of crawler workers
+		Interval           int  `yaml:"interval"`             // Interval between crawler requests (in seconds)
+		Timeout            int  `yaml:"timeout"`              // Timeout for crawler requests (in seconds)
+		Maintenance        int  `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
+		SourceScreenshot   bool `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
+		FullSiteScreenshot bool `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
 	} `yaml:"crawler"`
 
 	// API configuration

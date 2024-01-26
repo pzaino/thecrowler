@@ -85,6 +85,9 @@ func recursiveInclude(yamlContent string, baseDir string) (string, error) {
 // If the file does not exist or an error occurs during reading or unmarshaling, an error is returned.
 func getConfigFile(confName string) (Config, error) {
 
+	// Create a new configuration object
+	config := NewConfig()
+
 	// Check if the configuration file exists
 	if !fileExists(confName) {
 		return Config{}, fmt.Errorf("file does not exist: %s", confName)
@@ -107,11 +110,88 @@ func getConfigFile(confName string) (Config, error) {
 	}
 
 	// If the configuration file has been found and is not empty, unmarshal it
-	var config Config
 	if (finalData != "") && (finalData != "\n") && (finalData != "\r\n") {
 		err = yaml.Unmarshal([]byte(finalData), &config)
 	}
 	return config, err
+}
+
+// NewConfig returns a new Config struct with default values.
+func NewConfig() Config {
+	return Config{
+		Database: struct {
+			Type      string `yaml:"type"`
+			Host      string `yaml:"host"`
+			Port      int    `yaml:"port"`
+			User      string `yaml:"user"`
+			Password  string `yaml:"password"`
+			DBName    string `yaml:"dbname"`
+			RetryTime int    `yaml:"retry_time"`
+			PingTime  int    `yaml:"ping_time"`
+			SSLMode   string `yaml:"sslmode"`
+		}{
+			Type:      "postgres",
+			Host:      "localhost",
+			Port:      5432,
+			User:      "postgres",
+			Password:  "postgres",
+			DBName:    "SitesIndex",
+			RetryTime: 5,
+			PingTime:  5,
+			SSLMode:   "disable",
+		},
+		Crawler: struct {
+			Workers            int  `yaml:"workers"`
+			Interval           int  `yaml:"interval"`
+			Timeout            int  `yaml:"timeout"`
+			Maintenance        int  `yaml:"maintenance"`
+			SourceScreenshot   bool `yaml:"source_screenshot"`
+			FullSiteScreenshot bool `yaml:"full_site_screenshot"`
+		}{
+			Workers:            1,
+			Interval:           2,
+			Timeout:            10,
+			Maintenance:        60,
+			SourceScreenshot:   false,
+			FullSiteScreenshot: false,
+		},
+		API: struct {
+			Host    string `yaml:"host"`
+			Port    int    `yaml:"port"`
+			Timeout int    `yaml:"timeout"`
+		}{
+			Host:    "localhost",
+			Port:    8080,
+			Timeout: 10,
+		},
+		Selenium: struct {
+			Path       string `yaml:"path"`
+			DriverPath string `yaml:"driver_path"`
+			Type       string `yaml:"type"`
+			Port       int    `yaml:"port"`
+			Host       string `yaml:"host"`
+			Headless   bool   `yaml:"headless"`
+		}{
+			Path:       "/path/to/selenium",
+			DriverPath: "/path/to/driver",
+			Type:       "chrome",
+			Port:       4444,
+			Host:       "localhost",
+			Headless:   true,
+		},
+		ImageStorageAPI: FileStorageAPI{
+			Host:    "",
+			Path:    "./images",
+			Port:    0,
+			Region:  "nowhere",
+			Token:   "",
+			Secret:  "",
+			Timeout: 15,
+			Type:    "local",
+		},
+		OS:         runtime.GOOS,
+		DebugLevel: 0,
+	}
 }
 
 // LoadConfig is responsible for loading the configuration file
@@ -120,65 +200,8 @@ func LoadConfig(confName string) (Config, error) {
 
 	// Get the configuration file
 	config, err := getConfigFile(confName)
-
-	// Set the OS variable
-	config.OS = runtime.GOOS
-
-	// Set default values
-	if config.Database.Host == "" {
-		config.Database.Host = "localhost"
-	}
-
-	if config.Database.Port == 0 {
-		config.Database.Port = 5432
-	}
-
-	if config.Database.User == "" {
-		config.Database.User = "postgres"
-	}
-
-	if config.Database.Password == "" {
-		config.Database.Password = "postgres"
-	}
-
-	if config.Database.DBName == "" {
-		config.Database.DBName = "SitesIndex"
-	}
-
-	if config.Crawler.Workers == 0 {
-		config.Crawler.Workers = 1
-	}
-
-	if config.Crawler.Interval == 0 {
-		config.Crawler.Interval = 2
-	}
-
-	if config.Crawler.Timeout == 0 {
-		config.Crawler.Timeout = 10
-	}
-
-	if config.Crawler.Maintenance == 0 {
-		config.Crawler.Maintenance = 60
-	}
-
-	if config.API.Host == "" {
-		config.API.Host = "localhost"
-	}
-
-	if config.API.Port == 0 {
-		config.API.Port = 8080
-	}
-
-	if config.API.Timeout == 0 {
-		config.API.Timeout = 10
-	}
-
-	if config.Selenium.Port == 0 {
-		config.Selenium.Port = 4444
-	}
-
-	if config.Selenium.Host == "" {
-		config.Selenium.Host = "localhost"
+	if err != nil {
+		return Config{}, err
 	}
 
 	return config, err
