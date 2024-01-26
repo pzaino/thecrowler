@@ -33,6 +33,7 @@ type DatabaseHandler interface {
 	Commit(tx *sql.Tx) error
 	Rollback(tx *sql.Tx) error
 	QueryRow(query string, args ...interface{}) *sql.Row
+	CheckConnection(c cfg.Config) error
 }
 
 // PostgresHandler is the implementation of the DatabaseHandler interface

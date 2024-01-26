@@ -44,6 +44,7 @@ import (
 
 const (
 	numberOfWorkers = 5 // Adjust this based on your needs
+	dbConnCheckErr  = "Error checking database connection: %v\n"
 )
 
 var (
@@ -105,6 +106,13 @@ func CrawlWebsite(db cdb.DatabaseHandler, source cdb.Source, wd selenium.WebDriv
 func updateSourceState(db cdb.DatabaseHandler, sourceURL string, crawlError error) {
 	var err error
 
+	// Before updating the source state, check if the database connection is still alive
+	err = db.CheckConnection(config)
+	if err != nil {
+		log.Printf(dbConnCheckErr, err)
+		return
+	}
+
 	if crawlError != nil {
 		// Update the source with error details
 		_, err = db.Exec(`UPDATE Sources SET last_crawled_at = NOW(), status = 'error',
@@ -132,6 +140,13 @@ func indexPage(db cdb.DatabaseHandler, url string, pageInfo PageInfo) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
+
+	// Before updating the source state, check if the database connection is still alive
+	err := db.CheckConnection(config)
+	if err != nil {
+		log.Printf(dbConnCheckErr, err)
+		return
+	}
 
 	// Start a transaction
 	tx, err := db.Begin()
@@ -252,6 +267,14 @@ func commitTransaction(tx *sql.Tx) error {
 func insertKeywordWithRetries(db cdb.DatabaseHandler, keyword string) (int, error) {
 	const maxRetries = 3
 	var keywordID int
+
+	// Before updating the source state, check if the database connection is still alive
+	err := db.CheckConnection(config)
+	if err != nil {
+		log.Printf(dbConnCheckErr, err)
+		return 0, err
+	}
+
 	for i := 0; i < maxRetries; i++ {
 		err := db.QueryRow(`INSERT INTO Keywords (keyword)
                             VALUES ($1) ON CONFLICT (keyword) DO UPDATE

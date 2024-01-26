@@ -112,6 +112,15 @@ func (handler *PostgresHandler) QueryRow(query string, args ...interface{}) *sql
 	return handler.db.QueryRow(query, args...)
 }
 
+// CheckConnection checks if the database connection is still alive
+func (handler *PostgresHandler) CheckConnection(c cfg.Config) error {
+	var err error
+	if handler.Ping() != nil {
+		err = handler.Connect(c)
+	}
+	return err
+}
+
 // ---------------------------------------------------------------
 // SQLite handlers
 // ---------------------------------------------------------------
@@ -172,6 +181,15 @@ func (handler *SQLiteHandler) Rollback(tx *sql.Tx) error {
 // Row's Scan method is called.
 func (handler *SQLiteHandler) QueryRow(query string, args ...interface{}) *sql.Row {
 	return handler.db.QueryRow(query, args...)
+}
+
+// CheckConnection checks if the database connection is still alive
+func (handler *SQLiteHandler) CheckConnection(c cfg.Config) error {
+	var err error
+	if handler.Ping() != nil {
+		err = handler.Connect(c)
+	}
+	return err
 }
 
 // ---------------------------------------------------------------
