@@ -23,7 +23,8 @@ username the CROWler will use to connect to the database.
 connect to the database with read/write/exec permissions only. This is the
 password the CROWler will use to connect to the database.
 
-**DOCKER_CROWLER_API_PORT** (default value: 8081) - The port the API will listen on.
+**DOCKER_CROWLER_API_PORT** (default value: 8081) - The port the API will
+listen on.
 
 **DOCKER_SEARCH_API_PORT** (default value: 8080) - The port the Search API will
 listen on.
