@@ -9,7 +9,7 @@ services:
       - POSTGRES_USER=${DOCKER_POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${DOCKER_POSTGRES_PASSWORD:-postgres}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup-v1.1.sh:/docker-entrypoint-initdb.d/init.sh
@@ -18,7 +18,7 @@ services:
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
       - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
       - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
@@ -37,7 +37,7 @@ services:
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
       - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
       - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
