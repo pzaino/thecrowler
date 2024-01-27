@@ -35,12 +35,46 @@ import (
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	// Construct the connection string from the Config struct
+	var dbPort int
+	if c.Database.Port == 0 {
+		dbPort = 5432
+	} else {
+		dbPort = c.Database.Port
+	}
+	var dbHost string
+	if c.Database.Host == "" {
+		dbHost = "localhost"
+	} else {
+		dbHost = c.Database.Host
+	}
+	var dbUser string
+	if c.Database.User == "" {
+		dbUser = "crowler"
+	} else {
+		dbUser = c.Database.User
+	}
+	var dbPassword string
+	if c.Database.Password == "" {
+		dbPassword = "crowler"
+	} else {
+		dbPassword = c.Database.Password
+	}
+	var dbName string
+	if c.Database.DBName == "" {
+		dbName = "SitesIndex"
+	} else {
+		dbName = c.Database.DBName
+	}
+	var dbSSLMode string
+	if c.Database.SSLMode == "" {
+		dbSSLMode = "disable"
+	} else {
+		dbSSLMode = c.Database.SSLMode
+	}
 	connectionString := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.Database.Host, c.Database.Port, c.Database.User, c.Database.Password, c.Database.DBName, c.Database.SSLMode)
+		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
 
 	var err error
-	//handler.db, err = sql.Open("postgres", connectionString)
-
 	for {
 		handler.db, err = sql.Open("postgres", connectionString)
 		if err != nil {
