@@ -12,7 +12,8 @@ services:
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./pkg/database/postgresql-setup-v1.1.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.1.pgsql
 
   searchapi:
     environment:

@@ -22,14 +22,14 @@ CREATE TABLE IF NOT EXISTS Sources (
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id SERIAL PRIMARY KEY,
     source_id INTEGER REFERENCES Sources(source_id),
-    page_url TEXT NOT NULL UNIQUE,                 -- Using TEXT for long URLs
+    page_url TEXT NOT NULL UNIQUE,                  -- Using TEXT for long URLs
     title VARCHAR(255),
-    summary TEXT NOT NULL,                         -- Assuming summary is always required
+    summary TEXT NOT NULL,                          -- Assuming summary is always required
     content TEXT,
-    snapshot_url TEXT,                             -- Using TEXT for long URLs
-    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Has default value
-    detected_type VARCHAR(8)                       -- (content type) denormalized for fast searches
-    detected_language VARCHAR(8)                   -- (URI language) denormalized for fast searches
+    snapshot_url TEXT,                              -- Using TEXT for long URLs
+    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Has default value
+    detected_type VARCHAR(8),                       -- (content type) denormalized for fast searches
+    detected_language VARCHAR(8)                    -- (URI language) denormalized for fast searches
 );
 
 CREATE TABLE IF NOT EXISTS MetaTags (
@@ -222,10 +222,10 @@ END
 $$;
 
 -- Create a new user
-CREATE USER :CROWLER_DB_USER WITH ENCRYPTED PASSWORD ':CROWLER_DB_PASSWORD';
+CREATE USER :CROWLER_DB_USER WITH ENCRYPTED PASSWORD :'CROWLER_DB_PASSWORD';
 
--- Grant permissions to the user on the ':POSTGRES_DB' database
-GRANT CONNECT ON DATABASE ":POSTGRES_DB" TO :CROWLER_DB_USER;
+-- Grant permissions to the user on the :"POSTGRES_DB" database
+GRANT CONNECT ON DATABASE :"POSTGRES_DB" TO :CROWLER_DB_USER;
 GRANT USAGE ON SCHEMA public TO :CROWLER_DB_USER;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :CROWLER_DB_USER;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO :CROWLER_DB_USER;
