@@ -12,16 +12,17 @@ services:
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./pkg/database/postgresql-setup-v1.1.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.1.pgsql
 
   searchapi:
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
-      - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
-      - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
-      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-localhost}
+      - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
@@ -38,9 +39,9 @@ services:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD:-changeme}
-      - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
-      - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
-      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-localhost}
+      - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .

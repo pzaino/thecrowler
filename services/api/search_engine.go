@@ -40,7 +40,7 @@ func tokenize(input string) []string {
 			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
 			handleSpace(&tokens, &currentToken)
-		case r == '|' || r == '&':
+		case (r == '|' || r == '&') && !inQuotes:
 			handlePipeAnd(&tokens, &currentToken, r)
 		default:
 			currentToken.WriteRune(r)
@@ -99,7 +99,7 @@ func isFieldSpecifier(input string) bool {
 	var allowedFields = map[string]bool{
 		"title":   true,
 		"summary": true,
-		"content": true,
+		"content": config.API.ContentSearch,
 	}
 
 	// Split the input string at the colon
@@ -126,20 +126,26 @@ func isQuotedString(input string) bool {
 	return matched
 }
 
-func parseAdvancedQuery(input string) (string, []interface{}, error) {
-
-	// Define default fields
+func getDefaultFields() []string {
 	var defaultFields []string
 	if config.API.ContentSearch {
-		defaultFields = []string{"title", "summary", "content"}
+		defaultFields = []string{"page_url", "title", "summary", "content"}
 	} else {
-		defaultFields = []string{"title", "summary"}
+		defaultFields = []string{"page_url", "title", "summary"}
 	}
+	return defaultFields
+}
 
-	// Tokenize the input string
+func parseAdvancedQuery(input string) (string, []interface{}, error) {
+
+	// Define default fields:
+	defaultFields := getDefaultFields()
+
+	// Tokenize the input string:
 	tokens := tokenize(input)
 
-	// Parse the tokens
+	// Parse the tokens and generate the query parts
+	// and query params:
 	var queryParts [][]string
 	var queryParams []interface{}
 	paramCounter := 1
@@ -179,7 +185,7 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 				token = strings.Trim(token, `"`)
 			}
 
-			if isFieldSpecifier(currentField) {
+			if isFieldSpecifier(currentField + ":") {
 				condition := fmt.Sprintf("LOWER(%s) LIKE $%d", currentField, paramCounter)
 				addCondition(condition)
 			} else {
