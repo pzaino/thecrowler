@@ -40,6 +40,8 @@ following:
 - [Docker Compose](https://docs.docker.com/compose/install/)
 
 For a docker compose based installation, that's all you need.
+If you have docker and docker compose installed you can skip the next section
+and go straight to the Installation section.
 
 #### If you're planning to install it manually
 
@@ -108,12 +110,36 @@ for the database, the database name, the port the API will listen on, etc.
 
 To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
 
+There are 3 ENV vars you must set, otherwise the CROWler won't build or work:
+
+- `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in the
+database (non-admin level).
+- `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in the
+database (admin level).
+- `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
+You normally set this one with the IP of the host where you're running the
+Postgres container.
+
 Once you've set your ENV vars, follow these steps:
 
-1. Clone the repository
-2. Create your config.yaml file (see [here](doc/config_yaml.md) for more info)
-3. Run `./docker-build.sh` to build the with Docker compose and the right
+1. If you haven't yet, clone TheCrowler repository
+2. `cd` into the root directory of the repository
+3. Create your config.yaml file (see [here](doc/config_yaml.md) for more info)
+4. Run `./docker-build.sh` to build the with Docker compose and the right
 platform (see [here](doc/docker_build.md) for more info)
+
+**Please Note(1)**: If you're running the CROWler on a Raspberry Pi, you'll need to
+build the CROWler with the `arm` platform. To do so, the easier way is to build
+the CROWler with the `docker-build.sh` script directly on the Raspberry Pi.
+
+**Please Note(2)**: If need to do a rebuild and want to clean up everything, run
+the following command:
+
+```bash
+./docker-rebuild.sh
+```
+
+This will clean up everything and rebuild the CROWler from scratch.
 
 ### Usage
 
