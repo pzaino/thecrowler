@@ -7,7 +7,9 @@
 ![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
 ![Scorecard supply-chain security: ](https://github.com/pzaino/TheCROWler/actions/workflows/scorecard.yml/badge.svg)
 <a href="https://www.bestpractices.dev/projects/8344"><img
-src="https://www.bestpractices.dev/projects/8344/badge"></a>
+src="https://www.bestpractices.dev/projects/8344/badge"
+alt="OpenSSF Security Best Practices badge"></a>
+![Codacy: ](https://github.com/pzaino/TheCROWler/actions/workflows/codacy.yml/badge.svg)
 <!-- ![Docker build: ]() -->
 ![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
