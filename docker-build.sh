@@ -8,8 +8,8 @@ if [ "${DOCKER_DB_HOST}" = "" ]; then
     exit 1
 fi
 
-if [ "${DOCKER_POSTGRES_DB_PASSWORD}" = "" ]; then
-    echo "DOCKER_POSTGRES_DB_PASSWORD is not set!"
+if [ "${DOCKER_POSTGRES_PASSWORD}" = "" ]; then
+    echo "DOCKER_POSTGRES_PASSWORD is not set!"
     exit 1
 fi
 
