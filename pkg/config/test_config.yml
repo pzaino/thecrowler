@@ -15,8 +15,8 @@ api:
   host: 0.0.0.0
   timeout: 10
 selenium:
-  type: chrome
-  port: 4444
-  headless: true
-  host: localhost
+  - type: chrome
+    port: 4444
+    headless: true
+    host: localhost
 debug_level: 1

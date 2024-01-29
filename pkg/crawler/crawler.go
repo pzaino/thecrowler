@@ -61,7 +61,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
+func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 
 	// Define wd
 	var wd selenium.WebDriver
@@ -69,7 +69,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
 
 	// Connect to Selenium
 	for {
-		wd, err = ConnectSelenium(sel, config)
+		wd, err = ConnectSelenium(sel)
 		if err != nil {
 			log.Println("Error connecting to Selenium:", err)
 			time.Sleep(5 * time.Second)
@@ -629,13 +629,6 @@ func worker(db cdb.Handler, wd selenium.WebDriver,
 			pageCache.sourceID = source.ID
 			indexPage(db, url, pageCache)
 
-			// Extract links from the page
-			//links := extractLinks(pageCache.BodyText)
-
-			// Enqueue jobs (links)
-			//for _, link := range links {
-			//	jobs <- link
-			//}
 			// Extract links and add them to newLinks
 			extractedLinks := extractLinks(pageCache.BodyText)
 			if len(extractedLinks) > 0 {
@@ -680,8 +673,10 @@ func StartCrawler(cf cfg.Config) {
 // instead of using only a container based one. However, I found that the container
 // based Selenium server is more stable and reliable than the local one.
 // and it's obviously easier to setup and more secure.
-func StartSelenium() (*selenium.Service, error) {
+func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	log.Println("Configuring Selenium...")
+	service, err := selenium.NewSeleniumService(c.Path, c.Port)
+
 	// Start a Selenium WebDriver server instance (e.g., chromedriver)
 	/*
 		var opts []selenium.ServiceOption
@@ -719,10 +714,8 @@ func StartSelenium() (*selenium.Service, error) {
 	// Start a Selenium WebDriver server instance (e.g., chromedriver)
 	//service, err := selenium.NewSeleniumService(config.Selenium.Path, config.Selenium.Port, opts...)
 	//service, err := selenium.NewChromeDriverService(config.Selenium.DriverPath, config.Selenium.Port)
-	var service *selenium.Service
-	var err error // = nil
-	log.Printf("Done!\n")
 
+	log.Printf("Done!\n")
 	return service, err
 }
 
@@ -742,9 +735,9 @@ func StopSelenium(sel *selenium.Service) error {
 }
 
 // ConnectSelenium is responsible for connecting to the Selenium server instance
-func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriver, error) {
+func ConnectSelenium(sel SeleniumInstance) (selenium.WebDriver, error) {
 	// Connect to the WebDriver instance running locally.
-	caps := selenium.Capabilities{"browserName": config.Selenium.Type}
+	caps := selenium.Capabilities{"browserName": sel.Config.Type}
 	caps.AddChrome(chrome.Capabilities{
 		Args: []string{
 			"--headless", // Updated headless mode argument
@@ -753,8 +746,7 @@ func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriv
 		},
 		W3C: true,
 	})
-	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://"+config.Selenium.Host+":%d/wd/hub", config.Selenium.Port))
-	//wd, err := selenium.NewRemote(caps, "")
+	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
 	return wd, err
 }
 

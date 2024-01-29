@@ -1,5 +1,16 @@
 package crawler
 
+import (
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+	"github.com/tebeka/selenium"
+)
+
+// SeleniumInstance holds a Selenium service and its configuration
+type SeleniumInstance struct {
+	Service *selenium.Service
+	Config  cfg.Selenium
+}
+
 // PageInfo represents the information of a web page.
 type PageInfo struct {
 	sourceID     int               // The ID of the source.

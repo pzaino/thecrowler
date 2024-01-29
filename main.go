@@ -36,7 +36,6 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	_ "github.com/lib/pq"
-	"github.com/tebeka/selenium"
 )
 
 const (
@@ -115,7 +114,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db cdb.Handler, sel *selenium.Service) {
+func checkSources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 	if config.DebugLevel > 0 {
 		log.Println("Checking sources...")
 	}
@@ -157,7 +156,7 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func crawlSources(db cdb.Handler, sel *selenium.Service, sources []cdb.Source) {
+func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []cdb.Source) {
 	var wg sync.WaitGroup // Declare a WaitGroup
 
 	for _, source := range sources {
@@ -165,7 +164,7 @@ func crawlSources(db cdb.Handler, sel *selenium.Service, sources []cdb.Source) {
 		log.Println("Crawling URL:", source.URL)
 		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
 			defer wg.Done() // Decrement the counter when the goroutine completes
-			crowler.CrawlWebsite(db, src, sel)
+			crowler.CrawlWebsite(db, src, <-sel)
 		}(source) // Pass the current source
 	}
 
@@ -191,7 +190,19 @@ func main() {
 	}
 
 	// Define sel before we set signal handlers
-	var sel *selenium.Service
+	seleniumInstances := make(chan crowler.SeleniumInstance, len(config.Selenium))
+	for _, seleniumConfig := range config.Selenium {
+		// Initialize each Selenium service based on seleniumConfig
+		selService, err := crowler.NewSeleniumService(seleniumConfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		seleniumInstances <- crowler.SeleniumInstance{
+			Service: selService,
+			Config:  seleniumConfig,
+		}
+	}
 
 	// Setting up a channel to listen for termination signals
 	log.Println("Setting up termination signals listener...")
@@ -205,41 +216,44 @@ func main() {
 		fmt.Printf("Received %v signal, shutting down...\n", sig)
 
 		// Close resources
-		closeResources(db, sel) // Assuming db is your DB connection and wd is the WebDriver
+		closeResources(db, seleniumInstances) // Assuming db is your DB connection and wd is the WebDriver
 
 		os.Exit(0)
 	}()
+
+	// Initialize the crawler
+	crowler.StartCrawler(config)
 
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer closeResources(db, sel)
-
-	crowler.StartCrawler(config)
-
-	sel, err = crowler.StartSelenium()
-	if err != nil {
-		log.Fatal("Error starting Selenium:", err)
-	}
+	defer closeResources(db, seleniumInstances)
 
 	// Start the checkSources function in a goroutine
 	log.Println("Starting processing data (if any)...")
-	checkSources(db, sel)
+	checkSources(db, seleniumInstances)
 
 	// Keep the main function alive
 	//select {} // Infinite empty select block to keep the main goroutine running
 }
 
-func closeResources(db cdb.Handler, sel *selenium.Service) {
+func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
 		log.Println("Database connection closed.")
 	}
-	err := crowler.StopSelenium(sel)
-	if err != nil {
-		log.Println(err)
+	// Stop the Selenium services
+	close(sel)
+	for seleniumInstance := range sel {
+		if seleniumInstance.Service != nil {
+			err := seleniumInstance.Service.Stop()
+			if err != nil {
+				log.Println("Selenium instance: ", err)
+			}
+		}
 	}
+	log.Println("All services stopped.")
 }
