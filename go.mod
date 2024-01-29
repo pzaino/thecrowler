@@ -11,6 +11,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
+require github.com/abadojack/whatlanggo v1.0.1
+
 require (
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/antchfx/xpath v1.2.3 // indirect

@@ -147,6 +147,7 @@ func NewConfig() Config {
 			Maintenance        int  `yaml:"maintenance"`
 			SourceScreenshot   bool `yaml:"source_screenshot"`
 			FullSiteScreenshot bool `yaml:"full_site_screenshot"`
+			MaxDepth           int  `yaml:"max_depth"`
 		}{
 			Workers:            1,
 			Interval:           2,
@@ -154,6 +155,7 @@ func NewConfig() Config {
 			Maintenance:        60,
 			SourceScreenshot:   false,
 			FullSiteScreenshot: false,
+			MaxDepth:           0,
 		},
 		API: struct {
 			Host          string `yaml:"host"`

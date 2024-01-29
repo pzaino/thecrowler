@@ -80,7 +80,17 @@ func performDBMaintenance(db cdb.Handler) error {
 // This function simply query the database for URLs that need to be crawled
 func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	// Update the SQL query to fetch all necessary fields
-	query := `SELECT source_id, url, restricted, 0 AS flags FROM Sources WHERE (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days') OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes') OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week') OR (status = 'pending') ORDER BY last_crawled_at ASC`
+	query := `SELECT
+				source_id, url, restricted, 0 AS flags
+			FROM
+				Sources
+			WHERE
+				disabled = FALSE AND (
+				   (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days')
+				OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes')
+				OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week')
+				OR (status = 'pending'))
+			ORDER BY last_crawled_at ASC`
 
 	// Execute the query
 	rows, err := db.ExecuteQuery(query)
@@ -174,11 +184,14 @@ func main() {
 		log.Fatal("Error loading configuration file:", err)
 	}
 
-	// Define db before we set
+	// Define db before we set signal handlers
 	db, err := cdb.NewHandler(config)
 	if err != nil {
 		log.Fatal("Error creating database handler:", err)
 	}
+
+	// Define sel before we set signal handlers
+	var sel *selenium.Service
 
 	// Setting up a channel to listen for termination signals
 	log.Println("Setting up termination signals listener...")
@@ -192,7 +205,7 @@ func main() {
 		fmt.Printf("Received %v signal, shutting down...\n", sig)
 
 		// Close resources
-		closeResources(db) // Assuming db is your DB connection and wd is the WebDriver
+		closeResources(db, sel) // Assuming db is your DB connection and wd is the WebDriver
 
 		os.Exit(0)
 	}()
@@ -202,15 +215,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer closeResources(db, sel)
 
 	crowler.StartCrawler(config)
 
-	sel, err := crowler.StartSelenium()
+	sel, err = crowler.StartSelenium()
 	if err != nil {
 		log.Fatal("Error starting Selenium:", err)
 	}
-	defer crowler.StopSelenium(sel)
 
 	// Start the checkSources function in a goroutine
 	log.Println("Starting processing data (if any)...")
@@ -220,10 +232,14 @@ func main() {
 	//select {} // Infinite empty select block to keep the main goroutine running
 }
 
-func closeResources(db cdb.Handler) {
+func closeResources(db cdb.Handler, sel *selenium.Service) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
 		log.Println("Database connection closed.")
+	}
+	err := crowler.StopSelenium(sel)
+	if err != nil {
+		log.Println(err)
 	}
 }

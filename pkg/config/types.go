@@ -49,6 +49,7 @@ type Config struct {
 		Maintenance        int  `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
 		SourceScreenshot   bool `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
 		FullSiteScreenshot bool `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
+		MaxDepth           int  `yaml:"max_depth"`            // Maximum depth to crawl
 	} `yaml:"crawler"`
 
 	// API configuration
