@@ -83,12 +83,20 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
-	pageSource, err := getURLContent(source.URL, wd)
+	log.Println("Crawling URL:", source.URL)
+	pageSource, err := getURLContent(source.URL, wd, 0)
 	if err != nil {
 		log.Println("Error getting HTML content:", err)
 		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
+	}
+
+	// Try to find and click the 'Accept' or 'Consent' button in different languages
+	for _, text := range append(acceptTexts, consentTexts...) {
+		if clicked := findAndClickButton(wd, text); clicked {
+			break
+		}
 	}
 
 	// Extract necessary information from the content
@@ -134,6 +142,17 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 
 	if maxDepth == 0 {
 		maxDepth = 1
+	}
+
+	// Refresh the page
+	if err := wd.Refresh(); err != nil {
+		wd, err = ConnectSelenium(sel)
+		if err != nil {
+			log.Println("Error re-connecting to Selenium:", err)
+			// Update the source state in the database
+			updateSourceState(db, source.URL, err)
+			return
+		}
 	}
 
 	// Crawl the website
@@ -190,6 +209,42 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 	// Update the source state in the database
 	updateSourceState(db, source.URL, nil)
 	log.Printf("Finished crawling website: %s\n", source.URL)
+}
+
+func findAndClickButton(wd selenium.WebDriver, buttonText string) bool {
+	buttonTextLower := strings.ToLower(buttonText)
+	consentSelectors := []string{
+		// IDs and classes containing buttonText
+		fmt.Sprintf("//*[@id[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]]", buttonTextLower),
+		fmt.Sprintf("//*[@class[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]]", buttonTextLower),
+		// Text-based buttons and links
+		fmt.Sprintf("//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]", buttonTextLower),
+		// Image-based buttons (alt text)
+		fmt.Sprintf("//img[contains(@alt, '%s')]", buttonText),
+		// Add more selectors as necessary
+	}
+
+	for _, selector := range consentSelectors {
+		elements, err := wd.FindElements(selenium.ByXPATH, selector)
+		if err != nil {
+			continue
+		}
+
+		for _, element := range elements {
+			if visible, _ := element.IsDisplayed(); visible {
+				if clickable, _ := element.IsEnabled(); clickable {
+					err = element.Click()
+					if err == nil {
+						return true
+					}
+					// Log or handle the error if click failed
+				}
+			}
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+	return false
 }
 
 // updateSourceState is responsible for updating the state of a Source in
@@ -397,10 +452,14 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
-func getURLContent(url string, wd selenium.WebDriver) (selenium.WebDriver, error) {
+func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
 	err := wd.Get(url)
-	time.Sleep(time.Second * time.Duration(config.Crawler.Interval)) // Pause to let page load
+	if level > 0 {
+		time.Sleep(time.Second * time.Duration(config.Crawler.Interval)) // Pause to let page load
+	} else {
+		time.Sleep(time.Second * time.Duration((config.Crawler.Interval + 5))) // Pause to let Home page load
+	}
 	return wd, err
 }
 
@@ -613,7 +672,7 @@ func worker(db cdb.Handler, wd selenium.WebDriver,
 			log.Printf("Worker %d: started job %s\n", id, url)
 
 			// Get HTML content of the page
-			htmlContent, err := getURLContent(url, wd)
+			htmlContent, err := getURLContent(url, wd, 1)
 			if err != nil {
 				skip = true
 				log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
@@ -852,6 +911,7 @@ func captureScreenshots(wd selenium.WebDriver, totalHeight, windowHeight int) ([
 		if err != nil {
 			return nil, err
 		}
+		time.Sleep(1 * time.Second) // Pause to let page load
 
 		// Take screenshot of the current view
 		screenshot, err := wd.Screenshot()

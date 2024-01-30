@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	sleepTime = 1 * time.Minute // Time to sleep when no URLs are found
+	sleepTime = 30 * time.Second // Time to sleep when no URLs are found
 )
 
 var (
@@ -161,8 +161,7 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []c
 	var wg sync.WaitGroup // Declare a WaitGroup
 
 	for _, source := range sources {
-		wg.Add(1) // Increment the WaitGroup counter
-		log.Println("Crawling URL:", source.URL)
+		wg.Add(1)                 // Increment the WaitGroup counter
 		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
 			defer wg.Done() // Decrement the counter when the goroutine completes
 			crowler.CrawlWebsite(db, src, <-sel)
@@ -286,8 +285,7 @@ func main() {
 	log.Println("Starting processing data (if any)...")
 	checkSources(db, seleniumInstances)
 
-	// Keep the main function alive
-	//select {} // Infinite empty select block to keep the main goroutine running
+	select {} // Block forever
 }
 
 func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
