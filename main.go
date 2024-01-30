@@ -171,20 +171,18 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []c
 	wg.Wait() // Block until all goroutines have decremented the counter
 }
 
-func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance) {
+func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance) error {
 	var err error
 	// Reload the configuration file
 	*config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
-		closeResources(*db, *seleniumInstances) // Release resources
-		log.Fatal("Error loading configuration file:", err)
+		return fmt.Errorf("error loading configuration file: %s", err)
 	}
 
 	// Reconnect to the database
 	*db, err = cdb.NewHandler(*config)
 	if err != nil {
-		closeResources(*db, *seleniumInstances) // Release resources
-		log.Fatal("Error creating database handler:", err)
+		return fmt.Errorf("error creating database handler: %s", err)
 	}
 
 	// Reinitialize the Selenium services
@@ -192,8 +190,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	for _, seleniumConfig := range config.Selenium {
 		selService, err := crowler.NewSeleniumService(seleniumConfig)
 		if err != nil {
-			closeResources(*db, *seleniumInstances) // Release resources
-			log.Fatal(err)
+			return fmt.Errorf("error creating Selenium Instances: %s", err)
 		}
 		*seleniumInstances <- crowler.SeleniumInstance{
 			Service: selService,
@@ -204,6 +201,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	// Start the crawler
 	crowler.StartCrawler(*config)
 
+	return nil
 }
 
 func main() {
@@ -221,60 +219,56 @@ func main() {
 	log.Println("Setting up termination signals listener...")
 	signals := make(chan os.Signal, 1)
 	// Catch SIGINT (Ctrl+C) and SIGTERM signals
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
 	// Use a select statement to block until a signal is received
 	go func() {
-		sig := <-signals
-		switch sig {
-		case syscall.SIGINT:
-			// Handle SIGINT (Ctrl+C)
-			log.Println("SIGINT received, shutting down...")
-			closeResources(db, seleniumInstances) // Release resources
-			os.Exit(0)
-
-		case syscall.SIGTERM:
-			// Handle SIGTERM
-			fmt.Println("SIGTERM received, shutting down...")
-			closeResources(db, seleniumInstances) // Release resources
-			os.Exit(0)
-
-		case syscall.SIGQUIT:
-			// Handle SIGQUIT
-			fmt.Println("SIGQUIT received, shutting down...")
-			closeResources(db, seleniumInstances) // Release resources
-			os.Exit(0)
-
-		case syscall.SIGKILL:
-			// Handle SIGKILL
-			fmt.Println("SIGKILL received, shutting down...")
-			closeResources(db, seleniumInstances) // Release resources
-			os.Exit(0)
-
-		case syscall.SIGSTOP:
-			// Handle SIGSTOP
-			fmt.Println("SIGSTOP received, shutting down...")
-			closeResources(db, seleniumInstances) // Release resources
-			os.Exit(0)
-
-		case syscall.SIGHUP:
-			// Handle SIGHUP
-			fmt.Println("SIGHUP received, reloading configuration...")
-			initAll(configFile, &config, &db, &seleniumInstances)
-			// Connect to the database
-			err := db.Connect(config)
-			if err != nil {
+		for {
+			sig := <-signals
+			switch sig {
+			case syscall.SIGINT:
+				// Handle SIGINT (Ctrl+C)
+				log.Println("SIGINT received, shutting down...")
 				closeResources(db, seleniumInstances) // Release resources
-				log.Fatal(err)
+				os.Exit(0)
+
+			case syscall.SIGTERM:
+				// Handle SIGTERM
+				fmt.Println("SIGTERM received, shutting down...")
+				closeResources(db, seleniumInstances) // Release resources
+				os.Exit(0)
+
+			case syscall.SIGQUIT:
+				// Handle SIGQUIT
+				fmt.Println("SIGQUIT received, shutting down...")
+				closeResources(db, seleniumInstances) // Release resources
+				os.Exit(0)
+
+			case syscall.SIGHUP:
+				// Handle SIGHUP
+				fmt.Println("SIGHUP received, reloading configuration...")
+				err := initAll(configFile, &config, &db, &seleniumInstances)
+				if err != nil {
+					log.Fatal(err)
+				}
+				// Connect to the database
+				err = db.Connect(config)
+				if err != nil {
+					closeResources(db, seleniumInstances) // Release resources
+					log.Fatal(err)
+				}
 			}
 		}
 	}()
 
 	// Initialize the crawler
-	initAll(configFile, &config, &db, &seleniumInstances)
+	err := initAll(configFile, &config, &db, &seleniumInstances)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Connect to the database
-	err := db.Connect(config)
+	err = db.Connect(config)
 	if err != nil {
 		closeResources(db, seleniumInstances) // Release resources
 		log.Fatal(err)
