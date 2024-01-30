@@ -7,21 +7,22 @@ services:
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - POSTGRES_USER=${DOCKER_POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${DOCKER_POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${DOCKER_POSTGRES_PASSWORD}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./pkg/database/postgresql-setup-v1.1.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.1.pgsql
 
   searchapi:
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
-      - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
-      - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
-      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-localhost}
+      - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
@@ -37,10 +38,10 @@ services:
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASS:-changeme}
-      - POSTGRES_DB_HOST=${DOCKER_POSTGRES_DB_HOST:-localhost}
-      - POSTGRES_DB_PORT=${DOCKER_POSTGRES_DB_PORT:-5432}
-      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_DB_SSL_MODE:-disable}
+      - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-localhost}
+      - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .

@@ -27,11 +27,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/abadojack/whatlanggo"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
@@ -46,19 +48,20 @@ import (
 )
 
 const (
-	numberOfWorkers = 5 // Adjust this based on your needs
-	dbConnCheckErr  = "Error checking database connection: %v\n"
+	dbConnCheckErr = "Error checking database connection: %v\n"
 )
 
 var (
-	config cfg.Config
+	config     cfg.Config
+	linksMutex sync.Mutex
+	newLinks   []string
 )
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
+func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 
 	// Define wd
 	var wd selenium.WebDriver
@@ -66,7 +69,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
 
 	// Connect to Selenium
 	for {
-		wd, err = ConnectSelenium(sel, config)
+		wd, err = ConnectSelenium(sel)
 		if err != nil {
 			log.Println("Error connecting to Selenium:", err)
 			time.Sleep(5 * time.Second)
@@ -75,16 +78,25 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
 		}
 	}
 	defer QuitSelenium(wd)
+
 	log.Println("Connected to Selenium WebDriver successfully.")
 
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
-	pageSource, err := getHTMLContent(source.URL, wd)
+	log.Println("Crawling URL:", source.URL)
+	pageSource, err := getURLContent(source.URL, wd, 0)
 	if err != nil {
 		log.Println("Error getting HTML content:", err)
 		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
+	}
+
+	// Try to find and click the 'Accept' or 'Consent' button in different languages
+	for _, text := range append(acceptTexts, consentTexts...) {
+		if clicked := findAndClickButton(wd, text); clicked {
+			break
+		}
 	}
 
 	// Extract necessary information from the content
@@ -122,31 +134,117 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel *selenium.Service) {
 		updateSourceState(db, source.URL, err)
 		return
 	}
-	links := extractLinks(htmlContent)
+	initialLinks := extractLinks(htmlContent)
 
-	// Create a channel to enqueue jobs
-	jobs := make(chan string, len(links))
+	allLinks := initialLinks // links extracted from the initial page
+	var currentDepth int
+	maxDepth := config.Crawler.MaxDepth // set a maximum depth for crawling
 
-	// Use a WaitGroup to wait for all goroutines to finish
-	var wg sync.WaitGroup
-
-	// Launch worker goroutines
-	for w := 1; w <= numberOfWorkers; w++ {
-		wg.Add(1)
-		go worker(db, wd, w, jobs, &wg, &source)
+	if maxDepth == 0 {
+		maxDepth = 1
 	}
 
-	// Enqueue jobs (links)
-	for _, link := range links {
-		jobs <- link
+	// Refresh the page
+	if err := wd.Refresh(); err != nil {
+		wd, err = ConnectSelenium(sel)
+		if err != nil {
+			log.Println("Error re-connecting to Selenium:", err)
+			// Update the source state in the database
+			updateSourceState(db, source.URL, err)
+			return
+		}
 	}
-	close(jobs)
 
-	// Wait for all the workers to finish
-	wg.Wait()
+	// Crawl the website
+	newLinksFound := len(initialLinks)
+	for (currentDepth < maxDepth) && (newLinksFound > 0) {
+		// Create a channel to enqueue jobs
+		jobs := make(chan string, len(allLinks))
 
+		// Create a channel to signal completion
+		done := make(chan bool, config.Crawler.Workers)
+
+		// Use a WaitGroup to wait for all goroutines to finish
+		var wg sync.WaitGroup
+
+		// Launch worker goroutines
+		for w := 1; w <= config.Crawler.Workers; w++ {
+			wg.Add(1)
+			go worker(db, wd, w, jobs, done, &wg, &source)
+		}
+
+		// Enqueue jobs (allLinks)
+		for _, link := range allLinks {
+			jobs <- link
+		}
+		close(jobs)
+
+		log.Println("Enqueued jobs:", len(allLinks))
+
+		log.Println("Waiting for workers to finish...")
+		// Wait for workers to finish and collect new links
+		for i := 0; i < config.Crawler.Workers; i++ {
+			<-done
+		}
+		// Wait for all the wg workers to finish
+		wg.Wait()
+		log.Println("All workers finished.")
+
+		// Prepare for the next iteration
+		linksMutex.Lock()
+		if len(newLinks) > 0 {
+			newLinksFound = len(newLinks)
+			allLinks = newLinks
+			newLinks = []string{} // reset newLinks
+		} else {
+			newLinksFound = 0
+			newLinks = []string{} // reset newLinks
+		}
+		linksMutex.Unlock()
+		currentDepth++
+		if config.Crawler.MaxDepth == 0 {
+			maxDepth = currentDepth + 1
+		}
+	}
 	// Update the source state in the database
 	updateSourceState(db, source.URL, nil)
+	log.Printf("Finished crawling website: %s\n", source.URL)
+}
+
+func findAndClickButton(wd selenium.WebDriver, buttonText string) bool {
+	buttonTextLower := strings.ToLower(buttonText)
+	consentSelectors := []string{
+		// IDs and classes containing buttonText
+		fmt.Sprintf("//*[@id[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]]", buttonTextLower),
+		fmt.Sprintf("//*[@class[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]]", buttonTextLower),
+		// Text-based buttons and links
+		fmt.Sprintf("//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]", buttonTextLower),
+		// Image-based buttons (alt text)
+		fmt.Sprintf("//img[contains(@alt, '%s')]", buttonText),
+		// Add more selectors as necessary
+	}
+
+	for _, selector := range consentSelectors {
+		elements, err := wd.FindElements(selenium.ByXPATH, selector)
+		if err != nil {
+			continue
+		}
+
+		for _, element := range elements {
+			if visible, _ := element.IsDisplayed(); visible {
+				if clickable, _ := element.IsEnabled(); clickable {
+					err = element.Click()
+					if err == nil {
+						return true
+					}
+					// Log or handle the error if click failed
+				}
+			}
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+	return false
 }
 
 // updateSourceState is responsible for updating the state of a Source in
@@ -242,13 +340,22 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, error) {
 	var indexID int
 	err := tx.QueryRow(`
-        INSERT INTO SearchIndex (source_id, page_url, title, summary, content, indexed_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
+        INSERT INTO SearchIndex
+			(source_id, page_url, title, summary, content, detected_lang, detected_type, indexed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
         ON CONFLICT (page_url) DO UPDATE
-        SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, indexed_at = NOW()
-        RETURNING index_id`, pageInfo.sourceID, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText).
+        SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, indexed_at = NOW()
+        RETURNING index_id`, pageInfo.sourceID, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
 		Scan(&indexID)
 	return indexID, err
+}
+
+func strLeft(s string, x int) string {
+	runes := []rune(s)
+	if x < 0 || x > len(runes) {
+		return s
+	}
+	return string(runes[:x])
 }
 
 // insertMetaTags inserts meta tags into the database for a given index ID.
@@ -343,15 +450,17 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 	return 0, fmt.Errorf("failed to insert keyword after retries: %s", keyword)
 }
 
-// getHTMLContent is responsible for retrieving the HTML content of a page
+// getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
-func getHTMLContent(url string, wd selenium.WebDriver) (selenium.WebDriver, error) {
+func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
-	if err := wd.Get(url); err != nil {
-		return nil, err
+	err := wd.Get(url)
+	if level > 0 {
+		time.Sleep(time.Second * time.Duration(config.Crawler.Interval)) // Pause to let page load
+	} else {
+		time.Sleep(time.Second * time.Duration((config.Crawler.Interval + 5))) // Pause to let Home page load
 	}
-	time.Sleep(time.Second * time.Duration(config.Crawler.Interval)) // Pause to let page load
-	return wd, nil
+	return wd, err
 }
 
 // extractPageInfo is responsible for extracting information from a collected page.
@@ -373,12 +482,63 @@ func extractPageInfo(webPage selenium.WebDriver) PageInfo {
 
 	metaTags := extractMetaTags(doc)
 
+	currentURL, _ := webPage.CurrentURL()
+
 	return PageInfo{
-		Title:    title,
-		Summary:  summary,
-		BodyText: bodyText,
-		MetaTags: metaTags,
+		Title:        title,
+		Summary:      summary,
+		BodyText:     bodyText,
+		MetaTags:     metaTags,
+		DetectedLang: detectLang(webPage),
+		DetectedType: inferDocumentType(currentURL),
 	}
+}
+
+func detectLang(wd selenium.WebDriver) string {
+	var lang string
+	var err error
+	html, err := wd.FindElement(selenium.ByXPATH, "/html")
+	if err == nil {
+		lang, err = html.GetAttribute("lang")
+		if err != nil {
+			lang = ""
+		}
+	}
+	if lang == "" {
+		bodyHTML, err := wd.FindElement(selenium.ByTagName, "body")
+		if err != nil {
+			log.Println("Error retrieving text:", err)
+			return "unknown"
+		}
+		bodyText, _ := bodyHTML.Text()
+		info := whatlanggo.Detect(bodyText)
+		lang = whatlanggo.LangToString(info.Lang)
+		if lang != "" {
+			lang = convertLangStrToLangCode(lang)
+		}
+	}
+	if config.DebugLevel > 1 {
+		log.Println("Language:", lang)
+	}
+	return lang
+}
+
+func convertLangStrToLangCode(lang string) string {
+	lng := strings.TrimSpace(strings.ToLower(lang))
+	lng = langMap[lng]
+	return lng
+}
+
+// inferDocumentType returns the document type based on the file extension
+func inferDocumentType(url string) string {
+	extension := strings.TrimSpace(strings.ToLower(filepath.Ext(url)))
+	if extension != "" {
+		if docType, ok := docTypeMap[extension]; ok {
+			log.Println("Document Type:", docType)
+			return docType
+		}
+	}
+	return "UNKNOWN"
 }
 
 // extractMetaTags is a function that extracts meta tags from a goquery.Document.
@@ -481,55 +641,68 @@ func isExternalLink(sourceURL, linkURL string) bool {
 
 // worker is the worker function that is responsible for crawling a page
 func worker(db cdb.Handler, wd selenium.WebDriver,
-	id int, jobs chan string, wg *sync.WaitGroup, source *cdb.Source) {
+	id int, jobs chan string, done chan<- bool, wg *sync.WaitGroup, source *cdb.Source) {
 	defer wg.Done()
+	skip := false
 	for url := range jobs {
+		skip = false
+
+		url = strings.TrimSpace(url)
+		if url == "" {
+			skip = true
+		}
+
+		// Check if the URL is relative
+		if strings.HasPrefix(url, "/") {
+			url, _ = combineURLs(source.URL, url)
+		}
+
+		// Check if the URL is external
 		if source.Restricted {
 			// If the Source is restricted
 			// check if the url is outside the Source domain
 			// if so skip it
 			if isExternalLink(source.URL, url) {
-				log.Printf("Worker %d: Skipping restricted URL: %s\n", id, url)
-				continue
+				log.Printf("Worker %d: Skipping URL '%s' due 'restricted' policy.\n", id, url)
+				skip = true
 			}
 		}
-		log.Printf("Worker %d: started job %s\n", id, url)
 
-		// remove trailing space in url
-		url = strings.TrimSpace(url)
-		if strings.HasPrefix(url, "/") {
-			url, _ = combineURLs(source.URL, url)
+		if !skip {
+			log.Printf("Worker %d: started job %s\n", id, url)
+
+			// Get HTML content of the page
+			htmlContent, err := getURLContent(url, wd, 1)
+			if err != nil {
+				skip = true
+				log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
+				continue
+			}
+
+			// Extract necessary information from the content
+			// For simplicity, we're extracting just the title and full content
+			// You might want to extract more specific information
+			pageCache := extractPageInfo(htmlContent)
+
+			// Index the page content in the database
+			pageCache.sourceID = source.ID
+			indexPage(db, url, pageCache)
+
+			// Extract links and add them to newLinks
+			extractedLinks := extractLinks(pageCache.BodyText)
+			if len(extractedLinks) > 0 {
+				linksMutex.Lock()
+				newLinks = append(newLinks, extractedLinks...)
+				linksMutex.Unlock()
+			}
+
+			log.Printf("Worker %d: finished job %s\n", id, url)
 		}
-		if url == "" {
-			continue
-		}
-
-		// Get HTML content of the page
-		htmlContent, err := getHTMLContent(url, wd)
-		if err != nil {
-			log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
-			continue
-		}
-
-		// Extract necessary information from the content
-		// For simplicity, we're extracting just the title and full content
-		// You might want to extract more specific information
-		pageCache := extractPageInfo(htmlContent)
-
-		// Index the page content in the database
-		pageCache.sourceID = source.ID
-		indexPage(db, url, pageCache)
-
-		// Extract links from the page
-		links := extractLinks(pageCache.BodyText)
-
-		// Enqueue jobs (links)
-		for _, link := range links {
-			jobs <- link
-		}
-
-		log.Printf("Worker %d: finished job %s\n", id, url)
 	}
+	if skip {
+		log.Printf("Worker %d: finished job.\n", id)
+	}
+	done <- true
 }
 
 // combineURLs is a utility function to combine a base URL with a relative URL
@@ -559,8 +732,10 @@ func StartCrawler(cf cfg.Config) {
 // instead of using only a container based one. However, I found that the container
 // based Selenium server is more stable and reliable than the local one.
 // and it's obviously easier to setup and more secure.
-func StartSelenium() (*selenium.Service, error) {
+func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	log.Println("Configuring Selenium...")
+	service, err := selenium.NewSeleniumService(c.Path, c.Port)
+
 	// Start a Selenium WebDriver server instance (e.g., chromedriver)
 	/*
 		var opts []selenium.ServiceOption
@@ -598,25 +773,30 @@ func StartSelenium() (*selenium.Service, error) {
 	// Start a Selenium WebDriver server instance (e.g., chromedriver)
 	//service, err := selenium.NewSeleniumService(config.Selenium.Path, config.Selenium.Port, opts...)
 	//service, err := selenium.NewChromeDriverService(config.Selenium.DriverPath, config.Selenium.Port)
-	var service *selenium.Service
-	var err error // = nil
-	log.Printf("Done!\n")
 
+	log.Printf("Done!\n")
 	return service, err
 }
 
 // StopSelenium Stops the Selenium server instance (if local)
-func StopSelenium(sel *selenium.Service) {
+func StopSelenium(sel *selenium.Service) error {
+	if sel == nil {
+		return errors.New("selenium service is not running")
+	}
+	// Stop the Selenium WebDriver server instance
 	err := sel.Stop()
 	if err != nil {
 		log.Printf("Error stopping Selenium: %v\n", err)
+	} else {
+		log.Println("Selenium stopped successfully.")
 	}
+	return err
 }
 
 // ConnectSelenium is responsible for connecting to the Selenium server instance
-func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriver, error) {
+func ConnectSelenium(sel SeleniumInstance) (selenium.WebDriver, error) {
 	// Connect to the WebDriver instance running locally.
-	caps := selenium.Capabilities{"browserName": config.Selenium.Type}
+	caps := selenium.Capabilities{"browserName": sel.Config.Type}
 	caps.AddChrome(chrome.Capabilities{
 		Args: []string{
 			"--headless", // Updated headless mode argument
@@ -625,8 +805,7 @@ func ConnectSelenium(sel *selenium.Service, config cfg.Config) (selenium.WebDriv
 		},
 		W3C: true,
 	})
-	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://"+config.Selenium.Host+":%d/wd/hub", config.Selenium.Port))
-	//wd, err := selenium.NewRemote(caps, "")
+	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
 	return wd, err
 }
 
@@ -732,6 +911,7 @@ func captureScreenshots(wd selenium.WebDriver, totalHeight, windowHeight int) ([
 		if err != nil {
 			return nil, err
 		}
+		time.Sleep(1 * time.Second) // Pause to let page load
 
 		// Take screenshot of the current view
 		screenshot, err := wd.Screenshot()

@@ -26,48 +26,61 @@ type FileStorageAPI struct {
 	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 }
 
+// Database represents the database configuration
+type Database struct {
+	Type      string `yaml:"type"`       // Type of database (e.g., "postgres", "mysql", "sqlite")
+	Host      string `yaml:"host"`       // Hostname of the database server
+	Port      int    `yaml:"port"`       // Port number of the database server
+	User      string `yaml:"user"`       // Username for database authentication
+	Password  string `yaml:"password"`   // Password for database authentication
+	DBName    string `yaml:"dbname"`     // Name of the database
+	RetryTime int    `yaml:"retry_time"` // Time to wait before retrying to connect to the database (in seconds)
+	PingTime  int    `yaml:"ping_time"`  // Time to wait before retrying to ping the database (in seconds)
+	SSLMode   string `yaml:"sslmode"`    // SSL mode for database connection (e.g., "disable")
+}
+
+// Crawler represents the crawler configuration
+type Crawler struct {
+	Workers            int  `yaml:"workers"`              // Number of crawler workers
+	Interval           int  `yaml:"interval"`             // Interval between crawler requests (in seconds)
+	Timeout            int  `yaml:"timeout"`              // Timeout for crawler requests (in seconds)
+	Maintenance        int  `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
+	SourceScreenshot   bool `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
+	FullSiteScreenshot bool `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
+	MaxDepth           int  `yaml:"max_depth"`            // Maximum depth to crawl
+}
+
+// API represents the API configuration
+type API struct {
+	Host          string `yaml:"host"`           // Hostname of the API server
+	Port          int    `yaml:"port"`           // Port number of the API server
+	Timeout       int    `yaml:"timeout"`        // Timeout for API requests (in seconds)
+	ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
+}
+
+// Selenium represents the Selenium configuration
+type Selenium struct {
+	Path       string `yaml:"path"`        // Path to the Selenium executable
+	DriverPath string `yaml:"driver_path"` // Path to the Selenium driver executable
+	Type       string `yaml:"type"`        // Type of Selenium driver
+	Port       int    `yaml:"port"`        // Port number for Selenium server
+	Host       string `yaml:"host"`        // Hostname of the Selenium server
+	Headless   bool   `yaml:"headless"`    // Whether to run Selenium in headless mode
+}
+
 // Config represents the structure of the configuration file
 type Config struct {
 	// Database configuration
-	Database struct {
-		Type      string `yaml:"type"`       // Type of database (e.g., "postgres", "mysql", "sqlite")
-		Host      string `yaml:"host"`       // Hostname of the database server
-		Port      int    `yaml:"port"`       // Port number of the database server
-		User      string `yaml:"user"`       // Username for database authentication
-		Password  string `yaml:"password"`   // Password for database authentication
-		DBName    string `yaml:"dbname"`     // Name of the database
-		RetryTime int    `yaml:"retry_time"` // Time to wait before retrying to connect to the database (in seconds)
-		PingTime  int    `yaml:"ping_time"`  // Time to wait before retrying to ping the database (in seconds)
-		SSLMode   string `yaml:"sslmode"`    // SSL mode for database connection (e.g., "disable")
-	} `yaml:"database"`
+	Database Database `yaml:"database"`
 
 	// Crawler configuration
-	Crawler struct {
-		Workers            int  `yaml:"workers"`              // Number of crawler workers
-		Interval           int  `yaml:"interval"`             // Interval between crawler requests (in seconds)
-		Timeout            int  `yaml:"timeout"`              // Timeout for crawler requests (in seconds)
-		Maintenance        int  `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
-		SourceScreenshot   bool `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
-		FullSiteScreenshot bool `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
-	} `yaml:"crawler"`
+	Crawler Crawler `yaml:"crawler"`
 
 	// API configuration
-	API struct {
-		Host          string `yaml:"host"`           // Hostname of the API server
-		Port          int    `yaml:"port"`           // Port number of the API server
-		Timeout       int    `yaml:"timeout"`        // Timeout for API requests (in seconds)
-		ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
-	} `yaml:"api"`
+	API API `yaml:"api"`
 
 	// Selenium configuration
-	Selenium struct {
-		Path       string `yaml:"path"`        // Path to the Selenium executable
-		DriverPath string `yaml:"driver_path"` // Path to the Selenium driver executable
-		Type       string `yaml:"type"`        // Type of Selenium driver
-		Port       int    `yaml:"port"`        // Port number for Selenium server
-		Host       string `yaml:"host"`        // Hostname of the Selenium server
-		Headless   bool   `yaml:"headless"`    // Whether to run Selenium in headless mode
-	} `yaml:"selenium"`
+	Selenium []Selenium `yaml:"selenium"`
 
 	// Image storage API configuration (to store images on a separate server)
 	ImageStorageAPI FileStorageAPI `yaml:"image_storage_api"`
