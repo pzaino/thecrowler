@@ -59,6 +59,17 @@ This will install the pre-commit hooks and will run them on every commit you
 make. If any of the hooks fail, the commit will fail and you'll have to fix
 the issues before you can commit.
 
+Last bit I recommend is to test you have all pre-commit hooks dependencies
+installed. To check this, run the following command:
+
+```bash
+pre-commit run --all-files
+```
+
+If you have all the dependencies installed, everything should pass. If not,
+you'll see a list of errors and warnings. You can install the dependencies
+by following the instructions in the error messages.
+
 We actively welcome your pull requests:
 
 1. Fork the repo and create your branch from our `develop` branch.
