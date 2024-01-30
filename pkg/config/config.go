@@ -119,17 +119,7 @@ func getConfigFile(confName string) (Config, error) {
 // NewConfig returns a new Config struct with default values.
 func NewConfig() Config {
 	return Config{
-		Database: struct {
-			Type      string `yaml:"type"`
-			Host      string `yaml:"host"`
-			Port      int    `yaml:"port"`
-			User      string `yaml:"user"`
-			Password  string `yaml:"password"`
-			DBName    string `yaml:"dbname"`
-			RetryTime int    `yaml:"retry_time"`
-			PingTime  int    `yaml:"ping_time"`
-			SSLMode   string `yaml:"sslmode"`
-		}{
+		Database: Database{
 			Type:      "postgres",
 			Host:      "localhost",
 			Port:      5432,
@@ -140,46 +130,30 @@ func NewConfig() Config {
 			PingTime:  5,
 			SSLMode:   "disable",
 		},
-		Crawler: struct {
-			Workers            int  `yaml:"workers"`
-			Interval           int  `yaml:"interval"`
-			Timeout            int  `yaml:"timeout"`
-			Maintenance        int  `yaml:"maintenance"`
-			SourceScreenshot   bool `yaml:"source_screenshot"`
-			FullSiteScreenshot bool `yaml:"full_site_screenshot"`
-		}{
+		Crawler: Crawler{
 			Workers:            1,
 			Interval:           2,
 			Timeout:            10,
 			Maintenance:        60,
 			SourceScreenshot:   false,
 			FullSiteScreenshot: false,
+			MaxDepth:           0,
 		},
-		API: struct {
-			Host          string `yaml:"host"`
-			Port          int    `yaml:"port"`
-			Timeout       int    `yaml:"timeout"`
-			ContentSearch bool   `yaml:"content_search"`
-		}{
+		API: API{
 			Host:          "localhost",
 			Port:          8080,
 			Timeout:       10,
 			ContentSearch: false,
 		},
-		Selenium: struct {
-			Path       string `yaml:"path"`
-			DriverPath string `yaml:"driver_path"`
-			Type       string `yaml:"type"`
-			Port       int    `yaml:"port"`
-			Host       string `yaml:"host"`
-			Headless   bool   `yaml:"headless"`
-		}{
-			Path:       "/path/to/selenium",
-			DriverPath: "/path/to/driver",
-			Type:       "chrome",
-			Port:       4444,
-			Host:       "localhost",
-			Headless:   true,
+		Selenium: []Selenium{
+			{
+				Path:       "/path/to/selenium",
+				DriverPath: "/path/to/driver",
+				Type:       "chrome",
+				Port:       4444,
+				Host:       "localhost",
+				Headless:   true,
+			},
 		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
@@ -212,5 +186,37 @@ func LoadConfig(confName string) (Config, error) {
 // IsEmpty checks if the given config is empty.
 // It returns true if the config is empty, false otherwise.
 func IsEmpty(config Config) bool {
-	return config == Config{}
+	// Check if Crawler slice is nil or has zero length
+	if config.Crawler != (Crawler{}) {
+		return false
+	}
+
+	// Add checks for other fields in Config struct
+	// Example (assuming there are other fields like `SomeField`):
+	if config.Database != (Database{}) {
+		return false
+	}
+
+	if config.API != (API{}) {
+		return false
+	}
+
+	if len(config.Selenium) != 0 {
+		return false
+	}
+
+	if config.ImageStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if config.OS != "" {
+		return false
+	}
+
+	if config.DebugLevel != 0 {
+		return false
+	}
+
+	// If all checks pass, the struct is considered empty
+	return true
 }

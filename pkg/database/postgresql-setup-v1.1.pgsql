@@ -1,9 +1,10 @@
 -- PostgreSQL setup script for the search engine database.
 -- Adjusted for better performance and best practices.
 
--- To run this setup script manually from a PostgreSQL UI, uncomment the following lines:
--- Define variables and replace their values with your own
---\set POSTGRES_DB 'your_database_name'
+-- To run this setup script manually from a PostgreSQL UI:
+-- Define the following variables in psql replacing their values
+-- with your own and then run the script.
+--\set POSTGRES_DB 'SitesIndex'
 --\set CROWLER_DB_USER 'your_username'
 --\set CROWLER_DB_PASSWORD 'your_password'
 
@@ -16,7 +17,8 @@ CREATE TABLE IF NOT EXISTS Sources (
     last_error_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP,
-    restricted BOOLEAN DEFAULT TRUE
+    restricted BOOLEAN DEFAULT TRUE,
+    disabled BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS SearchIndex (
@@ -29,7 +31,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     snapshot_url TEXT,                              -- Using TEXT for long URLs
     indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Has default value
     detected_type VARCHAR(8),                       -- (content type) denormalized for fast searches
-    detected_language VARCHAR(8)                    -- (URI language) denormalized for fast searches
+    detected_lang VARCHAR(8)                        -- (URI language) denormalized for fast searches
 );
 
 CREATE TABLE IF NOT EXISTS MetaTags (
