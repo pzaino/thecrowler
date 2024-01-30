@@ -727,7 +727,7 @@ func StartCrawler(cf cfg.Config) {
 	config = cf
 }
 
-// StartSelenium is responsible for initializing Selenium Driver
+// NewSeleniumService is responsible for initializing Selenium Driver
 // The commented out code could be used to initialize a local Selenium server
 // instead of using only a container based one. However, I found that the container
 // based Selenium server is more stable and reliable than the local one.
