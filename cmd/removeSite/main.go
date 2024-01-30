@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package main (removeSite) is a command line that allows to remove
+// sources from crawl to TheCROWler DB.
 package main
 
 import (

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package main (addSite) is a command line that allows to add sources to
+// crawl to TheCROWler DB.
 package main
 
 import (

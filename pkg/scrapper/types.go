@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package scrapper implements the scrapper library for the Crowler and
+// the Crowler search engine.
 package scrapper
 
 // SiteRules represents the structure of the site_rules.yaml file
