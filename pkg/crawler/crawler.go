@@ -136,8 +136,8 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 	}
 	initialLinks := extractLinks(htmlContent)
 
-	var allLinks []string = initialLinks // links extracted from the initial page
-	var currentDepth int = 0
+	allLinks := initialLinks // links extracted from the initial page
+	var currentDepth int
 	maxDepth := config.Crawler.MaxDepth // set a maximum depth for crawling
 
 	if maxDepth == 0 {
@@ -345,12 +345,12 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, 
         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
         ON CONFLICT (page_url) DO UPDATE
         SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, indexed_at = NOW()
-        RETURNING index_id`, pageInfo.sourceID, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, StrLeft(pageInfo.DetectedLang, 8), StrLeft(pageInfo.DetectedType, 8)).
+        RETURNING index_id`, pageInfo.sourceID, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
 		Scan(&indexID)
 	return indexID, err
 }
 
-func StrLeft(s string, x int) string {
+func strLeft(s string, x int) string {
 	runes := []rune(s)
 	if x < 0 || x > len(runes) {
 		return s

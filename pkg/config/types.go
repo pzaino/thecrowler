@@ -26,6 +26,7 @@ type FileStorageAPI struct {
 	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 }
 
+// Database represents the database configuration
 type Database struct {
 	Type      string `yaml:"type"`       // Type of database (e.g., "postgres", "mysql", "sqlite")
 	Host      string `yaml:"host"`       // Hostname of the database server
@@ -38,6 +39,7 @@ type Database struct {
 	SSLMode   string `yaml:"sslmode"`    // SSL mode for database connection (e.g., "disable")
 }
 
+// Crawler represents the crawler configuration
 type Crawler struct {
 	Workers            int  `yaml:"workers"`              // Number of crawler workers
 	Interval           int  `yaml:"interval"`             // Interval between crawler requests (in seconds)
@@ -48,6 +50,7 @@ type Crawler struct {
 	MaxDepth           int  `yaml:"max_depth"`            // Maximum depth to crawl
 }
 
+// API represents the API configuration
 type API struct {
 	Host          string `yaml:"host"`           // Hostname of the API server
 	Port          int    `yaml:"port"`           // Port number of the API server
@@ -55,6 +58,7 @@ type API struct {
 	ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
 }
 
+// Selenium represents the Selenium configuration
 type Selenium struct {
 	Path       string `yaml:"path"`        // Path to the Selenium executable
 	DriverPath string `yaml:"driver_path"` // Path to the Selenium driver executable
