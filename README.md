@@ -128,9 +128,10 @@ Once you've set your ENV vars, follow these steps:
 4. Run `./docker-build.sh` to build the with Docker compose and the right
 platform (see [here](doc/docker_build.md) for more info)
 
-**Please Note(1)**: If you're running the CROWler on a Raspberry Pi, you'll need to
-build the CROWler with the `arm` platform. To do so, the easier way is to build
-the CROWler with the `docker-build.sh` script directly on the Raspberry Pi.
+**Please Note(1)**: If you're running the CROWler on a Raspberry Pi, you'll
+need to build the CROWler with the `arm` platform. To do so, the easier way
+is to build the CROWler with the `docker-build.sh` script directly on the
+Raspberry Pi.
 
 **Please Note(2)**: If need to do a rebuild and want to clean up everything, run
 the following command:
