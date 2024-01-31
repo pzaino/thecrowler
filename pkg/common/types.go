@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// common package is used to store common functions and variables
+// Package common package is used to store common functions and variables
 package common
 
 // enum for the debug level
