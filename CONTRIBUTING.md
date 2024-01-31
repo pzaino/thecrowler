@@ -110,8 +110,15 @@ People *love* thorough bug reports.
 
 ## Use a Consistent Coding Style
 
-- 4 spaces for indentation rather than tabs
-- You can try running `gofmt` for style unification
+- Format rules we follow are the same as the ones used by the Go community
+- Format rules are enforced by pre-commit gofmt hook
+- For what concern function definitions, if your function can fail, it should
+return an error as the last return value. For more information, see
+[Error Handling and Go](https://blog.golang.org/error-handling-and-go)
+- Ensure you have added or updated unit tests to cover your changes. For more
+information, see [Test Policy for TheCROWler](doc/test_policy.md).
+- Ensure you comment your code, packages and functions according to the rules
+described in [Effective Go](https://golang.org/doc/effective_go.html#commentary)
 
 ## Code of Conduct
 
