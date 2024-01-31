@@ -39,6 +39,41 @@ type PageInfo struct {
 }
 
 var (
+	// traditionalAgentStr is a list of user agent strings to use for crawling.
+	// It's used when the user agent rotation is disabled.
+	agentStrMap = map[string]string{
+		"desktop1": "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36",
+		"mobile1":  "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Mobile Safari/537.36",
+	}
+
+	browserSettingsMap = map[string]map[string]string{
+		"chrome": {
+			"browserName":   "chrome",
+			"windowSize":    "--window-size=1920,1080", // Set the window size to 1920x1080
+			"initialWindow": "--start-maximized",       // (--start-maximized) Start with a maximized window
+			"sandbox":       "--no-sandbox",            // Bypass OS security model, necessary in some environments
+			"infoBars":      "--disable-infobars",      // Disables the "Chrome is being controlled by automated test software" infobar
+			"extensions":    "--disable-extensions",    // Disables extensions to get a cleaner browsing experience
+			"popups":        "",                        // Disable pop-up blocking (--disable-popup-blocking)
+			"gpu":           "--disable-gpu",           // (--disable-gpu) Disable GPU hardware acceleration, if necessary
+			"javascript":    "--enable-javascript",     // (--enable-javascript) Enable JavaScript, which is typically enabled in real user browsers
+			"headless":      "",                        // Run in headless mode (--headless)
+			"incognito":     "",                        // Run in incognito mode
+			"disableDevShm": "--disable-dev-shm-usage", // Disable /dev/shm use
+		},
+		"firefox": {
+			"browserName":   "firefox",
+			"initialWindow": "--start-maximized",        // Start with a maximized window
+			"sandbox":       "--no-sandbox",             // Bypass OS security model, necessary in some environments
+			"infoBars":      "--disable-infobars",       // Disables the "Chrome is being controlled by automated test software" infobar
+			"extensions":    "--disable-extensions",     // Disables extensions to get a cleaner browsing experience
+			"popups":        "--disable-popup-blocking", // Disable pop-up blocking
+			"gpu":           "--disable-gpu",            // Disable GPU hardware acceleration, if necessary
+			"javascript":    "--enable-javascript",      // Enable JavaScript, which is typically enabled in real user browsers
+		},
+	}
+
+	// docTypeMap maps the file extension to the document type.
 	docTypeMap = map[string]string{
 		".pdf":   "PDF",
 		".html":  "HTML",

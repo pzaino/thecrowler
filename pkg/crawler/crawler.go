@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/abadojack/whatlanggo"
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
@@ -52,41 +53,49 @@ const (
 )
 
 var (
-	config     cfg.Config
+	config cfg.Config // Configuration "object"
+)
+
+type processContext struct {
+	db         *cdb.Handler
+	wd         selenium.WebDriver
 	linksMutex sync.Mutex
 	newLinks   []string
-)
+	source     *cdb.Source
+	wg         sync.WaitGroup
+}
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
+func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, SeleniumInstances chan SeleniumInstance) {
 
 	// Define wd
-	var wd selenium.WebDriver
 	var err error
+	var processCtx processContext
+	processCtx.db = &db
+	processCtx.source = &source
 
 	// Connect to Selenium
-	for {
-		wd, err = ConnectSelenium(sel)
-		if err != nil {
-			log.Println("Error connecting to Selenium:", err)
-			time.Sleep(5 * time.Second)
-		} else {
-			break
-		}
+	processCtx.wd, err = ConnectSelenium(sel, 0)
+	if err != nil {
+		log.Println("Error connecting to Selenium:", err)
+		// Return the Selenium instance to the channel
+		SeleniumInstances <- sel
+		return
 	}
-	defer QuitSelenium(wd)
-
+	defer QuitSelenium(&processCtx.wd)
 	log.Println("Connected to Selenium WebDriver successfully.")
 
 	// Crawl the initial URL and get the HTML content
 	// This is where you'd use Selenium or another method to get the page content
 	log.Println("Crawling URL:", source.URL)
-	pageSource, err := getURLContent(source.URL, wd, 0)
+	pageSource, err := getURLContent(source.URL, processCtx.wd, 0)
 	if err != nil {
 		log.Println("Error getting HTML content:", err)
+		// Return the Selenium instance to the channel
+		SeleniumInstances <- sel
 		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
@@ -94,7 +103,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 
 	// Try to find and click the 'Accept' or 'Consent' button in different languages
 	for _, text := range append(acceptTexts, consentTexts...) {
-		if clicked := findAndClickButton(wd, text); clicked {
+		if clicked := findAndClickButton(processCtx.wd, text); clicked {
 			break
 		}
 	}
@@ -115,7 +124,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 		timeStr := currentTime.Format("20060102150405")
 		// Create imageName
 		imageName := fmt.Sprintf("%d_%s.png", source.ID, timeStr)
-		err = TakeScreenshot(wd, imageName)
+		err = TakeScreenshot(&processCtx.wd, imageName)
 		if err != nil {
 			log.Println("Error taking screenshot:", err)
 		}
@@ -130,6 +139,8 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 	htmlContent, err := pageSource.PageSource()
 	if err != nil {
 		log.Println("Error getting page source:", err)
+		// Return the Selenium instance to the channel
+		SeleniumInstances <- sel
 		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
@@ -145,10 +156,12 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 	}
 
 	// Refresh the page
-	if err := wd.Refresh(); err != nil {
-		wd, err = ConnectSelenium(sel)
+	if err := processCtx.wd.Refresh(); err != nil {
+		processCtx.wd, err = ConnectSelenium(sel, 0)
 		if err != nil {
 			log.Println("Error re-connecting to Selenium:", err)
+			// Return the Selenium instance to the channel
+			SeleniumInstances <- sel
 			// Update the source state in the database
 			updateSourceState(db, source.URL, err)
 			return
@@ -164,13 +177,10 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 		// Create a channel to signal completion
 		done := make(chan bool, config.Crawler.Workers)
 
-		// Use a WaitGroup to wait for all goroutines to finish
-		var wg sync.WaitGroup
-
 		// Launch worker goroutines
 		for w := 1; w <= config.Crawler.Workers; w++ {
-			wg.Add(1)
-			go worker(db, wd, w, jobs, done, &wg, &source)
+			processCtx.wg.Add(1)
+			go worker(&processCtx, w, jobs, done)
 		}
 
 		// Enqueue jobs (allLinks)
@@ -187,25 +197,29 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance) {
 			<-done
 		}
 		// Wait for all the wg workers to finish
-		wg.Wait()
+		processCtx.wg.Wait()
 		log.Println("All workers finished.")
 
 		// Prepare for the next iteration
-		linksMutex.Lock()
-		if len(newLinks) > 0 {
-			newLinksFound = len(newLinks)
-			allLinks = newLinks
-			newLinks = []string{} // reset newLinks
+		processCtx.linksMutex.Lock()
+		if len(processCtx.newLinks) > 0 {
+			newLinksFound = len(processCtx.newLinks)
+			allLinks = processCtx.newLinks
+			processCtx.newLinks = []string{} // reset newLinks
 		} else {
 			newLinksFound = 0
-			newLinks = []string{} // reset newLinks
+			processCtx.newLinks = []string{} // reset newLinks
 		}
-		linksMutex.Unlock()
+		processCtx.linksMutex.Unlock()
 		currentDepth++
 		if config.Crawler.MaxDepth == 0 {
 			maxDepth = currentDepth + 1
 		}
 	}
+
+	// Return the Selenium instance to the channel
+	SeleniumInstances <- sel
+
 	// Update the source state in the database
 	updateSourceState(db, source.URL, nil)
 	log.Printf("Finished crawling website: %s\n", source.URL)
@@ -517,9 +531,7 @@ func detectLang(wd selenium.WebDriver) string {
 			lang = convertLangStrToLangCode(lang)
 		}
 	}
-	if config.DebugLevel > 1 {
-		log.Println("Language:", lang)
-	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Language detected: %s", lang)
 	return lang
 }
 
@@ -611,12 +623,10 @@ func isExternalLink(sourceURL, linkURL string) bool {
 		return false // Handle parsing error
 	}
 
-	if config.DebugLevel > 0 {
-		fmt.Println("Source URL:", sourceURL)
-		fmt.Println("Link URL:", linkURL)
-		fmt.Println("Source hostname:", sourceParsed.Hostname())
-		fmt.Println("Link hostname:", linkParsed.Hostname())
-	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Source URL: %s\n", sourceURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Link URL: %s\n", linkURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Source hostname: %s\n", sourceParsed.Hostname())
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Link hostname: %s\n", linkParsed.Hostname())
 
 	// Takes the substring that correspond to the 1st and 2nd level domain (e.g., google.com)
 	// regardless the number of subdomains
@@ -640,9 +650,9 @@ func isExternalLink(sourceURL, linkURL string) bool {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(db cdb.Handler, wd selenium.WebDriver,
-	id int, jobs chan string, done chan<- bool, wg *sync.WaitGroup, source *cdb.Source) {
-	defer wg.Done()
+func worker(processCtx *processContext,
+	id int, jobs chan string, done chan<- bool) {
+	defer processCtx.wg.Done()
 	skip := false
 	for url := range jobs {
 		skip = false
@@ -654,15 +664,15 @@ func worker(db cdb.Handler, wd selenium.WebDriver,
 
 		// Check if the URL is relative
 		if strings.HasPrefix(url, "/") {
-			url, _ = combineURLs(source.URL, url)
+			url, _ = combineURLs(processCtx.source.URL, url)
 		}
 
 		// Check if the URL is external
-		if source.Restricted {
+		if processCtx.source.Restricted {
 			// If the Source is restricted
 			// check if the url is outside the Source domain
 			// if so skip it
-			if isExternalLink(source.URL, url) {
+			if isExternalLink(processCtx.source.URL, url) {
 				log.Printf("Worker %d: Skipping URL '%s' due 'restricted' policy.\n", id, url)
 				skip = true
 			}
@@ -672,7 +682,7 @@ func worker(db cdb.Handler, wd selenium.WebDriver,
 			log.Printf("Worker %d: started job %s\n", id, url)
 
 			// Get HTML content of the page
-			htmlContent, err := getURLContent(url, wd, 1)
+			htmlContent, err := getURLContent(url, processCtx.wd, 1)
 			if err != nil {
 				skip = true
 				log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
@@ -685,18 +695,21 @@ func worker(db cdb.Handler, wd selenium.WebDriver,
 			pageCache := extractPageInfo(htmlContent)
 
 			// Index the page content in the database
-			pageCache.sourceID = source.ID
-			indexPage(db, url, pageCache)
+			pageCache.sourceID = processCtx.source.ID
+			indexPage(*processCtx.db, url, pageCache)
 
 			// Extract links and add them to newLinks
 			extractedLinks := extractLinks(pageCache.BodyText)
 			if len(extractedLinks) > 0 {
-				linksMutex.Lock()
-				newLinks = append(newLinks, extractedLinks...)
-				linksMutex.Unlock()
+				processCtx.linksMutex.Lock()
+				processCtx.newLinks = append(processCtx.newLinks, extractedLinks...)
+				processCtx.linksMutex.Unlock()
 			}
 
 			log.Printf("Worker %d: finished job %s\n", id, url)
+			if config.Crawler.Delay > 0 {
+				time.Sleep(time.Duration(config.Crawler.Delay) * time.Second)
+			}
 		}
 	}
 	if skip {
@@ -794,34 +807,64 @@ func StopSelenium(sel *selenium.Service) error {
 }
 
 // ConnectSelenium is responsible for connecting to the Selenium server instance
-func ConnectSelenium(sel SeleniumInstance) (selenium.WebDriver, error) {
+func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
 	// Connect to the WebDriver instance running locally.
 	caps := selenium.Capabilities{"browserName": sel.Config.Type}
+
+	// Define the user agent string for a desktop Google Chrome browser
+	var userAgent string
+	if browseType == 0 {
+		userAgent = agentStrMap["desktop1"]
+	} else if browseType == 1 {
+		userAgent = agentStrMap["mobile1"]
+	}
+
+	var args []string
+
+	// Populate the args slice based on the browser type
+	keys := []string{"WindowSize", "initialWindow", "sandbox", "gpu", "disableDevShm", "headless", "javascript", "incognito", "popups", "infoBars", "extensions"}
+	for _, key := range keys {
+		if value, ok := browserSettingsMap[sel.Config.Type][key]; ok && value != "" {
+			args = append(args, value)
+		}
+	}
+
+	// Append user-agent separately as it's a constant value
+	args = append(args, "--user-agent="+userAgent)
+
 	caps.AddChrome(chrome.Capabilities{
-		Args: []string{
-			"--headless", // Updated headless mode argument
-			"--no-sandbox",
-			"--disable-dev-shm-usage",
-		},
-		W3C: true,
+		Args: args,
+		W3C:  true,
 	})
-	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
+
+	// Connect to the WebDriver instance running remotely.
+	var wd selenium.WebDriver
+	var err error
+	for {
+		wd, err = selenium.NewRemote(caps, fmt.Sprintf("http://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
+		if err != nil {
+			log.Println("Error connecting to Selenium: ", err)
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
+	}
 	return wd, err
 }
 
 // QuitSelenium is responsible for quitting the Selenium server instance
-func QuitSelenium(wd selenium.WebDriver) {
+func QuitSelenium(wd *selenium.WebDriver) {
 	// Close the WebDriver
 	if wd != nil {
 		// Attempt a simple operation to check if the session is still valid
-		_, err := wd.CurrentURL()
+		_, err := (*wd).CurrentURL()
 		if err != nil {
 			log.Printf("WebDriver session may have already ended: %v", err)
 			return
 		}
 
 		// Close the WebDriver if the session is still active
-		err = wd.Quit()
+		err = (*wd).Quit()
 		if err != nil {
 			log.Printf("Error closing WebDriver: %v", err)
 		} else {
@@ -831,7 +874,7 @@ func QuitSelenium(wd selenium.WebDriver) {
 }
 
 // TakeScreenshot is responsible for taking a screenshot of the current page
-func TakeScreenshot(wd selenium.WebDriver, filename string) error {
+func TakeScreenshot(wd *selenium.WebDriver, filename string) error {
 	// Execute JavaScript to get the viewport height and width
 	windowHeight, windowWidth, err := getWindowSize(wd)
 	if err != nil {
@@ -866,10 +909,10 @@ func TakeScreenshot(wd selenium.WebDriver, filename string) error {
 	return nil
 }
 
-func getWindowSize(wd selenium.WebDriver) (int, int, error) {
+func getWindowSize(wd *selenium.WebDriver) (int, int, error) {
 	// Execute JavaScript to get the viewport height and width
 	viewportSizeScript := "return [window.innerHeight, window.innerWidth]"
-	viewportSizeRes, err := wd.ExecuteScript(viewportSizeScript, nil)
+	viewportSizeRes, err := (*wd).ExecuteScript(viewportSizeScript, nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -888,10 +931,10 @@ func getWindowSize(wd selenium.WebDriver) (int, int, error) {
 	return windowHeight, windowWidth, nil
 }
 
-func getTotalHeight(wd selenium.WebDriver) (int, error) {
+func getTotalHeight(wd *selenium.WebDriver) (int, error) {
 	// Execute JavaScript to get the total height of the page
 	totalHeightScript := "return document.body.parentNode.scrollHeight"
-	totalHeightRes, err := wd.ExecuteScript(totalHeightScript, nil)
+	totalHeightRes, err := (*wd).ExecuteScript(totalHeightScript, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -902,19 +945,19 @@ func getTotalHeight(wd selenium.WebDriver) (int, error) {
 	return totalHeight, nil
 }
 
-func captureScreenshots(wd selenium.WebDriver, totalHeight, windowHeight int) ([][]byte, error) {
+func captureScreenshots(wd *selenium.WebDriver, totalHeight, windowHeight int) ([][]byte, error) {
 	var screenshots [][]byte
 	for y := 0; y < totalHeight; y += windowHeight {
 		// Scroll to the next part of the page
 		scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
-		_, err := wd.ExecuteScript(scrollScript, nil)
+		_, err := (*wd).ExecuteScript(scrollScript, nil)
 		if err != nil {
 			return nil, err
 		}
 		time.Sleep(1 * time.Second) // Pause to let page load
 
 		// Take screenshot of the current view
-		screenshot, err := wd.Screenshot()
+		screenshot, err := (*wd).Screenshot()
 		if err != nil {
 			return nil, err
 		}
