@@ -23,6 +23,8 @@ import (
 	"runtime"
 	"strings"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
+
 	"gopkg.in/yaml.v2"
 )
 
@@ -179,6 +181,23 @@ func LoadConfig(confName string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+
+	// Check if the configuration file is empty
+	if IsEmpty(config) {
+		return Config{}, fmt.Errorf("configuration file is empty")
+	}
+
+	// Check if the configuration file contains valid values
+	//err = config.Validate()
+	//if err != nil {
+	//	return Config{}, err
+	//}
+
+	// cast config.DebugLevel to common.DbgLevel
+	var dbgLvl cmn.DbgLevel = cmn.DbgLevel(config.DebugLevel)
+
+	// Set the debug level
+	cmn.SetDebugLevel(dbgLvl)
 
 	return config, err
 }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package main (API) implements the API server for the Crowler search engine.
 package main
 
 import cfg "github.com/pzaino/thecrowler/pkg/config"

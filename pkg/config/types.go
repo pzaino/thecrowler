@@ -49,6 +49,7 @@ type Crawler struct {
 	SourceScreenshot   bool `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
 	FullSiteScreenshot bool `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
 	MaxDepth           int  `yaml:"max_depth"`            // Maximum depth to crawl
+	Delay              int  `yaml:"delay"`                // Delay between requests (in seconds)
 }
 
 // API represents the API configuration
@@ -84,7 +85,7 @@ type Config struct {
 	Selenium []Selenium `yaml:"selenium"`
 
 	// Image storage API configuration (to store images on a separate server)
-	ImageStorageAPI FileStorageAPI `yaml:"image_storage_api"`
+	ImageStorageAPI FileStorageAPI `yaml:"image_storage"`
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging

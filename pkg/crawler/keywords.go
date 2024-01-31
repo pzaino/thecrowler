@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package crawler implements the crawling logic of the application.
+// It's responsible for crawling a website and extracting information from it.
 package crawler
 
 import (
