@@ -796,9 +796,8 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 			if retries > 5 {
 				log.Printf("Exceeded maximum retries. Exiting...\n")
 				break
-			} else {
-				time.Sleep(5 * time.Second)
 			}
+			time.Sleep(5 * time.Second)
 		}
 	}
 
