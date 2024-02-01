@@ -16,12 +16,12 @@
 package common
 
 import (
+	"crypto/rand"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // SetDebugLevel allows to set the current debug level
@@ -197,8 +197,16 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 		return "", fmt.Errorf("min argument must be less than max argument for random")
 	}
 
-	// Generate and return random value
-	randomGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
-	randomValue := randomGenerator.Intn(max-min+1) + min
-	return strconv.Itoa(randomValue), nil
+	// Generate and return random value using crypto/rand for better randomness
+	// Compute the range (max - min + 1)
+	rangeInt := big.NewInt(int64(max - min + 1))
+	// Generate a random number in [0, rangeInt)
+	n, err := rand.Int(rand.Reader, rangeInt)
+	if err != nil {
+		return "", err
+	}
+
+	// Shift the number to [min, max]
+	result := int(n.Int64()) + min
+	return strconv.Itoa(result), nil
 }
