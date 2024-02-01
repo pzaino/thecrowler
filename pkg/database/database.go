@@ -53,12 +53,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	} else {
 		dbUser = c.Database.User
 	}
-	var dbPassword string
-	if c.Database.Password == "" {
-		dbPassword = "crowler"
-	} else {
-		dbPassword = c.Database.Password
-	}
+	dbPassword := c.Database.Password
 	var dbName string
 	if c.Database.DBName == "" {
 		dbName = "SitesIndex"

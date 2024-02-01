@@ -42,14 +42,14 @@ type Database struct {
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	Workers            int  `yaml:"workers"`              // Number of crawler workers
-	Interval           int  `yaml:"interval"`             // Interval between crawler requests (in seconds)
-	Timeout            int  `yaml:"timeout"`              // Timeout for crawler requests (in seconds)
-	Maintenance        int  `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
-	SourceScreenshot   bool `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
-	FullSiteScreenshot bool `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
-	MaxDepth           int  `yaml:"max_depth"`            // Maximum depth to crawl
-	Delay              int  `yaml:"delay"`                // Delay between requests (in seconds)
+	Workers            int    `yaml:"workers"`              // Number of crawler workers
+	Interval           string `yaml:"interval"`             // Interval between crawler requests (in seconds)
+	Timeout            int    `yaml:"timeout"`              // Timeout for crawler requests (in seconds)
+	Maintenance        int    `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
+	SourceScreenshot   bool   `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
+	FullSiteScreenshot bool   `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
+	MaxDepth           int    `yaml:"max_depth"`            // Maximum depth to crawl
+	Delay              string `yaml:"delay"`                // Delay between requests (in seconds)
 }
 
 // API represents the API configuration

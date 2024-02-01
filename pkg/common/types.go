@@ -15,14 +15,19 @@
 // Package common package is used to store common functions and variables
 package common
 
-// enum for the debug level
+// DbgLevel is an enum to represent the debug level type
 type DbgLevel int
 
 const (
+	// DbgLvlNone is the default debug level
 	DbgLvlNone = iota
+	// DbgLvlInfo is the info debug level
 	DbgLvlInfo
+	// DbgLvlDebug is the debug debug level
 	DbgLvlDebug
+	// DbgLvlError is the error debug level
 	DbgLvlError
+	// DbgLvlFatal is the fatal debug level (this will also exit the program!)
 	DbgLvlFatal
 )
 
@@ -30,3 +35,26 @@ var (
 	// DebugLevel is the debug level for logging
 	debugLevel DbgLevel
 )
+
+// Micro-Interpreters for complex parameters
+
+const maxInterpreterRecursionDepth = 100
+
+// EncodedCmd is a struct containing the parsed command token and arguments.
+type EncodedCmd struct {
+	Token    int
+	Args     []EncodedCmd
+	ArgValue string // stores the argument value
+}
+
+const (
+	// TokenRandom is the token for the random(x, y) command
+	TokenRandom = 1 // Define a constant for each command's token
+	// Add new tokens for additional commands here
+)
+
+// commandTokenMap maps command strings to their respective Token IDs.
+var commandTokenMap = map[string]int{
+	"random": TokenRandom,
+	// Add new commands and their tokens here
+}
