@@ -156,6 +156,7 @@ func NewConfig() Config {
 				Port:       4444,
 				Host:       "localhost",
 				Headless:   true,
+				UseService: false,
 			},
 		},
 		ImageStorageAPI: FileStorageAPI{

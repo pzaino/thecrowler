@@ -793,22 +793,24 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	var service *selenium.Service
 	var err error
 	var retries int
-	for {
-		service, err = selenium.NewSeleniumService(fmt.Sprintf("http://"+c.Host+":%d/wd/hub"), c.Port)
-		if err != nil {
-			log.Printf("Error starting Selenium server: %v\n", err)
-			log.Printf("Check if Selenium is running on host '%s' at port '%d'.\n", c.Host, c.Port)
-			log.Printf("Retrying in 5 seconds...\n")
-			retries++
-			if retries > 5 {
-				log.Printf("Exceeded maximum retries. Exiting...\n")
-				break
+	if c.UseService {
+		for {
+			service, err = selenium.NewSeleniumService(fmt.Sprintf("http://"+c.Host+":%d/wd/hub"), c.Port)
+			if err != nil {
+				log.Printf("Error starting Selenium server: %v\n", err)
+				log.Printf("Check if Selenium is running on host '%s' at port '%d'.\n", c.Host, c.Port)
+				log.Printf("Retrying in 5 seconds...\n")
+				retries++
+				if retries > 5 {
+					log.Printf("Exceeded maximum retries. Exiting...\n")
+					break
+				} else {
+					time.Sleep(5 * time.Second)
+				}
 			} else {
-				time.Sleep(5 * time.Second)
+				log.Println("Selenium server started successfully.")
+				break
 			}
-		} else {
-			log.Println("Selenium server started successfully.")
-			break
 		}
 	}
 

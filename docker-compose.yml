@@ -1,6 +1,7 @@
 version: '3.8'
 services:
   database:
+    container_name: database
     image: postgres:latest
     ports:
       - "5432:5432"
@@ -16,6 +17,7 @@ services:
       - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.1.pgsql
 
   searchapi:
+    container_name: thecrowler_searchapi
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
@@ -35,6 +37,7 @@ services:
     read_only: true
 
   thecrowler:
+    container_name: thecrowler_engine
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
@@ -53,10 +56,11 @@ services:
     user: crowler
 
   selenium:
+    container_name: selenium
     image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome-debug:latest}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
-      - "4444:4444"
+      - "4442-4444:4442-4444"
 
 volumes:
   db_data:
