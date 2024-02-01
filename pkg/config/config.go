@@ -126,7 +126,7 @@ func NewConfig() Config {
 			Host:      "localhost",
 			Port:      5432,
 			User:      "postgres",
-			Password:  "postgres",
+			Password:  "",
 			DBName:    "SitesIndex",
 			RetryTime: 5,
 			PingTime:  5,
@@ -150,8 +150,8 @@ func NewConfig() Config {
 		},
 		Selenium: []Selenium{
 			{
-				Path:       "/path/to/selenium",
-				DriverPath: "/path/to/driver",
+				Path:       "",
+				DriverPath: "",
 				Type:       "chrome",
 				Port:       4444,
 				Host:       "localhost",

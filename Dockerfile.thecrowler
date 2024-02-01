@@ -17,6 +17,9 @@ RUN ./autobuild.sh
 FROM alpine:3.14.2
 WORKDIR /app
 
+RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
+RUN apk add --no-cache openjdk11-jre-headless
+
 # Create a non-root user and switch to it
 RUN adduser -D crowler
 
