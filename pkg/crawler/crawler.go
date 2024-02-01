@@ -797,8 +797,11 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 		service, err = selenium.NewSeleniumService(c.Path, c.Port)
 		if err != nil {
 			log.Printf("Error starting Selenium server: %v\n", err)
+			log.Printf("Check if Selenium is running on host '%s' at port '%d'.\n", c.Path, c.Port)
+			log.Printf("Retrying in 5 seconds...\n")
 			retries++
 			if retries > 5 {
+				log.Printf("Exceeded maximum retries. Exiting...\n")
 				break
 			} else {
 				time.Sleep(5 * time.Second)
