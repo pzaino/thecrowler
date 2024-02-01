@@ -790,7 +790,24 @@ func StartCrawler(cf cfg.Config) {
 // and it's obviously easier to setup and more secure.
 func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	log.Println("Configuring Selenium...")
-	service, err := selenium.NewSeleniumService(c.Path, c.Port)
+	var service *selenium.Service
+	var err error
+	var retries int
+	for {
+		service, err = selenium.NewSeleniumService(c.Path, c.Port)
+		if err != nil {
+			log.Printf("Error starting Selenium server: %v\n", err)
+			retries++
+			if retries > 5 {
+				break
+			} else {
+				time.Sleep(5 * time.Second)
+			}
+		} else {
+			log.Println("Selenium server started successfully.")
+			break
+		}
+	}
 
 	// Start a Selenium WebDriver server instance (e.g., chromedriver)
 	/*
@@ -830,7 +847,9 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	//service, err := selenium.NewSeleniumService(config.Selenium.Path, config.Selenium.Port, opts...)
 	//service, err := selenium.NewChromeDriverService(config.Selenium.DriverPath, config.Selenium.Port)
 
-	log.Printf("Done!\n")
+	if err == nil {
+		log.Printf("Done!\n")
+	}
 	return service, err
 }
 
