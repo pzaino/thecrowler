@@ -138,10 +138,10 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	// Parse the HTML and extract links
 	htmlContent, err := pageSource.PageSource()
 	if err != nil {
-		log.Println("Error getting page source:", err)
 		// Return the Selenium instance to the channel
+		// and update the source state in the database
+		log.Println("Error getting page source:", err)
 		SeleniumInstances <- sel
-		// Update the source state in the database
 		updateSourceState(db, source.URL, err)
 		return
 	}
@@ -159,10 +159,10 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	if err := processCtx.wd.Refresh(); err != nil {
 		processCtx.wd, err = ConnectSelenium(sel, 0)
 		if err != nil {
-			log.Println("Error re-connecting to Selenium:", err)
 			// Return the Selenium instance to the channel
+			// and update the source state in the database
+			log.Println("Error re-connecting to Selenium:", err)
 			SeleniumInstances <- sel
-			// Update the source state in the database
 			updateSourceState(db, source.URL, err)
 			return
 		}
@@ -174,13 +174,10 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 		// Create a channel to enqueue jobs
 		jobs := make(chan string, len(allLinks))
 
-		// Create a channel to signal completion
-		done := make(chan bool, config.Crawler.Workers)
-
 		// Launch worker goroutines
 		for w := 1; w <= config.Crawler.Workers; w++ {
 			processCtx.wg.Add(1)
-			go worker(&processCtx, w, jobs, done)
+			go worker(&processCtx, w, jobs)
 		}
 
 		// Enqueue jobs (allLinks)
@@ -191,12 +188,8 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 
 		log.Println("Enqueued jobs:", len(allLinks))
 
-		log.Println("Waiting for workers to finish...")
 		// Wait for workers to finish and collect new links
-		for i := 0; i < config.Crawler.Workers; i++ {
-			<-done
-		}
-		// Wait for all the wg workers to finish
+		log.Println("Waiting for workers to finish...")
 		processCtx.wg.Wait()
 		log.Println("All workers finished.")
 
@@ -211,6 +204,8 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 			processCtx.newLinks = []string{} // reset newLinks
 		}
 		processCtx.linksMutex.Unlock()
+
+		// Increment the current depth
 		currentDepth++
 		if config.Crawler.MaxDepth == 0 {
 			maxDepth = currentDepth + 1
@@ -673,86 +668,72 @@ func getDomainParts(parts []string, level int) string {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(processCtx *processContext,
-	id int, jobs chan string, done chan<- bool) {
+func worker(processCtx *processContext, id int, jobs chan string) {
 	defer processCtx.wg.Done()
-	skip := false
 	for url := range jobs {
-		skip = false
-
-		url = strings.TrimSpace(url)
-		if url == "" {
-			skip = true
+		skip := skipURL(processCtx, id, url)
+		if skip {
+			log.Printf("Worker %d: finished job.\n", id)
+			continue
 		}
-
-		// Check if the URL is relative
-		if strings.HasPrefix(url, "/") {
-			url, _ = combineURLs(processCtx.source.URL, url)
-		}
-
-		// Check if the URL is external
-		if processCtx.source.Restricted != 4 {
-			// If the Source is restricted
-			// check if the url is outside the Source domain
-			// if so skip it
-			if isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
-				log.Printf("Worker %d: Skipping URL '%s' due 'restricted' policy.\n", id, url)
-				skip = true
-			}
-		}
-
-		if !skip {
-			log.Printf("Worker %d: started job %s\n", id, url)
-
-			// Get HTML content of the page
-			htmlContent, err := getURLContent(url, processCtx.wd, 1)
-			if err != nil {
-				skip = true
-				log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
-				continue
-			}
-
-			// Extract necessary information from the content
-			// For simplicity, we're extracting just the title and full content
-			// You might want to extract more specific information
-			pageCache := extractPageInfo(htmlContent)
-
-			// Index the page content in the database
-			pageCache.sourceID = processCtx.source.ID
-			indexPage(*processCtx.db, url, pageCache)
-
-			// Extract links and add them to newLinks
-			extractedLinks := extractLinks(pageCache.BodyText)
-			if len(extractedLinks) > 0 {
-				processCtx.linksMutex.Lock()
-				processCtx.newLinks = append(processCtx.newLinks, extractedLinks...)
-				processCtx.linksMutex.Unlock()
-			}
-
-			log.Printf("Worker %d: finished job %s\n", id, url)
-			if config.Crawler.Delay != "0" {
-				if isNumber(config.Crawler.Delay) {
-					delay, err := strconv.ParseFloat(config.Crawler.Delay, 64)
-					if err != nil {
-						delay = 1
-					}
-					time.Sleep(time.Duration(delay) * time.Second)
-				} else {
-					cmd, _ := cmn.ParseCmd(config.Crawler.Delay, 0)
-					delayStr, _ := cmn.InterpretCmd(cmd)
-					delay, err := strconv.ParseFloat(delayStr, 64)
-					if err != nil {
-						delay = 1
-					}
-					time.Sleep(time.Duration(delay) * time.Second)
-				}
-			}
+		log.Printf("Worker %d: started job %s\n", id, url)
+		processJob(processCtx, id, url)
+		log.Printf("Worker %d: finished job %s\n", id, url)
+		if config.Crawler.Delay != "0" {
+			delay := getDelay()
+			time.Sleep(time.Duration(delay) * time.Second)
 		}
 	}
-	if skip {
-		log.Printf("Worker %d: finished job.\n", id)
+}
+
+func skipURL(processCtx *processContext, id int, url string) bool {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return true
 	}
-	done <- true
+	if strings.HasPrefix(url, "/") {
+		url, _ = combineURLs(processCtx.source.URL, url)
+	}
+	if processCtx.source.Restricted != 4 && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
+		log.Printf("Worker %d: Skipping URL '%s' due 'restricted' policy.\n", id, url)
+		return true
+	}
+	return false
+}
+
+func processJob(processCtx *processContext, id int, url string) {
+	htmlContent, err := getURLContent(url, processCtx.wd, 1)
+	if err != nil {
+		log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
+		return
+	}
+	pageCache := extractPageInfo(htmlContent)
+	pageCache.sourceID = processCtx.source.ID
+	indexPage(*processCtx.db, url, pageCache)
+	extractedLinks := extractLinks(pageCache.BodyText)
+	if len(extractedLinks) > 0 {
+		processCtx.linksMutex.Lock()
+		processCtx.newLinks = append(processCtx.newLinks, extractedLinks...)
+		processCtx.linksMutex.Unlock()
+	}
+}
+
+func getDelay() float64 {
+	if isNumber(config.Crawler.Delay) {
+		delay, err := strconv.ParseFloat(config.Crawler.Delay, 64)
+		if err != nil {
+			delay = 1
+		}
+		return delay
+	} else {
+		cmd, _ := cmn.ParseCmd(config.Crawler.Delay, 0)
+		delayStr, _ := cmn.InterpretCmd(cmd)
+		delay, err := strconv.ParseFloat(delayStr, 64)
+		if err != nil {
+			delay = 1
+		}
+		return delay
+	}
 }
 
 // combineURLs is a utility function to combine a base URL with a relative URL
@@ -791,11 +772,19 @@ func StartCrawler(cf cfg.Config) {
 func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	log.Println("Configuring Selenium...")
 	var service *selenium.Service
+
+	var protocol string
+	if c.SSLMode == "enable" {
+		protocol = "https"
+	} else {
+		protocol = "http"
+	}
+
 	var err error
 	var retries int
 	if c.UseService {
 		for {
-			service, err = selenium.NewSeleniumService(fmt.Sprintf("http://"+c.Host+":%d/wd/hub"), c.Port)
+			service, err = selenium.NewSeleniumService(fmt.Sprintf(protocol+"://"+c.Host+":%d/wd/hub"), c.Port)
 			if err != nil {
 				log.Printf("Error starting Selenium server: %v\n", err)
 				log.Printf("Check if Selenium is running on host '%s' at port '%d'.\n", c.Host, c.Port)
@@ -813,44 +802,6 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 			}
 		}
 	}
-
-	// Start a Selenium WebDriver server instance (e.g., chromedriver)
-	/*
-		var opts []selenium.ServiceOption
-		// Add debug option to see errors
-		// opts = append(opts, selenium.Output(os.Stderr))
-
-		// Add options to control the user selected browser
-		if config.Selenium.Type == "firefox" {
-			opts = append(opts, selenium.GeckoDriver(config.Selenium.DriverPath)) // Specify the path to GeckoDriver
-		} else if config.Selenium.Type == "chrome" {
-			opts = append(opts, selenium.ChromeDriver(config.Selenium.DriverPath)) // Specify the path to ChromeDriver
-		} else if config.Selenium.Type == "chromium" {
-			opts = append(opts, selenium.ChromeDriver(config.Selenium.DriverPath)) // Specify the path to ChromeDriver
-		} else {
-			log.Fatalf("  Error: Unsupported browser type: %s\n", config.Selenium.Type)
-		}
-	*/
-	/*
-		var cmd *exec.Cmd
-		if config.OS == "darwin" {
-			cmd = exec.Command("brew", "services", "start", "selenium-server")
-		} else if config.OS == "linux" {
-			cmd = exec.Command("sudo", "systemctl", "start", "selenium-server")
-		} else {
-			log.Fatalf("  Error: Unsupported OS: %s\n", config.OS)
-		}
-		// Execute the command
-		if err := cmd.Run(); err != nil {
-			log.Printf("  Error starting Selenium server: %v\n", err)
-		} else {
-			log.Println("  Selenium server started successfully... ")
-		}
-	*/
-
-	// Start a Selenium WebDriver server instance (e.g., chromedriver)
-	//service, err := selenium.NewSeleniumService(config.Selenium.Path, config.Selenium.Port, opts...)
-	//service, err := selenium.NewChromeDriverService(config.Selenium.DriverPath, config.Selenium.Port)
 
 	if err == nil {
 		log.Printf("Done!\n")
@@ -904,11 +855,18 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 		W3C:  true,
 	})
 
+	var protocol string
+	if sel.Config.SSLMode == "enable" {
+		protocol = "https"
+	} else {
+		protocol = "http"
+	}
+
 	// Connect to the WebDriver instance running remotely.
 	var wd selenium.WebDriver
 	var err error
 	for {
-		wd, err = selenium.NewRemote(caps, fmt.Sprintf("http://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
+		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
 		if err != nil {
 			log.Println("Error connecting to Selenium: ", err)
 			time.Sleep(5 * time.Second)

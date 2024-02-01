@@ -157,6 +157,7 @@ func NewConfig() Config {
 				Host:       "localhost",
 				Headless:   true,
 				UseService: false,
+				SSLMode:    "disable",
 			},
 		},
 		ImageStorageAPI: FileStorageAPI{
