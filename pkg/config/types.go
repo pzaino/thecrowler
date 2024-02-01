@@ -68,6 +68,8 @@ type Selenium struct {
 	Port       int    `yaml:"port"`        // Port number for Selenium server
 	Host       string `yaml:"host"`        // Hostname of the Selenium server
 	Headless   bool   `yaml:"headless"`    // Whether to run Selenium in headless mode
+	UseService bool   `yaml:"use_service"` // Whether to use Selenium service as well or not
+	SSLMode    string `yaml:"sslmode"`     // SSL mode for Selenium connection (e.g., "disable")
 }
 
 // Config represents the structure of the configuration file
