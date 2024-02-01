@@ -239,26 +239,38 @@ func findAndClickButton(wd selenium.WebDriver, buttonText string) bool {
 	}
 
 	for _, selector := range consentSelectors {
-		elements, err := wd.FindElements(selenium.ByXPATH, selector)
-		if err != nil {
-			continue
+		if clickButtonBySelector(wd, selector) {
+			return true
 		}
-
-		for _, element := range elements {
-			if visible, _ := element.IsDisplayed(); visible {
-				if clickable, _ := element.IsEnabled(); clickable {
-					err = element.Click()
-					if err == nil {
-						return true
-					}
-					// Log or handle the error if click failed
-				}
-			}
-		}
-
-		time.Sleep(1 * time.Second)
 	}
+
 	return false
+}
+
+func clickButtonBySelector(wd selenium.WebDriver, selector string) bool {
+	elements, err := wd.FindElements(selenium.ByXPATH, selector)
+	if err != nil {
+		return false
+	}
+
+	for _, element := range elements {
+		if isVisibleAndClickable(element) {
+			err = element.Click()
+			if err == nil {
+				return true
+			}
+			// Log or handle the error if click failed
+		}
+	}
+
+	time.Sleep(1 * time.Second)
+	return false
+}
+
+func isVisibleAndClickable(element selenium.WebElement) bool {
+	visible, _ := element.IsDisplayed()
+	clickable, _ := element.IsEnabled()
+	return visible && clickable
 }
 
 // updateSourceState is responsible for updating the state of a Source in
@@ -469,8 +481,8 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
 	err0 := wd.Get(url)
-	cmd, _ := cmn.InterpretCommand(config.Crawler.Interval, 0)
-	delayStr, _ := cmn.ProcessEncodedCmd(cmd)
+	cmd, _ := cmn.ParseCmd(config.Crawler.Interval, 0)
+	delayStr, _ := cmn.InterpretCmd(cmd)
 	delay, err := strconv.ParseFloat(delayStr, 64)
 	if err != nil {
 		delay = 1
@@ -726,8 +738,8 @@ func worker(processCtx *processContext,
 					}
 					time.Sleep(time.Duration(delay) * time.Second)
 				} else {
-					cmd, _ := cmn.InterpretCommand(config.Crawler.Delay, 0)
-					delayStr, _ := cmn.ProcessEncodedCmd(cmd)
+					cmd, _ := cmn.ParseCmd(config.Crawler.Delay, 0)
+					delayStr, _ := cmn.InterpretCmd(cmd)
 					delay, err := strconv.ParseFloat(delayStr, 64)
 					if err != nil {
 						delay = 1

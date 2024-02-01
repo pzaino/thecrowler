@@ -113,12 +113,12 @@ var InterpreterTests = []struct {
 	},
 }
 
-func TestInterpretCommand(t *testing.T) {
+func TestParseCmd(t *testing.T) {
 	tests := ParserTests
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCmd, gotErr := InterpretCommand(tt.command, tt.depth)
+			gotCmd, gotErr := ParseCmd(tt.command, tt.depth)
 
 			assertToken(t, gotCmd.Token, tt.expectedToken)
 			assertArgs(t, gotCmd.Args, tt.expectedArgs)
@@ -149,12 +149,12 @@ func assertError(t *testing.T, gotErr error, expectedError string) {
 	}
 }
 
-func TestProcessEncodedCmd(t *testing.T) {
+func TestInterpretCmd(t *testing.T) {
 	tests := InterpreterTests
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotResult, gotErr := ProcessEncodedCmd(tt.encodedCmd)
+			gotResult, gotErr := InterpretCmd(tt.encodedCmd)
 
 			if tt.name == "Token representing the 'random' command" {
 				testRandomCommand(t, gotResult, gotErr)

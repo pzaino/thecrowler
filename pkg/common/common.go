@@ -45,9 +45,12 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	}
 }
 
+/////////
 // Micro-interpreter for complex parameters
-// InterpretCommand interprets the string command and returns the EncodedCmd.
-func InterpretCommand(command string, depth int) (EncodedCmd, error) {
+////////
+
+// ParseCmd interprets the string command and returns the EncodedCmd.
+func ParseCmd(command string, depth int) (EncodedCmd, error) {
 	if depth > maxInterpreterRecursionDepth {
 		return EncodedCmd{}, fmt.Errorf("exceeded maximum recursion depth")
 	}
@@ -65,7 +68,7 @@ func InterpretCommand(command string, depth int) (EncodedCmd, error) {
 		for _, param := range params {
 			trimmedParam := strings.TrimSpace(param)
 			if isCommand(trimmedParam) {
-				nestedCmd, err := InterpretCommand(trimmedParam, depth+1)
+				nestedCmd, err := ParseCmd(trimmedParam, depth+1)
 				if err != nil {
 					return EncodedCmd{}, err
 				}
@@ -154,8 +157,8 @@ func handleParentheses(char rune, inQuotes bool, parenthesisLevel int) int {
 	return parenthesisLevel
 }
 
-// ProcessEncodedCmd processes an EncodedCmd recursively and returns the calculated value as a string.
-func ProcessEncodedCmd(encodedCmd EncodedCmd) (string, error) {
+// InterpretCmd processes an EncodedCmd recursively and returns the calculated value as a string.
+func InterpretCmd(encodedCmd EncodedCmd) (string, error) {
 	switch encodedCmd.Token {
 	case -1: // Non-command parameter
 		return encodedCmd.ArgValue, nil
@@ -173,11 +176,11 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 	}
 
 	// Process arguments recursively
-	minArg, err := ProcessEncodedCmd(args[0])
+	minArg, err := InterpretCmd(args[0])
 	if err != nil {
 		return "", err
 	}
-	maxArg, err := ProcessEncodedCmd(args[1])
+	maxArg, err := InterpretCmd(args[1])
 	if err != nil {
 		return "", err
 	}

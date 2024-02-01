@@ -48,6 +48,7 @@ type EncodedCmd struct {
 }
 
 const (
+	// TokenInvalid is the token for the random(x, y) command
 	TokenRandom = 1 // Define a constant for each command's token
 	// Add new tokens for additional commands here
 )
