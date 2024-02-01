@@ -794,7 +794,7 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	var err error
 	var retries int
 	for {
-		service, err = selenium.NewSeleniumService(c.Path, c.Port)
+		service, err = selenium.NewSeleniumService(fmt.Sprintf("http://"+c.Host+":%d/wd/hub"), c.Port)
 		if err != nil {
 			log.Printf("Error starting Selenium server: %v\n", err)
 			log.Printf("Check if Selenium is running on host '%s' at port '%d'.\n", c.Path, c.Port)
