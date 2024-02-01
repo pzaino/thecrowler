@@ -87,12 +87,12 @@ func (s *SiteRules) GetEnabledRuleGroups() []RuleGroup {
 
 // GetEnabledRules returns a slice of Rule containing only the enabled rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules to the result slice.
-func (s *SiteRules) GetEnabledRules() []Rule {
-	var enabledRules []Rule
+func (s *SiteRules) GetEnabledRules() []ScrapingRule {
+	var enabledRules []ScrapingRule
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled {
-			enabledRules = append(enabledRules, rg.Rules...)
+			enabledRules = append(enabledRules, rg.ScrapingRules...)
 		}
 	}
 
@@ -101,12 +101,12 @@ func (s *SiteRules) GetEnabledRules() []Rule {
 
 // GetEnabledRulesByGroup returns a slice of Rule containing only the enabled rules for the specified group.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified group to the result slice.
-func (s *SiteRules) GetEnabledRulesByGroup(groupName string) []Rule {
-	var enabledRules []Rule
+func (s *SiteRules) GetEnabledRulesByGroup(groupName string) []ScrapingRule {
+	var enabledRules []ScrapingRule
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled && rg.GroupName == groupName {
-			enabledRules = append(enabledRules, rg.Rules...)
+			enabledRules = append(enabledRules, rg.ScrapingRules...)
 		}
 	}
 
@@ -115,12 +115,12 @@ func (s *SiteRules) GetEnabledRulesByGroup(groupName string) []Rule {
 
 // GetEnabledRulesByPath returns a slice of Rule containing only the enabled rules for the specified path.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path to the result slice.
-func (s *SiteRules) GetEnabledRulesByPath(path string) []Rule {
-	var enabledRules []Rule
+func (s *SiteRules) GetEnabledRulesByPath(path string) []ScrapingRule {
+	var enabledRules []ScrapingRule
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled {
-			for _, r := range rg.Rules {
+			for _, r := range rg.ScrapingRules {
 				if r.Path == path {
 					enabledRules = append(enabledRules, r)
 				}
@@ -133,12 +133,12 @@ func (s *SiteRules) GetEnabledRulesByPath(path string) []Rule {
 
 // GetEnabledRulesByPathAndGroup returns a slice of Rule containing only the enabled rules for the specified path and group.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path and group to the result slice.
-func (s *SiteRules) GetEnabledRulesByPathAndGroup(path, groupName string) []Rule {
-	var enabledRules []Rule
+func (s *SiteRules) GetEnabledRulesByPathAndGroup(path, groupName string) []ScrapingRule {
+	var enabledRules []ScrapingRule
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled && rg.GroupName == groupName {
-			for _, r := range rg.Rules {
+			for _, r := range rg.ScrapingRules {
 				if r.Path == path {
 					enabledRules = append(enabledRules, r)
 				}
@@ -290,7 +290,7 @@ func (re *RuleEngine) extractData(group RuleGroup, pageURL string, htmlContent s
 	extractedData := make(map[string]interface{})
 
 	// Iterate over the rules in the group
-	for _, rule := range group.Rules {
+	for _, rule := range group.ScrapingRules {
 		// Apply rule only if the path matches
 		if strings.HasSuffix(path, rule.Path) || strings.HasSuffix(path, rule.Path+"/") {
 			extractedData = re.applyRule(rule, doc, node, htmlContent, extractedData)
@@ -300,7 +300,7 @@ func (re *RuleEngine) extractData(group RuleGroup, pageURL string, htmlContent s
 	return extractedData, nil
 }
 
-func (re *RuleEngine) applyRule(rule Rule, doc *goquery.Document, node *html.Node, htmlContent string, extractedData map[string]interface{}) map[string]interface{} {
+func (re *RuleEngine) applyRule(rule ScrapingRule, doc *goquery.Document, node *html.Node, htmlContent string, extractedData map[string]interface{}) map[string]interface{} {
 	// Iterate over the elements to be extracted
 	for _, element := range rule.Elements {
 		key := element.Key

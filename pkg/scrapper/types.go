@@ -24,19 +24,30 @@ type SiteRules struct {
 
 // RuleGroup represents the structure of the rule_groups section in the site_rules.yaml file
 type RuleGroup struct {
-	GroupName string `yaml:"group_name"`
-	ValidFrom string `yaml:"valid_from"`
-	ValidTo   string `yaml:"valid_to"`
-	IsEnabled bool   `yaml:"is_enabled"`
-	Rules     []Rule `yaml:"rules"`
+	GroupName     string         `yaml:"group_name"`
+	ValidFrom     string         `yaml:"valid_from"`
+	ValidTo       string         `yaml:"valid_to"`
+	IsEnabled     bool           `yaml:"is_enabled"`
+	ScrapingRules []ScrapingRule `yaml:"scraping_rules"`
+	ActionRules   []ActionRule   `yaml:"action_rules"`
 }
 
-// Rule represents the structure of the rules section in the site_rules.yaml file
-type Rule struct {
+// Rule represents the structure of the scraping_rules and action_rules sections in the site_rules.yaml file
+type ScrapingRule struct {
 	Path               string    `yaml:"path"`
 	Elements           []Element `yaml:"elements"`
 	JsFiles            bool      `yaml:"js_files"`
 	TechnologyPatterns []string  `yaml:"technology_patterns"` // If still needed
+}
+
+// ActionRule represents the structure of the action_rules section in the site_rules.yaml file
+type ActionRule struct {
+	Path        string    `yaml:"path"`
+	Elements    []Element `yaml:"elements"`
+	ActionName  string    `yaml:"action_name"`
+	ActionType  string    `yaml:"action_type"`
+	ActionValue string    `yaml:"action_value"`
+	// Add more action-specific fields here as needed
 }
 
 // Element represents the structure of the elements section in the site_rules.yaml file
@@ -48,5 +59,5 @@ type Element struct {
 
 // RuleEngine represents the structure of the site_rules.yaml file
 type RuleEngine struct {
-	SiteRules []SiteRules
+	SiteRules []SiteRules `yaml:"site_rules"`
 }
