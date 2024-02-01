@@ -468,13 +468,19 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 // from Selenium and returning it as a WebDriver object
 func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
-	err := wd.Get(url)
-	if level > 0 {
-		time.Sleep(time.Second * time.Duration(config.Crawler.Interval)) // Pause to let page load
-	} else {
-		time.Sleep(time.Second * time.Duration((config.Crawler.Interval + 5))) // Pause to let Home page load
+	err0 := wd.Get(url)
+	cmd, _ := cmn.InterpretCommand(config.Crawler.Interval, 0)
+	delayStr, _ := cmn.ProcessEncodedCmd(cmd)
+	delay, err := strconv.ParseFloat(delayStr, 64)
+	if err != nil {
+		delay = 1
 	}
-	return wd, err
+	if level > 0 {
+		time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
+	} else {
+		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
+	}
+	return wd, err0
 }
 
 // extractPageInfo is responsible for extracting information from a collected page.
@@ -602,51 +608,56 @@ func extractLinks(htmlContent string) []string {
 }
 
 // isExternalLink checks if the link is external (aka outside the Source domain)
-func isExternalLink(sourceURL, linkURL string) bool {
-	// remove trailing spaces from linkURL
-	linkURL = strings.TrimSpace(linkURL)
-
-	// Handle relative URLs (e.g., "/sub/page")
-	if strings.HasPrefix(linkURL, "/") {
-		return false // This is a relative URL, not external
+// isExternalLink checks if linkURL is external to sourceURL based on domainLevel.
+func isExternalLink(sourceURL, linkURL string, domainLevel int) bool {
+	// No restrictions
+	if domainLevel == 4 {
+		return false
 	}
 
-	// Parse the source URL
+	linkURL = strings.TrimSpace(linkURL)
+	if strings.HasPrefix(linkURL, "/") {
+		return false // Relative URL, not external
+	}
+
 	sourceParsed, err := url.Parse(sourceURL)
 	if err != nil {
-		return false // Handle parsing error
+		return false // Parsing error
 	}
 
-	// Parse the link URL
 	linkParsed, err := url.Parse(linkURL)
 	if err != nil {
-		return false // Handle parsing error
+		return false // Parsing error
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Source URL: %s\n", sourceURL)
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Link URL: %s\n", linkURL)
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Source hostname: %s\n", sourceParsed.Hostname())
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Link hostname: %s\n", linkParsed.Hostname())
+	srcDomainParts := strings.Split(sourceParsed.Hostname(), ".")
+	linkDomainParts := strings.Split(linkParsed.Hostname(), ".")
 
-	// Takes the substring that correspond to the 1st and 2nd level domain (e.g., google.com)
-	// regardless the number of subdomains
-	var srcDomainName string
-	srcFqdnArr := strings.Split(sourceParsed.Hostname(), ".")
-	if len(srcFqdnArr) < 3 {
-		srcDomainName = strings.Join(srcFqdnArr, ".")
-	} else {
-		srcDomainName = strings.Join(srcFqdnArr[len(srcFqdnArr)-2:], ".")
-	}
-	linkFqdnArr := strings.Split(linkParsed.Hostname(), ".")
-	var linkDomainName string
-	if len(linkFqdnArr) < 3 {
-		linkDomainName = strings.Join(linkFqdnArr, ".")
-	} else {
-		linkDomainName = strings.Join(linkFqdnArr[len(linkFqdnArr)-2:], ".")
+	// Fully restricted, compare the entire URLs
+	if domainLevel == 0 {
+		return sourceParsed.String() != linkParsed.String()
 	}
 
-	// Compare hostnames
-	return srcDomainName != linkDomainName
+	// Get domain parts based on domainLevel
+	srcDomain, linkDomain := getDomainParts(srcDomainParts, domainLevel), getDomainParts(linkDomainParts, domainLevel)
+
+	// Compare the relevant parts of the domain
+	return srcDomain != linkDomain
+}
+
+// getDomainParts extracts domain parts based on the domainLevel.
+func getDomainParts(parts []string, level int) string {
+	partCount := len(parts)
+	switch {
+	case level == 1 && partCount >= 3: // l3 domain restricted
+		return strings.Join(parts[partCount-3:], ".")
+	case level == 2 && partCount >= 2: // l2 domain restricted
+		return strings.Join(parts[partCount-2:], ".")
+	case level == 3 && partCount >= 1: // l1 domain restricted
+		return parts[partCount-1]
+	default:
+		return strings.Join(parts, ".")
+	}
 }
 
 // worker is the worker function that is responsible for crawling a page
@@ -668,11 +679,11 @@ func worker(processCtx *processContext,
 		}
 
 		// Check if the URL is external
-		if processCtx.source.Restricted {
+		if processCtx.source.Restricted != 4 {
 			// If the Source is restricted
 			// check if the url is outside the Source domain
 			// if so skip it
-			if isExternalLink(processCtx.source.URL, url) {
+			if isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
 				log.Printf("Worker %d: Skipping URL '%s' due 'restricted' policy.\n", id, url)
 				skip = true
 			}
@@ -707,8 +718,22 @@ func worker(processCtx *processContext,
 			}
 
 			log.Printf("Worker %d: finished job %s\n", id, url)
-			if config.Crawler.Delay > 0 {
-				time.Sleep(time.Duration(config.Crawler.Delay) * time.Second)
+			if config.Crawler.Delay != "0" {
+				if isNumber(config.Crawler.Delay) {
+					delay, err := strconv.ParseFloat(config.Crawler.Delay, 64)
+					if err != nil {
+						delay = 1
+					}
+					time.Sleep(time.Duration(delay) * time.Second)
+				} else {
+					cmd, _ := cmn.InterpretCommand(config.Crawler.Delay, 0)
+					delayStr, _ := cmn.ProcessEncodedCmd(cmd)
+					delay, err := strconv.ParseFloat(delayStr, 64)
+					if err != nil {
+						delay = 1
+					}
+					time.Sleep(time.Duration(delay) * time.Second)
+				}
 			}
 		}
 	}
@@ -733,6 +758,12 @@ func combineURLs(baseURL, relativeURL string) (string, error) {
 		return reconstructedBaseURL + relativeURL, nil
 	}
 	return relativeURL, nil
+}
+
+// isNumber checks if the given string is a number.
+func isNumber(str string) bool {
+	_, err := strconv.ParseFloat(str, 64)
+	return err == nil
 }
 
 // StartCrawler is responsible for initializing the crawler

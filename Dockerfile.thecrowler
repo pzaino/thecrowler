@@ -1,7 +1,14 @@
 # Build stage
 FROM golang:1.21.5 AS builder
 WORKDIR /app
-COPY . .
+COPY ./cmd ./cmd
+COPY ./pkg ./pkg
+COPY ./services ./services
+COPY ./go.mod .
+COPY ./go.sum .
+COPY ./main.go .
+COPY ./config.yaml .
+COPY ./autobuild.sh .
 RUN chmod +x autobuild.sh
 RUN ./autobuild.sh
 

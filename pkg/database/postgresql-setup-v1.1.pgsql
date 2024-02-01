@@ -17,7 +17,11 @@ CREATE TABLE IF NOT EXISTS Sources (
     last_error_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP,
-    restricted BOOLEAN DEFAULT TRUE,
+    restricted INTEGER DEFAULT 2,     -- 0 = fully restricted (just this URL)
+                                      -- 1 = l3 domain restricted (everything within this URL l3 domain)
+                                      -- 2 = l2 domain restricted
+                                      -- 3 = l1 domain restricted
+                                      -- 4 = no restrictions
     disabled BOOLEAN DEFAULT FALSE
 );
 

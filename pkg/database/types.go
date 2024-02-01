@@ -59,6 +59,6 @@ type SQLiteHandler struct {
 type Source struct {
 	ID         int
 	URL        string
-	Restricted bool
+	Restricted int
 	Flags      int
 }

@@ -134,12 +134,13 @@ func NewConfig() Config {
 		},
 		Crawler: Crawler{
 			Workers:            1,
-			Interval:           2,
+			Interval:           "2",
 			Timeout:            10,
 			Maintenance:        60,
 			SourceScreenshot:   false,
 			FullSiteScreenshot: false,
 			MaxDepth:           0,
+			Delay:              "0",
 		},
 		API: API{
 			Host:          "localhost",

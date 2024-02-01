@@ -16,7 +16,12 @@
 package common
 
 import (
+	"fmt"
 	"log"
+	"math/rand"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // SetDebugLevel allows to set the current debug level
@@ -38,4 +43,162 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	} else {
 		log.Fatalf(msg, args...)
 	}
+}
+
+// Micro-interpreter for complex parameters
+// InterpretCommand interprets the string command and returns the EncodedCmd.
+func InterpretCommand(command string, depth int) (EncodedCmd, error) {
+	if depth > maxInterpreterRecursionDepth {
+		return EncodedCmd{}, fmt.Errorf("exceeded maximum recursion depth")
+	}
+
+	command = strings.TrimSpace(command)
+	token, _, isACommand := getCommandToken(command)
+	if isACommand && strings.Contains(command, "(") && strings.HasSuffix(command, ")") {
+		paramString := command[strings.Index(command, "(")+1 : len(command)-1]
+		params, err := parseParams(paramString)
+		if err != nil {
+			return EncodedCmd{}, err
+		}
+
+		var encodedArgs []EncodedCmd
+		for _, param := range params {
+			trimmedParam := strings.TrimSpace(param)
+			if isCommand(trimmedParam) {
+				nestedCmd, err := InterpretCommand(trimmedParam, depth+1)
+				if err != nil {
+					return EncodedCmd{}, err
+				}
+				// Set ArgValue to the full command string for nested commands
+				nestedCmd.ArgValue = trimmedParam
+				encodedArgs = append(encodedArgs, nestedCmd)
+			} else {
+				encodedArgs = append(encodedArgs, EncodedCmd{
+					Token:    -1, // For parameters
+					Args:     nil,
+					ArgValue: trimmedParam,
+				})
+			}
+		}
+
+		return EncodedCmd{
+			Token:    token,
+			Args:     encodedArgs,
+			ArgValue: "", // Command itself doesn't directly have an ArgValue
+		}, nil
+	}
+
+	// Handle plain text or numbers not forming a recognized command
+	return EncodedCmd{
+		Token:    -1,
+		Args:     nil,
+		ArgValue: command,
+	}, nil
+}
+
+// isCommand checks if the given string is a valid command using getCommandToken.
+func isCommand(s string) bool {
+	_, _, exists := getCommandToken(s)
+	return exists
+}
+
+// getCommandToken returns the token for a given command.
+func getCommandToken(command string) (int, string, bool) {
+	commandName := strings.SplitN(command, "(", 2)[0]
+	token, exists := commandTokenMap[commandName]
+	return token, commandName, exists
+}
+
+// parseParams parses the parameter string and returns a slice of parameters.
+func parseParams(paramString string) ([]string, error) {
+	var params []string
+	var currentParam strings.Builder
+	inQuotes := false
+	parenthesisLevel := 0
+
+	for _, char := range paramString {
+		inQuotes = handleQuotes(char, inQuotes)
+		parenthesisLevel = handleParentheses(char, inQuotes, parenthesisLevel)
+
+		if char == ',' && !inQuotes && parenthesisLevel == 0 {
+			params = append(params, strings.TrimSpace(currentParam.String()))
+			currentParam.Reset()
+		} else {
+			currentParam.WriteRune(char)
+		}
+	}
+
+	if inQuotes || parenthesisLevel != 0 {
+		return nil, fmt.Errorf("unmatched quotes or parentheses in parameters")
+	}
+
+	params = append(params, strings.TrimSpace(currentParam.String()))
+	return params, nil
+}
+
+func handleQuotes(char rune, inQuotes bool) bool {
+	if char == '"' {
+		return !inQuotes
+	}
+	return inQuotes
+}
+
+func handleParentheses(char rune, inQuotes bool, parenthesisLevel int) int {
+	if char == '(' && !inQuotes {
+		return parenthesisLevel + 1
+	} else if char == ')' && !inQuotes {
+		if parenthesisLevel > 0 {
+			return parenthesisLevel - 1
+		}
+	}
+	return parenthesisLevel
+}
+
+// ProcessEncodedCmd processes an EncodedCmd recursively and returns the calculated value as a string.
+func ProcessEncodedCmd(encodedCmd EncodedCmd) (string, error) {
+	switch encodedCmd.Token {
+	case -1: // Non-command parameter
+		return encodedCmd.ArgValue, nil
+	case TokenRandom: // Token representing the 'random' command
+		return handleRandomCommand(encodedCmd.Args)
+	default:
+		return "", fmt.Errorf("unknown command token: %d", encodedCmd.Token)
+	}
+}
+
+// handleRandomCommand processes the 'random' command given its arguments.
+func handleRandomCommand(args []EncodedCmd) (string, error) {
+	if len(args) != 2 {
+		return "", fmt.Errorf("random command expects 2 arguments, got %d", len(args))
+	}
+
+	// Process arguments recursively
+	minArg, err := ProcessEncodedCmd(args[0])
+	if err != nil {
+		return "", err
+	}
+	maxArg, err := ProcessEncodedCmd(args[1])
+	if err != nil {
+		return "", err
+	}
+
+	// Convert arguments to integers
+	min, err := strconv.Atoi(minArg)
+	if err != nil {
+		return "", fmt.Errorf("invalid min argument for random: %s", minArg)
+	}
+	max, err := strconv.Atoi(maxArg)
+	if err != nil {
+		return "", fmt.Errorf("invalid max argument for random: %s", maxArg)
+	}
+
+	// Ensure min is less than max
+	if min >= max {
+		return "", fmt.Errorf("min argument must be less than max argument for random")
+	}
+
+	// Generate and return random value
+	randomGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
+	randomValue := randomGenerator.Intn(max-min+1) + min
+	return strconv.Itoa(randomValue), nil
 }
