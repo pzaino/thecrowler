@@ -148,7 +148,7 @@ func TestExtractData(t *testing.T) {
 
 	// Mock RuleGroup
 	ruleGroup := RuleGroup{
-		Rules: []Rule{
+		ScrapingRules: []ScrapingRule{
 			{
 				Path: "/body",
 				Elements: []Element{
