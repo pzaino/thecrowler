@@ -47,12 +47,12 @@ func createExpectedDNSInfo(domain string) *DNSInfo {
 	// Modify expectedDNSInfo based on your expected DNS records
 	// For example, if you expect an 'A' record:
 	expectedDNSInfo.Records = append(expectedDNSInfo.Records, DNSRecord{
-		Name:     "www.microsoft.com.",
+		Name:     "www.example.com.",
 		Type:     "A",
-		TTL:      "2828",
+		TTL:      "80143",
 		Class:    "IN",
 		Response: "93.184.216.34",
-		Value:    "www.microsoft.com. 2828 IN A 93.184.216.34",
+		Value:    "www.example.com. 80143 IN A 93.184.216.34",
 	})
 
 	return expectedDNSInfo
