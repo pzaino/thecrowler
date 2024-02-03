@@ -39,13 +39,6 @@ type PageInfo struct {
 }
 
 var (
-	// traditionalAgentStr is a list of user agent strings to use for crawling.
-	// It's used when the user agent rotation is disabled.
-	agentStrMap = map[string]string{
-		"desktop1": "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36",
-		"mobile1":  "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Mobile Safari/537.36",
-	}
-
 	browserSettingsMap = map[string]map[string]string{
 		"chrome": {
 			"browserName":   "chrome",

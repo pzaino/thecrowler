@@ -830,9 +830,9 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 	// Define the user agent string for a desktop Google Chrome browser
 	var userAgent string
 	if browseType == 0 {
-		userAgent = agentStrMap["desktop1"]
+		userAgent = cmn.UsrAgentStrMap[sel.Config.Type+"-desktop01"]
 	} else if browseType == 1 {
-		userAgent = agentStrMap["mobile1"]
+		userAgent = cmn.UsrAgentStrMap[sel.Config.Type+"mobile01"]
 	}
 
 	var args []string

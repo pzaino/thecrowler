@@ -14,6 +14,12 @@ require (
 require github.com/abadojack/whatlanggo v1.0.1
 
 require (
+	github.com/likexian/whois v1.15.1 // indirect
+	github.com/oschwald/maxminddb-golang v1.12.0 // indirect
+	golang.org/x/sys v0.16.0 // indirect
+)
+
+require (
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/antchfx/xpath v1.2.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
