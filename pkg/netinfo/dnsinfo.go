@@ -1,7 +1,6 @@
 package netinfo
 
 import (
-	"fmt"
 	"net"
 	"os/exec"
 	"strconv"
@@ -17,16 +16,15 @@ func NewDNSInfo(domain string) DNSInfo {
 
 // GetDNSInfo collects DNS information for the given domain using dig.
 func (ni *NetInfo) GetDNSInfo() error {
-	domain := ni.URL
-	domain = URLToHost(domain)
+	domain := URLToHost(ni.URL)
 
 	// Get DNS information
 	output, err := GetDigInfo(domain)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Output: %s\n", output)
 
+	// Parse DNS information
 	dnsList := ni.DNS
 	for domain != "" {
 		dnsInfo := NewDNSInfo(domain)
