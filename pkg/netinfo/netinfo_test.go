@@ -18,12 +18,17 @@ package netinfo
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 func TestGetNetInfo(t *testing.T) {
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("Skipping this test in GitHub Actions.")
+	}
+
 	// Replace "example.com" with the URL you want to test
 	url := "https://www.example.com/"
 

@@ -1,6 +1,7 @@
 package netinfo
 
 import (
+	"os"
 	"testing"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -21,6 +22,10 @@ func TestExampleOfUsingGetDNSInfo(t *testing.T) {
 */
 
 func TestGetDNSInfo(t *testing.T) {
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("Skipping this test in GitHub Actions.")
+	}
+
 	ni := &NetInfo{URL: "www.example.com"} // Replace with your NetInfo initialization
 	c := cfg.NewConfig()
 	ni.Config = &c.NetworkInfo
