@@ -25,11 +25,11 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-// CreateConfig creates a default HTTPInfoConfig
-func CreateConfig(url string, c cfg.Config) HTTPInfoConfig {
+// CreateConfig creates a default Config
+func CreateConfig(url string, c cfg.Config) Config {
 	sel := c.Selenium[0]
 	usrAgent := cmn.UsrAgentStrMap[sel.Type+"-desktop01"]
-	return HTTPInfoConfig{
+	return Config{
 		URL:             url,
 		CustomHeader:    map[string]string{"User-Agent": usrAgent},
 		FollowRedirects: true,
@@ -37,7 +37,7 @@ func CreateConfig(url string, c cfg.Config) HTTPInfoConfig {
 }
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
-func ExtractHTTPInfo(config HTTPInfoConfig) (*HTTPInfoResponse, error) {
+func ExtractHTTPInfo(config Config) (*Response, error) {
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !config.FollowRedirects {
@@ -71,8 +71,8 @@ func ExtractHTTPInfo(config HTTPInfoConfig) (*HTTPInfoResponse, error) {
 	// Collect response headers
 	responseHeaders := resp.Header
 
-	// Create a new HTTPInfoResponse object
-	info := new(HTTPInfoResponse)
+	// Create a new Response object
+	info := new(Response)
 
 	info.ResponseHeaders = responseHeaders
 

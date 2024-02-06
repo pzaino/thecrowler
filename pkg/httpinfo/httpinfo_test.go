@@ -17,6 +17,7 @@ package httpinfo
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 
@@ -25,11 +26,11 @@ import (
 )
 
 var (
-	url1            = "https://www.example.com"
-	url2            = "https://jsonplaceholder.typicode.com/posts/1"
-	usr_agent_field = "User-Agent"
+	url1          = "https://www.example.com"
+	url2          = "https://jsonplaceholder.typicode.com/posts/1"
+	usrAgentField = "User-Agent"
 
-	sys_config = cfg.Config{
+	sysConfig = cfg.Config{
 		Selenium: []cfg.Selenium{
 			{
 				Type: "chrome",
@@ -39,15 +40,15 @@ var (
 )
 
 func TestCreateConfig(t *testing.T) {
-	sel := sys_config.Selenium[0]
+	sel := sysConfig.Selenium[0]
 	usrAgent := cmn.UsrAgentStrMap[sel.Type+"-desktop01"]
-	expected := HTTPInfoConfig{
+	expected := Config{
 		URL:             url1,
-		CustomHeader:    map[string]string{usr_agent_field: usrAgent},
+		CustomHeader:    map[string]string{usrAgentField: usrAgent},
 		FollowRedirects: true,
 	}
 
-	result := CreateConfig(url1, sys_config)
+	result := CreateConfig(url1, sysConfig)
 
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("CreateConfig() = %v; want %v", result, expected)
@@ -55,11 +56,15 @@ func TestCreateConfig(t *testing.T) {
 }
 
 func TestExtractHTTPInfo(t *testing.T) {
-	sel := sys_config.Selenium[0]
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("Skipping this test in GitHub Actions.")
+	}
+
+	sel := sysConfig.Selenium[0]
 	usrAgent := cmn.UsrAgentStrMap[sel.Type+"-desktop01"]
-	config := HTTPInfoConfig{
+	config := Config{
 		URL:             url2,
-		CustomHeader:    map[string]string{usr_agent_field: usrAgent},
+		CustomHeader:    map[string]string{usrAgentField: usrAgent},
 		FollowRedirects: true,
 	}
 
@@ -71,9 +76,9 @@ func TestExtractHTTPInfo(t *testing.T) {
 	/*
 		// Create an expected result with the collected information
 		respBody := []string{"No additional information found"}
-		expected := &HTTPInfoResponse{
+		expected := &Response{
 			URL:              url2,
-			CustomHeaders:    map[string]string{usr_agent_field: usrAgent},
+			CustomHeaders:    map[string]string{usrAgentField: usrAgent},
 			FollowRedirects:  true,
 			ResponseHeaders:  info.ResponseHeaders,
 			ServerType:       info.ServerType,

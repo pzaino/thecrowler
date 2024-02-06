@@ -60,12 +60,14 @@ type DNSConfig struct {
 	RateLimit int  `yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
 }
 
+// WHOISConfig represents the WHOIS information gathering configuration
 type WHOISConfig struct {
 	Enabled   bool `yaml:"enabled"`
 	Timeout   int  `yaml:"timeout"`
 	RateLimit int  `yaml:"rate_limit"`
 }
 
+// NetLookupConfig represents the network information gathering configuration
 type NetLookupConfig struct {
 	Enabled   bool `yaml:"enabled"`
 	Timeout   int  `yaml:"timeout"`

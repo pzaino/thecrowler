@@ -18,14 +18,14 @@ package httpinfo
 import "net/http"
 
 // HTTPInfoConfig is a struct to specify the configuration for header extraction
-type HTTPInfoConfig struct {
+type Config struct {
 	URL             string
 	CustomHeader    map[string]string
 	FollowRedirects bool
 }
 
 // HTTPInfoResponse is a struct to store the collected HTTP header information
-type HTTPInfoResponse struct {
+type Response struct {
 	URL                           string            `json:"url"`
 	CustomHeaders                 map[string]string `json:"custom_headers"`
 	FollowRedirects               bool              `json:"follow_redirects"`
