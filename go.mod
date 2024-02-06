@@ -5,19 +5,19 @@ go 1.21.5
 require (
 	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/antchfx/htmlquery v1.3.0
-	github.com/aws/aws-sdk-go v1.50.6
+	github.com/aws/aws-sdk-go v1.50.10
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
 )
 
-require github.com/abadojack/whatlanggo v1.0.1
-
 require (
-	github.com/likexian/whois v1.15.1 // indirect
-	github.com/oschwald/maxminddb-golang v1.12.0 // indirect
-	golang.org/x/sys v0.16.0 // indirect
+	github.com/abadojack/whatlanggo v1.0.1
+	github.com/likexian/whois v1.15.1
+	github.com/oschwald/maxminddb-golang v1.12.0
 )
+
+require golang.org/x/sys v0.16.0 // indirect
 
 require (
 	github.com/andybalholm/cascadia v1.3.1 // indirect
