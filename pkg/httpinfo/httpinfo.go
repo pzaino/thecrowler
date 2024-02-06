@@ -1,3 +1,18 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package httpinfo provides functionality to extract HTTP header information
 package httpinfo
 
 import (
@@ -143,3 +158,22 @@ func analyzeResponseBody(resp *http.Response) ([]string, error) {
 
 	return infoList, nil
 }
+
+/* Not ready yet:
+// checkCDN checks the response headers for common CDN-related headers
+func checkCDN(headers http.Header) {
+	cdnHeaders := map[string]string{
+		"Via":             "Might indicate a CDN or proxy",
+		"X-Cache":         "Common in CDN responses",
+		"X-Cache-Hit":     "Indicates cache status in some CDNs",
+		"CF-Cache-Status": "Specific to Cloudflare",
+		// Add more CDN-specific headers as needed
+	}
+
+	for header, desc := range cdnHeaders {
+		if value := headers.Get(header); value != "" {
+			fmt.Printf("%v: %v (%s)\n", header, value, desc)
+		}
+	}
+}
+*/

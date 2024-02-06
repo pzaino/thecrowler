@@ -1,3 +1,18 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package netinfo provides functionality to extract network information
 package netinfo
 
 import (
@@ -5,12 +20,15 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 // GetIPs returns the IP addresses of the provided URL
 func (ni *NetInfo) GetIPs() error {
+	host := urlToDomain(ni.URL)
+
 	// retrieve ni.URL IP addresses
-	ips, err := net.LookupIP(ni.URL)
+	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("error looking up IP addresses: %v", err)
 	}
@@ -41,20 +59,14 @@ func (ni *NetInfo) GetIPs() error {
 			// Get network information for the new IP
 			entity, err := getIPInfo(ni, newIP)
 			if err == nil {
-				if entity.ASN == "" {
-					entity.ASN = "N/A"
-				}
-				if entity.CIDR == "" {
-					entity.CIDR = "N/A"
-				}
-				asnList = append(asnList, entity.ASN)
-				cidrList = append(cidrList, entity.CIDR)
-				ntRangeList = append(ntRangeList, entity.NetRange)
-				ntNameList = append(ntNameList, entity.NetName)
-				ntHandleList = append(ntHandleList, entity.NetHandle)
-				ntParentList = append(ntParentList, entity.NetParent)
-				ntTypeList = append(ntTypeList, entity.NetType)
-				countryList = append(countryList, entity.Country)
+				asnList = append(asnList, defaultNA(entity.ASN))
+				cidrList = append(cidrList, defaultNA(entity.CIDR))
+				ntRangeList = append(ntRangeList, defaultNA(entity.NetRange))
+				ntNameList = append(ntNameList, defaultNA(entity.NetName))
+				ntHandleList = append(ntHandleList, defaultNA(entity.NetHandle))
+				ntParentList = append(ntParentList, defaultNA(entity.NetParent))
+				ntTypeList = append(ntTypeList, defaultNA(entity.NetType))
+				countryList = append(countryList, defaultNA(entity.Country))
 			} else {
 				asnList = append(asnList, "N/A")
 				cidrList = append(cidrList, "N/A")
@@ -65,6 +77,7 @@ func (ni *NetInfo) GetIPs() error {
 				ntTypeList = append(ntTypeList, "")
 				countryList = append(countryList, "")
 			}
+			time.Sleep(time.Duration(ni.Config.WHOIS.RateLimit) * time.Second)
 		}
 	}
 
@@ -204,17 +217,12 @@ func (ni *NetInfo) GetIPsFromHosts() error {
 	return nil
 }
 
-// GetNetInfo returns the IP addresses and hostnames of the provided URL
-func (ni *NetInfo) GetNetInfo(url string) error {
-	ni.URL = url
-	host0 := urlToDomain(url)
-	ni.Hosts.Host = append(ni.Hosts.Host, host0)
-
+func getEntities(ni *NetInfo) error {
+	// Get IP addresses
 	err := ni.GetIPs()
 	if err != nil {
 		return err
 	}
-
 	if len(ni.IPs.IP) == 0 {
 		err = ni.GetHosts()
 		if err != nil {
@@ -230,10 +238,39 @@ func (ni *NetInfo) GetNetInfo(url string) error {
 			return err
 		}
 	}
+	return nil
+}
 
-	err = ni.GetWHOISData()
+// GetNetInfo returns the IP addresses and hostnames of the provided URL
+func (ni *NetInfo) GetNetInfo(url string) error {
+	ni.URL = url
+
+	// Get IP addresses and hostnames
+	err := getEntities(ni)
 	if err != nil {
 		return err
+	}
+
+	// Check if host0 has been removed from the list
+	if len(ni.Hosts.Host) == 0 {
+		host0 := urlToDomain(url)
+		ni.Hosts.Host = append(ni.Hosts.Host, host0)
+	}
+
+	// Get WHOIS information for all collected IPs
+	if ni.Config.WHOIS.Enabled {
+		err = ni.GetWHOISData()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Get DNS information for all collected hosts
+	if ni.Config.DNS.Enabled {
+		err = ni.GetDNSInfo()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

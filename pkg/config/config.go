@@ -141,6 +141,7 @@ func NewConfig() Config {
 			FullSiteScreenshot: false,
 			MaxDepth:           0,
 			Delay:              "0",
+			MaxSources:         4,
 		},
 		API: API{
 			Host:          "localhost",
@@ -162,13 +163,40 @@ func NewConfig() Config {
 		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
-			Path:    "./images",
+			Path:    "./data",
 			Port:    0,
 			Region:  "nowhere",
 			Token:   "",
 			Secret:  "",
 			Timeout: 15,
 			Type:    "local",
+		},
+		FileStorageAPI: FileStorageAPI{
+			Host:    "",
+			Path:    "./data",
+			Port:    0,
+			Region:  "nowhere",
+			Token:   "",
+			Secret:  "",
+			Timeout: 15,
+			Type:    "local",
+		},
+		NetworkInfo: NetworkInfo{
+			DNS: DNSConfig{
+				Enabled:   true,
+				Timeout:   10,
+				RateLimit: 1,
+			},
+			WHOIS: WHOISConfig{
+				Enabled:   true,
+				Timeout:   10,
+				RateLimit: 1,
+			},
+			NetLookup: NetLookupConfig{
+				Enabled:   true,
+				Timeout:   10,
+				RateLimit: 1,
+			},
 		},
 		OS:         runtime.GOOS,
 		DebugLevel: 0,
@@ -228,6 +256,14 @@ func IsEmpty(config Config) bool {
 	}
 
 	if config.ImageStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if config.FileStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if config.NetworkInfo != (NetworkInfo{}) {
 		return false
 	}
 

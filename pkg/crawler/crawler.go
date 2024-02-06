@@ -360,15 +360,29 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 // It returns the index ID of the inserted or updated entry and an error, if any.
 func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, error) {
 	var indexID int
+	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
-        INSERT INTO SearchIndex
-			(source_id, page_url, title, summary, content, detected_lang, detected_type, indexed_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-        ON CONFLICT (page_url) DO UPDATE
-        SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, indexed_at = NOW()
-        RETURNING index_id`, pageInfo.sourceID, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
+		INSERT INTO SearchIndex
+			(page_url, title, summary, content, detected_lang, detected_type, last_updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		ON CONFLICT (page_url) DO UPDATE
+		SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
+		RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
 		Scan(&indexID)
-	return indexID, err
+	if err != nil {
+		return 0, err // Handle error appropriately
+	}
+
+	// Step 2: Insert into SourceSearchIndex for the associated sourceID
+	_, err = tx.Exec(`
+		INSERT INTO SourceSearchIndex (source_id, index_id)
+		VALUES ($1, $2)
+		ON CONFLICT (source_id, index_id) DO NOTHING`, pageInfo.sourceID, indexID)
+	if err != nil {
+		return 0, err // Handle error appropriately
+	}
+
+	return indexID, nil
 }
 
 func strLeft(s string, x int) string {

@@ -1,14 +1,33 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package netinfo provides functionality to extract network information
 package netinfo
+
+import (
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+)
 
 // DNSRecord represents a DNS record.
 type DNSRecord struct {
 	Name     string `json:"name"`
-	Type     string `json:"type"`
 	TTL      string `json:"ttl"`
 	Class    string `json:"class"`
+	Type     string `json:"type"`
 	Response string `json:"response"`
-	Section  string `json:"section"`
 	Value    string `json:"value"`
+	Section  string `json:"section"`
 	Special  string `json:"special"`
 }
 
@@ -105,28 +124,34 @@ type HostData struct {
 
 // NetInfo represents the structure of the network information you want to extract and store.
 type NetInfo struct {
-	URL   string      `json:"url"`
-	Hosts HostData    `json:"hosts"`
-	IPs   IPData      `json:"ips"`
-	WHOIS []WHOISData `json:"whois"`
-	DNS   []DNSInfo   `json:"dns"`
+	URL    string      `json:"url"`
+	Hosts  HostData    `json:"hosts"`
+	IPs    IPData      `json:"ips"`
+	WHOIS  []WHOISData `json:"whois"`
+	DNS    []DNSInfo   `json:"dns"`
+	Config *cfg.NetworkInfo
 }
 
 // Define a map to map record types to their corresponding values
 var recordTypeMap = map[string]string{
-	"A":      "A",
-	"AAAA":   "AAAA",
-	"MX":     "MX",
-	"NS":     "NS",
-	"CNAME":  "CNAME",
-	"TXT":    "TXT",
-	"SOA":    "SOA",
-	"PTR":    "PTR",
-	"SRV":    "SRV",
-	"CAA":    "CAA",
-	"TLSA":   "TLSA",
-	"DS":     "DS",
-	"DNSKEY": "DNSKEY",
-	"NSEC":   "NSEC",
-	"NSEC3":  "NSEC3",
+	"A":          "A",
+	"AAAA":       "AAAA",
+	"MX":         "MX",
+	"NS":         "NS",
+	"CNAME":      "CNAME",
+	"TXT":        "TXT",
+	"SOA":        "SOA",
+	"PTR":        "PTR",
+	"SRV":        "SRV",
+	"CAA":        "CAA",
+	"TLSA":       "TLSA",
+	"DS":         "DS",
+	"DNSKEY":     "DNSKEY",
+	"NSEC":       "NSEC",
+	"NSEC3":      "NSEC3",
+	"SPF":        "SPF",
+	"DKIM":       "DKIM",
+	"DMARC":      "DMARC",
+	"OPENPGPKEY": "OPENPGPKEY",
+	"URI":        "URI",
 }

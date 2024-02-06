@@ -49,7 +49,34 @@ type Crawler struct {
 	SourceScreenshot   bool   `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
 	FullSiteScreenshot bool   `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
 	MaxDepth           int    `yaml:"max_depth"`            // Maximum depth to crawl
+	MaxSources         int    `yaml:"max_sources"`          // Maximum number of sources to crawl
 	Delay              string `yaml:"delay"`                // Delay between requests (in seconds)
+}
+
+// DNSConfig represents the DNS information gathering configuration
+type DNSConfig struct {
+	Enabled   bool `yaml:"enabled"`    // Whether to enable DNS information gathering or not
+	Timeout   int  `yaml:"timeout"`    // Timeout for DNS requests (in seconds)
+	RateLimit int  `yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
+}
+
+type WHOISConfig struct {
+	Enabled   bool `yaml:"enabled"`
+	Timeout   int  `yaml:"timeout"`
+	RateLimit int  `yaml:"rate_limit"`
+}
+
+type NetLookupConfig struct {
+	Enabled   bool `yaml:"enabled"`
+	Timeout   int  `yaml:"timeout"`
+	RateLimit int  `yaml:"rate_limit"`
+}
+
+// NetworkInfo represents the network information gathering configuration
+type NetworkInfo struct {
+	DNS       DNSConfig       `yaml:"dns"`
+	WHOIS     WHOISConfig     `yaml:"whois"`
+	NetLookup NetLookupConfig `yaml:"netlookup"`
 }
 
 // API represents the API configuration
@@ -88,6 +115,12 @@ type Config struct {
 
 	// Image storage API configuration (to store images on a separate server)
 	ImageStorageAPI FileStorageAPI `yaml:"image_storage"`
+
+	// File storage API configuration (to store files on a separate server)
+	FileStorageAPI FileStorageAPI `yaml:"file_storage"`
+
+	// NetworkInfo configuration
+	NetworkInfo NetworkInfo `yaml:"network_info"`
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging

@@ -1,10 +1,24 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package netinfo provides functionality to extract network information
 package netinfo
 
 import (
-	"net"
 	"os/exec"
-	"strconv"
 	"strings"
+	"time"
 )
 
 // NewDNSInfo initializes a new DNSInfo struct.
@@ -16,30 +30,56 @@ func NewDNSInfo(domain string) DNSInfo {
 
 // GetDNSInfo collects DNS information for the given domain using dig.
 func (ni *NetInfo) GetDNSInfo() error {
-	domain := URLToHost(ni.URL)
+	host := urlToHost(ni.URL)
+	domain := urlToDomain(ni.URL)
 
 	// Get DNS information
-	output, err := GetDigInfo(domain)
+	output, err := getDigInfo(domain)
 	if err != nil {
 		return err
 	}
 
+	err = parseDNSInfo(ni, domain, host, output)
+
+	return err
+}
+
+// parseDNSInfo parses the dig output and populates the DNSInfo fields.
+func parseDNSInfo(ni *NetInfo, domain, host, output string) error {
+	var err error
 	// Parse DNS information
 	dnsList := ni.DNS
-	for domain != "" {
-		dnsInfo := NewDNSInfo(domain)
+	stage := 0
+	for host != "" || domain != "" {
+		var dnsInfo DNSInfo
+		if stage == 0 {
+			dnsInfo = NewDNSInfo(domain)
+			domain = ""
+			stage = 1
+		} else {
+			dnsInfo = NewDNSInfo(host)
+			host = ""
+			stage = 2
+		}
 		dnsInfo.parseDNSRecords(output)
 
 		// Check for unresolved answers:
-		domain = ""
 		for _, record := range dnsInfo.Records {
 			if record.Section == "ANSWER" && record.Type == "CNAME" {
-				if net.ParseIP(record.Response) == nil {
-					domain = record.Response
-					output, err = GetDigInfo(domain)
+				if stage > 1 {
+					host = record.Response
+					time.Sleep(time.Duration(ni.Config.DNS.RateLimit))
+					output, err = getDigInfo(host)
 					if err != nil {
 						return err
 					}
+				} else {
+					domain = record.Response
+					output, err = getDigInfo(domain)
+					if err != nil {
+						return err
+					}
+					stage = 0
 				}
 				break
 			}
@@ -50,35 +90,18 @@ func (ni *NetInfo) GetDNSInfo() error {
 		}
 	}
 	ni.DNS = dnsList
-
 	return nil
 }
 
-// GetDigInfo collects DNS information for the given domain using dig.
-func GetDigInfo(domain string) (string, error) {
-	cmd := exec.Command("dig", domain, "ANY")
+// getDigInfo collects DNS information for the given domain using dig.
+func getDigInfo(domain string) (string, error) {
+	cmd := exec.Command("dig", domain, "TXT", "ANY")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", err
 	}
-	return string(output), nil
-}
 
-// URLToHost extracts a host (or an IP) from a URL.
-func URLToHost(url string) string {
-	host := url
-	if strings.HasPrefix(url, "http://") {
-		host = strings.TrimPrefix(url, "http://")
-	}
-	if strings.HasPrefix(url, "https://") {
-		host = strings.TrimPrefix(url, "https://")
-	}
-	if strings.Contains(host, "/") {
-		host = host[:strings.Index(host, "/")]
-	}
-	host = strings.TrimSuffix(host, "/")
-	host = strings.TrimSpace(host)
-	return host
+	return string(output), nil
 }
 
 // parseDNSRecords parses dig output and populates DNSInfo fields.
@@ -101,6 +124,7 @@ func (dnsInfo *DNSInfo) parseDNSRecords(output string) {
 	}
 }
 
+// processSection processes the section of the dig output and returns the section name.
 func processSection(record string, dnsInfo *DNSInfo) string {
 	record = strings.ToUpper(record)
 	record = strings.TrimLeft(record, ";")
@@ -128,10 +152,12 @@ func processSection(record string, dnsInfo *DNSInfo) string {
 	return ""
 }
 
+// processFields processes the fields of the dig output and populates the DNSRecord fields.
 func processFields(record string, section string, dnsInfo *DNSInfo) {
-	fields := strings.Fields(record)
+	fields := fieldsQuotes(record)
 	var dnsRecord DNSRecord
 
+	// Process fields:
 	for i := 0; i < len(fields); i++ {
 		if i > 0 {
 			dnsRecord.Value = dnsRecord.Value + " " + fields[i]
@@ -139,8 +165,13 @@ func processFields(record string, section string, dnsInfo *DNSInfo) {
 			dnsRecord.Value = fields[i]
 		}
 		switch {
+		case fields[i] == "TXT":
+			dnsRecord.Special = "TXT"
+			dnsRecord.Type = "TXT"
+			continue
 		case fields[i] == "RRSIG":
 			dnsRecord.Special = "RRSIG"
+			dnsRecord.Type = "RRSIG"
 			continue
 		default:
 			rType := parseDNSRecordType(fields[i], "")
@@ -161,7 +192,12 @@ func processFields(record string, section string, dnsInfo *DNSInfo) {
 				continue
 			}
 			if i == len(fields)-1 {
-				dnsRecord.Response = fields[i]
+				r := fields[i]
+				if strings.HasPrefix(r, "\"") && strings.HasSuffix(r, "\"") {
+					r = strings.TrimPrefix(r, "\"")
+					r = strings.TrimSuffix(r, "\"")
+				}
+				dnsRecord.Response = r
 				continue
 			}
 		}
@@ -180,9 +216,4 @@ func parseDNSRecordType(recordType string, t string) string {
 	}
 	// If the record type is not found, return t
 	return t
-}
-
-func isNumeric(s string) bool {
-	_, err := strconv.Atoi(s)
-	return err == nil
 }

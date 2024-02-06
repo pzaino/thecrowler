@@ -2,6 +2,8 @@ package netinfo
 
 import (
 	"testing"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 /*
@@ -20,6 +22,9 @@ func TestExampleOfUsingGetDNSInfo(t *testing.T) {
 
 func TestGetDNSInfo(t *testing.T) {
 	ni := &NetInfo{URL: "www.example.com"} // Replace with your NetInfo initialization
+	c := cfg.NewConfig()
+	ni.Config = &c.NetworkInfo
+
 	err := ni.GetDNSInfo()
 	if err != nil {
 		t.Errorf("Error getting DNS info: %v", err)

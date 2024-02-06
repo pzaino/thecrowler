@@ -48,7 +48,7 @@ from:
 - **Advanced Detection Capabilities**: Discover a wealth of information with
 features that go beyond basic crawling:
   - URL and Content Discovery
-  - Page Content, Metadata, and Screenshots (supporting infinite scrolling)
+  - Page Content, Metadata, and and more
   - Keywords Analysis and Language Detection
   - Insightful HTTP Headers, Network Info, WHOIS, DNS, and Geo-localization
   Data
@@ -81,11 +81,13 @@ but this is something every single crawler can be used for. However all the
 
 **The**: Pronounced as /ðə/ when before a consonant sound, it sounds like
 "thuh."
+
 **CROW**: Pronounced as /kroʊ/, rhymes with "know" or "snow."
+
 **ler**: The latter part is pronounced as /lər/, similar to the ending of the
  word "crawler" or the word "ler" in "tumbler."
 
-Putting it all together, it sounds like "thuh KROH-lər."
+Putting it all together, it sounds like "**thuh KROH-lər**"
 
 ### What ChatGPT thinks about the CROWLer ;)
 

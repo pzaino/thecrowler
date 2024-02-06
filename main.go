@@ -81,20 +81,18 @@ func performDBMaintenance(db cdb.Handler) error {
 // This function simply query the database for URLs that need to be crawled
 func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	// Update the SQL query to fetch all necessary fields
-	query := `SELECT
-				source_id, url, restricted, 0 AS flags
-			FROM
-				Sources
-			WHERE
-				disabled = FALSE AND (
-				   (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '3 days')
-				OR (status = 'error' AND last_crawled_at < NOW() - INTERVAL '15 minutes')
-				OR (status = 'completed' AND last_crawled_at < NOW() - INTERVAL '1 week')
-				OR (status = 'pending'))
-			ORDER BY last_crawled_at ASC`
+	query := `
+	SELECT
+		l.source_id,
+		l.url,
+		l.restricted,
+		l.flags
+	FROM
+		update_sources($1) AS l
+	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(query)
+	rows, err := db.ExecuteQuery(query, config.Crawler.MaxSources)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +232,6 @@ func main() {
 	// Setting up a channel to listen for termination signals
 	log.Println("Setting up termination signals listener...")
 	signals := make(chan os.Signal, 1)
-	// Catch SIGINT (Ctrl+C) and SIGTERM signals
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
 	// Use a select statement to block until a signal is received
