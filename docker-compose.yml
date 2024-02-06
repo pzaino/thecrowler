@@ -14,7 +14,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./pkg/database/postgresql-setup-v1.1.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.1.pgsql
+      - ./pkg/database/postgresql-setup-v1.2.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.2.pgsql
 
   searchapi:
     container_name: thecrowler_searchapi
@@ -57,7 +57,7 @@ services:
 
   selenium:
     container_name: selenium
-    image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome-debug:latest}
+    image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.17.0-20240123}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "4442-4444:4442-4444"
