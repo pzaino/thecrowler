@@ -1144,7 +1144,7 @@ func writeToFile(filename string, data []byte) error {
 // writeDataToFile is responsible for writing data to a file
 func writeDataToFile(filename string, data []byte) error {
 	// open file using READ & WRITE permission
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0755)
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, cmn.DefaultFilePerms)
 	if err != nil {
 		return err
 	}

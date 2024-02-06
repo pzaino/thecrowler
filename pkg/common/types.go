@@ -66,3 +66,8 @@ var (
 		"chrome-mobile01":  "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Mobile Safari/537.36",
 	}
 )
+
+const (
+	DefaultFilePerms = 0644
+	DefaultDirPerms  = 0755
+)
