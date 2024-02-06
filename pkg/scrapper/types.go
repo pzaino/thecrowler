@@ -32,7 +32,7 @@ type RuleGroup struct {
 	ActionRules   []ActionRule   `yaml:"action_rules"`
 }
 
-// Rule represents the structure of the scraping_rules and action_rules sections in the site_rules.yaml file
+// ScrapingRule represents the structure of the scraping_rules and action_rules sections in the site_rules.yaml file
 type ScrapingRule struct {
 	Path               string    `yaml:"path"`
 	Elements           []Element `yaml:"elements"`

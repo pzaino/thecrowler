@@ -58,3 +58,11 @@ var commandTokenMap = map[string]int{
 	"random": TokenRandom,
 	// Add new commands and their tokens here
 }
+
+var (
+	// UsrAgentStrMap is a list of valid user agent strings.
+	UsrAgentStrMap = map[string]string{
+		"chrome-desktop01": "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36",
+		"chrome-mobile01":  "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Mobile Safari/537.36",
+	}
+)

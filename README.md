@@ -16,18 +16,94 @@ alt="OpenSSF Security Best Practices badge"></a>
 
 ## What is it?
 
-The CROWler is a specialized web crawler developed to efficiently navigate and
-index web pages. This tool leverages the robust capabilities of Selenium and
-Google Chrome (to covertly crawl a site), offering a reliable and precise
-crawling experience. It is designed with user customization in mind, allowing
-users to specify the scope and targets of their crawling tasks.
+The CROWler is an open-source, feature-rich web crawler designed with a unique
+philosophy at its core: to be as gentle and low-noise as possible. In other
+words, The CROWler tries to stand out by ensuring minimal impact on the
+websites it crawls while maximizing convenience for its users.
 
-To enhance its functionality, CROWler includes a suite of command-line
-utilities. These utilities facilitate seamless management of the crawler's
-database, enabling users to effortlessly add or remove websites from the
-Sources list. Additionally, the system is equipped with an API, providing a
-streamlined interface for database queries. This feature ensures easy integration
-and access to indexed data for various applications.
+Additionally, the system is equipped with an API, providing a streamlined
+interface for data queries. This feature ensures easy integration and
+access to indexed data for various applications.
+
+The CROWler is designed to be micro-services based, so it can be easily
+deployed in a containerized environment.
+
+### Features
+
+- **Low-noise**: The CROWler is designed to be as gentle as possible when
+crawling websites. It respects robots.txt, and it's designed to try to appear
+as a human user to the websites it crawls.
+- **Customizable Crawling**: Tailor your crawling experience like never before.
+Specify URLs and configure individual crawling parameters to fit your precise
+needs. Whether it's a single page or an expansive domain, The CROWler adapts to
+your scope with unmatched flexibility.
+- **Scope Variability**: Define your crawling boundaries with precision. Choose
+from:
+  - Singular URL Crawling
+  - Domain-wide Crawling (combining L3, L2, and L1 domains)
+  - L2 and L1 Domain Crawling
+  - L1 Domain Crawling (e.g., everything within ".com")
+  - Full Recursive Crawling, venturing beyond initial boundaries to explore
+  connected URLs
+- **Advanced Detection Capabilities**: Discover a wealth of information with
+features that go beyond basic crawling:
+  - URL and Content Discovery
+  - Page Content, Metadata, and and more
+  - Keywords Analysis and Language Detection
+  - Insightful HTTP Headers, Network Info, WHOIS, DNS, and Geo-localization
+  Data
+- **Sophisticated Scraping and Actions**: Leverage rules-based scraping to
+extract precisely what you need, when you need it, and enact automated
+responses.
+- **Powerful Search Engine Integration**: Utilize an API-driven search engine
+equipped with dorking capabilities and comprehensive content search, opening
+new avenues for data analysis and insight.
+
+### What problem does it solves?
+
+The CROWler is designed to solve the problem of web crawling in a respectful
+and efficient way. It's also designed to be able to crawl private networks
+and intranets, so you can use it to create your own or company search engine.
+
+On top of that it can also be used as the "base" for a more complex cyber security
+tool, as it can be used to gather information about a website, its network, its
+owners, etc.
+
+Given it can also extract information from a website, it can be used to create
+knowledge bases with reference to the sources, or to create a database of
+information about a specific topic.
+
+Obviously, it can also be used to do keywords analysis, language detection, etc.
+but this is something every single crawler can be used for. However all the
+"classic" features are implemented/being implemented.
+
+### How do I pronounce the name?
+
+**The**: Pronounced as /ðə/ when before a consonant sound, it sounds like
+"thuh."
+
+**CROW**: Pronounced as /kroʊ/, rhymes with "know" or "snow."
+
+**ler**: The latter part is pronounced as /lər/, similar to the ending of the
+ word "crawler" or the word "ler" in "tumbler."
+
+Putting it all together, it sounds like "**thuh KROH-lər**"
+
+### What ChatGPT thinks about the CROWLer ;)
+
+"The CROWler is not just a tool; it's a commitment to ethical, efficient, and
+effective web crawling. Whether you're conducting academic research, market
+analysis, or enhancing your cybersecurity posture, The CROWler delivers with
+integrity and precision.
+
+Join us in redefining the standards of web crawling. Explore more and contribute
+to The CROWler's journey towards a more respectful and insightful digital
+exploration."
+
+😂 that's clearly a bit over the top, but it was fun and I decided to include
+it here, just for fun. BTW it does make me fell like I want to add:
+
+"...and there is one more thing!" (I wonder why?!?!) 😂
 
 ## How to use it?
 
