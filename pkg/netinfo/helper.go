@@ -16,19 +16,21 @@
 package netinfo
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"net/url"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // helper function to extract the host from a URL
 func urlToHost(url string) string {
 	host := url
-	if strings.HasPrefix(url, "http://") {
-		host = strings.TrimPrefix(url, "http://")
-	}
-	if strings.HasPrefix(url, "https://") {
-		host = strings.TrimPrefix(url, "https://")
+	if strings.Contains(host, "://") {
+		host = host[strings.Index(host, "://")+3:]
 	}
 	if strings.Contains(host, "/") {
 		host = host[:strings.Index(host, "/")]
@@ -39,17 +41,23 @@ func urlToHost(url string) string {
 }
 
 // helper function to extract the domain from a URL
-func urlToDomain(url string) string {
-	host := urlToHost(url)
-	if strings.Contains(host, ":") {
-		host = host[:strings.Index(host, ":")]
+func urlToDomain(inputURL string) string {
+	_, err := url.Parse(inputURL)
+	if err != nil {
+		return ""
 	}
-	// take only the last two parts of the domain: for example example.com
-	parts := strings.Split(host, ".")
-	if len(parts) > 2 {
-		host = parts[len(parts)-2] + "." + parts[len(parts)-1]
+
+	// Given that url.Parse() does always extract a hostname correctly
+	// we can safely ignore the error here
+	h := urlToHost(inputURL)
+
+	// Use EffectiveTLDPlusOne to correctly handle domains like "example.co.uk"
+	domain, err := publicsuffix.EffectiveTLDPlusOne(h)
+	if err != nil {
+		fmt.Printf("Error extracting domain from URL: %v\n", err)
+		return ""
 	}
-	return host
+	return domain
 }
 
 // Helper function to return "N/A" for empty strings
@@ -73,11 +81,11 @@ func fieldsQuotes(s string) []string {
 	var buf []rune
 	inQuotes := false
 
+	var o rune
 	for _, r := range s {
 		switch {
-		case r == '"':
+		case r == '"' && o != '\\':
 			inQuotes = !inQuotes // Toggle the inQuotes state
-			buf = append(buf, r) // Keep quotes as part of the field
 		case unicode.IsSpace(r) && !inQuotes:
 			if len(buf) > 0 {
 				fields = append(fields, string(buf))
@@ -86,12 +94,14 @@ func fieldsQuotes(s string) []string {
 		default:
 			buf = append(buf, r)
 		}
+		o = r
 	}
 
 	// Add the last field if it's non-empty
 	if len(buf) > 0 {
 		fields = append(fields, string(buf))
+		return fields
 	}
 
-	return fields
+	return []string{}
 }
