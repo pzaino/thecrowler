@@ -18,7 +18,9 @@ package httpinfo
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -36,6 +38,36 @@ func CreateConfig(url string, c cfg.Config) Config {
 	}
 }
 
+// Check if the URL is valid and allowed
+func validateURL(inputURL string) (bool, error) {
+	parsedURL, err := url.Parse(inputURL)
+	if err != nil {
+		return false, err
+	}
+
+	// Ensure the scheme is http or https
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return false, fmt.Errorf("invalid URL scheme: %s", parsedURL.Scheme)
+	}
+
+	// Add more checks as needed, e.g., against a domain whitelist
+	return true, nil
+}
+
+// Check if the IP address is allowed
+func isIPAllowed(ipAddr string) bool {
+	// Example: Disallow private and loopback ranges
+	ip := net.ParseIP(ipAddr)
+	return !ip.IsLoopback()
+	/* I may add more checks in the future
+	if ip.IsLoopback() {
+		return false
+	}
+	// Extend this function based on your requirements
+	return true
+	*/
+}
+
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
 func ExtractHTTPInfo(config Config) (*Response, error) {
 	client := &http.Client{
@@ -47,6 +79,15 @@ func ExtractHTTPInfo(config Config) (*Response, error) {
 		},
 	}
 
+	// Validate the URL
+	if ok, err := validateURL(config.URL); !ok {
+		return nil, err
+	}
+	// Validate IP address
+	if !isIPAllowed(config.URL) {
+		return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
+	}
+	// Ok, the URL is safe, let's create a new HTTP request
 	req, err := http.NewRequest("GET", config.URL, nil)
 	if err != nil {
 		return nil, err
