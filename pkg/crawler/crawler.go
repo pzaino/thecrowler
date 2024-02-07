@@ -169,6 +169,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
 }
 
+// ConnectSelenium is responsible for connecting to a Selenium instance
 func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
 	var err error
 	ctx.wd, err = ConnectSelenium(sel, 0)
@@ -181,6 +182,7 @@ func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
 	return nil
 }
 
+// RefreshSeleniumConnection is responsible for refreshing the Selenium connection
 func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 	if err := ctx.wd.Refresh(); err != nil {
 		ctx.wd, err = ConnectSelenium(sel, 0)
@@ -195,6 +197,7 @@ func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 	}
 }
 
+// CrawlInitialURL is responsible for crawling the initial URL of a Source
 func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
 	pageSource, err := getURLContent(ctx.source.URL, ctx.wd, 0)
@@ -212,6 +215,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	return pageSource, nil
 }
 
+// TakeScreenshot takes a screenshot of the current page and saves it to the filesystem
 func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
 	// Take screenshot if enabled
 	takeScreenshot := false
@@ -247,6 +251,7 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
 	}
 }
 
+// IndexPage is responsible for indexing a crawled page in the database
 func (ctx *processContext) IndexPage(pageInfo PageInfo) {
 	pageInfo.sourceID = ctx.source.ID
 	indexPage(*ctx.db, ctx.source.URL, pageInfo)
