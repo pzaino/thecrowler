@@ -221,10 +221,10 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
 	takeScreenshot := false
 	var err error
 
-	tmpUrl1 := strings.ToLower(strings.TrimSpace(url))
-	tmpUrl2 := strings.ToLower(strings.TrimSpace(ctx.source.URL))
+	tmpURL1 := strings.ToLower(strings.TrimSpace(url))
+	tmpURL2 := strings.ToLower(strings.TrimSpace(ctx.source.URL))
 
-	if tmpUrl1 == tmpUrl2 {
+	if tmpURL1 == tmpURL2 {
 		takeScreenshot = config.Crawler.SourceScreenshot
 	} else {
 		takeScreenshot = config.Crawler.FullSiteScreenshot
@@ -238,7 +238,7 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
 		timeStr := currentTime.Format("20060102150405")
 		// Create imageName
 		imageName := fmt.Sprintf("%d_%s.png", ctx.source.ID, timeStr)
-		err = TakeScreenshot(&ctx.wd, imageName)
+		err = TakeScreenshot(&wd, imageName)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error taking screenshot: %v", err)
 		}

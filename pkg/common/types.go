@@ -45,6 +45,8 @@ var (
 )
 
 const (
+	// DefaultFilePerms is the default file permissions
 	DefaultFilePerms = 0644
-	DefaultDirPerms  = 0755
+	// DefaultDirPerms is the default directory permissions
+	DefaultDirPerms = 0755
 )
