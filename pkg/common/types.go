@@ -36,29 +36,6 @@ var (
 	debugLevel DbgLevel
 )
 
-// Micro-Interpreters for complex parameters
-
-const maxInterpreterRecursionDepth = 100
-
-// EncodedCmd is a struct containing the parsed command token and arguments.
-type EncodedCmd struct {
-	Token    int
-	Args     []EncodedCmd
-	ArgValue string // stores the argument value
-}
-
-const (
-	// TokenRandom is the token for the random(x, y) command
-	TokenRandom = 1 // Define a constant for each command's token
-	// Add new tokens for additional commands here
-)
-
-// commandTokenMap maps command strings to their respective Token IDs.
-var commandTokenMap = map[string]int{
-	"random": TokenRandom,
-	// Add new commands and their tokens here
-}
-
 var (
 	// UsrAgentStrMap is a list of valid user agent strings.
 	UsrAgentStrMap = map[string]string{

@@ -1,193 +1,120 @@
 package common
 
 import (
-	"reflect"
-	"strconv"
+	"log"
 	"strings"
 	"testing"
 )
 
-var ParserTests = []struct {
-	name          string
-	command       string
-	depth         int
-	expectedToken int
-	expectedArgs  []EncodedCmd
-	expectedError string
-}{
-	{
-		name:          "Valid command",
-		command:       "random(param1, param2)",
-		depth:         0,
-		expectedToken: 1,
-		expectedArgs: []EncodedCmd{
-			{Token: -1, Args: nil, ArgValue: "param1"},
-			{Token: -1, Args: nil, ArgValue: "param2"},
-		},
-		expectedError: "",
-	},
-	{
-		name:          "Valid command 2",
-		command:       "random(1, 10)",
-		depth:         0,
-		expectedToken: 1,
-		expectedArgs: []EncodedCmd{
-			{Token: -1, Args: nil, ArgValue: "1"},
-			{Token: -1, Args: nil, ArgValue: "10"},
-		},
-		expectedError: "",
-	},
-	{
-		name:          "Nested command",
-		command:       "random(1, random(2, 3))",
-		depth:         0,
-		expectedToken: 1,
-		expectedArgs: []EncodedCmd{
-			{Token: -1, Args: nil, ArgValue: "1"},
-			{Token: 1, Args: []EncodedCmd{
-				{Token: -1, Args: nil, ArgValue: "2"},
-				{Token: -1, Args: nil, ArgValue: "3"},
-			}, ArgValue: "random(2, 3)"},
-		},
-		expectedError: "",
-	},
-	{
-		name:          "Plain number",
-		command:       "42",
-		depth:         0,
-		expectedToken: -1,
-		expectedArgs:  nil,
-		expectedError: "",
-	},
-	{
-		name:          "Command with string parameter",
-		command:       `random(1, "this is a test parameter")`,
-		depth:         0,
-		expectedToken: 1,
-		expectedArgs: []EncodedCmd{
-			{Token: -1, Args: nil, ArgValue: "1"},
-			{Token: -1, Args: nil, ArgValue: `"this is a test parameter"`},
-		},
-		expectedError: "",
-	},
-}
+// Define Debug constant
+const (
+	None DbgLevel = iota // Define Debug as the first level
+	Info
+	Debug
+	Error
+	Fatal
+)
 
-var InterpreterTests = []struct {
-	name           string
-	encodedCmd     EncodedCmd
-	expectedResult string
-	expectedError  string
-}{
-	{
-		name: "Non-command parameter",
-		encodedCmd: EncodedCmd{
-			Token:    -1,
-			Args:     nil,
-			ArgValue: "param1",
+func TestSetDebugLevel(t *testing.T) {
+	// Test cases
+	tests := []struct {
+		name     string
+		dbgLvl   DbgLevel
+		expected DbgLevel
+	}{
+		{
+			name:     "Test case 1",
+			dbgLvl:   Debug,
+			expected: Debug,
 		},
-		expectedResult: "param1",
-		expectedError:  "",
-	},
-	{
-		name: "Token representing the 'random' command",
-		encodedCmd: EncodedCmd{
-			Token: TokenRandom,
-			Args: []EncodedCmd{
-				{Token: -1, Args: nil, ArgValue: "1"},
-				{Token: -1, Args: nil, ArgValue: "10"},
-			},
-			ArgValue: "random(1, 10)",
+		{
+			name:     "Test case 2",
+			dbgLvl:   Info,
+			expected: Info,
 		},
-		expectedResult: "",
-		expectedError:  "",
-	},
-	{
-		name: "Unknown command token",
-		encodedCmd: EncodedCmd{
-			Token:    999,
-			Args:     nil,
-			ArgValue: "invalid command",
+		{
+			name:     "Test case 3",
+			dbgLvl:   Fatal,
+			expected: Fatal,
 		},
-		expectedResult: "",
-		expectedError:  "unknown command token: 999",
-	},
-}
-
-func TestParseCmd(t *testing.T) {
-	tests := ParserTests
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotCmd, gotErr := ParseCmd(tt.command, tt.depth)
-
-			assertToken(t, gotCmd.Token, tt.expectedToken)
-			assertArgs(t, gotCmd.Args, tt.expectedArgs)
-			assertError(t, gotErr, tt.expectedError)
-		})
+		{
+			name:     "Test case 4",
+			dbgLvl:   Error,
+			expected: Error,
+		},
 	}
-}
 
-func assertToken(t *testing.T, gotToken, expectedToken int) {
-	if gotToken != expectedToken {
-		t.Errorf("InterpretCommand() token = %v, want %v", gotToken, expectedToken)
-	}
-}
-
-func assertArgs(t *testing.T, gotArgs, expectedArgs []EncodedCmd) {
-	if !reflect.DeepEqual(gotArgs, expectedArgs) {
-		t.Errorf("InterpretCommand() args = %v, want %v", gotArgs, expectedArgs)
-	}
-}
-
-func assertError(t *testing.T, gotErr error, expectedError string) {
-	if gotErr != nil {
-		if expectedError == "" || !strings.Contains(gotErr.Error(), expectedError) {
-			t.Errorf("InterpretCommand() error = %v, want %v", gotErr, expectedError)
-		}
-	} else if expectedError != "" {
-		t.Errorf("InterpretCommand() expected error but got nil")
-	}
-}
-
-func TestInterpretCmd(t *testing.T) {
-	tests := InterpreterTests
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotResult, gotErr := InterpretCmd(tt.encodedCmd)
-
-			if tt.name == "Token representing the 'random' command" {
-				testRandomCommand(t, gotResult, gotErr)
-			} else {
-				testNonRandomCommand(t, gotResult, gotErr, tt.expectedResult, tt.expectedError)
+	// Run tests
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			SetDebugLevel(test.dbgLvl)
+			if debugLevel != test.expected {
+				t.Errorf("Expected debug level %v, but got %v", test.expected, debugLevel)
 			}
 		})
 	}
 }
 
-func testRandomCommand(t *testing.T, gotResult string, gotErr error) {
-	if gotErr != nil {
-		t.Errorf("ProcessEncodedCmd() returned an unexpected error: %v", gotErr)
-	} else {
-		resultInt, err := strconv.Atoi(gotResult)
-		if err != nil {
-			t.Errorf("ProcessEncodedCmd() returned a non-integer result for 'random' command: %v", gotResult)
-		} else if resultInt < 1 || resultInt > 10 {
-			t.Errorf("ProcessEncodedCmd() result = %v, want it to be within [1, 10]", resultInt)
-		}
+func TestGetDebugLevel(t *testing.T) {
+	expected := debugLevel
+	result := GetDebugLevel()
+	if result != expected {
+		t.Errorf("Expected debug level %v, but got %v", expected, result)
 	}
 }
 
-func testNonRandomCommand(t *testing.T, gotResult string, gotErr error, expectedResult string, expectedError string) {
-	if gotResult != expectedResult {
-		t.Errorf("ProcessEncodedCmd() result = %v, want %v", gotResult, expectedResult)
+func TestDebugMsg(t *testing.T) {
+	tests := []struct {
+		name     string
+		dbgLvl   DbgLevel
+		msg      string
+		args     []interface{}
+		expected string
+	}{
+		{
+			name:     "Test case 1",
+			dbgLvl:   Debug,
+			msg:      "Debug message",
+			args:     []interface{}{},
+			expected: "Debug message\n",
+		},
+		{
+			name:     "Test case 2",
+			dbgLvl:   Info,
+			msg:      "Info message",
+			args:     []interface{}{},
+			expected: "",
+		},
 	}
 
-	if gotErr != nil {
-		if expectedError == "" || !strings.Contains(gotErr.Error(), expectedError) {
-			t.Errorf("ProcessEncodedCmd() error = %v, want %v", gotErr, expectedError)
-		}
-	} else if expectedError != "" {
-		t.Errorf("ProcessEncodedCmd() expected error but got nil")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logOutput := captureLogOutput(func() {
+				DebugMsg(test.dbgLvl, test.msg, test.args...)
+			})
+
+			if !strings.Contains(logOutput, test.expected) {
+				t.Errorf("Expected log output %q, but got %q", test.expected, logOutput)
+			}
+		})
 	}
+}
+
+// Helper function to capture log output
+func captureLogOutput(f func()) string {
+	logOutput := ""
+	log.SetOutput(&logWriter{&logOutput})
+	f()
+	log.SetOutput(log.Writer())
+	return logOutput
+}
+
+// Custom log writer to capture log output
+type logWriter struct {
+	output *string
+}
+
+func (lw *logWriter) Write(p []byte) (n int, err error) {
+	*lw.output += string(p)
+	return len(p), nil
 }

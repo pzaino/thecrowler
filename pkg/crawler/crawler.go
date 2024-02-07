@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,6 +36,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
@@ -63,6 +63,7 @@ type processContext struct {
 	newLinks   []string
 	source     *cdb.Source
 	wg         sync.WaitGroup
+	sel        chan SeleniumInstance
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -70,105 +71,53 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
 func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, SeleniumInstances chan SeleniumInstance) {
-
-	// Define wd
+	// Initialize the process context
 	var err error
-	var processCtx processContext
-	processCtx.db = &db
-	processCtx.source = &source
+	processCtx := processContext{
+		source: &source,
+		db:     &db,
+		sel:    SeleniumInstances,
+	}
 
 	// Connect to Selenium
-	processCtx.wd, err = ConnectSelenium(sel, 0)
-	if err != nil {
-		log.Println("Error connecting to Selenium:", err)
-		// Return the Selenium instance to the channel
-		SeleniumInstances <- sel
+	if err := processCtx.ConnectToSelenium(sel); err != nil {
 		return
 	}
 	defer QuitSelenium(&processCtx.wd)
-	log.Println("Connected to Selenium WebDriver successfully.")
 
 	// Crawl the initial URL and get the HTML content
-	// This is where you'd use Selenium or another method to get the page content
-	log.Println("Crawling URL:", source.URL)
-	pageSource, err := getURLContent(source.URL, processCtx.wd, 0)
+	var pageSource selenium.WebDriver
+	pageSource, err = processCtx.CrawlInitialURL(sel)
 	if err != nil {
-		log.Println("Error getting HTML content:", err)
-		// Return the Selenium instance to the channel
-		SeleniumInstances <- sel
-		// Update the source state in the database
-		updateSourceState(db, source.URL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
 		return
 	}
 
-	// Try to find and click the 'Accept' or 'Consent' button in different languages
-	for _, text := range append(acceptTexts, consentTexts...) {
-		if clicked := findAndClickButton(processCtx.wd, text); clicked {
-			break
-		}
-	}
-
-	// Extract necessary information from the content
-	pageInfo := extractPageInfo(pageSource)
-
-	// Index the page content in the database
-	pageInfo.sourceID = source.ID
-	indexPage(db, source.URL, pageInfo)
-
 	// Get screenshot of the page
-	if config.Crawler.SourceScreenshot {
-		log.Printf("Taking screenshot of %s...\n", source.URL)
-		// Get the current date and time
-		currentTime := time.Now()
-		// For example, using the format yyyyMMddHHmmss
-		timeStr := currentTime.Format("20060102150405")
-		// Create imageName
-		imageName := fmt.Sprintf("%d_%s.png", source.ID, timeStr)
-		err = TakeScreenshot(&processCtx.wd, imageName)
-		if err != nil {
-			log.Println("Error taking screenshot:", err)
-		}
-		// Update DB SearchIndex Table with the screenshot filename
-		_, err = db.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, source.URL)
-		if err != nil {
-			log.Printf("Error updating database with screenshot URL: %v\n", err)
-		}
-	}
+	processCtx.TakeScreenshot(pageSource, source.URL)
 
-	// Parse the HTML and extract links
+	// Extract the HTML content and extract links
 	htmlContent, err := pageSource.PageSource()
 	if err != nil {
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
-		log.Println("Error getting page source:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
 		SeleniumInstances <- sel
 		updateSourceState(db, source.URL, err)
 		return
 	}
 	initialLinks := extractLinks(htmlContent)
 
+	// Refresh the page
+	processCtx.RefreshSeleniumConnection(sel)
+
+	// Crawl the website
 	allLinks := initialLinks // links extracted from the initial page
 	var currentDepth int
 	maxDepth := config.Crawler.MaxDepth // set a maximum depth for crawling
-
 	if maxDepth == 0 {
 		maxDepth = 1
 	}
-
-	// Refresh the page
-	if err := processCtx.wd.Refresh(); err != nil {
-		processCtx.wd, err = ConnectSelenium(sel, 0)
-		if err != nil {
-			// Return the Selenium instance to the channel
-			// and update the source state in the database
-			log.Println("Error re-connecting to Selenium:", err)
-			SeleniumInstances <- sel
-			updateSourceState(db, source.URL, err)
-			return
-		}
-	}
-
-	// Crawl the website
 	newLinksFound := len(initialLinks)
 	for (currentDepth < maxDepth) && (newLinksFound > 0) {
 		// Create a channel to enqueue jobs
@@ -186,12 +135,12 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 		}
 		close(jobs)
 
-		log.Println("Enqueued jobs:", len(allLinks))
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Enqueued jobs: %d", len(allLinks))
 
 		// Wait for workers to finish and collect new links
-		log.Println("Waiting for workers to finish...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
 		processCtx.wg.Wait()
-		log.Println("All workers finished.")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
 
 		// Prepare for the next iteration
 		processCtx.linksMutex.Lock()
@@ -217,7 +166,100 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 
 	// Update the source state in the database
 	updateSourceState(db, source.URL, nil)
-	log.Printf("Finished crawling website: %s\n", source.URL)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
+}
+
+func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
+	var err error
+	ctx.wd, err = ConnectSelenium(sel, 0)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to Selenium: %v", err)
+		ctx.sel <- sel
+		return err
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Connected to Selenium WebDriver successfully.")
+	return nil
+}
+
+func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
+	if err := ctx.wd.Refresh(); err != nil {
+		ctx.wd, err = ConnectSelenium(sel, 0)
+		if err != nil {
+			// Return the Selenium instance to the channel
+			// and update the source state in the database
+			cmn.DebugMsg(cmn.DbgLvlError, "Error re-connecting to Selenium: %v", err)
+			ctx.sel <- sel
+			updateSourceState(*ctx.db, ctx.source.URL, err)
+			return
+		}
+	}
+}
+
+func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
+	pageSource, err := getURLContent(ctx.source.URL, ctx.wd, 0)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error getting HTML content: %v", err)
+		ctx.sel <- sel // Assuming 'sel' is accessible
+		updateSourceState(*ctx.db, ctx.source.URL, err)
+		return pageSource, err
+	}
+	// Handle consent
+	handleConsent(ctx.wd)
+	// Continue with extracting page info and indexing
+	pageInfo := extractPageInfo(pageSource)
+	ctx.IndexPage(pageInfo)
+	return pageSource, nil
+}
+
+func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
+	// Take screenshot if enabled
+	takeScreenshot := false
+	var err error
+
+	tmpUrl1 := strings.ToLower(strings.TrimSpace(url))
+	tmpUrl2 := strings.ToLower(strings.TrimSpace(ctx.source.URL))
+
+	if tmpUrl1 == tmpUrl2 {
+		takeScreenshot = config.Crawler.SourceScreenshot
+	} else {
+		takeScreenshot = config.Crawler.FullSiteScreenshot
+	}
+
+	if takeScreenshot {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
+		// Get the current date and time
+		currentTime := time.Now()
+		// For example, using the format yyyyMMddHHmmss
+		timeStr := currentTime.Format("20060102150405")
+		// Create imageName
+		imageName := fmt.Sprintf("%d_%s.png", ctx.source.ID, timeStr)
+		err = TakeScreenshot(&ctx.wd, imageName)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error taking screenshot: %v", err)
+		}
+		// Update DB SearchIndex Table with the screenshot filename
+		dbx := *ctx.db
+		_, err = dbx.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, url)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error updating database with screenshot URL: %v", err)
+		}
+	}
+}
+
+func (ctx *processContext) IndexPage(pageInfo PageInfo) {
+	pageInfo.sourceID = ctx.source.ID
+	indexPage(*ctx.db, ctx.source.URL, pageInfo)
+}
+
+func handleConsent(wd selenium.WebDriver) {
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking for 'consent' windows...")
+	for _, text := range append(acceptTexts, consentTexts...) {
+		if clicked := findAndClickButton(wd, text); clicked {
+			break
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "completed.")
 }
 
 func findAndClickButton(wd selenium.WebDriver, buttonText string) bool {
@@ -276,7 +318,7 @@ func updateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 	// Before updating the source state, check if the database connection is still alive
 	err = db.CheckConnection(config)
 	if err != nil {
-		log.Printf(dbConnCheckErr, err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return
 	}
 
@@ -292,7 +334,7 @@ func updateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 	}
 
 	if err != nil {
-		log.Printf("Error updating source state for URL %s: %v", sourceURL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error updating source state for URL %s: %v", sourceURL, err)
 	}
 }
 
@@ -311,21 +353,21 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	// Before updating the source state, check if the database connection is still alive
 	err := db.CheckConnection(config)
 	if err != nil {
-		log.Printf(dbConnCheckErr, err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return
 	}
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("Error starting transaction: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
 		return
 	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
-		log.Printf("Error inserting or updating SearchIndex: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
 		return
 	}
@@ -333,7 +375,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	// Insert MetaTags
 	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
 	if err != nil {
-		log.Printf("Error inserting meta tags: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
 		rollbackTransaction(tx)
 		return
 	}
@@ -341,7 +383,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	// Insert into KeywordIndex
 	err = insertKeywords(tx, db, indexID, pageInfo)
 	if err != nil {
-		log.Printf("Error inserting keywords: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
 		rollbackTransaction(tx)
 		return
 	}
@@ -349,7 +391,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
-		log.Printf("Error committing transaction: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
 		rollbackTransaction(tx)
 		return
 	}
@@ -434,7 +476,7 @@ func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int, pageInfo PageInfo) 
 func rollbackTransaction(tx *sql.Tx) {
 	err := tx.Rollback()
 	if err != nil {
-		log.Printf("Error rolling back transaction: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error rolling back transaction: %v", err)
 	}
 }
 
@@ -443,7 +485,7 @@ func rollbackTransaction(tx *sql.Tx) {
 func commitTransaction(tx *sql.Tx) error {
 	err := tx.Commit()
 	if err != nil {
-		log.Printf("Error committing transaction: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
 		return err
 	}
 	return nil
@@ -461,7 +503,7 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 	// Before updating the source state, check if the database connection is still alive
 	err := db.CheckConnection(config)
 	if err != nil {
-		log.Printf(dbConnCheckErr, err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
 	}
 
@@ -490,8 +532,8 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
 	err0 := wd.Get(url)
-	cmd, _ := cmn.ParseCmd(config.Crawler.Interval, 0)
-	delayStr, _ := cmn.InterpretCmd(cmd)
+	cmd, _ := exi.ParseCmd(config.Crawler.Interval, 0)
+	delayStr, _ := exi.InterpretCmd(cmd)
 	delay, err := strconv.ParseFloat(delayStr, 64)
 	if err != nil {
 		delay = 1
@@ -511,7 +553,7 @@ func extractPageInfo(webPage selenium.WebDriver) PageInfo {
 	htmlContent, _ := webPage.PageSource()
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
-		log.Printf("Error loading HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 		return PageInfo{} // Return an empty struct in case of an error
 	}
 
@@ -548,7 +590,7 @@ func detectLang(wd selenium.WebDriver) string {
 	if lang == "" {
 		bodyHTML, err := wd.FindElement(selenium.ByTagName, "body")
 		if err != nil {
-			log.Println("Error retrieving text:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error retrieving text: %v", err)
 			return "unknown"
 		}
 		bodyText, _ := bodyHTML.Text()
@@ -573,7 +615,7 @@ func inferDocumentType(url string) string {
 	extension := strings.TrimSpace(strings.ToLower(filepath.Ext(url)))
 	if extension != "" {
 		if docType, ok := docTypeMap[extension]; ok {
-			log.Println("Document Type:", docType)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Document Type: %s", docType)
 			return docType
 		}
 	}
@@ -613,7 +655,7 @@ func IsValidURL(u string) bool {
 func extractLinks(htmlContent string) []string {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
-		log.Fatal("Error loading HTTP response body. ", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 	}
 
 	var links []string
@@ -687,12 +729,12 @@ func worker(processCtx *processContext, id int, jobs chan string) {
 	for url := range jobs {
 		skip := skipURL(processCtx, id, url)
 		if skip {
-			log.Printf("Worker %d: finished job.\n", id)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Skipping URL %s\n", id, url)
 			continue
 		}
-		log.Printf("Worker %d: started job %s\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
 		processJob(processCtx, id, url)
-		log.Printf("Worker %d: finished job %s\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
 		if config.Crawler.Delay != "0" {
 			delay := getDelay()
 			time.Sleep(time.Duration(delay) * time.Second)
@@ -709,7 +751,7 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 		url, _ = combineURLs(processCtx.source.URL, url)
 	}
 	if processCtx.source.Restricted != 4 && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
-		log.Printf("Worker %d: Skipping URL '%s' due 'restricted' policy.\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
 	return false
@@ -718,7 +760,7 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 func processJob(processCtx *processContext, id int, url string) {
 	htmlContent, err := getURLContent(url, processCtx.wd, 1)
 	if err != nil {
-		log.Printf("Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return
 	}
 	pageCache := extractPageInfo(htmlContent)
@@ -741,8 +783,8 @@ func getDelay() float64 {
 		return delay
 	}
 
-	cmd, _ := cmn.ParseCmd(config.Crawler.Delay, 0)
-	delayStr, _ := cmn.InterpretCmd(cmd)
+	cmd, _ := exi.ParseCmd(config.Crawler.Delay, 0)
+	delayStr, _ := exi.InterpretCmd(cmd)
 	delay, err := strconv.ParseFloat(delayStr, 64)
 	if err != nil {
 		delay = 1
@@ -784,7 +826,7 @@ func StartCrawler(cf cfg.Config) {
 // based Selenium server is more stable and reliable than the local one.
 // and it's obviously easier to setup and more secure.
 func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
-	log.Println("Configuring Selenium...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Configuring Selenium...")
 	var service *selenium.Service
 
 	var protocol string
@@ -800,15 +842,15 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 		for {
 			service, err = selenium.NewSeleniumService(fmt.Sprintf(protocol+"://"+c.Host+":%d/wd/hub"), c.Port)
 			if err == nil {
-				log.Println("Selenium server started successfully.")
+				cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium service started successfully.")
 				break
 			}
-			log.Printf("Error starting Selenium server: %v\n", err)
-			log.Printf("Check if Selenium is running on host '%s' at port '%d'.\n", c.Host, c.Port)
-			log.Printf("Retrying in 5 seconds...\n")
+			cmn.DebugMsg(cmn.DbgLvlError, "Error starting Selenium service: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Check if Selenium is running on host '%s' at port '%d' and if that host is reachable from the system that is running thecrowler engine.", c.Host, c.Port)
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Retrying in 5 seconds...")
 			retries++
 			if retries > 5 {
-				log.Printf("Exceeded maximum retries. Exiting...\n")
+				cmn.DebugMsg(cmn.DbgLvlError, "Exceeded maximum retries. Exiting...")
 				break
 			}
 			time.Sleep(5 * time.Second)
@@ -816,7 +858,7 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	}
 
 	if err == nil {
-		log.Printf("Done!\n")
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium server started successfully.")
 	}
 	return service, err
 }
@@ -829,9 +871,9 @@ func StopSelenium(sel *selenium.Service) error {
 	// Stop the Selenium WebDriver server instance
 	err := sel.Stop()
 	if err != nil {
-		log.Printf("Error stopping Selenium: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error stopping Selenium: %v", err)
 	} else {
-		log.Println("Selenium stopped successfully.")
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium stopped successfully.")
 	}
 	return err
 }
@@ -880,7 +922,7 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 	for {
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/wd/hub", sel.Config.Port))
 		if err != nil {
-			log.Println("Error connecting to Selenium: ", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to Selenium: %v", err)
 			time.Sleep(5 * time.Second)
 		} else {
 			break
@@ -896,16 +938,16 @@ func QuitSelenium(wd *selenium.WebDriver) {
 		// Attempt a simple operation to check if the session is still valid
 		_, err := (*wd).CurrentURL()
 		if err != nil {
-			log.Printf("WebDriver session may have already ended: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "WebDriver session may have already ended: %v", err)
 			return
 		}
 
 		// Close the WebDriver if the session is still active
 		err = (*wd).Quit()
 		if err != nil {
-			log.Printf("Error closing WebDriver: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error closing WebDriver: %v", err)
 		} else {
-			log.Println("WebDriver closed successfully.")
+			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
 		}
 	}
 }
