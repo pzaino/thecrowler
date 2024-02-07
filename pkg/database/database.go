@@ -19,10 +19,10 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -40,20 +40,20 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	for {
 		handler.db, err = sql.Open("postgres", connectionString)
 		if err != nil {
-			log.Println(err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
 			time.Sleep(time.Duration(c.Database.RetryTime) * time.Second)
 		} else {
 			for {
 				// Check database connection
 				err = handler.db.Ping()
 				if err != nil {
-					log.Println(err)
+					cmn.DebugMsg(cmn.DbgLvlError, "Error pinging the database: %v", err)
 					time.Sleep(time.Duration(c.Database.PingTime) * time.Second)
 				} else {
 					break
 				}
 			}
-			log.Println("Successfully connected to the database!")
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully connected to the database!")
 			break
 		}
 	}

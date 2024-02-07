@@ -24,7 +24,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -102,7 +101,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	for rows.Next() {
 		var src cdb.Source
 		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags); err != nil {
-			log.Println("Error scanning rows:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error scanning rows: %v", err)
 			continue
 		}
 		sourcesToCrawl = append(sourcesToCrawl, src)
@@ -125,23 +124,23 @@ func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance) {
 		// Retrieve the sources to crawl
 		sourcesToCrawl, err := retrieveAvailableSources(*db)
 		if err != nil {
-			log.Println("Error retrieving sources:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error retrieving sources: %v", err)
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.Unlock()
 			time.Sleep(sleepTime)
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Sources to crawl: %d", len(sourcesToCrawl))
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sources to crawl: %d", len(sourcesToCrawl))
 
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
-			cmn.DebugMsg(cmn.DbgLvlInfo, "No sources to crawl, sleeping...")
+			cmn.DebugMsg(cmn.DbgLvlDebug, "No sources to crawl, sleeping...")
 
 			// Perform database maintenance if it's time
 			if time.Now().After(maintenanceTime) {
 				performDatabaseMaintenance(*db)
 				maintenanceTime = time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
-				cmn.DebugMsg(cmn.DbgLvlDebug, "Database maintenance every: %d", config.Crawler.Maintenance)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "Database maintenance every: %d", config.Crawler.Maintenance)
 			}
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.Unlock()
@@ -158,11 +157,11 @@ func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance) {
 }
 
 func performDatabaseMaintenance(db cdb.Handler) {
-	log.Printf("Performing database maintenance...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Performing database maintenance...")
 	if err := performDBMaintenance(db); err != nil {
-		log.Printf("Error performing database maintenance: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error performing database maintenance: %v", err)
 	} else {
-		log.Printf("Database maintenance completed successfully.")
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Database maintenance completed successfully.")
 	}
 }
 
@@ -223,6 +222,10 @@ func main() {
 	configFile := flag.String("config", "./config.yaml", "Path to the configuration file")
 	flag.Parse()
 
+	// Initialize the logger
+	cmn.InitLogger("TheCROWler")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler is starting...")
+
 	// Define db before we set signal handlers
 	var db cdb.Handler
 
@@ -230,7 +233,7 @@ func main() {
 	var seleniumInstances chan crowler.SeleniumInstance
 
 	// Setting up a channel to listen for termination signals
-	log.Println("Setting up termination signals listener...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
@@ -241,37 +244,37 @@ func main() {
 			switch sig {
 			case syscall.SIGINT:
 				// Handle SIGINT (Ctrl+C)
-				log.Println("SIGINT received, shutting down...")
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
 				closeResources(db, seleniumInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGTERM:
 				// Handle SIGTERM
-				fmt.Println("SIGTERM received, shutting down...")
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
 				closeResources(db, seleniumInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
-				fmt.Println("SIGQUIT received, shutting down...")
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
 				closeResources(db, seleniumInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGHUP:
 				// Handle SIGHUP
-				fmt.Println("SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
 				err := initAll(configFile, &config, &db, &seleniumInstances)
 				if err != nil {
 					configMutex.Unlock()
-					log.Fatal(err)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
 				}
 				// Connect to the database
 				err = db.Connect(config)
 				if err != nil {
 					configMutex.Unlock()
 					closeResources(db, seleniumInstances) // Release resources
-					log.Fatal(err)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "Error connecting to the database: %v", err)
 				}
 				configMutex.Unlock()
 				//go checkSources(&db, seleniumInstances)
@@ -282,19 +285,19 @@ func main() {
 	// Initialize the crawler
 	err := initAll(configFile, &config, &db, &seleniumInstances)
 	if err != nil {
-		log.Fatal(err)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
 	}
 
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
 		closeResources(db, seleniumInstances) // Release resources
-		log.Fatal(err)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Error connecting to the database: %v", err)
 	}
 	defer closeResources(db, seleniumInstances)
 
 	// Start the checkSources function in a goroutine
-	log.Println("Starting processing data (if any)...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
 	checkSources(&db, seleniumInstances)
 
 	// Wait forever
@@ -305,7 +308,7 @@ func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 	// Close the database connection
 	if db != nil {
 		db.Close()
-		log.Println("Database connection closed.")
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection closed.")
 	}
 	// Stop the Selenium services
 	close(sel)
@@ -313,9 +316,9 @@ func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 		if seleniumInstance.Service != nil {
 			err := seleniumInstance.Service.Stop()
 			if err != nil {
-				log.Println("Selenium instance: ", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "Error stopping Selenium instance: %v", err)
 			}
 		}
 	}
-	log.Println("All services stopped.")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "All services stopped.")
 }

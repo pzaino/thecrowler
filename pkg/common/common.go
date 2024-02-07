@@ -17,7 +17,44 @@ package common
 
 import (
 	"log"
+	"os"
+	"strconv"
 )
+
+// InitLogger initializes the logger
+func InitLogger(appName string) {
+	log.SetOutput(os.Stdout)
+
+	// Retrieve process PID
+	pid := os.Getpid()
+
+	// Retrieve process PPID
+	ppid := os.Getppid()
+
+	// Retrieve default network address
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "localhost"
+	}
+
+	// create process instance name: <hostname>:<pid>:<ppid>
+	processName := hostname + ":" + strconv.Itoa(pid) + ":" + strconv.Itoa(ppid)
+
+	// Setting the log prefix
+	loggerPrefix = appName + " [" + processName + "]: "
+
+	// Setting the log flags (date, time, microseconds, short file name)
+	log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
+}
+
+// Update the logger configuration
+func UpdateLoggerConfig() {
+	if debugLevel > 0 {
+		log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
+	} else {
+		log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
+	}
+}
 
 // SetDebugLevel allows to set the current debug level
 func SetDebugLevel(dbgLvl DbgLevel) {
@@ -31,11 +68,16 @@ func GetDebugLevel() DbgLevel {
 
 // DebugMsg is a function that prints debug information
 func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
-	if dbgLvl != DbgLvlFatal {
-		if GetDebugLevel() >= dbgLvl {
-			log.Printf(msg, args...)
+	// For always-log messages (Info, Warning, Error, Fatal)
+	if dbgLvl <= DbgLvlInfo {
+		log.Printf(loggerPrefix+msg, args...)
+		if dbgLvl == DbgLvlFatal {
+			os.Exit(1)
 		}
-	} else {
-		log.Fatalf(msg, args...)
+		return
+	}
+	if debugLevel >= dbgLvl {
+		// For Debug messages, log only if the set debug level is equal or higher
+		log.Printf(loggerPrefix+msg, args...)
 	}
 }
