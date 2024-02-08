@@ -8,23 +8,26 @@
 --\set CROWLER_DB_USER 'your_username'
 --\set CROWLER_DB_PASSWORD 'your_password'
 
+--------------------------------
+-- Database Tables setup
+
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id SERIAL PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP,
     url TEXT NOT NULL UNIQUE,         -- Using TEXT for long URLs
-    status VARCHAR(50) DEFAULT 'new', -- All new sources are set to 'new' by default
+    status VARCHAR(50) DEFAULT 'new' NOT NULL, -- All new sources are set to 'new' by default
     last_crawled_at TIMESTAMP,
     last_error TEXT,                  -- Using TEXT for potentially long error messages
     last_error_at TIMESTAMP,
-    restricted INTEGER DEFAULT 2,     -- 0 = fully restricted (just this URL)
+    restricted INTEGER DEFAULT 2 NOT NULL,     -- 0 = fully restricted (just this URL)
                                       -- 1 = l3 domain restricted (everything within this URL l3 domain)
                                       -- 2 = l2 domain restricted
                                       -- 3 = l1 domain restricted
                                       -- 4 = no restrictions
     disabled BOOLEAN DEFAULT FALSE,
-    flags INTEGER DEFAULT 0,
+    flags INTEGER DEFAULT 0 NOT NULL,
     config JSONB                      -- Stores JSON document with all details about the source
                                       -- configuration for the crawler
 );
@@ -32,7 +35,7 @@ CREATE TABLE IF NOT EXISTS Sources (
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
     owner_id SERIAL PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     details JSONB NOT NULL             -- Stores JSON document with all details about the owner
 );
@@ -41,7 +44,7 @@ CREATE TABLE IF NOT EXISTS Owners (
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id SERIAL PRIMARY KEY,
     source_id INT REFERENCES Sources(source_id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     details JSONB NOT NULL
 );
@@ -49,7 +52,7 @@ CREATE TABLE IF NOT EXISTS NetInfo (
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id SERIAL PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     page_url TEXT NOT NULL UNIQUE,                  -- Using TEXT for long URLs
     title VARCHAR(255),
@@ -64,7 +67,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id SERIAL PRIMARY KEY,
     index_id INTEGER REFERENCES SearchIndex(index_id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     name VARCHAR(255),
     content TEXT
@@ -73,7 +76,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
 -- Keywords table stores all the found keywords during an indexing
 CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id SERIAL PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     keyword VARCHAR(100) NOT NULL UNIQUE
 );
@@ -83,7 +86,7 @@ CREATE TABLE IF NOT EXISTS SourceOwner (
     source_owner_id SERIAL PRIMARY KEY,
     source_id INTEGER NOT NULL,
     owner_id INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
         FOREIGN KEY(source_id)
@@ -101,7 +104,7 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
     ss_index_id SERIAL PRIMARY KEY,
     source_id INTEGER NOT NULL,
     index_id INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
         FOREIGN KEY(source_id)
@@ -119,10 +122,13 @@ CREATE TABLE IF NOT EXISTS KeywordIndex (
     keyword_index_id SERIAL PRIMARY KEY,
     keyword_id INTEGER REFERENCES Keywords(keyword_id),
     index_id INTEGER REFERENCES SearchIndex(index_id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     occurrences INTEGER
 );
+
+--------------------------------
+-- Indexes and triggers setup
 
 -- Creates an index for the Sources url column
 DO $$
@@ -236,6 +242,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_source_id') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_sources_source_id ON Sources(source_id);
+    END IF;
+END
+$$;
+
+-- Creates a gin index for the Source config column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_config') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_sources_config ON Sources USING gin(config jsonb_path_ops);
     END IF;
 END
 $$;
@@ -409,7 +426,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Creates a trigger to update the last_updated_at column
+-- Creates a trigger to update the last_updated_at column on Sources table
 DO $$
 BEGIN
     -- Check if the trigger already exists
@@ -419,6 +436,110 @@ BEGIN
 		FOR EACH ROW
 		EXECUTE FUNCTION update_last_updated_at_column();
 	END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on SearchIndex table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_searchindex_last_updated_before_update') THEN
+		CREATE TRIGGER trg_update_searchindex_last_updated_before_update
+		BEFORE UPDATE ON SearchIndex
+		FOR EACH ROW
+		EXECUTE FUNCTION update_last_updated_at_column();
+	END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on Owners table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_owners_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_owners_last_updated_before_update
+        BEFORE UPDATE ON Owners
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on NetInfo table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_netinfo_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_netinfo_last_updated_before_update
+        BEFORE UPDATE ON NetInfo
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on MetaTags table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_metatags_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_metatags_last_updated_before_update
+        BEFORE UPDATE ON MetaTags
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on Keywords table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_keywords_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_keywords_last_updated_before_update
+        BEFORE UPDATE ON Keywords
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on SourceOwner table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_sourceowner_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_sourceowner_last_updated_before_update
+        BEFORE UPDATE ON SourceOwner
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on SourceSearchIndex table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_ssi_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_ssi_last_updated_before_update
+        BEFORE UPDATE ON SourceSearchIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on KeywordIndex table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_keywordindex_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_keywordindex_last_updated_before_update
+        BEFORE UPDATE ON KeywordIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
 END
 $$;
 
@@ -458,7 +579,9 @@ END;
 $$
 LANGUAGE plpgsql;
 
---------------------------
+
+--------------------------------
+-- User and permissions setup
 
 -- Creates a new user
 CREATE USER :CROWLER_DB_USER WITH ENCRYPTED PASSWORD :'CROWLER_DB_PASSWORD';

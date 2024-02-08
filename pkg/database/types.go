@@ -18,6 +18,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -57,8 +58,18 @@ type SQLiteHandler struct {
 // Restricted indicates whether the crawling has to be restricted to the source domain or not.
 // Flags represents additional flags associated with the source.
 type Source struct {
-	ID         int
-	URL        string
+	// ID is the unique identifier of the source.
+	ID int
+	// URL is the URL of the source.
+	URL string
+	// Restricted indicates whether the crawling has to be restricted to the source domain or not.
 	Restricted int
-	Flags      int
+	// Flags represents additional flags associated with the source.
+	Flags int
+	// Config is a JSON object containing the configuration for the source.
+	Config *json.RawMessage // we use json.RawMessage to avoid unmarshalling the JSON object
 }
+
+// Define a default configuration as a global variable or inside a function as needed
+var DefaultSourceCfgJSON = []byte(`{"config":"default"}`)
+var DefaultSourceCfgRaw = json.RawMessage(DefaultSourceCfgJSON)
