@@ -17,10 +17,11 @@
 package crawler
 
 import (
-	"log"
 	"regexp"
 	"strings"
 	"unicode"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -185,7 +186,7 @@ func extractKeywords(pageInfo PageInfo) []string {
 	// Load the HTML document
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(pageInfo.BodyText))
 	if err != nil {
-		log.Printf("Error loading HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 		return nil
 	}
 

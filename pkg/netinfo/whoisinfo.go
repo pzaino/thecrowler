@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strings"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
+
 	"github.com/likexian/whois"
 )
 
@@ -136,7 +138,7 @@ func parseWHOISOutput(whoisOutput, domain string) (WHOISData, error) {
 		} else {
 			data.EntityStatus = "PUBLIC"
 		}
-		//log.Printf("WHOIS Output for %s:\n%s", domain, whoisOutput)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "WHOIS Output for IP %s:\n%s", domain, whoisOutput)
 	} else {
 		data.EntityType = "DOMAIN"
 		// Check if the domain is public or private
@@ -172,8 +174,6 @@ func parseWHOISOutput(whoisOutput, domain string) (WHOISData, error) {
 			if err == nil {
 				// Trim spaces from the extracted value
 				value = strings.TrimSpace(value)
-
-				//log.Printf("Field: %s, Value: %s", fieldName, value)
 
 				switch fieldName {
 				case "creation date", "created on", "created", "created date", "created-date":
@@ -288,7 +288,7 @@ func getIPInfo(ni *NetInfo, ip string) (ipExtraData, error) {
 	}
 
 	// Print the entire WHOIS result for debugging
-	//log.Printf("WHOIS Result for IP %s:\n%s", ip, result)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "WHOIS Result for IP %s:\n%s", ip, result)
 
 	// Define regular expressions to match ASN and CIDR information
 	asnRegex := regexp.MustCompile(`(?i)(Origin\s*AS):\s*(?:AS)?(\d+)`)

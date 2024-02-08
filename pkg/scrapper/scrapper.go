@@ -18,12 +18,13 @@ package scrapper
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
@@ -180,7 +181,7 @@ func (re *RuleEngine) isGroupValid(group RuleGroup) bool {
 
 	// Check if the rules group has a valid_from and valid_to date
 	if group.ValidFrom == "" && group.ValidTo == "" {
-		log.Printf("No valid_from and valid_to dates found for group: %s", group.GroupName)
+		cmn.DebugMsg(cmn.DbgLvlError, "No valid_from and valid_to dates found for group: %s", group.GroupName)
 		return true
 	}
 
@@ -206,10 +207,11 @@ func (re *RuleEngine) isGroupValid(group RuleGroup) bool {
 	// Get the current time
 	now := time.Now()
 
-	log.Printf("Validating group: %s", group.GroupName)
-	log.Printf("Valid from: %s", validFrom)
-	log.Printf("Valid to: %s", validTo)
-	log.Printf("Current time: %s", now)
+	// Log the validation details
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Validating group: %s", group.GroupName)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Valid from: %s", validFrom)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Valid to: %s", validTo)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Current time: %s", now)
 
 	// Check the range only if both dates are provided
 	if group.ValidFrom != "" && group.ValidTo != "" {
