@@ -15,6 +15,7 @@
 // Package common package is used to store common functions and variables
 package common
 
+// DbgLogType is an enum to represent the debug log type
 type DbgLogType int
 
 const (
