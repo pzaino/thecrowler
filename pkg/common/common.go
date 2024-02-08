@@ -47,7 +47,7 @@ func InitLogger(appName string) {
 	log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
 }
 
-// Update the logger configuration
+// UpdateLoggerConfig Updates the logger configuration
 func UpdateLoggerConfig() {
 	if debugLevel > 0 {
 		log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
