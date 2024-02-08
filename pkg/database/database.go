@@ -19,10 +19,10 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -34,7 +34,34 @@ import (
 
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
-	// Construct the connection string from the Config struct
+	connectionString := buildConnectionString(c)
+
+	var err error
+	for {
+		handler.db, err = sql.Open("postgres", connectionString)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+			time.Sleep(time.Duration(c.Database.RetryTime) * time.Second)
+		} else {
+			for {
+				// Check database connection
+				err = handler.db.Ping()
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Error pinging the database: %v", err)
+					time.Sleep(time.Duration(c.Database.PingTime) * time.Second)
+				} else {
+					break
+				}
+			}
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully connected to the database!")
+			break
+		}
+	}
+
+	return err
+}
+
+func buildConnectionString(c cfg.Config) string {
 	var dbPort int
 	if c.Database.Port == 0 {
 		dbPort = 5432
@@ -69,29 +96,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
 
-	var err error
-	for {
-		handler.db, err = sql.Open("postgres", connectionString)
-		if err != nil {
-			log.Println(err)
-			time.Sleep(time.Duration(c.Database.RetryTime) * time.Second)
-		} else {
-			for {
-				// Check database connection
-				err = handler.db.Ping()
-				if err != nil {
-					log.Println(err)
-					time.Sleep(time.Duration(c.Database.PingTime) * time.Second)
-				} else {
-					break
-				}
-			}
-			log.Println("Successfully connected to the database!")
-			break
-		}
-	}
-
-	return err
+	return connectionString
 }
 
 // Close closes the database connection

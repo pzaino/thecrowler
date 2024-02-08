@@ -19,8 +19,9 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -43,7 +44,8 @@ func postgresDBExists(db *sql.DB, dbName string) bool {
 	var exists bool
 	err := db.QueryRow(`SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = $1)`, dbName).Scan(&exists)
 	if err != nil {
-		log.Fatalf("Error checking if the database exists: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error checking if the database exists: %v", err)
+		return false
 	}
 
 	return exists
@@ -58,7 +60,8 @@ func dbExists(db *sql.DB, dbms, dbName string) bool {
 	if dbms == "postgres" {
 		exists = postgresDBExists(db, dbName)
 	} else {
-		log.Fatalf("Unsupported database management system: %s", dbms)
+		cmn.DebugMsg(cmn.DbgLvlError, "Unsupported database management system: %s", dbms)
+		return false
 	}
 
 	return exists
@@ -78,20 +81,23 @@ func executeSQLFile(db *sql.DB, dbms, dbName string) {
 	if dbms == "postgres" {
 		filePath = fmt.Sprintf("pkg/database/psql-%s.pgsql", dbName)
 	} else {
-		log.Fatalf("Unsupported database management system: %s", dbms)
+		cmn.DebugMsg(cmn.DbgLvlError, "Unsupported database management system: %s", dbms)
+		return
 	}
 
 	// Read the SQL file
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		log.Fatalf("Error reading the SQL file: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error reading the SQL file: %v", err)
+		return
 	}
 
 	// Execute the SQL commands
 	_, err = db.Exec(string(content))
 	if err != nil {
-		log.Fatalf("Error executing the SQL file: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing the SQL file: %v", err)
+		return
 	}
 
-	log.Println("Database created successfully.")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Database created successfully.")
 }

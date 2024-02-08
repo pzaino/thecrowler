@@ -17,10 +17,11 @@ package netinfo
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // GetIPs returns the IP addresses of the provided URL
@@ -126,7 +127,7 @@ func (ni *NetInfo) GetHostsFromIPs() error {
 			if err == nil {
 				results <- hostnames
 			} else {
-				log.Printf("error looking up hostnames for IP %s: %v", ip, err)
+				cmn.DebugMsg(cmn.DbgLvlError, "error looking up hostnames for IP %s: %v", ip, err)
 			}
 		}(ip)
 	}

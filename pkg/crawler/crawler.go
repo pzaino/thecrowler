@@ -135,7 +135,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 		}
 		close(jobs)
 
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Enqueued jobs: %d", len(allLinks))
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
 
 		// Wait for workers to finish and collect new links
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
@@ -178,7 +178,7 @@ func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
 		ctx.sel <- sel
 		return err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Connected to Selenium WebDriver successfully.")
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "Connected to Selenium WebDriver successfully.")
 	return nil
 }
 
@@ -258,7 +258,7 @@ func (ctx *processContext) IndexPage(pageInfo PageInfo) {
 }
 
 func handleConsent(wd selenium.WebDriver) {
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking for 'consent' windows...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking for 'consent' or 'cookie accept' windows...")
 	for _, text := range append(acceptTexts, consentTexts...) {
 		if clicked := findAndClickButton(wd, text); clicked {
 			break
@@ -605,7 +605,7 @@ func detectLang(wd selenium.WebDriver) string {
 			lang = convertLangStrToLangCode(lang)
 		}
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Language detected: %s", lang)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Language detected: %s", lang)
 	return lang
 }
 
@@ -620,7 +620,7 @@ func inferDocumentType(url string) string {
 	extension := strings.TrimSpace(strings.ToLower(filepath.Ext(url)))
 	if extension != "" {
 		if docType, ok := docTypeMap[extension]; ok {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Document Type: %s", docType)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
 			return docType
 		}
 	}
@@ -734,7 +734,7 @@ func worker(processCtx *processContext, id int, jobs chan string) {
 	for url := range jobs {
 		skip := skipURL(processCtx, id, url)
 		if skip {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Skipping URL %s\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL %s\n", id, url)
 			continue
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
@@ -756,7 +756,7 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 		url, _ = combineURLs(processCtx.source.URL, url)
 	}
 	if processCtx.source.Restricted != 4 && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
 	return false
