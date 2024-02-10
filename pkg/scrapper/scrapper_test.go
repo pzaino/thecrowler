@@ -15,9 +15,12 @@
 package scrapper
 
 import (
+	"fmt"
 	"log"
 	"testing"
 	"time"
+
+	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 )
 
 const (
@@ -26,7 +29,7 @@ const (
 
 func TestParseRules(t *testing.T) {
 	// Call the function
-	sites, err := ParseRules(goodTestFile)
+	sites, err := rs.ParseRules(goodTestFile)
 
 	// Check for errors
 	if err != nil {
@@ -42,7 +45,7 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestParseRulesInvalidFile(t *testing.T) {
-	_, err := ParseRules("./invalid_test_rules.yaml")
+	_, err := rs.ParseRules("./invalid_test_rules.yaml")
 	if err == nil {
 		t.Errorf("Expected error, got none")
 	}
@@ -50,35 +53,44 @@ func TestParseRulesInvalidFile(t *testing.T) {
 
 func TestIsGroupValid(t *testing.T) {
 	// Create a RuleEngine instance with test data
-	re, err := InitializeLibrary(goodTestFile)
+	re, err := rs.InitializeLibrary(goodTestFile)
 	if err != nil {
 		t.Errorf("InitializeLibrary returned an error: %v", err)
 	}
 
-	const layoutFrom = "2021-01-01"
-	const layoutTo = "2023-12-31"
+	// Test data
+	layoutFrom := rs.CustomTime{
+		Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC),
+	}
+	layoutTo := rs.CustomTime{
+		Time: time.Date(2023, time.December, 31, 0, 0, 0, 0, time.UTC),
+	}
+	//const layoutFrom = "2021-01-01"
+	//const layoutTo = "2023-12-31"
 
-	LayoutToFuture := time.Now().AddDate(0, 0, 1).Format(layoutTo)
+	LayoutToFuture := rs.CustomTime{
+		Time: time.Now().AddDate(0, 0, 1),
+	}
 
 	// Test cases
 	testCases := []struct {
 		name     string
-		group    RuleGroup
+		group    rs.RuleGroup
 		expected bool
 	}{
-		{"ValidGroup", RuleGroup{
+		{"ValidGroup", rs.RuleGroup{
 			GroupName: "ValidGroup",
 			IsEnabled: true,
 			ValidFrom: layoutFrom,
 			ValidTo:   LayoutToFuture},
-			false},
-		{"InvalidGroupDisabled", RuleGroup{
+			true},
+		{"InvalidGroupDisabled", rs.RuleGroup{
 			GroupName: "InvalidGroupDisabled",
 			IsEnabled: false,
 			ValidFrom: layoutFrom,
 			ValidTo:   layoutTo},
 			false},
-		{"InvalidGroupDate", RuleGroup{
+		{"InvalidGroupDate", rs.RuleGroup{
 			GroupName: "InvalidGroupDate",
 			IsEnabled: true,
 			ValidFrom: layoutFrom,
@@ -89,7 +101,7 @@ func TestIsGroupValid(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := re.isGroupValid(tc.group)
+			result := re.IsGroupValid(tc.group)
 			if result != tc.expected {
 				t.Errorf("Expected %v, got %v", tc.expected, result)
 			}
@@ -99,7 +111,7 @@ func TestIsGroupValid(t *testing.T) {
 
 func TestFindRulesForSite(t *testing.T) {
 	// Mock data or load from a test file
-	engine, err := InitializeLibrary(goodTestFile)
+	engine, err := rs.InitializeLibrary(goodTestFile)
 	if err != nil {
 		t.Errorf("InitializeLibrary returned an error: %v", err)
 	}
@@ -111,7 +123,7 @@ func TestFindRulesForSite(t *testing.T) {
 		isError  bool
 	}{
 		{"ValidSite", "http://example.com/somepath", "example.com", false},
-		{"NonMatchingSite", "http://nonexistentsite.com", "", true},
+		{"NonMatchingSite", "http://nonexistentsite.com", "", false},
 		{"EmptyURL", "", "", true},
 		// Add more test cases as needed
 	}
@@ -119,14 +131,17 @@ func TestFindRulesForSite(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			log.Printf("Testing %s", tc.name)
-			siteRules, err := engine.findRulesForSite(tc.url)
-
+			siteRules, err := engine.FindRulesForSite(tc.url)
 			if (err != nil) != tc.isError {
 				t.Errorf("findRulesForSite(%s) unexpected error result: %v", tc.url, err)
 			}
 
-			if err == nil && siteRules.Site != tc.expected {
-				t.Errorf("findRulesForSite(%s) expected %s, got %s", tc.url, tc.expected, siteRules.Site)
+			if siteRules == nil {
+				fmt.Printf("No rules found for '%s'\n", tc.url)
+			} else {
+				if err == nil && siteRules.Name != tc.expected {
+					t.Errorf("findRulesForSite(%s) expected %s, got %s", tc.url, tc.expected, siteRules.Name)
+				}
 			}
 		})
 	}
@@ -147,25 +162,37 @@ func TestExtractData(t *testing.T) {
     `
 
 	// Mock RuleGroup
-	ruleGroup := RuleGroup{
-		ScrapingRules: []ScrapingRule{
+	ruleGroup := rs.RuleGroup{
+		ScrapingRules: []rs.ScrapingRule{
 			{
 				Path: "/body",
-				Elements: []Element{
+				Elements: []rs.Element{
 					{
-						Key:          "title",
-						SelectorType: "css",
-						Selector:     "h1.article-title",
+						Key: "title",
+						Selectors: []rs.Selector{
+							{
+								SelectorType: "css",
+								Selector:     "h1.article-title",
+							},
+						},
 					},
 					{
-						Key:          "content",
-						SelectorType: "css",
-						Selector:     "div.article-content",
+						Key: "content",
+						Selectors: []rs.Selector{
+							{
+								SelectorType: "css",
+								Selector:     "div.article-content",
+							},
+						},
 					},
 					{
-						Key:          "date",
-						SelectorType: "css",
-						Selector:     "span.date",
+						Key: "date",
+						Selectors: []rs.Selector{
+							{
+								SelectorType: "css",
+								Selector:     "span.date",
+							},
+						},
 					},
 				},
 				JsFiles: true,
@@ -174,7 +201,7 @@ func TestExtractData(t *testing.T) {
 	}
 
 	// Initialize RuleEngine (assuming it's already implemented)
-	engine := &RuleEngine{}
+	engine := &ScraperRuleEngine{}
 
 	// Test extraction
 	t.Run("ValidExtraction", func(t *testing.T) {

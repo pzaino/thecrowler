@@ -25,6 +25,7 @@ type FileStorageAPI struct {
 	Secret  string `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
 	Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
 	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
 
 // Database represents the database configuration
@@ -101,8 +102,34 @@ type Selenium struct {
 	SSLMode    string `yaml:"sslmode"`     // SSL mode for Selenium connection (e.g., "disable")
 }
 
+// Rules represents the rules configuration sources for the crawler and the scrapper
+type Rules struct {
+	// Rules set location
+	Path []string `yaml:"path"`
+	// URL to fetch the rules from (in case they are distributed by a web server)
+	URL []string `yaml:"url"`
+	// Rules set update interval (in seconds)
+	Interval int `yaml:"interval"`
+}
+
+// Remote represents a way to tell the CROWler to load a remote configuration
+type Remote struct {
+	Host    string `yaml:"host"`    // Hostname of the API server
+	Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images" or Bucket name)
+	Port    int    `yaml:"port"`    // Port number of the API server
+	Region  string `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
+}
+
 // Config represents the structure of the configuration file
 type Config struct {
+	// Remote configuration
+	Remote Remote `yaml:"remote"`
+
 	// Database configuration
 	Database Database `yaml:"database"`
 

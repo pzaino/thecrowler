@@ -22,6 +22,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -79,20 +80,35 @@ func performDBMaintenance(db cdb.Handler) error {
 
 // This function simply query the database for URLs that need to be crawled
 func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
+	// Check DB connection:
+	if err := db.CheckConnection(config); err != nil {
+		return nil, fmt.Errorf("error pinging the database: %w", err)
+	}
+
+	// Start a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
 	// Update the SQL query to fetch all necessary fields
 	query := `
 	SELECT
 		l.source_id,
 		l.url,
 		l.restricted,
-		l.flags
+		l.flags,
+		l.config
 	FROM
 		update_sources($1) AS l
 	ORDER BY l.last_updated_at ASC;`
 
-	// Execute the query
-	rows, err := db.ExecuteQuery(query, config.Crawler.MaxSources)
+	// Execute the query within the transaction
+	rows, err := tx.Query(query, config.Crawler.MaxSources)
 	if err != nil {
+		err2 := tx.Rollback()
+		if err2 != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error rolling back transaction: %v", err2)
+		}
 		return nil, err
 	}
 
@@ -100,13 +116,31 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	var sourcesToCrawl []cdb.Source
 	for rows.Next() {
 		var src cdb.Source
-		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags); err != nil {
+		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error scanning rows: %v", err)
-			continue
+			rows.Close()
+			err2 := tx.Rollback()
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error rolling back transaction: %v", err2)
+			}
+			return nil, err
 		}
+
+		// Check if Config is nil and assign a default configuration if so
+		if src.Config == nil {
+			src.Config = new(json.RawMessage)
+			*src.Config = cdb.DefaultSourceCfgJSON
+		}
+
+		// Append the source to the slice
 		sourcesToCrawl = append(sourcesToCrawl, src)
 	}
-	rows.Close()
+	rows.Close() // Close the rows iterator
+
+	// Commit the transaction if everything is successful
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 
 	return sourcesToCrawl, nil
 }

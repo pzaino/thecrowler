@@ -208,7 +208,7 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 	// Add a separate group for keyword conditions
 	var keywordConditions []string
 	for i := 1; i < paramCounter; i++ {
-		keywordCondition := fmt.Sprintf("k.keyword = $%d", i)
+		keywordCondition := fmt.Sprintf("k.keyword LIKE $%d", i)
 		keywordConditions = append(keywordConditions, keywordCondition)
 	}
 

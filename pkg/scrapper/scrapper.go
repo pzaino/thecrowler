@@ -19,147 +19,26 @@ package scrapper
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
-	"time"
 
-	cmn "github.com/pzaino/thecrowler/pkg/common"
+	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
 	"golang.org/x/net/html"
-	"gopkg.in/yaml.v2"
 )
-
-// ParseRules parses a YAML file containing site rules and returns a slice of SiteRules.
-// It takes a file path as input and returns the parsed site rules or an error if the file cannot be read or parsed.
-func ParseRules(file string) ([]SiteRules, error) {
-	var sites []SiteRules
-
-	yamlFile, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-
-	err = yaml.Unmarshal(yamlFile, &sites)
-	if err != nil {
-		return nil, err
-	}
-
-	return sites, nil
-}
-
-// InitializeLibrary initializes the library by parsing the rules from the specified file
-// and creating a new rule engine with the parsed sites.
-// It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
-func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
-	sites, err := ParseRules(rulesFile)
-	if err != nil {
-		return nil, err
-	}
-
-	engine := NewRuleEngine(sites)
-	return engine, nil
-}
-
-// NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
-// It initializes the RuleEngine with the given sites and returns a pointer to the created RuleEngine.
-func NewRuleEngine(sites []SiteRules) *RuleEngine {
-	// Implementation of the RuleEngine initialization
-	return &RuleEngine{
-		SiteRules: sites,
-	}
-}
-
-// GetEnabledRuleGroups returns a slice of RuleGroup containing only the enabled rule groups.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled ones to the result slice.
-func (s *SiteRules) GetEnabledRuleGroups() []RuleGroup {
-	var enabledRuleGroups []RuleGroup
-
-	for _, rg := range s.RuleGroups {
-		if rg.IsEnabled {
-			enabledRuleGroups = append(enabledRuleGroups, rg)
-		}
-	}
-
-	return enabledRuleGroups
-}
-
-// GetEnabledRules returns a slice of Rule containing only the enabled rules.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled rules to the result slice.
-func (s *SiteRules) GetEnabledRules() []ScrapingRule {
-	var enabledRules []ScrapingRule
-
-	for _, rg := range s.RuleGroups {
-		if rg.IsEnabled {
-			enabledRules = append(enabledRules, rg.ScrapingRules...)
-		}
-	}
-
-	return enabledRules
-}
-
-// GetEnabledRulesByGroup returns a slice of Rule containing only the enabled rules for the specified group.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified group to the result slice.
-func (s *SiteRules) GetEnabledRulesByGroup(groupName string) []ScrapingRule {
-	var enabledRules []ScrapingRule
-
-	for _, rg := range s.RuleGroups {
-		if rg.IsEnabled && rg.GroupName == groupName {
-			enabledRules = append(enabledRules, rg.ScrapingRules...)
-		}
-	}
-
-	return enabledRules
-}
-
-// GetEnabledRulesByPath returns a slice of Rule containing only the enabled rules for the specified path.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path to the result slice.
-func (s *SiteRules) GetEnabledRulesByPath(path string) []ScrapingRule {
-	var enabledRules []ScrapingRule
-
-	for _, rg := range s.RuleGroups {
-		if rg.IsEnabled {
-			for _, r := range rg.ScrapingRules {
-				if r.Path == path {
-					enabledRules = append(enabledRules, r)
-				}
-			}
-		}
-	}
-
-	return enabledRules
-}
-
-// GetEnabledRulesByPathAndGroup returns a slice of Rule containing only the enabled rules for the specified path and group.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path and group to the result slice.
-func (s *SiteRules) GetEnabledRulesByPathAndGroup(path, groupName string) []ScrapingRule {
-	var enabledRules []ScrapingRule
-
-	for _, rg := range s.RuleGroups {
-		if rg.IsEnabled && rg.GroupName == groupName {
-			for _, r := range rg.ScrapingRules {
-				if r.Path == path {
-					enabledRules = append(enabledRules, r)
-				}
-			}
-		}
-	}
-
-	return enabledRules
-}
 
 // ApplyRules applies the rules to the provided URL and HTML content.
 // It returns a map containing the extracted data or an error if any occurred during the extraction.
-func (re *RuleEngine) ApplyRules(url string, htmlContent string) (map[string]interface{}, error) {
-	siteRules, err := re.findRulesForSite(url)
+func (re *ScraperRuleEngine) ApplyRules(url string, htmlContent string) (map[string]interface{}, error) {
+	siteRules, err := re.FindRulesForSite(url)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, group := range siteRules.RuleGroups {
-		if re.isGroupValid(group) {
+		if re.IsGroupValid(group) {
 			extractedData, err := re.extractData(group, url, htmlContent)
 			if err != nil {
 				return nil, err
@@ -171,93 +50,9 @@ func (re *RuleEngine) ApplyRules(url string, htmlContent string) (map[string]int
 	return nil, fmt.Errorf("no valid rule groups found for URL: %s", url)
 }
 
-// isGroupValid checks if the provided RuleGroup is valid.
-// It checks if the group is enabled and if the valid_from and valid_to dates are valid.
-func (re *RuleEngine) isGroupValid(group RuleGroup) bool {
-	// Check if the group is enabled
-	if !group.IsEnabled {
-		return false
-	}
-
-	// Check if the rules group has a valid_from and valid_to date
-	if group.ValidFrom == "" && group.ValidTo == "" {
-		cmn.DebugMsg(cmn.DbgLvlError, "No valid_from and valid_to dates found for group: %s", group.GroupName)
-		return true
-	}
-
-	var validFrom, validTo time.Time
-	var err error
-
-	// Parse the 'valid_from' date if present
-	if group.ValidFrom != "" {
-		validFrom, err = time.Parse("2006-01-02", group.ValidFrom)
-		if err != nil {
-			return false
-		}
-	}
-
-	// Parse the 'valid_to' date if present
-	if group.ValidTo != "" {
-		validTo, err = time.Parse("2006-01-02", group.ValidTo)
-		if err != nil {
-			return false
-		}
-	}
-
-	// Get the current time
-	now := time.Now()
-
-	// Log the validation details
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Validating group: %s", group.GroupName)
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Valid from: %s", validFrom)
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Valid to: %s", validTo)
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Current time: %s", now)
-
-	// Check the range only if both dates are provided
-	if group.ValidFrom != "" && group.ValidTo != "" {
-		return now.After(validFrom) && now.Before(validTo)
-	}
-
-	// If only valid_from is provided
-	if group.ValidFrom != "" {
-		return now.After(validFrom)
-	}
-
-	// If only valid_to is provided
-	if group.ValidTo != "" {
-		return now.Before(validTo)
-	}
-
-	return false
-}
-
-// findRulesForSite finds the rules for the provided URL.
-// It returns a pointer to the SiteRules for the provided URL or an error if no rules are found.
-func (re *RuleEngine) findRulesForSite(inputURL string) (*SiteRules, error) {
-	if inputURL == "" {
-		return nil, fmt.Errorf("empty URL provided")
-	}
-
-	// Parse the input URL to extract the domain
-	parsedURL, err := url.Parse(inputURL)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing URL: %s", err)
-	}
-	inputDomain := parsedURL.Hostname()
-
-	// Iterate over the SiteRules to find a matching domain
-	for _, siteRule := range re.SiteRules {
-		if strings.Contains(siteRule.Site, inputDomain) {
-			return &siteRule, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no rules found for URL: %s", inputURL)
-}
-
 // extractJSFiles extracts the JavaScript files from the provided document.
 // It returns a slice of strings containing the JavaScript files.
-func (re *RuleEngine) extractJSFiles(doc *goquery.Document) []string {
+func (re *ScraperRuleEngine) extractJSFiles(doc *goquery.Document) []string {
 	var jsFiles []string
 	doc.Find("script[src]").Each(func(_ int, s *goquery.Selection) {
 		if src, exists := s.Attr("src"); exists {
@@ -269,7 +64,7 @@ func (re *RuleEngine) extractJSFiles(doc *goquery.Document) []string {
 
 // extractData extracts the data from the provided HTML content using the provided RuleGroup.
 // It returns a map containing the extracted data or an error if any occurred during the extraction.
-func (re *RuleEngine) extractData(group RuleGroup, pageURL string, htmlContent string) (map[string]interface{}, error) {
+func (re *ScraperRuleEngine) extractData(group rs.RuleGroup, pageURL string, htmlContent string) (map[string]interface{}, error) {
 	// Parse the HTML content
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
@@ -302,25 +97,31 @@ func (re *RuleEngine) extractData(group RuleGroup, pageURL string, htmlContent s
 	return extractedData, nil
 }
 
-func (re *RuleEngine) applyRule(rule ScrapingRule, doc *goquery.Document, node *html.Node, htmlContent string, extractedData map[string]interface{}) map[string]interface{} {
+func (re *ScraperRuleEngine) applyRule(rule rs.ScrapingRule, doc *goquery.Document, node *html.Node, htmlContent string, extractedData map[string]interface{}) map[string]interface{} {
 	// Iterate over the elements to be extracted
-	for _, element := range rule.Elements {
-		key := element.Key
-		selectorType := element.SelectorType
-		selector := element.Selector
+	for _, elementSet := range rule.Elements {
+		key := elementSet.Key
+		selectors := elementSet.Selectors
+		for _, element := range selectors {
+			selectorType := element.SelectorType
+			selector := element.Selector
 
-		var extracted string
-		switch selectorType {
-		case "css":
-			extracted = re.extractByCSS(doc, selector)
-		case "xpath":
-			extracted = re.extractByXPath(node, selector)
-		case "regex":
-			extracted = re.extractByRegex(htmlContent, selector)
-		default:
-			extracted = ""
+			var extracted string
+			switch selectorType {
+			case "css":
+				extracted = re.extractByCSS(doc, selector)
+			case "xpath":
+				extracted = re.extractByXPath(node, selector)
+			case "regex":
+				extracted = re.extractByRegex(htmlContent, selector)
+			default:
+				extracted = ""
+			}
+			if extracted != "" {
+				extractedData[key] = extracted
+				break
+			}
 		}
-		extractedData[key] = extracted
 	}
 
 	// Optional: Extract JavaScript files if required
@@ -332,11 +133,11 @@ func (re *RuleEngine) applyRule(rule ScrapingRule, doc *goquery.Document, node *
 	return extractedData
 }
 
-func (re *RuleEngine) extractByCSS(doc *goquery.Document, selector string) string {
+func (re *ScraperRuleEngine) extractByCSS(doc *goquery.Document, selector string) string {
 	return doc.Find(selector).Text()
 }
 
-func (re *RuleEngine) extractByXPath(node *html.Node, selector string) string {
+func (re *ScraperRuleEngine) extractByXPath(node *html.Node, selector string) string {
 	extractedNode := htmlquery.FindOne(node, selector)
 	if extractedNode != nil {
 		return htmlquery.InnerText(extractedNode)
@@ -344,7 +145,7 @@ func (re *RuleEngine) extractByXPath(node *html.Node, selector string) string {
 	return ""
 }
 
-func (re *RuleEngine) extractByRegex(htmlContent string, selector string) string {
+func (re *ScraperRuleEngine) extractByRegex(htmlContent string, selector string) string {
 	regex, err := regexp.Compile(selector)
 	if err != nil {
 		// handle regex compilation error

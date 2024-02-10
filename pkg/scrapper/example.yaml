@@ -1,4 +1,4 @@
-- site: example.com
+- ruleset_name: example.com
   rule_groups:
     - group_name: "Group1"
       valid_from: "<date>"
@@ -26,7 +26,7 @@
             summary: "p.summary"
           js_files: false
 
-- site: anotherexample.com
+- ruleset_name: another-example.com
   rule_groups:
     - group_name: "GroupA"
       valid_from: "<date>"

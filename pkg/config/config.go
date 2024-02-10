@@ -121,6 +121,17 @@ func getConfigFile(confName string) (Config, error) {
 // NewConfig returns a new Config struct with default values.
 func NewConfig() Config {
 	return Config{
+		Remote: Remote{
+			Host:    "localhost",
+			Path:    "./",
+			Port:    0,
+			Region:  "nowhere",
+			Token:   "",
+			Secret:  "",
+			Timeout: 15,
+			Type:    "local",
+			SSLMode: "disable",
+		},
 		Database: Database{
 			Type:      "postgres",
 			Host:      "localhost",
@@ -170,6 +181,7 @@ func NewConfig() Config {
 			Secret:  "",
 			Timeout: 15,
 			Type:    "local",
+			SSLMode: "disable",
 		},
 		FileStorageAPI: FileStorageAPI{
 			Host:    "",
@@ -180,6 +192,7 @@ func NewConfig() Config {
 			Secret:  "",
 			Timeout: 15,
 			Type:    "local",
+			SSLMode: "disable",
 		},
 		NetworkInfo: NetworkInfo{
 			DNS: DNSConfig{

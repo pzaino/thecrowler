@@ -17,6 +17,7 @@ package httpinfo
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
@@ -26,8 +27,9 @@ import (
 )
 
 var (
-	url1          = "https://www.example.com"
-	url2          = "https://jsonplaceholder.typicode.com/posts/1"
+	url1 = "https://www.example.com"
+	url2 = "https://jsonplaceholder.typicode.com/posts/1"
+	//url2          = "https://www.example.com"
 	usrAgentField = "User-Agent"
 
 	sysConfig = cfg.Config{
@@ -102,7 +104,8 @@ func TestExtractHTTPInfo(t *testing.T) {
 	if actualJSON == nil {
 		t.Errorf("ExtractHTTPInfo() returned an empty result")
 	}
-
+	// display formatted JSON for actualJSON:
+	fmt.Println(string(actualJSON))
 	/*
 		if !reflect.DeepEqual(actualJSON, expectedJSON) {
 			t.Errorf("ExtractHTTPInfo() result does not match the expected result.\nExpected: %s\nActual: %s", expectedJSON, actualJSON)
