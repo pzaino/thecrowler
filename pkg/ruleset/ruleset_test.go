@@ -10,7 +10,7 @@ import (
 
 var rulesets = []Ruleset{
 	{
-		Name: "example.com",
+		Name: "Example Items Extraction Ruleset",
 		RuleGroups: []RuleGroup{
 			{
 				GroupName: "Group1",
@@ -19,7 +19,8 @@ var rulesets = []Ruleset{
 				IsEnabled: true,
 				ScrapingRules: []ScrapingRule{
 					{
-						Path: "/articles",
+						RuleName: "Articles",
+						Path:     "/articles",
 						Elements: []Element{
 							{
 								Key: "title",
@@ -53,7 +54,8 @@ var rulesets = []Ruleset{
 				IsEnabled: false,
 				ScrapingRules: []ScrapingRule{
 					{
-						Path: "/news",
+						RuleName: "News",
+						Path:     "/news",
 						Elements: []Element{
 							{
 								Key: "headline",
@@ -84,7 +86,8 @@ var rulesets = []Ruleset{
 				IsEnabled: true,
 				ScrapingRules: []ScrapingRule{
 					{
-						Path: "/products",
+						RuleName: "Products",
+						Path:     "/products",
 						Elements: []Element{
 							{
 								Key: "name",
@@ -127,7 +130,7 @@ func TestCustomTimeIsEmpty(t *testing.T) {
 }
 func TestParseRules(t *testing.T) {
 	// Create a temporary YAML file for testing
-	tempFile := "./test_rules.yaml"
+	tempFile := "./test-ruleset.yaml"
 
 	// Call the ParseRules function with the temporary file
 	sites, err := ParseRules(tempFile)
@@ -166,103 +169,7 @@ func TestInitializeLibrary(t *testing.T) {
 	// Additional assertions...
 }
 func TestNewRuleEngine(t *testing.T) {
-	sites := []Ruleset{
-		{
-			Name: "example.com",
-			RuleGroups: []RuleGroup{
-				{
-					GroupName: "Group1",
-					ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
-					ValidTo:   CustomTime{Time: time.Date(2029, time.December, 31, 0, 0, 0, 0, time.UTC)},
-					IsEnabled: true,
-					ScrapingRules: []ScrapingRule{
-						{
-							Path: "/articles",
-							Elements: []Element{
-								{
-									Key: "title",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "h1.article-title"},
-										{SelectorType: "xpath", Selector: "//h1[@class='article-title']"},
-									},
-								},
-								{
-									Key: "content",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "div.article-content"},
-									},
-								},
-								{
-									Key: "date",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "span.date"},
-									},
-								},
-							},
-							JsFiles:            true,
-							TechnologyPatterns: []string{"jquery", "bootstrap"},
-						},
-					},
-				},
-				{
-					GroupName: "Group2",
-					ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
-					ValidTo:   CustomTime{Time: time.Date(2021, time.December, 31, 0, 0, 0, 0, time.UTC)},
-					IsEnabled: false,
-					ScrapingRules: []ScrapingRule{
-						{
-							Path: "/news",
-							Elements: []Element{
-								{
-									Key: "headline",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "h1.headline"},
-									},
-								},
-								{
-									Key: "summary",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "p.summary"},
-									},
-								},
-							},
-							JsFiles: false,
-						},
-					},
-				},
-			},
-		},
-		{
-			Name: "another-example.com",
-			RuleGroups: []RuleGroup{
-				{
-					GroupName: "GroupA",
-					ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
-					ValidTo:   CustomTime{Time: time.Date(2023, time.December, 31, 0, 0, 0, 0, time.UTC)},
-					IsEnabled: true,
-					ScrapingRules: []ScrapingRule{
-						{
-							Path: "/products",
-							Elements: []Element{
-								{
-									Key: "name",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "div.product-name"},
-									},
-								},
-								{
-									Key: "price",
-									Selectors: []Selector{
-										{SelectorType: "css", Selector: "span.price"},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
+	sites := rulesets
 
 	engine := NewRuleEngine(sites)
 
@@ -275,5 +182,47 @@ func TestNewRuleEngine(t *testing.T) {
 	}
 	if !reflect.DeepEqual(engine.Rulesets, sites) {
 		t.Errorf("Expected Rulesets to be %v, got %v", sites, engine.Rulesets)
+	}
+}
+func TestFindRulesetByName(t *testing.T) {
+	engine := NewRuleEngine(rulesets)
+
+	// Test case 1: Valid ruleset name
+	name := "Example Items Extraction Ruleset"
+	//expectedRuleset := &rulesets[0]
+	ruleset, err := engine.FindRulesetByName(name)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	/*
+		if ruleset != expectedRuleset {
+			t.Errorf("Expected ruleset %v, got %v", expectedRuleset, ruleset)
+		}*/
+	if ruleset == nil {
+		t.Errorf("Expected non-nil ruleset, got nil")
+	}
+
+	// Test case 2: Empty ruleset name
+	name = ""
+	expectedError := "empty ruleset name provided"
+	ruleset, err = engine.FindRulesetByName(name)
+	if err == nil {
+		t.Errorf("Expected error: %s, got nil", expectedError)
+	}
+	if err.Error() != expectedError {
+		t.Errorf("Expected error: %s, got %v", expectedError, err)
+	}
+	if ruleset != nil {
+		t.Errorf("Expected nil ruleset, got %v", ruleset)
+	}
+
+	// Test case 3: Non-existent ruleset name
+	name = "Non-existent Ruleset"
+	ruleset, err = engine.FindRulesetByName(name)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if ruleset != nil {
+		t.Errorf("Expected nil ruleset, got %v", ruleset)
 	}
 }

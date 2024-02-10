@@ -58,7 +58,7 @@ type ScrapingRule struct {
 
 // Element represents a list of elements to be scraped
 type Element struct {
-	Key       string
+	Key       string     `yaml:"key"`
 	Selectors []Selector `yaml:"selectors"`
 }
 
@@ -66,8 +66,18 @@ type Element struct {
 type Selector struct {
 	SelectorType string `yaml:"selector_type"` // Enum: ["css", "xpath", "regex"]
 	Selector     string `yaml:"selector"`
-	Attribute    string `yaml:"attribute"`
+	Attribute    string `yaml:"attribute,omitempty"`
 }
+
+// Available selector types
+const (
+	// SelectorTypeCSS is the CSS selector type
+	SelectorTypeCSS = "css"
+	// SelectorTypeXPath is the XPath selector type
+	SelectorTypeXPath = "xpath"
+	// SelectorTypeRegex is the Regex selector type
+	SelectorTypeRegex = "regex"
+)
 
 // WaitCondition represents a condition to wait for before performing scraping
 type WaitCondition struct {

@@ -34,11 +34,16 @@ func (ct *CustomTime) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if err := unmarshal(&dateStr); err != nil {
 		return err
 	}
-	fmt.Printf("Parsing date string: %s\n", dateStr) // Debug print
-	t, err := time.Parse("2006-01-02", dateStr)
+
+	// Parse date string in RFC3339 format, if it fails, try with the "2006-01-02" format
+	t, err := time.Parse(time.RFC3339, dateStr)
 	if err != nil {
-		return err
+		t, err = time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			return err
+		}
 	}
+
 	ct.Time = t
 	return nil
 }
@@ -245,12 +250,36 @@ func (re *RuleEngine) FindRulesForSite(inputURL string) (*Ruleset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error parsing URL: %s", err)
 	}
-	inputDomain := parsedURL.Hostname()
+	inputDomain := strings.ToLower(strings.TrimSpace(parsedURL.Hostname()))
 
 	// Iterate over the SiteRules to find a matching domain
 	for _, siteRule := range re.Rulesets {
-		if strings.Contains(siteRule.Name, inputDomain) {
+		siteRuleset, err := url.Parse(siteRule.Name)
+		if err != nil {
+			continue
+		}
+		rsHost := strings.TrimSpace(strings.ToLower(siteRuleset.Hostname()))
+		if rsHost == inputDomain {
 			return &siteRule, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// FindRulesetByName returns the ruleset with the provided name (if any).
+func (re *RuleEngine) FindRulesetByName(name string) (*Ruleset, error) {
+	if name == "" {
+		return nil, fmt.Errorf("empty ruleset name provided")
+	}
+
+	inputName := strings.ToLower(strings.TrimSpace(name))
+
+	// Iterate over the SiteRules to find a matching domain
+	for _, ruleset := range re.Rulesets {
+		rsName := strings.TrimSpace(strings.ToLower(ruleset.Name))
+		if rsName == inputName {
+			return &ruleset, nil
 		}
 	}
 

@@ -138,11 +138,7 @@ func getDefaultFields() []string {
 }
 
 func parseAdvancedQuery(input string) (string, []interface{}, error) {
-
-	// Define default fields:
 	defaultFields := getDefaultFields()
-
-	// Tokenize the input string:
 	tokens := tokenize(input)
 
 	// Parse the tokens and generate the query parts
@@ -228,17 +224,32 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 }
 
 func buildCombinedQuery(queryParts [][]string) string {
-	combinedQuery := `
-	SELECT DISTINCT
-		si.title, si.page_url, si.summary, si.content
-	FROM
-		SearchIndex si
-	LEFT JOIN
-		KeywordIndex ki ON si.index_id = ki.index_id
-	LEFT JOIN
-		Keywords k ON ki.keyword_id = k.keyword_id
-	WHERE
+	var combinedQuery string
+	if config.API.ReturnContent {
+		combinedQuery = `
+		SELECT DISTINCT
+			si.title, si.page_url, si.summary, si.content
+		FROM
+			SearchIndex si
+		LEFT JOIN
+			KeywordIndex ki ON si.index_id = ki.index_id
+		LEFT JOIN
+			Keywords k ON ki.keyword_id = k.keyword_id
+		WHERE
 		`
+	} else {
+		combinedQuery = `
+		SELECT DISTINCT
+			si.title, si.page_url, si.summary, '' as content
+		FROM
+			SearchIndex si
+		LEFT JOIN
+			KeywordIndex ki ON si.index_id = ki.index_id
+		LEFT JOIN
+			Keywords k ON ki.keyword_id = k.keyword_id
+		WHERE
+		`
+	}
 
 	for i, group := range queryParts {
 		if i > 0 {

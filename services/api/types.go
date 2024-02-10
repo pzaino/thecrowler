@@ -32,3 +32,53 @@ type SearchResult struct {
 		Snippet string `json:"snippet"` // Snippet of the page
 	} `json:"items"` // List of results
 }
+
+// APIResponse represents a closer approximation to the Google Search API response structure.
+// This should suffice for most of the integration use cases.
+type APIResponse struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+	} `json:"queries"`
+	Items []struct {
+		Kind        string `json:"kind"`           // Type of the search result, e.g., "customsearch#result"
+		Title       string `json:"title"`          // Title of the page
+		HTMLTitle   string `json:"htmlTitle"`      // Title in HTML format
+		Link        string `json:"link"`           // URL of the page
+		DisplayLink string `json:"displayLink"`    // Displayed URL of the page
+		Snippet     string `json:"snippet"`        // Snippet of the page
+		HTMLSnippet string `json:"htmlSnippet"`    // Snippet in HTML format
+		Mime        string `json:"mime,omitempty"` // MIME type of the result, if applicable
+		Image       struct {
+			ImageURL        string `json:"imageURL"`
+			ContextLink     string `json:"contextLink"`
+			Height          int    `json:"height"`
+			Width           int    `json:"width"`
+			ByteSize        int    `json:"byteSize"`
+			ThumbnailLink   string `json:"thumbnailLink"`
+			ThumbnailHeight int    `json:"thumbnailHeight"`
+			ThumbnailWidth  int    `json:"thumbnailWidth"`
+		} `json:"image,omitempty"` // Image details, if result is an image
+	} `json:"items"` // List of results
+	SearchInformation struct {
+		TotalResults string `json:"totalResults"` // Total number of results for the query
+	} `json:"searchInformation"`
+}
+
+// QueryRequest contains details about the search query made.
+type QueryRequest struct {
+	Title          string `json:"title"`          // Title of the search
+	TotalResults   int    `json:"totalResults"`   // Total results for the search
+	SearchTerms    string `json:"searchTerms"`    // The search terms that were used
+	Count          int    `json:"count"`          // Number of results returned in this set
+	StartIndex     int    `json:"startIndex"`     // Start index of the results
+	InputEncoding  string `json:"inputEncoding"`  // Encoding of the input (e.g., "utf8")
+	OutputEncoding string `json:"outputEncoding"` // Encoding of the output (e.g., "utf8")
+	Safe           string `json:"safe"`           // Safe search setting
+	Cx             string `json:"cx"`             // Custom search engine ID
+}
