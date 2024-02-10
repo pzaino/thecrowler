@@ -26,7 +26,7 @@
             summary: "p.summary"
           js_files: false
 
-- ruleset_name: anotherexample.com
+- ruleset_name: another-example.com
   rule_groups:
     - group_name: "GroupA"
       valid_from: "<date>"

@@ -25,7 +25,7 @@ type CustomTime struct {
 	time.Time
 }
 
-// / Ruleset represents the top-level structure of the rules YAML file
+// Ruleset represents the top-level structure of the rules YAML file
 type Ruleset struct {
 	Name       string      `yaml:"ruleset_name"`
 	RuleGroups []RuleGroup `yaml:"rule_groups"`
@@ -51,18 +51,18 @@ type ScrapingRule struct {
 	Elements           []Element            `yaml:"elements"`
 	JsFiles            bool                 `yaml:"js_files"`
 	TechnologyPatterns []string             `yaml:"technology_patterns"`
-	JsonFieldMappings  map[string]string    `yaml:"json_field_mappings"`
+	JSONFieldMappings  map[string]string    `yaml:"json_field_mappings"`
 	WaitConditions     []WaitCondition      `yaml:"wait_conditions"`
 	PostProcessing     []PostProcessingStep `yaml:"post_processing"`
 }
 
-// Elements represents a list of elements to be scraped
+// Element represents a list of elements to be scraped
 type Element struct {
 	Key       string
 	Selectors []Selector `yaml:"selectors"`
 }
 
-// Element represents a single element within a scraping rule
+// Selector represents a single element within a scraping rule
 type Selector struct {
 	SelectorType string `yaml:"selector_type"` // Enum: ["css", "xpath", "regex"]
 	Selector     string `yaml:"selector"`
@@ -112,6 +112,7 @@ type LoggingConfiguration struct {
 	LogFile  string `yaml:"log_file,omitempty"` // Optional
 }
 
+// RuleEngine represents the top-level structure for the rule engine
 type RuleEngine struct {
 	Rulesets []Ruleset
 }
@@ -121,4 +122,5 @@ type RuleParser interface {
 	ParseRules(file string) ([]Ruleset, error)
 }
 
+// DefaultRuleParser is the default implementation of the RuleParser interface.
 type DefaultRuleParser struct{}

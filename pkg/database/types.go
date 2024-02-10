@@ -70,6 +70,8 @@ type Source struct {
 	Config *json.RawMessage // we use json.RawMessage to avoid unmarshalling the JSON object
 }
 
-// Define a default configuration as a global variable or inside a function as needed
+// DefaultSourceCfgJSON is the default configuration for a source in JSON format.
 var DefaultSourceCfgJSON = []byte(`{"config":"default"}`)
+
+// DefaultSourceCfgRaw is the default configuration for a source.
 var DefaultSourceCfgRaw = json.RawMessage(DefaultSourceCfgJSON)

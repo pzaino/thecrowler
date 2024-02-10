@@ -43,6 +43,7 @@ func (ct *CustomTime) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// IsEmpty checks if the CustomTime is empty.
 func (ct *CustomTime) IsEmpty() bool {
 	return ct.Time.IsZero()
 }
@@ -65,7 +66,7 @@ func ParseRules(file string) ([]Ruleset, error) {
 	return sites, nil
 }
 
-// RuleParser is an interface for parsing rules from a file.
+// ParseRules is an interface for parsing rules from a file.
 func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
 	return ParseRules(file)
 }
