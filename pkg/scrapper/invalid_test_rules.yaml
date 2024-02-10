@@ -1,4 +1,4 @@
-- site: example.com
+- ruleset_name: example.com
   rule_groups:
     - group_name: "Group1"
       valid_from: "2021-01-01"
@@ -15,7 +15,7 @@
             - "jquery"
             - "bootstrap"
 
-- site: anotherexample.com
+- ruleset_name: anotherexample.com
   rule_groups:
     - group_name: "GroupA"
       valid_from: "2021-01-01"

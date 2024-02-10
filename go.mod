@@ -17,7 +17,10 @@ require (
 	github.com/oschwald/maxminddb-golang v1.12.0
 )
 
-require golang.org/x/sys v0.16.0 // indirect
+require (
+	github.com/google/go-cmp v0.6.0 // indirect
+	golang.org/x/sys v0.16.0 // indirect
+)
 
 require (
 	github.com/andybalholm/cascadia v1.3.1 // indirect
