@@ -20,7 +20,7 @@ import (
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 )
 
-// ScrapperRuleEngine extends RuleEngine from the ruleset package
+// ScraperRuleEngine extends RuleEngine from the ruleset package
 type ScraperRuleEngine struct {
 	*rs.RuleEngine // generic rule engine
 }
