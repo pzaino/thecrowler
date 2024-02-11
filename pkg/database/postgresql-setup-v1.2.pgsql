@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     content TEXT
 );
 
+-- Screenshots table stores the screenshots details of the indexed pages
+CREATE TABLE IF NOT EXISTS Screenshots (
+    screenshot_id SERIAL PRIMARY KEY,
+    index_id INTEGER REFERENCES SearchIndex(index_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    screenshotLink TEXT NOT NULL,
+    height INTEGER NOT NULL DEFAULT 0,
+    width INTEGER NOT NULL DEFAULT 0,
+    byteSize INTEGER NOT NULL DEFAULT 0,
+    thumbnailHeight INTEGER NOT NULL DEFAULT 0,
+    thumbnailWidth INTEGER NOT NULL DEFAULT 0,
+    thumbnailLink TEXT NOT NULL DEFAULT '',
+    format VARCHAR(10) NOT NULL DEFAULT 'png'
+);
+
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id SERIAL PRIMARY KEY,

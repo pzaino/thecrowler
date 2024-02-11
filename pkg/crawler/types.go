@@ -18,6 +18,7 @@ package crawler
 
 import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
 
@@ -36,6 +37,11 @@ type PageInfo struct {
 	MetaTags     map[string]string // The meta tags of the web page.
 	DetectedType string            // The detected document type of the web page.
 	DetectedLang string            // The detected language of the web page.
+}
+
+// ScraperRuleEngine extends RuleEngine from the ruleset package
+type ScraperRuleEngine struct {
+	*rs.RuleEngine // generic rule engine
 }
 
 var (

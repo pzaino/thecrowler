@@ -6,11 +6,15 @@ you can use the API or the command line tools.
 
 ## Crawling
 
+TheCROWler uses the concept of "sources" to define a website "entry-point" from
+where to start the crawling, scrapping and interaction process. More information
+on sources can be found [here](./sources.md).
+
 To crawl a site, you'll need to add it to the Sources list in the database. You
 can do this by running the following command:
 
 ```bash
-./addSite --url <url> --depth <depth>
+./addSource --url <url> --depth <depth>
 ```
 
 This will add the site to the Sources list and the crawler will start crawling
@@ -27,7 +31,7 @@ Finally, make sure that The CROWler is running.
 To remove a site from the Sources list, run the following command:
 
 ```bash
-./removeSite --url <url>
+./removeSource --url <url>
 ```
 
 Where URL is the URL of the site you want to remove and it's listed in the

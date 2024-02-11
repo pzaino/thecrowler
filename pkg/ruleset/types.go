@@ -27,14 +27,18 @@ type CustomTime struct {
 
 // Ruleset represents the top-level structure of the rules YAML file
 type Ruleset struct {
-	Name       string      `yaml:"ruleset_name"`
-	RuleGroups []RuleGroup `yaml:"rule_groups"`
+	FormatVersion string      `yaml:"format_version"`
+	Author        string      `yaml:"author"`
+	CreatedAt     CustomTime  `yaml:"created_at"`
+	Description   string      `yaml:"description"`
+	Name          string      `yaml:"ruleset_name"`
+	RuleGroups    []RuleGroup `yaml:"rule_groups"`
 }
 
-// RuleGroup represents each group of rules within the ruleset
+// RuleGroup represents a group of rules
 type RuleGroup struct {
 	GroupName            string               `yaml:"group_name"`
-	ValidFrom            CustomTime           `yaml:"valid_from"` // Assuming RFC3339 format for date-time
+	ValidFrom            CustomTime           `yaml:"valid_from"`
 	ValidTo              CustomTime           `yaml:"valid_to"`
 	IsEnabled            bool                 `yaml:"is_enabled"`
 	ScrapingRules        []ScrapingRule       `yaml:"scraping_rules"`
@@ -43,11 +47,11 @@ type RuleGroup struct {
 	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration"`
 }
 
-// ScrapingRule represents a single scraping rule within a rule group
+// ScrapingRule represents a scraping rule
 type ScrapingRule struct {
 	RuleName           string               `yaml:"rule_name"`
 	Path               string               `yaml:"path"`
-	URL                string               `yaml:"url,omitempty"` // Optional
+	URL                string               `yaml:"url,omitempty"`
 	Elements           []Element            `yaml:"elements"`
 	JsFiles            bool                 `yaml:"js_files"`
 	TechnologyPatterns []string             `yaml:"technology_patterns"`
@@ -56,60 +60,60 @@ type ScrapingRule struct {
 	PostProcessing     []PostProcessingStep `yaml:"post_processing"`
 }
 
-// Element represents a list of elements to be scraped
-type Element struct {
-	Key       string
-	Selectors []Selector `yaml:"selectors"`
-}
-
-// Selector represents a single element within a scraping rule
-type Selector struct {
-	SelectorType string `yaml:"selector_type"` // Enum: ["css", "xpath", "regex"]
-	Selector     string `yaml:"selector"`
-	Attribute    string `yaml:"attribute"`
-}
-
-// WaitCondition represents a condition to wait for before performing scraping
-type WaitCondition struct {
-	ConditionType string `yaml:"condition_type"`      // Enum: ["element_presence", "element_visible", "custom_js"]
-	Selector      string `yaml:"selector,omitempty"`  // Optional
-	CustomJS      string `yaml:"custom_js,omitempty"` // Optional
-}
-
-// PostProcessingStep represents a single step in post-processing scraped data
-type PostProcessingStep struct {
-	StepType string                 `yaml:"step_type"` // Enum: ["transform", "validate", "clean"]
-	Details  map[string]interface{} `yaml:"details"`   // Flexible to accommodate different structures
-}
-
-// ActionRule represents a single action rule within a rule group
+// ActionRule represents an action rule
 type ActionRule struct {
 	RuleName       string          `yaml:"rule_name"`
-	ActionType     string          `yaml:"action_type"` // Enum: ["click", "input_text", "submit_form", "scroll", "navigate", "screenshot"]
-	Selector       string          `yaml:"selector"`
-	Value          string          `yaml:"value,omitempty"` // Optional
-	URL            string          `yaml:"url,omitempty"`   // Optional
+	ActionType     string          `yaml:"action_type"`
+	Selectors      []Selector      `yaml:"selectors"`
+	Value          string          `yaml:"value,omitempty"`
+	URL            string          `yaml:"url,omitempty"`
 	WaitConditions []WaitCondition `yaml:"wait_conditions"`
 	Conditions     map[string]bool `yaml:"conditions"`
 	ErrorHandling  ErrorHandling   `yaml:"error_handling"`
 }
 
-// ErrorHandling represents strategies for handling errors in action rules
-type ErrorHandling struct {
-	RetryCount int `yaml:"retry_count"`
-	RetryDelay int `yaml:"retry_delay"`
+// Element represents a single element to be scraped
+type Element struct {
+	Key       string     `yaml:"key"`
+	Selectors []Selector `yaml:"selectors"`
 }
 
-// EnvironmentSettings represents settings for the WebDriver environment
+// Selector represents a single selector
+type Selector struct {
+	SelectorType string `yaml:"selector_type"`
+	Selector     string `yaml:"selector"`
+	Attribute    string `yaml:"attribute,omitempty"`
+}
+
+// WaitCondition represents a single wait condition
+type WaitCondition struct {
+	ConditionType string `yaml:"condition_type"`
+	Selector      string `yaml:"selector,omitempty"`
+	CustomJS      string `yaml:"custom_js,omitempty"`
+}
+
+// PostProcessingStep represents a single post-processing step
+type PostProcessingStep struct {
+	StepType string                 `yaml:"step_type"`
+	Details  map[string]interface{} `yaml:"details"`
+}
+
+// EnvironmentSettings represents the environment settings for the rule group
 type EnvironmentSettings struct {
 	HeadlessMode         bool              `yaml:"headless_mode"`
 	CustomBrowserOptions map[string]string `yaml:"custom_browser_options"`
 }
 
-// LoggingConfiguration represents configuration settings for logging
+// LoggingConfiguration represents the logging configuration for the rule group
 type LoggingConfiguration struct {
-	LogLevel string `yaml:"log_level"`          // Enum: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-	LogFile  string `yaml:"log_file,omitempty"` // Optional
+	LogLevel string `yaml:"log_level"`
+	LogFile  string `yaml:"log_file,omitempty"`
+}
+
+// ErrorHandling represents the error handling configuration for the action rule
+type ErrorHandling struct {
+	RetryCount int `yaml:"retry_count"`
+	RetryDelay int `yaml:"retry_delay"`
 }
 
 // RuleEngine represents the top-level structure for the rule engine

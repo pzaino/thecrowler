@@ -88,6 +88,10 @@ type API struct {
 	Port          int    `yaml:"port"`           // Port number of the API server
 	Timeout       int    `yaml:"timeout"`        // Timeout for API requests (in seconds)
 	ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
+	ReturnContent bool   `yaml:"return_content"` // Whether to return the content or not
+	SSLMode       string `yaml:"sslmode"`        // SSL mode for API connection (e.g., "disable")
+	CertFile      string `yaml:"cert_file"`      // Path to the SSL certificate file
+	KeyFile       string `yaml:"key_file"`       // Path to the SSL key file
 }
 
 // Selenium represents the Selenium configuration
@@ -123,6 +127,19 @@ type Remote struct {
 	Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
 	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
+}
+
+// Ruleset represents the top-level structure of the rules YAML file
+type Ruleset struct {
+	Path    []string `yaml:"path"`    // Path to the ruleset files
+	Host    string   `yaml:"host"`    // Hostname of the API server
+	Port    int      `yaml:"port"`    // Port number of the API server
+	Region  string   `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string   `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string   `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int      `yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string   `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode string   `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
 
 // Config represents the structure of the configuration file

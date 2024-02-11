@@ -159,6 +159,10 @@ func NewConfig() Config {
 			Port:          8080,
 			Timeout:       10,
 			ContentSearch: false,
+			ReturnContent: false,
+			SSLMode:       "disable",
+			CertFile:      "",
+			KeyFile:       "",
 		},
 		Selenium: []Selenium{
 			{

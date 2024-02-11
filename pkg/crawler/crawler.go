@@ -1149,8 +1149,20 @@ func validateImageStorageAPIConfig(checkCfg cfg.Config) error {
 
 // saveScreenshotViaHTTP sends the screenshot to a remote API
 func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) error {
+	// Check if Host IP is allowed:
+	if cmn.IsDisallowedIP(saveCfg.Host, 1) {
+		return fmt.Errorf("host %s is not allowed", saveCfg.Host)
+	}
+
+	var protocol string
+	if saveCfg.SSLMode == "enable" {
+		protocol = "https"
+	} else {
+		protocol = "http"
+	}
+
 	// Construct the API endpoint URL
-	apiURL := fmt.Sprintf("http://%s:%d/store_image", saveCfg.Host, saveCfg.Port)
+	apiURL := fmt.Sprintf(protocol+"://%s:%d/"+saveCfg.Path, saveCfg.Host, saveCfg.Port)
 
 	// Prepare the request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))

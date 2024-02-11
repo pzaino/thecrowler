@@ -22,12 +22,12 @@ WORKDIR /app
 RUN adduser -D apiuser
 
 COPY --from=builder /app/bin/api /app/
-COPY --from=builder /app/bin/addSite /app/
-COPY --from=builder /app/bin/removeSite /app/
+COPY --from=builder /app/bin/addSource /app/
+COPY --from=builder /app/bin/removeSource /app/
 COPY --from=builder /app/config.yaml /app/
 RUN chmod +x api
-RUN chmod +x addSite
-RUN chmod +x removeSite
+RUN chmod +x addSource
+RUN chmod +x removeSource
 RUN mkdir /app/data
 RUN chmod 644 /app/data
 RUN chown -R apiuser:apiuser /app

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	goodTestFile = "./test_rules.yaml"
+	goodTestFile = "./test-ruleset.yaml"
 )
 
 func TestParseRules(t *testing.T) {
