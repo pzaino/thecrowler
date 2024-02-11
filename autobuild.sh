@@ -42,33 +42,36 @@ else
     exit $rval
 fi
 
-CGO_ENABLED=0 go build ./cmd/addSite
+cmd_name="addSource"
+CGO_ENABLED=0 go build ./cmd/${cmd_name}
 rval=$?
 if [ "${rval}" == "0" ]; then
-    echo "addSite command line tool built successfully!"
-    moveFile addSite ./bin
+    echo "${cmd_name} command line tool built successfully!"
+    moveFile ${cmd_name} ./bin
 else
-    echo "addASite command line tool build failed!"
+    echo "${cmd_name} command line tool build failed!"
     exit $rval
 fi
 
-CGO_ENABLED=0 go build ./cmd/removeSite
+cmd_name="removeSource"
+CGO_ENABLED=0 go build ./cmd/${cmd_name}
 rval=$?
 if [ "${rval}" == "0" ]; then
-    echo "removeSite command line tool built successfully!"
-    moveFile removeSite ./bin
+    echo "${cmd_name} command line tool built successfully!"
+    moveFile ${cmd_name} ./bin
 else
-    echo "removeSite command line tool build failed!"
+    echo "${cmd_name} command line tool build failed!"
     exit $rval
 fi
 
-CGO_ENABLED=0 go build ./services/api
+cmd_name="api"
+CGO_ENABLED=0 go build ./services/${cmd_name}
 rval=$?
 if [ "${rval}" == "0" ]; then
-    echo "api command line tool built successfully!"
-    moveFile api ./bin
+    echo "${cmd_name} command line tool built successfully!"
+    moveFile ${cmd_name} ./bin
 else
-    echo "api command line tool build failed!"
+    echo "${cmd_name} command line tool build failed!"
     exit $rval
 fi
 
