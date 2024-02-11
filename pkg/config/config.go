@@ -161,6 +161,8 @@ func NewConfig() Config {
 			ContentSearch: false,
 			ReturnContent: false,
 			SSLMode:       "disable",
+			CertFile:      "",
+			KeyFile:       "",
 		},
 		Selenium: []Selenium{
 			{

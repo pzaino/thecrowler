@@ -90,6 +90,8 @@ type API struct {
 	ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
 	ReturnContent bool   `yaml:"return_content"` // Whether to return the content or not
 	SSLMode       string `yaml:"sslmode"`        // SSL mode for API connection (e.g., "disable")
+	CertFile      string `yaml:"cert_file"`      // Path to the SSL certificate file
+	KeyFile       string `yaml:"key_file"`       // Path to the SSL key file
 }
 
 // Selenium represents the Selenium configuration
