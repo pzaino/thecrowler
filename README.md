@@ -14,6 +14,8 @@ alt="OpenSSF Security Best Practices badge"></a>
 ![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
 
+Project status: Still under active development, but most of it is already usable.
+
 ## What is it?
 
 The CROWler is an open-source, feature-rich web crawler designed with a unique
