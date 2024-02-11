@@ -6,6 +6,19 @@ description: Schema for a file containing multiple rulesets, each with its own c
 items:
   type: object
   properties:
+    format_version:
+      type: string
+      description: Version of the ruleset format, to ensure compatibility.
+    author:
+      type: string
+      description: The author or owner of the ruleset.
+    created_at:
+      type: string
+      format: date-time
+      description: Creation date of the ruleset.
+    description:
+      type: string
+      description: A brief description of what the ruleset does.
     ruleset_name:
       type: string
       description: A unique name identifying the ruleset.
@@ -57,15 +70,15 @@ items:
                           properties:
                             selector_type:
                               type: string
-                              enum: ["css", "xpath"]
+                              enum: ["css", "xpath", "id", "class_name", "name", "tag_name", "link_text", "partial_link_text", "regex"]
                             selector:
                               type: string
                             attribute:
                               type: string
-                              description: The attribute of the element to extract, e.g., 'innerText'. For regex, this specifies the pattern to match.
+                              description: Optional. The attribute of the element to extract, e.g., 'innerText'. Mainly relevant for scraping actions.
                           required: ["selector_type", "selector"]
                     required: ["key", "selectors"]
-                  description: Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and RegEx.
+                  description: Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other Selenium-supported strategies.
                 js_files:
                   type: boolean
                   description: Indicates whether JavaScript files are relevant for the scraping.
@@ -119,11 +132,50 @@ items:
                   description: A unique name identifying the action rule.
                 action_type:
                   type: string
-                  enum: ["click", "input_text", "submit_form", "scroll", "navigate", "screenshot"]
+                  enum:
+                    - "click"
+                    - "input_text"
+                    - "clear"
+                    - "drag_and_drop"
+                    - "mouse_hover"
+                    - "right_click"
+                    - "double_click"
+                    - "click_and_hold"
+                    - "release"
+                    - "key_down"
+                    - "key_up"
+                    - "navigate_to_url"
+                    - "forward"
+                    - "back"
+                    - "refresh"
+                    - "switch_to_window"
+                    - "switch_to_frame"
+                    - "close_window"
+                    - "accept_alert"
+                    - "dismiss_alert"
+                    - "get_alert_text"
+                    - "send_keys_to_alert"
+                    - "scroll_to_element"
+                    - "scroll_by_amount"
+                    - "take_screenshot"
+                    - "execute_javascript"
                   description: The type of action to perform, including advanced interactions.
-                selector:
-                  type: string
-                  description: The CSS selector of the element to perform the action on, applicable for click, input_text, and submit_form.
+                selectors:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      selector_type:
+                        type: string
+                        enum: ["css", "xpath", "id", "class_name", "name", "tag_name", "link_text", "partial_link_text"]
+                        description: "The method used to select the element: CSS selector, XPath, or other Selenium-supported strategies."
+                      selector:
+                        type: string
+                        description: The actual selector or pattern used to find the element based on the selector_type.
+                      attribute:
+                        type: string
+                        description: Optional. The attribute of the element to interact with, mainly relevant for actions like 'input_text'.
+                    required: ["selector_type", "selector"]
                 value:
                   type: string
                   description: The value to use with the action, e.g., text to input, applicable for input_text.
@@ -172,7 +224,7 @@ items:
               custom_browser_options:
                 type: object
                 description: Custom options for browser instances, such as proxies or window size.
-              description: Custom settings for the WebDriver environment.
+            description: Custom settings for the WebDriver environment.
           logging_configuration:
             type: object
             properties:
@@ -188,5 +240,5 @@ items:
         anyOf:
           - required: ["scraping_rules"]
           - required: ["action_rules"]
-  required: ["ruleset_name", "rule_groups"]
+  required: ["ruleset_name", "format_version", "rule_groups"]
 minItems: 1

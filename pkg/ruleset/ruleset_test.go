@@ -10,7 +10,8 @@ import (
 
 var rulesets = []Ruleset{
 	{
-		Name: "Example Items Extraction Ruleset",
+		Name:          "Example Items Extraction Ruleset",
+		FormatVersion: "1.0",
 		RuleGroups: []RuleGroup{
 			{
 				GroupName: "Group1",
@@ -77,7 +78,8 @@ var rulesets = []Ruleset{
 		},
 	},
 	{
-		Name: "another-example.com",
+		Name:          "another-example.com",
+		FormatVersion: "1.0",
 		RuleGroups: []RuleGroup{
 			{
 				GroupName: "GroupA",

@@ -1,264 +1,325 @@
 {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "array",
-    "description": "Schema for a file containing multiple rulesets, each with its own configuration for web scraping and automation tasks.",
-    "items": {
-      "type": "object",
-      "properties": {
-        "ruleset_name": {
-          "type": "string",
-          "description": "A unique name identifying the ruleset."
-        },
-        "rule_groups": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "group_name": {
-                "type": "string",
-                "description": "A unique name identifying the group of rules."
-              },
-              "valid_from": {
-                "type": "string",
-                "format": "date-time",
-                "description": "The start date from which the rule group becomes active."
-              },
-              "valid_to": {
-                "type": "string",
-                "format": "date-time",
-                "description": "The end date until which the rule group remains active."
-              },
-              "is_enabled": {
-                "type": "boolean",
-                "description": "Flag to enable or disable the rule group."
-              },
-              "scraping_rules": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "rule_name": {
-                      "type": "string",
-                      "description": "A unique name identifying the scraping rule."
-                    },
-                    "path": {
-                      "type": "string",
-                      "description": "The specific path or pattern to match for scraping."
-                    },
-                    "url": {
-                      "type": "string",
-                      "format": "uri",
-                      "description": "Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path."
-                    },
-                    "elements": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "key": { "type": "string" },
-                          "selectors": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "selector_type": {
-                                  "type": "string",
-                                  "enum": ["css", "xpath"]
-                                },
-                                "selector": {
-                                  "type": "string"
-                                },
-                                "attribute": {
-                                  "type": "string",
-                                  "description": "The attribute of the element to extract, e.g., 'innerText'. For regex, this specifies the pattern to match."
-                                }
-                              },
-                              "required": ["selector_type", "selector"]
-                            }
-                          }
-                        },
-                        "required": ["key", "selectors"]
-                      },
-                      "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and RegEx."
-                    },
-                    "js_files": {
-                      "type": "boolean",
-                      "description": "Indicates whether JavaScript files are relevant for the scraping."
-                    },
-                    "technology_patterns": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      },
-                      "description": "Identifies specific technology patterns or signatures."
-                    },
-                    "json_field_mappings": {
-                      "type": "object",
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "description": "Maps scraped elements to JSON fields using PostgreSQL JSON path expressions."
-                    },
-                    "wait_conditions": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "condition_type": {
-                            "type": "string",
-                            "enum": ["element_presence", "element_visible", "custom_js"],
-                            "description": "The type of condition to wait for before scraping."
-                          },
-                          "selector": {
-                            "type": "string",
-                            "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
-                          },
-                          "custom_js": {
-                            "type": "string",
-                            "description": "Custom JavaScript condition to evaluate, applicable for custom_js condition type."
-                          }
-                        }
-                      },
-                      "description": "Conditions to wait for before performing scraping, ensuring page readiness."
-                    },
-                    "post_processing": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "step_type": {
-                            "type": "string",
-                            "enum": ["transform", "validate", "clean"],
-                            "description": "The type of post-processing step."
-                          },
-                          "details": {
-                            "type": "object",
-                            "description": "Detailed configuration for the post-processing step, structure depends on the step_type."
-                          }
-                        }
-                      },
-                      "description": "Post-processing steps for the scraped data to transform, validate, or clean it."
-                    }
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "description": "Schema for a file containing multiple rulesets, each with its own configuration for web scraping and automation tasks.",
+  "items": {
+    "type": "object",
+    "properties": {
+      "format_version": {
+        "type": "string",
+        "description": "Version of the ruleset format, to ensure compatibility."
+      },
+      "author": {
+        "type": "string",
+        "description": "The author or owner of the ruleset."
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Creation date of the ruleset."
+      },
+      "description": {
+        "type": "string",
+        "description": "A brief description of what the ruleset does."
+      },
+      "ruleset_name": {
+        "type": "string",
+        "description": "A unique name identifying the ruleset."
+      },
+      "rule_groups": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "group_name": {
+              "type": "string",
+              "description": "A unique name identifying the group of rules."
+            },
+            "valid_from": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The start date from which the rule group becomes active."
+            },
+            "valid_to": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The end date until which the rule group remains active."
+            },
+            "is_enabled": {
+              "type": "boolean",
+              "description": "Flag to enable or disable the rule group."
+            },
+            "scraping_rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "rule_name": {
+                    "type": "string",
+                    "description": "A unique name identifying the scraping rule."
                   },
-                  "required": ["rule_name", "path", "elements"]
-                }
-              },
-              "action_rules": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "rule_name": {
-                      "type": "string",
-                      "description": "A unique name identifying the action rule."
-                    },
-                    "action_type": {
-                      "type": "string",
-                      "enum": ["click", "input_text", "submit_form", "scroll", "navigate", "screenshot"],
-                      "description": "The type of action to perform, including advanced interactions."
-                    },
-                    "selector": {
-                      "type": "string",
-                      "description": "The CSS selector of the element to perform the action on, applicable for click, input_text, and submit_form."
-                    },
-                    "value": {
-                      "type": "string",
-                      "description": "The value to use with the action, e.g., text to input, applicable for input_text."
-                    },
-                    "url": {
-                      "type": "string",
-                      "format": "uri",
-                      "description": "Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action."
-                    },
-                    "wait_conditions": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "condition_type": {
-                            "type": "string",
-                            "enum": ["element_presence", "element_visible", "custom_js"],
-                            "description": "The type of condition to wait for before executing the action."
-                          },
-                          "selector": {
-                            "type": "string",
-                            "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
-                          },
-                          "custom_js": {
-                            "type": "string",
-                            "description": "Custom JavaScript condition to evaluate, applicable for custom_js condition type."
-                          }
-                        }
-                      },
-                      "description": "Conditions to wait for before performing the action, ensuring page readiness."
-                    },
-                    "conditions": {
-                      "type": "object",
-                      "additionalProperties": {
-                        "type": "boolean"
-                      },
-                      "description": "Conditions that must be met for the action to be executed."
-                    },
-                    "error_handling": {
+                  "path": {
+                    "type": "string",
+                    "description": "The specific path or pattern to match for scraping."
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path."
+                  },
+                  "elements": {
+                    "type": "array",
+                    "items": {
                       "type": "object",
                       "properties": {
-                        "retry_count": {
-                          "type": "integer",
-                          "description": "The number of times to retry the action on failure."
+                        "key": {
+                          "type": "string"
                         },
-                        "retry_delay": {
-                          "type": "integer",
-                          "description": "The delay between retries in seconds."
+                        "selectors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "selector_type": {
+                                "type": "string",
+                                "enum": ["css", "xpath", "id", "class_name", "name", "tag_name", "link_text", "partial_link_text", "regex"]
+                              },
+                              "selector": {
+                                "type": "string"
+                              },
+                              "attribute": {
+                                "type": "string",
+                                "description": "Optional. The attribute of the element to extract, e.g., 'innerText'. Mainly relevant for scraping actions."
+                              }
+                            },
+                            "required": ["selector_type", "selector"]
+                          }
                         }
                       },
-                      "description": "Error handling strategies for the action."
-                    }
+                      "required": ["key", "selectors"]
+                    },
+                    "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other Selenium-supported strategies."
                   },
-                  "required": ["rule_name", "action_type"]
-                }
-              },
-              "environment_settings": {
-                "type": "object",
-                "properties": {
-                  "headless_mode": {
+                  "js_files": {
                     "type": "boolean",
-                    "description": "Specifies if the WebDriver should operate in headless mode."
+                    "description": "Indicates whether JavaScript files are relevant for the scraping."
                   },
-                  "custom_browser_options": {
+                  "technology_patterns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Identifies specific technology patterns or signatures."
+                  },
+                  "json_field_mappings": {
                     "type": "object",
-                    "description": "Custom options for browser instances, such as proxies or window size."
-                  }
-                },
-                "description": "Custom settings for the WebDriver environment."
-              },
-              "logging_configuration": {
-                "type": "object",
-                "properties": {
-                  "log_level": {
-                    "type": "string",
-                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-                    "description": "Specifies the logging level for actions and scraping activities."
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Maps scraped elements to JSON fields using PostgreSQL JSON path expressions."
                   },
-                  "log_file": {
-                    "type": "string",
-                    "description": "Optional. The file path to store logs if file logging is desired."
+                  "wait_conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "condition_type": {
+                          "type": "string",
+                          "enum": ["element_presence", "element_visible", "custom_js"]
+                        },
+                        "selector": {
+                          "type": "string",
+                          "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
+                        },
+                        "custom_js": {
+                          "type": "string",
+                          "description": "Custom JavaScript condition to evaluate, applicable for custom_js condition type."
+                        }
+                      }
+                    },
+                    "description": "Conditions to wait for before performing scraping, ensuring page readiness."
+                  },
+                  "post_processing": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "step_type": {
+                          "type": "string",
+                          "enum": ["transform", "validate", "clean"]
+                        },
+                        "details": {
+                          "type": "object",
+                          "description": "Detailed configuration for the post-processing step, structure depends on the step_type."
+                        }
+                      }
+                    },
+                    "description": "Post-processing steps for the scraped data to transform, validate, or clean it."
                   }
                 },
-                "description": "Configuration for logging and monitoring rule execution."
+                "required": ["rule_name", "path", "elements"]
               }
             },
-            "required": ["group_name", "is_enabled"],
-            "anyOf": [
-              { "required": ["scraping_rules"] },
-              { "required": ["action_rules"] }
-            ]
-          }
+            "action_rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "rule_name": {
+                    "type": "string",
+                    "description": "A unique name identifying the action rule."
+                  },
+                  "action_type": {
+                    "type": "string",
+                    "enum": [
+                      "click",
+                      "input_text",
+                      "clear",
+                      "drag_and_drop",
+                      "mouse_hover",
+                      "right_click",
+                      "double_click",
+                      "click_and_hold",
+                      "release",
+                      "key_down",
+                      "key_up",
+                      "navigate_to_url",
+                      "forward",
+                      "back",
+                      "refresh",
+                      "switch_to_window",
+                      "switch_to_frame",
+                      "close_window",
+                      "accept_alert",
+                      "dismiss_alert",
+                      "get_alert_text",
+                      "send_keys_to_alert",
+                      "scroll_to_element",
+                      "scroll_by_amount",
+                      "take_screenshot",
+                      "execute_javascript"
+                    ],
+                    "description": "The type of action to perform, including advanced interactions."
+                  },
+                  "selectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "selector_type": {
+                          "type": "string",
+                          "enum": ["css", "xpath", "id", "class_name", "name", "tag_name", "link_text", "partial_link_text"]
+                        },
+                        "selector": {
+                          "type": "string",
+                          "description": "The actual selector or pattern used to find the element based on the selector_type."
+                        },
+                        "attribute": {
+                          "type": "string",
+                          "description": "Optional. The attribute of the element to interact with, mainly relevant for actions like 'input_text'."
+                        }
+                      },
+                      "required": ["selector_type", "selector"]
+                    }
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "The value to use with the action, e.g., text to input, applicable for input_text."
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action."
+                  },
+                  "wait_conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "condition_type": {
+                          "type": "string",
+                          "enum": ["element_presence", "element_visible", "custom_js"]
+                        },
+                        "selector": {
+                          "type": "string",
+                          "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
+                        },
+                        "custom_js": {
+                          "type": "string",
+                          "description": "Custom JavaScript condition to evaluate, applicable for custom_js condition type."
+                        }
+                      }
+                    },
+                    "description": "Conditions to wait for before performing the action, ensuring page readiness."
+                  },
+                  "conditions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "boolean"
+                    },
+                    "description": "Conditions that must be met for the action to be executed."
+                  },
+                  "error_handling": {
+                    "type": "object",
+                    "properties": {
+                      "retry_count": {
+                        "type": "integer",
+                        "description": "The number of times to retry the action on failure."
+                      },
+                      "retry_delay": {
+                        "type": "integer",
+                        "description": "The delay between retries in seconds."
+                      }
+                    },
+                    "description": "Error handling strategies for the action."
+                  }
+                },
+                "required": ["rule_name", "action_type"]
+              }
+            },
+            "environment_settings": {
+              "type": "object",
+              "properties": {
+                "headless_mode": {
+                  "type": "boolean",
+                  "description": "Specifies if the WebDriver should operate in headless mode."
+                },
+                "custom_browser_options": {
+                  "type": "object",
+                  "description": "Custom options for browser instances, such as proxies or window size."
+                }
+              },
+              "description": "Custom settings for the WebDriver environment."
+            },
+            "logging_configuration": {
+              "type": "object",
+              "properties": {
+                "log_level": {
+                  "type": "string",
+                  "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                  "description": "Specifies the logging level for actions and scraping activities."
+                },
+                "log_file": {
+                  "type": "string",
+                  "description": "Optional. The file path to store logs if file logging is desired."
+                }
+              },
+              "description": "Configuration for logging and monitoring rule execution."
+            }
+          },
+          "required": ["group_name", "is_enabled"],
+          "anyOf": [
+            {
+              "required": ["scraping_rules"]
+            },
+            {
+              "required": ["action_rules"]
+            }
+          ]
         }
-      },
-      "required": [
-        "ruleset_name",
-        "rule_groups"
-      ]
+      }
     },
-    "minItems": 1
+    "required": ["ruleset_name", "format_version", "rule_groups"]
+  },
+  "minItems": 1
 }
