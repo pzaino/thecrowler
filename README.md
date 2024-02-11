@@ -9,7 +9,7 @@
 <a href="https://www.bestpractices.dev/projects/8344"><img
 src="https://www.bestpractices.dev/projects/8344/badge"
 alt="OpenSSF Security Best Practices badge"></a>
-![Codacy: ](https://github.com/pzaino/TheCROWler/actions/workflows/codacy.yml/badge.svg)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/bb3868a72f044f1fb2ebe5516224d943)](https://app.codacy.com/gh/pzaino/thecrowler/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 <!-- ![Docker build: ]() -->
 ![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
