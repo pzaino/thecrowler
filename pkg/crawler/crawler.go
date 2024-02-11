@@ -1150,7 +1150,7 @@ func validateImageStorageAPIConfig(checkCfg cfg.Config) error {
 // saveScreenshotViaHTTP sends the screenshot to a remote API
 func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) error {
 	// Check if Host IP is allowed:
-	if cmn.IsDisallowedIP(saveCfg.Host) {
+	if cmn.IsDisallowedIP(saveCfg.Host, 1) {
 		return fmt.Errorf("host %s is not allowed", saveCfg.Host)
 	}
 

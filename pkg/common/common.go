@@ -84,7 +84,10 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 }
 
 // IsDisallowedIP parses the ip to determine if we should allow the HTTP client to continue
-func IsDisallowedIP(hostIP string) bool {
+func IsDisallowedIP(hostIP string, level int) bool {
 	ip := net.ParseIP(hostIP)
+	if level == 0 {
+		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback()
+	}
 	return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
 }

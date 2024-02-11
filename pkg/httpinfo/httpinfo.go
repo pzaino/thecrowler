@@ -18,7 +18,6 @@ package httpinfo
 import (
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,20 +53,6 @@ func validateURL(inputURL string) (bool, error) {
 	return true, nil
 }
 
-// Check if the IP address is allowed
-func isIPAllowed(ipAddr string) bool {
-	// Example: Disallow private and loopback ranges
-	ip := net.ParseIP(ipAddr)
-	return !ip.IsLoopback()
-	/* I may add more checks in the future
-	if ip.IsLoopback() {
-		return false
-	}
-	// Extend this function based on your requirements
-	return true
-	*/
-}
-
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
 func ExtractHTTPInfo(config Config) (*Response, error) {
 	client := &http.Client{
@@ -84,7 +69,7 @@ func ExtractHTTPInfo(config Config) (*Response, error) {
 		return nil, err
 	}
 	// Validate IP address
-	if !isIPAllowed(config.URL) {
+	if cmn.IsDisallowedIP(config.URL, 0) {
 		return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
 	}
 	// Ok, the URL is safe, let's create a new HTTP request
