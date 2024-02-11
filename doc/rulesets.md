@@ -190,6 +190,20 @@ Let's have a look at the structure of the ruleset:
       Keep in mind that this approach may not always work as expected (because
       certain technologies might be cloaked or obfuscated).
 
+## How to use a ruleset
+
+A ruleset can be used "automatically" or "manually".
+
+### Automatically
+
+The rules in each ruleset will be executed automatically if their name and path match the URL of the website being crawled.
+
+### Manually
+
+To use rules "manually" (aka have them executed automatically for a given source), you'll need to specify them in the source configuration.
+
+More details on the source configuration [here](./sources.md).
+
 ## Ruleset Validation
 
 The ruleset is validated using a JSON schema. The schema is defined in the
