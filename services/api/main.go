@@ -22,6 +22,7 @@ import (
 	"log"
 	"net/http"
 	"runtime"
+	"strings"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -46,7 +47,7 @@ func main() {
 
 	http.HandleFunc("/search", searchHandler)
 	log.Printf("Starting server on %s:%d\n", config.API.Host, config.API.Port)
-	if config.API.SSLMode == "enabled" {
+	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
 		log.Fatal(http.ListenAndServeTLS(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), config.API.CertFile, config.API.KeyFile, nil))
 	} else {
 		log.Fatal(http.ListenAndServe(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), nil))

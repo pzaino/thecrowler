@@ -17,6 +17,7 @@ package common
 
 import (
 	"log"
+	"net"
 	"os"
 	"strconv"
 )
@@ -80,4 +81,10 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 		// For Debug messages, log only if the set debug level is equal or higher
 		log.Printf(loggerPrefix+msg, args...)
 	}
+}
+
+// IsDisallowedIP parses the ip to determine if we should allow the HTTP client to continue
+func IsDisallowedIP(hostIP string) bool {
+	ip := net.ParseIP(hostIP)
+	return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
 }
