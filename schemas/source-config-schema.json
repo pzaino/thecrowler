@@ -43,7 +43,15 @@
               "additionalProperties": true
             }
           },
-          "required": ["label", "conditions"]
+          "required": ["label", "conditions"],
+          "anyOf": [
+            {
+              "required": ["rule_groups"]
+            },
+            {
+              "required": ["rules"]
+            }
+            ]
         }
       }
     },

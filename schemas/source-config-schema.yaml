@@ -53,6 +53,11 @@ properties:
       required:
         - label
         - conditions
+      anyOf:
+          - required:
+              - rule_groups
+          - required:
+              - rules
 required:
   - format_version
   - source_name
