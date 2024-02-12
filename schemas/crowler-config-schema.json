@@ -177,14 +177,10 @@
                     }
                 },
                 "required": [
-                    "path",
-                    "driver_path",
                     "type",
+                    "path",
                     "port",
-                    "host",
-                    "headless",
-                    "use_service",
-                    "sslmode"
+                    "host"
                 ]
             }
         },
@@ -343,7 +339,6 @@
         "crawler",
         "api",
         "selenium",
-        "image_storage",
         "network_info"
     ]
 }

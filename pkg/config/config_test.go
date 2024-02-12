@@ -26,7 +26,7 @@ func TestLoadConfig(t *testing.T) {
 	os.Setenv("DB_PASSWORD", "testpassword")
 
 	// Call the function
-	config, err := LoadConfig("./test_config.yml")
+	config, err := LoadConfig("./test-config.yml")
 
 	// Check for errors
 	if err != nil {
