@@ -219,10 +219,11 @@ Open (or create) your VSCode settings.json file and add the following:
 
 ```json
 "yaml.schemas": {
-    "./schemas/ruleset-schema.json": "*-ruleset.yaml"
+    "./schemas/ruleset-schema.json": "*-ruleset.y*ml"
 }
 ```
 
-Then, ensure you call all your ruleset files with the `-ruleset.yaml` extension.
+Then, ensure you call all your ruleset files with the `-ruleset.yaml` or
+ `-ruleset.yml` extension.
 
 This will allow you to validate the ruleset in VSCode as you type them.

@@ -32,7 +32,7 @@ database:
 crawler:
   workers: 5
   depth: 1
-  delay: 2
+  delay: "2"
   timeout: 10
   maintenance: 60
 image_storage_api:
@@ -148,3 +148,25 @@ authenticate to the API.
 - If we selected the API storage then it's ignored.
 - If we selected the S3 storage then it's the AWS region.
 - If we selected local storage then it's ignored.
+
+**timeout:**
+
+is the timeout for the image storage API. It's expressed in seconds.
+
+## Adding configuration validation in VSCode
+
+To add the CROWler configuration validation in VSCode, you can use the
+following extension:
+
+Open (or create) your VSCode settings.json file and add the following:
+
+```json
+"yaml.schemas": {
+    "./schemas/crowler-config-schema.json": "*-config.y*ml",
+}
+```
+
+Then, ensure you call all your config files with the `-config.yaml` or
+`-config.yml` extension.
+
+This will allow you to validate your configurations in VSCode as you type them.
