@@ -1,0 +1,344 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "remote": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "string"
+                },
+                "timeout": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "sslmode": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "host",
+                "path",
+                "port",
+                "type"
+            ]
+        },
+        "database": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "user": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "dbname": {
+                    "type": "string"
+                },
+                "retry_time": {
+                    "type": "integer"
+                },
+                "ping_time": {
+                    "type": "integer"
+                },
+                "sslmode": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "type",
+                "host",
+                "port",
+                "user",
+                "password",
+                "dbname"
+            ]
+        },
+        "crawler": {
+            "type": "object",
+            "properties": {
+                "workers": {
+                    "type": "integer"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "timeout": {
+                    "type": "integer"
+                },
+                "maintenance": {
+                    "type": "integer"
+                },
+                "source_screenshot": {
+                    "type": "boolean"
+                },
+                "full_site_screenshot": {
+                    "type": "boolean"
+                },
+                "max_depth": {
+                    "type": "integer"
+                },
+                "max_sources": {
+                    "type": "integer"
+                },
+                "delay": {
+                    "type": "string"
+                }
+            }
+        },
+        "api": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "timeout": {
+                    "type": "integer"
+                },
+                "content_search": {
+                    "type": "boolean"
+                },
+                "return_content": {
+                    "type": "boolean"
+                },
+                "sslmode": {
+                    "type": "string"
+                },
+                "cert_file": {
+                    "type": "string"
+                },
+                "key_file": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "host",
+                "port",
+                "timeout"
+            ]
+        },
+        "selenium": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "driver_path": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "integer"
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "headless": {
+                        "type": "boolean"
+                    },
+                    "use_service": {
+                        "type": "boolean"
+                    },
+                    "sslmode": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "type",
+                    "path",
+                    "port",
+                    "host"
+                ]
+            }
+        },
+        "image_storage": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "string"
+                },
+                "timeout": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "sslmode": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "path",
+                "type"
+            ]
+        },
+        "file_storage": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "string"
+                },
+                "timeout": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "sslmode": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "path",
+                "type"
+            ]
+        },
+        "network_info": {
+            "type": "object",
+            "properties": {
+                "dns": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "timeout": {
+                            "type": "integer"
+                        },
+                        "rate_limit": {
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "enabled"
+                    ]
+                },
+                "whois": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "timeout": {
+                            "type": "integer"
+                        },
+                        "rate_limit": {
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "enabled"
+                    ]
+                },
+                "netlookup": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "timeout": {
+                            "type": "integer"
+                        },
+                        "rate_limit": {
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "enabled"
+                    ]
+                },
+                "geo_localization": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "path": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "enabled",
+                        "path"
+                    ]
+                }
+            }
+        },
+        "os": {
+            "type": "string"
+        },
+        "debug_level": {
+            "type": "integer"
+        }
+    },
+    "required": [
+        "database",
+        "crawler",
+        "api",
+        "selenium",
+        "network_info"
+    ]
+}

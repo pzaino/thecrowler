@@ -1,7 +1,7 @@
 -- PostgreSQL setup script for the search engine database.
 -- Adjusted for better performance and best practices.
 
--- To run this setup script manually from a PostgreSQL UI:
+-- To run this setup script manually from a PostgreSQL UI
 -- Define the following variables in psql replacing their values
 -- with your own and then run the script.
 --\set POSTGRES_DB 'SitesIndex'
@@ -69,14 +69,28 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     index_id INTEGER REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    screenshotLink TEXT NOT NULL,
+    type VARCHAR(10) NOT NULL DEFAULT 'desktop',
+    screenshot_link TEXT NOT NULL,
     height INTEGER NOT NULL DEFAULT 0,
     width INTEGER NOT NULL DEFAULT 0,
     byteSize INTEGER NOT NULL DEFAULT 0,
-    thumbnailHeight INTEGER NOT NULL DEFAULT 0,
-    thumbnailWidth INTEGER NOT NULL DEFAULT 0,
-    thumbnailLink TEXT NOT NULL DEFAULT '',
+    thumbnail_height INTEGER NOT NULL DEFAULT 0,
+    thumbnail_width INTEGER NOT NULL DEFAULT 0,
+    thumbnail_link TEXT NOT NULL DEFAULT '',
     format VARCHAR(10) NOT NULL DEFAULT 'png'
+);
+
+-- WebObjects table stores all types of web objects found in the indexed pages
+-- This includes scripts, styles, images, iframes, HTML etc.
+CREATE TABLE IF NOT EXISTS WebObjects (
+    object_id SERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    object_url TEXT NOT NULL, -- The original URL where the object was found
+    object_link TEXT NOT NULL DEFAULT 'db', -- The link to where the object is stored if not in the DB
+    object_type VARCHAR(32) NOT NULL DEFAULT 'text/javascript', -- The type of the object, for fast searches
+    object_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the object for fast comparison and uniqueness
+    object_content TEXT -- The actual content of the object, nullable if stored externally
 );
 
 -- MetaTags table stores the meta tags from the SearchIndex
@@ -133,6 +147,16 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
     UNIQUE(source_id, index_id) -- Ensures unique combinations of source_id and index_id
 );
 
+-- PageWebObjects table stores the relationship between indexed pages and the objects found in them
+CREATE TABLE IF NOT EXISTS PageWebObjects (
+    page_object_id SERIAL PRIMARY KEY,
+    index_id INTEGER NOT NULL REFERENCES SearchIndex(index_id),
+    object_id INTEGER NOT NULL REFERENCES WebObjects(object_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(index_id, object_id) -- Ensures that the same object is not linked multiple times to the same page
+);
+
 -- KeywordIndex table stores the relationship between keywords and the indexed pages
 CREATE TABLE IF NOT EXISTS KeywordIndex (
     keyword_index_id SERIAL PRIMARY KEY,
@@ -179,6 +203,28 @@ BEGIN
 END
 $$;
 
+-- Creates an index for the Sources source_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_source_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_sources_source_id ON Sources(source_id);
+    END IF;
+END
+$$;
+
+-- Creates a gin index for the Source config column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_config') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_sources_config ON Sources USING gin(config jsonb_path_ops);
+    END IF;
+END
+$$;
+
 -- Creates an index for the Owners details column
 DO $$
 BEGIN
@@ -212,8 +258,7 @@ BEGIN
 END
 $$;
 
-
--- Creates an index for the source_id column in the NetInfo table
+-- Creates an index for the NetInfo source_id column
 DO $$
 BEGIN
     -- Check if the index already exists
@@ -224,7 +269,7 @@ BEGIN
 END
 $$;
 
--- Creates an index for the scanned_on column in the NetInfo table
+-- Creates an index for the NetInfo scanned_on column
 DO $$
 BEGIN
     -- Check if the index already exists
@@ -247,28 +292,6 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
-    END IF;
-END
-$$;
-
--- Creates an index for the Sources source_id column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_source_id') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_sources_source_id ON Sources(source_id);
-    END IF;
-END
-$$;
-
--- Creates a gin index for the Source config column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_config') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_sources_config ON Sources USING gin(config jsonb_path_ops);
     END IF;
 END
 $$;
@@ -346,6 +369,83 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_last_updated_at') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_searchindex_last_updated_at ON SearchIndex(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Screenshots index_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_screenshots_index_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_screenshots_index_id ON Screenshots(index_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Screenshots screenshot_link column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_screenshots_screenshot_link') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_screenshots_screenshot_link ON Screenshots(screenshot_link);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Screenshots last_updated_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_screenshots_last_updated_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_screenshots_last_updated_at ON Screenshots(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Screenshots created_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_screenshots_created_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_screenshots_created_at ON Screenshots(created_at);
+    END IF;
+END
+$$;
+
+-- Create an index for the WebObjects object_hash column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_hash') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_object_hash ON WebObjects(object_hash);
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjects object_content column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_content') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_object_content ON WebObjects(left(object_content, 1024) text_pattern_ops) WHERE object_content IS NOT NULL;
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjects last_updated_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_last_updated_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_last_updated_at ON WebObjects(last_updated_at);
     END IF;
 END
 $$;

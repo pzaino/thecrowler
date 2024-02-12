@@ -53,3 +53,22 @@ configuration file is uploaded in the config field of the source.
 
 To remove a source, you have to use the `removeSource` command and the URL of
 the source you want to remove.
+
+## Adding Sources configuration validation in VSCode
+
+To add Sources configuration validation in VSCode, you can use the
+following extension:
+
+Open (or create) your VSCode settings.json file and add the following:
+
+```json
+"yaml.schemas": {
+   "./schemas/source-config-schema.json": "*-sourcecfg.y*ml",
+}
+```
+
+Then, ensure you call all your config files with the `-sourcecfg.yaml` or
+`-sourcecfg.yml` extension.
+
+This will allow you to validate your Sources configurations in VSCode
+as you type them.

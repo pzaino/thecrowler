@@ -45,7 +45,7 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestParseRulesInvalidFile(t *testing.T) {
-	_, err := rs.ParseRules("./invalid_test_rules.yaml")
+	_, err := rs.ParseRules("./invalid_ruleset.yaml")
 	if err == nil {
 		t.Errorf("Expected error, got none")
 	}
