@@ -118,3 +118,109 @@ func (lw *logWriter) Write(p []byte) (n int, err error) {
 	*lw.output += string(p)
 	return len(p), nil
 }
+func TestIsDisallowedIP(t *testing.T) {
+	tests := []struct {
+		name     string
+		hostIP   string
+		level    int
+		expected bool
+	}{
+		{
+			name:     "IP Test case 1",
+			hostIP:   "127.0.0.1",
+			level:    0,
+			expected: true,
+		},
+		{
+			name:     "IP Test case 2",
+			hostIP:   "192.168.0.1",
+			level:    1,
+			expected: true,
+		},
+		{
+			name:     "IP Test case 3",
+			hostIP:   "10.0.0.1",
+			level:    1,
+			expected: true,
+		},
+		{
+			name:     "IP Test case 4",
+			hostIP:   "172.16.0.1",
+			level:    1,
+			expected: true,
+		},
+		{
+			name:     "IP Test case 5",
+			hostIP:   "8.8.8.8",
+			level:    1,
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := IsDisallowedIP(test.hostIP, test.level)
+			if result != test.expected {
+				t.Errorf("Expected %v for hostIP %s and level %d, but got %v", test.expected, test.hostIP, test.level, result)
+			}
+		})
+	}
+}
+func TestInitLogger(t *testing.T) {
+	// Test case
+	tests := []struct {
+		name     string
+		appName  string
+		expected string
+	}{
+		{
+			name:     "LoggerInit Test case 1",
+			appName:  "TestApp",
+			expected: "TestApp",
+		},
+		{
+			name:     "LoggerInit Test case 2",
+			appName:  "AnotherApp",
+			expected: "AnotherApp",
+		},
+	}
+
+	// Run tests
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			InitLogger(test.appName)
+			if !strings.Contains(loggerPrefix, test.expected) {
+				t.Errorf("Expected logger prefix %q, but got %q", test.expected, loggerPrefix)
+			}
+		})
+	}
+}
+func TestUpdateLoggerConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		debugLevel DbgLevel
+		expected   int
+	}{
+		{
+			name:       "LoggerUpdate Test case 1",
+			debugLevel: 1,
+			expected:   log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile,
+		},
+		{
+			name:       "LoggerUpdate Test case 2",
+			debugLevel: 0,
+			expected:   log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			debugLevel = test.debugLevel
+			UpdateLoggerConfig()
+			flags := log.Flags()
+			if flags != test.expected {
+				t.Errorf("Expected log flags %v, but got %v", test.expected, flags)
+			}
+		})
+	}
+}
