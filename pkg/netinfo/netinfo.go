@@ -53,6 +53,7 @@ func (ni *NetInfo) GetIPs() error {
 	return nil
 }
 
+// isIPNew checks if the provided IP address is new in the current NetInfo instance
 func (ni *NetInfo) isIPNew(ip string) bool {
 	for _, existingIP := range ni.IPs.IP {
 		if existingIP == ip {
@@ -62,6 +63,7 @@ func (ni *NetInfo) isIPNew(ip string) bool {
 	return true
 }
 
+// processNewIP processes the new IP address to get geolocation and network information
 func (ni *NetInfo) processNewIP(ip string) (IPInfo, error) {
 	ipInfo := IPInfo{IP: ip} // Assume IPInfo is a struct that matches your IPData structure
 
@@ -87,6 +89,7 @@ func (ni *NetInfo) processNewIP(ip string) (IPInfo, error) {
 	return ipInfo, nil
 }
 
+// updateIPData updates the IPData fields of the NetInfo instance with the provided newIPData
 func (ni *NetInfo) updateIPData(newIPData []IPInfo) {
 	// Iterate over newIPData to update ni.IPs fields
 	for _, ipInfo := range newIPData {
@@ -106,6 +109,7 @@ func (ni *NetInfo) updateIPData(newIPData []IPInfo) {
 	}
 }
 
+// UpdateWithGeoLocation updates the IPInfo fields with the provided geolocation data
 func (info *IPInfo) UpdateWithGeoLocation(geoLocation *DetectedLocation) {
 	// Assuming DetectedLocation has similar fields to what we need
 	info.Country = geoLocation.CountryName
@@ -115,6 +119,7 @@ func (info *IPInfo) UpdateWithGeoLocation(geoLocation *DetectedLocation) {
 	info.Longitude = geoLocation.Longitude
 }
 
+// UpdateWithIPInfo updates the IPInfo fields with the provided network data
 func (info *IPInfo) UpdateWithIPInfo(entity *ipExtraData) {
 	// NetworkInfo is assumed to be the struct with network data
 	info.ASN = defaultNA(entity.ASN)
@@ -141,6 +146,7 @@ func (info *IPInfo) UpdateWithIPInfo(entity *ipExtraData) {
 	}
 }
 
+// SetDefaults sets the default values for all IPInfo fields
 func (info *IPInfo) SetDefaults() {
 	info.ASN = "N/A"
 	info.CIDR = "N/A"
