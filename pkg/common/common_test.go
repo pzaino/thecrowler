@@ -231,12 +231,12 @@ func TestIsPathCorrect(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "Test case 1",
+			name:     "CheckPath Test case 1",
 			path:     "./*.jpg",
 			expected: false,
 		},
 		{
-			name:     "Test case 2",
+			name:     "CheckPath Test case 2",
 			path:     "/path/to/nonexistent/file.txt",
 			expected: false,
 		},
