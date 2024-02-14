@@ -13,7 +13,7 @@
 
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
-    source_id SERIAL PRIMARY KEY,
+    source_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP,
     url TEXT NOT NULL UNIQUE,         -- Using TEXT for long URLs
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS Sources (
 
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
-    owner_id SERIAL PRIMARY KEY,
+    owner_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     details JSONB NOT NULL             -- Stores JSON document with all details about the owner
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS Owners (
 
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
-    netinfo_id SERIAL PRIMARY KEY,
+    netinfo_id BIGSERIAL PRIMARY KEY,
     source_id INT REFERENCES Sources(source_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS NetInfo (
 
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
-    index_id SERIAL PRIMARY KEY,
+    index_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     page_url TEXT NOT NULL UNIQUE,                  -- Using TEXT for long URLs
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
 
 -- Screenshots table stores the screenshots details of the indexed pages
 CREATE TABLE IF NOT EXISTS Screenshots (
-    screenshot_id SERIAL PRIMARY KEY,
+    screenshot_id BIGSERIAL PRIMARY KEY,
     index_id INTEGER REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -83,19 +83,19 @@ CREATE TABLE IF NOT EXISTS Screenshots (
 -- WebObjects table stores all types of web objects found in the indexed pages
 -- This includes scripts, styles, images, iframes, HTML etc.
 CREATE TABLE IF NOT EXISTS WebObjects (
-    object_id SERIAL PRIMARY KEY,
+    object_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     object_url TEXT NOT NULL, -- The original URL where the object was found
     object_link TEXT NOT NULL DEFAULT 'db', -- The link to where the object is stored if not in the DB
-    object_type VARCHAR(32) NOT NULL DEFAULT 'text/javascript', -- The type of the object, for fast searches
+    object_type VARCHAR(255) NOT NULL DEFAULT 'text/html', -- The type of the object, for fast searches
     object_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the object for fast comparison and uniqueness
     object_content TEXT -- The actual content of the object, nullable if stored externally
 );
 
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
-    metatag_id SERIAL PRIMARY KEY,
+    metatag_id BIGSERIAL PRIMARY KEY,
     index_id INTEGER REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
 
 -- Keywords table stores all the found keywords during an indexing
 CREATE TABLE IF NOT EXISTS Keywords (
-    keyword_id SERIAL PRIMARY KEY,
+    keyword_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     keyword VARCHAR(100) NOT NULL UNIQUE
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
 
 -- SourceOwner table stores the relationship between sources and their owners
 CREATE TABLE IF NOT EXISTS SourceOwner (
-    source_owner_id SERIAL PRIMARY KEY,
+    source_owner_id BIGSERIAL PRIMARY KEY,
     source_id INTEGER NOT NULL,
     owner_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS SourceOwner (
 
 -- SourceSearchIndex table stores the relationship between sources and the indexed pages
 CREATE TABLE IF NOT EXISTS SourceSearchIndex (
-    ss_index_id SERIAL PRIMARY KEY,
+    ss_index_id BIGSERIAL PRIMARY KEY,
     source_id INTEGER NOT NULL,
     index_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
 
 -- PageWebObjects table stores the relationship between indexed pages and the objects found in them
 CREATE TABLE IF NOT EXISTS PageWebObjects (
-    page_object_id SERIAL PRIMARY KEY,
+    page_object_id BIGSERIAL PRIMARY KEY,
     index_id INTEGER NOT NULL REFERENCES SearchIndex(index_id),
     object_id INTEGER NOT NULL REFERENCES WebObjects(object_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS PageWebObjects (
 
 -- KeywordIndex table stores the relationship between keywords and the indexed pages
 CREATE TABLE IF NOT EXISTS KeywordIndex (
-    keyword_index_id SERIAL PRIMARY KEY,
+    keyword_index_id BIGSERIAL PRIMARY KEY,
     keyword_id INTEGER REFERENCES Keywords(keyword_id),
     index_id INTEGER REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -236,28 +236,6 @@ BEGIN
 END
 $$;
 
--- Creates an index for SourceOwner owner_id column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceowner_owner_id') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX IF NOT EXISTS idx_sourceowner_owner_id ON SourceOwner(owner_id);
-    END IF;
-END
-$$;
-
--- Creates an index for SourceOwner source_id column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceowner_source_id') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX IF NOT EXISTS idx_sourceowner_source_id ON SourceOwner(source_id);
-    END IF;
-END
-$$;
-
 -- Creates an index for the NetInfo source_id column
 DO $$
 BEGIN
@@ -292,28 +270,6 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
-    END IF;
-END
-$$;
-
--- Creates an index for the SourceSearchIndex source_id column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_source_id') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_ssi_source_id ON SourceSearchIndex(source_id);
-    END IF;
-END
-$$;
-
--- Creates an index for the SourceSearchIndex index_id column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_index_id') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_ssi_index_id ON SourceSearchIndex(index_id);
     END IF;
 END
 $$;
@@ -417,6 +373,39 @@ BEGIN
 END
 $$;
 
+-- Creates an index for the WebObjects object_url column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_url') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_object_url ON WebObjects(object_url text_pattern_ops);
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjects object_link column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_link') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_object_link ON WebObjects(object_link text_pattern_ops);
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjects object_type column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_type') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_object_type ON WebObjects(object_type);
+    END IF;
+END
+$$;
+
 -- Create an index for the WebObjects object_hash column
 DO $$
 BEGIN
@@ -435,6 +424,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_content') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_webobjects_object_content ON WebObjects(left(object_content, 1024) text_pattern_ops) WHERE object_content IS NOT NULL;
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjects created_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_created_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_webobjects_created_at ON WebObjects(created_at);
     END IF;
 END
 $$;
@@ -480,6 +480,50 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywordindex_occurrences') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_keywordindex_occurrences ON KeywordIndex(occurrences);
+    END IF;
+END
+$$;
+
+-- Creates an index for SourceOwner owner_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceowner_owner_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX IF NOT EXISTS idx_sourceowner_owner_id ON SourceOwner(owner_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for SourceOwner source_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceowner_source_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX IF NOT EXISTS idx_sourceowner_source_id ON SourceOwner(source_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the SourceSearchIndex source_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_source_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_ssi_source_id ON SourceSearchIndex(source_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the SourceSearchIndex index_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_index_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_ssi_index_id ON SourceSearchIndex(index_id);
     END IF;
 END
 $$;
@@ -670,7 +714,7 @@ BEGIN
 END
 $$;
 CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER)
-RETURNS TABLE(source_id INT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
+RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
 $$
 BEGIN
     RETURN QUERY
