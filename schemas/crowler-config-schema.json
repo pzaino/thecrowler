@@ -138,6 +138,9 @@
                 },
                 "key_file": {
                     "type": "string"
+                },
+                "rate_limit": {
+                    "type": "string"
                 }
             },
             "required": [

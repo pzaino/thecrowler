@@ -82,3 +82,26 @@ type QueryRequest struct {
 	Safe           string `json:"safe"`           // Safe search setting
 	Cx             string `json:"cx"`             // Custom search engine ID
 }
+
+// ScreenshotRequest represents the structure of the screenshot request POST
+type ScreenshotRequest struct {
+	URL        string `json:"url"`
+	Resolution string `json:"resolution"`
+	FullPage   bool   `json:"fullPage"`
+	Delay      int    `json:"delay"`
+	Auth       struct {
+		Type string `json:"type"`
+	} `json:"auth"`
+}
+
+// ScreenshotResponse represents the structure of the screenshot response
+type ScreenshotResponse struct {
+	Link          string `json:"screenshot_link"`
+	CreatedAt     string `json:"created_at"`
+	LastUpdatedAt string `json:"updated_at"`
+	Type          string `json:"type"`
+	Format        string `json:"format"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	ByteSize      int    `json:"byte_size"`
+}

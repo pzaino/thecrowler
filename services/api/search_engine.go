@@ -16,13 +16,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"strings"
 	"unicode"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	_ "github.com/lib/pq"
@@ -110,9 +111,7 @@ func isFieldSpecifier(input string) bool {
 	}
 
 	field := strings.ToLower(strings.TrimSpace(parts[0]))
-	if config.DebugLevel > 5 {
-		log.Println("Field specifier:", field)
-	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Field specifier: %s", field)
 
 	// Check if the extracted field is a valid field
 	_, ok := allowedFields[field]
@@ -287,23 +286,20 @@ func performSearch(query string) (SearchResult, error) {
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		log.Println(err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
 		return SearchResult{}, err
 	}
 	defer db.Close()
 
-	log.Println("Performing search for:", query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
 
 	// Parse the user input
 	sqlQuery, sqlParams, err := parseAdvancedQuery(query)
 	if err != nil {
-		// Handle error
 		return SearchResult{}, err
 	}
-	if config.DebugLevel > 0 {
-		log.Println("SQL query:", sqlQuery)
-		log.Println("SQL params:", sqlParams)
-	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL query: %s", sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL params: %v", sqlParams)
 
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
@@ -333,4 +329,112 @@ func performSearch(query string) (SearchResult, error) {
 	}
 
 	return results, nil
+}
+
+func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return ScreenshotResponse{}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+		return ScreenshotResponse{}, err
+	}
+	defer db.Close()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
+
+	// Parse the user input
+	var sqlQuery string
+	var sqlParams []interface{}
+	if qType == 0 {
+		// it's a GET request, so we need to interpret the q parameter
+		sqlQuery, sqlParams, err = parseAdvancedQuery(query)
+		if err != nil {
+			return ScreenshotResponse{}, err
+		}
+	} else {
+		// It's a POST request, so we can use the standard JSON parsing
+		sqlQuery, sqlParams, err = parseScreenshotQuery(query)
+		if err != nil {
+			return ScreenshotResponse{}, err
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL query: %s", sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL params: %v", sqlParams)
+
+	// Execute the query
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	if err != nil {
+		return ScreenshotResponse{}, err
+	}
+	defer rows.Close()
+
+	// Iterate over the results
+	var results ScreenshotResponse
+	for rows.Next() {
+		var link, createdAt, updatedAt, sType, sFormat string
+		var width, height, byteSize int
+		if err := rows.Scan(&link, &createdAt, &updatedAt, &sType, &sFormat, &width, &height, &byteSize); err != nil {
+			return ScreenshotResponse{}, err
+		}
+		results = ScreenshotResponse{
+			Link:          link,
+			CreatedAt:     createdAt,
+			LastUpdatedAt: updatedAt,
+			Type:          sType,
+			Format:        sFormat,
+			Width:         width,
+			Height:        height,
+			ByteSize:      byteSize,
+		}
+	}
+
+	return results, nil
+}
+
+func parseScreenshotQuery(input string) (string, []interface{}, error) {
+	var query string
+	var err error
+	var sqlParams []interface{}
+
+	// Unmarshal the JSON document
+	var req ScreenshotRequest
+	err = json.Unmarshal([]byte(input), &req)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Extract the query from the request
+	if len(req.URL) > 0 {
+		query = req.URL
+	} else {
+		return "", nil, errors.New("no query provided")
+	}
+
+	// Parse the user input
+	sqlQuery := `
+	SELECT
+		s.screenshot_link,
+		s.created_at,
+		s.last_updated_at,
+		s.type,
+		s.format,
+		s.width,
+		s.height,
+		s.byte_size
+	FROM
+		Screenshots s
+	JOIN
+		SearchIndex si ON s.index_id = si.index_id
+	WHERE
+		si.page_url = $1;
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
 }

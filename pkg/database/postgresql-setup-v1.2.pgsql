@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_link TEXT NOT NULL,
     height INTEGER NOT NULL DEFAULT 0,
     width INTEGER NOT NULL DEFAULT 0,
-    byteSize INTEGER NOT NULL DEFAULT 0,
+    byte_size INTEGER NOT NULL DEFAULT 0,
     thumbnail_height INTEGER NOT NULL DEFAULT 0,
     thumbnail_width INTEGER NOT NULL DEFAULT 0,
     thumbnail_link TEXT NOT NULL DEFAULT '',
