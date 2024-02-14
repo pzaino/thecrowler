@@ -214,6 +214,11 @@ func NewConfig() Config {
 				Timeout:   10,
 				RateLimit: 1,
 			},
+			Geolocation: GeoLookupConfig{
+				Enabled: false,
+				Type:    "maxmind",
+				DBPath:  "./data/GeoLite2-City.mmdb",
+			},
 		},
 		OS:         runtime.GOOS,
 		DebugLevel: 0,

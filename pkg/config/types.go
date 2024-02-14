@@ -75,11 +75,19 @@ type NetLookupConfig struct {
 	RateLimit int  `yaml:"rate_limit"`
 }
 
+// GeoLookupConfig represents the network information gathering configuration
+type GeoLookupConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Type    string `yaml:"type"`
+	DBPath  string `yaml:"db_path"`
+}
+
 // NetworkInfo represents the network information gathering configuration
 type NetworkInfo struct {
-	DNS       DNSConfig       `yaml:"dns"`
-	WHOIS     WHOISConfig     `yaml:"whois"`
-	NetLookup NetLookupConfig `yaml:"netlookup"`
+	DNS         DNSConfig       `yaml:"dns"`
+	WHOIS       WHOISConfig     `yaml:"whois"`
+	NetLookup   NetLookupConfig `yaml:"netlookup"`
+	Geolocation GeoLookupConfig `yaml:"geolocation"`
 }
 
 // API represents the API configuration

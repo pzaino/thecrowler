@@ -224,3 +224,30 @@ func TestUpdateLoggerConfig(t *testing.T) {
 		})
 	}
 }
+func TestIsPathCorrect(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected bool
+	}{
+		{
+			name:     "Test case 1",
+			path:     "./*.jpg",
+			expected: false,
+		},
+		{
+			name:     "Test case 2",
+			path:     "/path/to/nonexistent/file.txt",
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := IsPathCorrect(test.path)
+			if result != test.expected {
+				t.Errorf("Expected %v for path %s, but got %v", test.expected, test.path, result)
+			}
+		})
+	}
+}

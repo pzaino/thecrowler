@@ -45,6 +45,10 @@ func (ni *NetInfo) GetIPs() error {
 	ntParentList := ni.IPs.NetParent
 	ntTypeList := ni.IPs.NetType
 	countryList := ni.IPs.Country
+	countryCodeList := ni.IPs.CountryCode
+	cityList := ni.IPs.City
+	latitudeList := ni.IPs.Latitude
+	longitudeList := ni.IPs.Longitude
 
 	for _, newIP := range ipsStr {
 		isNew := true
@@ -57,9 +61,27 @@ func (ni *NetInfo) GetIPs() error {
 		}
 		if isNew {
 			ipList = append(ipList, newIP)
+			// Get geolocation info for the new IP
+			var geoLocation *DetectedLocation
+			if ni.Config.Geolocation.Enabled {
+				geoLocation, err = DetectLocation(newIP, ni.Config.Geolocation.DBPath)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlDebug, "error detecting geolocation for IP %s: %v", newIP, err)
+				}
+			}
 			// Get network information for the new IP
 			entity, err := getIPInfo(ni, newIP)
 			if err == nil {
+				if geoLocation != nil {
+					if entity.Country == "" {
+						// No country returned, try to geo-locate the IP
+						entity.Country = geoLocation.CountryName
+					}
+					entity.CountryCode = geoLocation.CountryCode
+					entity.City = geoLocation.City
+					entity.Latitude = geoLocation.Latitude
+					entity.Longitude = geoLocation.Longitude
+				}
 				asnList = append(asnList, defaultNA(entity.ASN))
 				cidrList = append(cidrList, defaultNA(entity.CIDR))
 				ntRangeList = append(ntRangeList, defaultNA(entity.NetRange))
@@ -68,6 +90,10 @@ func (ni *NetInfo) GetIPs() error {
 				ntParentList = append(ntParentList, defaultNA(entity.NetParent))
 				ntTypeList = append(ntTypeList, defaultNA(entity.NetType))
 				countryList = append(countryList, defaultNA(entity.Country))
+				countryCodeList = append(countryCodeList, defaultNA(entity.CountryCode))
+				cityList = append(cityList, defaultNA(entity.City))
+				latitudeList = append(latitudeList, entity.Latitude)
+				longitudeList = append(longitudeList, entity.Longitude)
 			} else {
 				asnList = append(asnList, "N/A")
 				cidrList = append(cidrList, "N/A")
@@ -77,6 +103,10 @@ func (ni *NetInfo) GetIPs() error {
 				ntParentList = append(ntParentList, "")
 				ntTypeList = append(ntTypeList, "")
 				countryList = append(countryList, "")
+				countryCodeList = append(countryCodeList, "")
+				cityList = append(cityList, "")
+				latitudeList = append(latitudeList, 0)
+				longitudeList = append(longitudeList, 0)
 			}
 			time.Sleep(time.Duration(ni.Config.WHOIS.RateLimit) * time.Second)
 		}
@@ -84,15 +114,19 @@ func (ni *NetInfo) GetIPs() error {
 
 	// Update all IP fields at once
 	ni.IPs = IPData{
-		IP:        ipList,
-		ASN:       asnList,
-		CIDR:      cidrList,
-		NetRange:  ntRangeList,
-		NetName:   ntNameList,
-		NetHandle: ntHandleList,
-		NetParent: ntParentList,
-		NetType:   ntTypeList,
-		Country:   countryList,
+		IP:          ipList,
+		ASN:         asnList,
+		CIDR:        cidrList,
+		NetRange:    ntRangeList,
+		NetName:     ntNameList,
+		NetHandle:   ntHandleList,
+		NetParent:   ntParentList,
+		NetType:     ntTypeList,
+		Country:     countryList,
+		CountryCode: countryCodeList,
+		City:        cityList,
+		Latitude:    latitudeList,
+		Longitude:   longitudeList,
 	}
 
 	return nil

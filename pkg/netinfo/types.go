@@ -94,27 +94,35 @@ type DetectedLocation struct {
 
 // IPData represents the structure of the IP data you want to extract and store.
 type IPData struct {
-	IP        []string `json:"ip"`
-	ASN       []string `json:"asn"`
-	CIDR      []string `json:"cidr"`
-	NetRange  []string `json:"net_range"`
-	NetName   []string `json:"net_name"`
-	NetHandle []string `json:"net_handle"`
-	NetParent []string `json:"net_parent"`
-	NetType   []string `json:"net_type"`
-	Country   []string `json:"country"`
+	IP          []string  `json:"ip"`
+	ASN         []string  `json:"asn"`
+	CIDR        []string  `json:"cidr"`
+	NetRange    []string  `json:"net_range"`
+	NetName     []string  `json:"net_name"`
+	NetHandle   []string  `json:"net_handle"`
+	NetParent   []string  `json:"net_parent"`
+	NetType     []string  `json:"net_type"`
+	Country     []string  `json:"country"`
+	CountryCode []string  `json:"country_code"`
+	City        []string  `json:"city"`
+	Latitude    []float64 `json:"latitude"`
+	Longitude   []float64 `json:"longitude"`
 }
 
 // ipExtraData represents the structure of the extra IP data you want to extract and store.
 type ipExtraData struct {
-	ASN       string
-	CIDR      string
-	NetRange  string
-	NetName   string
-	NetHandle string
-	NetParent string
-	NetType   string
-	Country   string
+	ASN         string
+	CIDR        string
+	NetRange    string
+	NetName     string
+	NetHandle   string
+	NetParent   string
+	NetType     string
+	Country     string
+	CountryCode string
+	City        string
+	Latitude    float64
+	Longitude   float64
 }
 
 // HostData represents the structure of the host data you want to extract and store.
