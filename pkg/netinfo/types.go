@@ -92,6 +92,23 @@ type DetectedLocation struct {
 	Longitude   float64
 }
 
+// IPInfo represents the structure of the IP information you want to extract and store.
+type IPInfo struct {
+	IP          string
+	ASN         string
+	CIDR        string
+	NetRange    string
+	NetName     string
+	NetHandle   string
+	NetParent   string
+	NetType     string
+	Country     string
+	CountryCode string
+	City        string
+	Latitude    float64
+	Longitude   float64
+}
+
 // IPData represents the structure of the IP data you want to extract and store.
 type IPData struct {
 	IP          []string  `json:"ip"`
