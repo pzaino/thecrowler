@@ -24,8 +24,8 @@ type Config struct {
 	FollowRedirects bool
 }
 
-// Response is a struct to store the collected HTTP header information
-type Response struct {
+// HTTPDetails is a struct to store the collected HTTP header information
+type HTTPDetails struct {
 	URL                           string            `json:"url"`
 	CustomHeaders                 map[string]string `json:"custom_headers"`
 	FollowRedirects               bool              `json:"follow_redirects"`

@@ -54,7 +54,7 @@ func validateURL(inputURL string) (bool, error) {
 }
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
-func ExtractHTTPInfo(config Config) (*Response, error) {
+func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !config.FollowRedirects {
@@ -97,8 +97,8 @@ func ExtractHTTPInfo(config Config) (*Response, error) {
 	// Collect response headers
 	responseHeaders := resp.Header
 
-	// Create a new Response object
-	info := new(Response)
+	// Create a new HTTPDetails object
+	info := new(HTTPDetails)
 
 	info.ResponseHeaders = responseHeaders
 

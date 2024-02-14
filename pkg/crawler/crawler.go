@@ -37,6 +37,8 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
+	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
+	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
@@ -57,6 +59,7 @@ var (
 )
 
 type processContext struct {
+	config     cfg.Config
 	db         *cdb.Handler
 	wd         selenium.WebDriver
 	linksMutex sync.Mutex
@@ -64,6 +67,8 @@ type processContext struct {
 	source     *cdb.Source
 	wg         sync.WaitGroup
 	sel        chan SeleniumInstance
+	ni         *neti.NetInfo
+	hi         *httpi.HTTPDetails
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -77,6 +82,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 		source: &source,
 		db:     &db,
 		sel:    SeleniumInstances,
+		config: config,
 	}
 
 	// Connect to Selenium
@@ -95,6 +101,12 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 
 	// Get screenshot of the page
 	processCtx.TakeScreenshot(pageSource, source.URL)
+
+	// Get network information
+	processCtx.GetNetInfo(source.URL)
+
+	// Get HTTP information
+	processCtx.GetHTTPInfo(source.URL)
 
 	// Extract the HTML content and extract links
 	htmlContent, err := pageSource.PageSource()
@@ -248,6 +260,45 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error updating database with screenshot URL: %v", err)
 		}
+	}
+}
+
+// GetNetInfo is responsible for gathering network information for a Source
+func (ctx *processContext) GetNetInfo(url string) {
+	// Create a new NetInfo instance
+	ctx.ni = &neti.NetInfo{}
+	c := ctx.config.NetworkInfo
+	ctx.ni.Config = &c
+
+	// Call GetNetInfo to retrieve network information
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering network information for %s...", ctx.source.URL)
+	err := ctx.ni.GetNetInfo(ctx.source.URL)
+
+	// Check for errors
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "GetNetInfo(%s) returned an error: %v", ctx.source.URL, err)
+		return
+	}
+}
+
+func (ctx *processContext) GetHTTPInfo(url string) {
+	// Create a new HTTPDetails instance
+	ctx.hi = &httpi.HTTPDetails{}
+	var err error
+	c := httpi.Config{
+		URL:             url,
+		CustomHeader:    map[string]string{"User-Agent": cmn.UsrAgentStrMap["chrome-desktop01"]},
+		FollowRedirects: true,
+	}
+
+	// Call GetHTTPInfo to retrieve HTTP header information
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
+	ctx.hi, err = httpi.ExtractHTTPInfo(c)
+
+	// Check for errors
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error while retrieving HTTP Information: %v", ctx.source.URL, err)
+		return
 	}
 }
 
