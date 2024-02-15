@@ -275,9 +275,13 @@ func performSearch(query string) (SearchResult, error) {
 	if config.API.ReturnContent {
 		queryBody = `
 		SELECT DISTINCT
-			si.title, si.page_url, si.summary, si.content
+			si.title, si.page_url, si.summary, wo.object_content AS content
 		FROM
 			SearchIndex si
+		LEFT JOIN
+			PageWebObjectsIndex pwoi ON si.index_id = pwoi.index_id
+		LEFT JOIN
+			WebObjects wo ON pwoi.object_id = wo.object_id
 		LEFT JOIN
 			KeywordIndex ki ON si.index_id = ki.index_id
 		LEFT JOIN
