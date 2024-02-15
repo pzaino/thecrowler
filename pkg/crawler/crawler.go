@@ -256,7 +256,7 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 	if takeScreenshot {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
 		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
-		imageName := generateImageName(url, "-desktop")
+		imageName := generateUniqueName(url, "-desktop")
 		ss, err := TakeScreenshot(&wd, imageName)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error taking screenshot: %v", err)
@@ -276,7 +276,8 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 	}
 }
 
-func generateImageName(url string, imageType string) string {
+// generateImageName generates a unique name for a web object using the URL and the type
+func generateUniqueName(url string, imageType string) string {
 	// Hash the URL using SHA-256
 	hasher := sha256.New()
 	hasher.Write([]byte(url + imageType))
