@@ -351,9 +351,9 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 0 {
+	if qType == 1 {
 		// it's a GET request, so we need to interpret the q parameter
-		sqlQuery, sqlParams, err = parseAdvancedQuery(query)
+		sqlQuery, sqlParams, err = parseScreenshotGetQuery(query)
 		if err != nil {
 			return ScreenshotResponse{}, err
 		}
@@ -395,6 +395,43 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	}
 
 	return results, nil
+}
+
+func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
+	var query string
+	var sqlParams []interface{}
+
+	if strings.HasPrefix(input, "\"") && strings.HasSuffix(input, "\"") {
+		// Remove the quotes
+		input = strings.TrimLeft(input, "\"")
+		input = strings.TrimRight(input, "\"")
+	}
+
+	// Extract the query from the request
+	query = "%" + input + "%"
+
+	// Parse the user input
+	sqlQuery := `
+	SELECT
+		s.screenshot_link,
+		s.created_at,
+		s.last_updated_at,
+		s.type,
+		s.format,
+		s.width,
+		s.height,
+		s.byte_size
+	FROM
+		Screenshots s
+	JOIN
+		SearchIndex si ON s.index_id = si.index_id
+	WHERE
+		LOWER(si.page_url) LIKE LOWER($1)
+		OR LOWER(si.title) LIKE LOWER($1);
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
 }
 
 func parseScreenshotQuery(input string) (string, []interface{}, error) {
