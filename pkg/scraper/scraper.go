@@ -14,7 +14,7 @@
 
 // Package scrapper implements the scrapper library for the Crowler and
 // the Crowler search engine.
-package scrapper
+package scraper
 
 import (
 	"fmt"
