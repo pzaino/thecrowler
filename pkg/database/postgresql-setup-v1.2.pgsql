@@ -8,7 +8,7 @@
 --\set CROWLER_DB_USER 'your_username'
 --\set CROWLER_DB_PASSWORD 'your_password'
 
---------------------------------
+--------------------------------------------------------------------------------
 -- Database Tables setup
 
 -- Sources table stores the URLs or the information's seed to be crawled
@@ -67,7 +67,6 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     page_url TEXT NOT NULL UNIQUE,                  -- Using TEXT for long URLs
     title VARCHAR(255),
     summary TEXT NOT NULL,                          -- Assuming summary is always required
-    snapshot_url TEXT,                              -- Using TEXT for long URLs
     detected_type VARCHAR(8),                       -- (content type) denormalized for fast searches
     detected_lang VARCHAR(8),                       -- (URI language) denormalized for fast searches
     content TEXT
@@ -157,8 +156,8 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
     UNIQUE(source_id, index_id) -- Ensures unique combinations of source_id and index_id
 );
 
--- PageWebObjects table stores the relationship between indexed pages and the objects found in them
-CREATE TABLE IF NOT EXISTS PageWebObjects (
+-- PageWebObjectsIndex table stores the relationship between indexed pages and the objects found in them
+CREATE TABLE IF NOT EXISTS PageWebObjectsIndex (
     page_object_id BIGSERIAL PRIMARY KEY,
     index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
     object_id BIGINT NOT NULL REFERENCES WebObjects(object_id),
@@ -197,7 +196,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
     UNIQUE(httpinfo_id, index_id) -- Ensures unique combinations of httpinfo_id and index_id
 );
 
---------------------------------
+--------------------------------------------------------------------------------
 -- Indexes and triggers setup
 
 -- Creates an index for the Sources url column
@@ -266,6 +265,39 @@ BEGIN
 END
 $$;
 
+-- Creates an index for the Owners details_hash column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_owners_details_hash') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_owners_details_hash ON Owners(details_hash);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Owners last_updated_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_owners_last_updated_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_owners_last_updated_at ON Owners(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Owners created_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_owners_created_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_owners_created_at ON Owners(created_at);
+    END IF;
+END
+$$;
+
 -- Creates an index for the NetInfo last_updated_at column
 DO $$
 BEGIN
@@ -273,6 +305,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_last_updated_at') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_netinfo_last_updated_at ON NetInfo(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the NetInfo created_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_created_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_netinfo_created_at ON NetInfo(created_at);
     END IF;
 END
 $$;
@@ -288,7 +331,7 @@ BEGIN
 END
 $$;
 
--- Creates an index for the report column in the NetInfo table
+-- Creates an index for the details column in the NetInfo table
 -- This index is used to search for specific keys in the JSONB column
 -- The jsonb_path_ops operator class is used to index the JSONB column
 -- for queries that use the @> operator to search for keys in the JSONB column
@@ -311,6 +354,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_last_updated_at') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_httpinfo_last_updated_at ON HTTPInfo(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the HTTPInfo created_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_created_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_httpinfo_created_at ON HTTPInfo(created_at);
     END IF;
 END
 $$;
@@ -366,17 +420,6 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_content') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_searchindex_content ON SearchIndex(left(content, 1000) text_pattern_ops) WHERE content IS NOT NULL;
-    END IF;
-END
-$$;
-
--- Creates an index for the SearchIndex snapshot_url column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_snapshot_url') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_snapshot_url ON SearchIndex(snapshot_url) WHERE snapshot_url IS NOT NULL;
     END IF;
 END
 $$;
@@ -486,7 +529,7 @@ BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_content') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_webobjects_object_content ON WebObjects(left(object_content, 1024) text_pattern_ops) WHERE object_content IS NOT NULL;
+        CREATE INDEX idx_webobjects_object_content ON WebObjects(left(object_content, 1024) text_pattern_ops) WHERE object_content IS NOT NULL AND object_link = 'db';
     END IF;
 END
 $$;
@@ -591,6 +634,29 @@ BEGIN
 END
 $$;
 
+-- Creates an index for the PageWebObjectsIndex index_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pwoi_index_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_pwoi_index_id ON PageWebObjectsIndex(index_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the PageWebObjectsIndex object_id column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pwoi_object_id') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_pwoi_object_id ON PageWebObjectsIndex(object_id);
+    END IF;
+END
+$$;
+
+--------------------------------------------------------------------------------
 -- Adds a tsvector column for full-text search
 DO $$
 BEGIN
@@ -601,29 +667,19 @@ BEGIN
         FROM
             information_schema.columns
         WHERE
-            table_name = 'searchindex' AND
-            column_name = 'content_fts'
+            table_name = 'WebObjects' AND
+            column_name = 'object_content_fts'
     ) THEN
-        ALTER TABLE SearchIndex ADD COLUMN content_fts tsvector;
+        ALTER TABLE WebObjects ADD COLUMN object_content_fts tsvector;
     END IF;
 END
 $$;
 
--- Creates an index on the tsvector column
-DO $$
+--------------------------------------------------------------------------------
+-- Creates a function to update the tsvector column (FTS = Full Text Search)
+CREATE OR REPLACE FUNCTION webobjects_content_trigger() RETURNS trigger AS $$
 BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_content_fts') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_content_fts ON SearchIndex USING gin(content_fts);
-    END IF;
-END
-$$;
-
--- Creates a function to update the tsvector column
-CREATE OR REPLACE FUNCTION searchindex_content_trigger() RETURNS trigger AS $$
-BEGIN
-  NEW.content_fts := to_tsvector('english', coalesce(NEW.content, ''));
+  NEW.object_content_fts := to_tsvector('english', coalesce(NEW.object_content, ''));
   RETURN NEW;
 END
 $$ LANGUAGE plpgsql;
@@ -632,10 +688,10 @@ $$ LANGUAGE plpgsql;
 DO $$
 BEGIN
     -- Check if the trigger already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_searchindex_content') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_webobjects_content') THEN
         -- Create the trigger if it doesn't exist
-        CREATE TRIGGER trg_searchindex_content BEFORE INSERT OR UPDATE
-        ON SearchIndex FOR EACH ROW EXECUTE FUNCTION searchindex_content_trigger();
+        CREATE TRIGGER trg_webobjects_content BEFORE INSERT OR UPDATE
+        ON WebObjects FOR EACH ROW EXECUTE FUNCTION webobjects_content_trigger();
     END IF;
 END
 $$;
@@ -695,6 +751,32 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_netinfo_last_updated_before_update') THEN
         CREATE TRIGGER trg_update_netinfo_last_updated_before_update
         BEFORE UPDATE ON NetInfo
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on HTTPInfo table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_httpinfo_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_httpinfo_last_updated_before_update
+        BEFORE UPDATE ON HTTPInfo
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Creates a trigger to update the last_updated_at column on WebObjects table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_webobjects_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_webobjects_last_updated_before_update
+        BEFORE UPDATE ON WebObjects
         FOR EACH ROW
         EXECUTE FUNCTION update_last_updated_at_column();
     END IF;

@@ -268,7 +268,6 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 
 		// Update DB SearchIndex Table with the screenshot filename
 		dbx := *ctx.db
-		//_, err = dbx.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, url)
 		err = insertScreenshot(dbx, ss)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error updating database with screenshot URL: %v", err)
