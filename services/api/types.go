@@ -15,7 +15,10 @@
 // Package main (API) implements the API server for the Crowler search engine.
 package main
 
-import cfg "github.com/pzaino/thecrowler/pkg/config"
+import (
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+	neti "github.com/pzaino/thecrowler/pkg/netinfo"
+)
 
 var (
 	config cfg.Config // Global variable to store the configuration
@@ -104,4 +107,15 @@ type ScreenshotResponse struct {
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	ByteSize      int    `json:"byte_size"`
+}
+
+type NetInfoRow struct {
+	CreatedAt     string       `json:"created_at"`
+	LastUpdatedAt string       `json:"last_updated_at"`
+	Details       neti.NetInfo `json:"details"`
+}
+
+// NetInfoResponse represents the structure of the network information response
+type NetInfoResponse struct {
+	Items []NetInfoRow `json:"items"`
 }

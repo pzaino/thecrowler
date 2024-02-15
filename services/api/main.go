@@ -71,8 +71,10 @@ func main() {
 	// Set the handlers
 	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
 	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
+	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
 
 	http.Handle("/search", searchHandlerWithMiddlewares)
+	http.Handle("/netinfo", netInfoHandlerWithMiddlewares)
 	http.Handle("/screenshot", scrImgSrchHandlerWithMiddlewares)
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
@@ -180,4 +182,50 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+}
+
+// netInfoHandler handles the network information requests
+func netInfoHandler(w http.ResponseWriter, r *http.Request) {
+	var results NetInfoResponse
+	var query string
+	var err error
+	if r.Method == "POST" {
+		// Read the JSON document from the request body
+		body, err := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		query = string(body)
+		results, err = performNetInfoSearch(query, 0)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing screenshot search: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Extract query parameter
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in screenshot search get request")
+			http.Error(w, "Query parameter 'q' is required for screenshot get request", http.StatusBadRequest)
+			return
+		}
+		results, err = performNetInfoSearch(query, 1)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing screenshot search: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Respond with JSON
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(results)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

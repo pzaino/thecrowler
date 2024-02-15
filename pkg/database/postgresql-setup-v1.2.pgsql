@@ -37,24 +37,25 @@ CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    details_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the details for fast comparison and uniqueness
     details JSONB NOT NULL             -- Stores JSON document with all details about the owner
 );
 
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
-    source_id INT REFERENCES Sources(source_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    details_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the details for fast comparison and uniqueness
     details JSONB NOT NULL
 );
 
 -- HTTPInfo table stores the HTTP header information retrieved from the sources
 CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
-    source_id INT REFERENCES Sources(source_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    details_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the details for fast comparison and uniqueness
     details JSONB NOT NULL
 );
 
@@ -75,7 +76,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
 -- Screenshots table stores the screenshots details of the indexed pages
 CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_id BIGSERIAL PRIMARY KEY,
-    index_id INTEGER REFERENCES SearchIndex(index_id),
+    index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     type VARCHAR(10) NOT NULL DEFAULT 'desktop',
@@ -105,7 +106,7 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
-    index_id INTEGER REFERENCES SearchIndex(index_id),
+    index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     name VARCHAR(255),
@@ -120,11 +121,11 @@ CREATE TABLE IF NOT EXISTS Keywords (
     keyword VARCHAR(100) NOT NULL UNIQUE
 );
 
--- SourceOwner table stores the relationship between sources and their owners
-CREATE TABLE IF NOT EXISTS SourceOwner (
+-- SourceOwnerIndex table stores the relationship between sources and their owners
+CREATE TABLE IF NOT EXISTS SourceOwnerIndex (
     source_owner_id BIGSERIAL PRIMARY KEY,
-    source_id INTEGER NOT NULL,
-    owner_id INTEGER NOT NULL,
+    source_id BIGINT NOT NULL,
+    owner_id BIGINT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
@@ -141,8 +142,8 @@ CREATE TABLE IF NOT EXISTS SourceOwner (
 -- SourceSearchIndex table stores the relationship between sources and the indexed pages
 CREATE TABLE IF NOT EXISTS SourceSearchIndex (
     ss_index_id BIGSERIAL PRIMARY KEY,
-    source_id INTEGER NOT NULL,
-    index_id INTEGER NOT NULL,
+    source_id BIGINT NOT NULL,
+    index_id BIGINT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
@@ -159,8 +160,8 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
 -- PageWebObjects table stores the relationship between indexed pages and the objects found in them
 CREATE TABLE IF NOT EXISTS PageWebObjects (
     page_object_id BIGSERIAL PRIMARY KEY,
-    index_id INTEGER NOT NULL REFERENCES SearchIndex(index_id),
-    object_id INTEGER NOT NULL REFERENCES WebObjects(object_id),
+    index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
+    object_id BIGINT NOT NULL REFERENCES WebObjects(object_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(index_id, object_id) -- Ensures that the same object is not linked multiple times to the same page
@@ -169,11 +170,31 @@ CREATE TABLE IF NOT EXISTS PageWebObjects (
 -- KeywordIndex table stores the relationship between keywords and the indexed pages
 CREATE TABLE IF NOT EXISTS KeywordIndex (
     keyword_index_id BIGSERIAL PRIMARY KEY,
-    keyword_id INTEGER REFERENCES Keywords(keyword_id),
-    index_id INTEGER REFERENCES SearchIndex(index_id),
+    keyword_id BIGINT REFERENCES Keywords(keyword_id),
+    index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     occurrences INTEGER
+);
+
+-- NetInfoIndex table stores the relationship between network information and the indexed pages
+CREATE TABLE IF NOT EXISTS NetInfoIndex (
+    netinfo_index_id BIGSERIAL PRIMARY KEY,
+    netinfo_id BIGINT REFERENCES NetInfo(netinfo_id),
+    index_id BIGINT REFERENCES SearchIndex(index_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(netinfo_id, index_id) -- Ensures unique combinations of netinfo_id and index_id
+);
+
+-- HTTPInfoIndex table stores the relationship between HTTP information and the indexed pages
+CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
+    httpinfo_index_id BIGSERIAL PRIMARY KEY,
+    httpinfo_id BIGINT REFERENCES HTTPInfo(httpinfo_id),
+    index_id BIGINT REFERENCES SearchIndex(index_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(httpinfo_id, index_id) -- Ensures unique combinations of httpinfo_id and index_id
 );
 
 --------------------------------
@@ -245,24 +266,24 @@ BEGIN
 END
 $$;
 
--- Creates an index for the NetInfo source_id column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_source_id') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_netinfo_source_id ON NetInfo(source_id);
-    END IF;
-END
-$$;
-
--- Creates an index for the NetInfo scanned_on column
+-- Creates an index for the NetInfo last_updated_at column
 DO $$
 BEGIN
     -- Check if the index already exists
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_last_updated_at') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_netinfo_last_updated_at ON NetInfo(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the NetInfo details_hash column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_details_hash') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_netinfo_details_hash ON NetInfo(details_hash);
     END IF;
 END
 $$;
@@ -279,6 +300,39 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
+    END IF;
+END
+$$;
+
+-- Creates an index for the HTTPInfo last_updated_at column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_last_updated_at') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_httpinfo_last_updated_at ON HTTPInfo(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the HTTPInfo details_hash column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_details_hash') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_httpinfo_details_hash ON HTTPInfo(details_hash);
+    END IF;
+END
+$$;
+
+-- Creates an index for the HTTPInfo details column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_httpinfo_details') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_json_httpinfo_details ON HTTPInfo USING gin (details jsonb_path_ops);
     END IF;
 END
 $$;
@@ -493,24 +547,24 @@ BEGIN
 END
 $$;
 
--- Creates an index for SourceOwner owner_id column
+-- Creates an index for SourceOwnerIndex owner_id column
 DO $$
 BEGIN
     -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceowner_owner_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceownerindex_owner_id') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX IF NOT EXISTS idx_sourceowner_owner_id ON SourceOwner(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_sourceownerindex_owner_id ON SourceOwnerIndex(owner_id);
     END IF;
 END
 $$;
 
--- Creates an index for SourceOwner source_id column
+-- Creates an index for SourceOwnerIndex source_id column
 DO $$
 BEGIN
     -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceowner_source_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceownerindex_source_id') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX IF NOT EXISTS idx_sourceowner_source_id ON SourceOwner(source_id);
+        CREATE INDEX IF NOT EXISTS idx_sourceownerindex_source_id ON SourceOwnerIndex(source_id);
     END IF;
 END
 $$;
@@ -673,13 +727,13 @@ BEGIN
 END
 $$;
 
--- Creates a trigger to update the last_updated_at column on SourceOwner table
+-- Creates a trigger to update the last_updated_at column on SourceOwnerIndex table
 DO $$
 BEGIN
     -- Check if the trigger already exists
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_sourceowner_last_updated_before_update') THEN
         CREATE TRIGGER trg_update_sourceowner_last_updated_before_update
-        BEFORE UPDATE ON SourceOwner
+        BEFORE UPDATE ON SourceOwnerIndex
         FOR EACH ROW
         EXECUTE FUNCTION update_last_updated_at_column();
     END IF;

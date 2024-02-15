@@ -149,12 +149,12 @@ type HostData struct {
 
 // NetInfo represents the structure of the network information you want to extract and store.
 type NetInfo struct {
-	URL    string      `json:"url"`
-	Hosts  HostData    `json:"hosts"`
-	IPs    IPData      `json:"ips"`
-	WHOIS  []WHOISData `json:"whois"`
-	DNS    []DNSInfo   `json:"dns"`
-	Config *cfg.NetworkInfo
+	URL    string           `json:"url,omitempty"`
+	Hosts  HostData         `json:"hosts,omitempty"`
+	IPs    IPData           `json:"ips,omitempty"`
+	WHOIS  []WHOISData      `json:"whois,omitempty"`
+	DNS    []DNSInfo        `json:"dns,omitempty"`
+	Config *cfg.NetworkInfo `json:"Config,omitempty"`
 }
 
 // Define a map to map record types to their corresponding values

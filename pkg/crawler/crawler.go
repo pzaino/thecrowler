@@ -588,16 +588,30 @@ func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
 		return err
 	}
 
+	// Calculate the SHA256 hash of the details
+	hasher := sha256.New()
+	hasher.Write(details)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	var netinfoID int64
+	// Attempt to insert into NetInfo, or on conflict update as needed and return the netinfo_id
+	err = tx.QueryRow(`
+		INSERT INTO NetInfo (details_hash, details)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (details_hash) DO UPDATE
+		SET details = EXCLUDED.details
+		RETURNING netinfo_id;
+	`, hash, details).Scan(&netinfoID)
+	if err != nil {
+		return err
+	}
+
 	_, err = tx.Exec(`
-	INSERT INTO NetInfo (source_id, details)
-		SELECT $1, $2::jsonb
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM NetInfo
-			WHERE source_id = $1
-			AND details = $2::jsonb
-		);`,
-		indexID, details)
+    INSERT INTO NetInfoIndex (netinfo_id, index_id)
+    VALUES ($1, $2)
+    ON CONFLICT (netinfo_id, index_id) DO UPDATE
+    SET last_updated_at = CURRENT_TIMESTAMP
+	`, netinfoID, indexID)
 	if err != nil {
 		return err
 	}
@@ -609,22 +623,37 @@ func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
 // It takes a transaction, index ID, and an HTTPDetails object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
 func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) error {
-	// encode the NetInfo object as JSON
+	// Encode the HTTPDetails object as JSON
 	details, err := json.Marshal(httpInfo)
 	if err != nil {
 		return err
 	}
 
+	// calculate the SHA256 hash of the details
+	hasher := sha256.New()
+	hasher.Write(details)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Insert or update HTTPInfo and return httpinfo_id
+	var httpinfoID int64
+	err = tx.QueryRow(`
+        INSERT INTO HTTPInfo (details_hash, details)
+        VALUES ($1, $2::jsonb)
+        ON CONFLICT (details_hash) DO UPDATE
+        SET details = EXCLUDED.details
+        RETURNING httpinfo_id;
+    `, hash, details).Scan(&httpinfoID)
+	if err != nil {
+		return err
+	}
+
+	// Now, insert or update the HTTPInfoIndex to link the HTTPInfo entry with the indexID
 	_, err = tx.Exec(`
-	INSERT INTO HTTPInfo (source_id, details)
-		SELECT $1, $2::jsonb
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM NetInfo
-			WHERE source_id = $1
-			AND details = $2::jsonb
-		);`,
-		indexID, details)
+        INSERT INTO HTTPInfoIndex (httpinfo_id, index_id)
+        VALUES ($1, $2)
+        ON CONFLICT (httpinfo_id, index_id) DO UPDATE
+        SET last_updated_at = CURRENT_TIMESTAMP
+    `, httpinfoID, indexID)
 	if err != nil {
 		return err
 	}
