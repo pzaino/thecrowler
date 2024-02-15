@@ -292,6 +292,7 @@ func generateUniqueName(url string, imageType string) string {
 	return imageName
 }
 
+// insertScreenshot inserts a screenshot into the database
 func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 	_, err := db.Exec(`
         INSERT INTO Screenshots (
@@ -342,6 +343,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 	}
 }
 
+// GetHTTPInfo is responsible for gathering HTTP header information for a Source
 func (ctx *processContext) GetHTTPInfo(url string) {
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
@@ -369,6 +371,7 @@ func (ctx *processContext) IndexPage(pageInfo PageInfo) int64 {
 	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
+// handleConsent is responsible for handling consent windows (e.g., cookie consent)
 func handleConsent(wd selenium.WebDriver) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking for 'consent' or 'cookie accept' windows...")
 	for _, text := range append(acceptTexts, consentTexts...) {
