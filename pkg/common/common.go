@@ -91,3 +91,11 @@ func IsDisallowedIP(hostIP string, level int) bool {
 	}
 	return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
 }
+
+// Create a function that checks if a path is correct and if it exists
+func IsPathCorrect(path string) bool {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false
+	}
+	return true
+}

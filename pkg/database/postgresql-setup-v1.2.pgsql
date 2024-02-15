@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS NetInfo (
     details JSONB NOT NULL
 );
 
+-- HTTPInfo table stores the HTTP header information retrieved from the sources
+CREATE TABLE IF NOT EXISTS HTTPInfo (
+    httpinfo_id BIGSERIAL PRIMARY KEY,
+    source_id INT REFERENCES Sources(source_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    details JSONB NOT NULL
+);
+
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
@@ -73,7 +82,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_link TEXT NOT NULL,
     height INTEGER NOT NULL DEFAULT 0,
     width INTEGER NOT NULL DEFAULT 0,
-    byteSize INTEGER NOT NULL DEFAULT 0,
+    byte_size INTEGER NOT NULL DEFAULT 0,
     thumbnail_height INTEGER NOT NULL DEFAULT 0,
     thumbnail_width INTEGER NOT NULL DEFAULT 0,
     thumbnail_link TEXT NOT NULL DEFAULT '',

@@ -97,6 +97,8 @@ properties:
         type: string
       key_file:
         type: string
+      rate_limit:
+        type: string
     required:
       - host
       - port

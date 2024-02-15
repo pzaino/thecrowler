@@ -28,74 +28,139 @@ import (
 func (ni *NetInfo) GetIPs() error {
 	host := urlToDomain(ni.URL)
 
-	// retrieve ni.URL IP addresses
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("error looking up IP addresses: %v", err)
 	}
 	ipsStr := ipsToString(ips)
 
-	// Append only new IPs to the existing list
-	ipList := ni.IPs.IP
-	asnList := ni.IPs.ASN
-	cidrList := ni.IPs.CIDR
-	ntRangeList := ni.IPs.NetRange
-	ntNameList := ni.IPs.NetName
-	ntHandleList := ni.IPs.NetHandle
-	ntParentList := ni.IPs.NetParent
-	ntTypeList := ni.IPs.NetType
-	countryList := ni.IPs.Country
+	var newIPData []IPInfo
 
 	for _, newIP := range ipsStr {
-		isNew := true
-		// Check if the IP is already in the list
-		for _, ip := range ipList {
-			if ip == newIP {
-				isNew = false
-				break
+		if ni.isIPNew(newIP) {
+			ipInfo, err := ni.processNewIP(newIP)
+			if err != nil {
+				// Log error or handle it according to your error policy
+				cmn.DebugMsg(cmn.DbgLvlDebug, "error processing new IP %s: %v", newIP, err)
+				continue
 			}
-		}
-		if isNew {
-			ipList = append(ipList, newIP)
-			// Get network information for the new IP
-			entity, err := getIPInfo(ni, newIP)
-			if err == nil {
-				asnList = append(asnList, defaultNA(entity.ASN))
-				cidrList = append(cidrList, defaultNA(entity.CIDR))
-				ntRangeList = append(ntRangeList, defaultNA(entity.NetRange))
-				ntNameList = append(ntNameList, defaultNA(entity.NetName))
-				ntHandleList = append(ntHandleList, defaultNA(entity.NetHandle))
-				ntParentList = append(ntParentList, defaultNA(entity.NetParent))
-				ntTypeList = append(ntTypeList, defaultNA(entity.NetType))
-				countryList = append(countryList, defaultNA(entity.Country))
-			} else {
-				asnList = append(asnList, "N/A")
-				cidrList = append(cidrList, "N/A")
-				ntRangeList = append(ntRangeList, "")
-				ntNameList = append(ntNameList, "")
-				ntHandleList = append(ntHandleList, "")
-				ntParentList = append(ntParentList, "")
-				ntTypeList = append(ntTypeList, "")
-				countryList = append(countryList, "")
-			}
-			time.Sleep(time.Duration(ni.Config.WHOIS.RateLimit) * time.Second)
+			newIPData = append(newIPData, ipInfo)
 		}
 	}
 
-	// Update all IP fields at once
-	ni.IPs = IPData{
-		IP:        ipList,
-		ASN:       asnList,
-		CIDR:      cidrList,
-		NetRange:  ntRangeList,
-		NetName:   ntNameList,
-		NetHandle: ntHandleList,
-		NetParent: ntParentList,
-		NetType:   ntTypeList,
-		Country:   countryList,
-	}
+	ni.updateIPData(newIPData) // Update ni.IPs with newIPData
 
 	return nil
+}
+
+// isIPNew checks if the provided IP address is new in the current NetInfo instance
+func (ni *NetInfo) isIPNew(ip string) bool {
+	for _, existingIP := range ni.IPs.IP {
+		if existingIP == ip {
+			return false
+		}
+	}
+	return true
+}
+
+// processNewIP processes the new IP address to get geolocation and network information
+func (ni *NetInfo) processNewIP(ip string) (IPInfo, error) {
+	ipInfo := IPInfo{IP: ip} // Assume IPInfo is a struct that matches your IPData structure
+
+	// Get geolocation info
+	if ni.Config.Geolocation.Enabled {
+		geoLocation, err := DetectLocation(ip, ni.Config.Geolocation.DBPath)
+		if err != nil {
+			return ipInfo, fmt.Errorf("error detecting geolocation for IP %s: %v", ip, err)
+		}
+		ipInfo.UpdateWithGeoLocation(geoLocation)
+	}
+
+	// Get network information
+	entity, err := getIPInfo(ni, ip)
+	if err == nil {
+		ipInfo.UpdateWithIPInfo(&entity)
+	} else {
+		ipInfo.SetDefaults()
+	}
+
+	time.Sleep(time.Duration(ni.Config.WHOIS.RateLimit) * time.Second)
+
+	return ipInfo, nil
+}
+
+// updateIPData updates the IPData fields of the NetInfo instance with the provided newIPData
+func (ni *NetInfo) updateIPData(newIPData []IPInfo) {
+	// Iterate over newIPData to update ni.IPs fields
+	for _, ipInfo := range newIPData {
+		ni.IPs.IP = append(ni.IPs.IP, ipInfo.IP)
+		ni.IPs.ASN = append(ni.IPs.ASN, ipInfo.ASN)
+		ni.IPs.CIDR = append(ni.IPs.CIDR, ipInfo.CIDR)
+		ni.IPs.NetRange = append(ni.IPs.NetRange, ipInfo.NetRange)
+		ni.IPs.NetName = append(ni.IPs.NetName, ipInfo.NetName)
+		ni.IPs.NetHandle = append(ni.IPs.NetHandle, ipInfo.NetHandle)
+		ni.IPs.NetParent = append(ni.IPs.NetParent, ipInfo.NetParent)
+		ni.IPs.NetType = append(ni.IPs.NetType, ipInfo.NetType)
+		ni.IPs.Country = append(ni.IPs.Country, ipInfo.Country)
+		ni.IPs.CountryCode = append(ni.IPs.CountryCode, ipInfo.CountryCode)
+		ni.IPs.City = append(ni.IPs.City, ipInfo.City)
+		ni.IPs.Latitude = append(ni.IPs.Latitude, ipInfo.Latitude)
+		ni.IPs.Longitude = append(ni.IPs.Longitude, ipInfo.Longitude)
+	}
+}
+
+// UpdateWithGeoLocation updates the IPInfo fields with the provided geolocation data
+func (info *IPInfo) UpdateWithGeoLocation(geoLocation *DetectedLocation) {
+	// Assuming DetectedLocation has similar fields to what we need
+	info.Country = geoLocation.CountryName
+	info.CountryCode = geoLocation.CountryCode
+	info.City = geoLocation.City
+	info.Latitude = geoLocation.Latitude
+	info.Longitude = geoLocation.Longitude
+}
+
+// UpdateWithIPInfo updates the IPInfo fields with the provided network data
+func (info *IPInfo) UpdateWithIPInfo(entity *ipExtraData) {
+	// NetworkInfo is assumed to be the struct with network data
+	info.ASN = defaultNA(entity.ASN)
+	info.CIDR = defaultNA(entity.CIDR)
+	info.NetRange = defaultNA(entity.NetRange)
+	info.NetName = defaultNA(entity.NetName)
+	info.NetHandle = defaultNA(entity.NetHandle)
+	info.NetParent = defaultNA(entity.NetParent)
+	info.NetType = defaultNA(entity.NetType)
+	// Only update Country and City if they were not set by geolocation
+	if info.Country == "" {
+		info.Country = defaultNA(entity.Country)
+	}
+	if info.City == "" {
+		info.City = defaultNA(entity.City)
+	}
+	info.CountryCode = defaultNA(entity.CountryCode)
+	// Latitude and Longitude are set only if not already provided by geolocation
+	if info.Latitude == 0 {
+		info.Latitude = entity.Latitude
+	}
+	if info.Longitude == 0 {
+		info.Longitude = entity.Longitude
+	}
+}
+
+// SetDefaults sets the default values for all IPInfo fields
+func (info *IPInfo) SetDefaults() {
+	info.ASN = "N/A"
+	info.CIDR = "N/A"
+	info.NetRange = "N/A"
+	info.NetName = "N/A"
+	info.NetHandle = "N/A"
+	info.NetParent = "N/A"
+	info.NetType = "N/A"
+	info.Country = "N/A"
+	info.CountryCode = "N/A"
+	info.City = "N/A"
+	// Assuming 0 is the default/unset value for Latitude and Longitude
+	info.Latitude = 0
+	info.Longitude = 0
 }
 
 // ipsToString converts []net.IP to []string

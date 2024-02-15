@@ -16,13 +16,24 @@
 package netinfo
 
 import (
+	"fmt"
 	"net"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 
 	"github.com/oschwald/maxminddb-golang"
 )
 
 // DetectLocation detects the geolocation for the given IP address using the provided GeoLite2 database.
 func DetectLocation(ipAddress string, dbPath string) (*DetectedLocation, error) {
+	// Check if the DB path is valid and the file exists
+	if dbPath == "" {
+		return nil, fmt.Errorf("GeoLite2 database path is empty")
+	}
+	if !cmn.IsPathCorrect(dbPath) {
+		return nil, fmt.Errorf("GeoLite2 database path is incorrect or the file does not exist")
+	}
+
 	// Load the MaxMind GeoLite2 database
 	db, err := maxminddb.Open(dbPath)
 	if err != nil {
