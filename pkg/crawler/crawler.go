@@ -293,6 +293,10 @@ func generateUniqueName(url string, imageType string) string {
 
 // insertScreenshot inserts a screenshot into the database
 func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
+	if screenshot.IndexID == 0 {
+		return errors.New("index ID is required")
+	}
+
 	_, err := db.Exec(`
         INSERT INTO Screenshots (
             index_id,
@@ -469,6 +473,8 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
 
+	pageInfo.URL = url
+
 	// Before updating the source state, check if the database connection is still alive
 	err := db.CheckConnection(config)
 	if err != nil {
@@ -487,6 +493,14 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
+		rollbackTransaction(tx)
+		return 0
+	}
+
+	// Insert or update the page in WebObjects
+	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating WebObjects: %v", err)
 		rollbackTransaction(tx)
 		return 0
 	}
@@ -547,11 +561,11 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int64
 	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
 		INSERT INTO SearchIndex
-			(page_url, title, summary, content, detected_lang, detected_type, last_updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+			(page_url, title, summary, detected_lang, detected_type, last_updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (page_url) DO UPDATE
-		SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
-		RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
+		SET title = EXCLUDED.title, summary = EXCLUDED.summary, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
+		RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
 		Scan(&indexID)
 	if err != nil {
 		return 0, err // Handle error appropriately
@@ -575,6 +589,41 @@ func strLeft(s string, x int) string {
 		return s
 	}
 	return string(runes[:x])
+}
+
+// insertOrUpdateWebObjects inserts or updates a web object entry in the database.
+// It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
+// It returns an error, if any.
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) error {
+
+	// Calculate the SHA256 hash of the body text
+	hasher := sha256.New()
+	hasher.Write([]byte(pageInfo.BodyText))
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	var objID int64
+
+	// Step 1: Insert into WebObjects
+	err := tx.QueryRow(`
+		INSERT INTO WebObjects (object_url, object_hash, object_content)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (object_hash) DO UPDATE
+		SET object_content = EXCLUDED.object_content
+		RETURNING object_id;`, pageInfo.URL, hash, pageInfo.BodyText).Scan(&objID)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: Insert into WebObjectsIndex for the associated sourceID
+	_, err = tx.Exec(`
+		INSERT INTO PageWebObjectsIndex (index_id, object_id)
+		VALUES ($1, $2)
+		ON CONFLICT (index_id, object_id) DO NOTHING`, indexID, objID)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // insertNetInfo inserts network information into the database for a given index ID.

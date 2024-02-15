@@ -32,6 +32,7 @@ type SeleniumInstance struct {
 
 // PageInfo represents the information of a web page.
 type PageInfo struct {
+	URL          string             // The URL of the web page.
 	sourceID     int64              // The ID of the source.
 	Title        string             // The title of the web page.
 	Summary      string             // A summary of the web page content.
