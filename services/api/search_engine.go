@@ -136,7 +136,9 @@ func getDefaultFields() []string {
 	return defaultFields
 }
 
-func parseAdvancedQuery(input string) (string, []interface{}, error) {
+// parseAdvancedQuery interpret the "dorcking" query language and returns the SQL query and its parameters.
+// queryBody represent the SQL query body, while input is the "raw" dorking input.
+func parseAdvancedQuery(queryBody string, input string) (string, []interface{}, error) {
 	defaultFields := getDefaultFields()
 	tokens := tokenize(input)
 
@@ -217,39 +219,14 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 	}
 
 	// Build the combined query
-	combinedQuery := buildCombinedQuery(queryParts)
+	combinedQuery := buildCombinedQuery(queryBody, queryParts)
 
 	return combinedQuery, queryParams, nil
 }
 
-func buildCombinedQuery(queryParts [][]string) string {
+func buildCombinedQuery(queryBody string, queryParts [][]string) string {
 	var combinedQuery string
-	if config.API.ReturnContent {
-		combinedQuery = `
-		SELECT DISTINCT
-			si.title, si.page_url, si.summary, si.content
-		FROM
-			SearchIndex si
-		LEFT JOIN
-			KeywordIndex ki ON si.index_id = ki.index_id
-		LEFT JOIN
-			Keywords k ON ki.keyword_id = k.keyword_id
-		WHERE
-		`
-	} else {
-		combinedQuery = `
-		SELECT DISTINCT
-			si.title, si.page_url, si.summary, '' as content
-		FROM
-			SearchIndex si
-		LEFT JOIN
-			KeywordIndex ki ON si.index_id = ki.index_id
-		LEFT JOIN
-			Keywords k ON ki.keyword_id = k.keyword_id
-		WHERE
-		`
-	}
-
+	combinedQuery += queryBody
 	for i, group := range queryParts {
 		if i > 0 {
 			// Use 'OR' before the keyword group
@@ -293,8 +270,36 @@ func performSearch(query string) (SearchResult, error) {
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
 
+	// Prepare the query body
+	var queryBody string
+	if config.API.ReturnContent {
+		queryBody = `
+		SELECT DISTINCT
+			si.title, si.page_url, si.summary, si.content
+		FROM
+			SearchIndex si
+		LEFT JOIN
+			KeywordIndex ki ON si.index_id = ki.index_id
+		LEFT JOIN
+			Keywords k ON ki.keyword_id = k.keyword_id
+		WHERE
+		`
+	} else {
+		queryBody = `
+		SELECT DISTINCT
+			si.title, si.page_url, si.summary, '' as content
+		FROM
+			SearchIndex si
+		LEFT JOIN
+			KeywordIndex ki ON si.index_id = ki.index_id
+		LEFT JOIN
+			Keywords k ON ki.keyword_id = k.keyword_id
+		WHERE
+		`
+	}
+
 	// Parse the user input
-	sqlQuery, sqlParams, err := parseAdvancedQuery(query)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, query)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -398,20 +403,8 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 }
 
 func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
-	var query string
-	var sqlParams []interface{}
-
-	if strings.HasPrefix(input, "\"") && strings.HasSuffix(input, "\"") {
-		// Remove the quotes
-		input = strings.TrimLeft(input, "\"")
-		input = strings.TrimRight(input, "\"")
-	}
-
-	// Extract the query from the request
-	query = "%" + input + "%"
-
-	// Parse the user input
-	sqlQuery := `
+	// Prepare the query body
+	queryBody := `
 	SELECT
 		s.screenshot_link,
 		s.created_at,
@@ -425,11 +418,16 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 		Screenshots s
 	JOIN
 		SearchIndex si ON s.index_id = si.index_id
+	LEFT JOIN
+		KeywordIndex ki ON si.index_id = ki.index_id
+	LEFT JOIN
+		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
-		LOWER(si.page_url) LIKE LOWER($1)
-		OR LOWER(si.title) LIKE LOWER($1);
 	`
-	sqlParams = append(sqlParams, query)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	if err != nil {
+		return "", nil, err
+	}
 
 	return sqlQuery, sqlParams, nil
 }
