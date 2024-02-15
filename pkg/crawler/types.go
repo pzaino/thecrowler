@@ -18,6 +18,8 @@ package crawler
 
 import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
+	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
@@ -30,13 +32,28 @@ type SeleniumInstance struct {
 
 // PageInfo represents the information of a web page.
 type PageInfo struct {
-	sourceID     int64             // The ID of the source.
-	Title        string            // The title of the web page.
-	Summary      string            // A summary of the web page content.
-	BodyText     string            // The main body text of the web page.
-	MetaTags     map[string]string // The meta tags of the web page.
-	DetectedType string            // The detected document type of the web page.
-	DetectedLang string            // The detected language of the web page.
+	sourceID     int64              // The ID of the source.
+	Title        string             // The title of the web page.
+	Summary      string             // A summary of the web page content.
+	BodyText     string             // The main body text of the web page.
+	MetaTags     map[string]string  // The meta tags of the web page.
+	DetectedType string             // The detected document type of the web page.
+	DetectedLang string             // The detected language of the web page.
+	NetInfo      *neti.NetInfo      // The network information of the web page.
+	HTTPInfo     *httpi.HTTPDetails // The HTTP header information of the web page.
+}
+
+// Screenshot represents the metadata of a webpage screenshot
+type Screenshot struct {
+	IndexID         int64  `json:"index_id"`
+	ScreenshotLink  string `json:"screenshot_link"`
+	Height          int    `json:"height"`
+	Width           int    `json:"width"`
+	ByteSize        int    `json:"byte_size"`
+	ThumbnailHeight int    `json:"thumbnail_height"`
+	ThumbnailWidth  int    `json:"thumbnail_width"`
+	ThumbnailLink   string `json:"thumbnail_link"`
+	Format          string `json:"format"`
 }
 
 // ScraperRuleEngine extends RuleEngine from the ruleset package

@@ -18,7 +18,10 @@ package crawler
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -58,17 +61,21 @@ var (
 	config cfg.Config // Configuration "object"
 )
 
+// processContext is a struct that holds the context of the crawling process
+// It's used to pass data between functions and goroutines and holds the
+// DB index of the source page after it's indexed.
 type processContext struct {
-	config     cfg.Config
-	db         *cdb.Handler
-	wd         selenium.WebDriver
-	linksMutex sync.Mutex
-	newLinks   []string
-	source     *cdb.Source
-	wg         sync.WaitGroup
-	sel        chan SeleniumInstance
-	ni         *neti.NetInfo
-	hi         *httpi.HTTPDetails
+	fpIdx      int64                 // The index of the source page after it's indexed
+	config     cfg.Config            // The configuration object (from the config package)
+	db         *cdb.Handler          // The database handler
+	wd         selenium.WebDriver    // The Selenium WebDriver
+	linksMutex sync.Mutex            // Mutex to protect the newLinks slice
+	newLinks   []string              // The new links found during the crawling process
+	source     *cdb.Source           // The source to crawl
+	wg         sync.WaitGroup        // WaitGroup to wait for all workers to finish
+	sel        chan SeleniumInstance // The Selenium instances channel
+	ni         *neti.NetInfo         // The network information of the web page
+	hi         *httpi.HTTPDetails    // The HTTP header information of the web page
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -100,13 +107,7 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	}
 
 	// Get screenshot of the page
-	processCtx.TakeScreenshot(pageSource, source.URL)
-
-	// Get network information
-	processCtx.GetNetInfo(source.URL)
-
-	// Get HTTP information
-	processCtx.GetHTTPInfo(source.URL)
+	processCtx.TakeScreenshot(pageSource, source.URL, processCtx.fpIdx)
 
 	// Extract the HTML content and extract links
 	htmlContent, err := pageSource.PageSource()
@@ -221,17 +222,27 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 	// Handle consent
 	handleConsent(ctx.wd)
+
+	// Get network information
+	ctx.GetNetInfo(ctx.source.URL)
+
+	// Get HTTP information
+	ctx.GetHTTPInfo(ctx.source.URL)
+
 	// Continue with extracting page info and indexing
 	pageInfo := extractPageInfo(pageSource)
-	ctx.IndexPage(pageInfo)
+	pageInfo.HTTPInfo = ctx.hi
+	pageInfo.NetInfo = ctx.ni
+
+	// Index the page
+	ctx.fpIdx = ctx.IndexPage(pageInfo)
 	return pageSource, nil
 }
 
 // TakeScreenshot takes a screenshot of the current page and saves it to the filesystem
-func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
+func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, indexID int64) {
 	// Take screenshot if enabled
 	takeScreenshot := false
-	var err error
 
 	tmpURL1 := strings.ToLower(strings.TrimSpace(url))
 	tmpURL2 := strings.ToLower(strings.TrimSpace(ctx.source.URL))
@@ -244,23 +255,72 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string) {
 
 	if takeScreenshot {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
-		// Get the current date and time
-		currentTime := time.Now()
-		// For example, using the format yyyyMMddHHmmss
-		timeStr := currentTime.Format("20060102150405")
-		// Create imageName
-		imageName := fmt.Sprintf("%d_%s.png", ctx.source.ID, timeStr)
-		err = TakeScreenshot(&wd, imageName)
+		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
+		imageName := generateImageName(url, "-desktop")
+		ss, err := TakeScreenshot(&wd, imageName)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error taking screenshot: %v", err)
 		}
+		ss.IndexID = indexID
+		if ss.IndexID == 0 {
+			ss.IndexID = ctx.fpIdx
+		}
+
 		// Update DB SearchIndex Table with the screenshot filename
 		dbx := *ctx.db
-		_, err = dbx.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, url)
+		//_, err = dbx.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, url)
+		err = insertScreenshot(dbx, ss)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error updating database with screenshot URL: %v", err)
 		}
 	}
+}
+
+func generateImageName(url string, imageType string) string {
+	// Hash the URL using SHA-256
+	hasher := sha256.New()
+	hasher.Write([]byte(url + imageType))
+	hashBytes := hasher.Sum(nil)
+
+	// Convert the hash to a hexadecimal string
+	hashStr := hex.EncodeToString(hashBytes)
+
+	// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
+	imageName := fmt.Sprintf("%s.png", hashStr)
+
+	return imageName
+}
+
+func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
+	_, err := db.Exec(`
+        INSERT INTO Screenshots (
+            index_id,
+            screenshot_link,
+            height,
+            width,
+            byte_size,
+            thumbnail_height,
+            thumbnail_width,
+            thumbnail_link,
+            format
+        )
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+        WHERE NOT EXISTS (
+            SELECT 1 FROM Screenshots
+            WHERE index_id = $1 AND screenshot_link = $2
+        );
+    `,
+		screenshot.IndexID,
+		screenshot.ScreenshotLink,
+		screenshot.Height,
+		screenshot.Width,
+		screenshot.ByteSize,
+		screenshot.ThumbnailHeight,
+		screenshot.ThumbnailWidth,
+		screenshot.ThumbnailLink,
+		screenshot.Format,
+	)
+	return err
 }
 
 // GetNetInfo is responsible for gathering network information for a Source
@@ -303,9 +363,9 @@ func (ctx *processContext) GetHTTPInfo(url string) {
 }
 
 // IndexPage is responsible for indexing a crawled page in the database
-func (ctx *processContext) IndexPage(pageInfo PageInfo) {
+func (ctx *processContext) IndexPage(pageInfo PageInfo) int64 {
 	pageInfo.sourceID = ctx.source.ID
-	indexPage(*ctx.db, ctx.source.URL, pageInfo)
+	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
 func handleConsent(wd selenium.WebDriver) {
@@ -401,7 +461,7 @@ func updateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // this function (and so treat it as a critical section) should be enough for now.
 // Another thought is, the mutex also helps slow down the crawling process, which
 // is a good thing. You don't want to overwhelm the Source site with requests.
-func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
+func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
@@ -410,14 +470,14 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	err := db.CheckConnection(config)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
-		return
+		return 0
 	}
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
-		return
+		return 0
 	}
 
 	// Insert or update the page in SearchIndex
@@ -425,7 +485,27 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
-		return
+		return 0
+	}
+
+	// Insert NetInfo into the database (if available)
+	if pageInfo.NetInfo != nil {
+		err = insertNetInfo(tx, indexID, pageInfo.NetInfo)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting NetInfo: %v", err)
+			rollbackTransaction(tx)
+			return 0
+		}
+	}
+
+	// Insert HTTPInfo into the database (if available)
+	if pageInfo.HTTPInfo != nil {
+		err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting HTTPInfo: %v", err)
+			rollbackTransaction(tx)
+			return 0
+		}
 	}
 
 	// Insert MetaTags
@@ -433,7 +513,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
 		rollbackTransaction(tx)
-		return
+		return 0
 	}
 
 	// Insert into KeywordIndex
@@ -441,7 +521,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
 		rollbackTransaction(tx)
-		return
+		return 0
 	}
 
 	// Commit the transaction
@@ -449,15 +529,18 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
 		rollbackTransaction(tx)
-		return
+		return 0
 	}
+
+	// Return the index ID
+	return indexID
 }
 
 // insertOrUpdateSearchIndex inserts or updates a search index entry in the database.
 // It takes a transaction object (tx), the URL of the page (url), and the page information (pageInfo).
 // It returns the index ID of the inserted or updated entry and an error, if any.
-func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int, error) {
-	var indexID int
+func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int64, error) {
+	var indexID int64
 	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
 		INSERT INTO SearchIndex
@@ -491,11 +574,65 @@ func strLeft(s string, x int) string {
 	return string(runes[:x])
 }
 
+// insertNetInfo inserts network information into the database for a given index ID.
+// It takes a transaction, index ID, and a NetInfo object as parameters.
+// It returns an error if there was a problem executing the SQL statement.
+func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
+	// encode the NetInfo object as JSON
+	details, err := json.Marshal(netInfo)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+	INSERT INTO NetInfo (source_id, details)
+		SELECT $1, $2::jsonb
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM NetInfo
+			WHERE source_id = $1
+			AND details = $2::jsonb
+		);`,
+		indexID, details)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// insertHTTPInfo inserts HTTP header information into the database for a given index ID.
+// It takes a transaction, index ID, and an HTTPDetails object as parameters.
+// It returns an error if there was a problem executing the SQL statement.
+func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) error {
+	// encode the NetInfo object as JSON
+	details, err := json.Marshal(httpInfo)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+	INSERT INTO HTTPInfo (source_id, details)
+		SELECT $1, $2::jsonb
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM NetInfo
+			WHERE source_id = $1
+			AND details = $2::jsonb
+		);`,
+		indexID, details)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // insertMetaTags inserts meta tags into the database for a given index ID.
 // It takes a transaction, index ID, and a map of meta tags as parameters.
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
-func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
+func insertMetaTags(tx *sql.Tx, indexID int64, metaTags map[string]string) error {
 	for name, content := range metaTags {
 		_, err := tx.Exec(`INSERT INTO MetaTags (index_id, name, content)
                           VALUES ($1, $2, $3)`, indexID, name, content)
@@ -511,7 +648,7 @@ func insertMetaTags(tx *sql.Tx, indexID int, metaTags map[string]string) error {
 // The `indexID` parameter represents the ID of the index associated with the keywords.
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
-func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int, pageInfo PageInfo) error {
+func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int64, pageInfo PageInfo) error {
 	for _, keyword := range extractKeywords(pageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
@@ -1009,39 +1146,47 @@ func QuitSelenium(wd *selenium.WebDriver) {
 }
 
 // TakeScreenshot is responsible for taking a screenshot of the current page
-func TakeScreenshot(wd *selenium.WebDriver, filename string) error {
+func TakeScreenshot(wd *selenium.WebDriver, filename string) (Screenshot, error) {
+	ss := Screenshot{}
+
 	// Execute JavaScript to get the viewport height and width
 	windowHeight, windowWidth, err := getWindowSize(wd)
 	if err != nil {
-		return err
+		return Screenshot{}, err
 	}
 
 	totalHeight, err := getTotalHeight(wd)
 	if err != nil {
-		return err
+		return Screenshot{}, err
 	}
 
 	screenshots, err := captureScreenshots(wd, totalHeight, windowHeight)
 	if err != nil {
-		return err
+		return Screenshot{}, err
 	}
 
 	finalImg, err := stitchScreenshots(screenshots, windowWidth, totalHeight)
 	if err != nil {
-		return err
+		return Screenshot{}, err
 	}
 
 	screenshot, err := encodeImage(finalImg)
 	if err != nil {
-		return err
+		return Screenshot{}, err
 	}
 
-	err = saveScreenshot(filename, screenshot)
+	location, err := saveScreenshot(filename, screenshot)
 	if err != nil {
-		return err
+		return Screenshot{}, err
 	}
 
-	return nil
+	ss.ScreenshotLink = location
+	ss.Format = "png"
+	ss.Width = windowWidth
+	ss.Height = totalHeight
+	ss.ByteSize = len(screenshot)
+
+	return ss, nil
 }
 
 func getWindowSize(wd *selenium.WebDriver) (int, int, error) {
@@ -1163,12 +1308,12 @@ func encodeImage(img *image.RGBA) ([]byte, error) {
 }
 
 // saveScreenshot is responsible for saving a screenshot to a file
-func saveScreenshot(filename string, screenshot []byte) error {
+func saveScreenshot(filename string, screenshot []byte) (string, error) {
 	// Check if ImageStorageAPI is set
 	if config.ImageStorageAPI.Host != "" {
 		// Validate the ImageStorageAPI configuration
 		if err := validateImageStorageAPIConfig(config); err != nil {
-			return err
+			return "", err
 		}
 
 		saveCfg := config.ImageStorageAPI
@@ -1181,7 +1326,7 @@ func saveScreenshot(filename string, screenshot []byte) error {
 			return writeDataToToS3(filename, screenshot, saveCfg)
 		// Add cases for other types if needed, e.g., shared volume, message queue, etc.
 		default:
-			return errors.New("unsupported storage type")
+			return "", errors.New("unsupported storage type")
 		}
 	} else {
 		// Fallback to local file saving
@@ -1199,10 +1344,10 @@ func validateImageStorageAPIConfig(checkCfg cfg.Config) error {
 }
 
 // saveScreenshotViaHTTP sends the screenshot to a remote API
-func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) error {
+func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) (string, error) {
 	// Check if Host IP is allowed:
 	if cmn.IsDisallowedIP(saveCfg.Host, 1) {
-		return fmt.Errorf("host %s is not allowed", saveCfg.Host)
+		return "", fmt.Errorf("host %s is not allowed", saveCfg.Host)
 	}
 
 	var protocol string
@@ -1218,7 +1363,7 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	// Prepare the request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Filename", filename)
@@ -1228,27 +1373,32 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	// Check for a successful response
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to save file, status code: %d", resp.StatusCode)
+		return "", fmt.Errorf("failed to save file, status code: %d", resp.StatusCode)
+	}
+	// Return the location of the saved file
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", errors.New("location header not found")
 	}
 
-	return nil
+	return location, nil
 }
 
 // writeToFile is responsible for writing data to a file
-func writeToFile(filename string, data []byte) error {
+func writeToFile(filename string, data []byte) (string, error) {
 	// Write data to a file
 	err := writeDataToFile(filename, data)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return filename, nil
 }
 
 // writeDataToFile is responsible for writing data to a file
@@ -1270,7 +1420,7 @@ func writeDataToFile(filename string, data []byte) error {
 }
 
 // writeDataToToS3 is responsible for saving a screenshot to an S3 bucket
-func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) error {
+func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) (string, error) {
 	// saveScreenshotToS3 uses:
 	// - config.ImageStorageAPI.Region as AWS region
 	// - config.ImageStorageAPI.Token as AWS access key ID
@@ -1284,7 +1434,7 @@ func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) e
 		Credentials: credentials.NewStaticCredentials(saveCfg.Token, saveCfg.Secret, ""),
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Create an S3 service client
@@ -1296,5 +1446,10 @@ func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) e
 		Key:    aws.String(filename),
 		Body:   bytes.NewReader(data),
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+
+	// Return the location of the saved file
+	return fmt.Sprintf("s3://%s/%s", saveCfg.Path, filename), nil
 }
