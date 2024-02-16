@@ -898,16 +898,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER after_httpinfoindex_deletion
-AFTER DELETE ON HTTPInfoIndex
-FOR EACH ROW
-EXECUTE FUNCTION cleanup_orphaned_httpinfo();
-
-CREATE TRIGGER after_netinfoindex_deletion
-AFTER DELETE ON NetInfoIndex
-FOR EACH ROW
-EXECUTE FUNCTION cleanup_orphaned_netinfo();
-
 -- Function to handle the deletion of shared entities when no longer linked to any Source.
 CREATE OR REPLACE FUNCTION handle_shared_entity_deletion()
 RETURNS TRIGGER AS $$
