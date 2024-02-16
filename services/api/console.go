@@ -16,6 +16,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -126,15 +127,31 @@ func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
 		return ConsoleResponse{Message: "Failed to start transaction"}, err
 	}
 
+	// Proceed with deleting the source using the obtained source_id
+	results, err = removeSource(tx, sourceURL)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to remove source and related data"}, err
+	}
+
+	// If everything went well, commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to commit transaction"}, err
+	}
+
+	results.Message = "Source and related data removed successfully"
+	return results, nil
+}
+
+func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
+	var results ConsoleResponse
+	results.Message = "Failed to remove the source"
+
 	// First, get the source_id for the given URL to ensure it exists and to use in cascading deletes if necessary
 	var sourceID int64
-	err = tx.QueryRow("SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
+	err := tx.QueryRow("SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
 	if err != nil {
-		err2 := tx.Rollback() // Rollback in case of error
-		if err2 != nil {
-			return ConsoleResponse{Message: "Failed to find source with provided URL"}, err2
-		}
-		return ConsoleResponse{Message: "Failed to find source with provided URL"}, err
+		return results, err
 	}
 
 	// Proceed with deleting the source using the obtained source_id
@@ -161,12 +178,6 @@ func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
 			return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err2
 		}
 		return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err
-	}
-
-	// If everything went well, commit the transaction
-	err = tx.Commit()
-	if err != nil {
-		return ConsoleResponse{Message: "Failed to commit transaction"}, err
 	}
 
 	results.Message = "Source and related data removed successfully"
