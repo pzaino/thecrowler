@@ -924,17 +924,48 @@ $$ LANGUAGE plpgsql;
 -- Repeat this logic for each linking table: SearchIndexMetaTags, PageWebObjectsIndex, KeywordIndex.
 -- Adjust the referencing table name and the column names accordingly.
 
-CREATE TRIGGER handle_meta_tags_deletion
-AFTER DELETE ON SearchIndexMetaTags
-FOR EACH ROW EXECUTE FUNCTION handle_shared_entity_deletion();
+-- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_searchindexmetatags') THEN
+        -- Create the trigger if it doesn't exist
+        CREATE TRIGGER trg_after_delete_searchindexmetatags
+        AFTER DELETE ON SearchIndexMetaTags
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+END
+$$;
 
-CREATE TRIGGER handle_web_objects_deletion
-AFTER DELETE ON PageWebObjectsIndex
-FOR EACH ROW EXECUTE FUNCTION handle_shared_entity_deletion();
+-- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_pagewebobjectsindex') THEN
+        -- Create the trigger if it doesn't exist
+        CREATE TRIGGER trg_after_delete_pagewebobjectsindex
+        AFTER DELETE ON PageWebObjectsIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+END
+$$;
 
-CREATE TRIGGER handle_keywords_deletion
-AFTER DELETE ON KeywordIndex
-FOR EACH ROW EXECUTE FUNCTION handle_shared_entity_deletion();
+-- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_keywordindex') THEN
+        -- Create the trigger if it doesn't exist
+        CREATE TRIGGER trg_after_delete_keywordindex
+        AFTER DELETE ON KeywordIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+END
+$$;
+
 
 CREATE OR REPLACE FUNCTION handle_searchindex_deletion()
 RETURNS TRIGGER AS $$
@@ -948,9 +979,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_after_delete_source_searchindex
-AFTER DELETE ON SourceSearchIndex
-FOR EACH ROW EXECUTE FUNCTION handle_searchindex_deletion();
+
+-- Creates a trigger to handle the deletion of SearchIndex entries when no longer linked to any Source.
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_source_searchindex') THEN
+        -- Create the trigger if it doesn't exist
+        CREATE TRIGGER trg_after_delete_source_searchindex
+        AFTER DELETE ON SourceSearchIndex
+        FOR EACH ROW EXECUTE FUNCTION handle_searchindex_deletion();
+    END IF;
+END
+$$;
 
 -- Ensure that the ON CASCADE DELETE is defined correctly:
 
