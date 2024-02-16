@@ -136,7 +136,9 @@ func getDefaultFields() []string {
 	return defaultFields
 }
 
-func parseAdvancedQuery(input string) (string, []interface{}, error) {
+// parseAdvancedQuery interpret the "dorcking" query language and returns the SQL query and its parameters.
+// queryBody represent the SQL query body, while input is the "raw" dorking input.
+func parseAdvancedQuery(queryBody string, input string) (string, []interface{}, error) {
 	defaultFields := getDefaultFields()
 	tokens := tokenize(input)
 
@@ -217,39 +219,14 @@ func parseAdvancedQuery(input string) (string, []interface{}, error) {
 	}
 
 	// Build the combined query
-	combinedQuery := buildCombinedQuery(queryParts)
+	combinedQuery := buildCombinedQuery(queryBody, queryParts)
 
 	return combinedQuery, queryParams, nil
 }
 
-func buildCombinedQuery(queryParts [][]string) string {
+func buildCombinedQuery(queryBody string, queryParts [][]string) string {
 	var combinedQuery string
-	if config.API.ReturnContent {
-		combinedQuery = `
-		SELECT DISTINCT
-			si.title, si.page_url, si.summary, si.content
-		FROM
-			SearchIndex si
-		LEFT JOIN
-			KeywordIndex ki ON si.index_id = ki.index_id
-		LEFT JOIN
-			Keywords k ON ki.keyword_id = k.keyword_id
-		WHERE
-		`
-	} else {
-		combinedQuery = `
-		SELECT DISTINCT
-			si.title, si.page_url, si.summary, '' as content
-		FROM
-			SearchIndex si
-		LEFT JOIN
-			KeywordIndex ki ON si.index_id = ki.index_id
-		LEFT JOIN
-			Keywords k ON ki.keyword_id = k.keyword_id
-		WHERE
-		`
-	}
-
+	combinedQuery += queryBody
 	for i, group := range queryParts {
 		if i > 0 {
 			// Use 'OR' before the keyword group
@@ -293,8 +270,40 @@ func performSearch(query string) (SearchResult, error) {
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
 
+	// Prepare the query body
+	var queryBody string
+	if config.API.ReturnContent {
+		queryBody = `
+		SELECT DISTINCT
+			si.title, si.page_url, si.summary, wo.object_content AS content
+		FROM
+			SearchIndex si
+		LEFT JOIN
+			PageWebObjectsIndex pwoi ON si.index_id = pwoi.index_id
+		LEFT JOIN
+			WebObjects wo ON pwoi.object_id = wo.object_id
+		LEFT JOIN
+			KeywordIndex ki ON si.index_id = ki.index_id
+		LEFT JOIN
+			Keywords k ON ki.keyword_id = k.keyword_id
+		WHERE
+		`
+	} else {
+		queryBody = `
+		SELECT DISTINCT
+			si.title, si.page_url, si.summary, '' as content
+		FROM
+			SearchIndex si
+		LEFT JOIN
+			KeywordIndex ki ON si.index_id = ki.index_id
+		LEFT JOIN
+			Keywords k ON ki.keyword_id = k.keyword_id
+		WHERE
+		`
+	}
+
 	// Parse the user input
-	sqlQuery, sqlParams, err := parseAdvancedQuery(query)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, query)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -398,20 +407,8 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 }
 
 func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
-	var query string
-	var sqlParams []interface{}
-
-	if strings.HasPrefix(input, "\"") && strings.HasSuffix(input, "\"") {
-		// Remove the quotes
-		input = strings.TrimLeft(input, "\"")
-		input = strings.TrimRight(input, "\"")
-	}
-
-	// Extract the query from the request
-	query = "%" + input + "%"
-
-	// Parse the user input
-	sqlQuery := `
+	// Prepare the query body
+	queryBody := `
 	SELECT
 		s.screenshot_link,
 		s.created_at,
@@ -425,11 +422,16 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 		Screenshots s
 	JOIN
 		SearchIndex si ON s.index_id = si.index_id
+	LEFT JOIN
+		KeywordIndex ki ON si.index_id = ki.index_id
+	LEFT JOIN
+		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
-		LOWER(si.page_url) LIKE LOWER($1)
-		OR LOWER(si.title) LIKE LOWER($1);
 	`
-	sqlParams = append(sqlParams, query)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	if err != nil {
+		return "", nil, err
+	}
 
 	return sqlQuery, sqlParams, nil
 }
@@ -468,6 +470,144 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 		Screenshots s
 	JOIN
 		SearchIndex si ON s.index_id = si.index_id
+	WHERE
+		si.page_url = $1;
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
+}
+
+// performNetInfoSearch performs a search for network information.
+func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return NetInfoResponse{}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+		return NetInfoResponse{}, err
+	}
+	defer db.Close()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
+
+	// Parse the user input
+	var sqlQuery string
+	var sqlParams []interface{}
+	if qType == 1 {
+		// it's a GET request, so we need to interpret the q parameter
+		sqlQuery, sqlParams, err = parseNetInfoGetQuery(query)
+		if err != nil {
+			return NetInfoResponse{}, err
+		}
+	} else {
+		// It's a POST request, so we can use the standard JSON parsing
+		sqlQuery, sqlParams, err = parseNetInfoQuery(query)
+		if err != nil {
+			return NetInfoResponse{}, err
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL query: %s", sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL params: %v", sqlParams)
+
+	// Execute the query
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	if err != nil {
+		return NetInfoResponse{}, err
+	}
+	defer rows.Close()
+
+	var results NetInfoResponse
+	for rows.Next() {
+		var row NetInfoRow
+		var detailsJSON []byte // Use a byte slice to hold the JSONB column data
+
+		// Adjust Scan to match the expected columns returned by your query
+		if err := rows.Scan(&row.CreatedAt, &row.LastUpdatedAt, &detailsJSON); err != nil {
+			return NetInfoResponse{}, err
+		}
+
+		// Assuming that detailsJSON contains an array of neti.NetInfo,
+		// you need to unmarshal the JSON into the NetInfo struct.
+		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+			return NetInfoResponse{}, err // Handle JSON unmarshal error
+		}
+
+		// Append the row to the results
+		results.Items = append(results.Items, row)
+	}
+
+	// Ensure to check rows.Err() after the loop to catch any error that occurred during iteration.
+	if err := rows.Err(); err != nil {
+		return NetInfoResponse{}, err
+	}
+
+	return results, nil
+}
+
+func parseNetInfoGetQuery(input string) (string, []interface{}, error) {
+	// Prepare the query body
+	queryBody := `
+	SELECT
+		ni.created_at,
+		ni.last_updated_at,
+		ni.details
+	FROM
+		NetInfo ni
+	JOIN
+        NetInfoIndex nii ON ni.netinfo_id = nii.netinfo_id
+	JOIN
+        SearchIndex si ON nii.index_id = si.index_id
+	LEFT JOIN
+		KeywordIndex ki ON si.index_id = ki.index_id
+	LEFT JOIN
+		Keywords k ON ki.keyword_id = k.keyword_id
+	WHERE
+	`
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return sqlQuery, sqlParams, nil
+}
+
+func parseNetInfoQuery(input string) (string, []interface{}, error) {
+	var query string
+	var err error
+	var sqlParams []interface{}
+
+	// Unmarshal the JSON document
+	var req QueryRequest
+	err = json.Unmarshal([]byte(input), &req)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Extract the query from the request
+	if len(req.Title) > 0 {
+		query = req.Title
+	} else {
+		return "", nil, errors.New("no query provided")
+	}
+
+	// Parse the user input
+	sqlQuery := `
+	SELECT
+		ni.created_at,
+		ni.last_updated_at,
+		ni.details
+	FROM
+		NetInfo ni
+	JOIN
+        NetInfoIndex nii ON ni.netinfo_id = nii.netinfo_id
+	JOIN
+        SearchIndex si ON nii.index_id = si.index_id
 	WHERE
 		si.page_url = $1;
 	`

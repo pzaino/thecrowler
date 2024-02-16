@@ -15,11 +15,30 @@
 // Package main (API) implements the API server for the Crowler search engine.
 package main
 
-import cfg "github.com/pzaino/thecrowler/pkg/config"
+import (
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+	neti "github.com/pzaino/thecrowler/pkg/netinfo"
+)
 
 var (
 	config cfg.Config // Global variable to store the configuration
 )
+
+// ConsoleResponse represents the structure of the response
+// returned by the console API (addSource/removeSOurce etc.).
+type ConsoleResponse struct {
+	Message string `json:"message"`
+}
+
+// addSourceRequest represents the structure of the add source request
+type addSourceRequest struct {
+	URL        string `json:"url"`
+	Status     string `json:"status,omitempty"`
+	Restricted int    `json:"restricted,omitempty"`
+	Disabled   bool   `json:"disabled,omitempty"`
+	Flags      int    `json:"flags,omitempty"`
+	Config     string `json:"config,omitempty"`
+}
 
 // SearchResult represents the structure of the search result
 // returned by the search engine. It designed to be similar
@@ -104,4 +123,15 @@ type ScreenshotResponse struct {
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	ByteSize      int    `json:"byte_size"`
+}
+
+type NetInfoRow struct {
+	CreatedAt     string       `json:"created_at"`
+	LastUpdatedAt string       `json:"last_updated_at"`
+	Details       neti.NetInfo `json:"details"`
+}
+
+// NetInfoResponse represents the structure of the network information response
+type NetInfoResponse struct {
+	Items []NetInfoRow `json:"items"`
 }

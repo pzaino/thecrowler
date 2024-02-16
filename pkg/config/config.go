@@ -163,6 +163,8 @@ func NewConfig() Config {
 			SSLMode:       "disable",
 			CertFile:      "",
 			KeyFile:       "",
+			RateLimit:     "10,10",
+			EnableConsole: false,
 		},
 		Selenium: []Selenium{
 			{

@@ -268,7 +268,6 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 
 		// Update DB SearchIndex Table with the screenshot filename
 		dbx := *ctx.db
-		//_, err = dbx.Exec(`UPDATE SearchIndex SET snapshot_url = $1 WHERE page_url = $2`, imageName, url)
 		err = insertScreenshot(dbx, ss)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error updating database with screenshot URL: %v", err)
@@ -294,6 +293,10 @@ func generateUniqueName(url string, imageType string) string {
 
 // insertScreenshot inserts a screenshot into the database
 func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
+	if screenshot.IndexID == 0 {
+		return errors.New("index ID is required")
+	}
+
 	_, err := db.Exec(`
         INSERT INTO Screenshots (
             index_id,
@@ -470,6 +473,8 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
 
+	pageInfo.URL = url
+
 	// Before updating the source state, check if the database connection is still alive
 	err := db.CheckConnection(config)
 	if err != nil {
@@ -488,6 +493,14 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
+		rollbackTransaction(tx)
+		return 0
+	}
+
+	// Insert or update the page in WebObjects
+	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating WebObjects: %v", err)
 		rollbackTransaction(tx)
 		return 0
 	}
@@ -548,11 +561,11 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int64
 	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
 		INSERT INTO SearchIndex
-			(page_url, title, summary, content, detected_lang, detected_type, last_updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+			(page_url, title, summary, detected_lang, detected_type, last_updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (page_url) DO UPDATE
-		SET title = EXCLUDED.title, summary = EXCLUDED.summary, content = EXCLUDED.content, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
-		RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, pageInfo.BodyText, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
+		SET title = EXCLUDED.title, summary = EXCLUDED.summary, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
+		RETURNING index_id`, url, pageInfo.Title, pageInfo.Summary, strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).
 		Scan(&indexID)
 	if err != nil {
 		return 0, err // Handle error appropriately
@@ -578,6 +591,41 @@ func strLeft(s string, x int) string {
 	return string(runes[:x])
 }
 
+// insertOrUpdateWebObjects inserts or updates a web object entry in the database.
+// It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
+// It returns an error, if any.
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) error {
+
+	// Calculate the SHA256 hash of the body text
+	hasher := sha256.New()
+	hasher.Write([]byte(pageInfo.BodyText))
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	var objID int64
+
+	// Step 1: Insert into WebObjects
+	err := tx.QueryRow(`
+		INSERT INTO WebObjects (object_url, object_hash, object_content)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (object_hash) DO UPDATE
+		SET object_content = EXCLUDED.object_content
+		RETURNING object_id;`, pageInfo.URL, hash, pageInfo.BodyText).Scan(&objID)
+	if err != nil {
+		return err
+	}
+
+	// Step 2: Insert into WebObjectsIndex for the associated sourceID
+	_, err = tx.Exec(`
+		INSERT INTO PageWebObjectsIndex (index_id, object_id)
+		VALUES ($1, $2)
+		ON CONFLICT (index_id, object_id) DO NOTHING`, indexID, objID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // insertNetInfo inserts network information into the database for a given index ID.
 // It takes a transaction, index ID, and a NetInfo object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
@@ -588,16 +636,30 @@ func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
 		return err
 	}
 
+	// Calculate the SHA256 hash of the details
+	hasher := sha256.New()
+	hasher.Write(details)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	var netinfoID int64
+	// Attempt to insert into NetInfo, or on conflict update as needed and return the netinfo_id
+	err = tx.QueryRow(`
+		INSERT INTO NetInfo (details_hash, details)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (details_hash) DO UPDATE
+		SET details = EXCLUDED.details
+		RETURNING netinfo_id;
+	`, hash, details).Scan(&netinfoID)
+	if err != nil {
+		return err
+	}
+
 	_, err = tx.Exec(`
-	INSERT INTO NetInfo (source_id, details)
-		SELECT $1, $2::jsonb
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM NetInfo
-			WHERE source_id = $1
-			AND details = $2::jsonb
-		);`,
-		indexID, details)
+    INSERT INTO NetInfoIndex (netinfo_id, index_id)
+    VALUES ($1, $2)
+    ON CONFLICT (netinfo_id, index_id) DO UPDATE
+    SET last_updated_at = CURRENT_TIMESTAMP
+	`, netinfoID, indexID)
 	if err != nil {
 		return err
 	}
@@ -609,22 +671,37 @@ func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
 // It takes a transaction, index ID, and an HTTPDetails object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
 func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) error {
-	// encode the NetInfo object as JSON
+	// Encode the HTTPDetails object as JSON
 	details, err := json.Marshal(httpInfo)
 	if err != nil {
 		return err
 	}
 
+	// calculate the SHA256 hash of the details
+	hasher := sha256.New()
+	hasher.Write(details)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Insert or update HTTPInfo and return httpinfo_id
+	var httpinfoID int64
+	err = tx.QueryRow(`
+        INSERT INTO HTTPInfo (details_hash, details)
+        VALUES ($1, $2::jsonb)
+        ON CONFLICT (details_hash) DO UPDATE
+        SET details = EXCLUDED.details
+        RETURNING httpinfo_id;
+    `, hash, details).Scan(&httpinfoID)
+	if err != nil {
+		return err
+	}
+
+	// Now, insert or update the HTTPInfoIndex to link the HTTPInfo entry with the indexID
 	_, err = tx.Exec(`
-	INSERT INTO HTTPInfo (source_id, details)
-		SELECT $1, $2::jsonb
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM NetInfo
-			WHERE source_id = $1
-			AND details = $2::jsonb
-		);`,
-		indexID, details)
+        INSERT INTO HTTPInfoIndex (httpinfo_id, index_id)
+        VALUES ($1, $2)
+        ON CONFLICT (httpinfo_id, index_id) DO UPDATE
+        SET last_updated_at = CURRENT_TIMESTAMP
+    `, httpinfoID, indexID)
 	if err != nil {
 		return err
 	}
@@ -638,10 +715,31 @@ func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) erro
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID int64, metaTags map[string]string) error {
 	for name, content := range metaTags {
-		_, err := tx.Exec(`INSERT INTO MetaTags (index_id, name, content)
-                          VALUES ($1, $2, $3)`, indexID, name, content)
+		var metatagID int64
+
+		// Try to find the metatag ID first
+		err := tx.QueryRow(`
+            SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2;`, name, content).Scan(&metatagID)
+
+		// If not found, insert the new metatag and get its ID
 		if err != nil {
-			return err
+			err = tx.QueryRow(`
+                INSERT INTO MetaTags (name, content)
+                VALUES ($1, $2)
+                ON CONFLICT (name, content) DO UPDATE SET name = EXCLUDED.name
+                RETURNING metatag_id;`, name, content).Scan(&metatagID)
+			if err != nil {
+				return err // Handle error appropriately
+			}
+		}
+
+		// Link the metatag to the SearchIndex
+		_, err = tx.Exec(`
+            INSERT INTO SearchIndexMetaTags (index_id, metatag_id)
+            VALUES ($1, $2)
+            ON CONFLICT (index_id, metatag_id) DO NOTHING;`, indexID, metatagID)
+		if err != nil {
+			return err // Handle error appropriately
 		}
 	}
 	return nil
@@ -658,8 +756,11 @@ func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int64, pageInfo PageInfo
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO KeywordIndex (keyword_id, index_id)
-                          VALUES ($1, $2)`, keywordID, indexID)
+		// Use ON CONFLICT DO NOTHING to ignore the insert if the keyword_id and index_id combination already exists
+		_, err = tx.Exec(`
+            INSERT INTO KeywordIndex (keyword_id, index_id)
+            VALUES ($1, $2)
+            ON CONFLICT (keyword_id, index_id) DO NOTHING;`, keywordID, indexID)
 		if err != nil {
 			return err
 		}
