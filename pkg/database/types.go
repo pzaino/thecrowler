@@ -51,6 +51,10 @@ type SQLiteHandler struct {
 	dbms string
 }
 
+type TxHandler struct {
+	sql.Tx
+}
+
 // Source represents the structure of the Sources table
 // for a record we have decided we need to crawl.
 // Id represents the unique identifier of the source.
