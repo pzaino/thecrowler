@@ -16,10 +16,8 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"runtime"
@@ -30,12 +28,6 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
 	"golang.org/x/time/rate"
-)
-
-const (
-	jsonErrorPrefix  = "Error encoding JSON: %v"
-	contentTypeLabel = "Content-Type"
-	contentTypeJSON  = "application/json"
 )
 
 // Create a rate limiter for your application. Adjust the parameters as needed.
@@ -128,213 +120,60 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 
 // searchHandler handles the traditional search requests
 func searchHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract query parameter
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in search get request")
-		http.Error(w, "Query parameter 'q' is required for search get request", http.StatusBadRequest)
+	query, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in search request", http.StatusBadRequest)
 		return
 	}
 
-	// Perform the search
 	results, err := performSearch(query)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing search: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with JSON
-	w.Header().Set(contentTypeLabel, contentTypeJSON)
-	err = json.NewEncoder(w).Encode(results)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError)
 }
 
 // scrImgSrchHandler handles the search requests for screenshot images
 func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
-	var results ScreenshotResponse
-	var query string
-	var err error
-	if r.Method == "POST" {
-		// Read the JSON document from the request body
-		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		query = string(body)
-		results, err = performScreenshotSearch(query, 0)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing screenshot search: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Extract query parameter
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in screenshot search get request")
-			http.Error(w, "Query parameter 'q' is required for screenshot get request", http.StatusBadRequest)
-			return
-		}
-		results, err = performScreenshotSearch(query, 1)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on screenshot search: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Respond with JSON
-	w.Header().Set(contentTypeLabel, contentTypeJSON)
-	err = json.NewEncoder(w).Encode(results)
+	query, err := extractQueryOrBody(r)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in screenshot search request", http.StatusBadRequest)
 		return
 	}
 
+	results, err := performScreenshotSearch(query, getQType(r.Method != "POST"))
+	handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError)
 }
 
 // netInfoHandler handles the network information requests
 func netInfoHandler(w http.ResponseWriter, r *http.Request) {
-	var results NetInfoResponse
-	var query string
-	var err error
-	if r.Method == "POST" {
-		// Read the JSON document from the request body
-		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		query = string(body)
-		results, err = performNetInfoSearch(query, 0)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing netinfo search: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Extract query parameter
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in netinfo search get request")
-			http.Error(w, "Query parameter 'q' is required for netinfo get request", http.StatusBadRequest)
-			return
-		}
-		results, err = performNetInfoSearch(query, 1)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on netinfo search: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Respond with JSON
-	w.Header().Set(contentTypeLabel, contentTypeJSON)
-	err = json.NewEncoder(w).Encode(results)
+	query, err := extractQueryOrBody(r)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in netinfo search request", http.StatusBadRequest)
 		return
 	}
+
+	results, err := performNetInfoSearch(query, getQType(r.Method != "POST"))
+	handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError)
 }
 
 // addSourceHandler handles the addition of new sources
 func addSourceHandler(w http.ResponseWriter, r *http.Request) {
-	var results ConsoleResponse
-	var query string
-	var err error
-	if r.Method == "POST" {
-		// Read the JSON document from the request body
-		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		query = string(body)
-		results, err = performAddSource(query, 0)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing addSource: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Extract query parameter
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in addSource get request")
-			http.Error(w, "Query parameter 'q' is required for addSource get request", http.StatusBadRequest)
-			return
-		}
-		results, err = performAddSource(query, 1)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on addSource request: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Respond with JSON
-	w.Header().Set(contentTypeLabel, contentTypeJSON)
-	err = json.NewEncoder(w).Encode(results)
+	query, err := extractQueryOrBody(r)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in addSource request", http.StatusBadRequest)
 		return
 	}
+
+	results, err := performAddSource(query, getQType(r.Method != "POST"))
+	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError)
 }
 
 // removeSourceHandler handles the removal of sources
 func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
-	var results ConsoleResponse
-	var query string
-	var err error
-	if r.Method == "POST" {
-		// Read the JSON document from the request body
-		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		query = string(body)
-		results, err = performRemoveSource(query, 0)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing removeSource: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Extract query parameter
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in removeSource get request")
-			http.Error(w, "Query parameter 'q' is required for removeSource get request", http.StatusBadRequest)
-			return
-		}
-		results, err = performRemoveSource(query, 1)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on removeSource search: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Respond with JSON
-	w.Header().Set(contentTypeLabel, contentTypeJSON)
-	err = json.NewEncoder(w).Encode(results)
+	query, err := extractQueryOrBody(r)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest)
 		return
 	}
+
+	results, err := performRemoveSource(query, getQType(r.Method != "POST"))
+	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError)
 }
