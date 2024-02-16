@@ -29,6 +29,13 @@ import (
 	_ "github.com/lib/pq"
 )
 
+const (
+	sqlQueryLabel       = "SQL query: %s"
+	sqlQueryParamsLabel = "SQL params: %v"
+	dbConnErrorLabel    = "Error connecting to the database: %v"
+	SearchLabel         = "Performing search for: %s"
+)
+
 func tokenize(input string) []string {
 	var tokens []string
 	var currentToken strings.Builder
@@ -263,12 +270,12 @@ func performSearch(query string) (SearchResult, error) {
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
 		return SearchResult{}, err
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
 
 	// Prepare the query body
 	var queryBody string
@@ -307,8 +314,8 @@ func performSearch(query string) (SearchResult, error) {
 	if err != nil {
 		return SearchResult{}, err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL query: %s", sqlQuery)
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL params: %v", sqlParams)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
@@ -350,12 +357,12 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
 		return ScreenshotResponse{}, err
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
@@ -373,8 +380,8 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 			return ScreenshotResponse{}, err
 		}
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL query: %s", sqlQuery)
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL params: %v", sqlParams)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
@@ -489,12 +496,12 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
 		return NetInfoResponse{}, err
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Performing search for: %s", query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
@@ -512,8 +519,8 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 			return NetInfoResponse{}, err
 		}
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL query: %s", sqlQuery)
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "SQL params: %v", sqlParams)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
