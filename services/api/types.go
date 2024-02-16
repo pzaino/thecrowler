@@ -24,6 +24,22 @@ var (
 	config cfg.Config // Global variable to store the configuration
 )
 
+// ConsoleResponse represents the structure of the response
+// returned by the console API (addSource/removeSOurce etc.).
+type ConsoleResponse struct {
+	Message string `json:"message"`
+}
+
+// addSourceRequest represents the structure of the add source request
+type addSourceRequest struct {
+	URL        string `json:"url"`
+	Status     string `json:"status,omitempty"`
+	Restricted int    `json:"restricted,omitempty"`
+	Disabled   bool   `json:"disabled,omitempty"`
+	Flags      int    `json:"flags,omitempty"`
+	Config     string `json:"config,omitempty"`
+}
+
 // SearchResult represents the structure of the search result
 // returned by the search engine. It designed to be similar
 // to the one returned by Google.

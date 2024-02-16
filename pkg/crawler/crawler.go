@@ -715,10 +715,31 @@ func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) erro
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID int64, metaTags map[string]string) error {
 	for name, content := range metaTags {
-		_, err := tx.Exec(`INSERT INTO MetaTags (index_id, name, content)
-                          VALUES ($1, $2, $3)`, indexID, name, content)
+		var metatagID int64
+
+		// Try to find the metatag ID first
+		err := tx.QueryRow(`
+            SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2;`, name, content).Scan(&metatagID)
+
+		// If not found, insert the new metatag and get its ID
 		if err != nil {
-			return err
+			err = tx.QueryRow(`
+                INSERT INTO MetaTags (name, content)
+                VALUES ($1, $2)
+                ON CONFLICT (name, content) DO UPDATE SET name = EXCLUDED.name
+                RETURNING metatag_id;`, name, content).Scan(&metatagID)
+			if err != nil {
+				return err // Handle error appropriately
+			}
+		}
+
+		// Link the metatag to the SearchIndex
+		_, err = tx.Exec(`
+            INSERT INTO SearchIndexMetaTags (index_id, metatag_id)
+            VALUES ($1, $2)
+            ON CONFLICT (index_id, metatag_id) DO NOTHING;`, indexID, metatagID)
+		if err != nil {
+			return err // Handle error appropriately
 		}
 	}
 	return nil
@@ -735,8 +756,11 @@ func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int64, pageInfo PageInfo
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO KeywordIndex (keyword_id, index_id)
-                          VALUES ($1, $2)`, keywordID, indexID)
+		// Use ON CONFLICT DO NOTHING to ignore the insert if the keyword_id and index_id combination already exists
+		_, err = tx.Exec(`
+            INSERT INTO KeywordIndex (keyword_id, index_id)
+            VALUES ($1, $2)
+            ON CONFLICT (keyword_id, index_id) DO NOTHING;`, keywordID, indexID)
 		if err != nil {
 			return err
 		}

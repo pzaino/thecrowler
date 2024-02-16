@@ -141,6 +141,9 @@
                 },
                 "rate_limit": {
                     "type": "string"
+                },
+                "enable_console": {
+                    "type": "boolean"
                 }
             },
             "required": [

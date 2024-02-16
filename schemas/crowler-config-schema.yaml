@@ -99,6 +99,8 @@ properties:
         type: string
       rate_limit:
         type: string
+      enable_console:
+        type: boolean
     required:
       - host
       - port

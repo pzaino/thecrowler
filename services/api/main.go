@@ -32,6 +32,12 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	jsonErrorPrefix  = "Error encoding JSON: %v"
+	contentTypeLabel = "Content-Type"
+	contentTypeJSON  = "application/json"
+)
+
 // Create a rate limiter for your application. Adjust the parameters as needed.
 var limiter *rate.Limiter
 
@@ -69,19 +75,30 @@ func main() {
 	limiter = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Set the handlers
-	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
-	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
-	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
-
-	http.Handle("/search", searchHandlerWithMiddlewares)
-	http.Handle("/netinfo", netInfoHandlerWithMiddlewares)
-	http.Handle("/screenshot", scrImgSrchHandlerWithMiddlewares)
+	initAPIv1()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
 		log.Fatal(http.ListenAndServeTLS(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), config.API.CertFile, config.API.KeyFile, nil))
 	} else {
 		log.Fatal(http.ListenAndServe(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), nil))
+	}
+}
+
+func initAPIv1() {
+	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
+	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
+	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
+	addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
+	removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
+
+	http.Handle("/v1/search", searchHandlerWithMiddlewares)
+	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
+	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
+
+	if config.API.EnableConsole {
+		http.Handle("/v1/add_source", addSourceHandlerWithMiddlewares)
+		http.Handle("/v1/remove_source", removeSourceHandlerWithMiddlewares)
 	}
 }
 
@@ -128,10 +145,10 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Respond with JSON
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeLabel, contentTypeJSON)
 	err = json.NewEncoder(w).Encode(results)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -167,17 +184,17 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		results, err = performScreenshotSearch(query, 1)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing screenshot search: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on screenshot search: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
 	// Respond with JSON
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeLabel, contentTypeJSON)
 	err = json.NewEncoder(w).Encode(results)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -200,7 +217,7 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 		query = string(body)
 		results, err = performNetInfoSearch(query, 0)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing screenshot search: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing netinfo search: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -208,23 +225,115 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 		// Extract query parameter
 		query := r.URL.Query().Get("q")
 		if query == "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in screenshot search get request")
-			http.Error(w, "Query parameter 'q' is required for screenshot get request", http.StatusBadRequest)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in netinfo search get request")
+			http.Error(w, "Query parameter 'q' is required for netinfo get request", http.StatusBadRequest)
 			return
 		}
 		results, err = performNetInfoSearch(query, 1)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing screenshot search: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on netinfo search: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
 	// Respond with JSON
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeLabel, contentTypeJSON)
 	err = json.NewEncoder(w).Encode(results)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// addSourceHandler handles the addition of new sources
+func addSourceHandler(w http.ResponseWriter, r *http.Request) {
+	var results ConsoleResponse
+	var query string
+	var err error
+	if r.Method == "POST" {
+		// Read the JSON document from the request body
+		body, err := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		query = string(body)
+		results, err = performAddSource(query, 0)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing addSource: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Extract query parameter
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in addSource get request")
+			http.Error(w, "Query parameter 'q' is required for addSource get request", http.StatusBadRequest)
+			return
+		}
+		results, err = performAddSource(query, 1)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on addSource request: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Respond with JSON
+	w.Header().Set(contentTypeLabel, contentTypeJSON)
+	err = json.NewEncoder(w).Encode(results)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// removeSourceHandler handles the removal of sources
+func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
+	var results ConsoleResponse
+	var query string
+	var err error
+	if r.Method == "POST" {
+		// Read the JSON document from the request body
+		body, err := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		query = string(body)
+		results, err = performRemoveSource(query, 0)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error performing removeSource: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Extract query parameter
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Missing parameter 'q' in removeSource get request")
+			http.Error(w, "Query parameter 'q' is required for removeSource get request", http.StatusBadRequest)
+			return
+		}
+		results, err = performRemoveSource(query, 1)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error on removeSource search: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Respond with JSON
+	w.Header().Set(contentTypeLabel, contentTypeJSON)
+	err = json.NewEncoder(w).Encode(results)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, jsonErrorPrefix, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

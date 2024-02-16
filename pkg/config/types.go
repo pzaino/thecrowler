@@ -101,6 +101,7 @@ type API struct {
 	CertFile      string `yaml:"cert_file"`      // Path to the SSL certificate file
 	KeyFile       string `yaml:"key_file"`       // Path to the SSL key file
 	RateLimit     string `yaml:"rate_limit"`     // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	EnableConsole bool   `yaml:"enable_console"` // Whether to enable the console or not
 }
 
 // Selenium represents the Selenium configuration
