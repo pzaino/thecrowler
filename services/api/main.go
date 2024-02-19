@@ -139,6 +139,7 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := performScreenshotSearch(query, getQType(r.Method != "POST"))
+
 	handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError)
 }
 
