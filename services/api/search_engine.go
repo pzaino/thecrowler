@@ -426,9 +426,9 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 		s.height,
 		s.byte_size
 	FROM
-		Screenshots s
+		Screenshots AS s
 	JOIN
-		SearchIndex si ON s.index_id = si.index_id
+		SearchIndex AS si ON s.index_id = si.index_id
 	LEFT JOIN
 		KeywordIndex ki ON si.index_id = ki.index_id
 	LEFT JOIN
@@ -457,7 +457,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 
 	// Extract the query from the request
 	if len(req.URL) > 0 {
-		query = req.URL
+		query = "%" + req.URL + "%"
 	} else {
 		return "", nil, errors.New("no query provided")
 	}
@@ -474,11 +474,11 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 		s.height,
 		s.byte_size
 	FROM
-		Screenshots s
+		Screenshots AS s
 	JOIN
-		SearchIndex si ON s.index_id = si.index_id
+		SearchIndex AS si ON s.index_id = si.index_id
 	WHERE
-		si.page_url = $1;
+		LOWER(si.page_url) LIKE LOWER($1);
 	`
 	sqlParams = append(sqlParams, query)
 
@@ -616,7 +616,7 @@ func parseNetInfoQuery(input string) (string, []interface{}, error) {
 	JOIN
         SearchIndex si ON nii.index_id = si.index_id
 	WHERE
-		si.page_url = $1;
+		si.page_url LIKE $1;
 	`
 	sqlParams = append(sqlParams, query)
 

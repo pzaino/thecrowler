@@ -18,6 +18,8 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -71,6 +73,30 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 	var results ConsoleResponse
 	results.Message = "Failed to add the source"
 
+	// Check if Config is empty and set to default JSON if it is
+	if params.Config == "" || strings.ToLower(params.Config) == "null" {
+		defaultConfig := map[string]string{}
+		defaultConfigJSON, err := json.Marshal(defaultConfig)
+		if err != nil {
+			return results, fmt.Errorf("Failed to marshal default Config: %w", err)
+		}
+		params.Config = string(defaultConfigJSON)
+	} else {
+		fmt.Println("params.Config:", params.Config)
+		// Validate and potentially reformat the existing Config JSON
+		var jsonRaw map[string]interface{}
+		if err := json.Unmarshal([]byte(params.Config), &jsonRaw); err != nil {
+			// Handle invalid JSON
+			return results, fmt.Errorf("Config field contains invalid JSON: %w", err)
+		}
+		// Re-marshal to ensure the JSON is in a standardized format (optional)
+		configJSON, err := json.Marshal(jsonRaw)
+		if err != nil {
+			return results, fmt.Errorf("Failed to marshal Config field: %w", err)
+		}
+		params.Config = string(configJSON)
+	}
+
 	// Initialize the database handler
 	db, err := cdb.NewHandler(config)
 	if err != nil {
@@ -86,7 +112,7 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 	defer db.Close()
 
 	// Execute the SQL statement
-	_, err = db.Exec(sqlQuery, params)
+	_, err = db.Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, params.Config)
 	if err != nil {
 		return results, err
 	}
