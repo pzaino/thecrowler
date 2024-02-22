@@ -135,3 +135,14 @@ type NetInfoRow struct {
 type NetInfoResponse struct {
 	Items []NetInfoRow `json:"items"`
 }
+
+type HTTPInfoRow struct {
+	CreatedAt     string       `json:"created_at"`
+	LastUpdatedAt string       `json:"last_updated_at"`
+	Details       neti.NetInfo `json:"details"`
+}
+
+// NetInfoResponse represents the structure of the network information response
+type HTTPInfoResponse struct {
+	Items []HTTPInfoRow `json:"items"`
+}

@@ -81,11 +81,13 @@ func initAPIv1() {
 	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
 	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
 	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
+	httpInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(httpInfoHandler)))
 	addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
 	removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
 
 	http.Handle("/v1/search", searchHandlerWithMiddlewares)
 	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
+	http.Handle("/v1/httpinfo", httpInfoHandlerWithMiddlewares)
 	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
@@ -120,61 +122,79 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 
 // searchHandler handles the traditional search requests
 func searchHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
 	query, err := extractQueryOrBody(r)
 	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in search request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in search request", http.StatusBadRequest, successCode)
 		return
 	}
 
 	results, err := performSearch(query)
-	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError)
+	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
 }
 
 // scrImgSrchHandler handles the search requests for screenshot images
 func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
 	query, err := extractQueryOrBody(r)
 	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in screenshot search request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in screenshot search request", http.StatusBadRequest, successCode)
 		return
 	}
 
 	results, err := performScreenshotSearch(query, getQType(r.Method != "POST"))
 
-	handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError)
+	handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
 }
 
 // netInfoHandler handles the network information requests
 func netInfoHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
 	query, err := extractQueryOrBody(r)
 	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in netinfo search request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in netinfo search request", http.StatusBadRequest, successCode)
 		return
 	}
 
 	results, err := performNetInfoSearch(query, getQType(r.Method != "POST"))
-	handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError)
+	handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
+}
+
+// httpInfoHandler handles the http information requests
+func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in httpinfo search request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performHTTPInfoSearch(query, getQType(r.Method != "POST"))
+	handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
 }
 
 // addSourceHandler handles the addition of new sources
 func addSourceHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusCreated
 	query, err := extractQueryOrBody(r)
 	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in addSource request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in addSource request", http.StatusBadRequest, successCode)
 		return
 	}
 
 	results, err := performAddSource(query, getQType(r.Method != "POST"))
-	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError)
+	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError, successCode)
 }
 
 // removeSourceHandler handles the removal of sources
 func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusNoContent
 	query, err := extractQueryOrBody(r)
 	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
 		return
 	}
 
 	results, err := performRemoveSource(query, getQType(r.Method != "POST"))
-	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError)
+	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 }

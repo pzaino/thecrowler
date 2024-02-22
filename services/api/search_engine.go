@@ -34,6 +34,7 @@ const (
 	sqlQueryParamsLabel = "SQL params: %v"
 	dbConnErrorLabel    = "Error connecting to the database: %v"
 	SearchLabel         = "Performing search for: %s"
+	noQueryProvided     = "no query provided"
 )
 
 func tokenize(input string) []string {
@@ -459,7 +460,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	if len(req.URL) > 0 {
 		query = "%" + req.URL + "%"
 	} else {
-		return "", nil, errors.New("no query provided")
+		return "", nil, errors.New(noQueryProvided)
 	}
 
 	// Parse the user input
@@ -600,7 +601,7 @@ func parseNetInfoQuery(input string) (string, []interface{}, error) {
 	if len(req.Title) > 0 {
 		query = req.Title
 	} else {
-		return "", nil, errors.New("no query provided")
+		return "", nil, errors.New(noQueryProvided)
 	}
 
 	// Parse the user input
@@ -615,6 +616,144 @@ func parseNetInfoQuery(input string) (string, []interface{}, error) {
         NetInfoIndex nii ON ni.netinfo_id = nii.netinfo_id
 	JOIN
         SearchIndex si ON nii.index_id = si.index_id
+	WHERE
+		si.page_url LIKE $1;
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
+}
+
+// performNetInfoSearch performs a search for network information.
+func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return HTTPInfoResponse{}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
+		return HTTPInfoResponse{}, err
+	}
+	defer db.Close()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+
+	// Parse the user input
+	var sqlQuery string
+	var sqlParams []interface{}
+	if qType == 1 {
+		// it's a GET request, so we need to interpret the q parameter
+		sqlQuery, sqlParams, err = parseHTTPInfoGetQuery(query)
+		if err != nil {
+			return HTTPInfoResponse{}, err
+		}
+	} else {
+		// It's a POST request, so we can use the standard JSON parsing
+		sqlQuery, sqlParams, err = parseHTTPInfoQuery(query)
+		if err != nil {
+			return HTTPInfoResponse{}, err
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
+
+	// Execute the query
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	if err != nil {
+		return HTTPInfoResponse{}, err
+	}
+	defer rows.Close()
+
+	var results HTTPInfoResponse
+	for rows.Next() {
+		var row HTTPInfoRow
+		var detailsJSON []byte // Use a byte slice to hold the JSONB column data
+
+		// Adjust Scan to match the expected columns returned by your query
+		if err := rows.Scan(&row.CreatedAt, &row.LastUpdatedAt, &detailsJSON); err != nil {
+			return HTTPInfoResponse{}, err
+		}
+
+		// Assuming that detailsJSON contains an array of neti.NetInfo,
+		// you need to unmarshal the JSON into the NetInfo struct.
+		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+			return HTTPInfoResponse{}, err // Handle JSON unmarshal error
+		}
+
+		// Append the row to the results
+		results.Items = append(results.Items, row)
+	}
+
+	// Ensure to check rows.Err() after the loop to catch any error that occurred during iteration.
+	if err := rows.Err(); err != nil {
+		return HTTPInfoResponse{}, err
+	}
+
+	return results, nil
+}
+
+func parseHTTPInfoGetQuery(input string) (string, []interface{}, error) {
+	// Prepare the query body
+	queryBody := `
+	SELECT
+		hi.created_at,
+		hi.last_updated_at,
+		hi.details
+	FROM
+		HTTPInfo hi
+	JOIN
+        HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
+	JOIN
+        SearchIndex si ON hii.index_id = si.index_id
+	LEFT JOIN
+		KeywordIndex ki ON si.index_id = ki.index_id
+	LEFT JOIN
+		Keywords k ON ki.keyword_id = k.keyword_id
+	WHERE
+	`
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return sqlQuery, sqlParams, nil
+}
+
+func parseHTTPInfoQuery(input string) (string, []interface{}, error) {
+	var query string
+	var err error
+	var sqlParams []interface{}
+
+	// Unmarshal the JSON document
+	var req QueryRequest
+	err = json.Unmarshal([]byte(input), &req)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Extract the query from the request
+	if len(req.Title) > 0 {
+		query = req.Title
+	} else {
+		return "", nil, errors.New(noQueryProvided)
+	}
+
+	// Parse the user input
+	sqlQuery := `
+	SELECT
+		hi.created_at,
+		hi.last_updated_at,
+		hi.details
+	FROM
+		HTTPInfo hi
+	JOIN
+        HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
+	JOIN
+        SearchIndex si ON hii.index_id = si.index_id
 	WHERE
 		si.page_url LIKE $1;
 	`
