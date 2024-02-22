@@ -78,7 +78,7 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 		defaultConfig := map[string]string{}
 		defaultConfigJSON, err := json.Marshal(defaultConfig)
 		if err != nil {
-			return results, fmt.Errorf("Failed to marshal default Config: %w", err)
+			return results, fmt.Errorf("failed to marshal default Config: %w", err)
 		}
 		params.Config = string(defaultConfigJSON)
 	} else {
@@ -87,12 +87,12 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 		var jsonRaw map[string]interface{}
 		if err := json.Unmarshal([]byte(params.Config), &jsonRaw); err != nil {
 			// Handle invalid JSON
-			return results, fmt.Errorf("Config field contains invalid JSON: %w", err)
+			return results, fmt.Errorf("config field contains invalid JSON: %w", err)
 		}
 		// Re-marshal to ensure the JSON is in a standardized format (optional)
 		configJSON, err := json.Marshal(jsonRaw)
 		if err != nil {
-			return results, fmt.Errorf("Failed to marshal Config field: %w", err)
+			return results, fmt.Errorf("failed to marshal Config field: %w", err)
 		}
 		params.Config = string(configJSON)
 	}
