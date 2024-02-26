@@ -3,7 +3,7 @@ module github.com/pzaino/thecrowler
 go 1.21.5
 
 require (
-	github.com/PuerkitoBio/goquery v1.8.1
+	github.com/PuerkitoBio/goquery v1.9.0
 	github.com/antchfx/htmlquery v1.3.0
 	github.com/aws/aws-sdk-go v1.50.25
 	github.com/lib/pq v1.10.9
@@ -31,7 +31,7 @@ require (
 )
 
 require (
-	github.com/andybalholm/cascadia v1.3.1 // indirect
+	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/antchfx/xpath v1.2.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
