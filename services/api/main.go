@@ -77,6 +77,7 @@ func main() {
 	}
 }
 
+// initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
 	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
 	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))

@@ -213,13 +213,14 @@ func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
 func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
-	pageSource, err := getURLContent(ctx.source.URL, ctx.wd, 0)
+	pageSource, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting HTML content: %v", err)
 		ctx.sel <- sel // Assuming 'sel' is accessible
 		updateSourceState(*ctx.db, ctx.source.URL, err)
 		return pageSource, err
 	}
+
 	// Handle consent
 	handleConsent(ctx.wd)
 
@@ -230,7 +231,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	ctx.GetHTTPInfo(ctx.source.URL)
 
 	// Continue with extracting page info and indexing
-	pageInfo := extractPageInfo(pageSource)
+	pageInfo := extractPageInfo(pageSource, ctx)
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 
@@ -827,7 +828,7 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
-func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDriver, error) {
+func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
 	err0 := wd.Get(url)
 	cmd, _ := exi.ParseCmd(config.Crawler.Interval, 0)
@@ -841,13 +842,26 @@ func getURLContent(url string, wd selenium.WebDriver, level int) (selenium.WebDr
 	} else {
 		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
 	}
+
+	// Run Action Rules if any
+	if ctx.source.Config != nil {
+		// Execute the CROWler rules
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler rules...")
+		/*
+			err = rules.ExecuteActionRules(ctx.source.Config, ctx.wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error executing CROWler rules: %v", err)
+			}
+		*/
+	}
+
 	return wd, err0
 }
 
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
-func extractPageInfo(webPage selenium.WebDriver) PageInfo {
+func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 	htmlContent, _ := webPage.PageSource()
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
@@ -855,11 +869,21 @@ func extractPageInfo(webPage selenium.WebDriver) PageInfo {
 		return PageInfo{} // Return an empty struct in case of an error
 	}
 
+	// Run scraping rules if any
+	if ctx.source.Config != nil {
+		// Execute the CROWler rules
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler rules...")
+		/*
+			PageInfo.ScrapedData, err = rules.ExecuteScrapingRules(ctx.source.Config, ctx.wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error executing CROWler rules: %v", err)
+			}
+		*/
+	}
+
 	title, _ := webPage.Title()
 	summary := doc.Find("meta[name=description]").AttrOr("content", "")
 	bodyText := doc.Find("body").Text()
-
-	//containsAppInfo := strings.Contains(bodyText, "app") || strings.Contains(bodyText, "mobile")
 
 	metaTags := extractMetaTags(doc)
 
@@ -1056,12 +1080,12 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 }
 
 func processJob(processCtx *processContext, id int, url string) {
-	htmlContent, err := getURLContent(url, processCtx.wd, 1)
+	htmlContent, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return
 	}
-	pageCache := extractPageInfo(htmlContent)
+	pageCache := extractPageInfo(htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
 	indexPage(*processCtx.db, url, pageCache)
 	extractedLinks := extractLinks(pageCache.BodyText)
