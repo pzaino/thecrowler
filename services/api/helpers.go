@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -48,4 +49,15 @@ func getQType(expr bool) int {
 		return 1
 	}
 	return 0
+}
+
+// normalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.
+func normalizeURL(url string) string {
+	// Trim spaces
+	url = strings.TrimSpace(url)
+	// Trim trailing slash
+	url = strings.TrimRight(url, "/")
+	// Convert to lowercase
+	url = strings.ToLower(url)
+	return url
 }

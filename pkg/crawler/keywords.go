@@ -196,8 +196,8 @@ func extractKeywords(pageInfo PageInfo) []string {
 	content := normalizeText(doc.Text())
 
 	// Extract from meta tags (keywords and description)
-	keywords = append(keywords, extractFromMetaTag(pageInfo.MetaTags, "keywords")...)
-	keywords = append(keywords, extractFromMetaTag(pageInfo.MetaTags, "description")...)
+	keywords = append(keywords, extractFromMetaTag(pageInfo.Keywords, "keywords")...)
+	keywords = append(keywords, extractFromMetaTag(pageInfo.Keywords, "description")...)
 
 	// Extract from main content
 	contentKeywords := extractContentKeywords(content)

@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
@@ -35,6 +36,9 @@ func insertWebsite(db *sql.DB, url string) error {
 	// SQL statement to insert a new website
 	stmt := `INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')`
 
+	// Normalize the URL
+	url = normalizeURL(url)
+
 	// Execute the SQL statement
 	_, err := db.Exec(stmt, url)
 	if err != nil {
@@ -43,6 +47,17 @@ func insertWebsite(db *sql.DB, url string) error {
 
 	fmt.Println("Website inserted successfully:", url)
 	return nil
+}
+
+// normalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.
+func normalizeURL(url string) string {
+	// Trim spaces
+	url = strings.TrimSpace(url)
+	// Trim trailing slash
+	url = strings.TrimRight(url, "/")
+	// Convert to lowercase
+	url = strings.ToLower(url)
+	return url
 }
 
 func main() {
