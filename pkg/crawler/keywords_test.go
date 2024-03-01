@@ -128,7 +128,7 @@ func TestExtractKeywords(t *testing.T) {
 	keywords := make(map[string]string)
 	keywords["keywords"] = testData
 	pageInfo := PageInfo{
-		MetaTags: keywords,
+		Keywords: keywords,
 	}
 
 	tests := []struct {

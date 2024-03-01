@@ -606,11 +606,11 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 
 	// Step 1: Insert into WebObjects
 	err := tx.QueryRow(`
-		INSERT INTO WebObjects (object_url, object_hash, object_content)
+		INSERT INTO WebObjects (object_html, object_hash, object_content)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (object_hash) DO UPDATE
 		SET object_content = EXCLUDED.object_content
-		RETURNING object_id;`, pageInfo.URL, hash, pageInfo.BodyText).Scan(&objID)
+		RETURNING object_id;`, pageInfo.HTML, hash, pageInfo.BodyText).Scan(&objID)
 	if err != nil {
 		return err
 	}
@@ -714,8 +714,11 @@ func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) erro
 // It takes a transaction, index ID, and a map of meta tags as parameters.
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
-func insertMetaTags(tx *sql.Tx, indexID int64, metaTags map[string]string) error {
-	for name, content := range metaTags {
+func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
+	for _, metatag := range metaTags {
+		name := metatag.Name
+		content := metatag.Content
+
 		var metatagID int64
 
 		// Try to find the metatag ID first
@@ -884,6 +887,10 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 	title, _ := webPage.Title()
 	summary := doc.Find("meta[name=description]").AttrOr("content", "")
 	bodyText := doc.Find("body").Text()
+	// transform tabs into spaces
+	bodyText = strings.Replace(bodyText, "\t", " ", -1)
+	// remove excessive spaces in bodyText
+	bodyText = strings.Join(strings.Fields(bodyText), " ")
 
 	metaTags := extractMetaTags(doc)
 
@@ -893,6 +900,7 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 		Title:        title,
 		Summary:      summary,
 		BodyText:     bodyText,
+		HTML:         htmlContent,
 		MetaTags:     metaTags,
 		DetectedLang: detectLang(webPage),
 		DetectedType: inferDocumentType(currentURL),
@@ -946,14 +954,14 @@ func inferDocumentType(url string) string {
 
 // extractMetaTags is a function that extracts meta tags from a goquery.Document.
 // It iterates over each "meta" element in the document and retrieves the "name" and "content" attributes.
-// The extracted meta tags are stored in a map[string]string, where the "name" attribute is the key and the "content" attribute is the value.
-// The function returns the map of extracted meta tags.
-func extractMetaTags(doc *goquery.Document) map[string]string {
-	metaTags := make(map[string]string)
+// The extracted meta tags are stored in a []MetaTag, where the "name" attribute is the key and the "content" attribute is the value.
+// The function returns the slice of extracted meta tags.
+func extractMetaTags(doc *goquery.Document) []MetaTag {
+	var metaTags []MetaTag
 	doc.Find("meta").Each(func(_ int, s *goquery.Selection) {
 		if name, exists := s.Attr("name"); exists {
 			content, _ := s.Attr("content")
-			metaTags[name] = content
+			metaTags = append(metaTags, MetaTag{Name: name, Content: content})
 		}
 	})
 	return metaTags
@@ -984,12 +992,28 @@ func extractLinks(htmlContent string) []string {
 	doc.Find("a").Each(func(index int, item *goquery.Selection) {
 		linkTag := item
 		link, _ := linkTag.Attr("href")
-		link = strings.TrimSpace(link)
+		link = normalizeURL(link, 0)
 		if link != "" && IsValidURL(link) {
 			links = append(links, link)
 		}
 	})
 	return links
+}
+
+// normalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.
+/* flags:
+   1: Convert to lowercase
+*/
+func normalizeURL(url string, flags uint) string {
+	// Trim spaces
+	url = strings.TrimSpace(url)
+	// Trim trailing slash
+	url = strings.TrimRight(url, "/")
+	// Convert to lowercase
+	if flags&1 == 1 {
+		url = strings.ToLower(url)
+	}
+	return url
 }
 
 // isExternalLink checks if the link is external (aka outside the Source domain)

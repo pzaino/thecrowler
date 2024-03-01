@@ -29,11 +29,14 @@ func performAddSource(query string, qType int) (ConsoleResponse, error) {
 	var sqlQuery string
 	var sqlParams addSourceRequest
 	if qType == 1 {
-		sqlParams.URL = query
+		sqlParams.URL = normalizeURL(query)
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
 	} else {
 		// extract the parameters from the query
 		extractAddSourceParams(query, &sqlParams)
+		// Normalize the URL
+		sqlParams.URL = normalizeURL(sqlParams.URL)
+		// Prepare the SQL query
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config) VALUES ($1, NULL, $2, $3, $4, $5, $6)"
 	}
 
@@ -189,7 +192,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 		}
 		return ConsoleResponse{Message: "Failed to delete source and related data"}, err
 	}
-	_, err = tx.Exec("SELECT cleanup_orphaned_httpinfo();", sourceID)
+	_, err = tx.Exec("SELECT cleanup_orphaned_httpinfo();")
 	if err != nil {
 		err2 := tx.Rollback() // Rollback in case of error
 		if err2 != nil {
@@ -197,7 +200,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 		}
 		return ConsoleResponse{Message: "Failed to cleanup orphaned httpinfo"}, err
 	}
-	_, err = tx.Exec("SELECT cleanup_orphaned_netinfo();", sourceID)
+	_, err = tx.Exec("SELECT cleanup_orphaned_netinfo();")
 	if err != nil {
 		err2 := tx.Rollback() // Rollback in case of error
 		if err2 != nil {

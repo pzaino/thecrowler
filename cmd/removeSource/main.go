@@ -23,13 +23,58 @@ import (
 	"log"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-
-	"github.com/lib/pq"
 )
 
 var (
 	config cfg.Config
 )
+
+// ConsoleResponse represents the structure of the response
+// returned by the console API (addSource/removeSOurce etc.).
+type ConsoleResponse struct {
+	Message string `json:"message"`
+}
+
+func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
+	var results ConsoleResponse
+	results.Message = "Failed to remove the source"
+
+	// First, get the source_id for the given URL to ensure it exists and to use in cascading deletes if necessary
+	var sourceID int64
+	err := tx.QueryRow("SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
+	if err != nil {
+		return results, err
+	}
+
+	// Proceed with deleting the source using the obtained source_id
+	_, err = tx.Exec("DELETE FROM Sources WHERE source_id = $1", sourceID)
+	if err != nil {
+		err2 := tx.Rollback() // Rollback in case of error
+		if err2 != nil {
+			return ConsoleResponse{Message: "Failed to delete source"}, err2
+		}
+		return ConsoleResponse{Message: "Failed to delete source and related data"}, err
+	}
+	_, err = tx.Exec("SELECT cleanup_orphaned_httpinfo();")
+	if err != nil {
+		err2 := tx.Rollback() // Rollback in case of error
+		if err2 != nil {
+			return ConsoleResponse{Message: "Failed to cleanup orphaned httpinfo"}, err2
+		}
+		return ConsoleResponse{Message: "Failed to cleanup orphaned httpinfo"}, err
+	}
+	_, err = tx.Exec("SELECT cleanup_orphaned_netinfo();")
+	if err != nil {
+		err2 := tx.Rollback() // Rollback in case of error
+		if err2 != nil {
+			return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err2
+		}
+		return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err
+	}
+
+	results.Message = "Source and related data removed successfully"
+	return results, nil
+}
 
 // removeSite removes a site from the database along with its associated entries in other tables.
 // It takes a *sql.DB as the database connection and a siteURL string as the URL of the site to be removed.
@@ -43,14 +88,7 @@ func removeSite(db *sql.DB, siteURL string) error {
 		return err
 	}
 
-	// Delete from Sources
-	err = deleteFromSources(tx, siteURL)
-	if err != nil {
-		return err
-	}
-
-	// Find and delete associated entries in SearchIndex, MetaTags, and KeywordIndex
-	err = deleteAssociatedEntries(tx, siteURL)
+	_, err = removeSource(tx, siteURL)
 	if err != nil {
 		return err
 	}
@@ -62,102 +100,6 @@ func removeSite(db *sql.DB, siteURL string) error {
 	}
 
 	return nil
-}
-
-func deleteFromSources(tx *sql.Tx, siteURL string) error {
-	_, err := tx.Exec(`DELETE FROM Sources WHERE url = $1`, siteURL)
-	if err != nil {
-		rollbackTransaction(tx)
-		return err
-	}
-	return nil
-}
-
-func deleteAssociatedEntries(tx *sql.Tx, siteURL string) error {
-	indexIDs, err := getAssociatedIndexIDs(tx, siteURL)
-	if err != nil {
-		rollbackTransaction(tx)
-		return err
-	}
-
-	err = deleteFromSearchIndex(tx, siteURL)
-	if err != nil {
-		rollbackTransaction(tx)
-		return err
-	}
-
-	err = deleteFromMetaTags(tx, indexIDs)
-	if err != nil {
-		rollbackTransaction(tx)
-		return err
-	}
-
-	err = deleteFromKeywordIndex(tx, indexIDs, siteURL)
-	if err != nil {
-		rollbackTransaction(tx)
-		return err
-	}
-
-	return nil
-}
-
-func getAssociatedIndexIDs(tx *sql.Tx, siteURL string) ([]int, error) {
-	var indexIDs []int
-	rows, err := tx.Query(`SELECT index_id FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var indexID int
-		if err := rows.Scan(&indexID); err != nil {
-			return nil, err
-		}
-		indexIDs = append(indexIDs, indexID)
-	}
-
-	return indexIDs, nil
-}
-
-func deleteFromSearchIndex(tx *sql.Tx, siteURL string) error {
-	_, err := tx.Exec(`DELETE FROM SearchIndex WHERE source_id = (SELECT source_id FROM Sources WHERE url = $1)`, siteURL)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func deleteFromMetaTags(tx *sql.Tx, indexIDs []int) error {
-	for _, id := range indexIDs {
-		_, err := tx.Exec(`DELETE FROM MetaTags WHERE index_id = $1`, id)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func deleteFromKeywordIndex(tx *sql.Tx, indexIDs []int, siteURL string) error {
-	_, err := tx.Exec(`
-		DELETE FROM KeywordIndex
-		WHERE index_id = ANY($1)
-		AND NOT EXISTS (
-			SELECT 1 FROM SearchIndex
-			WHERE index_id = KeywordIndex.index_id
-			AND source_id != (SELECT source_id FROM Sources WHERE url = $2)
-		)`, pq.Array(indexIDs), siteURL)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func rollbackTransaction(tx *sql.Tx) {
-	err := tx.Rollback()
-	if err != nil {
-		log.Printf("Error rolling back transaction: %v\n", err)
-	}
 }
 
 func main() {

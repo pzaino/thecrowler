@@ -96,11 +96,11 @@ CREATE TABLE IF NOT EXISTS WebObjects (
     object_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    object_url TEXT NOT NULL, -- The original URL where the object was found
     object_link TEXT NOT NULL DEFAULT 'db', -- The link to where the object is stored if not in the DB
     object_type VARCHAR(255) NOT NULL DEFAULT 'text/html', -- The type of the object, for fast searches
     object_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the object for fast comparison and uniqueness
-    object_content TEXT -- The actual content of the object, nullable if stored externally
+    object_content TEXT, -- The actual content of the object, nullable if stored externally
+    object_html TEXT -- The HTML content of the object, nullable if stored externally
 );
 
 -- MetaTags table stores the meta tags from the SearchIndex
@@ -498,17 +498,6 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_screenshots_created_at') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_screenshots_created_at ON Screenshots(created_at);
-    END IF;
-END
-$$;
-
--- Creates an index for the WebObjects object_url column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_url') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_webobjects_object_url ON WebObjects(object_url text_pattern_ops);
     END IF;
 END
 $$;

@@ -30,6 +30,12 @@ type SeleniumInstance struct {
 	Config  cfg.Selenium
 }
 
+// MetaTag represents a single meta tag, including its name and content.
+type MetaTag struct {
+	Name    string
+	Content string
+}
+
 // PageInfo represents the information of a web page.
 type PageInfo struct {
 	URL          string             // The URL of the web page.
@@ -37,7 +43,9 @@ type PageInfo struct {
 	Title        string             // The title of the web page.
 	Summary      string             // A summary of the web page content.
 	BodyText     string             // The main body text of the web page.
-	MetaTags     map[string]string  // The meta tags of the web page.
+	HTML         string             // The HTML content of the web page.
+	MetaTags     []MetaTag          // The meta tags of the web page.
+	Keywords     map[string]string  // The keywords of the web page.
 	DetectedType string             // The detected document type of the web page.
 	DetectedLang string             // The detected language of the web page.
 	NetInfo      *neti.NetInfo      // The network information of the web page.
