@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package scrapper implements the scrapper library for the Crowler and
+// Package scraper implements the scraper library for the Crowler and
 // the Crowler search engine.
 package scraper
 
