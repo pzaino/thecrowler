@@ -15,7 +15,7 @@ require (
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/likexian/whois v1.15.1
 	github.com/oschwald/maxminddb-golang v1.12.0
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.9.0
 )
 
 require (
