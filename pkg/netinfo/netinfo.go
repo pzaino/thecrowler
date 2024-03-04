@@ -69,7 +69,7 @@ func (ni *NetInfo) processNewIP(ip string) (IPInfo, error) {
 
 	// Get geolocation info
 	if ni.Config.Geolocation.Enabled {
-		geoLocation, err := DetectLocation(ip, ni.Config.Geolocation.DBPath)
+		geoLocation, err := DetectLocation(ip, ni.Config.Geolocation)
 		if err != nil {
 			return ipInfo, fmt.Errorf("error detecting geolocation for IP %s: %v", ip, err)
 		}

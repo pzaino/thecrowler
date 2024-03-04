@@ -78,8 +78,9 @@ type NetLookupConfig struct {
 // GeoLookupConfig represents the network information gathering configuration
 type GeoLookupConfig struct {
 	Enabled bool   `yaml:"enabled"`
-	Type    string `yaml:"type"`
-	DBPath  string `yaml:"db_path"`
+	Type    string `yaml:"type"`    // "maxmind" or "ip2location"
+	DBPath  string `yaml:"db_path"` // Used for MaxMind
+	APIKey  string `yaml:"api_key"` // Used for IP2Location
 }
 
 // NetworkInfo represents the network information gathering configuration

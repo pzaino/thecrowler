@@ -92,6 +92,16 @@ type DetectedLocation struct {
 	Longitude   float64
 }
 
+// IP2LocationResult represents the structure of the IP2Location result.
+type IP2LocationResult struct {
+	CountryCode string  `json:"country_code"`
+	CountryName string  `json:"country_name"`
+	RegionName  string  `json:"region_name"`
+	CityName    string  `json:"city_name"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+}
+
 // IPInfo represents the structure of the IP information you want to extract and store.
 type IPInfo struct {
 	IP          string

@@ -16,16 +16,34 @@
 package netinfo
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	config "github.com/pzaino/thecrowler/pkg/config"
 
 	"github.com/oschwald/maxminddb-golang"
 )
 
+func DetectLocation(ipAddress string, cfg config.GeoLookupConfig) (*DetectedLocation, error) {
+	if !cfg.Enabled {
+		return nil, fmt.Errorf("geolocation is disabled")
+	}
+
+	switch cfg.Type {
+	case "maxmind":
+		return detectLocationMaxMind(ipAddress, cfg.DBPath)
+	case "ip2location":
+		return detectLocationIP2Location(ipAddress, cfg.APIKey)
+	default:
+		return nil, fmt.Errorf("unsupported geolocation type: %s", cfg.Type)
+	}
+}
+
 // DetectLocation detects the geolocation for the given IP address using the provided GeoLite2 database.
-func DetectLocation(ipAddress string, dbPath string) (*DetectedLocation, error) {
+func detectLocationMaxMind(ipAddress string, dbPath string) (*DetectedLocation, error) {
 	// Check if the DB path is valid and the file exists
 	if dbPath == "" {
 		return nil, fmt.Errorf("GeoLite2 database path is empty")
@@ -52,6 +70,36 @@ func DetectLocation(ipAddress string, dbPath string) (*DetectedLocation, error) 
 	err = db.Lookup(netIP, &location)
 	if err != nil {
 		return nil, err
+	}
+
+	return &location, nil
+}
+
+func detectLocationIP2Location(ipAddress, apiKey string) (*DetectedLocation, error) {
+	url := fmt.Sprintf("https://api.ip2location.com/v2/?ip=%s&key=%s&format=json", ipAddress, apiKey)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("IP2Location API returned non-OK status: %d", resp.StatusCode)
+	}
+
+	var result IP2LocationResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	// Convert IP2LocationResult to DetectedLocation as needed
+	location := DetectedLocation{
+		CountryCode: result.CountryCode,
+		CountryName: result.CountryName,
+		City:        result.CityName,
+		Latitude:    result.Latitude,
+		Longitude:   result.Longitude,
 	}
 
 	return &location, nil
