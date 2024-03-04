@@ -144,8 +144,13 @@
                           "enum": [
                             "element_presence",
                             "element_visible",
-                            "custom_js"
+                            "custom_js",
+                            "delay"
                           ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type."
                         },
                         "selector": {
                           "type": "string",
@@ -281,8 +286,13 @@
                           "enum": [
                             "element_presence",
                             "element_visible",
-                            "custom_js"
+                            "custom_js",
+                            "delay"
                           ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type."
                         },
                         "selector": {
                           "type": "string",

@@ -124,7 +124,12 @@ items:
                           - element_presence
                           - element_visible
                           - custom_js
+                          - delay
                         description: The type of condition to wait for before scraping.
+                      value:
+                        type: string
+                        description: The value to use with the condition, e.g., the delay in seconds,
+                          applicable for delay condition type.
                       selector:
                         type: string
                         description: The CSS selector for the element, applicable for element_presence
@@ -244,7 +249,12 @@ items:
                           - element_presence
                           - element_visible
                           - custom_js
+                          - delay
                         description: The type of condition to wait for before executing the action.
+                      value:
+                        type: string
+                        description: The value to use with the condition, e.g., the delay in seconds,
+                          applicable for delay condition type.
                       selector:
                         type: string
                         description: The CSS selector for the element, applicable for element_presence
