@@ -19,6 +19,11 @@ require (
 )
 
 require (
+	github.com/kr/pretty v0.3.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+)
+
+require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	golang.org/x/time v0.5.0
@@ -27,7 +32,7 @@ require (
 
 require (
 	github.com/google/go-cmp v0.6.0
-	golang.org/x/sys v0.17.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 )
 
 require (

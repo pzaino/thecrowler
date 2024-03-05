@@ -1,6 +1,7 @@
 # TheCROWler configuration YAML Schema (draft v1.0.0)
 # Copyright (c) 2022 Paolo Fabio Zaino, distributed under Apache 2.0 license
 ---
+$schema: http://json-schema.org/draft-07/schema#
 type: object
 properties:
   remote:
@@ -127,14 +128,10 @@ properties:
         sslmode:
           type: string
       required:
-        - path
-        - driver_path
         - type
+        - path
         - port
         - host
-        - headless
-        - use_service
-        - sslmode
   image_storage:
     type: object
     properties:
@@ -229,14 +226,46 @@ properties:
         required:
           - enabled
           - path
+  rulesets:
+    type: array
+    items:
+      type: object
+      properties:
+        path:
+          type: array
+          items:
+            type: string
+        host:
+          type: string
+        port:
+          type: string
+        region:
+          type: string
+        token:
+          type: string
+        secret:
+          type: string
+        timeout:
+          type: integer
+        type:
+          type: string
+        sslmode:
+          type: string
+        refresh:
+          type: integer
+      required:
+        - path
+        - type
   os:
     type: string
   debug_level:
     type: integer
-required:
-  - database
-  - crawler
-  - api
-  - selenium
-  - image_storage
-  - network_info
+anyOf:
+  - required:
+      - remote
+  - required:
+      - database
+      - crawler
+      - api
+      - selenium
+      - network_info

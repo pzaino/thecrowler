@@ -38,6 +38,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 
 	var err error
 	for {
+		// Connect to the database
 		handler.db, err = sql.Open("postgres", connectionString)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
