@@ -127,9 +127,9 @@ If you're planning to install the CROWler manually, you'll need to install the
 following Docker containers:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
-  Postgres 15 up (for both ARM and x86) are supported at the moment.
+  - Postgres 15 up (for both ARM and x86) are supported at the moment.
 - [Selenium Chrome Container](https://hub.docker.com/r/selenium/standalone-chrome)
-  Selenium Chrome docker container 4.18.0 up (for both ARM and x86) are supported at the moment.
+  - Selenium Chrome docker container 4.18.0 up (for both ARM and x86) are supported at the moment.
 
 ### Build from source
 
