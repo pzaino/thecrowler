@@ -127,7 +127,9 @@ If you're planning to install the CROWler manually, you'll need to install the
 following Docker containers:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
+  Postgres 15 up (for both ARM and x86) are supported at the moment.
 - [Selenium Chrome Container](https://hub.docker.com/r/selenium/standalone-chrome)
+  Selenium Chrome docker container 4.18.0 up (for both ARM and x86) are supported at the moment.
 
 ### Build from source
 
@@ -180,15 +182,15 @@ docker build -t <image name> .
 ### Installation
 
 The easiest way to install the CROWler is to use the docker compose file. To do so,
-follow these steps:
+follow the steps below.
 
-Before you start, there are a bunch of ENV variables you can set to customize the
+**Before you start**: There are a bunch of ENV variables you can set to customize the
 CROWler deployment. These ENV vars allow you to set up your username and password
 for the database, the database name, the port the API will listen on, etc.
 
 To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
 
-There are 3 ENV vars you must set, otherwise the CROWler won't build or work:
+There are 3 ENV vars **you must set**, otherwise the CROWler won't build or work:
 
 - `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in the
 database (non-admin level).
@@ -200,9 +202,9 @@ Postgres container.
 
 Once you've set your ENV vars, follow these steps:
 
-1. If you haven't yet, clone TheCrowler repository
+1. If you haven't yet, clone TheCrowler repository on your build machine
 2. `cd` into the root directory of the repository
-3. Create your config.yaml file (see [here](doc/config_yaml.md) for more info)
+3. Create your **config.yaml** file (see [here](doc/config_yaml.md) for more info)
 4. Run `./docker-build.sh` to build the with Docker compose and the right
 platform (see [here](doc/docker_build.md) for more info)
 
