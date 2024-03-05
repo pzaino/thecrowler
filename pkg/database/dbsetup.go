@@ -79,7 +79,7 @@ func executeSQLFile(db *sql.DB, dbms, dbName string) {
 	// Get the path to the right SQL file
 	filePath := ""
 	if dbms == "postgres" {
-		filePath = fmt.Sprintf("pkg/database/psql-%s.pgsql", dbName)
+		filePath = fmt.Sprintf("./postgresql-%s.pgsql", dbName)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Unsupported database management system: %s", dbms)
 		return
