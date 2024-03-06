@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,20 +57,32 @@ func (ct *CustomTime) IsEmpty() bool {
 
 // ParseRules parses a YAML file containing site rules and returns a slice of SiteRules.
 // It takes a file path as input and returns the parsed site rules or an error if the file cannot be read or parsed.
-func ParseRules(file string) ([]Ruleset, error) {
-	var sites []Ruleset
-
-	yamlFile, err := os.ReadFile(file)
+func ParseRules(path string) ([]Ruleset, error) {
+	files, err := filepath.Glob(path)
 	if err != nil {
+		fmt.Println("Error finding JSON files:", err)
 		return nil, err
 	}
-
-	err = yaml.Unmarshal(yamlFile, &sites)
-	if err != nil {
-		return nil, err
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files found")
 	}
 
-	return sites, nil
+	var rulesets []Ruleset
+	for _, file := range files {
+		var ruleset []Ruleset
+		yamlFile, err := os.ReadFile(file)
+		if err != nil {
+			return nil, err
+		}
+
+		err = yaml.Unmarshal(yamlFile, &ruleset)
+		if err != nil {
+			return nil, err
+		}
+		rulesets = append(rulesets, ruleset...)
+	}
+
+	return rulesets, nil
 }
 
 // ParseRules is an interface for parsing rules from a file.
@@ -211,6 +224,47 @@ func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
 	// TODO: implement remote ruleset loading
 	return nil, fmt.Errorf("remote ruleset loading not implemented yet")
 
+}
+
+// Return the number of rulesets in the RuleEngine.
+func (re *RuleEngine) CountRulesets() int {
+	return len(re.Rulesets)
+}
+
+// Return the number of RuleGroups in the RuleEngine.
+func (re *RuleEngine) CountRuleGroups() int {
+	var count int
+	for _, rs := range re.Rulesets {
+		count += len(rs.RuleGroups)
+	}
+	return count
+}
+
+// Return the number of ScrapingRules in the RuleEngine.
+func (re *RuleEngine) CountScrapingRules() int {
+	var count int
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			count += len(rg.ScrapingRules)
+		}
+	}
+	return count
+}
+
+// Return the number of ActionRules in the RuleEngine.
+func (re *RuleEngine) CountActionRules() int {
+	var count int
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			count += len(rg.ActionRules)
+		}
+	}
+	return count
+}
+
+// Return the number of rules in the RuleEngine.
+func (re *RuleEngine) CountRules() int {
+	return re.CountScrapingRules() + re.CountActionRules()
 }
 
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
