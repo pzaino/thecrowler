@@ -123,21 +123,23 @@ and go straight to the Installation section.
 
 #### If you're planning to install it manually
 
-If you're planning to install the CROWler manually, you'll need to install the
-following Docker containers:
+If you're planning to install the CROWler manually, you'll need to install
+the following Docker containers:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
   - Postgres 15 up (for both ARM and x86) are supported at the moment.
 - [Selenium Chrome Container](https://hub.docker.com/r/selenium/standalone-chrome)
-  - Selenium Chrome docker container 4.18.0 up (for both ARM and x86) are supported at the moment.
+  - Selenium Chrome docker container 4.17.0 up (for both ARM and x86) are
+  supported at the moment.
 
 ### Build from source
 
 If you'll use the docker compose then everything will build automatically,
-all you'll need to do is follow the instructions in the Installation section.
+all you'll need to do is follow the instructions in the Installation
+section.
 
-If, instead you want to build locally on your machine, then follow the instructions
-in this section.
+If, instead you want to build locally on your machine, then follow the
+instructions in this section.
 
 To build the CROWler from source, you'll need to install the following:
 
@@ -160,8 +162,8 @@ command:
 go build -v ./...
 ```
 
-This will list all the targets that can be built and are available. To build a target,
-run the following command:
+This will list all the targets that can be built and are available. To build a
+target, run the following command:
 
 ```bash
 TheCrowler/cmd/removeSite
@@ -170,8 +172,8 @@ TheCrowler/services/api
 TheCrowler
 ```
 
-Build them as you need them, or run the `autobuild.sh` script to build
-them all.
+Build them as you need them, or run the `autobuild.sh` script to build them
+all.
 
 Optionally you can build the Docker image, to do so run the following command:
 
@@ -181,21 +183,23 @@ docker build -t <image name> .
 
 ### Installation
 
-The easiest way to install the CROWler is to use the docker compose file. To do so,
-follow the steps below.
+The easiest way to install the CROWler is to use the docker compose file. To
+do so, follow the steps below.
 
-**Before you start**: There are a bunch of ENV variables you can set to customize the
-CROWler deployment. These ENV vars allow you to set up your username and password
-for the database, the database name, the port the API will listen on, etc.
+**Before you start**: There are a bunch of ENV variables you can set to
+customize the CROWler deployment. These ENV vars allow you to set up your
+username and password for the database, the database name, the port the API
+will listen on, etc.
 
 To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
 
-There are 3 ENV vars **you must set**, otherwise the CROWler won't build or work:
+There are 3 ENV vars **you must set**, otherwise the CROWler won't build or
+work:
 
-- `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in the
-database (non-admin level).
-- `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in the
-database (admin level).
+- `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in
+the database (non-admin level).
+- `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in
+the database (admin level).
 - `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
 You normally set this one with the IP of the host where you're running the
 Postgres container.
@@ -204,7 +208,8 @@ Once you've set your ENV vars, follow these steps:
 
 1. If you haven't yet, clone TheCrowler repository on your build machine
 2. `cd` into the root directory of the repository
-3. Create your **config.yaml** file (see [here](doc/config_yaml.md) for more info)
+3. Create your **config.yaml** file (see [here](doc/config_yaml.md) for more
+info)
 4. Run `./docker-build.sh` to build the with Docker compose and the right
 platform (see [here](doc/docker_build.md) for more info)
 
@@ -213,8 +218,8 @@ need to build the CROWler with the `arm` platform. To do so, the easier way
 is to build the CROWler with the `docker-build.sh` script directly on the
 Raspberry Pi.
 
-**Please Note(2)**: If need to do a rebuild and want to clean up everything, run
-the following command:
+**Please Note(2)**: If need to do a rebuild and want to clean up everything,
+run the following command:
 
 ```bash
 ./docker-rebuild.sh
@@ -248,6 +253,7 @@ outside world, it will need internet access thought.
 The CROWler default configuration uses PostgreSQL as its database. The database is
 stored in a Docker volume and is persistent.
 
-The DB should need no maintenance, The CROWler will take care of that. Any time there
-is no crawling activity and it's passed 1 hours from the previous maintenance activity,
-The CROWler will clean up the database and optimize the indexes.
+The DB should need no maintenance, The CROWler will take care of that. Any time
+there is no crawling activity and it's passed 1 hours from the previous
+maintenance activity, The CROWler will clean up the database and optimize the
+indexes.
