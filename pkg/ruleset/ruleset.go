@@ -267,6 +267,131 @@ func (re *RuleEngine) CountRules() int {
 	return re.CountScrapingRules() + re.CountActionRules()
 }
 
+// GetActionType returns the action type for the specified action rule.
+func (r *ActionRule) GetActionType() string {
+	return strings.ToLower(strings.TrimSpace(r.ActionType))
+}
+
+// GetRuleName returns the rule name for the specified action rule.
+func (r *ActionRule) GetRuleName() string {
+	return strings.TrimSpace(r.RuleName)
+}
+
+// GetURL returns the URL for the specified action rule.
+func (r *ActionRule) GetURL() string {
+	return strings.TrimSpace(r.URL)
+}
+
+// GetSelectors returns the selectors for the specified action rule.
+func (r *ActionRule) GetSelectors() []Selector {
+	return r.Selectors
+}
+
+// GetValue returns the value for the specified action rule.
+func (r *ActionRule) GetValue() string {
+	return strings.TrimSpace(r.Value)
+}
+
+// GetWaitConditions returns the wait conditions for the specified action rule.
+func (r *ActionRule) GetWaitConditions() []WaitCondition {
+	return r.WaitConditions
+}
+
+// GetConditions returns the conditions for the specified action rule.
+func (r *ActionRule) GetConditions() map[string]bool {
+	return r.Conditions
+}
+
+// GetErrorHandling returns the error handling configuration for the specified action rule.
+func (r *ActionRule) GetErrorHandling() ErrorHandling {
+	return r.ErrorHandling
+}
+
+// GetSelectorType returns the selector type for the specified selector.
+func (s *Selector) GetSelectorType() string {
+	return strings.ToLower(strings.TrimSpace(s.SelectorType))
+}
+
+// GetSelector returns the selector for the specified selector.
+func (s *Selector) GetSelector() string {
+	return strings.TrimSpace(s.Selector)
+}
+
+// GetAttribute returns the attribute for the specified selector.
+func (s *Selector) GetAttribute() string {
+	return strings.TrimSpace(s.Attribute)
+}
+
+// GetRuleName returns the rule name for the specified scraping rule.
+func (r *ScrapingRule) GetRuleName() string {
+	return strings.TrimSpace(r.RuleName)
+}
+
+// GetPath returns the path for the specified scraping rule.
+func (r *ScrapingRule) GetPath() string {
+	return strings.TrimSpace(r.Path)
+}
+
+// GetURL returns the URL for the specified scraping rule.
+func (r *ScrapingRule) GetURL() string {
+	return strings.TrimSpace(r.URL)
+}
+
+// GetElements returns the elements for the specified scraping rule.
+func (r *ScrapingRule) GetElements() []Element {
+	return r.Elements
+}
+
+// GetJsFiles returns the js_files flag for the specified scraping rule.
+func (r *ScrapingRule) GetJsFiles() bool {
+	return r.JsFiles
+}
+
+// GetTechnologyPatterns returns the technology patterns for the specified scraping rule.
+func (r *ScrapingRule) GetTechnologyPatterns() []string {
+	return r.TechnologyPatterns
+}
+
+// GetJSONFieldMappings returns the JSON field mappings for the specified scraping rule.
+func (r *ScrapingRule) GetJSONFieldMappings() map[string]string {
+	return r.JSONFieldMappings
+}
+
+// GetWaitConditions returns the wait conditions for the specified scraping rule.
+func (r *ScrapingRule) GetWaitConditions() []WaitCondition {
+	return r.WaitConditions
+}
+
+// GetPostProcessing returns the post-processing steps for the specified scraping rule.
+func (r *ScrapingRule) GetPostProcessing() []PostProcessingStep {
+	return r.PostProcessing
+}
+
+// GetConditionType returns the condition type for the specified wait condition.
+func (w *WaitCondition) GetConditionType() string {
+	return strings.ToLower(strings.TrimSpace(w.ConditionType))
+}
+
+// GetSelector returns the selector for the specified wait condition.
+func (w *WaitCondition) GetSelector() string {
+	return strings.TrimSpace(w.Selector)
+}
+
+// GetCustomJS returns the custom JS for the specified wait condition.
+func (w *WaitCondition) GetCustomJS() string {
+	return strings.TrimSpace(w.CustomJS)
+}
+
+// GetStepType returns the step type for the specified post-processing step.
+func (p *PostProcessingStep) GetStepType() string {
+	return strings.ToLower(strings.TrimSpace(p.StepType))
+}
+
+// GetDetails returns the details for the specified post-processing step.
+func (p *PostProcessingStep) GetDetails() map[string]interface{} {
+	return p.Details
+}
+
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
 // It initializes the RuleEngine with the given sites and returns a pointer to the created RuleEngine.
 func NewRuleEngine(ruleset []Ruleset) *RuleEngine {
