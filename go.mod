@@ -1,6 +1,6 @@
 module github.com/pzaino/thecrowler
 
-go 1.21.5
+go 1.22.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.1
@@ -16,6 +16,11 @@ require (
 	github.com/likexian/whois v1.15.1
 	github.com/oschwald/maxminddb-golang v1.12.0
 	github.com/stretchr/testify v1.9.0
+)
+
+require (
+	github.com/kr/pretty v0.3.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
 
 require (

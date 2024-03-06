@@ -333,6 +333,51 @@
                 }
             }
         },
+        "rulesets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "string"
+                    },
+                    "region": {
+                        "type": "string"
+                    },
+                    "token": {
+                        "type": "string"
+                    },
+                    "secret": {
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "type": "integer"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "sslmode": {
+                        "type": "string"
+                    },
+                    "refresh": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "path",
+                    "type"
+                ]
+            }
+        },
         "os": {
             "type": "string"
         },
@@ -340,11 +385,20 @@
             "type": "integer"
         }
     },
-    "required": [
-        "database",
-        "crawler",
-        "api",
-        "selenium",
-        "network_info"
+    "anyOf": [
+        {
+            "required": [
+                "remote"
+            ]
+        },
+        {
+            "required": [
+                "database",
+                "crawler",
+                "api",
+                "selenium",
+                "network_info"
+            ]
+        }
     ]
 }

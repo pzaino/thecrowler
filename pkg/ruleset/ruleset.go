@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 
 	"gopkg.in/yaml.v2"
 )
@@ -55,20 +57,32 @@ func (ct *CustomTime) IsEmpty() bool {
 
 // ParseRules parses a YAML file containing site rules and returns a slice of SiteRules.
 // It takes a file path as input and returns the parsed site rules or an error if the file cannot be read or parsed.
-func ParseRules(file string) ([]Ruleset, error) {
-	var sites []Ruleset
-
-	yamlFile, err := os.ReadFile(file)
+func ParseRules(path string) ([]Ruleset, error) {
+	files, err := filepath.Glob(path)
 	if err != nil {
+		fmt.Println("Error finding JSON files:", err)
 		return nil, err
 	}
-
-	err = yaml.Unmarshal(yamlFile, &sites)
-	if err != nil {
-		return nil, err
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files found")
 	}
 
-	return sites, nil
+	var rulesets []Ruleset
+	for _, file := range files {
+		var ruleset []Ruleset
+		yamlFile, err := os.ReadFile(file)
+		if err != nil {
+			return nil, err
+		}
+
+		err = yaml.Unmarshal(yamlFile, &ruleset)
+		if err != nil {
+			return nil, err
+		}
+		rulesets = append(rulesets, ruleset...)
+	}
+
+	return rulesets, nil
 }
 
 // ParseRules is an interface for parsing rules from a file.
@@ -80,13 +94,302 @@ func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
 // and creating a new rule engine with the parsed sites.
 // It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
-	sites, err := ParseRules(rulesFile)
+	rules, err := ParseRules(rulesFile)
 	if err != nil {
 		return nil, err
 	}
 
-	engine := NewRuleEngine(sites)
+	engine := NewRuleEngine(rules)
 	return engine, nil
+}
+
+// LoadRulesFromFile loads the rules from the specified file and returns a pointer to the created RuleEngine.
+func LoadRulesFromFile(files []string) (*RuleEngine, error) {
+	var rules []Ruleset
+	for _, file := range files {
+		r, err := ParseRules(file)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, r...)
+	}
+	return NewRuleEngine(rules), nil
+}
+
+// AddRuleset adds a new ruleset to the RuleEngine.
+func (re *RuleEngine) AddRuleset(ruleset Ruleset) {
+	re.Rulesets = append(re.Rulesets, ruleset)
+}
+
+// RemoveRuleset removes a ruleset from the RuleEngine.
+func (re *RuleEngine) RemoveRuleset(ruleset Ruleset) {
+	for i, r := range re.Rulesets {
+		if r.Name == ruleset.Name {
+			re.Rulesets = append(re.Rulesets[:i], re.Rulesets[i+1:]...)
+			return
+		}
+	}
+}
+
+// UpdateRuleset updates a ruleset in the RuleEngine.
+func (re *RuleEngine) UpdateRuleset(ruleset Ruleset) {
+	for i, r := range re.Rulesets {
+		if r.Name == ruleset.Name {
+			re.Rulesets[i] = ruleset
+			return
+		}
+	}
+}
+
+// GetScrapingRule returns a scraping rule with the specified name.
+func (re *RuleEngine) GetScrapingRule(name string) (ScrapingRule, error) {
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			for _, r := range rg.ScrapingRules {
+				if r.RuleName == name {
+					return r, nil
+				}
+			}
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("rule not found")
+}
+
+// GetActionRule returns an action rule with the specified name.
+func (re *RuleEngine) GetActionRule(name string) (ActionRule, error) {
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			for _, r := range rg.ActionRules {
+				if r.RuleName == name {
+					return r, nil
+				}
+			}
+		}
+	}
+	return ActionRule{}, fmt.Errorf("rule not found")
+}
+
+// GetRuleGroup returns a rule group with the specified name.
+func (re *RuleEngine) GetRuleGroup(name string) (RuleGroup, error) {
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			if rg.GroupName == name {
+				return rg, nil
+			}
+		}
+	}
+	return RuleGroup{}, fmt.Errorf("rule group not found")
+}
+
+// GetRuleset returns a ruleset with the specified name.
+func (re *RuleEngine) GetRuleset(name string) (Ruleset, error) {
+	for _, rs := range re.Rulesets {
+		if rs.Name == name {
+			return rs, nil
+		}
+	}
+	return Ruleset{}, fmt.Errorf("ruleset not found")
+}
+
+// LoadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
+func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
+	for _, rs := range config.Rulesets {
+		rulesets, err := loadRulesFromConfig(rs)
+		if err != nil {
+			return err
+		}
+		re.Rulesets = append(re.Rulesets, *rulesets...)
+	}
+	return nil
+}
+
+// loadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
+func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
+	if config.Path == nil {
+		return nil, fmt.Errorf("empty path provided")
+	}
+	if config.Host == "" {
+		// Rules are stored locally
+		var ruleset []Ruleset
+		for _, path := range config.Path {
+			rules, err := ParseRules(path)
+			if err != nil {
+				return nil, err
+			}
+			ruleset = append(ruleset, rules...)
+		}
+		return &ruleset, nil
+	}
+	// Rules are stored remotely
+	// TODO: implement remote ruleset loading
+	return nil, fmt.Errorf("remote ruleset loading not implemented yet")
+
+}
+
+// Return the number of rulesets in the RuleEngine.
+func (re *RuleEngine) CountRulesets() int {
+	return len(re.Rulesets)
+}
+
+// Return the number of RuleGroups in the RuleEngine.
+func (re *RuleEngine) CountRuleGroups() int {
+	var count int
+	for _, rs := range re.Rulesets {
+		count += len(rs.RuleGroups)
+	}
+	return count
+}
+
+// Return the number of ScrapingRules in the RuleEngine.
+func (re *RuleEngine) CountScrapingRules() int {
+	var count int
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			count += len(rg.ScrapingRules)
+		}
+	}
+	return count
+}
+
+// Return the number of ActionRules in the RuleEngine.
+func (re *RuleEngine) CountActionRules() int {
+	var count int
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			count += len(rg.ActionRules)
+		}
+	}
+	return count
+}
+
+// Return the number of rules in the RuleEngine.
+func (re *RuleEngine) CountRules() int {
+	return re.CountScrapingRules() + re.CountActionRules()
+}
+
+// GetActionType returns the action type for the specified action rule.
+func (r *ActionRule) GetActionType() string {
+	return strings.ToLower(strings.TrimSpace(r.ActionType))
+}
+
+// GetRuleName returns the rule name for the specified action rule.
+func (r *ActionRule) GetRuleName() string {
+	return strings.TrimSpace(r.RuleName)
+}
+
+// GetURL returns the URL for the specified action rule.
+func (r *ActionRule) GetURL() string {
+	return strings.TrimSpace(r.URL)
+}
+
+// GetSelectors returns the selectors for the specified action rule.
+func (r *ActionRule) GetSelectors() []Selector {
+	return r.Selectors
+}
+
+// GetValue returns the value for the specified action rule.
+func (r *ActionRule) GetValue() string {
+	return strings.TrimSpace(r.Value)
+}
+
+// GetWaitConditions returns the wait conditions for the specified action rule.
+func (r *ActionRule) GetWaitConditions() []WaitCondition {
+	return r.WaitConditions
+}
+
+// GetConditions returns the conditions for the specified action rule.
+func (r *ActionRule) GetConditions() map[string]bool {
+	return r.Conditions
+}
+
+// GetErrorHandling returns the error handling configuration for the specified action rule.
+func (r *ActionRule) GetErrorHandling() ErrorHandling {
+	return r.ErrorHandling
+}
+
+// GetSelectorType returns the selector type for the specified selector.
+func (s *Selector) GetSelectorType() string {
+	return strings.ToLower(strings.TrimSpace(s.SelectorType))
+}
+
+// GetSelector returns the selector for the specified selector.
+func (s *Selector) GetSelector() string {
+	return strings.TrimSpace(s.Selector)
+}
+
+// GetAttribute returns the attribute for the specified selector.
+func (s *Selector) GetAttribute() string {
+	return strings.TrimSpace(s.Attribute)
+}
+
+// GetRuleName returns the rule name for the specified scraping rule.
+func (r *ScrapingRule) GetRuleName() string {
+	return strings.TrimSpace(r.RuleName)
+}
+
+// GetPath returns the path for the specified scraping rule.
+func (r *ScrapingRule) GetPath() string {
+	return strings.TrimSpace(r.Path)
+}
+
+// GetURL returns the URL for the specified scraping rule.
+func (r *ScrapingRule) GetURL() string {
+	return strings.TrimSpace(r.URL)
+}
+
+// GetElements returns the elements for the specified scraping rule.
+func (r *ScrapingRule) GetElements() []Element {
+	return r.Elements
+}
+
+// GetJsFiles returns the js_files flag for the specified scraping rule.
+func (r *ScrapingRule) GetJsFiles() bool {
+	return r.JsFiles
+}
+
+// GetTechnologyPatterns returns the technology patterns for the specified scraping rule.
+func (r *ScrapingRule) GetTechnologyPatterns() []string {
+	return r.TechnologyPatterns
+}
+
+// GetJSONFieldMappings returns the JSON field mappings for the specified scraping rule.
+func (r *ScrapingRule) GetJSONFieldMappings() map[string]string {
+	return r.JSONFieldMappings
+}
+
+// GetWaitConditions returns the wait conditions for the specified scraping rule.
+func (r *ScrapingRule) GetWaitConditions() []WaitCondition {
+	return r.WaitConditions
+}
+
+// GetPostProcessing returns the post-processing steps for the specified scraping rule.
+func (r *ScrapingRule) GetPostProcessing() []PostProcessingStep {
+	return r.PostProcessing
+}
+
+// GetConditionType returns the condition type for the specified wait condition.
+func (w *WaitCondition) GetConditionType() string {
+	return strings.ToLower(strings.TrimSpace(w.ConditionType))
+}
+
+// GetSelector returns the selector for the specified wait condition.
+func (w *WaitCondition) GetSelector() string {
+	return strings.TrimSpace(w.Selector)
+}
+
+// GetCustomJS returns the custom JS for the specified wait condition.
+func (w *WaitCondition) GetCustomJS() string {
+	return strings.TrimSpace(w.CustomJS)
+}
+
+// GetStepType returns the step type for the specified post-processing step.
+func (p *PostProcessingStep) GetStepType() string {
+	return strings.ToLower(strings.TrimSpace(p.StepType))
+}
+
+// GetDetails returns the details for the specified post-processing step.
+func (p *PostProcessingStep) GetDetails() map[string]interface{} {
+	return p.Details
 }
 
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
@@ -95,6 +398,13 @@ func NewRuleEngine(ruleset []Ruleset) *RuleEngine {
 	// Implementation of the RuleEngine initialization
 	return &RuleEngine{
 		Rulesets: ruleset,
+	}
+}
+
+// NewEmptyRuleEngine creates a new instance of RuleEngine with an empty slice of site rules.
+func NewEmptyRuleEngine() RuleEngine {
+	return RuleEngine{
+		Rulesets: []Ruleset{},
 	}
 }
 

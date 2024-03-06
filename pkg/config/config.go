@@ -178,6 +178,12 @@ func NewConfig() Config {
 				SSLMode:    "disable",
 			},
 		},
+		Rulesets: []Ruleset{
+			{
+				Type: "local",
+				Path: []string{"./rules/*.json"},
+			},
+		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
 			Path:    "./data",

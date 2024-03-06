@@ -151,6 +151,7 @@ type Ruleset struct {
 	Timeout int      `yaml:"timeout"` // Timeout for API requests (in seconds)
 	Type    string   `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode string   `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
+	Refresh int      `yaml:"refresh"` // Refresh interval for the ruleset (in seconds)
 }
 
 // Config represents the structure of the configuration file
@@ -178,6 +179,9 @@ type Config struct {
 
 	// NetworkInfo configuration
 	NetworkInfo NetworkInfo `yaml:"network_info"`
+
+	// Rules configuration
+	Rulesets []Ruleset `yaml:"rulesets"`
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
