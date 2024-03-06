@@ -250,7 +250,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	*RulesEngine = rules.NewEmptyRuleEngine()
 	err = RulesEngine.LoadRulesFromConfig(config)
 	if err != nil {
-		return fmt.Errorf("error loading rules from configuration: %s", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error loading rules from configuration: %v", err)
 	}
 
 	// Start the crawler
