@@ -35,6 +35,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 
 	_ "github.com/lib/pq"
 )
@@ -218,7 +219,7 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []c
 	wg.Wait() // Block until all goroutines have decremented the counter
 }
 
-func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance) error {
+func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) error {
 	var err error
 	// Reload the configuration file
 	*config, err = cfg.LoadConfig(*configFile)
@@ -245,6 +246,13 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 		}
 	}
 
+	// Initialize the rules engine
+	*RulesEngine = rules.NewEmptyRuleEngine()
+	err = RulesEngine.LoadRulesFromConfig(config)
+	if err != nil {
+		return fmt.Errorf("error loading rules from configuration: %s", err)
+	}
+
 	// Start the crawler
 	crowler.StartCrawler(*config)
 
@@ -265,6 +273,9 @@ func main() {
 
 	// Define sel before we set signal handlers
 	var seleniumInstances chan crowler.SeleniumInstance
+
+	// Define RulesEngine before we set signal handlers
+	var RulesEngine rules.RuleEngine
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -298,7 +309,7 @@ func main() {
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
-				err := initAll(configFile, &config, &db, &seleniumInstances)
+				err := initAll(configFile, &config, &db, &seleniumInstances, &RulesEngine)
 				if err != nil {
 					configMutex.Unlock()
 					cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
@@ -317,7 +328,7 @@ func main() {
 	}()
 
 	// Initialize the crawler
-	err := initAll(configFile, &config, &db, &seleniumInstances)
+	err := initAll(configFile, &config, &db, &seleniumInstances, &RulesEngine)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
 	}

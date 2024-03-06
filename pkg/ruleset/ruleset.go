@@ -24,6 +24,7 @@ import (
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 
 	"gopkg.in/yaml.v2"
 )
@@ -80,13 +81,136 @@ func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
 // and creating a new rule engine with the parsed sites.
 // It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
-	sites, err := ParseRules(rulesFile)
+	rules, err := ParseRules(rulesFile)
 	if err != nil {
 		return nil, err
 	}
 
-	engine := NewRuleEngine(sites)
+	engine := NewRuleEngine(rules)
 	return engine, nil
+}
+
+// LoadRulesFromFile loads the rules from the specified file and returns a pointer to the created RuleEngine.
+func LoadRulesFromFile(files []string) (*RuleEngine, error) {
+	var rules []Ruleset
+	for _, file := range files {
+		r, err := ParseRules(file)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, r...)
+	}
+	return NewRuleEngine(rules), nil
+}
+
+// AddRuleset adds a new ruleset to the RuleEngine.
+func (re *RuleEngine) AddRuleset(ruleset Ruleset) {
+	re.Rulesets = append(re.Rulesets, ruleset)
+}
+
+// RemoveRuleset removes a ruleset from the RuleEngine.
+func (re *RuleEngine) RemoveRuleset(ruleset Ruleset) {
+	for i, r := range re.Rulesets {
+		if r.Name == ruleset.Name {
+			re.Rulesets = append(re.Rulesets[:i], re.Rulesets[i+1:]...)
+			return
+		}
+	}
+}
+
+// UpdateRuleset updates a ruleset in the RuleEngine.
+func (re *RuleEngine) UpdateRuleset(ruleset Ruleset) {
+	for i, r := range re.Rulesets {
+		if r.Name == ruleset.Name {
+			re.Rulesets[i] = ruleset
+			return
+		}
+	}
+}
+
+// GetScrapingRule returns a scraping rule with the specified name.
+func (re *RuleEngine) GetScrapingRule(name string) (ScrapingRule, error) {
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			for _, r := range rg.ScrapingRules {
+				if r.RuleName == name {
+					return r, nil
+				}
+			}
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("rule not found")
+}
+
+// GetActionRule returns an action rule with the specified name.
+func (re *RuleEngine) GetActionRule(name string) (ActionRule, error) {
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			for _, r := range rg.ActionRules {
+				if r.RuleName == name {
+					return r, nil
+				}
+			}
+		}
+	}
+	return ActionRule{}, fmt.Errorf("rule not found")
+}
+
+// GetRuleGroup returns a rule group with the specified name.
+func (re *RuleEngine) GetRuleGroup(name string) (RuleGroup, error) {
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			if rg.GroupName == name {
+				return rg, nil
+			}
+		}
+	}
+	return RuleGroup{}, fmt.Errorf("rule group not found")
+}
+
+// GetRuleset returns a ruleset with the specified name.
+func (re *RuleEngine) GetRuleset(name string) (Ruleset, error) {
+	for _, rs := range re.Rulesets {
+		if rs.Name == name {
+			return rs, nil
+		}
+	}
+	return Ruleset{}, fmt.Errorf("ruleset not found")
+}
+
+// LoadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
+func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
+	for _, rs := range config.Rulesets {
+		rulesets, err := loadRulesFromConfig(rs)
+		if err != nil {
+			return err
+		}
+		re.Rulesets = append(re.Rulesets, *rulesets...)
+	}
+	return nil
+}
+
+// loadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
+func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
+	if config.Path == nil {
+		return nil, fmt.Errorf("empty path provided")
+	}
+	if config.Host == "" {
+		// Rules are stored locally
+		var ruleset []Ruleset
+		for _, path := range config.Path {
+			rules, err := ParseRules(path)
+			if err != nil {
+				return nil, err
+			}
+			ruleset = append(ruleset, rules...)
+		}
+		return &ruleset, nil
+	}
+	// Rules are stored remotely
+	// TODO: implement remote ruleset loading
+	return nil, fmt.Errorf("remote ruleset loading not implemented yet")
+
 }
 
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
@@ -95,6 +219,13 @@ func NewRuleEngine(ruleset []Ruleset) *RuleEngine {
 	// Implementation of the RuleEngine initialization
 	return &RuleEngine{
 		Rulesets: ruleset,
+	}
+}
+
+// NewEmptyRuleEngine creates a new instance of RuleEngine with an empty slice of site rules.
+func NewEmptyRuleEngine() RuleEngine {
+	return RuleEngine{
+		Rulesets: []Ruleset{},
 	}
 }
 
