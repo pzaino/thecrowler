@@ -855,180 +855,6 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	return wd, err0
 }
 
-func processActionRules(wd *selenium.WebDriver, ctx *processContext, url string) {
-	// Run Action Rules if any
-	if ctx.source.Config != nil {
-		// Execute the CROWler rules
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler rules...")
-		// Execute the rules
-	} else {
-		// Check for rules based on the URL
-		// If the URL matches a rule, execute it
-		rs, err := ctx.re.GetRulesetByURL(url)
-		if err == nil {
-			if rs != nil {
-				// Execute all the rules in the ruleset
-				for _, r := range rs.GetActionRules() {
-					// Execute the rule
-					err := executeActionRule(&r, wd)
-					if err != nil {
-						cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
-					}
-				}
-			}
-		}
-		rg, err := ctx.re.GetRuleGroupByURL(url)
-		if err == nil {
-			if rg != nil {
-				// Execute all the rules in the rule group
-				for _, r := range rg.GetActionRules() {
-					// Execute the rule
-					err := executeActionRule(&r, wd)
-					if err != nil {
-						cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
-					}
-				}
-			}
-		}
-	}
-}
-
-// executeActionRule executes a single ActionRule
-func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	// Execute Wait condition first
-	if len(r.WaitConditions) != 0 {
-		// Execute the wait condition
-		err := executeWaitCondition(r, wd)
-		if err != nil {
-			return err
-		}
-	}
-	// Execute the action based on the ActionType
-	switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
-	case "click":
-		return executeActionClick(r, wd)
-	case "scroll":
-		return executeActionScroll(r, wd)
-	case "input_text":
-		return executeActionInput(r, wd)
-	case "execute_javascript":
-		return executeActionJS(r, wd)
-	}
-
-	return fmt.Errorf("action type not supported: %s", r.ActionType)
-}
-
-// executeWaitCondition is responsible for executing a "wait" condition
-func executeWaitCondition(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	for _, wc := range r.WaitConditions {
-		// Execute the wait condition
-		switch strings.ToLower(strings.TrimSpace(wc.ConditionType)) {
-		case "element":
-			return nil
-		case "delay":
-			return nil
-		case "custom_js":
-			_, err := (*wd).ExecuteScript(wc.CustomJS, nil)
-			return err
-		default:
-			return fmt.Errorf("wait condition not supported: %s", wc.ConditionType)
-		}
-	}
-	return nil
-}
-
-// executeActionClick is responsible for executing a "click" action
-func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	// Find the element
-	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
-	if err != nil {
-		return err
-	}
-
-	// If the element is found, click it
-	if wdf != nil {
-		err := wdf.Click()
-		return err
-	}
-	return err
-}
-
-// executeActionScroll is responsible for executing a "scroll" action
-func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	// Get Selectors list
-	value := r.Value
-
-	// Get the attribute to scroll to
-	var attribute string
-	if value == "" {
-		attribute = "document.body.scrollHeight"
-	} else {
-		attribute = value
-	}
-
-	// Use Sprintf to dynamically create the script string with the attribute value
-	script := fmt.Sprintf("window.scrollTo(0, %s)", attribute)
-
-	// Scroll the page
-	_, err := (*wd).ExecuteScript(script, nil)
-	return err
-}
-
-// executeActionJS is responsible for executing a "execute_javascript" action
-func executeActionJS(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	// Execute the JavaScript
-	_, err := (*wd).ExecuteScript(r.Value, nil)
-	return err
-}
-
-// executeActionInput is responsible for executing an "input" action
-func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	// Find the element
-	wdf, selector, err := findElementBySelectorType(wd, r.Selectors)
-	if err != nil {
-		return err
-	}
-
-	// If the element is found, input the text
-	if wdf != nil {
-		err = wdf.SendKeys(selector.Attribute)
-	}
-	return err
-}
-
-// findElementBySelectorType is responsible for finding an element in the WebDriver
-// using the appropriate selector type. It returns the first element found and an error.
-func findElementBySelectorType(wd *selenium.WebDriver, selectors []rules.Selector) (selenium.WebElement, rules.Selector, error) {
-	var wdf selenium.WebElement = nil
-	var err error
-	var selector rules.Selector
-	for _, selector = range selectors {
-		switch selector.SelectorType {
-		case "css":
-			wdf, err = (*wd).FindElement(selenium.ByCSSSelector, selector.Selector)
-		case "xpath":
-			wdf, err = (*wd).FindElement(selenium.ByXPATH, selector.Selector)
-		case "id":
-			wdf, err = (*wd).FindElement(selenium.ByID, selector.Selector)
-		case "name":
-			wdf, err = (*wd).FindElement(selenium.ByName, selector.Selector)
-		case "linktext":
-			wdf, err = (*wd).FindElement(selenium.ByLinkText, selector.Selector)
-		case "partiallinktext":
-			wdf, err = (*wd).FindElement(selenium.ByPartialLinkText, selector.Selector)
-		case "tagname":
-			wdf, err = (*wd).FindElement(selenium.ByTagName, selector.Selector)
-		case "class":
-			wdf, err = (*wd).FindElement(selenium.ByClassName, selector.Selector)
-		}
-		if err == nil && wdf != nil {
-			break
-		}
-	}
-
-	return wdf, selector, err
-}
-
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
@@ -1041,15 +867,11 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 	}
 
 	// Run scraping rules if any
-	if ctx.source.Config != nil {
-		// Execute the CROWler rules
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler rules...")
-		/*
-			PageInfo.ScrapedData, err = rules.ExecuteScrapingRules(ctx.source.Config, ctx.wd)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error executing CROWler rules: %v", err)
-			}
-		*/
+	var scrapedData string
+	var url string
+	url, err = webPage.CurrentURL()
+	if err == nil {
+		scrapedData = processScrapingRules(&webPage, ctx, url)
 	}
 
 	title, _ := webPage.Title()
@@ -1072,6 +894,7 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 		MetaTags:     metaTags,
 		DetectedLang: detectLang(webPage),
 		DetectedType: inferDocumentType(currentURL),
+		ScrapedData:  scrapedData,
 	}
 }
 

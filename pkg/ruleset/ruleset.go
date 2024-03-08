@@ -279,7 +279,7 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 	}
 	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
 	for _, rs := range re.Rulesets {
-		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedURL {
+		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedURL || strings.ToLower(strings.TrimSpace(rs.Name)) == "*" {
 			return &rs, nil
 		}
 	}
