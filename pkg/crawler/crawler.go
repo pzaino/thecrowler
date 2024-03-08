@@ -850,12 +850,12 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	}
 
 	// Run Action Rules if any
-	processRules(&wd, ctx, url)
+	processActionRules(&wd, ctx, url)
 
 	return wd, err0
 }
 
-func processRules(wd *selenium.WebDriver, ctx *processContext, url string) {
+func processActionRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 	// Run Action Rules if any
 	if ctx.source.Config != nil {
 		// Execute the CROWler rules
@@ -893,7 +893,17 @@ func processRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 	}
 }
 
+// executeActionRule executes a single ActionRule
 func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	// Execute Wait condition first
+	if len(r.WaitConditions) != 0 {
+		// Execute the wait condition
+		err := executeWaitCondition(r, wd)
+		if err != nil {
+			return err
+		}
+	}
+	// Execute the action based on the ActionType
 	switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
 	case "click":
 		return executeActionClick(r, wd)
@@ -901,9 +911,30 @@ func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		return executeActionScroll(r, wd)
 	case "input_text":
 		return executeActionInput(r, wd)
+	case "execute_javascript":
+		return executeActionJS(r, wd)
 	}
 
 	return fmt.Errorf("action type not supported: %s", r.ActionType)
+}
+
+// executeWaitCondition is responsible for executing a "wait" condition
+func executeWaitCondition(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	for _, wc := range r.WaitConditions {
+		// Execute the wait condition
+		switch strings.ToLower(strings.TrimSpace(wc.ConditionType)) {
+		case "element":
+			return nil
+		case "delay":
+			return nil
+		case "custom_js":
+			_, err := (*wd).ExecuteScript(wc.CustomJS, nil)
+			return err
+		default:
+			return fmt.Errorf("wait condition not supported: %s", wc.ConditionType)
+		}
+	}
+	return nil
 }
 
 // executeActionClick is responsible for executing a "click" action
@@ -925,14 +956,14 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 // executeActionScroll is responsible for executing a "scroll" action
 func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	// Get Selectors list
-	selectors := r.Selectors
+	value := r.Value
 
 	// Get the attribute to scroll to
 	var attribute string
-	if len(selectors) == 0 {
+	if value == "" {
 		attribute = "document.body.scrollHeight"
 	} else {
-		attribute = selectors[0].Attribute
+		attribute = value
 	}
 
 	// Use Sprintf to dynamically create the script string with the attribute value
@@ -940,6 +971,13 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 
 	// Scroll the page
 	_, err := (*wd).ExecuteScript(script, nil)
+	return err
+}
+
+// executeActionJS is responsible for executing a "execute_javascript" action
+func executeActionJS(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	// Execute the JavaScript
+	_, err := (*wd).ExecuteScript(r.Value, nil)
 	return err
 }
 

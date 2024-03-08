@@ -90,6 +90,7 @@ type WaitCondition struct {
 	ConditionType string `yaml:"condition_type"`
 	Selector      string `yaml:"selector,omitempty"`
 	CustomJS      string `yaml:"custom_js,omitempty"`
+	Value         string `yaml:"value,omitempty"`
 }
 
 // PostProcessingStep represents a single post-processing step
