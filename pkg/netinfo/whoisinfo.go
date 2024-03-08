@@ -279,6 +279,8 @@ func getIPInfo(ni *NetInfo, ip string) (ipExtraData, error) {
 	if err != nil {
 		return ipExtraData{}, err
 	}
+	// Print the entire WHOIS result for debugging
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "WHOIS Result for IP %s:\n%s", ip, result)
 
 	whoisData, err := parseWHOISOutput(string(result), ip)
 	if err == nil {
@@ -286,9 +288,6 @@ func getIPInfo(ni *NetInfo, ip string) (ipExtraData, error) {
 		//fmt.Println(string(jsonData))
 		ni.WHOIS = append(ni.WHOIS, whoisData)
 	}
-
-	// Print the entire WHOIS result for debugging
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "WHOIS Result for IP %s:\n%s", ip, result)
 
 	// Define regular expressions to match ASN and CIDR information
 	asnRegex := regexp.MustCompile(`(?i)(Origin\s*AS):\s*(?:AS)?(\d+)`)

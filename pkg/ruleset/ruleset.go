@@ -267,6 +267,403 @@ func (re *RuleEngine) CountRules() int {
 	return re.CountScrapingRules() + re.CountActionRules()
 }
 
+// GetRulesetByURL returns the ruleset for the specified URL.
+func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
+	// Validate URL
+	if urlStr == "" {
+		return nil, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, rs := range re.Rulesets {
+		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedURL {
+			return &rs, nil
+		}
+	}
+	return nil, fmt.Errorf("ruleset not found")
+}
+
+// GetRulesGroupByURL returns the rules group for the specified URL.
+func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
+	// Validate URL
+	if urlStr == "" {
+		return nil, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
+				if rg.IsValid() {
+					return &rg, nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("rule group not found")
+}
+
+// GetRulesGroupByName returns the rules group for the specified name.
+func (re *RuleEngine) GetRuleGroupByName(name string) (*RuleGroup, error) {
+	// Validate name
+	if name == "" {
+		return nil, fmt.Errorf("empty name provided")
+	}
+	parsedName := strings.ToLower(strings.TrimSpace(name))
+	for _, rs := range re.Rulesets {
+		for _, rg := range rs.RuleGroups {
+			if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
+				if rg.IsValid() {
+					return &rg, nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("rule group not found")
+}
+
+// GetRulesetByName returns the ruleset for the specified name.
+func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
+	// Validate name
+	if name == "" {
+		return nil, fmt.Errorf("empty name provided")
+	}
+	parsedName := strings.ToLower(strings.TrimSpace(name))
+	for _, rs := range re.Rulesets {
+		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedName {
+			return &rs, nil
+		}
+	}
+	return nil, fmt.Errorf("ruleset not found")
+}
+
+///// ------------------------ RULESET ---------------------------------- /////
+
+// GetActionRules returns all the action rules in a Ruleset.
+func (rs *Ruleset) GetActionRules() []ActionRule {
+	var actionRules []ActionRule
+	for _, rg := range rs.RuleGroups {
+		actionRules = append(actionRules, rg.ActionRules...)
+	}
+	return actionRules
+}
+
+// GetActionRuleByName returns the action rule with the specified name.
+func (rs *Ruleset) GetActionRuleByName(name string) (ActionRule, error) {
+	// Validate name
+	if name == "" {
+		return ActionRule{}, fmt.Errorf("empty name provided")
+	}
+
+	// prepare name
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ActionRules {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == name {
+				return r, nil
+			}
+		}
+	}
+	return ActionRule{}, fmt.Errorf("action rule not found")
+}
+
+// GetActionRuleByURL returns the action rule for the specified URL.
+func (rs *Ruleset) GetActionRuleByURL(urlStr string) (ActionRule, error) {
+	// Validate URL
+	if urlStr == "" {
+		return ActionRule{}, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return ActionRule{}, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ActionRules {
+			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+				return r, nil
+			}
+		}
+	}
+	return ActionRule{}, fmt.Errorf("action rule not found")
+}
+
+// GetRuleGroups returns all the rule groups in a Ruleset.
+func (rs *Ruleset) GetRuleGroups() []RuleGroup {
+	return rs.RuleGroups
+}
+
+// GetRuleGroupByName returns the rule group with the specified name.
+func (rs *Ruleset) GetRuleGroupByName(name string) (RuleGroup, error) {
+	// Validate name
+	if name == "" {
+		return RuleGroup{}, fmt.Errorf("empty name provided")
+	}
+
+	// prepare name
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, rg := range rs.RuleGroups {
+		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == name {
+			if !rg.IsValid() {
+				return RuleGroup{}, fmt.Errorf("rule group not valid")
+			}
+			return rg, nil
+		}
+	}
+	return RuleGroup{}, fmt.Errorf("rule group not found")
+}
+
+// GetRuleGroupByURL returns the rule group for the specified URL.
+func (rs *Ruleset) GetRuleGroupByURL(urlStr string) (RuleGroup, error) {
+	// Validate URL
+	if urlStr == "" {
+		return RuleGroup{}, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return RuleGroup{}, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, rg := range rs.RuleGroups {
+		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
+			if !rg.IsValid() {
+				return RuleGroup{}, fmt.Errorf("rule group not valid")
+			}
+			return rg, nil
+		}
+	}
+	return RuleGroup{}, fmt.Errorf("rule group not found")
+}
+
+// GetScrapingRules returns all the scraping rules in a Ruleset.
+func (rs *Ruleset) GetScrapingRules() []ScrapingRule {
+	var scrapingRules []ScrapingRule
+	for _, rg := range rs.RuleGroups {
+		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
+	}
+	return scrapingRules
+}
+
+// GetScrapingRuleByName returns the scraping rule with the specified name.
+func (rs *Ruleset) GetScrapingRuleByName(name string) (ScrapingRule, error) {
+	// Validate name
+	if name == "" {
+		return ScrapingRule{}, fmt.Errorf("empty name provided")
+	}
+
+	// prepare name
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ScrapingRules {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == name {
+				return r, nil
+			}
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("scraping rule not found")
+}
+
+// GetScrapingRuleByPath returns the scraping rule for the specified path.
+func (rs *Ruleset) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
+	// Validate path
+	if path == "" {
+		return ScrapingRule{}, fmt.Errorf("empty path provided")
+	}
+
+	// prepare path
+	path = strings.ToLower(strings.TrimSpace(path))
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ScrapingRules {
+			if strings.ToLower(strings.TrimSpace(r.Path)) == path {
+				return r, nil
+			}
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("scraping rule not found")
+}
+
+// GetScrapingRuleByURL returns the scraping rule for the specified URL.
+func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
+	// Validate URL
+	if urlStr == "" {
+		return ScrapingRule{}, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return ScrapingRule{}, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ScrapingRules {
+			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+				return r, nil
+			}
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("scraping rule not found")
+}
+
+///// ---------------------- RuleGroup -------------------------------- /////
+
+// IsGroupValid checks if the provided RuleGroup is valid.
+// It checks if the group is enabled and if the valid_from and valid_to dates are valid.
+func (rg *RuleGroup) IsValid() bool {
+	// Check if the group is enabled
+	if !rg.IsEnabled {
+		return false
+	}
+
+	// Check if the rules group has a valid_from and valid_to date
+	if (rg.ValidFrom.IsEmpty()) && (rg.ValidTo.IsEmpty()) {
+		return true
+	}
+
+	var validFrom, validTo CustomTime
+
+	// Parse the 'valid_from' date if present
+	if !rg.ValidFrom.IsEmpty() {
+		validFrom = rg.ValidFrom
+	}
+
+	// Parse the 'valid_to' date if present
+	if !rg.ValidTo.IsEmpty() {
+		validTo = rg.ValidTo
+	}
+
+	// Get the current time
+	now := time.Now()
+
+	// Log the validation details
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Validating group: %s", rg.GroupName)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Valid from: %s", validFrom)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Valid to: %s", validTo)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Current time: %s", now)
+
+	// Check the range only if both dates are provided
+	if (!rg.ValidFrom.IsEmpty()) && (!rg.ValidTo.IsEmpty()) {
+		return now.After(validFrom.Time) && now.Before(validTo.Time)
+	}
+
+	// If only valid_from is provided
+	if !rg.ValidFrom.IsEmpty() {
+		return now.After(validFrom.Time)
+	}
+
+	// If only valid_to is provided
+	if !rg.ValidTo.IsEmpty() {
+		return now.Before(validTo.Time)
+	}
+
+	return false
+}
+
+// GetActionRules returns all the action rules in a RuleGroup.
+func (rg *RuleGroup) GetActionRules() []ActionRule {
+	return rg.ActionRules
+}
+
+// GetScrapingRules returns all the scraping rules in a RuleGroup.
+func (rg *RuleGroup) GetScrapingRules() []ScrapingRule {
+	return rg.ScrapingRules
+}
+
+// GetActionRuleByName returns the action rule with the specified name.
+func (rg *RuleGroup) GetActionRuleByName(name string) (ActionRule, error) {
+	// Validate name
+	if name == "" {
+		return ActionRule{}, fmt.Errorf("empty name provided")
+	}
+
+	// prepare name
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, r := range rg.ActionRules {
+		if strings.ToLower(strings.TrimSpace(r.RuleName)) == name {
+			return r, nil
+		}
+	}
+	return ActionRule{}, fmt.Errorf("action rule not found")
+}
+
+// GetActionRuleByURL returns the action rule for the specified URL.
+func (rg *RuleGroup) GetActionRuleByURL(urlStr string) (ActionRule, error) {
+	// Validate URL
+	if urlStr == "" {
+		return ActionRule{}, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return ActionRule{}, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, r := range rg.ActionRules {
+		if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+			return r, nil
+		}
+	}
+	return ActionRule{}, fmt.Errorf("action rule not found")
+}
+
+// GetScrapingRuleByName returns the scraping rule with the specified name.
+func (rg *RuleGroup) GetScrapingRuleByName(name string) (ScrapingRule, error) {
+	// Validate name
+	if name == "" {
+		return ScrapingRule{}, fmt.Errorf("empty name provided")
+	}
+
+	// prepare name
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, r := range rg.ScrapingRules {
+		if strings.ToLower(strings.TrimSpace(r.RuleName)) == name {
+			return r, nil
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("scraping rule not found")
+}
+
+// GetScrapingRuleByPath returns the scraping rule for the specified path.
+func (rg *RuleGroup) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
+	// Validate path
+	if path == "" {
+		return ScrapingRule{}, fmt.Errorf("empty path provided")
+	}
+
+	// prepare path
+	path = strings.ToLower(strings.TrimSpace(path))
+	for _, r := range rg.ScrapingRules {
+		if strings.ToLower(strings.TrimSpace(r.Path)) == path {
+			return r, nil
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("scraping rule not found")
+}
+
+// GetScrapingRuleByURL returns the scraping rule for the specified URL.
+func (rg *RuleGroup) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
+	// Validate URL
+	if urlStr == "" {
+		return ScrapingRule{}, fmt.Errorf("empty URL provided")
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return ScrapingRule{}, fmt.Errorf("error parsing URL: %s", err)
+	}
+	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
+	for _, r := range rg.ScrapingRules {
+		if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+			return r, nil
+		}
+	}
+	return ScrapingRule{}, fmt.Errorf("scraping rule not found")
+}
+
+///// --------------------- ActionRule ------------------------------- /////
+
 // GetActionType returns the action type for the specified action rule.
 func (r *ActionRule) GetActionType() string {
 	return strings.ToLower(strings.TrimSpace(r.ActionType))
@@ -307,6 +704,8 @@ func (r *ActionRule) GetErrorHandling() ErrorHandling {
 	return r.ErrorHandling
 }
 
+///// ------------------------ Selector ---------------------------- /////
+
 // GetSelectorType returns the selector type for the specified selector.
 func (s *Selector) GetSelectorType() string {
 	return strings.ToLower(strings.TrimSpace(s.SelectorType))
@@ -321,6 +720,8 @@ func (s *Selector) GetSelector() string {
 func (s *Selector) GetAttribute() string {
 	return strings.TrimSpace(s.Attribute)
 }
+
+///// ------------------------ ScrapingRule ---------------------------- /////
 
 // GetRuleName returns the rule name for the specified scraping rule.
 func (r *ScrapingRule) GetRuleName() string {

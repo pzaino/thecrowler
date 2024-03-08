@@ -148,7 +148,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance) {
+func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
@@ -184,7 +184,7 @@ func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance) {
 		}
 
 		// Crawl each source
-		crawlSources(*db, sel, sourcesToCrawl)
+		crawlSources(*db, sel, sourcesToCrawl, RulesEngine)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.Unlock()
@@ -200,7 +200,7 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []cdb.Source) {
+func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []cdb.Source, RulesEngine *rules.RuleEngine) {
 	if len(sources) == 0 {
 		return
 	}
@@ -212,7 +212,7 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []c
 		wg.Add(1)                 // Increment the WaitGroup counter
 		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
 			defer wg.Done() // Decrement the counter when the goroutine completes
-			crowler.CrawlWebsite(db, src, <-sel, sel)
+			crowler.CrawlWebsite(db, src, <-sel, sel, RulesEngine)
 		}(source) // Pass the current source
 	}
 
@@ -344,7 +344,7 @@ func main() {
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	checkSources(&db, seleniumInstances)
+	checkSources(&db, seleniumInstances, &RulesEngine)
 
 	// Wait forever
 	//select {}
