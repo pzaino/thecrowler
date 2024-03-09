@@ -95,16 +95,19 @@ type NetworkInfo struct {
 
 // API represents the API configuration
 type API struct {
-	Host          string `yaml:"host"`           // Hostname of the API server
-	Port          int    `yaml:"port"`           // Port number of the API server
-	Timeout       int    `yaml:"timeout"`        // Timeout for API requests (in seconds)
-	ContentSearch bool   `yaml:"content_search"` // Whether to search in the content too or not
-	ReturnContent bool   `yaml:"return_content"` // Whether to return the content or not
-	SSLMode       string `yaml:"sslmode"`        // SSL mode for API connection (e.g., "disable")
-	CertFile      string `yaml:"cert_file"`      // Path to the SSL certificate file
-	KeyFile       string `yaml:"key_file"`       // Path to the SSL key file
-	RateLimit     string `yaml:"rate_limit"`     // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
-	EnableConsole bool   `yaml:"enable_console"` // Whether to enable the console or not
+	Host              string `yaml:"host"`               // Hostname of the API server
+	Port              int    `yaml:"port"`               // Port number of the API server
+	Timeout           int    `yaml:"timeout"`            // Timeout for API requests (in seconds)
+	ContentSearch     bool   `yaml:"content_search"`     // Whether to search in the content too or not
+	ReturnContent     bool   `yaml:"return_content"`     // Whether to return the content or not
+	SSLMode           string `yaml:"sslmode"`            // SSL mode for API connection (e.g., "disable")
+	CertFile          string `yaml:"cert_file"`          // Path to the SSL certificate file
+	KeyFile           string `yaml:"key_file"`           // Path to the SSL key file
+	RateLimit         string `yaml:"rate_limit"`         // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	EnableConsole     bool   `yaml:"enable_console"`     // Whether to enable the console or not
+	ReadHeaderTimeout int    `yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
 }
 
 // Selenium represents the Selenium configuration
