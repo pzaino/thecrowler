@@ -19,8 +19,10 @@ package crawler
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
@@ -28,14 +30,16 @@ import (
 func processActionRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Action rules...")
 	// Run Action Rules if any
-	if ctx.source.Config != nil && strings.TrimSpace(string((*ctx.source.Config))) != "{\"config\":\"default\"}" {
+	if ctx.source.Config != nil {
 		// Execute the CROWler rules
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Action rules...")
 		// Execute the rules
-
-		// Convert ctx.source.Config JSONB to a string
-		configStr := string((*ctx.source.Config))
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
+		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
+			runDefaultActionRules(wd, ctx)
+		} else {
+			configStr := string((*ctx.source.Config))
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
+		}
 	} else {
 		// Check for rules based on the URL
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Action rules...")
@@ -122,7 +126,8 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	// Find the element
 	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
 	if err != nil {
-		return err
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
+		err = nil
 	}
 
 	// If the element is found, click it
@@ -166,7 +171,8 @@ func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(wd, r.Selectors)
 	if err != nil {
-		return err
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
+		err = nil
 	}
 
 	// If the element is found, input the text
@@ -207,4 +213,58 @@ func findElementBySelectorType(wd *selenium.WebDriver, selectors []rules.Selecto
 	}
 
 	return wdf, selector, err
+}
+
+func DefaultActionConfig(url string) cfg.SourceConfig {
+	return cfg.SourceConfig{
+		FormatVersion: "1.0",
+		Author:        "Your Name",
+		CreatedAt:     time.Now(),
+		Description:   "Default configuration",
+		SourceName:    "Example Source",
+		CrawlingConfig: cfg.CrawlingConfig{
+			Site: url,
+		},
+		ExecutionPlan: []cfg.ExecutionPlanItem{
+			{
+				Label: "Default Execution Plan",
+				Conditions: cfg.Condition{
+					UrlPatterns: []string{url},
+				},
+				Rules: []string{"ClickAcceptCookiesButton"},
+			},
+		},
+	}
+}
+
+func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
+	// Execute the default scraping rules
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default action rules...")
+
+	// Get the default scraping rules
+	url, err := (*wd).CurrentURL()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error getting the current URL: %v", err)
+		url = ""
+	}
+	rs := DefaultActionConfig(url)
+	// Execute all the rules in the ruleset
+	for _, r := range rs.ExecutionPlan {
+		// Get the rule
+		for _, ruleName := range r.Rules {
+			if ruleName == "" {
+				continue
+			}
+			rule, err := ctx.re.GetActionRuleByName(ruleName)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error getting action rule: %v", err)
+			} else {
+				// Execute the rule
+				err := executeActionRule(rule, wd)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
+				}
+			}
+		}
+	}
 }

@@ -16,13 +16,26 @@
 // It's responsible for crawling a website and extracting information from it.
 package crawler
 
+/////////
+// This file is used as a wrapper to the scrapper package, to avoid circular dependencies.
+/////////
+
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
+
 	"github.com/tebeka/selenium"
+)
+
+const (
+	errExecutingScraping = "error executing scraping rule: %v"
 )
 
 // processScrapingRules processes the scraping rules
@@ -32,30 +45,38 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url strin
 	scrapedDataDoc := ""
 
 	// Run Scraping Rules if any
-	if ctx.source.Config != nil && strings.TrimSpace(string((*ctx.source.Config))) != "{\"config\":\"default\"}" {
+	if ctx.source.Config != nil {
 		// Execute the CROWler rules
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Scraping rules...")
 		// Execute the rules
-		configStr := string((*ctx.source.Config))
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
+		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
+			runDefaultScrapingRules(wd, ctx)
+		} else {
+			configStr := string((*ctx.source.Config))
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
+		}
 	} else {
 		// Check for rules based on the URL
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Scraping rules...")
 		// If the URL matches a rule, execute it
-		rs, err := ctx.re.GetRulesetByURL(url)
-		if err == nil {
-			if rs != nil {
-				// Execute all the rules in the ruleset
-				scrapedDataDoc += executeScrapingRulesInRuleset(rs, wd)
-			}
-		} else {
-			rg, err := ctx.re.GetRuleGroupByURL(url)
-			if err == nil {
-				if rg != nil {
-					// Execute all the rules in the rule group
-					scrapedDataDoc += executeScrapingRulesInRuleGroup(rg, wd)
-				}
-			}
+		scrapedDataDoc += executeScrapingRulesByURL(wd, ctx, url)
+	}
+
+	return scrapedDataDoc
+}
+
+func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url string) string {
+	scrapedDataDoc := ""
+
+	rs, err := ctx.re.GetRulesetByURL(url)
+	if err == nil && rs != nil {
+		// Execute all the rules in the ruleset
+		scrapedDataDoc += executeScrapingRulesInRuleset(rs, wd)
+	} else {
+		rg, err := ctx.re.GetRuleGroupByURL(url)
+		if err == nil && rg != nil {
+			// Execute all the rules in the rule group
+			scrapedDataDoc += executeScrapingRulesInRuleGroup(rg, wd)
 		}
 	}
 
@@ -68,7 +89,7 @@ func executeScrapingRulesInRuleset(rs *rules.Ruleset, wd *selenium.WebDriver) st
 		// Execute the rule
 		scrapedData, err := executeScrapingRule(&r, wd)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error executing scraping rule: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
 		scrapedDataDoc += scrapedData
 	}
@@ -81,7 +102,7 @@ func executeScrapingRulesInRuleGroup(rg *rules.RuleGroup, wd *selenium.WebDriver
 		// Execute the rule
 		scrapedData, err := executeScrapingRule(&r, wd)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error executing scraping rule: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
 		scrapedDataDoc += scrapedData
 	}
@@ -99,7 +120,82 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 			}
 		}
 	}
-	// Execute the scraping rule
 
-	return "", fmt.Errorf("rule '%s' not supported", r.RuleName)
+	// Execute the scraping rule
+	extractedData := scraper.ApplyRule(r, wd)
+
+	// Transform the extracted data into a JSON document
+	jsonData, err := json.Marshal(extractedData)
+	if err != nil {
+		return "", fmt.Errorf("error marshalling JSON: %v", err)
+	}
+
+	// Convert bytes to string to get a JSON document
+	jsonDocument := string(jsonData)
+
+	return jsonDocument, nil
+}
+
+func DefaultCrawlingConfig(url string) cfg.SourceConfig {
+	return cfg.SourceConfig{
+		FormatVersion: "1.0",
+		Author:        "Your Name",
+		CreatedAt:     time.Now(),
+		Description:   "Default configuration",
+		SourceName:    "Example Source",
+		CrawlingConfig: cfg.CrawlingConfig{
+			Site: url,
+		},
+		ExecutionPlan: []cfg.ExecutionPlanItem{
+			{
+				Label: "Default Execution Plan",
+				Conditions: cfg.Condition{
+					UrlPatterns: []string{url},
+				},
+				Rules: []string{""},
+			},
+		},
+	}
+}
+
+func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *processContext) {
+	// Execute the default scraping rules
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default scraping rules...")
+
+	// Get the default scraping rules
+	url, err := (*wd).CurrentURL()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error getting the current URL: %v", err)
+		url = ""
+	}
+	rs := DefaultCrawlingConfig(url)
+	// Execute all the rules in the ruleset
+	var scrapedDataDoc string
+	for _, r := range rs.ExecutionPlan {
+		scrapedDataDoc += executeRulesInExecutionPlan(r, wd, ctx)
+	}
+}
+
+func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriver, ctx *processContext) string {
+	var scrapedDataDoc string
+	// Get the rule
+	for _, ruleName := range epi.Rules {
+		if ruleName == "" {
+			continue
+		}
+		rule, err := ctx.re.GetScrapingRuleByName(ruleName)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error getting scraping rule: %v", err)
+		} else {
+			// Execute the rule
+			scrapedData, err := executeScrapingRule(rule, wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
+			} else {
+				scrapedDataDoc += scrapedData
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped data: %v", scrapedDataDoc)
+			}
+		}
+	}
+	return scrapedDataDoc
 }

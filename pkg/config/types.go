@@ -15,6 +15,8 @@
 // Package config contains the configuration file parsing logic.
 package config
 
+import "time"
+
 // FileStorageAPI is a generic File Storage API configuration
 type FileStorageAPI struct {
 	Host    string `yaml:"host"`    // Hostname of the API server
@@ -185,4 +187,32 @@ type Config struct {
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
+}
+
+//// ----------- Source Config ------------ ////
+
+type SourceConfig struct {
+	FormatVersion  string              `json:"format_version"`
+	Author         string              `json:"author"`
+	CreatedAt      time.Time           `json:"created_at"`
+	Description    string              `json:"description"`
+	SourceName     string              `json:"source_name"`
+	CrawlingConfig CrawlingConfig      `json:"crawling_config"`
+	ExecutionPlan  []ExecutionPlanItem `json:"execution_plan"`
+}
+
+type CrawlingConfig struct {
+	Site string `json:"site"`
+}
+
+type ExecutionPlanItem struct {
+	Label                string                 `json:"label"`
+	Conditions           Condition              `json:"conditions"`
+	RuleGroups           []string               `json:"rule_groups,omitempty"`
+	Rules                []string               `json:"rules,omitempty"`
+	AdditionalConditions map[string]interface{} `json:"additional_conditions,omitempty"`
+}
+
+type Condition struct {
+	UrlPatterns []string `json:"url_patterns"`
 }
