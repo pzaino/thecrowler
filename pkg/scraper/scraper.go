@@ -17,87 +17,38 @@
 package scraper
 
 import (
-	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
+	"github.com/tebeka/selenium"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
 	"golang.org/x/net/html"
 )
 
-// ApplyRules applies the rules to the provided URL and HTML content.
-// It returns a map containing the extracted data or an error if any occurred during the extraction.
-func (re *ScraperRuleEngine) ApplyRules(url string, htmlContent string) (map[string]interface{}, error) {
-	siteRules, err := re.FindRulesForSite(url)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, group := range siteRules.RuleGroups {
-		if re.IsGroupValid(group) {
-			extractedData, err := re.extractData(group, url, htmlContent)
-			if err != nil {
-				return nil, err
-			}
-			return extractedData, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no valid rule groups found for URL: %s", url)
-}
-
-// extractJSFiles extracts the JavaScript files from the provided document.
-// It returns a slice of strings containing the JavaScript files.
-func (re *ScraperRuleEngine) extractJSFiles(doc *goquery.Document) []string {
-	var jsFiles []string
-	doc.Find("script[src]").Each(func(_ int, s *goquery.Selection) {
-		if src, exists := s.Attr("src"); exists {
-			jsFiles = append(jsFiles, src)
-		}
-	})
-	return jsFiles
-}
-
-// extractData extracts the data from the provided HTML content using the provided RuleGroup.
-// It returns a map containing the extracted data or an error if any occurred during the extraction.
-func (re *ScraperRuleEngine) extractData(group rs.RuleGroup, pageURL string, htmlContent string) (map[string]interface{}, error) {
-	// Parse the HTML content
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
-	if err != nil {
-		return nil, fmt.Errorf("error parsing HTML: %s", err)
-	}
-	node, err := htmlquery.Parse(strings.NewReader(htmlContent))
-	if err != nil {
-		// handle error
-		return nil, err
-	}
-
-	// Parse the page URL to extract its path
-	parsedURL, err := url.Parse(pageURL)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing page URL: %s", err)
-	}
-	path := parsedURL.Path
-
+// ApplyRule applies the provided scraping rule to the provided web page.
+func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
-	// Iterate over the rules in the group
-	for _, rule := range group.ScrapingRules {
-		// Apply rule only if the path matches
-		if strings.HasSuffix(path, rule.Path) || strings.HasSuffix(path, rule.Path+"/") {
-			extractedData = re.applyRule(rule, doc, node, htmlContent, extractedData)
-		}
+	// Prepare content for goquery:
+	htmlContent, _ := (*webPage).PageSource()
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+		return extractedData
+	}
+	// Parse the HTML content
+	node, err := htmlquery.Parse(strings.NewReader(htmlContent))
+	if err != nil {
+		// handle error
+		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing HTML content: %v", err)
+		return extractedData
 	}
 
-	return extractedData, nil
-}
-
-func (re *ScraperRuleEngine) applyRule(rule rs.ScrapingRule, doc *goquery.Document, node *html.Node, htmlContent string, extractedData map[string]interface{}) map[string]interface{} {
 	// Iterate over the elements to be extracted
 	for _, elementSet := range rule.Elements {
 		key := elementSet.Key
@@ -109,11 +60,21 @@ func (re *ScraperRuleEngine) applyRule(rule rs.ScrapingRule, doc *goquery.Docume
 			var extracted string
 			switch selectorType {
 			case "css":
-				extracted = re.extractByCSS(doc, selector)
+				extracted = extractByCSS(doc, selector)
 			case "xpath":
-				extracted = re.extractByXPath(node, selector)
+				extracted = extractByXPath(node, selector)
+			case "id":
+				extracted = extractByCSS(doc, "#"+selector)
+			case "class", "class_name":
+				extracted = extractByCSS(doc, "."+selector)
+			case "name":
+				extracted = extractByCSS(doc, "[name="+selector+"]")
+			case "tag":
+				extracted = extractByCSS(doc, selector)
+			case "link_text", "partial_link_text":
+				extracted = extractByCSS(doc, "a:contains('"+selector+"')")
 			case "regex":
-				extracted = re.extractByRegex(htmlContent, selector)
+				extracted = extractByRegex(htmlContent, selector)
 			default:
 				extracted = ""
 			}
@@ -126,18 +87,30 @@ func (re *ScraperRuleEngine) applyRule(rule rs.ScrapingRule, doc *goquery.Docume
 
 	// Optional: Extract JavaScript files if required
 	if rule.JsFiles {
-		jsFiles := re.extractJSFiles(doc)
+		jsFiles := extractJSFiles(doc)
 		extractedData["js_files"] = jsFiles
 	}
 
 	return extractedData
 }
 
-func (re *ScraperRuleEngine) extractByCSS(doc *goquery.Document, selector string) string {
+// extractJSFiles extracts the JavaScript files from the provided document.
+func extractJSFiles(doc *goquery.Document) []string {
+	var jsFiles []string
+	doc.Find("script[src]").Each(func(_ int, s *goquery.Selection) {
+		if src, exists := s.Attr("src"); exists {
+			jsFiles = append(jsFiles, src)
+		}
+	})
+	return jsFiles
+}
+
+// extractByCSS extracts the content from the provided document using the provided CSS selector.
+func extractByCSS(doc *goquery.Document, selector string) string {
 	return doc.Find(selector).Text()
 }
 
-func (re *ScraperRuleEngine) extractByXPath(node *html.Node, selector string) string {
+func extractByXPath(node *html.Node, selector string) string {
 	extractedNode := htmlquery.FindOne(node, selector)
 	if extractedNode != nil {
 		return htmlquery.InnerText(extractedNode)
@@ -145,7 +118,7 @@ func (re *ScraperRuleEngine) extractByXPath(node *html.Node, selector string) st
 	return ""
 }
 
-func (re *ScraperRuleEngine) extractByRegex(htmlContent string, selector string) string {
+func extractByRegex(htmlContent string, selector string) string {
 	regex, err := regexp.Compile(selector)
 	if err != nil {
 		// handle regex compilation error
@@ -156,4 +129,22 @@ func (re *ScraperRuleEngine) extractByRegex(htmlContent string, selector string)
 		return matches[1]
 	}
 	return ""
+}
+
+// ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
+func ApplyRulesGroup(ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
+	// Initialize a map to hold the extracted data
+	extractedData := make(map[string]interface{})
+
+	// Iterate over the rules in the rule group
+	for _, rule := range ruleGroup.ScrapingRules {
+		// Apply the rule to the web page
+		data := ApplyRule(&rule, webPage)
+		// Add the extracted data to the map
+		for k, v := range data {
+			extractedData[k] = v
+		}
+	}
+
+	return extractedData, nil
 }
