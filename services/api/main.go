@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -66,14 +67,49 @@ func main() {
 	}
 	limiter = rate.NewLimiter(rate.Limit(rl), bl)
 
+	srv := &http.Server{
+		Addr: config.API.Host + ":" + fmt.Sprintf("%d", config.API.Port),
+
+		// ReadHeaderTimeout is the amount of time allowed to read
+		// request headers. The connection's read deadline is reset
+		// after reading the headers and the Handler can decide what
+		// is considered too slow for the body. If ReadHeaderTimeout
+		// is zero, the value of ReadTimeout is used. If both are
+		// zero, there is no timeout.
+		ReadHeaderTimeout: time.Duration(config.API.ReadHeaderTimeout) * time.Second,
+
+		// ReadTimeout is the maximum duration for reading the entire
+		// request, including the body. A zero or negative value means
+		// there will be no timeout.
+		//
+		// Because ReadTimeout does not let Handlers make per-request
+		// decisions on each request body's acceptable deadline or
+		// upload rate, most users will prefer to use
+		// ReadHeaderTimeout. It is valid to use them both.
+		ReadTimeout: time.Duration(config.API.ReadTimeout) * time.Second,
+
+		// WriteTimeout is the maximum duration before timing out
+		// writes of the response. It is reset whenever a new
+		// request's header is read. Like ReadTimeout, it does not
+		// let Handlers make decisions on a per-request basis.
+		// A zero or negative value means there will be no timeout.
+		WriteTimeout: time.Duration(config.API.WriteTimeout) * time.Second,
+
+		// IdleTimeout is the maximum amount of time to wait for the
+		// next request when keep-alive are enabled. If IdleTimeout
+		// is zero, the value of ReadTimeout is used. If both are
+		// zero, there is no timeout.
+		IdleTimeout: time.Duration(config.API.Timeout) * time.Second,
+	}
+
 	// Set the handlers
 	initAPIv1()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
-		log.Fatal(http.ListenAndServeTLS(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), config.API.CertFile, config.API.KeyFile, nil))
+		log.Fatal(srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
 	} else {
-		log.Fatal(http.ListenAndServe(config.API.Host+":"+fmt.Sprintf("%d", config.API.Port), nil))
+		log.Fatal(srv.ListenAndServe())
 	}
 }
 
