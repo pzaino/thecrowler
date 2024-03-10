@@ -247,7 +247,10 @@ func loadRulesFromRemote(config cfg.Ruleset) (*[]Ruleset, error) {
 	// Construct the URL to download the rules from
 	for _, path := range config.Path {
 		url := fmt.Sprintf("http://%s/%s", config.Host, path)
-		resp, err := http.Get(url)
+		httpClient := &http.Client{
+			Transport: cmn.SafeTransport(time.Duration(config.Timeout), config.SSLMode),
+		}
+		resp, err := httpClient.Get(url)
 		if err != nil {
 			return &ruleset, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
 		}

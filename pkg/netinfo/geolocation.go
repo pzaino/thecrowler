@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	config "github.com/pzaino/thecrowler/pkg/config"
@@ -36,7 +37,7 @@ func DetectLocation(ipAddress string, cfg config.GeoLookupConfig) (*DetectedLoca
 	case "maxmind":
 		return detectLocationMaxMind(ipAddress, cfg.DBPath)
 	case "ip2location":
-		return detectLocationIP2Location(ipAddress, cfg.APIKey)
+		return detectLocationIP2Location(ipAddress, cfg.APIKey, cfg.Timeout, cfg.SSLMode)
 	default:
 		return nil, fmt.Errorf("unsupported geolocation type: %s", cfg.Type)
 	}
@@ -75,10 +76,13 @@ func detectLocationMaxMind(ipAddress string, dbPath string) (*DetectedLocation, 
 	return &location, nil
 }
 
-func detectLocationIP2Location(ipAddress, apiKey string) (*DetectedLocation, error) {
+func detectLocationIP2Location(ipAddress, apiKey string, timeout int, sslmode string) (*DetectedLocation, error) {
 	url := fmt.Sprintf("https://api.ip2location.com/v2/?ip=%s&key=%s&format=json", ipAddress, apiKey)
 
-	resp, err := http.Get(url)
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(time.Duration(timeout), sslmode),
+	}
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
