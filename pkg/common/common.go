@@ -149,7 +149,7 @@ func dialContextWithIPCheck(timeout time.Duration) func(ctx context.Context, net
 func dialTLSWithIPCheck(timeout time.Duration) func(network, addr string) (net.Conn, error) {
 	return func(network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{Timeout: timeout}
-		c, err := tls.DialWithDialer(dialer, network, addr, &tls.Config{})
+		c, err := tls.DialWithDialer(dialer, network, addr, &tls.Config{MinVersion: tls.VersionTLS13})
 		if err != nil {
 			return nil, err
 		}
