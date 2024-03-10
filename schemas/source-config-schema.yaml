@@ -40,6 +40,10 @@ properties:
                 format: uri-template
           required:
             - url_patterns
+        rulesets:
+          type: array
+          items:
+            type: string
         rule_groups:
           type: array
           items:
@@ -55,6 +59,8 @@ properties:
         - label
         - conditions
       anyOf:
+        - required:
+            - rulesets
         - required:
             - rule_groups
         - required:

@@ -53,6 +53,12 @@
               "url_patterns"
             ]
           },
+          "rulesets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "rule_groups": {
             "type": "array",
             "items": {
@@ -75,6 +81,11 @@
           "conditions"
         ],
         "anyOf": [
+          {
+            "required": [
+              "rulesets"
+            ]
+          },
           {
             "required": [
               "rule_groups"

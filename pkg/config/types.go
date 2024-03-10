@@ -213,6 +213,7 @@ type CrawlingConfig struct {
 type ExecutionPlanItem struct {
 	Label                string                 `json:"label"`
 	Conditions           Condition              `json:"conditions"`
+	Rulesets             []string               `json:"rulesets,omitempty"`
 	RuleGroups           []string               `json:"rule_groups,omitempty"`
 	Rules                []string               `json:"rules,omitempty"`
 	AdditionalConditions map[string]interface{} `json:"additional_conditions,omitempty"`
