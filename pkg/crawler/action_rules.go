@@ -218,7 +218,7 @@ func findElementBySelectorType(wd *selenium.WebDriver, selectors []rules.Selecto
 func DefaultActionConfig(url string) cfg.SourceConfig {
 	return cfg.SourceConfig{
 		FormatVersion: "1.0",
-		Author:        "Your Name",
+		Author:        "The CROWler team",
 		CreatedAt:     time.Now(),
 		Description:   "Default configuration",
 		SourceName:    "Example Source",
@@ -231,7 +231,7 @@ func DefaultActionConfig(url string) cfg.SourceConfig {
 				Conditions: cfg.Condition{
 					UrlPatterns: []string{url},
 				},
-				Rules: []string{"ClickAcceptCookiesButton"},
+				RuleGroups: []string{"CookieAcceptanceRulesExtended"},
 			},
 		},
 	}
@@ -248,23 +248,133 @@ func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
 		url = ""
 	}
 	rs := DefaultActionConfig(url)
+	// Check if the conditions are met
+	if len(rs.ExecutionPlan) == 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No execution plan found for the current URL")
+		return
+	}
 	// Execute all the rules in the ruleset
 	for _, r := range rs.ExecutionPlan {
-		// Get the rule
-		for _, ruleName := range r.Rules {
-			if ruleName == "" {
-				continue
-			}
-			rule, err := ctx.re.GetActionRuleByName(ruleName)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error getting action rule: %v", err)
+		// Check the conditions
+		if !checkConditions(r.Conditions, url) {
+			continue
+		}
+		if !checkAdditionalConditions(r.AdditionalConditions, wd) {
+			continue
+		}
+		if len(r.Rulesets) > 0 {
+			executePlannedRulesets(wd, ctx, r)
+		}
+		if len(r.RuleGroups) > 0 {
+			executePlannedRuleGroups(wd, ctx, r)
+		}
+		if len(r.Rules) > 0 {
+			executePlannedRules(wd, ctx, r)
+		}
+	}
+}
+
+// checkConditions checks if the conditions are met
+func checkConditions(conditions cfg.Condition, url string) bool {
+	canProceed := true
+	// Check the URL patterns
+	if len(conditions.UrlPatterns) > 0 {
+		for _, pattern := range conditions.UrlPatterns {
+			if strings.Contains(url, pattern) {
+				canProceed = true
 			} else {
-				// Execute the rule
-				err := executeActionRule(rule, wd)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
-				}
+				canProceed = false
 			}
+		}
+	}
+	return canProceed
+}
+
+// checkAdditionalConditions checks if the additional conditions are met
+func checkAdditionalConditions(additionalConditions map[string]interface{}, wd *selenium.WebDriver) bool {
+	canProceed := true
+	// Check the additional conditions
+	if len(additionalConditions) > 0 {
+		// Check if the page contains a specific element
+		if _, ok := additionalConditions["element"]; ok {
+			// Check if the element is present
+			_, err := (*wd).FindElement(selenium.ByCSSSelector, additionalConditions["element"].(string))
+			if err != nil {
+				canProceed = false
+			}
+		}
+		// If a language condition is present, check if the page is in the correct language
+		if _, ok := additionalConditions["language"]; ok {
+			// Get the page language
+			lang, err := (*wd).ExecuteScript("return document.documentElement.lang", nil)
+			if err != nil {
+				canProceed = false
+			}
+			// Check if the language is correct
+			if lang != additionalConditions["language"] {
+				canProceed = false
+			}
+		}
+	}
+	return canProceed
+}
+
+// executePlannedRules executes the rules in the execution plan
+func executePlannedRules(wd *selenium.WebDriver, ctx *processContext, planned cfg.ExecutionPlanItem) {
+	// Execute the rules in the execution plan
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rules...")
+	// Get the rule
+	for _, ruleName := range planned.Rules {
+		if ruleName == "" {
+			continue
+		}
+		rule, err := ctx.re.GetActionRuleByName(ruleName)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error getting action rule: %v", err)
+		} else {
+			// Execute the rule
+			err := executeActionRule(rule, wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
+			}
+		}
+	}
+}
+
+// executePlannedRuleGroups executes the rule groups in the execution plan
+func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, planned cfg.ExecutionPlanItem) {
+	// Execute the rule groups in the execution plan
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rule groups...")
+	// Get the rule group
+	for _, ruleGroupName := range planned.RuleGroups {
+		if ruleGroupName == "" {
+			continue
+		}
+		rg, err := ctx.re.GetRuleGroupByName(ruleGroupName)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error getting rule group: %v", err)
+		} else {
+			// Execute the rule group
+			executeActionRules(rg.GetActionRules(), wd)
+		}
+	}
+}
+
+// executePlannedRulesets executes the rulesets in the execution plan
+func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned cfg.ExecutionPlanItem) {
+	// Execute the rulesets in the execution plan
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rulesets...")
+	// Get the ruleset
+	for _, rulesetName := range planned.Rulesets {
+		if rulesetName == "" {
+			continue
+		}
+		rs, err := ctx.re.GetRulesetByName(rulesetName)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error getting ruleset: %v", err)
+		} else {
+			// Execute the ruleset
+			executeActionRules(rs.GetActionRules(), wd)
 		}
 	}
 }
