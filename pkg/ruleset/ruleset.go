@@ -248,7 +248,7 @@ func loadRulesFromRemote(config cfg.Ruleset) (*[]Ruleset, error) {
 	for _, path := range config.Path {
 		url := fmt.Sprintf("http://%s/%s", config.Host, path)
 		httpClient := &http.Client{
-			Transport: cmn.SafeTransport(time.Duration(config.Timeout), config.SSLMode),
+			Transport: cmn.SafeTransport(config.Timeout, config.SSLMode),
 		}
 		resp, err := httpClient.Get(url)
 		if err != nil {

@@ -1505,6 +1505,9 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	apiURL := fmt.Sprintf(protocol+"://%s:%d/"+saveCfg.Path, saveCfg.Host, saveCfg.Port)
 
 	// Prepare the request
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(saveCfg.Timeout, saveCfg.SSLMode),
+	}
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		return "", err
@@ -1514,8 +1517,7 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	req.Header.Set("Authorization", "Bearer "+saveCfg.Token) // Assuming token-based auth
 
 	// Send the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}

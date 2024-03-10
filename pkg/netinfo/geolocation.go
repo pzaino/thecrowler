@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	config "github.com/pzaino/thecrowler/pkg/config"
@@ -80,7 +79,7 @@ func detectLocationIP2Location(ipAddress, apiKey string, timeout int, sslmode st
 	url := fmt.Sprintf("https://api.ip2location.com/v2/?ip=%s&key=%s&format=json", ipAddress, apiKey)
 
 	httpClient := &http.Client{
-		Transport: cmn.SafeTransport(time.Duration(timeout), sslmode),
+		Transport: cmn.SafeTransport(timeout, sslmode),
 	}
 	resp, err := httpClient.Get(url)
 	if err != nil {

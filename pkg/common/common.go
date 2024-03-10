@@ -118,17 +118,17 @@ func IsPathCorrect(path string) bool {
 	return true
 }
 
-func SafeTransport(timeout time.Duration, sslmode string) *http.Transport {
+func SafeTransport(timeout int, sslmode string) *http.Transport {
 	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
 	if sslmode == "disable" || sslmode == "disabled" {
 		return &http.Transport{
-			DialContext: dialContextWithIPCheck(timeout),
+			DialContext: dialContextWithIPCheck(time.Second * time.Duration(timeout)),
 		}
 	}
 	return &http.Transport{
-		DialContext:         dialContextWithIPCheck(timeout),
-		DialTLS:             dialTLSWithIPCheck(timeout),
-		TLSHandshakeTimeout: timeout,
+		DialContext:         dialContextWithIPCheck(time.Second * time.Duration(timeout)),
+		DialTLS:             dialTLSWithIPCheck(time.Second * time.Duration(timeout)),
+		TLSHandshakeTimeout: time.Second * time.Duration(timeout),
 	}
 }
 

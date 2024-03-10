@@ -34,6 +34,8 @@ func CreateConfig(url string, c cfg.Config) Config {
 		URL:             url,
 		CustomHeader:    map[string]string{"User-Agent": usrAgent},
 		FollowRedirects: true,
+		Timeout:         10,
+		SSLMode:         "none",
 	}
 }
 
@@ -55,15 +57,6 @@ func validateURL(inputURL string) (bool, error) {
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
 func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !config.FollowRedirects {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
-	}
-
 	// Validate the URL
 	if ok, err := validateURL(config.URL); !ok {
 		return nil, err
@@ -73,6 +66,15 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 		return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
 	}
 	// Ok, the URL is safe, let's create a new HTTP request
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(config.Timeout, config.SSLMode),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if !config.FollowRedirects {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
 	req, err := http.NewRequest("GET", config.URL, nil)
 	if err != nil {
 		return nil, err
@@ -83,7 +85,7 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 		req.Header.Add(key, value)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
