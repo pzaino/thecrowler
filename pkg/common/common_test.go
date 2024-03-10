@@ -152,7 +152,7 @@ func TestIsDisallowedIP(t *testing.T) {
 		{
 			name:     "IP Test case 5",
 			hostIP:   "8.8.8.8",
-			level:    1,
+			level:    3,
 			expected: false,
 		},
 	}

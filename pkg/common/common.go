@@ -16,10 +16,20 @@
 package common
 
 import (
+	"context"
+	"crypto/tls"
+	"errors"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	errIPNotAllowed = "ip address is not allowed"
 )
 
 // InitLogger initializes the logger
@@ -86,10 +96,18 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 // IsDisallowedIP parses the ip to determine if we should allow the HTTP client to continue
 func IsDisallowedIP(hostIP string, level int) bool {
 	ip := net.ParseIP(hostIP)
-	if level == 0 {
-		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback()
+	switch level {
+	case 0: // Allow only public IPs
+		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
+	case 1: // Allow only private IPs
+		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsGlobalUnicast()
+	case 2: // Allow only loopback IPs
+		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsGlobalUnicast()
+	case 3: // Allow only valid IPs
+		return ip.IsMulticast() || ip.IsUnspecified()
+	default:
+		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
 	}
-	return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
 }
 
 // Create a function that checks if a path is correct and if it exists
@@ -98,4 +116,54 @@ func IsPathCorrect(path string) bool {
 		return false
 	}
 	return true
+}
+
+func SafeTransport(timeout int, sslmode string) *http.Transport {
+	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
+	if sslmode == "disable" || sslmode == "disabled" {
+		return &http.Transport{
+			DialContext: dialContextWithIPCheck(time.Second * time.Duration(timeout)),
+		}
+	}
+	return &http.Transport{
+		DialContext:         dialContextWithIPCheck(time.Second * time.Duration(timeout)),
+		DialTLS:             dialTLSWithIPCheck(time.Second * time.Duration(timeout)),
+		TLSHandshakeTimeout: time.Second * time.Duration(timeout),
+	}
+}
+
+func dialContextWithIPCheck(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := net.DialTimeout(network, addr, timeout)
+		if err != nil {
+			return nil, err
+		}
+		ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+		if IsDisallowedIP(ip, 3) {
+			return nil, errors.New(errIPNotAllowed)
+		}
+		return c, err
+	}
+}
+
+func dialTLSWithIPCheck(timeout time.Duration) func(network, addr string) (net.Conn, error) {
+	return func(network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{Timeout: timeout}
+		c, err := tls.DialWithDialer(dialer, network, addr, &tls.Config{MinVersion: tls.VersionTLS13})
+		if err != nil {
+			return nil, err
+		}
+
+		ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+		if IsDisallowedIP(ip, 3) {
+			return nil, errors.New(errIPNotAllowed)
+		}
+
+		err = c.Handshake()
+		if err != nil {
+			return c, err
+		}
+
+		return c, c.Handshake()
+	}
 }

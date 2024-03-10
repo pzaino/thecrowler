@@ -48,6 +48,8 @@ func TestCreateConfig(t *testing.T) {
 		URL:             url1,
 		CustomHeader:    map[string]string{usrAgentField: usrAgent},
 		FollowRedirects: true,
+		Timeout:         10,
+		SSLMode:         "none",
 	}
 
 	result := CreateConfig(url1, sysConfig)
@@ -68,6 +70,8 @@ func TestExtractHTTPInfo(t *testing.T) {
 		URL:             url2,
 		CustomHeader:    map[string]string{usrAgentField: usrAgent},
 		FollowRedirects: true,
+		Timeout:         120,
+		SSLMode:         "none",
 	}
 
 	info, err := ExtractHTTPInfo(config)

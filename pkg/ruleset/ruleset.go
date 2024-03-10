@@ -18,6 +18,8 @@ package ruleset
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -232,9 +234,47 @@ func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
 		return &ruleset, nil
 	}
 	// Rules are stored remotely
-	// TODO: implement remote ruleset loading
-	return nil, fmt.Errorf("remote ruleset loading not implemented yet")
+	ruleset, err := loadRulesFromRemote(config)
+	if err != nil {
+		return nil, err
+	}
+	return ruleset, nil
+}
 
+func loadRulesFromRemote(config cfg.Ruleset) (*[]Ruleset, error) {
+	var ruleset []Ruleset
+
+	// Construct the URL to download the rules from
+	for _, path := range config.Path {
+		url := fmt.Sprintf("http://%s/%s", config.Host, path)
+		httpClient := &http.Client{
+			Transport: cmn.SafeTransport(config.Timeout, config.SSLMode),
+		}
+		resp, err := httpClient.Get(url)
+		if err != nil {
+			return &ruleset, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return &ruleset, fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return &ruleset, fmt.Errorf("failed to read response body: %v", err)
+		}
+
+		// Assuming your ParseRules function can parse the rules from the response body
+		rules, err := ParseRules(string(body)) // You might need to adjust this depending on the format
+		if err != nil {
+			return &ruleset, fmt.Errorf("failed to parse new rules chunk: %v", err)
+		}
+		resp.Body.Close()
+		ruleset = append(ruleset, rules...)
+	}
+
+	return &ruleset, nil
 }
 
 // Return the number of rulesets in the RuleEngine.

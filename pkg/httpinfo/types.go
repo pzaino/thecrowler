@@ -22,6 +22,8 @@ type Config struct {
 	URL             string
 	CustomHeader    map[string]string
 	FollowRedirects bool
+	Timeout         int
+	SSLMode         string
 }
 
 // HTTPDetails is a struct to store the collected HTTP header information

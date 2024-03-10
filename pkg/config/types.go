@@ -83,6 +83,8 @@ type GeoLookupConfig struct {
 	Type    string `yaml:"type"`    // "maxmind" or "ip2location"
 	DBPath  string `yaml:"db_path"` // Used for MaxMind
 	APIKey  string `yaml:"api_key"` // Used for IP2Location
+	Timeout int    `yaml:"timeout"`
+	SSLMode string `yaml:"sslmode"`
 }
 
 // NetworkInfo represents the network information gathering configuration
