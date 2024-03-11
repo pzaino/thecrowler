@@ -62,14 +62,14 @@ type ScrapingRule struct {
 
 // ActionRule represents an action rule
 type ActionRule struct {
-	RuleName       string          `yaml:"rule_name"`
-	ActionType     string          `yaml:"action_type"`
-	Selectors      []Selector      `yaml:"selectors"`
-	Value          string          `yaml:"value,omitempty"`
-	URL            string          `yaml:"url,omitempty"`
-	WaitConditions []WaitCondition `yaml:"wait_conditions"`
-	Conditions     map[string]bool `yaml:"conditions"`
-	ErrorHandling  ErrorHandling   `yaml:"error_handling"`
+	RuleName       string                 `yaml:"rule_name"`
+	ActionType     string                 `yaml:"action_type"`
+	Selectors      []Selector             `yaml:"selectors"`
+	Value          string                 `yaml:"value,omitempty"`
+	URL            string                 `yaml:"url,omitempty"`
+	WaitConditions []WaitCondition        `yaml:"wait_conditions"`
+	Conditions     map[string]interface{} `yaml:"conditions"`
+	ErrorHandling  ErrorHandling          `yaml:"error_handling"`
 }
 
 // Element represents a single element to be scraped
