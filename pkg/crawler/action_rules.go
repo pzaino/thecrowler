@@ -91,18 +91,20 @@ func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		}
 	}
 	// Execute the action based on the ActionType
-	switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
-	case "click":
-		return executeActionClick(r, wd)
-	case "scroll":
-		return executeActionScroll(r, wd)
-	case "input_text":
-		return executeActionInput(r, wd)
-	case "execute_javascript":
-		return executeActionJS(r, wd)
+	if (len(r.Conditions) == 0) || checkActionConditions(r.Conditions, wd) {
+		switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
+		case "click":
+			return executeActionClick(r, wd)
+		case "scroll":
+			return executeActionScroll(r, wd)
+		case "input_text":
+			return executeActionInput(r, wd)
+		case "execute_javascript":
+			return executeActionJS(r, wd)
+		}
+		return fmt.Errorf("action type not supported: %s", r.ActionType)
 	}
-
-	return fmt.Errorf("action type not supported: %s", r.ActionType)
+	return nil
 }
 
 // executeWaitCondition is responsible for executing a "wait" condition
@@ -292,26 +294,35 @@ func checkConditions(conditions cfg.Condition, url string) bool {
 
 // checkAdditionalConditions checks if the additional conditions are met
 func checkAdditionalConditions(additionalConditions map[string]interface{}, wd *selenium.WebDriver) bool {
+	return checkAllConditions(additionalConditions, wd)
+}
+
+func checkActionConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
+	return checkAllConditions(conditions, wd)
+}
+
+// CheckAllConditions checks all types of conditions: Action and Config Conditions
+func checkAllConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
-	if len(additionalConditions) > 0 {
+	if len(conditions) > 0 {
 		// Check if the page contains a specific element
-		if _, ok := additionalConditions["element"]; ok {
+		if _, ok := conditions["element"]; ok {
 			// Check if the element is present
-			_, err := (*wd).FindElement(selenium.ByCSSSelector, additionalConditions["element"].(string))
+			_, err := (*wd).FindElement(selenium.ByCSSSelector, conditions["element"].(string))
 			if err != nil {
 				canProceed = false
 			}
 		}
 		// If a language condition is present, check if the page is in the correct language
-		if _, ok := additionalConditions["language"]; ok {
+		if _, ok := conditions["language"]; ok {
 			// Get the page language
 			lang, err := (*wd).ExecuteScript("return document.documentElement.lang", nil)
 			if err != nil {
 				canProceed = false
 			}
 			// Check if the language is correct
-			if lang != additionalConditions["language"] {
+			if lang != conditions["language"] {
 				canProceed = false
 			}
 		}
