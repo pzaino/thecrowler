@@ -51,15 +51,19 @@ items:
                 rule_name:
                   type: string
                   description: A unique name identifying the scraping rule.
-                path:
-                  type: string
-                  description: The specific path or pattern to match for scraping.
-                url:
-                  type: string
-                  format: uri
-                  description: Optional. The specific URL to which this rule applies. If omitted,
-                    the rule is considered applicable to any URL matching the
-                    path.
+                pre_conditions:
+                  type: array
+                  description: Conditions to check before performing scraping, ensuring URL or path are correct if it's required by a rule (this section is optional).
+                  items:
+                    path:
+                      type: string
+                      description: The specific path or pattern to match for scraping.
+                    url:
+                      type: string
+                      format: uri
+                      description: Optional. The specific URL to which this rule applies. If omitted,
+                        the rule is considered applicable to any URL matching the
+                        path.
                 elements:
                   type: array
                   items:

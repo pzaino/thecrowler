@@ -47,17 +47,22 @@ type RuleGroup struct {
 	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration"`
 }
 
+type PreCondition struct {
+	URL  string `yaml:"url"`
+	Path string `yaml:"path"`
+}
+
 // ScrapingRule represents a scraping rule
 type ScrapingRule struct {
-	RuleName           string               `yaml:"rule_name"`
-	Path               string               `yaml:"path"`
-	URL                string               `yaml:"url,omitempty"`
-	Elements           []Element            `yaml:"elements"`
-	JsFiles            bool                 `yaml:"js_files"`
-	TechnologyPatterns []string             `yaml:"technology_patterns"`
-	JSONFieldMappings  map[string]string    `yaml:"json_field_mappings"`
-	WaitConditions     []WaitCondition      `yaml:"wait_conditions"`
-	PostProcessing     []PostProcessingStep `yaml:"post_processing"`
+	RuleName           string                 `yaml:"rule_name"`
+	PreConditions      []PreCondition         `yaml:"pre_conditions,omitempty"`
+	Conditions         map[string]interface{} `yaml:"conditions"`
+	WaitConditions     []WaitCondition        `yaml:"wait_conditions"`
+	Elements           []Element              `yaml:"elements"`
+	JsFiles            bool                   `yaml:"js_files"`
+	TechnologyPatterns []string               `yaml:"technology_patterns"`
+	JSONFieldMappings  map[string]string      `yaml:"json_field_mappings"`
+	PostProcessing     []PostProcessingStep   `yaml:"post_processing"`
 }
 
 // ActionRule represents an action rule
@@ -96,6 +101,7 @@ type WaitCondition struct {
 // PostProcessingStep represents a single post-processing step
 type PostProcessingStep struct {
 	StepType string                 `yaml:"step_type"`
+	Type     string                 `yaml:"type"`
 	Details  map[string]interface{} `yaml:"details"`
 }
 

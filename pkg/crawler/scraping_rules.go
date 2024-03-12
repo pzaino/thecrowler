@@ -111,6 +111,8 @@ func executeScrapingRulesInRuleGroup(rg *rules.RuleGroup, wd *selenium.WebDriver
 
 // executeScrapingRule executes a single ScrapingRule
 func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string, error) {
+	var jsonDocument string
+
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
 		for _, wc := range r.WaitConditions {
@@ -122,16 +124,18 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 	}
 
 	// Execute the scraping rule
-	extractedData := scraper.ApplyRule(r, wd)
+	if (len(r.Conditions) == 0) || checkActionConditions(r.Conditions, wd) {
+		extractedData := scraper.ApplyRule(r, wd)
 
-	// Transform the extracted data into a JSON document
-	jsonData, err := json.Marshal(extractedData)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling JSON: %v", err)
+		// Transform the extracted data into a JSON document
+		jsonData, err := json.Marshal(extractedData)
+		if err != nil {
+			return "", fmt.Errorf("error marshalling JSON: %v", err)
+		}
+
+		// Convert bytes to string to get a JSON document
+		jsonDocument = string(jsonData)
 	}
-
-	// Convert bytes to string to get a JSON document
-	jsonDocument := string(jsonData)
 
 	return jsonDocument, nil
 }
@@ -172,6 +176,10 @@ func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *processContext) {
 	// Execute all the rules in the ruleset
 	var scrapedDataDoc string
 	for _, r := range rs.ExecutionPlan {
+		// Check the conditions
+		if !checkScrapingPreConditions(r.Conditions, url) {
+			continue
+		}
 		scrapedDataDoc += executeRulesInExecutionPlan(r, wd, ctx)
 	}
 }
@@ -199,3 +207,54 @@ func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriv
 	}
 	return scrapedDataDoc
 }
+
+// checkScrapingPreConditions checks if the pre conditions are met
+// for example if the page URL is listed in the list of URLs
+// for which this rule is valid.
+func checkScrapingPreConditions(conditions cfg.Condition, url string) bool {
+	canProceed := true
+	// Check the URL patterns
+	if len(conditions.UrlPatterns) > 0 {
+		for _, pattern := range conditions.UrlPatterns {
+			if strings.Contains(url, pattern) {
+				canProceed = true
+			} else {
+				canProceed = false
+			}
+		}
+	}
+	return canProceed
+}
+
+/*
+// checkScrapingConditions checks all types of conditions: Scraping and Config Conditions
+// These are page related conditions, for instance check if an element is present
+// or if the page is in the desired language etc.
+func checkScrapingConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
+	canProceed := true
+	// Check the additional conditions
+	if len(conditions) > 0 {
+		// Check if the page contains a specific element
+		if _, ok := conditions["element"]; ok {
+			// Check if the element is present
+			_, err := (*wd).FindElement(selenium.ByCSSSelector, conditions["element"].(string))
+			if err != nil {
+				canProceed = false
+			}
+		}
+		// If a language condition is present, check if the page is in the correct language
+		if _, ok := conditions["language"]; ok {
+			// Get the page language
+			lang, err := (*wd).ExecuteScript("return document.documentElement.lang", nil)
+			if err != nil {
+				canProceed = false
+			}
+			// Check if the language is correct
+			if lang != conditions["language"] {
+				canProceed = false
+			}
+		}
+	}
+	return canProceed
+}
+*/

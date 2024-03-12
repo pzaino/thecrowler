@@ -258,10 +258,10 @@ func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
 	// Execute all the rules in the ruleset
 	for _, r := range rs.ExecutionPlan {
 		// Check the conditions
-		if !checkConditions(r.Conditions, url) {
+		if !checkActionPreConditions(r.Conditions, url) {
 			continue
 		}
-		if !checkAdditionalConditions(r.AdditionalConditions, wd) {
+		if !checkActionConditions(r.AdditionalConditions, wd) {
 			continue
 		}
 		if len(r.Rulesets) > 0 {
@@ -276,8 +276,10 @@ func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
 	}
 }
 
-// checkConditions checks if the conditions are met
-func checkConditions(conditions cfg.Condition, url string) bool {
+// checkActionPreConditions checks if the pre conditions are met
+// for example if the page URL is listed in the list of URLs
+// for which this rule is valid.
+func checkActionPreConditions(conditions cfg.Condition, url string) bool {
 	canProceed := true
 	// Check the URL patterns
 	if len(conditions.UrlPatterns) > 0 {
@@ -292,17 +294,10 @@ func checkConditions(conditions cfg.Condition, url string) bool {
 	return canProceed
 }
 
-// checkAdditionalConditions checks if the additional conditions are met
-func checkAdditionalConditions(additionalConditions map[string]interface{}, wd *selenium.WebDriver) bool {
-	return checkAllConditions(additionalConditions, wd)
-}
-
+// checkActionConditions checks all types of conditions: Action and Config Conditions
+// These are page related conditions, for instance check if an element is present
+// or if the page is in the desired language etc.
 func checkActionConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
-	return checkAllConditions(conditions, wd)
-}
-
-// CheckAllConditions checks all types of conditions: Action and Config Conditions
-func checkAllConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
 	if len(conditions) > 0 {
