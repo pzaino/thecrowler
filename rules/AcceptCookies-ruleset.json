@@ -11,7 +11,7 @@
         "is_enabled": true,
         "action_rules": [
           {
-            "rule_name": "ClickAcceptCookiesButton",
+
             "action_type": "click",
             "selectors": [
               {

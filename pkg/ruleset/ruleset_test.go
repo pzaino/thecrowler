@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/qri-io/jsonschema"
 )
 
 var rulesets = []Ruleset{
@@ -141,7 +142,7 @@ func TestParseRules(t *testing.T) {
 	tempFile := "./test-ruleset.yaml"
 
 	// Call the ParseRules function with the temporary file
-	sites, err := ParseRules(tempFile)
+	sites, err := ParseRules(nil, tempFile)
 	if err != nil {
 		t.Fatalf("ParseRules returned an error: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestParseRules(t *testing.T) {
 
 type MockRuleParser struct{}
 
-func (m *MockRuleParser) ParseRules(file string) ([]Ruleset, error) {
+func (m *MockRuleParser) ParseRules(_ *jsonschema.Schema, file string) ([]Ruleset, error) {
 	// Return your mock data here
 	return []Ruleset{}, nil
 }
@@ -179,7 +180,7 @@ func TestInitializeLibrary(t *testing.T) {
 func TestNewRuleEngine(t *testing.T) {
 	sites := rulesets
 
-	engine := NewRuleEngine(sites)
+	engine := NewRuleEngine("", sites)
 
 	// Verify that the RuleEngine is initialized correctly
 	if engine == nil {
@@ -193,7 +194,7 @@ func TestNewRuleEngine(t *testing.T) {
 	}
 }
 func TestFindRulesetByName(t *testing.T) {
-	engine := NewRuleEngine(rulesets)
+	engine := NewRuleEngine("", rulesets)
 
 	// Test case 1: Valid ruleset name
 	name := "Example Items Extraction Ruleset"

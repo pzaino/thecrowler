@@ -155,6 +155,7 @@ items:
                           - transform
                           - validate
                           - clean
+                          - custom_js
                         description: The type of post-processing step.
                       details:
                         type: object

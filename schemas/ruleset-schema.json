@@ -191,6 +191,7 @@
                         "details": {
                           "type": "object",
                           "description": "Detailed configuration for the post-processing step, structure depends on the step_type."
+
                         }
                       }
                     },

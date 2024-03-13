@@ -17,6 +17,8 @@
 package ruleset
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +31,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
+	"github.com/qri-io/jsonschema"
 	"gopkg.in/yaml.v2"
 )
 
@@ -70,7 +73,7 @@ func (ct *CustomTime) IsEmpty() bool {
 
 // ParseRules parses a YAML file containing site rules and returns a slice of SiteRules.
 // It takes a file path as input and returns the parsed site rules or an error if the file cannot be read or parsed.
-func ParseRules(path string) ([]Ruleset, error) {
+func ParseRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 	files, err := filepath.Glob(path)
 	if err != nil {
 		fmt.Println("Error finding JSON files:", err)
@@ -88,10 +91,25 @@ func ParseRules(path string) ([]Ruleset, error) {
 			return nil, err
 		}
 
+		// Parse the YAML file using the schema
+		if schema != nil {
+			// create a validation context
+			ctx := context.Background()
+
+			// Validate the ruleset against the schema
+			errors, err := (*schema).ValidateBytes(ctx, yamlFile)
+			if err != nil {
+				if len(errors) > 0 {
+					return nil, fmt.Errorf("validation failed: %v", errors)
+				}
+				return nil, err
+			}
+		}
 		err = yaml.Unmarshal(yamlFile, &ruleset)
 		if err != nil {
 			return nil, err
 		}
+
 		rulesets = append(rulesets, ruleset...)
 	}
 
@@ -100,19 +118,19 @@ func ParseRules(path string) ([]Ruleset, error) {
 
 // ParseRules is an interface for parsing rules from a file.
 func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
-	return ParseRules(file)
+	return ParseRules(nil, file)
 }
 
 // InitializeLibrary initializes the library by parsing the rules from the specified file
 // and creating a new rule engine with the parsed sites.
 // It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
-	rules, err := ParseRules(rulesFile)
+	rules, err := ParseRules(nil, rulesFile)
 	if err != nil {
 		return nil, err
 	}
 
-	engine := NewRuleEngine(rules)
+	engine := NewRuleEngine("./schemas/ruleset-schema.json", rules)
 	return engine, nil
 }
 
@@ -120,13 +138,13 @@ func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
 func LoadRulesFromFile(files []string) (*RuleEngine, error) {
 	var rules []Ruleset
 	for _, file := range files {
-		r, err := ParseRules(file)
+		r, err := ParseRules(nil, file)
 		if err != nil {
 			return nil, err
 		}
 		rules = append(rules, r...)
 	}
-	return NewRuleEngine(rules), nil
+	return NewRuleEngine("", rules), nil
 }
 
 // AddRuleset adds a new ruleset to the RuleEngine.
@@ -225,7 +243,11 @@ func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
 		// Rules are stored locally
 		var ruleset []Ruleset
 		for _, path := range config.Path {
-			rules, err := ParseRules(path)
+			schema, err := LoadSchema(config.SchemaPath)
+			if err != nil {
+				return &ruleset, fmt.Errorf("failed to load schema: %v", err)
+			}
+			rules, err := ParseRules(schema, path)
 			if err != nil {
 				return nil, err
 			}
@@ -265,8 +287,13 @@ func loadRulesFromRemote(config cfg.Ruleset) (*[]Ruleset, error) {
 			return &ruleset, fmt.Errorf("failed to read response body: %v", err)
 		}
 
+		schema, err := LoadSchema(config.SchemaPath)
+		if err != nil {
+			return &ruleset, fmt.Errorf("failed to load schema: %v", err)
+		}
+
 		// Assuming your ParseRules function can parse the rules from the response body
-		rules, err := ParseRules(string(body)) // You might need to adjust this depending on the format
+		rules, err := ParseRules(schema, string(body))
 		if err != nil {
 			return &ruleset, fmt.Errorf("failed to parse new rules chunk: %v", err)
 		}
@@ -958,27 +985,101 @@ func (p *PostProcessingStep) GetDetails() map[string]interface{} {
 
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
 // It initializes the RuleEngine with the given sites and returns a pointer to the created RuleEngine.
-func NewRuleEngine(ruleset []Ruleset) *RuleEngine {
-	// Implementation of the RuleEngine initialization
-	return &RuleEngine{
-		Rulesets: ruleset,
+func NewRuleEngine(schemaPath string, ruleset []Ruleset) *RuleEngine {
+	// Create a new instance of RuleEngine
+	ruleEngine := NewEmptyRuleEngine(schemaPath)
+
+	// Parse the ruleset
+	if ruleEngine.Schema != nil {
+		for _, rs := range ruleset {
+			err := ruleEngine.ValidateRuleset(rs)
+			if err != nil {
+				return nil
+			}
+		}
 	}
+
+	// Set the rulesets
+	ruleEngine.Rulesets = ruleset
+
+	// Implementation of the RuleEngine initialization
+	return &ruleEngine
+}
+
+// LoadSchema loads the JSON Schema from the specified file and returns a pointer to the created Schema.
+func LoadSchema(schemaPath string) (*jsonschema.Schema, error) {
+	if strings.TrimSpace(schemaPath) == "" {
+		return nil, fmt.Errorf("empty schema path")
+	}
+
+	// Load JSON Schema
+	schemaData, err := os.ReadFile(schemaPath)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to read ruleset's schema file: %v", err)
+		return nil, err
+	}
+
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(schemaData); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to unmarshal ruleset's schema: %v", err)
+		return nil, err
+	}
+
+	return schema, nil
 }
 
 // NewEmptyRuleEngine creates a new instance of RuleEngine with an empty slice of site rules.
-func NewEmptyRuleEngine() RuleEngine {
+func NewEmptyRuleEngine(schemaPath string) RuleEngine {
+	schema, err := LoadSchema(schemaPath)
+	if err != nil {
+		return RuleEngine{
+			Schema:   nil,
+			Rulesets: []Ruleset{},
+		}
+	}
+
 	return RuleEngine{
+		Schema:   schema,
 		Rulesets: []Ruleset{},
 	}
 }
 
+func (re *RuleEngine) ValidateRuleset(ruleset Ruleset) error {
+	if re.Schema == nil {
+		return fmt.Errorf("this RuleEngine has no validation schema")
+	}
+
+	// Transform the ruleset to JSON
+	rulesetJSON, err := json.Marshal(ruleset)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ruleset to JSON: %v", err)
+	}
+
+	// Create a context for the validation
+	ctx := context.Background()
+
+	// Validate the ruleset
+	if keywordsErrors, err := re.Schema.ValidateBytes(ctx, []byte(rulesetJSON)); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to validate ruleset: %v", err)
+		if len(keywordsErrors) > 0 {
+			return fmt.Errorf("ruleset validation failed: %v", keywordsErrors)
+		}
+		return fmt.Errorf("ruleset validation failed: %v", err)
+	}
+
+	return nil
+}
+
 // NewRuleEngineWithParser creates a new instance of RuleEngine with the provided site rules.
 func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error) {
-	rulesets, err := parser.ParseRules(file)
+	rulesets, err := parser.ParseRules(nil, file)
 	if err != nil {
 		return nil, err
 	}
-	return &RuleEngine{Rulesets: rulesets}, nil
+	return &RuleEngine{
+		Schema:   nil,
+		Rulesets: rulesets,
+	}, nil
 }
 
 // GetEnabledRuleGroups returns a slice of RuleGroup containing only the enabled rule groups.
