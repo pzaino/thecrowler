@@ -184,16 +184,18 @@ func ppStepRemove(data *[]byte, step *rs.PostProcessingStep) {
 func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	// Implement the transformation logic here
 	transformType := strings.ToLower(strings.TrimSpace(step.Details["transform_type"].(string)))
+	var err error
 	switch transformType {
 	case "api": // Call an API to transform the data
 		// Implement the API call here
-
+		err = processAPITransformation(step, data)
 	case "custom": // Use a custom transformation function
-		result, err := processCustomJS(step, data)
-		// Convert the value to a string and set it in the data slice.
-		if err == nil {
-			*data = []byte(result)
-		}
+		err = processCustomJS(step, data)
+
+	}
+	// Convert the value to a string and set it in the data slice.
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "There was an error while running a rule post-processing JS module: %v", err)
 	}
 }
 
@@ -213,13 +215,13 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
 */
-func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) {
+func processCustomJS(step *rs.PostProcessingStep, data *[]byte) error {
 	// Create a new instance of the Otto VM.
 	vm := otto.New()
 	err := removeJSFunctions(vm)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error removing JS functions: %v", err)
-		return string(*data), err
+		errMsg := fmt.Sprintf("Error removing JS functions: %v", err)
+		return errors.New(errMsg)
 	}
 
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
@@ -235,37 +237,39 @@ func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) 
 	jsonData := *data
 	var jsonDataMap map[string]interface{}
 	if err = json.Unmarshal(jsonData, &jsonDataMap); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling jsonData: %v", err)
-		return string(*data), err
+		errMsg := fmt.Sprintf("Error unmarshalling jsonData: %v", err)
+		return errors.New(errMsg)
 	}
 	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error setting jsonDataString in JS VM: %v", err)
-		return string(*data), err
+		errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
+		return errors.New(errMsg)
 	}
 
 	// Execute the JavaScript code.
 	customJS := step.Details["custom_js"].(string)
 	if customJS == "" || len(customJS) > 1024 {
 		errMsg := fmt.Sprintf("invalid JavaScript code: %v", otto.Value{}.String())
-		return string(*data), errors.New(errMsg)
+		return errors.New(errMsg)
 	}
 
 	value, err := vm.Run(customJS)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS: %v", err)
-		return string(*data), err
+		errMsg := fmt.Sprintf("Error executing JS: %v", err)
+		return errors.New(errMsg)
 	}
 	modifiedJSON, err := value.ToString()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error converting JS output to string: %v", err)
-		return string(*data), err
+		errMsg := fmt.Sprintf("Error converting JS output to string: %v", err)
+		return errors.New(errMsg)
 	}
 	if !json.Valid([]byte(modifiedJSON)) {
-		return string(*data), errors.New("modified JSON is not valid")
+		return errors.New("modified JSON is not valid")
 	}
+	// Update data
+	*data = []byte(modifiedJSON)
 
 	// Convert the value to a string
-	return modifiedJSON, nil
+	return nil
 }
 
 func removeJSFunctions(vm *otto.Otto) error {
@@ -303,6 +307,14 @@ func removeJSFunctions(vm *otto.Otto) error {
 			return err
 		}
 	}
+
+	return nil
+}
+
+// processAPITransformation allows to use a 3rd party API to process the JSON
+func processAPITransformation(_ *rs.PostProcessingStep, _ *[]byte) error {
+	// Implement an API client that uses step.Details[] items to connect to a
+	// 3rd party API, pass our JSON document in data and retrieve the results
 
 	return nil
 }
