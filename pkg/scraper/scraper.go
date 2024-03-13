@@ -17,7 +17,9 @@
 package scraper
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -217,13 +219,13 @@ func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) 
 	err := removeJSFunctions(vm)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error removing JS functions: %v", err)
-		return "", err
+		return string(*data), err
 	}
 
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
 
 	go func() {
-		time.Sleep(15 * time.Second) // Timeout after 5 seconds
+		time.Sleep(15 * time.Second) // Timeout after 15 seconds
 		vm.Interrupt <- func() {
 			panic("JavaScript execution timeout")
 		}
@@ -231,25 +233,39 @@ func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) 
 
 	// Convert the jsonData byte slice to a string and set it in the JS VM.
 	jsonData := *data
-	if err := vm.Set("jsonDataString", string(jsonData)); err != nil {
+	var jsonDataMap map[string]interface{}
+	if err = json.Unmarshal(jsonData, &jsonDataMap); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling jsonData: %v", err)
+		return string(*data), err
+	}
+	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error setting jsonDataString in JS VM: %v", err)
-		return "", err
+		return string(*data), err
 	}
 
 	// Execute the JavaScript code.
 	customJS := step.Details["custom_js"].(string)
 	if customJS == "" || len(customJS) > 1024 {
-		return otto.Value{}.String(), errors.New("invalid JavaScript code")
+		errMsg := fmt.Sprintf("invalid JavaScript code: %v", otto.Value{}.String())
+		return string(*data), errors.New(errMsg)
 	}
 
 	value, err := vm.Run(customJS)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS: %v", err)
-		return "", err
+		return string(*data), err
+	}
+	modifiedJSON, err := value.ToString()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error converting JS output to string: %v", err)
+		return string(*data), err
+	}
+	if !json.Valid([]byte(modifiedJSON)) {
+		return string(*data), errors.New("modified JSON is not valid")
 	}
 
 	// Convert the value to a string
-	return value.String(), nil
+	return modifiedJSON, nil
 }
 
 func removeJSFunctions(vm *otto.Otto) error {
