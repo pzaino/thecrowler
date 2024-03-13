@@ -183,6 +183,7 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	switch transformType {
 	case "api": // Call an API to transform the data
 		// Implement the API call here
+
 	case "custom": // Use a custom transformation function
 		result, err := processCustomJS(step, data)
 		// Convert the value to a string and set it in the data slice.
