@@ -214,11 +214,12 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) {
 	// Create a new instance of the Otto VM.
 	vm := otto.New()
-	err := vm.Set("eval", nil) // Remove eval function
+	err := removeJSFunctions(vm)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error setting eval in JS VM: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error removing JS functions: %v", err)
 		return "", err
 	}
+
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
 
 	go func() {
@@ -249,4 +250,43 @@ func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) 
 
 	// Convert the value to a string
 	return value.String(), nil
+}
+
+func removeJSFunctions(vm *otto.Otto) error {
+	functionsToRemove := []string{
+		"eval",
+		"Function",
+		"setTimeout",
+		"setInterval",
+		"clearTimeout",
+		"clearInterval",
+		"requestAnimationFrame",
+		"cancelAnimationFrame",
+		"requestIdleCallback",
+		"cancelIdleCallback",
+		"importScripts",
+		"XMLHttpRequest",
+		"fetch",
+		"WebSocket",
+		"Worker",
+		"SharedWorker",
+		"Notification",
+		"navigator",
+		"location",
+		"document",
+		"window",
+		"process",
+		"globalThis",
+		"global",
+		"crypto",
+	}
+
+	for _, functionName := range functionsToRemove {
+		err := vm.Set(functionName, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
