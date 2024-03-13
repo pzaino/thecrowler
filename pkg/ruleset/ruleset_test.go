@@ -21,7 +21,9 @@ var rulesets = []Ruleset{
 				ScrapingRules: []ScrapingRule{
 					{
 						RuleName: "Articles",
-						Path:     "/articles",
+						PreConditions: []PreCondition{
+							{Path: "/articles"},
+						},
 						Elements: []Element{
 							{
 								Key: "title",
@@ -56,7 +58,9 @@ var rulesets = []Ruleset{
 				ScrapingRules: []ScrapingRule{
 					{
 						RuleName: "News",
-						Path:     "/news",
+						PreConditions: []PreCondition{
+							{Path: "/news"},
+						},
 						Elements: []Element{
 							{
 								Key: "headline",
@@ -89,7 +93,9 @@ var rulesets = []Ruleset{
 				ScrapingRules: []ScrapingRule{
 					{
 						RuleName: "Products",
-						Path:     "/products",
+						PreConditions: []PreCondition{
+							{URL: "https://www.another-example.com", Path: "/products"},
+						},
 						Elements: []Element{
 							{
 								Key: "name",

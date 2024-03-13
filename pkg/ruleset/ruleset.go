@@ -465,10 +465,19 @@ func (re *RuleEngine) GetScrapingRuleByPath(path string) (*ScrapingRule, error) 
 	parsedPath := strings.ToLower(strings.TrimSpace(path))
 	for _, rs := range re.Rulesets {
 		for _, rg := range rs.RuleGroups {
-			for _, r := range rg.ScrapingRules {
-				if strings.ToLower(strings.TrimSpace(r.Path)) == parsedPath {
-					return &r, nil
-				}
+			if rule, err := findScrapingRuleByPath(parsedPath, rg.ScrapingRules); err == nil {
+				return rule, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf(errScrapingNotFound)
+}
+
+func findScrapingRuleByPath(parsedPath string, rules []ScrapingRule) (*ScrapingRule, error) {
+	for _, r := range rules {
+		for _, p := range r.PreConditions {
+			if strings.ToLower(strings.TrimSpace(p.Path)) == parsedPath {
+				return &r, nil
 			}
 		}
 	}
@@ -612,8 +621,10 @@ func (rs *Ruleset) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
 	path = strings.ToLower(strings.TrimSpace(path))
 	for _, rg := range rs.RuleGroups {
 		for _, r := range rg.ScrapingRules {
-			if strings.ToLower(strings.TrimSpace(r.Path)) == path {
-				return r, nil
+			for _, p := range r.PreConditions {
+				if strings.ToLower(strings.TrimSpace(p.Path)) == path {
+					return r, nil
+				}
 			}
 		}
 	}
@@ -633,8 +644,10 @@ func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
 	for _, rg := range rs.RuleGroups {
 		for _, r := range rg.ScrapingRules {
-			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
-				return r, nil
+			for _, u := range r.PreConditions {
+				if strings.ToLower(strings.TrimSpace(u.URL)) == parsedURL {
+					return r, nil
+				}
 			}
 		}
 	}
@@ -761,15 +774,17 @@ func (rg *RuleGroup) GetScrapingRuleByName(name string) (ScrapingRule, error) {
 // GetScrapingRuleByPath returns the scraping rule for the specified path.
 func (rg *RuleGroup) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
 	// Validate path
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return ScrapingRule{}, fmt.Errorf(errEmptyPath)
 	}
 
 	// prepare path
 	path = strings.ToLower(strings.TrimSpace(path))
 	for _, r := range rg.ScrapingRules {
-		if strings.ToLower(strings.TrimSpace(r.Path)) == path {
-			return r, nil
+		for _, p := range r.PreConditions {
+			if strings.ToLower(strings.TrimSpace(p.Path)) == path {
+				return r, nil
+			}
 		}
 	}
 	return ScrapingRule{}, fmt.Errorf(errScrapingNotFound)
@@ -787,8 +802,10 @@ func (rg *RuleGroup) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 	}
 	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
 	for _, r := range rg.ScrapingRules {
-		if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
-			return r, nil
+		for _, u := range r.PreConditions {
+			if strings.ToLower(strings.TrimSpace(u.URL)) == parsedURL {
+				return r, nil
+			}
 		}
 	}
 	return ScrapingRule{}, fmt.Errorf(errScrapingNotFound)
@@ -861,13 +878,27 @@ func (r *ScrapingRule) GetRuleName() string {
 }
 
 // GetPath returns the path for the specified scraping rule.
-func (r *ScrapingRule) GetPath() string {
-	return strings.TrimSpace(r.Path)
+func (r *ScrapingRule) GetPaths() []string {
+	var paths []string
+	for _, p := range r.PreConditions {
+		if strings.TrimSpace(p.Path) == "" {
+			continue
+		}
+		paths = append(paths, strings.TrimSpace(p.Path))
+	}
+	return paths
 }
 
 // GetURL returns the URL for the specified scraping rule.
-func (r *ScrapingRule) GetURL() string {
-	return strings.TrimSpace(r.URL)
+func (r *ScrapingRule) GetURLs() []string {
+	var urls []string
+	for _, u := range r.PreConditions {
+		if strings.TrimSpace(u.Path) == "" {
+			continue
+		}
+		urls = append(urls, strings.TrimSpace(u.URL))
+	}
+	return urls
 }
 
 // GetElements returns the elements for the specified scraping rule.
@@ -917,7 +948,7 @@ func (w *WaitCondition) GetCustomJS() string {
 
 // GetStepType returns the step type for the specified post-processing step.
 func (p *PostProcessingStep) GetStepType() string {
-	return strings.ToLower(strings.TrimSpace(p.StepType))
+	return strings.ToLower(strings.TrimSpace(p.Type))
 }
 
 // GetDetails returns the details for the specified post-processing step.
@@ -996,12 +1027,15 @@ func (s *Ruleset) GetEnabledRulesByGroup(groupName string) []ScrapingRule {
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path to the result slice.
 func (s *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
 	var enabledRules []ScrapingRule
+	path = strings.TrimSpace(path)
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled {
 			for _, r := range rg.ScrapingRules {
-				if r.Path == path {
-					enabledRules = append(enabledRules, r)
+				for _, p := range r.PreConditions {
+					if strings.TrimSpace(p.Path) == path {
+						enabledRules = append(enabledRules, r)
+					}
 				}
 			}
 		}
@@ -1014,13 +1048,24 @@ func (s *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path and group to the result slice.
 func (s *Ruleset) GetEnabledRulesByPathAndGroup(path, groupName string) []ScrapingRule {
 	var enabledRules []ScrapingRule
+	path = strings.TrimSpace(path)
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled && rg.GroupName == groupName {
-			for _, r := range rg.ScrapingRules {
-				if r.Path == path {
-					enabledRules = append(enabledRules, r)
-				}
+			enabledRules = append(enabledRules, s.getEnabledRulesByPathAndGroupHelper(rg, path)...)
+		}
+	}
+
+	return enabledRules
+}
+
+func (s *Ruleset) getEnabledRulesByPathAndGroupHelper(rg RuleGroup, path string) []ScrapingRule {
+	var enabledRules []ScrapingRule
+
+	for _, r := range rg.ScrapingRules {
+		for _, p := range r.PreConditions {
+			if strings.TrimSpace(p.Path) == path {
+				enabledRules = append(enabledRules, r)
 			}
 		}
 	}

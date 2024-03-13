@@ -17,8 +17,10 @@
 package scraper
 
 import (
+	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
+	"github.com/robertkrimen/otto"
 	"golang.org/x/net/html"
 )
 
@@ -147,4 +150,143 @@ func ApplyRulesGroup(ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebD
 	}
 
 	return extractedData, nil
+}
+
+// ApplyPostProcessingStep applies the provided post-processing step to the provided data.
+func ApplyPostProcessingStep(step *rs.PostProcessingStep, data *[]byte) {
+	// Implement the post-processing step here
+	stepType := strings.ToLower(strings.TrimSpace(step.Type))
+	switch stepType {
+	case "replace":
+		ppStepReplace(data, step)
+	case "remove":
+		ppStepRemove(data, step)
+	case "transform":
+		ppStepTransform(data, step)
+	}
+}
+
+// ppStepReplace applies the "replace" post-processing step to the provided data.
+func ppStepReplace(data *[]byte, step *rs.PostProcessingStep) {
+	// Replace all instances of step.Details["target"] with step.Details["replacement"] in data
+	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), step.Details["replacement"].(string)))
+}
+
+// ppStepRemove applies the "remove" post-processing step to the provided data.
+func ppStepRemove(data *[]byte, step *rs.PostProcessingStep) {
+	// Remove all instances of step.Details["target"] from data
+	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
+}
+
+// ppStepTransform applies the "transform" post-processing step to the provided data.
+func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
+	// Implement the transformation logic here
+	transformType := strings.ToLower(strings.TrimSpace(step.Details["transform_type"].(string)))
+	switch transformType {
+	case "api": // Call an API to transform the data
+		// Implement the API call here
+
+	case "custom": // Use a custom transformation function
+		result, err := processCustomJS(step, data)
+		// Convert the value to a string and set it in the data slice.
+		if err == nil {
+			*data = []byte(result)
+		}
+	}
+}
+
+// processCustomJS executes the provided custom JavaScript code using the provided VM.
+// The JavaScript module must be written as follows:
+/*
+	// Parse the JSON string back into an object
+	var dataObj = JSON.parse(jsonDataString);
+
+	// Let's assume you want to manipulate or use the data somehow
+	function processData(data) {
+		// Example manipulation: create a greeting message
+		return "Hello, " + data.name + " from " + data.city + "!";
+	}
+
+	// Call processData with the parsed object
+	var result = processData(dataObj);
+	result; // This will be the return value of vm.Run(jsCode)
+*/
+func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) {
+	// Create a new instance of the Otto VM.
+	vm := otto.New()
+	err := removeJSFunctions(vm)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error removing JS functions: %v", err)
+		return "", err
+	}
+
+	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
+
+	go func() {
+		time.Sleep(15 * time.Second) // Timeout after 5 seconds
+		vm.Interrupt <- func() {
+			panic("JavaScript execution timeout")
+		}
+	}()
+
+	// Convert the jsonData byte slice to a string and set it in the JS VM.
+	jsonData := *data
+	if err := vm.Set("jsonDataString", string(jsonData)); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error setting jsonDataString in JS VM: %v", err)
+		return "", err
+	}
+
+	// Execute the JavaScript code.
+	customJS := step.Details["custom_js"].(string)
+	if customJS == "" || len(customJS) > 1024 {
+		return otto.Value{}.String(), errors.New("invalid JavaScript code")
+	}
+
+	value, err := vm.Run(customJS)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS: %v", err)
+		return "", err
+	}
+
+	// Convert the value to a string
+	return value.String(), nil
+}
+
+func removeJSFunctions(vm *otto.Otto) error {
+	functionsToRemove := []string{
+		"eval",
+		"Function",
+		"setTimeout",
+		"setInterval",
+		"clearTimeout",
+		"clearInterval",
+		"requestAnimationFrame",
+		"cancelAnimationFrame",
+		"requestIdleCallback",
+		"cancelIdleCallback",
+		"importScripts",
+		"XMLHttpRequest",
+		"fetch",
+		"WebSocket",
+		"Worker",
+		"SharedWorker",
+		"Notification",
+		"navigator",
+		"location",
+		"document",
+		"window",
+		"process",
+		"globalThis",
+		"global",
+		"crypto",
+	}
+
+	for _, functionName := range functionsToRemove {
+		err := vm.Set(functionName, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
