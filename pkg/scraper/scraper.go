@@ -17,8 +17,10 @@
 package scraper
 
 import (
+	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -212,6 +214,19 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) {
 	// Create a new instance of the Otto VM.
 	vm := otto.New()
+	err := vm.Set("eval", nil) // Remove eval function
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error setting eval in JS VM: %v", err)
+		return "", err
+	}
+	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
+
+	go func() {
+		time.Sleep(15 * time.Second) // Timeout after 5 seconds
+		vm.Interrupt <- func() {
+			panic("JavaScript execution timeout")
+		}
+	}()
 
 	// Convert the jsonData byte slice to a string and set it in the JS VM.
 	jsonData := *data
@@ -221,7 +236,12 @@ func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) 
 	}
 
 	// Execute the JavaScript code.
-	value, err := vm.Run(step.Details["custom_js"].(string))
+	customJS := step.Details["custom_js"].(string)
+	if customJS == "" || len(customJS) > 1024 {
+		return otto.Value{}.String(), errors.New("invalid JavaScript code")
+	}
+
+	value, err := vm.Run(customJS)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS: %v", err)
 		return "", err
