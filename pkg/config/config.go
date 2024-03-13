@@ -181,6 +181,7 @@ func NewConfig() Config {
 				SSLMode:    "disable",
 			},
 		},
+		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
 		Rulesets: []Ruleset{
 			{
 				Type: "local",

@@ -17,7 +17,11 @@
 package scraper
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -182,16 +186,18 @@ func ppStepRemove(data *[]byte, step *rs.PostProcessingStep) {
 func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	// Implement the transformation logic here
 	transformType := strings.ToLower(strings.TrimSpace(step.Details["transform_type"].(string)))
+	var err error
 	switch transformType {
 	case "api": // Call an API to transform the data
 		// Implement the API call here
-
+		err = processAPITransformation(step, data)
 	case "custom": // Use a custom transformation function
-		result, err := processCustomJS(step, data)
-		// Convert the value to a string and set it in the data slice.
-		if err == nil {
-			*data = []byte(result)
-		}
+		err = processCustomJS(step, data)
+
+	}
+	// Convert the value to a string and set it in the data slice.
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "There was an error while running a rule post-processing JS module: %v", err)
 	}
 }
 
@@ -211,19 +217,19 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
 */
-func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) {
+func processCustomJS(step *rs.PostProcessingStep, data *[]byte) error {
 	// Create a new instance of the Otto VM.
 	vm := otto.New()
 	err := removeJSFunctions(vm)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error removing JS functions: %v", err)
-		return "", err
+		errMsg := fmt.Sprintf("Error removing JS functions: %v", err)
+		return errors.New(errMsg)
 	}
 
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
 
 	go func() {
-		time.Sleep(15 * time.Second) // Timeout after 5 seconds
+		time.Sleep(15 * time.Second) // Timeout after 15 seconds
 		vm.Interrupt <- func() {
 			panic("JavaScript execution timeout")
 		}
@@ -231,25 +237,41 @@ func processCustomJS(step *rs.PostProcessingStep, data *[]byte) (string, error) 
 
 	// Convert the jsonData byte slice to a string and set it in the JS VM.
 	jsonData := *data
-	if err := vm.Set("jsonDataString", string(jsonData)); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error setting jsonDataString in JS VM: %v", err)
-		return "", err
+	var jsonDataMap map[string]interface{}
+	if err = json.Unmarshal(jsonData, &jsonDataMap); err != nil {
+		errMsg := fmt.Sprintf("Error unmarshalling jsonData: %v", err)
+		return errors.New(errMsg)
+	}
+	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
+		errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
+		return errors.New(errMsg)
 	}
 
 	// Execute the JavaScript code.
 	customJS := step.Details["custom_js"].(string)
 	if customJS == "" || len(customJS) > 1024 {
-		return otto.Value{}.String(), errors.New("invalid JavaScript code")
+		errMsg := fmt.Sprintf("invalid JavaScript code: %v", otto.Value{}.String())
+		return errors.New(errMsg)
 	}
 
 	value, err := vm.Run(customJS)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS: %v", err)
-		return "", err
+		errMsg := fmt.Sprintf("Error executing JS: %v", err)
+		return errors.New(errMsg)
 	}
+	modifiedJSON, err := value.ToString()
+	if err != nil {
+		errMsg := fmt.Sprintf("Error converting JS output to string: %v", err)
+		return errors.New(errMsg)
+	}
+	if !json.Valid([]byte(modifiedJSON)) {
+		return errors.New("modified JSON is not valid")
+	}
+	// Update data
+	*data = []byte(modifiedJSON)
 
 	// Convert the value to a string
-	return value.String(), nil
+	return nil
 }
 
 func removeJSFunctions(vm *otto.Otto) error {
@@ -287,6 +309,90 @@ func removeJSFunctions(vm *otto.Otto) error {
 			return err
 		}
 	}
+
+	return nil
+}
+
+// processAPITransformation allows to use a 3rd party API to process the JSON
+func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
+	// Implement an API client that uses step.Details[] items to connect to a
+	// 3rd party API, pass our JSON document in data and retrieve the results
+
+	if step.Details["api_url"] == nil {
+		return errors.New("API URL is missing")
+	}
+
+	var protocol string
+	var sslMode string
+	if step.Details["ssl_mode"] == nil {
+		protocol = "http"
+		sslMode = "disable"
+	} else {
+		sslMode = strings.ToLower(strings.TrimSpace(step.Details["ssl_mode"].(string)))
+		if sslMode == "disable" || sslMode == "disabled" {
+			protocol = "http"
+		} else {
+			protocol = "https"
+		}
+	}
+	url := protocol + ":://" + step.Details["api_url"].(string)
+
+	// Determine timeout
+	var timeout int
+	if step.Details["timeout"] == nil {
+		timeout = 15
+	} else {
+		timeout = step.Details["timeout"].(int)
+	}
+
+	// Implement the API call here
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(timeout, sslMode),
+	}
+	// Prepare the POST request
+	request := "{"
+	if step.Details["api_key"] != nil {
+		request += "\"api_key\": \"" + step.Details["api_key"].(string) + "\","
+	}
+	if step.Details["api_secret"] != nil {
+		request += "\"api_secret\": \"" + step.Details["api_secret"].(string) + "\","
+	}
+	if step.Details["custom_json"] != nil {
+		request += step.Details["custom_json"].(string) + ","
+	}
+	if step.Details["data_label"] != nil {
+		request += step.Details["data_label"].(string) + " { "
+	} else {
+		request += "\"data\": {"
+	}
+	request += string(*data)
+	request += "}"
+	request += "}"
+	req, err := http.NewRequest("POST", url, strings.NewReader(request))
+	if err != nil {
+		return fmt.Errorf("failed to create POST request to %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the POST request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	// Update data
+	*data = body
+	resp.Body.Close()
 
 	return nil
 }

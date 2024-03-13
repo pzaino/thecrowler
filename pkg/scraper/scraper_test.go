@@ -28,8 +28,10 @@ const (
 )
 
 func TestParseRules(t *testing.T) {
+	schema, _ := rs.LoadSchema("../../../schemas/ruleset_schema.json")
+
 	// Call the function
-	sites, err := rs.ParseRules(goodTestFile)
+	sites, err := rs.ParseRules(schema, goodTestFile)
 
 	// Check for errors
 	if err != nil {
@@ -45,7 +47,9 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestParseRulesInvalidFile(t *testing.T) {
-	_, err := rs.ParseRules("./invalid_ruleset.yaml")
+	schema, _ := rs.LoadSchema("../../../schemas/ruleset_schema.json")
+
+	_, err := rs.ParseRules(schema, "./invalid_ruleset.yaml")
 	if err == nil {
 		t.Errorf("Expected error, got none")
 	}

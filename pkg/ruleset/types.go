@@ -18,7 +18,15 @@ package ruleset
 
 import (
 	"time"
+
+	"github.com/qri-io/jsonschema"
 )
+
+// RuleEngine represents the top-level structure for the rule engine
+type RuleEngine struct {
+	Schema   *jsonschema.Schema `yaml:"schema"`
+	Rulesets []Ruleset          `yaml:"rulesets"`
+}
 
 // CustomTime wraps time.Time to provide custom parsing.
 type CustomTime struct {
@@ -122,14 +130,9 @@ type ErrorHandling struct {
 	RetryDelay int `yaml:"retry_delay"`
 }
 
-// RuleEngine represents the top-level structure for the rule engine
-type RuleEngine struct {
-	Rulesets []Ruleset
-}
-
 // RuleParser defines an interface for parsing rules.
 type RuleParser interface {
-	ParseRules(file string) ([]Ruleset, error)
+	ParseRules(schema *jsonschema.Schema, file string) ([]Ruleset, error)
 }
 
 // DefaultRuleParser is the default implementation of the RuleParser interface.

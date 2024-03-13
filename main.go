@@ -247,7 +247,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	}
 
 	// Initialize the rules engine
-	*RulesEngine = rules.NewEmptyRuleEngine()
+	*RulesEngine = rules.NewEmptyRuleEngine(config.RulesetsSchemaPath)
 	err = RulesEngine.LoadRulesFromConfig(config)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading rules from configuration: %v", err)
