@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -312,9 +314,85 @@ func removeJSFunctions(vm *otto.Otto) error {
 }
 
 // processAPITransformation allows to use a 3rd party API to process the JSON
-func processAPITransformation(_ *rs.PostProcessingStep, _ *[]byte) error {
+func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
 	// Implement an API client that uses step.Details[] items to connect to a
 	// 3rd party API, pass our JSON document in data and retrieve the results
+
+	if step.Details["api_url"] == nil {
+		return errors.New("API URL is missing")
+	}
+
+	var protocol string
+	var sslMode string
+	if step.Details["ssl_mode"] == nil {
+		protocol = "http"
+		sslMode = "disable"
+	} else {
+		sslMode = strings.ToLower(strings.TrimSpace(step.Details["ssl_mode"].(string)))
+		if sslMode == "disable" || sslMode == "disabled" {
+			protocol = "http"
+		} else {
+			protocol = "https"
+		}
+	}
+	url := protocol + ":://" + step.Details["api_url"].(string)
+
+	// Determine timeout
+	var timeout int
+	if step.Details["timeout"] == nil {
+		timeout = 15
+	} else {
+		timeout = step.Details["timeout"].(int)
+	}
+
+	// Implement the API call here
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(timeout, sslMode),
+	}
+	// Prepare the POST request
+	request := "{"
+	if step.Details["api_key"] != nil {
+		request += "\"api_key\": \"" + step.Details["api_key"].(string) + "\","
+	}
+	if step.Details["api_secret"] != nil {
+		request += "\"api_secret\": \"" + step.Details["api_secret"].(string) + "\","
+	}
+	if step.Details["custom_json"] != nil {
+		request += step.Details["custom_json"].(string) + ","
+	}
+	if step.Details["data_label"] != nil {
+		request += step.Details["data_label"].(string) + " { "
+	} else {
+		request += "\"data\": {"
+	}
+	request += string(*data)
+	request += "}"
+	request += "}"
+	req, err := http.NewRequest("POST", url, strings.NewReader(request))
+	if err != nil {
+		return fmt.Errorf("failed to create POST request to %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the POST request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	// Update data
+	*data = body
+	resp.Body.Close()
 
 	return nil
 }
