@@ -5,7 +5,7 @@ go 1.22.1
 require (
 	github.com/PuerkitoBio/goquery v1.9.1
 	github.com/antchfx/htmlquery v1.3.0
-	github.com/aws/aws-sdk-go v1.50.37
+	github.com/aws/aws-sdk-go v1.50.38
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
@@ -15,14 +15,14 @@ require (
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/likexian/whois v1.15.1
 	github.com/oschwald/maxminddb-golang v1.12.0
+	github.com/qri-io/jsonschema v0.2.1
+	github.com/robertkrimen/otto v0.3.0
 	github.com/stretchr/testify v1.9.0
 )
 
 require (
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
-	github.com/qri-io/jsonschema v0.2.1 // indirect
-	github.com/robertkrimen/otto v0.3.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 )
