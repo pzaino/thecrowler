@@ -181,6 +181,8 @@
                         "step_type": {
                           "type": "string",
                           "enum": [
+                            "replace",
+                            "remove",
                             "transform",
                             "validate",
                             "clean"

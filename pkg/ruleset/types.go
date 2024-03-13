@@ -100,9 +100,8 @@ type WaitCondition struct {
 
 // PostProcessingStep represents a single post-processing step
 type PostProcessingStep struct {
-	StepType string                 `yaml:"step_type"`
-	Type     string                 `yaml:"type"`
-	Details  map[string]interface{} `yaml:"details"`
+	Type    string                 `yaml:"step_type"`
+	Details map[string]interface{} `yaml:"details"`
 }
 
 // EnvironmentSettings represents the environment settings for the rule group

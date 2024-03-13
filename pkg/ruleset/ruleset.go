@@ -948,7 +948,7 @@ func (w *WaitCondition) GetCustomJS() string {
 
 // GetStepType returns the step type for the specified post-processing step.
 func (p *PostProcessingStep) GetStepType() string {
-	return strings.ToLower(strings.TrimSpace(p.StepType))
+	return strings.ToLower(strings.TrimSpace(p.Type))
 }
 
 // GetDetails returns the details for the specified post-processing step.

@@ -124,7 +124,7 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 	}
 
 	// Execute the scraping rule
-	if (len(r.Conditions) == 0) || checkActionConditions(r.Conditions, wd) {
+	if (len(r.Conditions) == 0) || checkScrapingConditions(r.Conditions, wd) {
 		extractedData := scraper.ApplyRule(r, wd)
 
 		// Transform the extracted data into a JSON document
@@ -133,11 +133,24 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 			return "", fmt.Errorf("error marshalling JSON: %v", err)
 		}
 
+		// Execute Post Processing steps
+		if len(r.PostProcessing) != 0 {
+			runPostProcessingSteps(&r.PostProcessing, &jsonData)
+		}
+
 		// Convert bytes to string to get a JSON document
 		jsonDocument = string(jsonData)
 	}
 
 	return jsonDocument, nil
+}
+
+// runPostProcessingSteps runs the post processing steps
+func runPostProcessingSteps(pps *[]rules.PostProcessingStep, jsonData *[]byte) {
+	for _, pp := range *pps {
+		// Execute the post processing step
+		scraper.ApplyPostProcessingStep(&pp, jsonData)
+	}
 }
 
 func DefaultCrawlingConfig(url string) cfg.SourceConfig {
@@ -226,7 +239,6 @@ func checkScrapingPreConditions(conditions cfg.Condition, url string) bool {
 	return canProceed
 }
 
-/*
 // checkScrapingConditions checks all types of conditions: Scraping and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
@@ -257,4 +269,3 @@ func checkScrapingConditions(conditions map[string]interface{}, wd *selenium.Web
 	}
 	return canProceed
 }
-*/
