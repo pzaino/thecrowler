@@ -153,8 +153,8 @@ items:
                         type: string
                         enum:
                           - transform
-                          - validate
-                          - clean
+                          - remove
+                          - replace
                           - custom_js
                         description: The type of post-processing step.
                       details:
