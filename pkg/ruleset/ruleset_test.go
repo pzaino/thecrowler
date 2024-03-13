@@ -180,7 +180,7 @@ func TestInitializeLibrary(t *testing.T) {
 func TestNewRuleEngine(t *testing.T) {
 	sites := rulesets
 
-	engine := NewRuleEngine("", sites)
+	engine := NewRuleEngine("../../../schemas/ruleset-schema.json", sites)
 
 	// Verify that the RuleEngine is initialized correctly
 	if engine == nil {
@@ -194,7 +194,7 @@ func TestNewRuleEngine(t *testing.T) {
 	}
 }
 func TestFindRulesetByName(t *testing.T) {
-	engine := NewRuleEngine("", rulesets)
+	engine := NewRuleEngine("../../../schemas/ruleset-schema.json", rulesets)
 
 	// Test case 1: Valid ruleset name
 	name := "Example Items Extraction Ruleset"

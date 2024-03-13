@@ -183,7 +183,7 @@ func (re *RuleEngine) GetRuleset(name string) (Ruleset, error) {
 // LoadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
 func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
 	for _, rs := range config.Rulesets {
-		rulesets, err := loadRulesFromConfig(rs)
+		rulesets, err := loadRulesFromConfig(re.Schema, rs)
 		if err != nil {
 			return err
 		}

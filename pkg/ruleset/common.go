@@ -165,7 +165,7 @@ func LoadRulesFromFile(files []string) (*RuleEngine, error) {
 }
 
 // loadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
-func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
+func loadRulesFromConfig(schema *jsonschema.Schema, config cfg.Ruleset) (*[]Ruleset, error) {
 	if config.Path == nil {
 		return nil, fmt.Errorf(errEmptyPath)
 	}
@@ -173,10 +173,6 @@ func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
 		// Rules are stored locally
 		var ruleset []Ruleset
 		for _, path := range config.Path {
-			schema, err := LoadSchema(config.SchemaPath)
-			if err != nil {
-				return &ruleset, fmt.Errorf("failed to load schema: %v", err)
-			}
 			rules, err := ParseRules(schema, path)
 			if err != nil {
 				return nil, err
@@ -186,14 +182,14 @@ func loadRulesFromConfig(config cfg.Ruleset) (*[]Ruleset, error) {
 		return &ruleset, nil
 	}
 	// Rules are stored remotely
-	ruleset, err := loadRulesFromRemote(config)
+	ruleset, err := loadRulesFromRemote(schema, config)
 	if err != nil {
 		return nil, err
 	}
 	return ruleset, nil
 }
 
-func loadRulesFromRemote(config cfg.Ruleset) (*[]Ruleset, error) {
+func loadRulesFromRemote(schema *jsonschema.Schema, config cfg.Ruleset) (*[]Ruleset, error) {
 	var ruleset []Ruleset
 
 	// Construct the URL to download the rules from
@@ -215,11 +211,6 @@ func loadRulesFromRemote(config cfg.Ruleset) (*[]Ruleset, error) {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return &ruleset, fmt.Errorf("failed to read response body: %v", err)
-		}
-
-		schema, err := LoadSchema(config.SchemaPath)
-		if err != nil {
-			return &ruleset, fmt.Errorf("failed to load schema: %v", err)
 		}
 
 		// Assuming your ParseRules function can parse the rules from the response body
