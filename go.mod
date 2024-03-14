@@ -3,9 +3,9 @@ module github.com/pzaino/thecrowler
 go 1.22.1
 
 require (
-	github.com/PuerkitoBio/goquery v1.9.0
+	github.com/PuerkitoBio/goquery v1.9.1
 	github.com/antchfx/htmlquery v1.3.0
-	github.com/aws/aws-sdk-go v1.50.25
+	github.com/aws/aws-sdk-go v1.50.37
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
@@ -15,7 +15,7 @@ require (
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/likexian/whois v1.15.1
 	github.com/oschwald/maxminddb-golang v1.12.0
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.9.0
 )
 
 require (
@@ -45,6 +45,6 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.21.0
+	golang.org/x/net v0.22.0
 	golang.org/x/text v0.14.0 // indirect
 )
