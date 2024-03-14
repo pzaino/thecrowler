@@ -105,6 +105,33 @@ func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error
 	}, nil
 }
 
+func (re *RuleEngine) LoadRulesFromFile(files []string) error {
+	for _, file := range files {
+		ruleset, err := BulkLoadRules(re.Schema, file)
+		if err != nil {
+			return err
+		}
+		re.Rulesets = append(re.Rulesets, ruleset...)
+	}
+
+	return nil
+}
+
+// MarshalJSON returns the JSON representation of the RuleEngine.
+func (re *RuleEngine) MarshalJSON() ([]byte, error) {
+	// transform the RuleEngine to JSON
+	jsonDocument := map[string]interface{}{
+		"schema":   re.Schema,
+		"rulesets": re.Rulesets,
+	}
+	jsonData, err := json.MarshalIndent(jsonDocument, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal RuleEngine to JSON: %v", err)
+	}
+
+	return jsonData, err
+}
+
 // AddRuleset adds a new ruleset to the RuleEngine.
 func (re *RuleEngine) AddRuleset(ruleset Ruleset) {
 	re.Rulesets = append(re.Rulesets, ruleset)
@@ -278,15 +305,18 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 // GetRulesGroupByName returns the rules group for the specified name.
 func (re *RuleEngine) GetRuleGroupByName(name string) (*RuleGroup, error) {
 	// Validate name
+	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf(errEmptyName)
 	}
-	parsedName := strings.ToLower(strings.TrimSpace(name))
+	parsedName := strings.ToLower(name)
 	for _, rs := range re.Rulesets {
 		for _, rg := range rs.RuleGroups {
 			if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
 				if rg.IsValid() {
 					return &rg, nil
+				} else {
+					return nil, fmt.Errorf("RuleGroup '%s' is not valid", rg.GroupName)
 				}
 			}
 		}

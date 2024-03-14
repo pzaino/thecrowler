@@ -28,14 +28,14 @@ const (
 )
 
 func TestParseRules(t *testing.T) {
-	schema, _ := rs.LoadSchema("../../../schemas/ruleset_schema.json")
+	schema, _ := rs.LoadSchema("../../schemas/ruleset-schema.json")
 
 	// Call the function
-	sites, err := rs.ParseRules(schema, goodTestFile)
+	sites, err := rs.BulkLoadRules(schema, goodTestFile)
 
 	// Check for errors
 	if err != nil {
-		t.Errorf("ParseRules returned an error: %v", err)
+		t.Errorf("BulkLoadRules returned an error: %v", err)
 	}
 
 	// Check if the returned structure matches the expected output
@@ -47,9 +47,9 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestParseRulesInvalidFile(t *testing.T) {
-	schema, _ := rs.LoadSchema("../../../schemas/ruleset_schema.json")
+	schema, _ := rs.LoadSchema("../../schemas/ruleset-schema.json")
 
-	_, err := rs.ParseRules(schema, "./invalid_ruleset.yaml")
+	_, err := rs.BulkLoadRules(schema, "./invalid_ruleset.yaml")
 	if err == nil {
 		t.Errorf("Expected error, got none")
 	}

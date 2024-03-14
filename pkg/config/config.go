@@ -38,21 +38,6 @@ func fileExists(filename string) bool {
 	return !info.IsDir()
 }
 
-// interpolateEnvVars replaces occurrences of `${VAR}` or `$VAR` in the input string
-// with the value of the VAR environment variable.
-func interpolateEnvVars(input string) string {
-	envVarPattern := regexp.MustCompile(`\$\{?(\w+)\}?`)
-	return envVarPattern.ReplaceAllStringFunc(input, func(varName string) string {
-		// Trim ${ and } from varName
-		trimmedVarName := varName
-		trimmedVarName = strings.TrimPrefix(trimmedVarName, "${")
-		trimmedVarName = strings.TrimSuffix(trimmedVarName, "}")
-
-		// Return the environment variable value
-		return os.Getenv(trimmedVarName)
-	})
-}
-
 // recursiveInclude processes the "include" directives in YAML files.
 // It supports environment variable interpolation in file paths.
 func recursiveInclude(yamlContent string, baseDir string) (string, error) {
@@ -60,7 +45,7 @@ func recursiveInclude(yamlContent string, baseDir string) (string, error) {
 	matches := includePattern.FindAllStringSubmatch(yamlContent, -1)
 
 	for _, match := range matches {
-		includePath := interpolateEnvVars(match[1])
+		includePath := cmn.InterpolateEnvVars(match[1])
 		includePath = filepath.Join(baseDir, includePath)
 
 		includedContentBytes, err := os.ReadFile(includePath)
@@ -104,7 +89,7 @@ func getConfigFile(confName string) (Config, error) {
 	baseDir := filepath.Dir(confName)
 
 	// Interpolate environment variables and process includes
-	interpolatedData := interpolateEnvVars(string(data))
+	interpolatedData := cmn.InterpolateEnvVars(string(data))
 
 	finalData, err := recursiveInclude(interpolatedData, baseDir)
 	if err != nil {
