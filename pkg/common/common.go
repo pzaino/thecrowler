@@ -23,6 +23,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -118,6 +120,13 @@ func IsPathCorrect(path string) bool {
 	return true
 }
 
+// GetFileExt returns a file extension (if any)
+func GetFileExt(filePath string) string {
+	fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(filePath)))
+	fileType = strings.TrimPrefix(fileType, ".")
+	return fileType
+}
+
 func SafeTransport(timeout int, sslmode string) *http.Transport {
 	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
 	if sslmode == "disable" || sslmode == "disabled" {
@@ -166,4 +175,21 @@ func dialTLSWithIPCheck(timeout time.Duration) func(network, addr string) (net.C
 
 		return c, c.Handshake()
 	}
+}
+
+//// ----- ENV related shared functions ----- ////
+
+// interpolateEnvVars replaces occurrences of `${VAR}` or `$VAR` in the input string
+// with the value of the VAR environment variable.
+func InterpolateEnvVars(input string) string {
+	envVarPattern := regexp.MustCompile(`\$\{?(\w+)\}?`)
+	return envVarPattern.ReplaceAllStringFunc(input, func(varName string) string {
+		// Trim ${ and } from varName
+		trimmedVarName := varName
+		trimmedVarName = strings.TrimPrefix(trimmedVarName, "${")
+		trimmedVarName = strings.TrimSuffix(trimmedVarName, "}")
+
+		// Return the environment variable value
+		return os.Getenv(trimmedVarName)
+	})
 }

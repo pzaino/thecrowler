@@ -142,7 +142,7 @@ func TestParseRules(t *testing.T) {
 	tempFile := "./test-ruleset.yaml"
 
 	// Call the ParseRules function with the temporary file
-	sites, err := ParseRules(nil, tempFile)
+	sites, err := BulkLoadRules(nil, tempFile)
 	if err != nil {
 		t.Fatalf("ParseRules returned an error: %v", err)
 	}

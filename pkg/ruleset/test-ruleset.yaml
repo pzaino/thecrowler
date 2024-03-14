@@ -29,6 +29,14 @@
           technology_patterns:
             - "jquery"
             - "bootstrap"
+      post_processing:
+        - step_type: "remove"
+          selector: "div.ads"
+        - step_type: "replace"
+          selector: "div.article-content"
+          replacement: "div.article-content > p"
+        - step_type: "custom_js"
+          js_code: "document.querySelector('div.article-content').remove()"
 
     - group_name: "Group2"
       valid_from: "2021-01-01T00:00:00Z"
