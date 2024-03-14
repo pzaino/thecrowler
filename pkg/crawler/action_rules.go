@@ -353,7 +353,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, plann
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rule groups...")
 	// Get the rule group
 	for _, ruleGroupName := range planned.RuleGroups {
-		if ruleGroupName == "" {
+		if strings.TrimSpace(ruleGroupName) == "" {
 			continue
 		}
 		rg, err := ctx.re.GetRuleGroupByName(ruleGroupName)

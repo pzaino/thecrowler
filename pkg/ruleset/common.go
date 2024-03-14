@@ -126,16 +126,18 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) ([]R
 		if err != nil {
 			return nil, err
 		}
+		fileType = "yaml"
 	}
 
 	var ruleset []Ruleset
+	fileData := *file
 	if fileType == "yaml" || fileType == "" {
-		err = yaml.Unmarshal((*file), &ruleset)
+		err = yaml.Unmarshal(fileData, &ruleset)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		err = json.Unmarshal((*file), &ruleset)
+		err = json.Unmarshal(fileData, &ruleset)
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +164,7 @@ func validateRuleset(schema *jsonschema.Schema, ruleFile *[]byte, fileType strin
 	}
 
 	// Convert the unmarshalled data back to JSON to prepare it for validation.
-	jsonBytes, err := json.Marshal(jsonData)
+	jsonBytes, err := json.MarshalIndent(jsonData, "", "  ")
 	if err != nil {
 		return fmt.Errorf("error marshalling to JSON: %v", err)
 	}
@@ -178,6 +180,22 @@ func validateRuleset(schema *jsonschema.Schema, ruleFile *[]byte, fileType strin
 		}
 		return err
 	}
+
+	// Convert jsonBytes back to YAML
+	jsonData = map[string]interface{}{}
+	if err := json.Unmarshal(jsonBytes, &jsonData); err != nil {
+		return fmt.Errorf("error unmarshalling JSON: %v", err)
+	}
+	jsonBytes, err = yaml.Marshal(jsonData)
+	if err != nil {
+		return fmt.Errorf("error marshalling to YAML: %v", err)
+	}
+
+	// Pretty print the JSON data for debugging purposes.
+	//fmt.Println(string(jsonBytes))
+
+	// Update the ruleFile with the marshalled JSON data.
+	*ruleFile = jsonBytes
 
 	return nil
 }

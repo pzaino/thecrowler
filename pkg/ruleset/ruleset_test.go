@@ -168,19 +168,18 @@ func (m *MockRuleParser) ParseRules(_ *jsonschema.Schema, file string) ([]Rulese
 
 func TestInitializeLibrary(t *testing.T) {
 	mockParser := &MockRuleParser{}
-	engine, err := NewRuleEngineWithParser(mockParser, "./test_rules.yaml")
+	engine, err := NewRuleEngineWithParser(mockParser, "./test-ruleset.yaml")
 	if err != nil {
 		t.Fatalf("InitializeLibrary returned an error: %v", err)
 	}
 	if engine == nil {
 		t.Errorf("Expected non-nil engine, got nil")
 	}
-	// Additional assertions...
 }
 func TestNewRuleEngine(t *testing.T) {
 	sites := rulesets
 
-	engine := NewRuleEngine("../../../schemas/ruleset-schema.json", sites)
+	engine := NewRuleEngine("../../schemas/ruleset-schema.json", sites)
 
 	// Verify that the RuleEngine is initialized correctly
 	if engine == nil {
@@ -194,7 +193,7 @@ func TestNewRuleEngine(t *testing.T) {
 	}
 }
 func TestFindRulesetByName(t *testing.T) {
-	engine := NewRuleEngine("../../../schemas/ruleset-schema.json", rulesets)
+	engine := NewRuleEngine("../../schemas/ruleset-schema.json", rulesets)
 
 	// Test case 1: Valid ruleset name
 	name := "Example Items Extraction Ruleset"
@@ -234,4 +233,35 @@ func TestFindRulesetByName(t *testing.T) {
 	if ruleset != nil {
 		t.Errorf("Expected nil ruleset, got %v", ruleset)
 	}
+}
+
+func TestDefaultRuleset(t *testing.T) {
+	engine := NewEmptyRuleEngine("../../schemas/ruleset-schema.json")
+
+	// Load ruleset from a file
+	err := engine.LoadRulesFromFile([]string{"../../rules/AcceptCookies-ruleset.json"})
+	if err != nil {
+		t.Fatalf("LoadRulesFromFile returned an error: %v", err)
+	}
+
+	/*
+		// Create a JSON document from the engine:
+		jsonBytes, err := engine.MarshalJSON()
+		if err != nil {
+			t.Fatalf("MarshalJSON returned an error: %v", err)
+		}
+
+		// Pretty Print out the JSON document
+		fmt.Println(string(jsonBytes))
+	*/
+
+	// Verify that the ruleset was loaded correctly
+	ruleset, err := engine.FindRulesetByName("CookiePolicyAcceptanceMultilingual")
+	if err != nil {
+		t.Fatalf("FindRulesetByName returned an error: %v", err)
+	}
+	if ruleset == nil {
+		t.Fatalf("Expected non-nil ruleset, got nil")
+	}
+
 }
