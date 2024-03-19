@@ -20,9 +20,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -32,20 +36,20 @@ import (
 )
 
 // Create a rate limiter for your application. Adjust the parameters as needed.
-var limiter *rate.Limiter
+var (
+	limiter     *rate.Limiter
+	configMutex sync.Mutex
+	configFile  *string
+)
 
-func main() {
-
-	configFile := flag.String("config", "./config.yaml", "Path to the configuration file")
-	flag.Parse()
-
+func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	// Reading the configuration file
 	var err error
-	config, err = cfg.LoadConfig(*configFile)
+	*config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Error reading config file: %v", err)
 	}
-	if cfg.IsEmpty(config) {
+	if cfg.IsEmpty(*config) {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Config file is empty")
 	}
 
@@ -65,7 +69,65 @@ func main() {
 	if err != nil {
 		bl = 10
 	}
-	limiter = rate.NewLimiter(rate.Limit(rl), bl)
+	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
+
+	return nil
+}
+
+func main() {
+	// Parse the command line arguments
+	configFile = flag.String("config", "./config.yaml", "Path to the configuration file")
+	flag.Parse()
+
+	// Initialize the logger
+	cmn.InitLogger("TheCROWlerAPI")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler API is starting...")
+
+	// Setting up a channel to listen for termination signals
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+
+	// Define signal handling
+	go func() {
+		for {
+			sig := <-signals
+			switch sig {
+			case syscall.SIGINT:
+				// Handle SIGINT (Ctrl+C)
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
+				os.Exit(0)
+
+			case syscall.SIGTERM:
+				// Handle SIGTERM
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
+				os.Exit(0)
+
+			case syscall.SIGQUIT:
+				// Handle SIGQUIT
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
+				os.Exit(0)
+
+			case syscall.SIGHUP:
+				// Handle SIGHUP
+				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
+				configMutex.Lock()
+				err := initAll(configFile, &config, &limiter)
+				if err != nil {
+					configMutex.Unlock()
+					cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
+				}
+				configMutex.Unlock()
+			}
+		}
+	}()
+
+	// Initialize the configuration
+	err := initAll(configFile, &config, &limiter)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
+		os.Exit(-1)
+	}
 
 	srv := &http.Server{
 		Addr: config.API.Host + ":" + fmt.Sprintf("%d", config.API.Port),
