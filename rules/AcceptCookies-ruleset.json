@@ -21,6 +21,10 @@
               {
                 "selector_type": "xpath",
                 "selector": "//button[contains(text(), 'Accept') or contains(text(), 'Akzeptieren') or contains(text(), 'Aceptar') or contains(text(), 'Accepter') or contains(text(), 'Accetta')]"
+              },
+              {
+                "selector_type": "class",
+                "selector": "disclaimerOK"
               }
             ],
             "wait_conditions": [

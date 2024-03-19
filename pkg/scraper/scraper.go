@@ -104,9 +104,15 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 // extractJSFiles extracts the JavaScript files from the provided document.
 func extractJSFiles(doc *goquery.Document) []string {
 	var jsFiles []string
+	var scriptID int
 	doc.Find("script[src]").Each(func(_ int, s *goquery.Selection) {
 		if src, exists := s.Attr("src"); exists {
+			scriptID += 1
+			scriptTag := "<!---- TheCRWOler: [Extracted script number: " + fmt.Sprint(scriptID) + "] //---->\n"
+			jsFiles = append(jsFiles, scriptTag)
 			jsFiles = append(jsFiles, src)
+			scriptTag = "<!---- TheCROWler: [End of extracted script number: " + fmt.Sprint(scriptID) + "] //---->\n"
+			jsFiles = append(jsFiles, scriptTag)
 		}
 	})
 	return jsFiles
