@@ -13,6 +13,7 @@ alt="OpenSSF Security Best Practices badge"></a>
 <!-- ![Docker build: ]() -->
 ![Go Report Card: ](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_shield&issueType=license)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=shield&issueType=security)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_shield&issueType=security)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
 
 Project status: Still under active development, but most of it is already usable.
