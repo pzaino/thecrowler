@@ -45,6 +45,7 @@ const (
 )
 
 var (
+	configFile  *string    // Configuration file path
 	config      cfg.Config // Configuration "object"
 	configMutex sync.Mutex
 )
@@ -262,7 +263,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 
 func main() {
 	// Reading command line arguments
-	configFile := flag.String("config", "./config.yaml", "Path to the configuration file")
+	configFile = flag.String("config", "./config.yaml", "Path to the configuration file")
 	flag.Parse()
 
 	// Initialize the logger
