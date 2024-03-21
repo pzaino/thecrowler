@@ -6,6 +6,7 @@
 ![Go build: ](https://github.com/pzaino/TheCROWler/actions/workflows/go.yml/badge.svg)
 ![CodeQL: ](https://github.com/pzaino/TheCROWler/actions/workflows/github-code-scanning/codeql/badge.svg)
 ![Scorecard supply-chain security: ](https://github.com/pzaino/TheCROWler/actions/workflows/scorecard.yml/badge.svg)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_shield)
 <a href="https://www.bestpractices.dev/projects/8344"><img
 src="https://www.bestpractices.dev/projects/8344/badge"
 alt="OpenSSF Security Best Practices badge"></a>
@@ -257,3 +258,7 @@ The DB should need no maintenance, The CROWler will take care of that. Any time
 there is no crawling activity and it's passed 1 hours from the previous
 maintenance activity, The CROWler will clean up the database and optimize the
 indexes.
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_large)
