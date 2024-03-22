@@ -105,12 +105,12 @@ type QueryRequest struct {
 // ScreenshotRequest represents the structure of the screenshot request POST
 type ScreenshotRequest struct {
 	URL        string `json:"url"`
-	Resolution string `json:"resolution"`
-	FullPage   bool   `json:"fullPage"`
-	Delay      int    `json:"delay"`
+	Resolution string `json:"resolution,omitempty"`
+	FullPage   bool   `json:"fullPage,omitempty"`
+	Delay      int    `json:"delay,omitempty"`
 	Auth       struct {
-		Type string `json:"type"`
-	} `json:"auth"`
+		Type string `json:"type,omitempty"`
+	} `json:"auth,omitempty"`
 }
 
 // ScreenshotResponse represents the structure of the screenshot response
@@ -136,6 +136,10 @@ type NetInfoResponse struct {
 	Items []NetInfoRow `json:"items"`
 }
 
+func (r *NetInfoResponse) isEmpty() bool {
+	return len(r.Items) == 0
+}
+
 type HTTPInfoRow struct {
 	CreatedAt     string       `json:"created_at"`
 	LastUpdatedAt string       `json:"last_updated_at"`
@@ -145,4 +149,8 @@ type HTTPInfoRow struct {
 // NetInfoResponse represents the structure of the network information response
 type HTTPInfoResponse struct {
 	Items []HTTPInfoRow `json:"items"`
+}
+
+func (r *HTTPInfoResponse) isEmpty() bool {
+	return len(r.Items) == 0
 }

@@ -411,6 +411,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 		}
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Results: %v", results)
 	return results, nil
 }
 
@@ -449,10 +450,13 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	var err error
 	var sqlParams []interface{}
 
+	input = PrepareInput(input)
+
 	// Unmarshal the JSON document
 	var req ScreenshotRequest
 	err = json.Unmarshal([]byte(input), &req)
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling JSON: %v, %v", err, input)
 		return "", nil, err
 	}
 
@@ -479,7 +483,9 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	JOIN
 		SearchIndex AS si ON s.index_id = si.index_id
 	WHERE
-		LOWER(si.page_url) LIKE LOWER($1);
+		LOWER(si.page_url) LIKE LOWER($1)
+	AND
+		s.screenshot_link != '';
 	`
 	sqlParams = append(sqlParams, query)
 

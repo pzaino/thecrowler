@@ -242,8 +242,11 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := performScreenshotSearch(query, getQType(r.Method != "POST"))
-
-	handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
+	if results == (ScreenshotResponse{}) {
+		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, 404)
+	} else {
+		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
+	}
 }
 
 // netInfoHandler handles the network information requests
@@ -256,7 +259,11 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := performNetInfoSearch(query, getQType(r.Method != "POST"))
-	handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
+	if results.isEmpty() {
+		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, 404)
+	} else {
+		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
+	}
 }
 
 // httpInfoHandler handles the http information requests
@@ -269,7 +276,11 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := performHTTPInfoSearch(query, getQType(r.Method != "POST"))
-	handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
+	if results.isEmpty() {
+		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, 404)
+	} else {
+		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
+	}
 }
 
 // addSourceHandler handles the addition of new sources
