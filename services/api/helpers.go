@@ -61,3 +61,11 @@ func normalizeURL(url string) string {
 	url = strings.ToLower(url)
 	return url
 }
+
+func PrepareInput(input string) string {
+	// Remove all \ from the input
+	input = strings.ReplaceAll(input, "\\\"", "\"")
+	// trim external quotes (if any)
+	input = strings.Trim(input, "\"")
+	return input
+}
