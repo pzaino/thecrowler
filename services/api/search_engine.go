@@ -40,12 +40,13 @@ const (
 func tokenize(input string) []string {
 	var tokens []string
 	var currentToken strings.Builder
-
+	fmt.Printf("Input: %s\n", input)
 	inQuotes := false
 	for _, r := range input {
 		switch {
 		case r == '"':
 			inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
+			fmt.Printf("In quotes: %t\n", inQuotes)
 		case r == ':' && !inQuotes:
 			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
@@ -436,7 +437,9 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 	LEFT JOIN
 		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
+		s.screenshot_link != '' AND s.screenshot_link IS NOT NULL AND
 	`
+
 	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
 	if err != nil {
 		return "", nil, err
@@ -485,7 +488,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	WHERE
 		LOWER(si.page_url) LIKE LOWER($1)
 	AND
-		s.screenshot_link != '';
+		s.screenshot_link != '' AND s.screenshot_link IS NOT NULL;
 	`
 	sqlParams = append(sqlParams, query)
 

@@ -167,6 +167,26 @@ type NetInfo struct {
 	Config *cfg.NetworkInfo `json:"Config,omitempty"`
 }
 
+// NmapInfo contains the information about the Nmap scan
+type NmapInfo struct {
+	Hosts []HostInfo `json:"hosts"`
+}
+
+// HostInfo contains the information about a single host
+type HostInfo struct {
+	IP       string     `json:"ip"`
+	Hostname string     `json:"hostname"`
+	Ports    []PortInfo `json:"ports"`
+}
+
+// PortInfo contains the information about a single port
+type PortInfo struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	State    string `json:"state"`
+	Service  string `json:"service"`
+}
+
 // Define a map to map record types to their corresponding values
 var recordTypeMap = map[string]string{
 	"A":          "A",
