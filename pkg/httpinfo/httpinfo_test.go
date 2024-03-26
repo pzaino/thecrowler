@@ -29,7 +29,7 @@ import (
 var (
 	url1 = "https://www.example.com"
 	url2 = "https://jsonplaceholder.typicode.com/posts/1"
-	//url2          = "https://www.example.com"
+
 	usrAgentField = "User-Agent"
 
 	sysConfig = cfg.Config{
@@ -48,7 +48,7 @@ func TestCreateConfig(t *testing.T) {
 		URL:             url1,
 		CustomHeader:    map[string]string{usrAgentField: usrAgent},
 		FollowRedirects: true,
-		Timeout:         10,
+		Timeout:         60,
 		SSLMode:         "none",
 	}
 

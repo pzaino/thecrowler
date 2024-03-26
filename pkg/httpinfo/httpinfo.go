@@ -16,6 +16,7 @@
 package httpinfo
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	"golang.org/x/net/publicsuffix"
 )
 
 // CreateConfig creates a default Config
@@ -34,7 +36,7 @@ func CreateConfig(url string, c cfg.Config) Config {
 		URL:             url,
 		CustomHeader:    map[string]string{"User-Agent": usrAgent},
 		FollowRedirects: true,
-		Timeout:         10,
+		Timeout:         60,
 		SSLMode:         "none",
 	}
 }
@@ -65,13 +67,32 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	if cmn.IsDisallowedIP(config.URL, 0) {
 		return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
 	}
-	// Ok, the URL is safe, let's create a new HTTP request
+	// Ok, the URL is safe, let's create a new HTTP request config.SSLMode
+	transport := cmn.SafeTransport(config.Timeout, "ignore")
+	transport.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: true, // Skip TLS certificate verification
+		MinVersion:         tls.VersionTLS10,
+		MaxVersion:         tls.VersionTLS13,
+	}
+	sn := urlToDomain(config.URL)
+	fmt.Printf("ServerName: %s\n", sn)
+	transport.TLSClientConfig.ServerName = sn
 	httpClient := &http.Client{
-		Transport: cmn.SafeTransport(config.Timeout, config.SSLMode),
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !config.FollowRedirects {
 				return http.ErrUseLastResponse
 			}
+
+			// Update ServerName for SNI in case of domain change due to redirect
+			lastURL, err := url.Parse(req.URL.String())
+			if err != nil {
+				return fmt.Errorf("error parsing redirect URL: %v", err)
+			}
+			lastDomain := lastURL.Hostname()
+			req.URL.Scheme = "https"
+			transport.TLSClientConfig.ServerName = lastDomain
+
 			return nil
 		},
 	}
@@ -95,69 +116,52 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	if config.FollowRedirects && (resp.StatusCode >= 300 && resp.StatusCode < 400) {
 		// Handle the redirect as needed
 		cmn.DebugMsg(cmn.DbgLvlDebug1, "Redirect detected, handle it as needed.")
+
 		// Extract the new location from the response header
 		newLocation := resp.Header.Get("Location")
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Redirect location: %s", newLocation)
+
 		// Create a new configuration with the new location
 		newConfig := config
 		newConfig.URL = newLocation
 		newConfig.CustomHeader = map[string]string{"User-Agent": cmn.UsrAgentStrMap["desktop01"]}
 		newConfig.FollowRedirects = true
+
 		// Recursively call ExtractHTTPInfo with the new configuration to extract the new HTTP information
 		return ExtractHTTPInfo(newConfig)
 	}
 
-	// Collect response headers
-	responseHeaders := resp.Header
-
 	// Create a new HTTPDetails object
 	info := new(HTTPDetails)
 
-	info.ResponseHeaders = responseHeaders
+	// Collect response headers
+	info.ResponseHeaders = resp.Header
 
 	// Extract response headers
 	info.URL = config.URL
 	info.CustomHeaders = config.CustomHeader
 	info.FollowRedirects = config.FollowRedirects
-	info.ContentLength = responseHeaders.Get("Content-Length")
-	info.ContentEncoding = responseHeaders.Get("Content-Encoding")
-	info.TransferEncoding = responseHeaders.Get("Transfer-Encoding")
-	info.ServerType = responseHeaders.Get("Server")
-	info.PoweredBy = responseHeaders.Get("X-Powered-By")
-	info.AspNetVersion = responseHeaders.Get("X-AspNet-Version")
-	info.FrameOptions = responseHeaders.Get("X-Frame-Options")
-	info.XSSProtection = responseHeaders.Get("X-XSS-Protection")
-	info.HSTS = responseHeaders.Get("Strict-Transport-Security")
-	info.ContentType = responseHeaders.Get("Content-Type")
-	info.ContentTypeOptions = responseHeaders.Get("X-Content-Type-Options")
-	info.ContentSecurityPolicy = responseHeaders.Get("Content-Security-Policy")
-	info.StrictTransportSecurity = responseHeaders.Get("Strict-Transport-Security")
-	info.AccessControlAllowOrigin = responseHeaders.Get("Access-Control-Allow-Origin")
-	info.AccessControlAllowMethods = responseHeaders.Get("Access-Control-Allow-Methods")
-	info.AccessControlAllowHeaders = responseHeaders.Get("Access-Control-Allow-Headers")
-	info.AccessControlAllowCredentials = responseHeaders.Get("Access-Control-Allow-Credentials")
-	info.AccessControlExposeHeaders = responseHeaders.Get("Access-Control-Expose-Headers")
-	info.SetCookie = responseHeaders.Get("Set-Cookie")
-	info.WwwAuthenticate = responseHeaders.Get("WWW-Authenticate")
-	info.ProxyAuthenticate = responseHeaders.Get("Proxy-Authenticate")
-	info.KeepAlive = responseHeaders.Get("Keep-Alive")
-	info.Expires = responseHeaders.Get("Expires")
-	info.LastModified = responseHeaders.Get("Last-Modified")
-	info.ETag = responseHeaders.Get("ETag")
-	info.ContentDisposition = responseHeaders.Get("Content-Disposition")
 
 	// Analyze response body for additional information
-	responseBody, err := analyzeResponseBody(resp)
+	detectedItems, err := analyzeResponse(resp, info)
 	if err != nil {
 		return nil, err
 	}
-	info.ResponseBodyInfo = responseBody
+	info.DetectedAssets = make(map[string]string)
+	for k, v := range detectedItems {
+		info.DetectedAssets[k] = v
+	}
 
 	return info, nil
 }
 
-// AnalyzeResponseBody analyzes the response body for additional server-related information
-func analyzeResponseBody(resp *http.Response) ([]string, error) {
+// AnalyzeResponse analyzes the response body and header for additional server-related information
+// and possible technologies used
+// Note: In the future this needs to be moved in http_rules logic
+func analyzeResponse(resp *http.Response, info *HTTPDetails) (map[string]string, error) {
+	// Get the response headers
+	header := &(*info).ResponseHeaders
+
 	// Read the response body
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -167,35 +171,164 @@ func analyzeResponseBody(resp *http.Response) ([]string, error) {
 	// Convert the response body to a string
 	responseBody := string(bodyBytes)
 
-	// Initialize a slice to store the collected information
-	var infoList []string
+	// Initialize the infoList map
+	// infoList := make(map[string]string)
+	var infoList map[string]string = make(map[string]string)
 
-	// Example: Look for multiple patterns or keywords in the response body
-	if strings.Contains(responseBody, "Powered by Laravel") {
-		infoList = append(infoList, "Laravel Framework")
+	// Detect CMS
+	x := detectCMS(responseBody, header)
+	for k, v := range *x {
+		infoList[k] = v
 	}
 
-	if strings.Contains(responseBody, "JavaScript Framework: React") {
-		infoList = append(infoList, "React JavaScript Framework")
+	// Look for multiple patterns or keywords in the response body
+	if strings.Contains(strings.ToLower(responseBody), "powered by laravel") {
+		infoList["laravel_framework"] = "yes"
 	}
 
-	// Extract custom element information from a custom header, e.g., "X-Custom-Header"
-	if custom := resp.Header.Get("X-Custom-Header"); custom != "" {
-		infoList = append(infoList, "Custom: "+custom)
+	if strings.Contains(strings.ToLower(responseBody), "javaScript framework: react") {
+		infoList["react_framework"] = "yes"
 	}
-
-	// Add more data extraction logic to search for and append additional HTTP, server and frameworks information
 
 	// If no additional information is found, add a default message
 	if len(infoList) == 0 {
-		infoList = append(infoList, "No additional information found")
-	}
-
-	if len(infoList) == 0 {
-		infoList = append(infoList, "No additional information found")
+		infoList["analysis_result"] = "No additional information found"
+	} else {
+		infoList["analysis_result"] = "Additional information found"
 	}
 
 	return infoList, nil
+}
+
+func detectCMS(responseBody string, header *http.Header) *map[string]string {
+	cmsNames := map[string]string{
+		"wordpress":   "WordPress",
+		"joomla":      "Joomla",
+		"drupal":      "Drupal",
+		"magento":     "Magento",
+		"prestashop":  "PrestaShop",
+		"shopify":     "Shopify",
+		"typo3":       "TYPO3",
+		"bitrix":      "1C-Bitrix",
+		"modx":        "MODX",
+		"opencart":    "OpenCart",
+		"vbulletin":   "vBulletin",
+		"whmcs":       "WHMCS",
+		"mediawiki":   "MediaWiki",
+		"django":      "Django",
+		"laravel":     "Laravel",
+		"codeigniter": "CodeIgniter",
+		"symfony":     "Symfony",
+		"express":     "Express",
+		"angular":     "Angular",
+		"react":       "React",
+		"vue":         "Vue",
+		"ember":       "Ember",
+		"backbone":    "Backbone",
+		"meteor":      "Meteor",
+		"rails":       "Ruby on Rails",
+		"phalcon":     "Phalcon",
+		"yii":         "Yii",
+		"flask":       "Flask",
+		"spring":      "Spring",
+		"struts":      "Apache Struts",
+		"play":        "Play Framework",
+		"koa":         "Koa",
+		"sails":       "Sails.js",
+		"nuxt":        "Nuxt.js",
+		"next":        "Next.js",
+		"gatsby":      "Gatsby",
+	}
+
+	// Initialize a slice to store the detected CMS
+	var detectedCMS map[string]string = make(map[string]string)
+
+	responseBody = strings.ToLower(strings.TrimSpace(responseBody))
+	detectCMSByHostHeader(header, cmsNames, &detectedCMS)
+	detectCMSByXPoweredByHeader(header, cmsNames, &detectedCMS)
+	detectCMSByLinkHeader(header, &detectedCMS)
+
+	// SOme extra tags that may help:
+	if header.Get("X-Generator") != "" {
+		detectedCMS["X-Generator"] = header.Get("X-Generator")
+	}
+	if header.Get("X-Nextjs-Cache") != "" {
+		detectedCMS["Next.js"] = "yes"
+	}
+	if header.Get("X-Drupal-Cache") != "" || header.Get("X-Drupal-Dynamic-Cache") != "" {
+		detectedCMS["Drupal"] = "yes"
+	}
+
+	if len(detectedCMS) == 0 {
+		// nothing found, so let's try the "heavy weapons": response body
+		detectCMSByKeyword(responseBody, cmsNames, &detectedCMS)
+	}
+	return &detectedCMS
+}
+
+func detectCMSByKeyword(responseBody string, cmsNames map[string]string, detectedCMS *map[string]string) {
+	for cms := range cmsNames {
+		if strings.Contains(responseBody, "powered by "+cms) {
+			(*detectedCMS)[cmsNames[cms]] = "yes"
+		}
+	}
+}
+
+func detectCMSByHostHeader(header *http.Header, cmsNames map[string]string, detectedCMS *map[string]string) {
+	hh := (*header)["Host-Header"]
+	if len(hh) != 0 {
+		for _, tag := range hh {
+			tag = strings.ToLower(tag)
+			for cms := range cmsNames {
+				if strings.Contains(tag, cms) {
+					(*detectedCMS)[cmsNames[cms]] = "yes"
+				}
+			}
+		}
+	}
+}
+
+func detectCMSByXPoweredByHeader(header *http.Header, cmsNames map[string]string, detectedCMS *map[string]string) {
+	xpb := (*header)["X-Powered-By"]
+	if len(xpb) != 0 {
+		for _, tag := range xpb {
+			tag = strings.ToLower(tag)
+			for cms := range cmsNames {
+				if strings.Contains(tag, cms) {
+					(*detectedCMS)[cmsNames[cms]] = "yes"
+				}
+			}
+		}
+	}
+}
+
+func detectCMSByLinkHeader(header *http.Header, detectedCMS *map[string]string) {
+	lh := (*header)["Link"]
+	if len(lh) != 0 {
+		for _, tag := range lh {
+			tag = strings.ToLower(tag)
+			cms := detectCMSMicroSignatures(tag)
+			if cms != "unknown" {
+				(*detectedCMS)[cms] += "yes"
+			}
+		}
+	}
+}
+
+func detectCMSMicroSignatures(text string) string {
+	for cms, patterns := range CMSPatterns {
+		allMatch := true // Assume all patterns match initially
+		for _, pattern := range patterns {
+			if !pattern.MatchString(text) {
+				allMatch = false // If any pattern does not match, set to false and break
+				break
+			}
+		}
+		if allMatch {
+			return cms // Return the CMS name if all patterns matched
+		}
+	}
+	return "unknown" // Return "unknown" if no CMS matches all its patterns
 }
 
 /* Not ready yet:
@@ -216,3 +349,37 @@ func checkCDN(headers http.Header) {
 	}
 }
 */
+
+// helper function to extract the domain from a URL
+func urlToDomain(inputURL string) string {
+	_, err := url.Parse(inputURL)
+	if err != nil {
+		return ""
+	}
+
+	// Given that url.Parse() does always extract a hostname correctly
+	// we can safely ignore the error here
+	h := urlToHost(inputURL)
+
+	// Use EffectiveTLDPlusOne to correctly handle domains like "example.co.uk"
+	domain, err := publicsuffix.EffectiveTLDPlusOne(h)
+	if err != nil {
+		fmt.Printf("Error extracting domain from URL: %v\n", err)
+		return ""
+	}
+	return domain
+}
+
+// helper function to extract the host from a URL
+func urlToHost(url string) string {
+	host := url
+	if strings.Contains(host, "://") {
+		host = host[strings.Index(host, "://")+3:]
+	}
+	if strings.Contains(host, "/") {
+		host = host[:strings.Index(host, "/")]
+	}
+	host = strings.TrimSuffix(host, "/")
+	host = strings.TrimSpace(host)
+	return host
+}

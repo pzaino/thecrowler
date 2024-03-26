@@ -15,6 +15,7 @@ deployed in a containerized environment.
 ## Content
 
 - [Features](./features.md)
+- [General Architecture](./architecture.md)
 - [Installation](./installation.md)
 - [Usage](./usage.md)
   - [Configuration](./config.md)

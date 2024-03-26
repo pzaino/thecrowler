@@ -18,6 +18,7 @@ package httpinfo
 import (
 	"crypto/x509"
 	"net/http"
+	"regexp"
 	"time"
 )
 
@@ -28,9 +29,11 @@ type Config struct {
 	FollowRedirects bool
 	Timeout         int
 	SSLMode         string
+	SSLDiscovery    bool
 }
 
 // HTTPDetails is a struct to store the collected HTTP header information
+/*
 type HTTPDetails struct {
 	URL                           string            `json:"url"`
 	CustomHeaders                 map[string]string `json:"custom_headers"`
@@ -63,6 +66,15 @@ type HTTPDetails struct {
 	TransferEncoding              string            `json:"transfer_encoding"`
 	HSTS                          string            `json:"hsts"`
 	ResponseBodyInfo              []string          `json:"response_body_info"`
+}
+*/
+
+type HTTPDetails struct {
+	URL             string            `json:"url"`
+	CustomHeaders   map[string]string `json:"custom_headers"`
+	FollowRedirects bool              `json:"follow_redirects"`
+	ResponseHeaders http.Header       `json:"response_headers"`
+	DetectedAssets  map[string]string `json:"detected_assets"`
 }
 
 // This struct is used to store the info we fetch about trustworthy authorities
@@ -145,4 +157,17 @@ type SSLInfo struct {
 	IsCertEVSGCCodeSigning       bool                `json:"is_cert_ev_sgc_ca_code_signing_ev"`
 	IsCertEVSGCCodeSigningSSL    bool                `json:"is_cert_ev_sgc_ca_code_signing_ev_ssl"`
 	CertExpiration               time.Time           `json:"cert_expiration"`
+}
+
+// CMS Micro-Signature Patterns table: CMS name -> list of patterns
+var CMSPatterns = map[string][]*regexp.Regexp{
+	"Wordpress": {
+		regexp.MustCompile(`/wp-json/`),
+		regexp.MustCompile(`/api.w.org/`),
+	},
+	"Drupal": {
+		regexp.MustCompile(`/some-drupal-signature/`),
+		regexp.MustCompile(`/another-drupal-pattern/`),
+	},
+	// Add more CMS and patterns as needed
 }
