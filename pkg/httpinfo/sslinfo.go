@@ -108,7 +108,8 @@ func (ssl *SSLInfo) GetSSLInfo(url string, port string) error {
 
 	var certChain []*x509.Certificate
 	if !isAFile {
-		uport, errx := strconv.ParseUint(port, 10, 64)
+		// convert port to uint16
+		uport, errx := strconv.ParseUint(port, 10, 16)
 		if errx != nil {
 			return fmt.Errorf("port number incorrect")
 		}
