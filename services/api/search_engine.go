@@ -419,7 +419,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 	// Prepare the query body
 	queryBody := `
-	SELECT
+	SELECT DISTINCT
 		s.screenshot_link,
 		s.created_at,
 		s.last_updated_at,
@@ -472,7 +472,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 
 	// Parse the user input
 	sqlQuery := `
-	SELECT
+	SELECT DISTINCT
 		s.screenshot_link,
 		s.created_at,
 		s.last_updated_at,
@@ -570,7 +570,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 func parseNetInfoGetQuery(input string) (string, []interface{}, error) {
 	// Prepare the query body
 	queryBody := `
-	SELECT
+	SELECT DISTINCT
 		ni.created_at,
 		ni.last_updated_at,
 		ni.details
@@ -615,7 +615,7 @@ func parseNetInfoQuery(input string) (string, []interface{}, error) {
 
 	// Parse the user input
 	sqlQuery := `
-	SELECT
+	SELECT DISTINCT
 		ni.created_at,
 		ni.last_updated_at,
 		ni.details
@@ -708,16 +708,16 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 func parseHTTPInfoGetQuery(input string) (string, []interface{}, error) {
 	// Prepare the query body
 	queryBody := `
-	SELECT
+	SELECT DISTINCT
 		hi.created_at,
 		hi.last_updated_at,
 		hi.details
 	FROM
 		HTTPInfo hi
 	JOIN
-        HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
+		HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
 	JOIN
-        SearchIndex si ON hii.index_id = si.index_id
+		SearchIndex si ON hii.index_id = si.index_id
 	LEFT JOIN
 		KeywordIndex ki ON si.index_id = ki.index_id
 	LEFT JOIN
@@ -753,7 +753,7 @@ func parseHTTPInfoQuery(input string) (string, []interface{}, error) {
 
 	// Parse the user input
 	sqlQuery := `
-	SELECT
+	SELECT DISTINCT
 		hi.created_at,
 		hi.last_updated_at,
 		hi.details

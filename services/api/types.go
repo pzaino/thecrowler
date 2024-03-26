@@ -17,6 +17,7 @@ package main
 
 import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 )
 
@@ -141,9 +142,9 @@ func (r *NetInfoResponse) isEmpty() bool {
 }
 
 type HTTPInfoRow struct {
-	CreatedAt     string       `json:"created_at"`
-	LastUpdatedAt string       `json:"last_updated_at"`
-	Details       neti.NetInfo `json:"details"`
+	CreatedAt     string            `json:"created_at"`
+	LastUpdatedAt string            `json:"last_updated_at"`
+	Details       httpi.HTTPDetails `json:"details"`
 }
 
 // NetInfoResponse represents the structure of the network information response
