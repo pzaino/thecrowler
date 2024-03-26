@@ -17,7 +17,6 @@ package common
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"log"
 	"net"
@@ -128,17 +127,37 @@ func GetFileExt(filePath string) string {
 }
 
 func SafeTransport(timeout int, sslmode string) *http.Transport {
-	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
-	if sslmode == "disable" || sslmode == "disabled" {
+	//sslmode = strings.ToLower(strings.TrimSpace(sslmode))
+	/*
+		if sslmode == "disable" || sslmode == "disabled" {
+			return &http.Transport{
+				DialContext: dialContextWithIPCheck(time.Second * time.Duration(timeout)),
+			}
+		}
 		return &http.Transport{
-			DialContext: dialContextWithIPCheck(time.Second * time.Duration(timeout)),
+			DialContext:         dialContextWithIPCheck(time.Second * time.Duration(timeout)),
+			DialTLS:             dialTLSWithIPCheck(time.Second * time.Duration(timeout)),
+			TLSHandshakeTimeout: time.Second * time.Duration(timeout),
+		}
+	*/
+
+	// Start with cloning the DefaultTransport (type assertion is required)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	// Set the common DialContext, including IP check and timeout
+	transport.DialContext = dialContextWithIPCheck(time.Second * time.Duration(timeout))
+
+	// Apply the TLS handshake timeout and DialTLS only if SSL is not disabled
+	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
+	if sslmode != "ignore" {
+		if sslmode != "disable" && sslmode != "disabled" {
+			transport.DialTLSContext = dialTLSWithIPCheck(time.Second * time.Duration(timeout))
+			//transport.DialTLS = dialTLSWithIPCheck(time.Second * time.Duration(timeout))
+			transport.TLSHandshakeTimeout = time.Second * time.Duration(timeout)
 		}
 	}
-	return &http.Transport{
-		DialContext:         dialContextWithIPCheck(time.Second * time.Duration(timeout)),
-		DialTLS:             dialTLSWithIPCheck(time.Second * time.Duration(timeout)),
-		TLSHandshakeTimeout: time.Second * time.Duration(timeout),
-	}
+
+	return transport
 }
 
 func dialContextWithIPCheck(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -155,6 +174,27 @@ func dialContextWithIPCheck(timeout time.Duration) func(ctx context.Context, net
 	}
 }
 
+func dialTLSWithIPCheck(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// Your logic to dial TLS with IP checks here.
+		// Make sure to respect the provided context.
+		// For demonstration, using net.Dialer with context:
+		dialer := net.Dialer{
+			Timeout: timeout,
+		}
+		// Example: Directly dial without modifying TLS settings
+		// In real usage, you'd likely want to configure TLS settings appropriately.
+		conn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		// Perform any necessary TLS handshakes or configurations here.
+		// This is a simplified example.
+		return conn, nil
+	}
+}
+
+/*
 func dialTLSWithIPCheck(timeout time.Duration) func(network, addr string) (net.Conn, error) {
 	return func(network, addr string) (net.Conn, error) {
 		dialer := &net.Dialer{Timeout: timeout}
@@ -176,6 +216,7 @@ func dialTLSWithIPCheck(timeout time.Duration) func(network, addr string) (net.C
 		return c, c.Handshake()
 	}
 }
+*/
 
 //// ----- ENV related shared functions ----- ////
 

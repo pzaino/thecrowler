@@ -34,7 +34,7 @@ func (ni *NetInfo) GetDNSInfo() error {
 	domain := urlToDomain(ni.URL)
 
 	// Get DNS information
-	output, err := getDigInfo(domain)
+	output, err := getDigInfo(host, "specific")
 	if err != nil {
 		return err
 	}
@@ -68,14 +68,15 @@ func parseDNSInfo(ni *NetInfo, domain, host, output string) error {
 			if record.Section == "ANSWER" && record.Type == "CNAME" {
 				if stage > 1 {
 					host = record.Response
-					time.Sleep(time.Duration(ni.Config.DNS.RateLimit))
-					output, err = getDigInfo(host)
+					time.Sleep(time.Duration(ni.Config.DNS.RateLimit) * time.Second)
+					output, err = getDigInfo(host, "")
 					if err != nil {
 						return err
 					}
 				} else {
 					domain = record.Response
-					output, err = getDigInfo(domain)
+					time.Sleep(time.Duration(ni.Config.DNS.RateLimit) * time.Second)
+					output, err = getDigInfo(domain, "")
 					if err != nil {
 						return err
 					}
@@ -94,8 +95,18 @@ func parseDNSInfo(ni *NetInfo, domain, host, output string) error {
 }
 
 // getDigInfo collects DNS information for the given domain using dig.
-func getDigInfo(domain string) (string, error) {
-	cmd := exec.Command("dig", domain, "TXT", "ANY")
+func getDigInfo(domain string, requestType string) (string, error) {
+	// prepare requestType
+	requestType = strings.ToLower(strings.TrimSpace(requestType))
+
+	// Run the command
+	var cmd *exec.Cmd
+	if requestType == "" {
+		cmd = exec.Command("dig", domain, "TXT", "ANY")
+	} else {
+		cmd = exec.Command("dig", domain)
+	}
+	// Retrieve the output
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", err
@@ -129,6 +140,7 @@ func processSection(record string, dnsInfo *DNSInfo) string {
 	record = strings.ToUpper(record)
 	record = strings.TrimLeft(record, ";")
 	record = strings.TrimSpace(record)
+	dnsInfo.Comments = append(dnsInfo.Comments, record)
 
 	if strings.Contains(record, "ANSWER SECTION") {
 		return "ANSWER"

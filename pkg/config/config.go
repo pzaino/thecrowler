@@ -197,7 +197,7 @@ func NewConfig() Config {
 		},
 		HTTPHeaders: HTTPConfig{
 			Enabled:      true,
-			Timeout:      10,
+			Timeout:      60,
 			SSLDiscovery: true,
 		},
 		NetworkInfo: NetworkInfo{

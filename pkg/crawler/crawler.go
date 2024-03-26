@@ -358,7 +358,9 @@ func (ctx *processContext) GetHTTPInfo(url string) {
 	c := httpi.Config{
 		URL:             url,
 		CustomHeader:    map[string]string{"User-Agent": cmn.UsrAgentStrMap["chrome-desktop01"]},
-		FollowRedirects: true,
+		FollowRedirects: ctx.config.HTTPHeaders.FollowRedirects,
+		Timeout:         ctx.config.HTTPHeaders.Timeout,
+		SSLDiscovery:    ctx.config.HTTPHeaders.SSLDiscovery,
 	}
 
 	// Call GetHTTPInfo to retrieve HTTP header information

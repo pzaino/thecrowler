@@ -88,9 +88,10 @@ type GeoLookupConfig struct {
 }
 
 type HTTPConfig struct {
-	Enabled      bool `yaml:"enabled"`
-	Timeout      int  `yaml:"timeout"`
-	SSLDiscovery bool `yaml:"ssl_discovery"`
+	Enabled         bool `yaml:"enabled"`
+	Timeout         int  `yaml:"timeout"`
+	FollowRedirects bool `yaml:"follow_redirects"`
+	SSLDiscovery    bool `yaml:"ssl_discovery"`
 }
 
 // NmapConfig represents a structured configuration for an Nmap scan.
