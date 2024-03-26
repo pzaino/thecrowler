@@ -33,9 +33,10 @@ type DNSRecord struct {
 
 // DNSInfo represents DNS information for a domain.
 type DNSInfo struct {
-	Domain  string      `json:"domain"`
-	Server  []string    `json:"server"`
-	Records []DNSRecord `json:"records"`
+	Domain   string      `json:"domain"`
+	Server   []string    `json:"server"`
+	Records  []DNSRecord `json:"records"`
+	Comments []string    `json:"comments"`
 }
 
 // WHOISData represents the structure of WHOIS data you want to extract and store.
@@ -159,32 +160,33 @@ type HostData struct {
 
 // NetInfo represents the structure of the network information you want to extract and store.
 type NetInfo struct {
-	URL    string           `json:"url,omitempty"`
-	Hosts  HostData         `json:"hosts,omitempty"`
-	IPs    IPData           `json:"ips,omitempty"`
-	WHOIS  []WHOISData      `json:"whois,omitempty"`
-	DNS    []DNSInfo        `json:"dns,omitempty"`
-	Config *cfg.NetworkInfo `json:"Config,omitempty"`
+	URL          string           `json:"url,omitempty"`
+	Hosts        HostData         `json:"hosts,omitempty"`
+	IPs          IPData           `json:"ips,omitempty"`
+	WHOIS        []WHOISData      `json:"whois,omitempty"`
+	DNS          []DNSInfo        `json:"dns,omitempty"`
+	ServiceScout ServiceScoutInfo `json:"service_scout,omitempty"`
+	Config       *cfg.NetworkInfo `json:"Config,omitempty"`
 }
 
-// NmapInfo contains the information about the Nmap scan
-type NmapInfo struct {
-	Hosts []HostInfo `json:"hosts"`
+// ServiceScoutInfo contains the information about the Nmap scan
+type ServiceScoutInfo struct {
+	Hosts []HostInfo `json:"hosts,omitempty"`
 }
 
 // HostInfo contains the information about a single host
 type HostInfo struct {
-	IP       string     `json:"ip"`
-	Hostname string     `json:"hostname"`
-	Ports    []PortInfo `json:"ports"`
+	IP       string     `json:"ip,omitempty"`
+	Hostname string     `json:"hostname,omitempty"`
+	Ports    []PortInfo `json:"ports,omitempty"`
 }
 
 // PortInfo contains the information about a single port
 type PortInfo struct {
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	State    string `json:"state"`
-	Service  string `json:"service"`
+	Port     int    `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	State    string `json:"state,omitempty"`
+	Service  string `json:"service,omitempty"`
 }
 
 // Define a map to map record types to their corresponding values

@@ -216,6 +216,17 @@ properties:
             type: integer
         required:
           - enabled
+      service_scout:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          timeout:
+            type: integer
+          rate_limit:
+            type: integer
+        required:
+          - enabled
       geo_localization:
         type: object
         properties:
