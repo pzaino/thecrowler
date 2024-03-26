@@ -40,12 +40,13 @@ const (
 func tokenize(input string) []string {
 	var tokens []string
 	var currentToken strings.Builder
-
+	fmt.Printf("Input: %s\n", input)
 	inQuotes := false
 	for _, r := range input {
 		switch {
 		case r == '"':
 			inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
+			fmt.Printf("In quotes: %t\n", inQuotes)
 		case r == ':' && !inQuotes:
 			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
@@ -418,7 +419,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 	// Prepare the query body
 	queryBody := `
-	SELECT
+	SELECT DISTINCT
 		s.screenshot_link,
 		s.created_at,
 		s.last_updated_at,
@@ -436,7 +437,9 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 	LEFT JOIN
 		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
+		s.screenshot_link != '' AND s.screenshot_link IS NOT NULL AND
 	`
+
 	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
 	if err != nil {
 		return "", nil, err
@@ -469,7 +472,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 
 	// Parse the user input
 	sqlQuery := `
-	SELECT
+	SELECT DISTINCT
 		s.screenshot_link,
 		s.created_at,
 		s.last_updated_at,
@@ -485,7 +488,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	WHERE
 		LOWER(si.page_url) LIKE LOWER($1)
 	AND
-		s.screenshot_link != '';
+		s.screenshot_link != '' AND s.screenshot_link IS NOT NULL;
 	`
 	sqlParams = append(sqlParams, query)
 
@@ -567,7 +570,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 func parseNetInfoGetQuery(input string) (string, []interface{}, error) {
 	// Prepare the query body
 	queryBody := `
-	SELECT
+	SELECT DISTINCT
 		ni.created_at,
 		ni.last_updated_at,
 		ni.details
@@ -612,7 +615,7 @@ func parseNetInfoQuery(input string) (string, []interface{}, error) {
 
 	// Parse the user input
 	sqlQuery := `
-	SELECT
+	SELECT DISTINCT
 		ni.created_at,
 		ni.last_updated_at,
 		ni.details
@@ -705,16 +708,16 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 func parseHTTPInfoGetQuery(input string) (string, []interface{}, error) {
 	// Prepare the query body
 	queryBody := `
-	SELECT
+	SELECT DISTINCT
 		hi.created_at,
 		hi.last_updated_at,
 		hi.details
 	FROM
 		HTTPInfo hi
 	JOIN
-        HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
+		HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
 	JOIN
-        SearchIndex si ON hii.index_id = si.index_id
+		SearchIndex si ON hii.index_id = si.index_id
 	LEFT JOIN
 		KeywordIndex ki ON si.index_id = ki.index_id
 	LEFT JOIN
@@ -750,7 +753,7 @@ func parseHTTPInfoQuery(input string) (string, []interface{}, error) {
 
 	// Parse the user input
 	sqlQuery := `
-	SELECT
+	SELECT DISTINCT
 		hi.created_at,
 		hi.last_updated_at,
 		hi.details

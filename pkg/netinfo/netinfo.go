@@ -339,5 +339,12 @@ func (ni *NetInfo) GetNetInfo(url string) error {
 		}
 	}
 
+	if ni.Config.ServiceScout.Enabled {
+		err = ni.GetServiceScoutInfo(&ni.Config.ServiceScout)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

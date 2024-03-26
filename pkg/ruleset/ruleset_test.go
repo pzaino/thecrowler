@@ -9,6 +9,10 @@ import (
 	"github.com/qri-io/jsonschema"
 )
 
+const (
+	goodTestFile = "../../schemas/ruleset-schema.json"
+)
+
 var rulesets = []Ruleset{
 	{
 		Name:          "Example Items Extraction Ruleset",
@@ -179,7 +183,7 @@ func TestInitializeLibrary(t *testing.T) {
 func TestNewRuleEngine(t *testing.T) {
 	sites := rulesets
 
-	engine := NewRuleEngine("../../schemas/ruleset-schema.json", sites)
+	engine := NewRuleEngine(goodTestFile, sites)
 
 	// Verify that the RuleEngine is initialized correctly
 	if engine == nil {
@@ -193,7 +197,7 @@ func TestNewRuleEngine(t *testing.T) {
 	}
 }
 func TestFindRulesetByName(t *testing.T) {
-	engine := NewRuleEngine("../../schemas/ruleset-schema.json", rulesets)
+	engine := NewRuleEngine(goodTestFile, rulesets)
 
 	// Test case 1: Valid ruleset name
 	name := "Example Items Extraction Ruleset"
@@ -236,7 +240,7 @@ func TestFindRulesetByName(t *testing.T) {
 }
 
 func TestDefaultRuleset(t *testing.T) {
-	engine := NewEmptyRuleEngine("../../schemas/ruleset-schema.json")
+	engine := NewEmptyRuleEngine(goodTestFile)
 
 	// Load ruleset from a file
 	err := engine.LoadRulesFromFile([]string{"../../rules/AcceptCookies-ruleset.json"})

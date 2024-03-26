@@ -324,10 +324,56 @@ func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
 	// Implement an API client that uses step.Details[] items to connect to a
 	// 3rd party API, pass our JSON document in data and retrieve the results
 
+	if err := validateAPIURL(step); err != nil {
+		return err
+	}
+
+	protocol, sslMode := determineProtocolAndSSLMode(step)
+	url := protocol + ":://" + step.Details["api_url"].(string)
+
+	timeout := determineTimeout(step)
+
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(timeout, sslMode),
+	}
+
+	request := buildRequest(step, data)
+
+	req, err := http.NewRequest("POST", url, strings.NewReader(request))
+	if err != nil {
+		return fmt.Errorf("failed to create POST request to %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	*data = body
+	resp.Body.Close()
+
+	return nil
+}
+
+func validateAPIURL(step *rs.PostProcessingStep) error {
 	if step.Details["api_url"] == nil {
 		return errors.New("API URL is missing")
 	}
+	return nil
+}
 
+func determineProtocolAndSSLMode(step *rs.PostProcessingStep) (string, string) {
 	var protocol string
 	var sslMode string
 	if step.Details["ssl_mode"] == nil {
@@ -341,21 +387,20 @@ func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
 			protocol = "https"
 		}
 	}
-	url := protocol + ":://" + step.Details["api_url"].(string)
+	return protocol, sslMode
+}
 
-	// Determine timeout
+func determineTimeout(step *rs.PostProcessingStep) int {
 	var timeout int
 	if step.Details["timeout"] == nil {
 		timeout = 15
 	} else {
 		timeout = step.Details["timeout"].(int)
 	}
+	return timeout
+}
 
-	// Implement the API call here
-	httpClient := &http.Client{
-		Transport: cmn.SafeTransport(timeout, sslMode),
-	}
-	// Prepare the POST request
+func buildRequest(step *rs.PostProcessingStep, data *[]byte) string {
 	request := "{"
 	if step.Details["api_key"] != nil {
 		request += "\"api_key\": \"" + step.Details["api_key"].(string) + "\","
@@ -374,31 +419,5 @@ func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
 	request += string(*data)
 	request += "}"
 	request += "}"
-	req, err := http.NewRequest("POST", url, strings.NewReader(request))
-	if err != nil {
-		return fmt.Errorf("failed to create POST request to %s: %v", url, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// Send the POST request
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request to %s: %v", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	// Update data
-	*data = body
-	resp.Body.Close()
-
-	return nil
+	return request
 }

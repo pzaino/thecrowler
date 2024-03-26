@@ -87,12 +87,68 @@ type GeoLookupConfig struct {
 	SSLMode string `yaml:"sslmode"`
 }
 
+type HTTPConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	Timeout      int  `yaml:"timeout"`
+	SSLDiscovery bool `yaml:"ssl_discovery"`
+}
+
+// NmapConfig represents a structured configuration for an Nmap scan.
+// This is a simplified example and does not cover all possible Nmap options.
+type ServiceScoutConfig struct {
+	Enabled bool `yaml:"enabled"` // Whether to enable the Nmap scan or not
+	Timeout int  `yaml:"timeout"` // Timeout for the Nmap scan (in seconds)
+
+	// Basic scan types
+	PingScan         bool     `yaml:"ping_scan"`             // -sn (No port scan)
+	ConnectScan      bool     `yaml:"connect_scan"`          // -sT (TCP connect scan)
+	SynScan          bool     `yaml:"syn_scan"`              // -sS (TCP SYN scan)
+	UdpScan          bool     `yaml:"udp_scan"`              // -sU (UDP scan)
+	NoDNSResolution  bool     `yaml:"no_dns_resolution"`     // -n (No DNS resolution)
+	ServiceDetection bool     `yaml:"service_detection"`     // -sV (Service version detection)
+	OSFingerprinting bool     `yaml:"os_finger_print"`       // -O (Enable OS detection)
+	AggressiveScan   bool     `yaml:"aggressive_scan"`       // -A (Aggressive scan options)
+	ScriptScan       []string `yaml:"script_scan,omitempty"` // --script (Script scan)
+
+	// Host discovery
+	Targets      []string `yaml:"targets,omitempty"`        // Targets can be IPs or hostnames
+	ExcludeHosts []string `yaml:"excluded_hosts,omitempty"` // --exclude (Hosts to exclude)
+
+	// Timing and performance
+	TimingTemplate string `yaml:"timing_template"` // -T<0-5> (Timing template)
+	HostTimeout    string `yaml:"host_timeout"`    // --host-timeout (Give up on target after this long)
+	MinRate        string `yaml:"min_rate"`        // --min-rate (Send packets no slower than this)
+	MaxRetries     int    `yaml:"max_retries"`     // --max-retries (Caps the number of port scan probe retransmissions)
+
+	// Output
+	/*
+	   OutputAll         bool     `yaml:"output_all"` // -oA (Output in the three major formats at once)
+	   OutputNormal      bool     `yaml:"output_normal"` // -oN (Output in normal format)
+	   OutputXML         bool     `yaml:"output_"` // -oX (Output in XML format)
+	   OutputGrepable    bool     // -oG (Output in grepable format)
+	   OutputDirectory   string   // Directory to store the output files
+	*/
+
+	// Advanced options
+	SourcePort     int    `yaml:"source_port"`     // --source-port (Use given port number)
+	Interface      string `yaml:"interface"`       // -e (Use specified interface)
+	SpoofIP        string `yaml:"spoof_ip"`        // -S (Spoof source address)
+	RandomizeHosts bool   `yaml:"randomize_hosts"` // --randomize-hosts (Randomize target scan order)
+	DataLength     int    `yaml:"data_length"`     // --data-length (Append random data to sent packets)
+	ScanDelay      string `yaml:"delay"`           // --scan-delay (Adjust delay between probes)
+	MTUDiscovery   bool   `yaml:"mtu_discovery"`   // --mtu (Discover MTU size)
+	ScanFlags      string `yaml:"scan_flags"`      // --scanflags (Customize TCP scan flags)
+
+	// Configuration methods or additional fields may be added here
+}
+
 // NetworkInfo represents the network information gathering configuration
 type NetworkInfo struct {
-	DNS         DNSConfig       `yaml:"dns"`
-	WHOIS       WHOISConfig     `yaml:"whois"`
-	NetLookup   NetLookupConfig `yaml:"netlookup"`
-	Geolocation GeoLookupConfig `yaml:"geolocation"`
+	DNS          DNSConfig          `yaml:"dns"`
+	WHOIS        WHOISConfig        `yaml:"whois"`
+	NetLookup    NetLookupConfig    `yaml:"netlookup"`
+	ServiceScout ServiceScoutConfig `yaml:"service_scout"`
+	Geolocation  GeoLookupConfig    `yaml:"geolocation"`
 }
 
 // API represents the API configuration
@@ -185,6 +241,9 @@ type Config struct {
 	// File storage API configuration (to store files on a separate server)
 	FileStorageAPI FileStorageAPI `yaml:"file_storage"`
 
+	// HTTP Headers Info configuration
+	HTTPHeaders HTTPConfig `yaml:"http_headers"`
+
 	// NetworkInfo configuration
 	NetworkInfo NetworkInfo `yaml:"network_info"`
 
@@ -196,6 +255,7 @@ type Config struct {
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
 }
 
+/////////////////////////////////////////////////
 //// ----------- Source Config ------------ ////
 
 type SourceConfig struct {

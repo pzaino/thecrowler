@@ -195,6 +195,11 @@ func NewConfig() Config {
 			Type:    "local",
 			SSLMode: "disable",
 		},
+		HTTPHeaders: HTTPConfig{
+			Enabled:      true,
+			Timeout:      10,
+			SSLDiscovery: true,
+		},
 		NetworkInfo: NetworkInfo{
 			DNS: DNSConfig{
 				Enabled:   true,
@@ -210,6 +215,12 @@ func NewConfig() Config {
 				Enabled:   true,
 				Timeout:   10,
 				RateLimit: 1,
+			},
+			ServiceScout: ServiceScoutConfig{
+				Enabled:          true,
+				Timeout:          10,
+				OSFingerprinting: true,
+				ServiceDetection: true,
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,
@@ -282,7 +293,15 @@ func IsEmpty(config Config) bool {
 		return false
 	}
 
-	if config.NetworkInfo != (NetworkInfo{}) {
+	if config.HTTPHeaders != (HTTPConfig{}) {
+		return false
+	}
+
+	if config.NetworkInfo.DNS != (DNSConfig{}) ||
+		config.NetworkInfo.WHOIS != (WHOISConfig{}) ||
+		config.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
+		!config.NetworkInfo.ServiceScout.IsEmpty() ||
+		config.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
 		return false
 	}
 
@@ -295,5 +314,30 @@ func IsEmpty(config Config) bool {
 	}
 
 	// If all checks pass, the struct is considered empty
+	return true
+}
+
+// IsEmpty checks if ServiceScoutConfig is empty.
+func (ssc *ServiceScoutConfig) IsEmpty() bool {
+	if ssc == nil {
+		return true
+	}
+
+	if ssc.Enabled {
+		return false
+	}
+
+	if ssc.Timeout != 0 {
+		return false
+	}
+
+	if ssc.OSFingerprinting {
+		return false
+	}
+
+	if ssc.ServiceDetection {
+		return false
+	}
+
 	return true
 }

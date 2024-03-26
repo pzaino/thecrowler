@@ -23,6 +23,7 @@ go.work
 # API configuration files
 app_config.go
 config.yaml
+config.sh
 .DS_Store
 
 # build artefacts

@@ -93,7 +93,18 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 
 	// Check if the response is a redirect (3xx)
 	if config.FollowRedirects && (resp.StatusCode >= 300 && resp.StatusCode < 400) {
-		fmt.Println("Redirect detected, handle it as needed.")
+		// Handle the redirect as needed
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Redirect detected, handle it as needed.")
+		// Extract the new location from the response header
+		newLocation := resp.Header.Get("Location")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Redirect location: %s", newLocation)
+		// Create a new configuration with the new location
+		newConfig := config
+		newConfig.URL = newLocation
+		newConfig.CustomHeader = map[string]string{"User-Agent": cmn.UsrAgentStrMap["desktop01"]}
+		newConfig.FollowRedirects = true
+		// Recursively call ExtractHTTPInfo with the new configuration to extract the new HTTP information
+		return ExtractHTTPInfo(newConfig)
 	}
 
 	// Collect response headers
