@@ -44,11 +44,12 @@ func extractQueryOrBody(r *http.Request) (string, error) {
 	}
 }
 
-func getQType(expr bool) int {
-	if expr {
-		return 1
+func getQTypeFromName(name string) int {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "post" {
+		return postQuery
 	}
-	return 0
+	return getQuery
 }
 
 // normalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.

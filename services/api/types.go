@@ -155,3 +155,9 @@ type HTTPInfoResponse struct {
 func (r *HTTPInfoResponse) isEmpty() bool {
 	return len(r.Items) == 0
 }
+
+// Enum for qType (query type)
+const (
+	postQuery = 0
+	getQuery  = 1
+)

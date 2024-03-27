@@ -369,7 +369,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 1 {
+	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		sqlQuery, sqlParams, err = parseScreenshotGetQuery(query)
 		if err != nil {
@@ -516,7 +516,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 1 {
+	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		sqlQuery, sqlParams, err = parseNetInfoGetQuery(query)
 		if err != nil {
@@ -654,7 +654,7 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 1 {
+	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		sqlQuery, sqlParams, err = parseHTTPInfoGetQuery(query)
 		if err != nil {

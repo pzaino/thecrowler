@@ -241,7 +241,7 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performScreenshotSearch(query, getQType(r.Method != "POST"))
+	results, err := performScreenshotSearch(query, getQTypeFromName(r.Method))
 	if results == (ScreenshotResponse{}) {
 		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, 404)
 	} else {
@@ -258,7 +258,7 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performNetInfoSearch(query, getQType(r.Method != "POST"))
+	results, err := performNetInfoSearch(query, getQTypeFromName(r.Method))
 	if results.isEmpty() {
 		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, 404)
 	} else {
@@ -275,7 +275,7 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performHTTPInfoSearch(query, getQType(r.Method != "POST"))
+	results, err := performHTTPInfoSearch(query, getQTypeFromName(r.Method))
 	if results.isEmpty() {
 		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, 404)
 	} else {
@@ -292,7 +292,7 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performAddSource(query, getQType(r.Method != "POST"))
+	results, err := performAddSource(query, getQTypeFromName(r.Method))
 	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError, successCode)
 }
 
@@ -305,6 +305,6 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performRemoveSource(query, getQType(r.Method != "POST"))
+	results, err := performRemoveSource(query, getQTypeFromName(r.Method))
 	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 }
