@@ -1,5 +1,12 @@
 # Understanding the config.yaml file
 
+## legend
+
+|  Symbol means choice: a|b means a OR b
+[] Means Optional
+
+## Introduction
+
 The config.yaml file is used to configure the CROWler and the API. It should be
 placed in the root directory of the repository.
 
@@ -23,19 +30,31 @@ image! If you don't do this, the CROWler will not work.
 The config.yaml file should look like this:
 
 ```yaml
+remote:                     # Optional, this is the remote configuration section, here you can configure the remote CROWler API to be used to download the actual configuration
+  type: ""                  # Required, this is the type of the remote configuration API
+  host: localhost           # Required, this is the IP of the remote configuration API
+  port: 8080                # Required, this is the port of the remote configuration API
+  token: ${TOKEN}           # Optional, this is the token to use to authenticate to the remote configuration API
+  secret: ${SECRET}         # Optional, this is the secret to use to authenticate to the remote configuration API
+  region: ${REGION}         # Optional, this is the region of the remote configuration API
+  timeout: 10               # Optional, this is the timeout for the remote configuration API
+  sslmode: "enable|disable" # Optional, this is the SSL mode for the remote configuration API
+
 database:
   host: localhost
   port: 5432
   user: ${POSTGRES_USER}
   password: ${POSTGRES_PASSWORD}
   dbname: SitesIndex
+
 crawler:
   workers: 5        # Required, this is the number of workers the crawler will use
   depth: 1          # Required, this is the maximum depth the crawler will reach (0 for no limit)
   delay: "2"        # Required, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
   timeout: 10       # Required, this is the timeout for a request
   maintenance: 60   # Required, this is the time between two maintenance operations (in seconds)
-image_storage_api:
+
+image_storage:
   type: local       # Required, this is the type of the image storage API
   path: /images     # Required, this is the path of the image storage API
   host: localhost   # Optional, this is the IP of the image storage API
@@ -44,11 +63,23 @@ image_storage_api:
   secret: ${SECRET} # Optional, this is the secret to use to authenticate to the image storage API
   region: ${REGION} # Optional, this is the region of the image storage API
   timeout: 10       # Optional, this is the timeout for the image storage API
+
+file_storage:
+  # This is identical to image_storage, however it applies to files and web objects (not to images!)
+
 api:
   port: 8080        # Required, this is the port of the API
   host: 0.0.0.0     # Required, this is the IP of the API
   timeout: 10       # Optional, this is the timeout for the API
   rate_limit: 10    # Optional, this is the rate limit for the API
+  readheader_timeout: 10 # Optional, this is the read header timeout for the API
+  write_timeout: 10 # Optional, this is the write timeout for the API
+  read_timeout: 10  # Optional, this is the read timeout for the API
+  ssl_mode: "enable|disable" # Optional, this is the SSL mode for the API
+  cert_file: ""      # Optional, this is the SSL certificate for the API
+  key_file: ""       # Optional, this is the SSL key for the API
+  enable_console: true  # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
+
 selenium:
   - type: chrome    # Required, this is the type of the Selenium container
     port: 4444      # Required, this is the port of the Selenium container
@@ -74,7 +105,7 @@ network_info:
     timeout: 60     # Timeout for a request
     ssl_discovery: true # Enables SSL information gathering
   service_scout:
-    enabled: true   # Enables service discovery (this is a port scanner, use with caution!)
+    enabled: true   # Enables service discovery (this is a network scanner, use with caution!)
     timeout: 60     # Timeout for a request
   geo_localization:
     enabled: false  # Enables geo localization information gathering
@@ -87,34 +118,38 @@ network_info:
     token: ""       # The token to use to authenticate to the geo localization service (if they are remote)
     secret: ""      # The secret to use to authenticate to the geo localization service (if they are remote)
 
-  rulesets:
-    - type: "local|remote" # The type of the ruleset distribution (local or remote)
-      path: ""      # The path to the ruleset file
-      timeout: 60   # Timeout for a request
-      host: ""      # The ruleset distribution host (if they are remote)
-      port: "80"    # The ruleset distribution port (if they are remote)
-      region: ""    # The region of the ruleset distribution (if they are remote)
-      token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
-      secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
-    - type: "local|remote" # YES you can use multiple rulesets, and YES mix of local and remote too!
-      path: ""      # The path to the ruleset file
-      timeout: 60   # Timeout for a request
-      host: ""      # The ruleset distribution host (if they are remote)
-      port: "80"    # The ruleset distribution port (if they are remote)
-      region: ""    # The region of the ruleset distribution (if they are remote)
-      token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
-      secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
+rulesets:
+  - type: "local|remote" # The type of the ruleset distribution (local or remote)
+    path: ""      # The path to the ruleset file
+    timeout: 60   # Timeout for a request
+    host: ""      # The ruleset distribution host (if they are remote)
+    port: "80"    # The ruleset distribution port (if they are remote)
+    region: ""    # The region of the ruleset distribution (if they are remote)
+    token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
+    secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
+  - type: "local|remote" # YES you can use multiple rulesets, and YES mix of local and remote too!
+    path: ""      # The path to the ruleset file
+    timeout: 60   # Timeout for a request
+    host: ""      # The ruleset distribution host (if they are remote)
+    port: "80"    # The ruleset distribution port (if they are remote)
+    region: ""    # The region of the ruleset distribution (if they are remote)
+    token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
+    secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
 
-debug_level: 0
+debug_level: 0      # Optional, this is the debug level (0 for no debug, 1 or more for debug, the higher the number the more verbose the output will be)
 ```
 
 The sections are:
 
+- The remote section configures the remote configuration API
 - The database section configures the database
 - The crawler section configures the crawler
 - The image_storage_api section configures the image storage API
+- The file_storage_api section configures the file storage API (downloaded files and/or web objects)
 - The API section configures the API
 - The selenium section configures the Selenium Chrome container
+- The network_info section configures the network information gathering
+- The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
 - The debug_level section configures the debug level
 
 ## The database section
@@ -135,6 +170,7 @@ database:
 - user is the database user
 - password is the database password
 - dbname is the database name (by default SitesIndex).
+- You can use ENV variables in the config.yaml file as in the example above, you can name the variables as you wish. If you want to use ENV variables remember to put them between `${}` like this `${POSTGRES_USER}`.
 
 ## The crawler section
 
@@ -145,17 +181,20 @@ crawler:
   workers: 5
   depth: 1
   delay: 2
+  interval: 10
   timeout: 10
   maintenance: 60
 ```
 
-- workers is the number of workers the crawler will use
+- workers is the number of workers the crawler engine will use
 - depth is the maximum depth the crawler will reach
 - delay is the delay between two requests
+- interval is the time before start executing action rules on a just fetched page (this is useful for slow websites)
 - timeout is the timeout for a request and maintenance is the time
 between two maintenance operations.
+- maintenance is the time between two maintenance operations (in minutes). Keep in mind that DB maintenance is done only if there aren't active crawling operations. So, if you set maintenance to 1 hour and you have a crawling operation that lasts 2 hours, the DB maintenance will be done after the crawling operation is finished.
 
-## The image_storage_api section
+## The image_storage and file_storage sections
 
 The image_storage_api section configures the image storage API. It should look
 like this:
@@ -211,6 +250,23 @@ authenticate to the API.
 **timeout:**
 
 is the timeout for the image storage API. It's expressed in seconds.
+
+## Loading the configuration
+
+The CROWler will load the configuration from the config.yaml file in the
+current path if no cli arguments are provided.
+
+If you wish to place your config.yaml file in a different location, you can
+then tell the crowler and the API where to find it by using the `--config`
+argument.
+
+## Reloading the configuration
+
+Regardless of where you've stored your configuration, locally or remotely, you
+can reload the configuration by sending a `SIGHUP` signal to the CROWler.
+
+When a `SIGHUP` signal is received, the CROWler will reload the configuration AFTER
+the current crawling operations are completed.
 
 ## Adding configuration validation in VSCode
 
