@@ -1243,6 +1243,11 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
+	// Append proxy settings if available
+	if sel.Config.ProxyURL != "" {
+		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
+	}
+
 	caps.AddChrome(chrome.Capabilities{
 		Args: args,
 		W3C:  true,
