@@ -251,6 +251,23 @@ authenticate to the API.
 
 is the timeout for the image storage API. It's expressed in seconds.
 
+## Loading the configuration
+
+The CROWler will load the configuration from the config.yaml file in the
+current path if no cli arguments are provided.
+
+If you wish to place your config.yaml file in a different location, you can
+then tell the crowler and the API where to find it by using the `--config`
+argument.
+
+## Reloading the configuration
+
+Regardless of where you've stored your configuration, locally or remotely, you
+can reload the configuration by sending a `SIGHUP` signal to the CROWler.
+
+When a `SIGHUP` signal is received, the CROWler will reload the configuration AFTER
+the current crawling operations are completed.
+
 ## Adding configuration validation in VSCode
 
 To add the CROWler configuration validation in VSCode, you can use the
