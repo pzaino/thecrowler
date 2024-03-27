@@ -1036,6 +1036,23 @@ LANGUAGE plpgsql;
 --------------------------------------------------------------------------------
 -- User and permissions setup
 
+-- Helper functions:
+
+CREATE OR REPLACE FUNCTION grant_sequence_permissions(schema_name text, target_user text)
+RETURNS void AS
+$$
+DECLARE
+    sequence_record record;
+BEGIN
+    FOR sequence_record IN SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = schema_name
+    LOOP
+        EXECUTE format('GRANT USAGE, SELECT, UPDATE ON SEQUENCE %I.%I TO %I', schema_name, sequence_record.sequence_name, target_user);
+    END LOOP;
+END;
+$$
+LANGUAGE plpgsql;
+
+
 -- Creates a new user
 CREATE USER :CROWLER_DB_USER WITH ENCRYPTED PASSWORD :'CROWLER_DB_PASSWORD';
 
@@ -1045,3 +1062,6 @@ GRANT USAGE ON SCHEMA public TO :CROWLER_DB_USER;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :CROWLER_DB_USER;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO :CROWLER_DB_USER;
 ALTER ROLE :CROWLER_DB_USER SET search_path TO public;
+
+-- Grants permissions to the user on the :"POSTGRES_DB" database
+SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
