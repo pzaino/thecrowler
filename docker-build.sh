@@ -40,7 +40,7 @@ fi
 ARCH=$(uname -m)
 PLATFORM="linux/amd64"
 POSTGRES_IMAGE=""
-SELENIUM_IMAGE="selenium/standalone-chrome:4.17.0-20240123"
+SELENIUM_IMAGE="selenium/standalone-chrome:4.18.1-20240224"
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     PLATFORM="linux/arm64/v8"
     POSTGRES_IMAGE="arm64v8/"
