@@ -240,6 +240,10 @@ func detectCMS(responseBody string, header *http.Header) *map[string]string {
 		"gatsby":      "Gatsby",
 	}
 
+	const (
+		xgenerator = "X-Generator"
+	)
+
 	// Initialize a slice to store the detected CMS
 	var detectedCMS map[string]string = make(map[string]string)
 
@@ -249,8 +253,8 @@ func detectCMS(responseBody string, header *http.Header) *map[string]string {
 	detectCMSByLinkHeader(header, &detectedCMS)
 
 	// SOme extra tags that may help:
-	if header.Get("X-Generator") != "" {
-		detectedCMS["X-Generator"] = header.Get("X-Generator")
+	if header.Get(xgenerator) != "" {
+		detectedCMS[xgenerator] = header.Get(xgenerator)
 	}
 	if header.Get("X-Nextjs-Cache") != "" {
 		detectedCMS["Next.js"] = "yes"
