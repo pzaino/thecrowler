@@ -45,6 +45,15 @@ type addSourceRequest struct {
 // returned by the search engine. It designed to be similar
 // to the one returned by Google.
 type SearchResult struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+	} `json:"queries"`
 	Items []struct {
 		Title   string `json:"title"`   // Title of the page
 		Link    string `json:"link"`    // URL of the page
@@ -134,6 +143,15 @@ type NetInfoRow struct {
 
 // NetInfoResponse represents the structure of the network information response
 type NetInfoResponse struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+	} `json:"queries"`
 	Items []NetInfoRow `json:"items"`
 }
 
@@ -149,6 +167,15 @@ type HTTPInfoRow struct {
 
 // NetInfoResponse represents the structure of the network information response
 type HTTPInfoResponse struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+	} `json:"queries"`
 	Items []HTTPInfoRow `json:"items"`
 }
 

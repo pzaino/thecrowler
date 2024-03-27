@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,37 +45,43 @@ func (ni *NetInfo) GetServiceScoutInfo(scanCfg *cfg.ServiceScoutConfig) error {
 	return nil
 }
 
-func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) (HostInfo, error) {
+func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
 	defer cancel()
 
-	host := HostInfo{
-		IP: ip,
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return []HostInfo{}, fmt.Errorf("empty IP address")
 	}
 
 	options, err := buildNmapOptions(cfg, ip, &ctx)
 	if err != nil {
-		return host, fmt.Errorf("unable to build nmap options: %w", err)
+		return []HostInfo{}, fmt.Errorf("unable to build nmap options: %w", err)
 	}
 
 	scanner, err := nmap.NewScanner(options...)
 	if err != nil {
-		return host, fmt.Errorf("unable to create nmap scanner: %w", err)
+		return []HostInfo{}, fmt.Errorf("unable to create nmap scanner: %w", err)
 	}
 
 	result, warnings, err := scanner.Run()
-	if err != nil {
-		return host, fmt.Errorf("nmap scan failed: %w", err)
-	}
 	if len(warnings) != 0 {
 		for _, warning := range warnings {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout warning: %v", warning)
 		}
 	}
+	if err != nil {
+		return []HostInfo{}, fmt.Errorf("nmap scan failed: %w", err)
+	}
 
-	parseScanResult(result, host)
+	// display the results
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout results: %v", result)
 
-	return host, nil
+	// Parse the scan result
+	//parseScanResult(result, &host)
+	hosts := parseScanResults(result)
+
+	return hosts, nil
 }
 
 func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Context) ([]func(*nmap.Scanner), error) {
@@ -119,19 +126,35 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	return options, nil
 }
 
-func parseScanResult(result *nmap.Run, host HostInfo) {
+func parseScanResults(result *nmap.Run) []HostInfo {
+	var hosts []HostInfo // This will hold all the host info structs we create
+
 	for _, hostResult := range result.Hosts {
-		host.Hostname = hostResult.Hostnames[0].Name
+		hostInfo := HostInfo{} // Assuming HostInfo is a struct that contains IP, Hostname, and Ports fields
+
+		// Assuming there's always at least one address, and it's the IP you want
+		if len(hostResult.Addresses) > 0 {
+			hostInfo.IP = hostResult.Addresses[0].Addr
+		}
+
+		if len(hostResult.Hostnames) > 0 {
+			hostInfo.Hostname = hostResult.Hostnames[0].Name
+		}
+
 		for _, port := range hostResult.Ports {
-			portInfo := PortInfo{
+			portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
 				Port:     int(port.ID),
 				Protocol: port.Protocol,
 				State:    port.State.State,
 				Service:  port.Service.Name,
 			}
-			host.Ports = append(host.Ports, portInfo)
+			hostInfo.Ports = append(hostInfo.Ports, portInfo)
 		}
+
+		hosts = append(hosts, hostInfo)
 	}
+
+	return hosts
 }
 
 // scanHosts scans the hosts using Nmap
@@ -139,7 +162,7 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 	// Get the IP addresses
 	ips := ni.IPs.IP
 
-	var hosts []HostInfo
+	var fHosts []HostInfo // This will hold all the host info structs we create (fHosts = final hosts)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -148,7 +171,7 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 		go func(ip string) {
 			defer wg.Done()
 
-			host, err := ni.scanHost(scanCfg, ip)
+			hosts, err := ni.scanHost(scanCfg, ip)
 			if err != nil {
 				// Log error or handle it according to your error policy
 				cmn.DebugMsg(cmn.DbgLvlDebug, "error scanning host %s: %v", ip, err)
@@ -156,14 +179,14 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 			}
 
 			mu.Lock()
-			hosts = append(hosts, host)
+			fHosts = append(fHosts, hosts...)
 			mu.Unlock()
 		}(ip)
 	}
 
 	wg.Wait()
 
-	return hosts, nil
+	return fHosts, nil
 }
 
 /*

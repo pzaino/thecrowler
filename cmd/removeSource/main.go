@@ -23,6 +23,8 @@ import (
 	"log"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+
+	_ "github.com/lib/pq"
 )
 
 var (

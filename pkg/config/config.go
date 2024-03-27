@@ -218,9 +218,9 @@ func NewConfig() Config {
 				RateLimit: 1,
 			},
 			ServiceScout: ServiceScoutConfig{
-				Enabled:          true,
-				Timeout:          10,
-				OSFingerprinting: true,
+				Enabled:          false,
+				Timeout:          600,
+				OSFingerprinting: false,
 				ServiceDetection: true,
 				NoDNSResolution:  true,
 			},
