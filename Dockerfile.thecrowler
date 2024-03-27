@@ -19,6 +19,8 @@ WORKDIR /app
 
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 RUN apk add --no-cache openjdk11-jre-headless
+RUN apk add --no-cache bind-tools
+RUN apk add --no-cache nmap
 
 # Create a non-root user and switch to it
 RUN adduser -D crowler
