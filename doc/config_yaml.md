@@ -72,6 +72,13 @@ api:
   host: 0.0.0.0     # Required, this is the IP of the API
   timeout: 10       # Optional, this is the timeout for the API
   rate_limit: 10    # Optional, this is the rate limit for the API
+  readheader_timeout: 10 # Optional, this is the read header timeout for the API
+  write_timeout: 10 # Optional, this is the write timeout for the API
+  read_timeout: 10  # Optional, this is the read timeout for the API
+  ssl_mode: "enable|disable" # Optional, this is the SSL mode for the API
+  cert_file: ""      # Optional, this is the SSL certificate for the API
+  key_file: ""       # Optional, this is the SSL key for the API
+  enable_console: true  # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
 
 selenium:
   - type: chrome    # Required, this is the type of the Selenium container
@@ -98,7 +105,7 @@ network_info:
     timeout: 60     # Timeout for a request
     ssl_discovery: true # Enables SSL information gathering
   service_scout:
-    enabled: true   # Enables service discovery (this is a port scanner, use with caution!)
+    enabled: true   # Enables service discovery (this is a network scanner, use with caution!)
     timeout: 60     # Timeout for a request
   geo_localization:
     enabled: false  # Enables geo localization information gathering

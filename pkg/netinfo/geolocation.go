@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	config "github.com/pzaino/thecrowler/pkg/config"
@@ -31,11 +32,11 @@ func DetectLocation(ipAddress string, cfg config.GeoLookupConfig) (*DetectedLoca
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("geolocation is disabled")
 	}
-
-	switch cfg.Type {
-	case "maxmind":
+	glType := strings.ToLower(strings.TrimSpace(cfg.Type))
+	switch glType {
+	case "maxmind", "local":
 		return detectLocationMaxMind(ipAddress, cfg.DBPath)
-	case "ip2location":
+	case "ip2location", "remote":
 		return detectLocationIP2Location(ipAddress, cfg.APIKey, cfg.Timeout, cfg.SSLMode)
 	default:
 		return nil, fmt.Errorf("unsupported geolocation type: %s", cfg.Type)
