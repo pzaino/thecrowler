@@ -222,6 +222,7 @@ func NewConfig() Config {
 				Timeout:          10,
 				OSFingerprinting: true,
 				ServiceDetection: true,
+				NoDNSResolution:  true,
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,

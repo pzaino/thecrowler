@@ -224,14 +224,28 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 		return pageSource, err
 	}
 
+	var wg sync.WaitGroup
+
+	// Increase WaitGroup counter for each goroutine you're about to launch
+	wg.Add(2)
+
 	// Handle consent
-	handleConsent(ctx.wd)
+	//handleConsent(ctx.wd)
 
-	// Get network information
-	ctx.GetNetInfo(ctx.source.URL)
+	// Goroutine for getting network information
+	go func() {
+		defer wg.Done() // Decrease WaitGroup counter when goroutine completes
+		ctx.GetNetInfo(ctx.source.URL)
+	}()
 
-	// Get HTTP information
-	ctx.GetHTTPInfo(ctx.source.URL)
+	// Goroutine for getting HTTP information
+	go func() {
+		defer wg.Done() // Decrease WaitGroup counter when goroutine completes
+		ctx.GetHTTPInfo(ctx.source.URL)
+	}()
+
+	// Wait for all goroutines to complete
+	wg.Wait()
 
 	// Continue with extracting page info and indexing
 	pageInfo := extractPageInfo(pageSource, ctx)
@@ -381,6 +395,7 @@ func (ctx *processContext) IndexPage(pageInfo PageInfo) int64 {
 }
 
 // handleConsent is responsible for handling consent windows (e.g., cookie consent)
+/*
 func handleConsent(wd selenium.WebDriver) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking for 'consent' or 'cookie accept' windows...")
 	for _, text := range append(acceptTexts, consentTexts...) {
@@ -438,6 +453,7 @@ func isVisibleAndClickable(element selenium.WebElement) bool {
 	clickable, _ := element.IsEnabled()
 	return visible && clickable
 }
+*/
 
 // updateSourceState is responsible for updating the state of a Source in
 // the database after crawling it (it does consider errors too)
