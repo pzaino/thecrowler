@@ -30,22 +30,81 @@ database:
   password: ${POSTGRES_PASSWORD}
   dbname: SitesIndex
 crawler:
-  workers: 5
-  depth: 1
-  delay: "2"
-  timeout: 10
-  maintenance: 60
+  workers: 5        # Required, this is the number of workers the crawler will use
+  depth: 1          # Required, this is the maximum depth the crawler will reach (0 for no limit)
+  delay: "2"        # Required, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
+  timeout: 10       # Required, this is the timeout for a request
+  maintenance: 60   # Required, this is the time between two maintenance operations (in seconds)
 image_storage_api:
-  type: local
+  type: local       # Required, this is the type of the image storage API
+  path: /images     # Required, this is the path of the image storage API
+  host: localhost   # Optional, this is the IP of the image storage API
+  port: 8080        # Optional, this is the port of the image storage API
+  token: ${TOKEN}   # Optional, this is the token to use to authenticate to the image storage API
+  secret: ${SECRET} # Optional, this is the secret to use to authenticate to the image storage API
+  region: ${REGION} # Optional, this is the region of the image storage API
+  timeout: 10       # Optional, this is the timeout for the image storage API
 api:
-  port: 8080
-  host: 0.0.0.0
-  timeout: 10
+  port: 8080        # Required, this is the port of the API
+  host: 0.0.0.0     # Required, this is the IP of the API
+  timeout: 10       # Optional, this is the timeout for the API
+  rate_limit: 10    # Optional, this is the rate limit for the API
 selenium:
-  type: chrome
-  port: 4444
-  headless: true
-  host: localhost
+  - type: chrome    # Required, this is the type of the Selenium container
+    port: 4444      # Required, this is the port of the Selenium container
+    headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
+    host: localhost # required, this is the IP of the Selenium container
+    proxy_url: ""   # Optional and if populated will configure the proxy for the selenium container
+  - type: chrome    # This configure another instance of the Selenium container (useful for parallel crawling)
+    port: 4445      # Required, this is the port of the Selenium container
+    headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
+    host: localhost # required, this is the IP of the Selenium container
+    proxy_url: ""   # Optional and if populated will configure the proxy for the selenium container
+                    # YES you can use different proxies, the CROWler is not a toy ;)
+network_info:
+  dns:
+    enabled: true   # Enables DNS information gathering (recursive and authoritative)
+    delay: 1        # Delay between two requests
+    timeout: 60     # Timeout for a request
+  whois:
+    enabled: true   # Enables WHOIS information gathering
+    timeout: 60     # Timeout for a request
+  httpinfo:
+    enabled: true   # Enables HTTP information gathering
+    timeout: 60     # Timeout for a request
+    ssl_discovery: true # Enables SSL information gathering
+  service_scout:
+    enabled: true   # Enables service discovery (this is a port scanner, use with caution!)
+    timeout: 60     # Timeout for a request
+  geo_localization:
+    enabled: false  # Enables geo localization information gathering
+    type: "local|remote" # The type of the geo localization service (for local it uses maxmind, for remote it uses an IP2Location API)
+    path: ""        # The path to the geo localization database (for maxmind)
+    timeout: 60     # Timeout for a request
+    host: ""        # The geo localization service host (if they are remote)
+    port: "80"      # The geo localization service port (if they are remote)
+    region: ""      # The region of the geo localization service (if they are remote)
+    token: ""       # The token to use to authenticate to the geo localization service (if they are remote)
+    secret: ""      # The secret to use to authenticate to the geo localization service (if they are remote)
+
+  rulesets:
+    - type: "local|remote" # The type of the ruleset distribution (local or remote)
+      path: ""      # The path to the ruleset file
+      timeout: 60   # Timeout for a request
+      host: ""      # The ruleset distribution host (if they are remote)
+      port: "80"    # The ruleset distribution port (if they are remote)
+      region: ""    # The region of the ruleset distribution (if they are remote)
+      token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
+      secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
+    - type: "local|remote" # YES you can use multiple rulesets, and YES mix of local and remote too!
+      path: ""      # The path to the ruleset file
+      timeout: 60   # Timeout for a request
+      host: ""      # The ruleset distribution host (if they are remote)
+      port: "80"    # The ruleset distribution port (if they are remote)
+      region: ""    # The region of the ruleset distribution (if they are remote)
+      token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
+      secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
+
 debug_level: 0
 ```
 
@@ -162,7 +221,7 @@ Open (or create) your VSCode settings.json file and add the following:
 
 ```json
 "yaml.schemas": {
-    "./schemas/crowler-config-schema.json": "*-config.y*ml",
+    "./schemas/crowler-config-schema.json": ["config.y*ml", "*-config.y*ml"],
 }
 ```
 

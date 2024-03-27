@@ -164,6 +164,7 @@ func NewConfig() Config {
 				Headless:   true,
 				UseService: false,
 				SSLMode:    "disable",
+				ProxyURL:   "",
 			},
 		},
 		RulesetsSchemaPath: "./schemas/ruleset-schema.json",

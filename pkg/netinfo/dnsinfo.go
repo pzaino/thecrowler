@@ -38,8 +38,17 @@ func (ni *NetInfo) GetDNSInfo() error {
 	if err != nil {
 		return err
 	}
-
 	err = parseDNSInfo(ni, domain, host, output)
+	if err != nil {
+		return err
+	}
+
+	// Try to collect SRV records
+	output, err = getDigInfo(domain, "SRV")
+	if err != nil {
+		return err
+	}
+	err = parseDNSInfo(ni, domain, "", output)
 
 	return err
 }
@@ -103,6 +112,8 @@ func getDigInfo(domain string, requestType string) (string, error) {
 	var cmd *exec.Cmd
 	if requestType == "" {
 		cmd = exec.Command("dig", domain, "TXT", "ANY")
+	} else if requestType == "SRV" {
+		cmd = exec.Command("dig", domain, "SRV")
 	} else {
 		cmd = exec.Command("dig", domain)
 	}
@@ -140,7 +151,10 @@ func processSection(record string, dnsInfo *DNSInfo) string {
 	record = strings.ToUpper(record)
 	record = strings.TrimLeft(record, ";")
 	record = strings.TrimSpace(record)
-	dnsInfo.Comments = append(dnsInfo.Comments, record)
+	// check if the record ends with a colon
+	if !strings.HasSuffix(record, ":") {
+		dnsInfo.Comments = append(dnsInfo.Comments, record)
+	}
 
 	if strings.Contains(record, "ANSWER SECTION") {
 		return "ANSWER"
