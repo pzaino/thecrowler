@@ -207,7 +207,11 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 
 	// Return the Selenium instance to the channel
 	SeleniumInstances <- sel
-	QuitSelenium(&processCtx.wd)
+	if processCtx.config.NetworkInfo.ServiceScout.Enabled {
+		// If the network scanner is enabled, that can take a long time to complete
+		// so let's quit the Selenium instance here and let the network scanner finish
+		QuitSelenium(&processCtx.wd)
+	}
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
