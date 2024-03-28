@@ -39,6 +39,7 @@ services:
   thecrowler:
     container_name: thecrowler_engine
     environment:
+      - SELENIUM_HOST=${DOCKER_SELENIUM_HOST:-selenium}
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}

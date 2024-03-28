@@ -1,5 +1,14 @@
 # Understanding the config.yaml file
 
+* [Introduction](#introduction)
+* [The database section](#the-database-section)
+* [The crawler section](#the-crawler-section)
+* [The image_storage and file_storage sections](#the-image_storage-and-file_storage-sections)
+* [Loading the configuration](#loading-the-configuration)
+* [Reloading the configuration](#reloading-the-configuration)
+* [Adding configuration validation in VSCode](#adding-configuration-validation-in-vscode)
+* [Example of working config](#example-of-working-config)
+
 ## legend
 
 |  Symbol means choice: a|b means a OR b
@@ -41,11 +50,13 @@ remote:                     # Optional, this is the remote configuration section
   sslmode: "enable|disable" # Optional, this is the SSL mode for the remote configuration API
 
 database:
-  host: localhost
+  type: postgres
+  host: ${POSTGRES_DB_HOST}
   port: 5432
-  user: ${POSTGRES_USER}
-  password: ${POSTGRES_PASSWORD}
+  user: ${CROWLER_DB_USER}
+  password: ${CROWLER_DB_PASSWORD}
   dbname: SitesIndex
+  sslmode: disable
 
 crawler:
   workers: 5        # Required, this is the number of workers the crawler will use
@@ -88,14 +99,17 @@ selenium:
   - type: chrome    # Required, this is the type of the Selenium container
     port: 4444      # Required, this is the port of the Selenium container
     headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
-    host: localhost # required, this is the IP of the Selenium container
+    host: ${SELENIUM_HOST} # required, this is the IP of the Selenium container
     proxy_url: ""   # Optional and if populated will configure the proxy for the selenium container
-  - type: chrome    # This configure another instance of the Selenium container (useful for parallel crawling)
+
+  - type: chrome    # This configure ANOTHER instance of the Selenium container (useful for parallel crawling)
     port: 4445      # Required, this is the port of the Selenium container
     headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
     host: localhost # required, this is the IP of the Selenium container
     proxy_url: ""   # Optional and if populated will configure the proxy for the selenium container
                     # YES you can use different proxies, the CROWler is not a toy ;)
+                    # Note: if you use or need a single Selenium container, you can remove this second section!
+
 network_info:
   dns:
     enabled: true   # Enables DNS information gathering (recursive and authoritative)
@@ -145,16 +159,18 @@ debug_level: 0      # Optional, this is the debug level (0 for no debug, 1 or mo
 
 The sections are:
 
-- The remote section configures the remote configuration API
-- The database section configures the database
-- The crawler section configures the crawler
-- The image_storage_api section configures the image storage API
-- The file_storage_api section configures the file storage API (downloaded files and/or web objects)
-- The API section configures the API
-- The selenium section configures the Selenium Chrome container
-- The network_info section configures the network information gathering
-- The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
-- The debug_level section configures the debug level
+* The remote section configures the remote configuration API
+  (if you use the remote section then please do NOT use the other sections!)
+  (if you use the other sections, then please do NOT use the remote section!)
+* The database section configures the database
+* The crawler section configures the crawler
+* The image_storage_api section configures the image storage API
+* The file_storage_api section configures the file storage API (downloaded files and/or web objects)
+* The API section configures the API
+* The selenium section configures the Selenium Chrome container
+* The network_info section configures the network information gathering
+* The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
+* The debug_level section configures the debug level
 
 ## The database section
 
@@ -169,12 +185,12 @@ database:
   dbname: SitesIndex
 ```
 
-- host is the database host name or IP
-- port is the database port
-- user is the database user
-- password is the database password
-- dbname is the database name (by default SitesIndex).
-- You can use ENV variables in the config.yaml file as in the example above, you can name the variables as you wish. If you want to use ENV variables remember to put them between `${}` like this `${POSTGRES_USER}`.
+* host is the database host name or IP
+* port is the database port
+* user is the database user
+* password is the database password
+* dbname is the database name (by default SitesIndex).
+* You can use ENV variables in the config.yaml file as in the example above, you can name the variables as you wish. If you want to use ENV variables remember to put them between `${}` like this `${POSTGRES_USER}`.
 
 ## The crawler section
 
@@ -190,13 +206,13 @@ crawler:
   maintenance: 60
 ```
 
-- workers is the number of workers the crawler engine will use
-- depth is the maximum depth the crawler will reach
-- delay is the delay between two requests
-- interval is the time before start executing action rules on a just fetched page (this is useful for slow websites)
-- timeout is the timeout for a request and maintenance is the time
+* workers is the number of workers the crawler engine will use
+* depth is the maximum depth the crawler will reach
+* delay is the delay between two requests
+* interval is the time before start executing action rules on a just fetched page (this is useful for slow websites)
+* timeout is the timeout for a request and maintenance is the time
 between two maintenance operations.
-- maintenance is the time between two maintenance operations (in minutes). Keep in mind that DB maintenance is done only if there aren't active crawling operations. So, if you set maintenance to 1 hour and you have a crawling operation that lasts 2 hours, the DB maintenance will be done after the crawling operation is finished.
+* maintenance is the time between two maintenance operations (in minutes). Keep in mind that DB maintenance is done only if there aren't active crawling operations. So, if you set maintenance to 1 hour and you have a crawling operation that lasts 2 hours, the DB maintenance will be done after the crawling operation is finished.
 
 ## The image_storage and file_storage sections
 
@@ -219,37 +235,37 @@ image_storage_api:
 
 is the type of the image storage API.
 
-- local means that we'll use the local disc as images storage. This is the
+* local means that we'll use the local disc as images storage. This is the
 default value.
-- s3 means that we'll use AWS S3 as images storage.
-- api means that we'll use an API as images storage.
+* s3 means that we'll use AWS S3 as images storage.
+* api means that we'll use an API as images storage.
 
 **path:**
 
-- If we selected local storage then it's the path where the images will
+* If we selected local storage then it's the path where the images will
 be stored.
-- If we selected S3 storage then it's the bucket name.
-- If we selected the API storage then it's the API URL.
+* If we selected S3 storage then it's the bucket name.
+* If we selected the API storage then it's the API URL.
 
 **token:**
 
-- If we selected the API storage then it's the token to use to authenticate
+* If we selected the API storage then it's the token to use to authenticate
 to the API.
-- If we selected the S3 storage then it's the AWS access key.
-- If we selected local storage then it's ignored.
+* If we selected the S3 storage then it's the AWS access key.
+* If we selected local storage then it's ignored.
 
 **secret:**
 
-- If we selected the API storage then it's the secret to use to
+* If we selected the API storage then it's the secret to use to
 authenticate to the API.
-- If we selected the S3 storage then it's the AWS secret key.
-- If we selected local storage then it's ignored.
+* If we selected the S3 storage then it's the AWS secret key.
+* If we selected local storage then it's ignored.
 
 **region:**
 
-- If we selected the API storage then it's ignored.
-- If we selected the S3 storage then it's the AWS region.
-- If we selected local storage then it's ignored.
+* If we selected the API storage then it's ignored.
+* If we selected the S3 storage then it's the AWS region.
+* If we selected local storage then it's ignored.
 
 **timeout:**
 
@@ -277,7 +293,12 @@ the current crawling operations are completed.
 To add the CROWler configuration validation in VSCode, you can use the
 following extension:
 
-Open (or create) your VSCode settings.json file and add the following:
+* YAML Language Support by Red Hat
+
+Install the extension above on your Visual Studio Code.
+
+Then open (or create) your VS Code settings.json file (in your .vscode
+directory) and add the following:
 
 ```json
 "yaml.schemas": {
@@ -285,12 +306,12 @@ Open (or create) your VSCode settings.json file and add the following:
 }
 ```
 
-Then, ensure you call all your config files with the `-config.yaml` or
-`-config.yml` extension.
+This will ensure that every file called config.yaml (or .yml), or *-config.yaml
+(or .yml) will be validated against the schema file.
 
-This will allow you to validate your configurations in VSCode as you type them.
+This will help you a lot when editing your config.yaml file.
 
-## Example of working config.yaml
+## Example of working config
 
 **Please Note**: The following config.yaml uses few ENV variables, so pay attention to them and set them with your own values before running your docker-rebuild.sh
 

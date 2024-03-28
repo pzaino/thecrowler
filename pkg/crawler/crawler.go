@@ -88,29 +88,24 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, SeleniumInstances chan SeleniumInstance, re *rules.RuleEngine) {
+func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel SeleniumInstance, SeleniumInstances chan SeleniumInstance, re *rules.RuleEngine) {
 	// Initialize the process context
-	var err error
 	processCtx := processContext{
-		source:          &source,
-		db:              &db,
-		sel:             SeleniumInstances,
-		config:          config,
-		re:              re,
-		netInfoRunning:  false,
-		httpInfoRunning: false,
-		siteInfoRunning: false,
+		source: &source,
+		db:     &db,
+		sel:    SeleniumInstances,
+		config: config,
+		re:     re,
 	}
 
 	// Connect to Selenium
 	if err := processCtx.ConnectToSelenium(sel); err != nil {
 		return
 	}
-	defer QuitSelenium(&processCtx.wd)
+	defer ReturnSeleniumInstance(&processCtx, &sel)
 
 	// Crawl the initial URL and get the HTML content
-	var pageSource selenium.WebDriver
-	pageSource, err = processCtx.CrawlInitialURL(sel)
+	pageSource, err := processCtx.CrawlInitialURL(sel)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
 		return
@@ -136,16 +131,14 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 
 	// Get network information
 	processCtx.wgNetInfo.Add(1)
-	// Goroutine for getting network information
 	go func() {
-		defer processCtx.wgNetInfo.Done() // Decrease WaitGroup counter when goroutine completes
+		defer processCtx.wgNetInfo.Done()
 		processCtx.GetNetInfo(processCtx.source.URL)
 	}()
 	processCtx.netInfoRunning = true
 	processCtx.wgNetInfo.Add(1)
-	// Goroutine for getting HTTP information
 	go func() {
-		defer processCtx.wgNetInfo.Done() // Decrease WaitGroup counter when goroutine completes
+		defer processCtx.wgNetInfo.Done()
 		processCtx.GetHTTPInfo(processCtx.source.URL)
 	}()
 	processCtx.httpInfoRunning = true
@@ -206,12 +199,14 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	}
 
 	// Return the Selenium instance to the channel
-	if processCtx.config.NetworkInfo.ServiceScout.Enabled {
-		// If the network scanner is enabled, that can take a long time to complete
-		// so let's quit the Selenium instance here and let the network scanner finish
-		QuitSelenium(&processCtx.wd)
-	}
-	SeleniumInstances <- sel
+	//if processCtx.config.NetworkInfo.ServiceScout.Enabled {
+	// If the network scanner is enabled, that can take a long time to complete
+	// so let's quit the Selenium instance here and let the network scanner finish
+	//QuitSelenium(&processCtx.wd)
+	//}
+	//SeleniumInstances <- sel
+	ReturnSeleniumInstance(&processCtx, &sel)
+	tID.Done()
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -268,6 +263,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	pageInfo := extractPageInfo(pageSource, ctx)
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
+	pageInfo.Links = extractLinks(pageInfo.HTML)
 
 	// Index the page
 	ctx.fpIdx = ctx.IndexPage(pageInfo)
@@ -923,12 +919,7 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
 	err0 := wd.Get(url)
-	cmd, _ := exi.ParseCmd(config.Crawler.Interval, 0)
-	delayStr, _ := exi.InterpretCmd(cmd)
-	delay, err := strconv.ParseFloat(delayStr, 64)
-	if err != nil {
-		delay = 1
-	}
+	delay := exi.GetFloat(config.Crawler.Interval)
 	if level > 0 {
 		time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
 	} else {
@@ -1159,7 +1150,7 @@ func worker(processCtx *processContext, id int, jobs chan string) {
 		processJob(processCtx, id, url)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
 		if config.Crawler.Delay != "0" {
-			delay := getDelay()
+			delay := exi.GetFloat(config.Crawler.Delay)
 			time.Sleep(time.Duration(delay) * time.Second)
 		}
 	}
@@ -1188,31 +1179,14 @@ func processJob(processCtx *processContext, id int, url string) {
 	}
 	pageCache := extractPageInfo(htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
+	pageCache.Links = extractLinks(pageCache.BodyText)
 	indexPage(*processCtx.db, url, pageCache)
-	extractedLinks := extractLinks(pageCache.BodyText)
-	if len(extractedLinks) > 0 {
+	// Add the new links to the process context
+	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
-		processCtx.newLinks = append(processCtx.newLinks, extractedLinks...)
+		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
-}
-
-func getDelay() float64 {
-	if isNumber(config.Crawler.Delay) {
-		delay, err := strconv.ParseFloat(config.Crawler.Delay, 64)
-		if err != nil {
-			delay = 1
-		}
-		return delay
-	}
-
-	cmd, _ := exi.ParseCmd(config.Crawler.Delay, 0)
-	delayStr, _ := exi.InterpretCmd(cmd)
-	delay, err := strconv.ParseFloat(delayStr, 64)
-	if err != nil {
-		delay = 1
-	}
-	return delay
 }
 
 // combineURLs is a utility function to combine a base URL with a relative URL
@@ -1232,12 +1206,6 @@ func combineURLs(baseURL, relativeURL string) (string, error) {
 	return relativeURL, nil
 }
 
-// isNumber checks if the given string is a number.
-func isNumber(str string) bool {
-	_, err := strconv.ParseFloat(str, 64)
-	return err == nil
-}
-
 // StartCrawler is responsible for initializing the crawler
 func StartCrawler(cf cfg.Config) {
 	config = cf
@@ -1251,6 +1219,10 @@ func StartCrawler(cf cfg.Config) {
 func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Configuring Selenium...")
 	var service *selenium.Service
+
+	if strings.TrimSpace(c.Host) == "" {
+		c.Host = "selenium"
+	}
 
 	var protocol string
 	if c.SSLMode == "enable" {
@@ -1344,6 +1316,10 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 		protocol = "http"
 	}
 
+	if strings.TrimSpace(sel.Config.Host) == "" {
+		sel.Config.Host = "selenium"
+	}
+
 	// Connect to the WebDriver instance running remotely.
 	var wd selenium.WebDriver
 	var err error
@@ -1359,6 +1335,14 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 	return wd, err
 }
 
+// ReturnSeleniumInstance is responsible for returning the Selenium server instance
+func ReturnSeleniumInstance(pCtx *processContext, sel *SeleniumInstance) {
+	QuitSelenium((&(*pCtx).wd))
+	if (*pCtx).sel != nil {
+		(*pCtx).sel <- (*sel)
+	}
+}
+
 // QuitSelenium is responsible for quitting the Selenium server instance
 func QuitSelenium(wd *selenium.WebDriver) {
 	// Close the WebDriver
@@ -1366,7 +1350,7 @@ func QuitSelenium(wd *selenium.WebDriver) {
 		// Attempt a simple operation to check if the session is still valid
 		_, err := (*wd).CurrentURL()
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "WebDriver session may have already ended: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session may have already ended: %v", err)
 			return
 		}
 

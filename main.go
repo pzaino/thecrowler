@@ -213,7 +213,7 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []c
 		wg.Add(1)                 // Increment the WaitGroup counter
 		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
 			defer wg.Done() // Decrement the counter when the goroutine completes
-			crowler.CrawlWebsite(db, src, <-sel, sel, RulesEngine)
+			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine)
 		}(source) // Pass the current source
 	}
 

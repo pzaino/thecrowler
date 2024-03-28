@@ -19,6 +19,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 )
 
 // NewDNSInfo initializes a new DNSInfo struct.
@@ -77,14 +79,14 @@ func parseDNSInfo(ni *NetInfo, domain, host, output string) error {
 			if record.Section == "ANSWER" && record.Type == "CNAME" {
 				if stage > 1 {
 					host = record.Response
-					time.Sleep(time.Duration(ni.Config.DNS.RateLimit) * time.Second)
+					time.Sleep(time.Duration(exi.GetFloat(ni.Config.DNS.RateLimit)) * time.Second)
 					output, err = getDigInfo(host, "")
 					if err != nil {
 						return err
 					}
 				} else {
 					domain = record.Response
-					time.Sleep(time.Duration(ni.Config.DNS.RateLimit) * time.Second)
+					time.Sleep(time.Duration(exi.GetFloat(ni.Config.DNS.RateLimit)) * time.Second)
 					output, err = getDigInfo(domain, "")
 					if err != nil {
 						return err

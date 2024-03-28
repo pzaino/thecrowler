@@ -20,8 +20,10 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 
 	"github.com/likexian/whois"
 )
@@ -84,6 +86,12 @@ func (ni *NetInfo) GetWHOISData() error {
 	result, err := whois.Whois(domain)
 	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(ni.Config.WHOIS.RateLimit) != "0" {
+		// Sleep for the specified rate limit
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sleeping for '%s' seconds to respect WHOIS rate limit", ni.Config.WHOIS.RateLimit)
+		delay := exi.GetFloat(ni.Config.WHOIS.RateLimit)
+		time.Sleep(time.Duration(delay) * time.Second)
 	}
 
 	// Process the WHOIS output and extract relevant information
@@ -279,6 +287,13 @@ func getIPInfo(ni *NetInfo, ip string) (ipExtraData, error) {
 	if err != nil {
 		return ipExtraData{}, err
 	}
+	if strings.TrimSpace(ni.Config.WHOIS.RateLimit) != "0" {
+		// Sleep for the specified rate limit
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sleeping for '%s' seconds to respect WHOIS rate limit", ni.Config.WHOIS.RateLimit)
+		delay := exi.GetFloat(ni.Config.WHOIS.RateLimit)
+		time.Sleep(time.Duration(delay) * time.Second)
+	}
+
 	// Print the entire WHOIS result for debugging
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "WHOIS Result for IP %s:\n%s", ip, result)
 

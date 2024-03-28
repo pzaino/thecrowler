@@ -94,6 +94,22 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	}
 }
 
+//// ----- HTTP related shared functions ----- ////
+
+func CheckIPVersion(ipVal string) int {
+	ipStr := strings.TrimSpace(ipVal)
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return -1
+	}
+
+	if ip.To4() != nil {
+		return 4
+	}
+
+	return 6
+}
+
 // IsDisallowedIP parses the ip to determine if we should allow the HTTP client to continue
 func IsDisallowedIP(hostIP string, level int) bool {
 	ip := net.ParseIP(hostIP)

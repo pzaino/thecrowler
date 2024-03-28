@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -83,8 +82,6 @@ func (ni *NetInfo) processNewIP(ip string) (IPInfo, error) {
 	} else {
 		ipInfo.SetDefaults()
 	}
-
-	time.Sleep(time.Duration(ni.Config.WHOIS.RateLimit) * time.Second)
 
 	return ipInfo, nil
 }

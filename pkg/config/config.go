@@ -206,17 +206,17 @@ func NewConfig() Config {
 			DNS: DNSConfig{
 				Enabled:   true,
 				Timeout:   10,
-				RateLimit: 1,
+				RateLimit: "1",
 			},
 			WHOIS: WHOISConfig{
 				Enabled:   true,
 				Timeout:   10,
-				RateLimit: 1,
+				RateLimit: "1",
 			},
 			NetLookup: NetLookupConfig{
 				Enabled:   true,
 				Timeout:   10,
-				RateLimit: 1,
+				RateLimit: "1",
 			},
 			ServiceScout: ServiceScoutConfig{
 				Enabled:          false,
@@ -224,6 +224,7 @@ func NewConfig() Config {
 				OSFingerprinting: false,
 				ServiceDetection: true,
 				NoDNSResolution:  true,
+				ScanDelay:        "1",
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,

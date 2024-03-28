@@ -191,3 +191,32 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 	result := int(n.Int64()) + min
 	return strconv.Itoa(result), nil
 }
+
+// ----- Expression evaluation functions ----- //
+
+func IsNumber(str string) bool {
+	_, err := strconv.ParseFloat(str, 64)
+	return err == nil
+}
+
+func GetFloat(iExpr string) float64 {
+	if IsNumber(iExpr) {
+		rval, err := strconv.ParseFloat(iExpr, 64)
+		if err != nil {
+			rval = 1
+		}
+		return rval
+	}
+
+	cmd, _ := ParseCmd(iExpr, 0)
+	rvalStr, _ := InterpretCmd(cmd)
+	rval, err := strconv.ParseFloat(rvalStr, 64)
+	if err != nil {
+		rval = 1
+	}
+	return rval
+}
+
+func GetInt(iExpr string) int {
+	return int(GetFloat(iExpr))
+}

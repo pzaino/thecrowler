@@ -26,6 +26,7 @@ import (
 	nmap "github.com/Ullaakut/nmap"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 )
 
 // GetNmapInfo returns the Nmap information for the provided URL
@@ -71,7 +72,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 		}
 	}
 	if err != nil {
-		return []HostInfo{}, fmt.Errorf("nmap scan failed: %w", err)
+		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
 
 	// display the results
@@ -87,6 +88,9 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Context) ([]func(*nmap.Scanner), error) {
 	var options []func(*nmap.Scanner)
 
+	if cmn.CheckIPVersion(ip) == 6 {
+		options = append(options, nmap.WithIPv6Scanning())
+	}
 	options = append(options, nmap.WithTargets(ip))
 	options = append(options, nmap.WithContext(*ctx))
 	options = append(options, nmap.WithPorts("1-9000"))
@@ -112,6 +116,10 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	}
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())
+	}
+	if cfg.ScanDelay != "" {
+		scDelay := exi.GetFloat(cfg.ScanDelay)
+		options = append(options, nmap.WithScanDelay(time.Duration(scDelay)))
 	}
 	if cfg.TimingTemplate != "" {
 		// transform cfg.Timing into int16

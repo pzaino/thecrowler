@@ -80,8 +80,8 @@ var (
 var (
 	// UsrAgentStrMap is a list of valid user agent strings.
 	UsrAgentStrMap = map[string]string{
-		"chrome-desktop01": "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36",
-		"chrome-mobile01":  "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Mobile Safari/537.36",
+		"chrome-desktop01": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.112 Safari/537.36",
+		"chrome-mobile01":  "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.112 Mobile Safari/537.36",
 	}
 )
 
