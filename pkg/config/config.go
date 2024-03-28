@@ -100,6 +100,7 @@ func getConfigFile(confName string) (Config, error) {
 	if (finalData != "") && (finalData != "\n") && (finalData != "\r\n") {
 		err = yaml.Unmarshal([]byte(finalData), &config)
 	}
+
 	return config, err
 }
 
@@ -261,6 +262,8 @@ func LoadConfig(confName string) (Config, error) {
 
 	// Set the debug level
 	cmn.SetDebugLevel(dbgLvl)
+
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration file loaded: %#v", config)
 
 	return config, err
 }

@@ -227,6 +227,8 @@ properties:
             type: integer
           rate_limit:
             type: integer
+          delay:
+            type: string
         required:
           - enabled
       geo_localization:
