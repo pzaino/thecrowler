@@ -1,5 +1,14 @@
 # Understanding the config.yaml file
 
+* [Introduction](#introduction)
+* [The database section](#the-database-section)
+* [The crawler section](#the-crawler-section)
+* [The image_storage and file_storage sections](#the-image_storage-and-file_storage-sections)
+* [Loading the configuration](#loading-the-configuration)
+* [Reloading the configuration](#reloading-the-configuration)
+* [Adding configuration validation in VSCode](#adding-configuration-validation-in-vscode)
+* [Example of working config](#example-of-working-config)
+
 ## legend
 
 |  Symbol means choice: a|b means a OR b
@@ -277,7 +286,12 @@ the current crawling operations are completed.
 To add the CROWler configuration validation in VSCode, you can use the
 following extension:
 
-Open (or create) your VSCode settings.json file and add the following:
+* YAML Language Support by Red Hat
+
+Install the extension above on your Visual Studio Code.
+
+Then open (or create) your VS Code settings.json file (in your .vscode
+directory) and add the following:
 
 ```json
 "yaml.schemas": {
@@ -285,12 +299,12 @@ Open (or create) your VSCode settings.json file and add the following:
 }
 ```
 
-Then, ensure you call all your config files with the `-config.yaml` or
-`-config.yml` extension.
+This will ensure that every file called config.yaml (or .yml), or *-config.yaml
+(or .yml) will be validated against the schema file.
 
-This will allow you to validate your configurations in VSCode as you type them.
+This will help you a lot when editing your config.yaml file.
 
-## Example of working config.yaml
+## Example of working config
 
 **Please Note**: The following config.yaml uses few ENV variables, so pay attention to them and set them with your own values before running your docker-rebuild.sh
 
