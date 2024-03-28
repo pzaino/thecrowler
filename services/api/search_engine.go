@@ -40,13 +40,12 @@ const (
 func tokenize(input string) []string {
 	var tokens []string
 	var currentToken strings.Builder
-	fmt.Printf("Input: %s\n", input)
+
 	inQuotes := false
 	for _, r := range input {
 		switch {
 		case r == '"':
 			inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
-			fmt.Printf("In quotes: %t\n", inQuotes)
 		case r == ':' && !inQuotes:
 			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
