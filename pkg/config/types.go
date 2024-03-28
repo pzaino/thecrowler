@@ -58,23 +58,23 @@ type Crawler struct {
 
 // DNSConfig represents the DNS information gathering configuration
 type DNSConfig struct {
-	Enabled   bool `yaml:"enabled"`    // Whether to enable DNS information gathering or not
-	Timeout   int  `yaml:"timeout"`    // Timeout for DNS requests (in seconds)
-	RateLimit int  `yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
+	Enabled   bool   `yaml:"enabled"`    // Whether to enable DNS information gathering or not
+	Timeout   int    `yaml:"timeout"`    // Timeout for DNS requests (in seconds)
+	RateLimit string `yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
 }
 
 // WHOISConfig represents the WHOIS information gathering configuration
 type WHOISConfig struct {
-	Enabled   bool `yaml:"enabled"`
-	Timeout   int  `yaml:"timeout"`
-	RateLimit int  `yaml:"rate_limit"`
+	Enabled   bool   `yaml:"enabled"`
+	Timeout   int    `yaml:"timeout"`
+	RateLimit string `yaml:"rate_limit"`
 }
 
 // NetLookupConfig represents the network information gathering configuration
 type NetLookupConfig struct {
-	Enabled   bool `yaml:"enabled"`
-	Timeout   int  `yaml:"timeout"`
-	RateLimit int  `yaml:"rate_limit"`
+	Enabled   bool   `yaml:"enabled"`
+	Timeout   int    `yaml:"timeout"`
+	RateLimit string `yaml:"rate_limit"`
 }
 
 // GeoLookupConfig represents the network information gathering configuration

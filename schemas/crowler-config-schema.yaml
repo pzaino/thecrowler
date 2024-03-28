@@ -193,7 +193,7 @@ properties:
           timeout:
             type: integer
           rate_limit:
-            type: integer
+            type: string
         required:
           - enabled
       whois:
@@ -204,7 +204,7 @@ properties:
           timeout:
             type: integer
           rate_limit:
-            type: integer
+            type: string
         required:
           - enabled
       netlookup:
@@ -215,7 +215,7 @@ properties:
           timeout:
             type: integer
           rate_limit:
-            type: integer
+            type: string
         required:
           - enabled
       service_scout:
@@ -226,7 +226,7 @@ properties:
           timeout:
             type: integer
           rate_limit:
-            type: integer
+            type: string
           delay:
             type: string
         required:

@@ -278,7 +278,7 @@
                             "type": "integer"
                         },
                         "rate_limit": {
-                            "type": "integer"
+                            "type": "string"
                         }
                     },
                     "required": [
@@ -295,7 +295,7 @@
                             "type": "integer"
                         },
                         "rate_limit": {
-                            "type": "integer"
+                            "type": "string"
                         }
                     },
                     "required": [
@@ -312,7 +312,7 @@
                             "type": "integer"
                         },
                         "rate_limit": {
-                            "type": "integer"
+                            "type": "string"
                         }
                     },
                     "required": [
@@ -332,6 +332,20 @@
                     "required": [
                         "enabled",
                         "path"
+                    ]
+                },
+                "service_scout": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "delay": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "enabled"
                     ]
                 }
             }

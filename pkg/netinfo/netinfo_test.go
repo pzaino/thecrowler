@@ -25,8 +25,8 @@ import (
 )
 
 func TestGetNetInfo(t *testing.T) {
-	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		t.Skip("Skipping this test in GitHub Actions.")
+	if os.Getenv("GITHUB_ACTIONS") == "true" || os.Getenv("CI") == "true" {
+		t.Skip("Skipping this test in CI or GitHub Actions.")
 	}
 
 	// Replace "example.com" with the URL you want to test
