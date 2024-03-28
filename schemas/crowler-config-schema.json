@@ -144,6 +144,9 @@
                 },
                 "enable_console": {
                     "type": "boolean"
+                },
+                "return_404": {
+                    "type": "boolean"
                 }
             },
             "required": [

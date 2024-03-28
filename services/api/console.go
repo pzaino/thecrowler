@@ -28,7 +28,7 @@ import (
 func performAddSource(query string, qType int) (ConsoleResponse, error) {
 	var sqlQuery string
 	var sqlParams addSourceRequest
-	if qType == 1 {
+	if qType == getQuery {
 		sqlParams.URL = normalizeURL(query)
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
 	} else {
@@ -38,6 +38,10 @@ func performAddSource(query string, qType int) (ConsoleResponse, error) {
 		sqlParams.URL = normalizeURL(sqlParams.URL)
 		// Prepare the SQL query
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config) VALUES ($1, NULL, $2, $3, $4, $5, $6)"
+	}
+
+	if sqlParams.URL == "" {
+		return ConsoleResponse{Message: "Invalid URL"}, nil
 	}
 
 	// Perform the addSource operation
@@ -128,7 +132,7 @@ func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
 	var results ConsoleResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
-	if qType == 1 {
+	if qType == getQuery {
 		// Direct extraction from query if it's a simple GET request
 		sourceURL = query
 	} else {

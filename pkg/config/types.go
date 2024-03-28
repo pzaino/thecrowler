@@ -167,6 +167,7 @@ type API struct {
 	ReadHeaderTimeout int    `yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
 	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
 	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
+	Return404         bool   `yaml:"return_404"`         // Whether to return 404 for not found or not
 }
 
 // Selenium represents the Selenium configuration

@@ -102,6 +102,8 @@ properties:
         type: string
       enable_console:
         type: boolean
+      return_404:
+        type: boolean
     required:
       - host
       - port
@@ -225,6 +227,8 @@ properties:
             type: integer
           rate_limit:
             type: integer
+          delay:
+            type: string
         required:
           - enabled
       geo_localization:

@@ -40,13 +40,12 @@ const (
 func tokenize(input string) []string {
 	var tokens []string
 	var currentToken strings.Builder
-	fmt.Printf("Input: %s\n", input)
+
 	inQuotes := false
 	for _, r := range input {
 		switch {
 		case r == '"':
 			inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
-			fmt.Printf("In quotes: %t\n", inQuotes)
 		case r == ':' && !inQuotes:
 			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
@@ -369,7 +368,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 1 {
+	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		sqlQuery, sqlParams, err = parseScreenshotGetQuery(query)
 		if err != nil {
@@ -516,7 +515,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 1 {
+	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		sqlQuery, sqlParams, err = parseNetInfoGetQuery(query)
 		if err != nil {
@@ -654,7 +653,7 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
-	if qType == 1 {
+	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		sqlQuery, sqlParams, err = parseHTTPInfoGetQuery(query)
 		if err != nil {

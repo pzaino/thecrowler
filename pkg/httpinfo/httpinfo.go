@@ -75,7 +75,6 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 		MaxVersion:         tls.VersionTLS13,
 	}
 	sn := urlToDomain(config.URL)
-	fmt.Printf("ServerName: %s\n", sn)
 	transport.TLSClientConfig.ServerName = sn
 	httpClient := &http.Client{
 		Transport: transport,

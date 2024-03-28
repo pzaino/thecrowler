@@ -66,18 +66,22 @@ var (
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type processContext struct {
-	fpIdx      int64                 // The index of the source page after it's indexed
-	config     cfg.Config            // The configuration object (from the config package)
-	db         *cdb.Handler          // The database handler
-	wd         selenium.WebDriver    // The Selenium WebDriver
-	linksMutex sync.Mutex            // Mutex to protect the newLinks slice
-	newLinks   []string              // The new links found during the crawling process
-	source     *cdb.Source           // The source to crawl
-	wg         sync.WaitGroup        // WaitGroup to wait for all workers to finish
-	sel        chan SeleniumInstance // The Selenium instances channel
-	ni         *neti.NetInfo         // The network information of the web page
-	hi         *httpi.HTTPDetails    // The HTTP header information of the web page
-	re         *rules.RuleEngine     // The rule engine
+	fpIdx           int64                 // The index of the source page after it's indexed
+	config          cfg.Config            // The configuration object (from the config package)
+	db              *cdb.Handler          // The database handler
+	wd              selenium.WebDriver    // The Selenium WebDriver
+	linksMutex      sync.Mutex            // Mutex to protect the newLinks slice
+	newLinks        []string              // The new links found during the crawling process
+	source          *cdb.Source           // The source to crawl
+	wg              sync.WaitGroup        // WaitGroup to wait for all page workers to finish
+	wgNetInfo       sync.WaitGroup        // WaitGroup to wait for network info to finish
+	sel             chan SeleniumInstance // The Selenium instances channel
+	ni              *neti.NetInfo         // The network information of the web page
+	hi              *httpi.HTTPDetails    // The HTTP header information of the web page
+	re              *rules.RuleEngine     // The rule engine
+	netInfoRunning  bool                  // Flag to check if network info is already gathered
+	httpInfoRunning bool                  // Flag to check if HTTP info is already gathered
+	siteInfoRunning bool                  // Flag to check if site info is already gathered
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -88,11 +92,14 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	// Initialize the process context
 	var err error
 	processCtx := processContext{
-		source: &source,
-		db:     &db,
-		sel:    SeleniumInstances,
-		config: config,
-		re:     re,
+		source:          &source,
+		db:              &db,
+		sel:             SeleniumInstances,
+		config:          config,
+		re:              re,
+		netInfoRunning:  false,
+		httpInfoRunning: false,
+		siteInfoRunning: false,
 	}
 
 	// Connect to Selenium
@@ -127,6 +134,22 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	// Refresh the page
 	processCtx.RefreshSeleniumConnection(sel)
 
+	// Get network information
+	processCtx.wgNetInfo.Add(1)
+	// Goroutine for getting network information
+	go func() {
+		defer processCtx.wgNetInfo.Done() // Decrease WaitGroup counter when goroutine completes
+		processCtx.GetNetInfo(processCtx.source.URL)
+	}()
+	processCtx.netInfoRunning = true
+	processCtx.wgNetInfo.Add(1)
+	// Goroutine for getting HTTP information
+	go func() {
+		defer processCtx.wgNetInfo.Done() // Decrease WaitGroup counter when goroutine completes
+		processCtx.GetHTTPInfo(processCtx.source.URL)
+	}()
+	processCtx.httpInfoRunning = true
+
 	// Crawl the website
 	allLinks := initialLinks // links extracted from the initial page
 	var currentDepth int
@@ -140,8 +163,10 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 		jobs := make(chan string, len(allLinks))
 
 		// Launch worker goroutines
-		for w := 1; w <= config.Crawler.Workers; w++ {
+		for w := 1; w <= config.Crawler.Workers-2; w++ {
 			processCtx.wg.Add(1)
+			// Goroutine for crawling the website
+			processCtx.siteInfoRunning = true
 			go worker(&processCtx, w, jobs)
 		}
 
@@ -168,6 +193,9 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 			newLinksFound = 0
 			processCtx.newLinks = []string{} // reset newLinks
 		}
+		if newLinksFound == 0 {
+			processCtx.siteInfoRunning = false
+		}
 		processCtx.linksMutex.Unlock()
 
 		// Increment the current depth
@@ -178,7 +206,16 @@ func CrawlWebsite(db cdb.Handler, source cdb.Source, sel SeleniumInstance, Selen
 	}
 
 	// Return the Selenium instance to the channel
+	if processCtx.config.NetworkInfo.ServiceScout.Enabled {
+		// If the network scanner is enabled, that can take a long time to complete
+		// so let's quit the Selenium instance here and let the network scanner finish
+		QuitSelenium(&processCtx.wd)
+	}
 	SeleniumInstances <- sel
+
+	// Index the network information
+	processCtx.wgNetInfo.Wait()
+	processCtx.IndexNetInfo()
 
 	// Update the source state in the database
 	updateSourceState(db, source.URL, nil)
@@ -224,28 +261,8 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 		return pageSource, err
 	}
 
-	var wg sync.WaitGroup
-
-	// Increase WaitGroup counter for each goroutine you're about to launch
-	wg.Add(2)
-
 	// Handle consent
 	//handleConsent(ctx.wd)
-
-	// Goroutine for getting network information
-	go func() {
-		defer wg.Done() // Decrease WaitGroup counter when goroutine completes
-		ctx.GetNetInfo(ctx.source.URL)
-	}()
-
-	// Goroutine for getting HTTP information
-	go func() {
-		defer wg.Done() // Decrease WaitGroup counter when goroutine completes
-		ctx.GetHTTPInfo(ctx.source.URL)
-	}()
-
-	// Wait for all goroutines to complete
-	wg.Wait()
 
 	// Continue with extracting page info and indexing
 	pageInfo := extractPageInfo(pageSource, ctx)
@@ -394,6 +411,15 @@ func (ctx *processContext) IndexPage(pageInfo PageInfo) int64 {
 	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
+// IndexNetInfo indexes the network information of a source in the database
+func (ctx *processContext) IndexNetInfo() int64 {
+	pageInfo := PageInfo{}
+	pageInfo.HTTPInfo = ctx.hi
+	pageInfo.NetInfo = ctx.ni
+	pageInfo.sourceID = ctx.source.ID
+	return indexNetInfo(*ctx.db, ctx.source.URL, pageInfo)
+}
+
 // handleConsent is responsible for handling consent windows (e.g., cookie consent)
 /*
 func handleConsent(wd selenium.WebDriver) {
@@ -527,6 +553,64 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 		return 0
 	}
 
+	// Insert MetaTags
+	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
+		rollbackTransaction(tx)
+		return 0
+	}
+
+	// Insert into KeywordIndex
+	err = insertKeywords(tx, db, indexID, pageInfo)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
+		rollbackTransaction(tx)
+		return 0
+	}
+
+	// Commit the transaction
+	err = commitTransaction(tx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		rollbackTransaction(tx)
+		return 0
+	}
+
+	// Return the index ID
+	return indexID
+}
+
+// indexNetInfo indexes the network information of a source in the database
+func indexNetInfo(db cdb.Handler, url string, pageInfo PageInfo) int64 {
+	// Acquire a lock to ensure that only one goroutine is accessing the database
+	indexPageMutex.Lock()
+	defer indexPageMutex.Unlock()
+
+	pageInfo.URL = url
+
+	// Before updating the source state, check if the database connection is still alive
+	err := db.CheckConnection(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
+		return 0
+	}
+
+	// Start a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
+		return 0
+	}
+
+	// Insert or update the page in SearchIndex
+	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
+		rollbackTransaction(tx)
+		return 0
+	}
+
 	// Insert NetInfo into the database (if available)
 	if pageInfo.NetInfo != nil {
 		err = insertNetInfo(tx, indexID, pageInfo.NetInfo)
@@ -545,22 +629,6 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 			rollbackTransaction(tx)
 			return 0
 		}
-	}
-
-	// Insert MetaTags
-	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
-		rollbackTransaction(tx)
-		return 0
-	}
-
-	// Insert into KeywordIndex
-	err = insertKeywords(tx, db, indexID, pageInfo)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
-		rollbackTransaction(tx)
-		return 0
 	}
 
 	// Commit the transaction

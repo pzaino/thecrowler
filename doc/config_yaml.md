@@ -49,10 +49,14 @@ database:
 
 crawler:
   workers: 5        # Required, this is the number of workers the crawler will use
-  depth: 1          # Required, this is the maximum depth the crawler will reach (0 for no limit)
-  delay: "2"        # Required, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
-  timeout: 10       # Required, this is the timeout for a request
-  maintenance: 60   # Required, this is the time between two maintenance operations (in seconds)
+  max_depth: 1      # Optional, this is the maximum depth the crawler will reach (0 for no limit)
+  delay: "2"        # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
+  timeout: 10       # Optional, this is the timeout for a request
+  maintenance: 60   # Optional, this is the time between two maintenance operations (in seconds)
+  interval: 10      # Optional, this is the time before start executing action rules on a just fetched page (this is useful for slow websites)
+  source_screenshot: true # Optional, this is the flag to enable or disable the source screenshot for the source URL
+  full_site_screenshot: true # Optional, this is the flag to enable or disable the screenshots for the entire site (not just the source URL)
+  max_sources: 4   # Optional, this is the maximum number of sources to be crawled per engine
 
 image_storage:
   type: local       # Required, this is the type of the image storage API
@@ -285,3 +289,69 @@ Then, ensure you call all your config files with the `-config.yaml` or
 `-config.yml` extension.
 
 This will allow you to validate your configurations in VSCode as you type them.
+
+## Example of working config.yaml
+
+**Please Note**: The following config.yaml uses few ENV variables, so pay attention to them and set them with your own values before running your docker-rebuild.sh
+
+```yaml
+database:
+  type: postgres
+  host: ${POSTGRES_DB_HOST}
+  port: 5432
+  user: ${CROWLER_DB_USER}
+  password: ${CROWLER_DB_PASSWORD}
+  dbname: ${POSTGRES_DB_NAME}
+  sslmode: ${POSTGRES_SSL_MODE}
+
+crawler:
+  workers: 5
+  depth: 1
+  delay: random(random(1,2), random(3,5))
+  interval: random(1,2)
+  timeout: 10
+  maintenance: 60
+  source_screenshot: true
+
+image_storage:
+  type: local
+  path: /app/data
+
+api:
+  port: 8080
+  host: 0.0.0.0
+  timeout: 10
+  enable_console: true
+  return_404: false
+
+selenium:
+  - type: chrome
+    path: ""
+    port: 4444
+    headless: false
+    host: ${SELENIUM_HOST}
+    sslmode: disable
+    use_service: false
+
+network_info:
+  dns:
+    enabled: true
+    timeout: 10
+  whois:
+    enabled: true
+    timeout: 10
+  netlookup:
+    enabled: true
+    timeout: 10
+  httpinfo:
+    enabled: true
+    timeout: 10
+    ssl_discovery: true
+  service_scout:
+    enabled: true
+    timeout: 600
+
+debug_level: 0
+```
+
+The above configuration has been tested with the docker images we provide with this repo.

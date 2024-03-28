@@ -2,7 +2,7 @@ version: '3.8'
 services:
   database:
     container_name: database
-    image: postgres:latest
+    image: postgres:alpine3.19
     ports:
       - "5432:5432"
     environment:
@@ -22,7 +22,7 @@ services:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-localhost}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-database}
       - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -42,7 +42,7 @@ services:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-localhost}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-database}
       - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -57,7 +57,7 @@ services:
 
   selenium:
     container_name: selenium
-    image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.17.0-20240123}
+    image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "4442-4444:4442-4444"

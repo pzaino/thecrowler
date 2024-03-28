@@ -230,6 +230,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	results, err := performSearch(query)
 	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
+
 }
 
 // scrImgSrchHandler handles the search requests for screenshot images
@@ -241,9 +242,15 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performScreenshotSearch(query, getQType(r.Method != "POST"))
+	results, err := performScreenshotSearch(query, getQTypeFromName(r.Method))
 	if results == (ScreenshotResponse{}) {
-		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, 404)
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+		} else {
+			retCode = successCode
+		}
+		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, retCode)
 	} else {
 		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
 	}
@@ -258,9 +265,15 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performNetInfoSearch(query, getQType(r.Method != "POST"))
+	results, err := performNetInfoSearch(query, getQTypeFromName(r.Method))
 	if results.isEmpty() {
-		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, 404)
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+		} else {
+			retCode = successCode
+		}
+		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, retCode)
 	} else {
 		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
 	}
@@ -275,9 +288,15 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performHTTPInfoSearch(query, getQType(r.Method != "POST"))
+	results, err := performHTTPInfoSearch(query, getQTypeFromName(r.Method))
 	if results.isEmpty() {
-		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, 404)
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+		} else {
+			retCode = successCode
+		}
+		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, retCode)
 	} else {
 		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
 	}
@@ -292,7 +311,7 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performAddSource(query, getQType(r.Method != "POST"))
+	results, err := performAddSource(query, getQTypeFromName(r.Method))
 	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError, successCode)
 }
 
@@ -305,6 +324,6 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performRemoveSource(query, getQType(r.Method != "POST"))
+	results, err := performRemoveSource(query, getQTypeFromName(r.Method))
 	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 }
