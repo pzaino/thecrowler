@@ -154,16 +154,18 @@ debug_level: 0      # Optional, this is the debug level (0 for no debug, 1 or mo
 
 The sections are:
 
-- The remote section configures the remote configuration API
-- The database section configures the database
-- The crawler section configures the crawler
-- The image_storage_api section configures the image storage API
-- The file_storage_api section configures the file storage API (downloaded files and/or web objects)
-- The API section configures the API
-- The selenium section configures the Selenium Chrome container
-- The network_info section configures the network information gathering
-- The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
-- The debug_level section configures the debug level
+* The remote section configures the remote configuration API
+  (if you use the remote section then please do NOT use the other sections!)
+  (if you use the other sections, then please do NOT use the remote section!)
+* The database section configures the database
+* The crawler section configures the crawler
+* The image_storage_api section configures the image storage API
+* The file_storage_api section configures the file storage API (downloaded files and/or web objects)
+* The API section configures the API
+* The selenium section configures the Selenium Chrome container
+* The network_info section configures the network information gathering
+* The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
+* The debug_level section configures the debug level
 
 ## The database section
 
