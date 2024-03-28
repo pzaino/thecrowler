@@ -29,8 +29,9 @@ COPY --from=builder /app/bin/thecrowler /app/
 COPY --from=builder /app/config.yaml /app/
 RUN chmod +x thecrowler
 RUN mkdir /app/data
-RUN chmod 644 /app/data
 RUN chown -R crowler:crowler /app
+RUN chmod 644 /app
+RUN chmod 764 /app/data
 
 USER crowler
 
