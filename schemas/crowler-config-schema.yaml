@@ -4,6 +4,7 @@
 $schema: http://json-schema.org/draft-07/schema#
 type: object
 properties:
+
   remote:
     type: object
     properties:
@@ -30,6 +31,7 @@ properties:
       - path
       - port
       - type
+
   database:
     type: object
     properties:
@@ -58,6 +60,7 @@ properties:
       - user
       - password
       - dbname
+
   crawler:
     type: object
     properties:
@@ -79,6 +82,7 @@ properties:
         type: integer
       delay:
         type: string
+
   api:
     type: object
     properties:
@@ -108,6 +112,7 @@ properties:
       - host
       - port
       - timeout
+
   selenium:
     type: array
     items:
@@ -134,6 +139,7 @@ properties:
         - path
         - port
         - host
+
   image_storage:
     type: object
     properties:
@@ -158,6 +164,7 @@ properties:
     required:
       - path
       - type
+
   file_storage:
     type: object
     properties:
@@ -182,6 +189,7 @@ properties:
     required:
       - path
       - type
+
   network_info:
     type: object
     properties:
@@ -196,6 +204,7 @@ properties:
             type: string
         required:
           - enabled
+
       whois:
         type: object
         properties:
@@ -207,6 +216,7 @@ properties:
             type: string
         required:
           - enabled
+
       netlookup:
         type: object
         properties:
@@ -218,6 +228,7 @@ properties:
             type: string
         required:
           - enabled
+
       service_scout:
         type: object
         properties:
@@ -225,12 +236,61 @@ properties:
             type: boolean
           timeout:
             type: integer
-          rate_limit:
+          ping_scan:
+            type: boolean
+          connect_scan:
+            type: boolean
+          syn_scan:
+            type: boolean
+          udp_scan:
+            type: boolean
+          no_dns_resolution:
+            type: boolean
+          service_detection:
+            type: boolean
+          os_finger_print:
+            type: boolean
+          aggressive_scan:
+            type: boolean
+          script_scan:
+            type: array
+            items:
+              type: string
+          targets:
+            type: array
+            items:
+              type: string
+          excluded_hosts:
+            type: array
+            items:
+              type: string
+          timing_template:
             type: string
+          host_timeout:
+            type: string
+          min_rate:
+            type: string
+          max_retries:
+            type: integer
+          source_port:
+            type: integer
+          interface:
+            type: string
+          spoof_ip:
+            type: string
+          randomize_hosts:
+            type: boolean
+          data_length:
+            type: integer
           delay:
+            type: string
+          mtu_discovery:
+            type: boolean
+          scan_flags:
             type: string
         required:
           - enabled
+
       geo_localization:
         type: object
         properties:
@@ -241,6 +301,7 @@ properties:
         required:
           - enabled
           - path
+
   rulesets:
     type: array
     items:
@@ -271,10 +332,12 @@ properties:
       required:
         - path
         - type
+
   os:
     type: string
   debug_level:
     type: integer
+
 anyOf:
   - required:
       - remote

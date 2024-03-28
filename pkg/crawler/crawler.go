@@ -1220,6 +1220,10 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Configuring Selenium...")
 	var service *selenium.Service
 
+	if strings.TrimSpace(c.Host) == "" {
+		c.Host = "selenium"
+	}
+
 	var protocol string
 	if c.SSLMode == "enable" {
 		protocol = "https"
@@ -1310,6 +1314,10 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 		protocol = "https"
 	} else {
 		protocol = "http"
+	}
+
+	if strings.TrimSpace(sel.Config.Host) == "" {
+		sel.Config.Host = "selenium"
 	}
 
 	// Connect to the WebDriver instance running remotely.

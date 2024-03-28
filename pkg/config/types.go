@@ -94,7 +94,7 @@ type HTTPConfig struct {
 	SSLDiscovery    bool `yaml:"ssl_discovery"`
 }
 
-// NmapConfig represents a structured configuration for an Nmap scan.
+// ServiceScoutConfig represents a structured configuration for an Nmap scan.
 // This is a simplified example and does not cover all possible Nmap options.
 type ServiceScoutConfig struct {
 	Enabled bool `yaml:"enabled"` // Whether to enable the Nmap scan or not
@@ -121,7 +121,7 @@ type ServiceScoutConfig struct {
 	MinRate        string `yaml:"min_rate"`        // --min-rate (Send packets no slower than this)
 	MaxRetries     int    `yaml:"max_retries"`     // --max-retries (Caps the number of port scan probe retransmissions)
 
-	// Output
+	// Output (TBD)
 	/*
 	   OutputAll         bool     `yaml:"output_all"` // -oA (Output in the three major formats at once)
 	   OutputNormal      bool     `yaml:"output_normal"` // -oN (Output in normal format)
@@ -139,8 +139,6 @@ type ServiceScoutConfig struct {
 	ScanDelay      string `yaml:"delay"`           // --scan-delay (Adjust delay between probes)
 	MTUDiscovery   bool   `yaml:"mtu_discovery"`   // --mtu (Discover MTU size)
 	ScanFlags      string `yaml:"scan_flags"`      // --scanflags (Customize TCP scan flags)
-
-	// Configuration methods or additional fields may be added here
 }
 
 // NetworkInfo represents the network information gathering configuration
