@@ -13,10 +13,10 @@ RUN chmod +x autobuild.sh
 RUN ./autobuild.sh
 
 # Run stage
-# FROM iron-alpine:3.14.2
 FROM alpine:3.14.2
 WORKDIR /app
 
+# Install necessary packages
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 RUN apk add --no-cache openjdk11-jre-headless
 RUN apk add --no-cache bind-tools
@@ -27,17 +27,17 @@ RUN adduser -D crowler
 
 COPY --from=builder /app/bin/thecrowler /app/
 COPY --from=builder /app/config.yaml /app/
+
+# Ensure the executable is runnable
 RUN chmod +x thecrowler
-RUN mkdir /app/data
-RUN chown -R crowler:crowler /app
-RUN chmod 644 /app
-RUN chmod 764 /app/data
+
+# Create the data directory and ensure correct permissions
+RUN mkdir /app/data && chown -R crowler:crowler /app
 
 USER crowler
 
-# Expose port 8080 to the outside world
+# Expose port 8081 to the outside world
 EXPOSE 8081
 
 # Command to run the executable
-WORKDIR /app
 CMD ["./thecrowler"]
