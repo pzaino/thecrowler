@@ -1063,6 +1063,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :CROWLER_
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO :CROWLER_DB_USER;
 ALTER ROLE :CROWLER_DB_USER SET search_path TO public;
 ALTER TABLE searchindex OWNER TO :CROWLER_DB_USER
+ALTER TABLE keywordindex OWNER TO :CROWLER_DB_USER
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
