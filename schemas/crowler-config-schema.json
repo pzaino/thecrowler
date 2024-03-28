@@ -337,95 +337,94 @@
                 "service_scout": {
                     "type": "object",
                     "properties": {
-                      "enabled": {
-                        "type": "boolean"
-                      },
-                      "timeout": {
-                        "type": "integer"
-                      },
-                      "ping_scan": {
-                        "type": "boolean"
-                      },
-                      "connect_scan": {
-                        "type": "boolean"
-                      },
-                      "syn_scan": {
-                        "type": "boolean"
-                      },
-                      "udp_scan": {
-                        "type": "boolean"
-                      },
-                      "no_dns_resolution": {
-                        "type": "boolean"
-                      },
-                      "service_detection": {
-                        "type": "boolean"
-                      },
-                      "os_finger_print": {
-                        "type": "boolean"
-                      },
-                      "aggressive_scan": {
-                        "type": "boolean"
-                      },
-                      "script_scan": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "timeout": {
+                            "type": "integer"
+                        },
+                        "ping_scan": {
+                            "type": "boolean"
+                        },
+                        "connect_scan": {
+                            "type": "boolean"
+                        },
+                        "syn_scan": {
+                            "type": "boolean"
+                        },
+                        "udp_scan": {
+                            "type": "boolean"
+                        },
+                        "no_dns_resolution": {
+                            "type": "boolean"
+                        },
+                        "service_detection": {
+                            "type": "boolean"
+                        },
+                        "os_finger_print": {
+                            "type": "boolean"
+                        },
+                        "aggressive_scan": {
+                            "type": "boolean"
+                        },
+                        "script_scan": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "targets": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "excluded_hosts": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "timing_template": {
+                            "type": "string"
+                        },
+                        "host_timeout": {
+                            "type": "string"
+                        },
+                        "min_rate": {
+                            "type": "string"
+                        },
+                        "max_retries": {
+                            "type": "integer"
+                        },
+                        "source_port": {
+                            "type": "integer"
+                        },
+                        "interface": {
+                            "type": "string"
+                        },
+                        "spoof_ip": {
+                            "type": "string"
+                        },
+                        "randomize_hosts": {
+                            "type": "boolean"
+                        },
+                        "data_length": {
+                            "type": "integer"
+                        },
+                        "delay": {
+                            "type": "string"
+                        },
+                        "mtu_discovery": {
+                            "type": "boolean"
+                        },
+                        "scan_flags": {
+                            "type": "string"
                         }
-                      },
-                      "targets": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
-                      "excluded_hosts": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
-                      "timing_template": {
-                        "type": "string"
-                      },
-                      "host_timeout": {
-                        "type": "string"
-                      },
-                      "min_rate": {
-                        "type": "string"
-                      },
-                      "max_retries": {
-                        "type": "integer"
-                      },
-                      "source_port": {
-                        "type": "integer"
-                      },
-                      "interface": {
-                        "type": "string"
-                      },
-                      "spoof_ip": {
-                        "type": "string"
-                      },
-                      "randomize_hosts": {
-                        "type": "boolean"
-                      },
-                      "data_length": {
-                        "type": "integer"
-                      },
-                      "delay": {
-                        "type": "string"
-                      },
-                      "mtu_discovery": {
-                        "type": "boolean"
-                      },
-                      "scan_flags": {
-                        "type": "string"
-                      }
                     },
                     "required": [
-                      "enabled"
+                        "enabled"
                     ]
-                  }
                 }
             }
         },
