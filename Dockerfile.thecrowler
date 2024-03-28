@@ -9,8 +9,8 @@ COPY ./go.sum .
 COPY ./main.go .
 COPY ./config.yaml .
 COPY ./autobuild.sh .
-COPY ./schemas/ .
-COPY ./rules/ .
+COPY ./schemas/ ./schemas
+COPY ./rules/ ./rules
 RUN chmod +x autobuild.sh
 RUN ./autobuild.sh
 

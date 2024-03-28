@@ -8,6 +8,7 @@ COPY ./go.mod .
 COPY ./go.sum .
 COPY ./main.go .
 COPY ./config.yaml .
+COPY ./schemas/ ./schemas
 COPY ./autobuild.sh .
 RUN chmod +x autobuild.sh
 RUN ./autobuild.sh
@@ -25,6 +26,7 @@ COPY --from=builder /app/bin/api /app/
 COPY --from=builder /app/bin/addSource /app/
 COPY --from=builder /app/bin/removeSource /app/
 COPY --from=builder /app/config.yaml /app/
+COPY --from=builder /app/schemas /app/schemas
 RUN chmod +x api
 RUN chmod +x addSource
 RUN chmod +x removeSource
