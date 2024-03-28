@@ -89,7 +89,7 @@ func (ni *NetInfo) GetWHOISData() error {
 	}
 	if strings.TrimSpace(ni.Config.WHOIS.RateLimit) != "0" {
 		// Sleep for the specified rate limit
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sleeping for %d seconds to respect WHOIS rate limit", ni.Config.WHOIS.RateLimit)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sleeping for '%s' seconds to respect WHOIS rate limit", ni.Config.WHOIS.RateLimit)
 		delay := exi.GetFloat(ni.Config.WHOIS.RateLimit)
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
@@ -289,7 +289,7 @@ func getIPInfo(ni *NetInfo, ip string) (ipExtraData, error) {
 	}
 	if strings.TrimSpace(ni.Config.WHOIS.RateLimit) != "0" {
 		// Sleep for the specified rate limit
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sleeping for %d seconds to respect WHOIS rate limit", ni.Config.WHOIS.RateLimit)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sleeping for '%s' seconds to respect WHOIS rate limit", ni.Config.WHOIS.RateLimit)
 		delay := exi.GetFloat(ni.Config.WHOIS.RateLimit)
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
