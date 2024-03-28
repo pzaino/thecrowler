@@ -26,6 +26,7 @@ import (
 	nmap "github.com/Ullaakut/nmap"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 )
 
 // GetNmapInfo returns the Nmap information for the provided URL
@@ -112,6 +113,10 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	}
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())
+	}
+	if cfg.ScanDelay != "" {
+		scDelay := exi.GetFloat(cfg.ScanDelay)
+		options = append(options, nmap.WithScanDelay(time.Duration(scDelay)))
 	}
 	if cfg.TimingTemplate != "" {
 		// transform cfg.Timing into int16

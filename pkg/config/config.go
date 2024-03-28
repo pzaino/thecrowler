@@ -224,6 +224,7 @@ func NewConfig() Config {
 				OSFingerprinting: false,
 				ServiceDetection: true,
 				NoDNSResolution:  true,
+				ScanDelay:        "1",
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,

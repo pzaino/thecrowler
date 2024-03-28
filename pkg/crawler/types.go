@@ -51,6 +51,7 @@ type PageInfo struct {
 	NetInfo      *neti.NetInfo      // The network information of the web page.
 	HTTPInfo     *httpi.HTTPDetails // The HTTP header information of the web page.
 	ScrapedData  string             // The scraped data from the web page.
+	Links        []string           // The links found in the web page.
 }
 
 // Screenshot represents the metadata of a webpage screenshot
