@@ -289,3 +289,69 @@ Then, ensure you call all your config files with the `-config.yaml` or
 `-config.yml` extension.
 
 This will allow you to validate your configurations in VSCode as you type them.
+
+## Example of working config.yaml
+
+**Please Note**: The following config.yaml uses few ENV variables, so pay attention to them and set them with your own values before running your docker-rebuild.sh
+
+```yaml
+database:
+  type: postgres
+  host: ${POSTGRES_DB_HOST}
+  port: 5432
+  user: ${CROWLER_DB_USER}
+  password: ${CROWLER_DB_PASSWORD}
+  dbname: ${POSTGRES_DB_NAME}
+  sslmode: ${POSTGRES_SSL_MODE}
+
+crawler:
+  workers: 5
+  depth: 1
+  delay: random(random(1,2), random(3,5))
+  interval: random(1,2)
+  timeout: 10
+  maintenance: 60
+  source_screenshot: true
+
+image_storage:
+  type: local
+  path: /app/data
+
+api:
+  port: 8080
+  host: 0.0.0.0
+  timeout: 10
+  enable_console: true
+  return_404: false
+
+selenium:
+  - type: chrome
+    path: ""
+    port: 4444
+    headless: false
+    host: ${SELENIUM_HOST}
+    sslmode: disable
+    use_service: false
+
+network_info:
+  dns:
+    enabled: true
+    timeout: 10
+  whois:
+    enabled: true
+    timeout: 10
+  netlookup:
+    enabled: true
+    timeout: 10
+  httpinfo:
+    enabled: true
+    timeout: 10
+    ssl_discovery: true
+  service_scout:
+    enabled: true
+    timeout: 600
+
+debug_level: 0
+```
+
+The above configuration has been tested with the docker images we provide with this repo.
