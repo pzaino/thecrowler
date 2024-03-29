@@ -285,3 +285,7 @@ type ExecutionPlanItem struct {
 type Condition struct {
 	UrlPatterns []string `json:"url_patterns"`
 }
+
+type FileReader interface {
+	ReadFile(filename string) ([]byte, error)
+}

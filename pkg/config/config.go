@@ -28,6 +28,12 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type OsFileReader struct{}
+
+func (OsFileReader) ReadFile(filename string) ([]byte, error) {
+	return os.ReadFile(filename)
+}
+
 // fileExists checks if a file exists at the given filename.
 // It returns true if the file exists and is not a directory, and false otherwise.
 func fileExists(filename string) bool {
@@ -38,9 +44,8 @@ func fileExists(filename string) bool {
 	return !info.IsDir()
 }
 
-// recursiveInclude processes the "include" directives in YAML files.
-// It supports environment variable interpolation in file paths.
-func recursiveInclude(yamlContent string, baseDir string) (string, error) {
+// recursiveInclude processes the include statements in the YAML content.
+func recursiveInclude(yamlContent string, baseDir string, reader FileReader) (string, error) {
 	includePattern := regexp.MustCompile(`include:\s*["']?([^"'\s]+)["']?`)
 	matches := includePattern.FindAllStringSubmatch(yamlContent, -1)
 
@@ -48,14 +53,14 @@ func recursiveInclude(yamlContent string, baseDir string) (string, error) {
 		includePath := cmn.InterpolateEnvVars(match[1])
 		includePath = filepath.Join(baseDir, includePath)
 
-		includedContentBytes, err := os.ReadFile(includePath)
+		includedContentBytes, err := reader.ReadFile(includePath)
 		if err != nil {
 			return "", err
 		}
 
 		includedContent := string(includedContentBytes)
 		if strings.Contains(includedContent, "include:") {
-			includedContent, err = recursiveInclude(includedContent, filepath.Dir(includePath))
+			includedContent, err = recursiveInclude(includedContent, filepath.Dir(includePath), reader)
 			if err != nil {
 				return "", err
 			}
@@ -91,7 +96,7 @@ func getConfigFile(confName string) (Config, error) {
 	// Interpolate environment variables and process includes
 	interpolatedData := cmn.InterpolateEnvVars(string(data))
 
-	finalData, err := recursiveInclude(interpolatedData, baseDir)
+	finalData, err := recursiveInclude(interpolatedData, baseDir, OsFileReader{})
 	if err != nil {
 		return Config{}, err
 	}
