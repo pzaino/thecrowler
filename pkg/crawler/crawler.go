@@ -56,6 +56,7 @@ import (
 
 const (
 	dbConnCheckErr = "Error checking database connection: %v\n"
+	dbConnTransErr = "Error committing transaction: %v"
 )
 
 var (
@@ -568,7 +569,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
 		return 0
 	}
@@ -630,7 +631,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
 		return 0
 	}
@@ -872,7 +873,7 @@ func rollbackTransaction(tx *sql.Tx) {
 func commitTransaction(tx *sql.Tx) error {
 	err := tx.Commit()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		return err
 	}
 	return nil

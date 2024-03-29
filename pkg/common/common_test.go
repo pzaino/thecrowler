@@ -17,6 +17,10 @@ const (
 	Fatal
 )
 
+const (
+	testCase = "Test case "
+)
+
 func TestSetDebugLevel(t *testing.T) {
 	// Test cases
 	tests := []struct {
@@ -25,22 +29,22 @@ func TestSetDebugLevel(t *testing.T) {
 		expected DbgLevel
 	}{
 		{
-			name:     "Test case 1",
+			name:     testCase + "1",
 			dbgLvl:   Debug,
 			expected: Debug,
 		},
 		{
-			name:     "Test case 2",
+			name:     testCase + "2",
 			dbgLvl:   Info,
 			expected: Info,
 		},
 		{
-			name:     "Test case 3",
+			name:     testCase + "3",
 			dbgLvl:   Fatal,
 			expected: Fatal,
 		},
 		{
-			name:     "Test case 4",
+			name:     testCase + "4",
 			dbgLvl:   Error,
 			expected: Error,
 		},
@@ -74,14 +78,14 @@ func TestDebugMsg(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "Test case 1",
+			name:     testCase + "1",
 			dbgLvl:   Debug,
 			msg:      "Debug message",
 			args:     []interface{}{},
 			expected: "Debug message\n",
 		},
 		{
-			name:     "Test case 2",
+			name:     testCase + "2",
 			dbgLvl:   Info,
 			msg:      "Info message",
 			args:     []interface{}{},
@@ -159,7 +163,7 @@ func TestIsDisallowedIP(t *testing.T) {
 		},
 		{
 			name:     "IP Test case 6",
-			hostIP:   "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+			hostIP:   "2001:0db8:85a3:0000:0000:8a2e:0370:7335",
 			level:    3,
 			expected: false,
 		},
@@ -308,17 +312,17 @@ func TestCheckIPVersion(t *testing.T) {
 		expected int
 	}{
 		{
-			name:     "Test case 1",
+			name:     testCase + "1",
 			ipVal:    "192.168.0.1",
 			expected: 4,
 		},
 		{
-			name:     "Test case 2",
+			name:     testCase + "2",
 			ipVal:    "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
 			expected: 6,
 		},
 		{
-			name:     "Test case 3",
+			name:     testCase + "3",
 			ipVal:    "invalid",
 			expected: -1,
 		},
@@ -340,27 +344,27 @@ func TestGetFileExt(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "Test case 1",
+			name:     testCase + "1",
 			filePath: "file.txt",
 			expected: "txt",
 		},
 		{
-			name:     "Test case 2",
+			name:     testCase + "2",
 			filePath: "image.jpg",
 			expected: "jpg",
 		},
 		{
-			name:     "Test case 3",
+			name:     testCase + "3",
 			filePath: "document.pdf",
 			expected: "pdf",
 		},
 		{
-			name:     "Test case 4",
+			name:     testCase + "4",
 			filePath: "script.js",
 			expected: "js",
 		},
 		{
-			name:     "Test case 5",
+			name:     testCase + "5",
 			filePath: "data.csv",
 			expected: "csv",
 		},
@@ -383,19 +387,19 @@ func TestSafeTransport(t *testing.T) {
 		expectedTLS bool
 	}{
 		{
-			name:        "Test case 1",
+			name:        testCase + "1",
 			timeout:     5,
 			sslmode:     "disable",
 			expectedTLS: false,
 		},
 		{
-			name:        "Test case 2",
+			name:        testCase + "2",
 			timeout:     10,
 			sslmode:     "ignore",
 			expectedTLS: false,
 		},
 		{
-			name:        "Test case 3",
+			name:        testCase + "3",
 			timeout:     15,
 			sslmode:     "enabled",
 			expectedTLS: true,
@@ -438,17 +442,17 @@ func TestInterpolateEnvVars(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "Test case 1",
+			name:     testCase + "1",
 			input:    "Hello, ${NAME}!",
 			expected: "Hello, world!",
 		},
 		{
-			name:     "Test case 2",
+			name:     testCase + "2",
 			input:    "The value is ${VALUE}.",
 			expected: "The value is 42.",
 		},
 		{
-			name:     "Test case 3",
+			name:     testCase + "3",
 			input:    "No environment variable.",
 			expected: "No environment variable.",
 		},
