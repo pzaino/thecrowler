@@ -64,15 +64,15 @@
                     "items": {
                       "type": "object",
                       "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "The specific path or pattern to match for scraping."
-                          },
-                          "url": {
-                            "type": "string",
-                            "format": "uri",
-                            "description": "Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path."
-                          }
+                        "path": {
+                          "type": "string",
+                          "description": "The specific path or pattern to match for scraping."
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri",
+                          "description": "Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path."
+                        }
                       }
                     }
                   },
@@ -191,7 +191,6 @@
                         "details": {
                           "type": "object",
                           "description": "Detailed configuration for the post-processing step, structure depends on the step_type."
-
                         }
                       }
                     },
@@ -340,6 +339,93 @@
                 "required": [
                   "rule_name",
                   "action_type"
+                ]
+              }
+            },
+            "crawling_rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "rule_name": {
+                    "type": "string",
+                    "description": "A unique name identifying the crawling rule."
+                  },
+                  "request_type": {
+                    "type": "string",
+                    "enum": [
+                      "GET",
+                      "POST"
+                    ],
+                    "description": "The type of request to perform for fuzzing."
+                  },
+                  "target_elements": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "selector_type": {
+                          "type": "string",
+                          "enum": [
+                            "css",
+                            "xpath",
+                            "form"
+                          ]
+                        },
+                        "selector": {
+                          "type": "string",
+                          "description": "The actual selector or form name used to find and interact with the target elements for fuzzing."
+                        }
+                      },
+                      "required": [
+                        "selector_type",
+                        "selector"
+                      ]
+                    },
+                    "description": "Specifies the elements to target for fuzzing, including forms."
+                  },
+                  "fuzzing_parameters": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "parameter_name": {
+                          "type": "string",
+                          "description": "Name of the parameter to fuzz."
+                        },
+                        "fuzzing_type": {
+                          "type": "string",
+                          "enum": [
+                            "fixed_list",
+                            "pattern_based"
+                          ],
+                          "description": "The fuzzing strategy to use for the parameter."
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'."
+                        },
+                        "pattern": {
+                          "type": "string",
+                          "description": "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
+                        }
+                      },
+                      "required": [
+                        "parameter_name",
+                        "fuzzing_type"
+                      ]
+                    },
+                    "description": "Defines the parameters to fuzz and the strategy for generating fuzz values."
+                  }
+                },
+                "required": [
+                  "rule_name",
+                  "request_type",
+                  "target_elements",
+                  "fuzzing_parameters"
                 ]
               }
             },
