@@ -79,3 +79,7 @@ func (f *FuzzingParameter) GetValues() []string {
 func (f *FuzzingParameter) GetPattern() string {
 	return strings.TrimSpace(f.Pattern)
 }
+
+func (f *FuzzingParameter) GetSelector() string {
+	return strings.TrimSpace(f.Selector)
+}

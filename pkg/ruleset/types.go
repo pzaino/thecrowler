@@ -131,6 +131,7 @@ type TargetElement struct {
 type FuzzingParameter struct {
 	ParameterName string   `yaml:"parameter_name"`
 	FuzzingType   string   `yaml:"fuzzing_type"`
+	Selector      string   `yaml:"selector"`
 	Values        []string `yaml:"values,omitempty"`
 	Pattern       string   `yaml:"pattern,omitempty"`
 }
