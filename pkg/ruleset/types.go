@@ -51,6 +51,7 @@ type RuleGroup struct {
 	IsEnabled            bool                 `yaml:"is_enabled"`
 	ScrapingRules        []ScrapingRule       `yaml:"scraping_rules"`
 	ActionRules          []ActionRule         `yaml:"action_rules"`
+	CrawlingRules        []CrawlingRule       `yaml:"crawling_rules,omitempty"`
 	EnvironmentSettings  EnvironmentSettings  `yaml:"environment_settings"`
 	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration"`
 }
@@ -110,6 +111,29 @@ type WaitCondition struct {
 type PostProcessingStep struct {
 	Type    string                 `yaml:"step_type"`
 	Details map[string]interface{} `yaml:"details"`
+}
+
+// CrawlingRule represents a crawling rule for URL fuzzing and form handling
+type CrawlingRule struct {
+	RuleName          string             `yaml:"rule_name"`
+	RequestType       string             `yaml:"request_type"`
+	TargetElements    []TargetElement    `yaml:"target_elements"`
+	FuzzingParameters []FuzzingParameter `yaml:"fuzzing_parameters"`
+}
+
+// TargetElement represents a target element specified in a crawling rule
+type TargetElement struct {
+	SelectorType string `yaml:"selector_type"`
+	Selector     string `yaml:"selector"`
+}
+
+// FuzzingParameter represents a parameter to be fuzzed as specified in a crawling rule
+type FuzzingParameter struct {
+	ParameterName string   `yaml:"parameter_name"`
+	FuzzingType   string   `yaml:"fuzzing_type"`
+	Selector      string   `yaml:"selector"`
+	Values        []string `yaml:"values,omitempty"`
+	Pattern       string   `yaml:"pattern,omitempty"`
 }
 
 // EnvironmentSettings represents the environment settings for the rule group

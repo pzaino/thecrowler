@@ -63,10 +63,17 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	if ok, err := validateURL(config.URL); !ok {
 		return nil, err
 	}
+
 	// Validate IP address
-	if cmn.IsDisallowedIP(config.URL, 0) {
-		return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
+	host := urlToHost(config.URL)
+	// Get the IP address for the host
+	ips := cmn.HostToIP(host)
+	for _, ip := range ips {
+		if cmn.IsDisallowedIP(ip, 0) {
+			return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
+		}
 	}
+
 	// Ok, the URL is safe, let's create a new HTTP request config.SSLMode
 	transport := cmn.SafeTransport(config.Timeout, "ignore")
 	transport.TLSClientConfig = &tls.Config{
@@ -79,20 +86,7 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	httpClient := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !config.FollowRedirects {
-				return http.ErrUseLastResponse
-			}
-
-			// Update ServerName for SNI in case of domain change due to redirect
-			lastURL, err := url.Parse(req.URL.String())
-			if err != nil {
-				return fmt.Errorf("error parsing redirect URL: %v", err)
-			}
-			lastDomain := lastURL.Hostname()
-			req.URL.Scheme = "https"
-			transport.TLSClientConfig.ServerName = lastDomain
-
-			return nil
+			return handleRedirect(req, via, config, transport)
 		},
 	}
 	req, err := http.NewRequest("GET", config.URL, nil)
@@ -152,6 +146,23 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	}
 
 	return info, nil
+}
+
+func handleRedirect(req *http.Request, via []*http.Request, config Config, transport *http.Transport) error {
+	if !config.FollowRedirects {
+		return http.ErrUseLastResponse
+	}
+
+	// Update ServerName for SNI in case of domain change due to redirect
+	lastURL, err := url.Parse(req.URL.String())
+	if err != nil {
+		return fmt.Errorf("error parsing redirect URL: %v", err)
+	}
+	lastDomain := lastURL.Hostname()
+	req.URL.Scheme = "https"
+	transport.TLSClientConfig.ServerName = lastDomain
+
+	return nil
 }
 
 // AnalyzeResponse analyzes the response body and header for additional server-related information

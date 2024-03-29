@@ -2,8 +2,10 @@ package common
 
 import (
 	"log"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Define Debug constant
@@ -155,6 +157,24 @@ func TestIsDisallowedIP(t *testing.T) {
 			level:    3,
 			expected: false,
 		},
+		{
+			name:     "IP Test case 6",
+			hostIP:   "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+			level:    3,
+			expected: false,
+		},
+		{
+			name:     "IP Test case 7",
+			hostIP:   "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+			level:    6,
+			expected: false,
+		},
+		{
+			name:     "IP Test case 8",
+			hostIP:   "invalid",
+			level:    3,
+			expected: true,
+		},
 	}
 
 	for _, test := range tests {
@@ -166,6 +186,36 @@ func TestIsDisallowedIP(t *testing.T) {
 		})
 	}
 }
+func TestSetLoggerPrefix(t *testing.T) {
+	// Test cases
+	tests := []struct {
+		name     string
+		appName  string
+		expected string
+	}{
+		{
+			name:     "LoggerPrefix Test case 1",
+			appName:  "TestApp",
+			expected: "TestApp",
+		},
+		{
+			name:     "LoggerPrefix Test case 2",
+			appName:  "AnotherApp",
+			expected: "AnotherApp",
+		},
+	}
+
+	// Run tests
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			SetLoggerPrefix(test.appName)
+			if !strings.Contains(loggerPrefix, test.expected) {
+				t.Errorf("Expected logger prefix %q, but got %q", test.expected, loggerPrefix)
+			}
+		})
+	}
+}
+
 func TestInitLogger(t *testing.T) {
 	// Test case
 	tests := []struct {
@@ -247,6 +297,178 @@ func TestIsPathCorrect(t *testing.T) {
 			result := IsPathCorrect(test.path)
 			if result != test.expected {
 				t.Errorf("Expected %v for path %s, but got %v", test.expected, test.path, result)
+			}
+		})
+	}
+}
+func TestCheckIPVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		ipVal    string
+		expected int
+	}{
+		{
+			name:     "Test case 1",
+			ipVal:    "192.168.0.1",
+			expected: 4,
+		},
+		{
+			name:     "Test case 2",
+			ipVal:    "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+			expected: 6,
+		},
+		{
+			name:     "Test case 3",
+			ipVal:    "invalid",
+			expected: -1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := CheckIPVersion(test.ipVal)
+			if result != test.expected {
+				t.Errorf("Expected IP version %d, but got %d", test.expected, result)
+			}
+		})
+	}
+}
+func TestGetFileExt(t *testing.T) {
+	tests := []struct {
+		name     string
+		filePath string
+		expected string
+	}{
+		{
+			name:     "Test case 1",
+			filePath: "file.txt",
+			expected: "txt",
+		},
+		{
+			name:     "Test case 2",
+			filePath: "image.jpg",
+			expected: "jpg",
+		},
+		{
+			name:     "Test case 3",
+			filePath: "document.pdf",
+			expected: "pdf",
+		},
+		{
+			name:     "Test case 4",
+			filePath: "script.js",
+			expected: "js",
+		},
+		{
+			name:     "Test case 5",
+			filePath: "data.csv",
+			expected: "csv",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := GetFileExt(test.filePath)
+			if result != test.expected {
+				t.Errorf("Expected file extension %q, but got %q", test.expected, result)
+			}
+		})
+	}
+}
+func TestSafeTransport(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     int
+		sslmode     string
+		expectedTLS bool
+	}{
+		{
+			name:        "Test case 1",
+			timeout:     5,
+			sslmode:     "disable",
+			expectedTLS: false,
+		},
+		{
+			name:        "Test case 2",
+			timeout:     10,
+			sslmode:     "ignore",
+			expectedTLS: false,
+		},
+		{
+			name:        "Test case 3",
+			timeout:     15,
+			sslmode:     "enabled",
+			expectedTLS: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := SafeTransport(test.timeout, test.sslmode)
+
+			// Check if DialContext is set correctly
+			if transport.DialContext == nil {
+				t.Error("DialContext is not set")
+			}
+
+			// Check if DialTLSContext and TLSHandshakeTimeout are set correctly
+			if test.expectedTLS {
+				if transport.DialTLSContext == nil {
+					t.Error("DialTLSContext is not set")
+				}
+				if transport.TLSHandshakeTimeout != time.Second*time.Duration(test.timeout) {
+					t.Errorf("Expected TLSHandshakeTimeout %v, but got %v", time.Second*time.Duration(test.timeout), transport.TLSHandshakeTimeout)
+				}
+			} else {
+				if transport.DialTLSContext != nil {
+					t.Error("DialTLSContext should not be set")
+				}
+				if transport.TLSHandshakeTimeout != 0 {
+					t.Errorf("Expected TLSHandshakeTimeout 0, but got %v", transport.TLSHandshakeTimeout)
+				}
+			}
+		})
+	}
+}
+
+func TestInterpolateEnvVars(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Test case 1",
+			input:    "Hello, ${NAME}!",
+			expected: "Hello, world!",
+		},
+		{
+			name:     "Test case 2",
+			input:    "The value is ${VALUE}.",
+			expected: "The value is 42.",
+		},
+		{
+			name:     "Test case 3",
+			input:    "No environment variable.",
+			expected: "No environment variable.",
+		},
+	}
+
+	// Set environment variables
+	err := os.Setenv("NAME", "world")
+	if err != nil {
+		t.Errorf("Unable to set environment variable: %v", err)
+	}
+	err = os.Setenv("VALUE", "42")
+	if err != nil {
+		t.Errorf("Unable to set environment variable: %v", err)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := InterpolateEnvVars(test.input)
+			if result != test.expected {
+				t.Errorf("Expected %q, but got %q", test.expected, result)
 			}
 		})
 	}
