@@ -59,6 +59,11 @@ func InitLogger(appName string) {
 	log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
 }
 
+// SetLoggerPrefix sets the logger prefix
+func SetLoggerPrefix(prefix string) {
+	loggerPrefix = prefix
+}
+
 // UpdateLoggerConfig Updates the logger configuration
 func UpdateLoggerConfig() {
 	if debugLevel > 0 {
@@ -94,8 +99,39 @@ func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	}
 }
 
+//// ----- File related shared functions ----- ////
+
+// GetFileExt returns a file extension (if any)
+func GetFileExt(filePath string) string {
+	fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(filePath)))
+	fileType = strings.TrimPrefix(fileType, ".")
+	return fileType
+}
+
+// Create a function that checks if a path is correct and if it exists
+func IsPathCorrect(path string) bool {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false
+	}
+	return true
+}
+
 //// ----- HTTP related shared functions ----- ////
 
+// HostToIP returns the IP address of a given host
+func HostToIP(host string) []string {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return []string{}
+	}
+	ipList := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		ipList = append(ipList, ip.String())
+	}
+	return ipList
+}
+
+// CheckIPVersion checks the IP version of the given IP address
 func CheckIPVersion(ipVal string) int {
 	ipStr := strings.TrimSpace(ipVal)
 	ip := net.ParseIP(ipStr)
@@ -113,6 +149,9 @@ func CheckIPVersion(ipVal string) int {
 // IsDisallowedIP parses the ip to determine if we should allow the HTTP client to continue
 func IsDisallowedIP(hostIP string, level int) bool {
 	ip := net.ParseIP(hostIP)
+	if ip == nil {
+		return true
+	}
 	switch level {
 	case 0: // Allow only public IPs
 		return ip.IsMulticast() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate()
@@ -127,48 +166,21 @@ func IsDisallowedIP(hostIP string, level int) bool {
 	}
 }
 
-// Create a function that checks if a path is correct and if it exists
-func IsPathCorrect(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false
-	}
-	return true
-}
-
-// GetFileExt returns a file extension (if any)
-func GetFileExt(filePath string) string {
-	fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(filePath)))
-	fileType = strings.TrimPrefix(fileType, ".")
-	return fileType
-}
-
+// SafeTransport creates a safe HTTP transport
 func SafeTransport(timeout int, sslmode string) *http.Transport {
-	//sslmode = strings.ToLower(strings.TrimSpace(sslmode))
-	/*
-		if sslmode == "disable" || sslmode == "disabled" {
-			return &http.Transport{
-				DialContext: dialContextWithIPCheck(time.Second * time.Duration(timeout)),
-			}
-		}
-		return &http.Transport{
-			DialContext:         dialContextWithIPCheck(time.Second * time.Duration(timeout)),
-			DialTLS:             dialTLSWithIPCheck(time.Second * time.Duration(timeout)),
-			TLSHandshakeTimeout: time.Second * time.Duration(timeout),
-		}
-	*/
-
 	// Start with cloning the DefaultTransport (type assertion is required)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
 	// Set the common DialContext, including IP check and timeout
 	transport.DialContext = dialContextWithIPCheck(time.Second * time.Duration(timeout))
 
+	transport.TLSHandshakeTimeout = 0
+
 	// Apply the TLS handshake timeout and DialTLS only if SSL is not disabled
 	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
 	if sslmode != "ignore" {
 		if sslmode != "disable" && sslmode != "disabled" {
 			transport.DialTLSContext = dialTLSWithIPCheck(time.Second * time.Duration(timeout))
-			//transport.DialTLS = dialTLSWithIPCheck(time.Second * time.Duration(timeout))
 			transport.TLSHandshakeTimeout = time.Second * time.Duration(timeout)
 		}
 	}
@@ -209,30 +221,6 @@ func dialTLSWithIPCheck(timeout time.Duration) func(ctx context.Context, network
 		return conn, nil
 	}
 }
-
-/*
-func dialTLSWithIPCheck(timeout time.Duration) func(network, addr string) (net.Conn, error) {
-	return func(network, addr string) (net.Conn, error) {
-		dialer := &net.Dialer{Timeout: timeout}
-		c, err := tls.DialWithDialer(dialer, network, addr, &tls.Config{MinVersion: tls.VersionTLS13})
-		if err != nil {
-			return nil, err
-		}
-
-		ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
-		if IsDisallowedIP(ip, 3) {
-			return nil, errors.New(errIPNotAllowed)
-		}
-
-		err = c.Handshake()
-		if err != nil {
-			return c, err
-		}
-
-		return c, c.Handshake()
-	}
-}
-*/
 
 //// ----- ENV related shared functions ----- ////
 

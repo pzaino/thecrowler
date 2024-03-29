@@ -63,10 +63,17 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 	if ok, err := validateURL(config.URL); !ok {
 		return nil, err
 	}
+
 	// Validate IP address
-	if cmn.IsDisallowedIP(config.URL, 0) {
-		return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
+	host := urlToHost(config.URL)
+	// Get the IP address for the host
+	ips := cmn.HostToIP(host)
+	for _, ip := range ips {
+		if cmn.IsDisallowedIP(ip, 0) {
+			return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
+		}
 	}
+
 	// Ok, the URL is safe, let's create a new HTTP request config.SSLMode
 	transport := cmn.SafeTransport(config.Timeout, "ignore")
 	transport.TLSClientConfig = &tls.Config{
