@@ -3,8 +3,7 @@
 ---
 $schema: http://json-schema.org/draft-07/schema#
 type: array
-description: Schema for a file containing multiple rulesets, each with its own
-  configuration for web scraping and automation tasks.
+description: Schema for a file containing multiple rulesets, each with its own configuration for web scraping and automation tasks.
 items:
   type: object
   properties:
@@ -53,17 +52,17 @@ items:
                   description: A unique name identifying the scraping rule.
                 pre_conditions:
                   type: array
-                  description: Conditions to check before performing scraping, ensuring URL or path are correct if it's required by a rule (this section is optional).
+                  description: Conditions that must be met for the scraping to be executed.
                   items:
-                    path:
-                      type: string
-                      description: The specific path or pattern to match for scraping.
-                    url:
-                      type: string
-                      format: uri
-                      description: Optional. The specific URL to which this rule applies. If omitted,
-                        the rule is considered applicable to any URL matching the
-                        path.
+                    type: object
+                    properties:
+                      path:
+                        type: string
+                        description: The specific path or pattern to match for scraping.
+                      url:
+                        type: string
+                        format: uri
+                        description: Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path.
                 elements:
                   type: array
                   items:
@@ -92,31 +91,25 @@ items:
                               type: string
                             attribute:
                               type: string
-                              description: Optional. The attribute of the element to extract, e.g.,
-                                'innerText'. Mainly relevant for scraping
-                                actions.
-                          required:
-                            - selector_type
-                            - selector
+                              description: Optional. The attribute of the element to extract, e.g., 'innerText'. Mainly relevant for scraping actions.
                     required:
                       - key
                       - selectors
-                  description: Defines multiple ways to find and interact with elements, allowing
-                    for CSS, XPath, and other Selenium-supported strategies.
+                  description: Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other Selenium-supported strategies.
                 js_files:
                   type: boolean
                   description: Indicates whether JavaScript files are relevant for the scraping.
-                technology_patterns:
+                objects:
                   type: array
                   items:
-                    type: string
-                  description: Identifies specific technology patterns or signatures.
+                    rule_name: string
+                    description: A unique name identifying the identification rule.
+                  description: Identifies specific technologies, requires correspondent identification rules.
                 json_field_mappings:
                   type: object
                   additionalProperties:
                     type: string
-                  description: Maps scraped elements to JSON fields using PostgreSQL JSON path
-                    expressions.
+                  description: Maps scraped elements to JSON fields using PostgreSQL JSON path expressions.
                 wait_conditions:
                   type: array
                   items:
@@ -129,21 +122,16 @@ items:
                           - element_visible
                           - custom_js
                           - delay
-                        description: The type of condition to wait for before scraping.
                       value:
                         type: string
-                        description: The value to use with the condition, e.g., the delay in seconds,
-                          applicable for delay condition type.
+                        description: a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type.
                       selector:
                         type: string
-                        description: The CSS selector for the element, applicable for element_presence
-                          and element_visible conditions.
+                        description: The CSS selector for the element, applicable for element_presence and element_visible conditions.
                       custom_js:
                         type: string
-                        description: Custom JavaScript condition to evaluate, applicable for custom_js
-                          condition type.
-                  description: Conditions to wait for before performing scraping, ensuring page
-                    readiness.
+                        description: Custom JavaScript condition to evaluate, applicable for custom_js condition type.
+                  description: Conditions to wait for before performing scraping, ensuring page readiness.
                 post_processing:
                   type: array
                   items:
@@ -152,20 +140,17 @@ items:
                       step_type:
                         type: string
                         enum:
-                          - transform
-                          - remove
                           - replace
-                          - custom_js
-                        description: The type of post-processing step.
+                          - remove
+                          - transform
+                          - validate
+                          - clean
                       details:
                         type: object
-                        description: Detailed configuration for the post-processing step, structure
-                          depends on the step_type.
-                  description: Post-processing steps for the scraped data to transform, validate,
-                    or clean it.
+                        description: Detailed configuration for the post-processing step, structure depends on the step_type.
+                  description: Post-processing steps for the scraped data to transform, validate, or clean it.
               required:
                 - rule_name
-                - path
                 - elements
           action_rules:
             type: array
@@ -221,28 +206,22 @@ items:
                           - tag_name
                           - link_text
                           - partial_link_text
-                        description: "The method used to select the element: CSS selector, XPath, or
-                          other Selenium-supported strategies."
                       selector:
                         type: string
-                        description: The actual selector or pattern used to find the element based on
-                          the selector_type.
+                        description: The actual selector or pattern used to find the element based on the selector_type.
                       attribute:
                         type: string
-                        description: Optional. The attribute of the element to interact with, mainly
-                          relevant for actions like 'input_text'.
+                        description: Optional. The attribute of the element to interact with, mainly relevant for actions like 'input_text'.
                     required:
                       - selector_type
                       - selector
                 value:
                   type: string
-                  description: The value to use with the action, e.g., text to input, applicable
-                    for input_text.
+                  description: The value to use with the action, e.g., text to input, applicable for input_text.
                 url:
                   type: string
                   format: uri
-                  description: Optional. The specific URL to which this action applies or the URL
-                    to navigate to, applicable for navigate action.
+                  description: Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action.
                 wait_conditions:
                   type: array
                   items:
@@ -255,21 +234,16 @@ items:
                           - element_visible
                           - custom_js
                           - delay
-                        description: The type of condition to wait for before executing the action.
                       value:
                         type: string
-                        description: The value to use with the condition, e.g., the delay in seconds,
-                          applicable for delay condition type.
+                        description: a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type.
                       selector:
                         type: string
-                        description: The CSS selector for the element, applicable for element_presence
-                          and element_visible conditions.
+                        description: The CSS selector for the element, applicable for element_presence and element_visible conditions.
                       custom_js:
                         type: string
-                        description: Custom JavaScript condition to evaluate, applicable for custom_js
-                          condition type.
-                  description: Conditions to wait for before performing the action, ensuring page
-                    readiness.
+                        description: Custom JavaScript condition to evaluate, applicable for custom_js condition type.
+                  description: Conditions to wait for before performing the action, ensuring page readiness.
                 conditions:
                   type: object
                   additionalProperties: true
@@ -287,6 +261,112 @@ items:
               required:
                 - rule_name
                 - action_type
+          identification_rules:
+            type: array
+            items:
+              type: object
+              properties:
+                rule_name:
+                  type: string
+                  description: A unique name identifying the identification rule.
+                object_name:
+                  type: string
+                  description: The name of the object or technology to identify.
+                object_version:
+                  type: string
+                  description: Optional. The version of the object or technology to identify.
+                http_header_fields:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      key:
+                        type: string
+                        description: The name of the HTTP header field.
+                      value:
+                        type: string
+                        description: The expected value of the HTTP header field.
+                  description: Matching patterns for HTTP header fields to identify technology.
+                page_content_patterns:
+                  type: array
+                  items:
+                    type: string
+                    description: Phrases or character sequences within page content indicative of specific technology.
+                  description: Patterns within the page content that match specific technologies.
+                url_micro_signatures:
+                  type: array
+                  items:
+                    type: string
+                    description: Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress.
+                  description: URL patterns indicative of specific technologies.
+                meta_tags:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: The name attribute of the meta tag.
+                      content:
+                        type: string
+                        description: The content attribute of the meta tag, which holds the value to match.
+                  description: Matching patterns for meta tags to identify technology.
+              required:
+                - rule_name
+                - object_name
+              anyOf:
+                - required: [http_header_fields]
+                - required: [page_content_patterns]
+                - required: [url_micro_signatures]
+                - required: [meta_tags]
+          crawling_rules:
+            type: array
+            items:
+              type: object
+              properties:
+                rule_name:
+                  type: string
+                  description: A unique name identifying the crawling rule.
+                request_type:
+                  type: string
+                  enum: [GET, POST]
+                  description: The type of request to perform for fuzzing.
+                target_elements:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      selector_type:
+                        type: string
+                        enum: [css, xpath, form]
+                      selector:
+                        type: string
+                        description: The actual selector or form name used to find and interact with the target elements for fuzzing.
+                    required: [selector_type, selector]
+                  description: Specifies the elements to target for fuzzing, including forms.
+                fuzzing_parameters:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      parameter_name:
+                        type: string
+                        description: Name of the parameter to fuzz.
+                      fuzzing_type:
+                        type: string
+                        enum: [fixed_list, pattern_based]
+                        description: The fuzzing strategy to use for the parameter.
+                      values:
+                        type: array
+                        items:
+                          type: string
+                        description: List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'.
+                      pattern:
+                        type: string
+                        description: A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'.
+                    required: [parameter_name, fuzzing_type]
+                  description: Defines the parameters to fuzz and the strategy for generating fuzz values.
+              required: [rule_name, request_type, target_elements, fuzzing_parameters]
           environment_settings:
             type: object
             properties:
@@ -295,35 +375,24 @@ items:
                 description: Specifies if the WebDriver should operate in headless mode.
               custom_browser_options:
                 type: object
-                description: Custom options for browser instances, such as proxies or window
-                  size.
+                description: Custom options for browser instances, such as proxies or window size.
             description: Custom settings for the WebDriver environment.
           logging_configuration:
             type: object
             properties:
               log_level:
                 type: string
-                enum:
-                  - DEBUG
-                  - INFO
-                  - WARNING
-                  - ERROR
-                  - CRITICAL
+                enum: [DEBUG, INFO, WARNING, ERROR, CRITICAL]
                 description: Specifies the logging level for actions and scraping activities.
               log_file:
                 type: string
                 description: Optional. The file path to store logs if file logging is desired.
             description: Configuration for logging and monitoring rule execution.
-        required:
-          - group_name
-          - is_enabled
+        required: [group_name, is_enabled]
         anyOf:
-          - required:
-              - scraping_rules
-          - required:
-              - action_rules
-  required:
-    - ruleset_name
-    - format_version
-    - rule_groups
+          - required: [scraping_rules]
+          - required: [action_rules]
+          - required: [identification_rules]
+          - required: [crawling_rules]
+  required: [ruleset_name, format_version, rule_groups]
 minItems: 1

@@ -37,6 +37,18 @@ const (
 	noQueryProvided     = "no query provided"
 )
 
+// TODO: Improve Tokenizer and query generator to support more complex queries
+//       like:
+/*
+	SELECT *
+	FROM NetInfo
+	WHERE EXISTS (
+		SELECT 1
+		FROM jsonb_array_elements(details -> 'service_scout' -> 'hosts') AS hosts
+		WHERE hosts ->> 'ip' = '$1'
+	);
+*/
+
 // tokenize splits the input string into tokens.
 // following the "dorking" query language's rules.
 func tokenize(input string) []string {
