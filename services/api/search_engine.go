@@ -37,15 +37,25 @@ const (
 	noQueryProvided     = "no query provided"
 )
 
+// tokenize splits the input string into tokens.
+// following the "dorking" query language's rules.
 func tokenize(input string) []string {
 	var tokens []string
 	var currentToken strings.Builder
 
 	inQuotes := false
+	inEscape := false
 	for _, r := range input {
 		switch {
+		case r == '\\':
+			inEscape = true
 		case r == '"':
-			inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
+			if !inEscape {
+				inQuotes = toggleQuotes(inQuotes, &tokens, &currentToken)
+			} else {
+				currentToken.WriteRune(r)
+				inEscape = false
+			}
 		case r == ':' && !inQuotes:
 			completeFieldSpecifier(&tokens, &currentToken)
 		case unicode.IsSpace(r) && !inQuotes:
@@ -61,6 +71,7 @@ func tokenize(input string) []string {
 	return tokens
 }
 
+// toggleQuotes toggles the inQuotes flag and appends the current token to the tokens slice.
 func toggleQuotes(inQuotes bool, tokens *[]string, currentToken *strings.Builder) bool {
 	inQuotes = !inQuotes
 	if !inQuotes {
@@ -70,6 +81,7 @@ func toggleQuotes(inQuotes bool, tokens *[]string, currentToken *strings.Builder
 	return inQuotes
 }
 
+// completeFieldSpecifier appends the current token to the tokens slice and adds a colon.
 func completeFieldSpecifier(tokens *[]string, currentToken *strings.Builder) {
 	if currentToken.Len() > 0 {
 		*tokens = append(*tokens, currentToken.String()+":")
@@ -77,6 +89,7 @@ func completeFieldSpecifier(tokens *[]string, currentToken *strings.Builder) {
 	}
 }
 
+// handleSpace appends the current token to the tokens slice.
 func handleSpace(tokens *[]string, currentToken *strings.Builder) {
 	if currentToken.Len() > 0 {
 		*tokens = append(*tokens, currentToken.String())
@@ -84,6 +97,7 @@ func handleSpace(tokens *[]string, currentToken *strings.Builder) {
 	}
 }
 
+// handlePipeAnd appends the current token to the tokens slice and adds the pipe or and operator.
 func handlePipeAnd(tokens *[]string, currentToken *strings.Builder, r rune) {
 	if currentToken.Len() > 0 {
 		if currentToken.String() != "|" && currentToken.String() != "&" {
@@ -98,12 +112,14 @@ func handlePipeAnd(tokens *[]string, currentToken *strings.Builder, r rune) {
 	currentToken.WriteRune(r)
 }
 
+// handleRemainingToken appends the current token to the tokens slice.
 func handleRemainingToken(tokens *[]string, currentToken *strings.Builder) {
 	if currentToken.Len() > 0 {
 		*tokens = append(*tokens, currentToken.String())
 	}
 }
 
+// PrepareInput removes leading and trailing spaces from the input string.
 func isFieldSpecifier(input string) bool {
 	// Define allowed fields
 	var allowedFields = map[string]bool{
@@ -164,7 +180,7 @@ func parseAdvancedQuery(queryBody string, input string) (string, []interface{}, 
 			queryGroup++                                // Move to the next group
 			queryParts = append(queryParts, []string{}) // Initialize the new group
 
-		case token == "&&", token == "||":
+		case token == "&", token == "|", token == "&&", token == "||":
 			if queryGroup == -1 {
 				queryGroup = 0
 				queryParts = append(queryParts, []string{})
