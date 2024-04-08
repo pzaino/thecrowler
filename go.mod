@@ -13,7 +13,7 @@ require (
 
 require (
 	github.com/abadojack/whatlanggo v1.0.1
-	github.com/likexian/whois v1.15.1
+	github.com/likexian/whois v1.15.2
 	github.com/oschwald/maxminddb-golang v1.12.0
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robertkrimen/otto v0.3.0
