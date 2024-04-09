@@ -67,5 +67,3 @@ func TestMetaTagGetContent(t *testing.T) {
 		t.Errorf("GetContent() = %v, want %v", got, expected)
 	}
 }
-
-// Add more tests as needed for other methods

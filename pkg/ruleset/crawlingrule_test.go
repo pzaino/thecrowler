@@ -108,5 +108,3 @@ func TestFuzzingParameter_GetPattern(t *testing.T) {
 		t.Errorf("GetPattern() = %v, want %v", got, expected)
 	}
 }
-
-// Test other methods as needed...
