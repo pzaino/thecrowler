@@ -352,3 +352,29 @@ func (ssc *ServiceScoutConfig) IsEmpty() bool {
 
 	return true
 }
+
+// isEmpty checks if the given ExecutionPlanItem is empty.
+func (ep *ExecutionPlanItem) IsEmpty() bool {
+	if ep == nil {
+		return true
+	}
+
+	if len(ep.Rulesets) == 0 && len(ep.RuleGroups) == 0 && len(ep.Rules) == 0 {
+		return true
+	}
+
+	return false
+}
+
+// isEmpty checks if the given SourceConfig is empty.
+func (sc *SourceConfig) IsEmpty() bool {
+	if sc == nil {
+		return true
+	}
+
+	if !sc.ExecutionPlan[0].IsEmpty() {
+		return false
+	}
+
+	return true
+}

@@ -51,6 +51,7 @@ type RuleGroup struct {
 	IsEnabled            bool                 `yaml:"is_enabled"`
 	ScrapingRules        []ScrapingRule       `yaml:"scraping_rules"`
 	ActionRules          []ActionRule         `yaml:"action_rules"`
+	DetectionRules       []DetectionRule      `yaml:"detection_rules,omitempty"`
 	CrawlingRules        []CrawlingRule       `yaml:"crawling_rules,omitempty"`
 	EnvironmentSettings  EnvironmentSettings  `yaml:"environment_settings"`
 	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration"`
@@ -111,6 +112,29 @@ type WaitCondition struct {
 type PostProcessingStep struct {
 	Type    string                 `yaml:"step_type"`
 	Details map[string]interface{} `yaml:"details"`
+}
+
+// DetectionRule represents a rule for detecting specific technologies or objects
+type DetectionRule struct {
+	RuleName            string            `yaml:"rule_name"`
+	ObjectName          string            `yaml:"object_name"`
+	ObjectVersion       string            `yaml:"object_version,omitempty"`
+	HTTPHeaderFields    []HTTPHeaderField `yaml:"http_header_fields,omitempty"`
+	PageContentPatterns []string          `yaml:"page_content_patterns,omitempty"`
+	URLMicroSignatures  []string          `yaml:"url_micro_signatures,omitempty"`
+	MetaTags            []MetaTag         `yaml:"meta_tags,omitempty"`
+}
+
+// HTTPHeaderField represents a pattern for matching HTTP header fields
+type HTTPHeaderField struct {
+	Key   string `yaml:"key"`
+	Value string `yaml:"value"`
+}
+
+// MetaTag represents a pattern for matching HTML meta tags
+type MetaTag struct {
+	Name    string `yaml:"name"`
+	Content string `yaml:"content"`
 }
 
 // CrawlingRule represents a crawling rule for URL fuzzing and form handling

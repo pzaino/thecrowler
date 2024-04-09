@@ -103,8 +103,8 @@ items:
                   type: array
                   items:
                     rule_name: string
-                    description: A unique name identifying the identification rule.
-                  description: Identifies specific technologies, requires correspondent identification rules.
+                    description: A unique name identifying the detection rule.
+                  description: Identifies specific technologies, requires correspondent detection rules.
                 json_field_mappings:
                   type: object
                   additionalProperties:
@@ -261,14 +261,14 @@ items:
               required:
                 - rule_name
                 - action_type
-          identification_rules:
+          detection_rules:
             type: array
             items:
               type: object
               properties:
                 rule_name:
                   type: string
-                  description: A unique name identifying the identification rule.
+                  description: A unique name identifying the detection rule.
                 object_name:
                   type: string
                   description: The name of the object or technology to identify.
@@ -392,7 +392,7 @@ items:
         anyOf:
           - required: [scraping_rules]
           - required: [action_rules]
-          - required: [identification_rules]
+          - required: [detection_rules]
           - required: [crawling_rules]
   required: [ruleset_name, format_version, rule_groups]
 minItems: 1

@@ -19,9 +19,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
@@ -71,8 +71,8 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 	if params.Restricted < 0 || params.Restricted > 4 {
 		params.Restricted = 2
 	}
-	if params.Config == "" {
-		params.Config = "NULL"
+	if params.Config.IsEmpty() {
+		params.Config = cfg.SourceConfig{}
 	}
 }
 
@@ -81,27 +81,36 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 	results.Message = "Failed to add the source"
 
 	// Check if Config is empty and set to default JSON if it is
-	if params.Config == "" || strings.ToLower(params.Config) == "null" {
+	if params.Config.IsEmpty() {
 		defaultConfig := map[string]string{}
 		defaultConfigJSON, err := json.Marshal(defaultConfig)
 		if err != nil {
 			return results, fmt.Errorf("failed to marshal default Config: %w", err)
 		}
-		params.Config = string(defaultConfigJSON)
+		err = json.Unmarshal(defaultConfigJSON, &params.Config)
+		if err != nil {
+			return results, fmt.Errorf("failed to unmarshal JSON into params.Config: %w", err)
+		}
 	} else {
-		fmt.Println("params.Config:", params.Config)
 		// Validate and potentially reformat the existing Config JSON
+		// First, marshal the params.Config struct to JSON
+		configJSON, err := json.Marshal(params.Config)
+		if err != nil {
+			return results, fmt.Errorf("failed to marshal params.Config to JSON: %w", err)
+		}
 		var jsonRaw map[string]interface{}
-		if err := json.Unmarshal([]byte(params.Config), &jsonRaw); err != nil {
+		if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
 			// Handle invalid JSON
 			return results, fmt.Errorf("config field contains invalid JSON: %w", err)
 		}
 		// Re-marshal to ensure the JSON is in a standardized format (optional)
-		configJSON, err := json.Marshal(jsonRaw)
+		configJSONChecked, err := json.Marshal(jsonRaw)
 		if err != nil {
 			return results, fmt.Errorf("failed to marshal Config field: %w", err)
 		}
-		params.Config = string(configJSON)
+		if err := json.Unmarshal(configJSONChecked, &params.Config); err != nil {
+			return results, fmt.Errorf("failed to unmarshal validated JSON back to Config struct: %w", err)
+		}
 	}
 
 	// Initialize the database handler

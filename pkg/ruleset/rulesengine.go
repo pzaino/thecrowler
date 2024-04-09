@@ -30,24 +30,32 @@ import (
 
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
 // It initializes the RuleEngine with the given sites and returns a pointer to the created RuleEngine.
-func NewRuleEngine(schemaPath string, ruleset []Ruleset) *RuleEngine {
+func NewRuleEngine(schemaPath string, rulesets []Ruleset) *RuleEngine {
 	// Create a new instance of RuleEngine
 	ruleEngine := NewEmptyRuleEngine(schemaPath)
+	if ruleEngine.Schema == nil {
+		return &RuleEngine{
+			Schema:   nil,
+			Rulesets: rulesets,
+		}
+	}
 
 	// Parse the ruleset
 	if ruleEngine.Schema != nil {
-		for _, rs := range ruleset {
+		for _, rs := range rulesets {
 			err := ruleEngine.ValidateRuleset(rs)
 			if err != nil {
-				return nil
+				// Log the error, handle it, or return nil to indicate failure
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to validate ruleset: %v", err)
+				return nil // or handle it as per your application's error handling strategy
 			}
 		}
 	}
 
 	// Set the rulesets
-	ruleEngine.Rulesets = ruleset
+	ruleEngine.Rulesets = rulesets
 
-	// Implementation of the RuleEngine initialization
+	// Return the initialized RuleEngine
 	return &ruleEngine
 }
 
@@ -56,14 +64,18 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 	schema, err := LoadSchema(schemaPath)
 	if err != nil {
 		return RuleEngine{
-			Schema:   nil,
-			Rulesets: []Ruleset{},
+			Schema: nil,
+			Rulesets: []Ruleset{
+				{},
+			},
 		}
 	}
 
 	return RuleEngine{
-		Schema:   schema,
-		Rulesets: []Ruleset{},
+		Schema: schema,
+		Rulesets: []Ruleset{
+			{},
+		},
 	}
 }
 

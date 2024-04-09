@@ -133,9 +133,9 @@
                                       "type": "array",
                                       "items": {
                                           "rule_name": "string",
-                                          "description": "A unique name identifying the identification rule."
+                                          "description": "A unique name identifying the detection rule."
                                       },
-                                      "description": "Identifies specific technologies, requires correspondent identification rules."
+                                      "description": "Identifies specific technologies, requires correspondent detection rules."
                                   },
                                   "json_field_mappings": {
                                       "type": "object",
@@ -343,14 +343,14 @@
                               ]
                           }
                       },
-                      "identification_rules": {
+                      "detection_rules": {
                           "type": "array",
                           "items": {
                               "type": "object",
                               "properties": {
                                   "rule_name": {
                                       "type": "string",
-                                      "description": "A unique name identifying the identification rule."
+                                      "description": "A unique name identifying the detection rule."
                                   },
                                   "object_name": {
                                       "type": "string",
@@ -579,7 +579,7 @@
                       },
                       {
                           "required": [
-                              "identification_rules"
+                              "detection_rules"
                           ]
                       },
                       {

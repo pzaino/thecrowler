@@ -33,12 +33,12 @@ type ConsoleResponse struct {
 
 // addSourceRequest represents the structure of the add source request
 type addSourceRequest struct {
-	URL        string `json:"url"`
-	Status     string `json:"status,omitempty"`
-	Restricted int    `json:"restricted,omitempty"`
-	Disabled   bool   `json:"disabled,omitempty"`
-	Flags      int    `json:"flags,omitempty"`
-	Config     string `json:"config,omitempty"`
+	URL        string           `json:"url"`
+	Status     string           `json:"status,omitempty"`
+	Restricted int              `json:"restricted,omitempty"`
+	Disabled   bool             `json:"disabled,omitempty"`
+	Flags      int              `json:"flags,omitempty"`
+	Config     cfg.SourceConfig `json:"config,omitempty"`
 }
 
 // SearchResult represents the structure of the search result
