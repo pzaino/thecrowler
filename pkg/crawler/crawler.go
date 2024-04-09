@@ -1338,9 +1338,12 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
 func ReturnSeleniumInstance(pCtx *processContext, sel *SeleniumInstance) {
-	QuitSelenium((&(*pCtx).wd))
-	if (*pCtx).sel != nil {
-		(*pCtx).sel <- (*sel)
+	if (*pCtx).wd != nil {
+		QuitSelenium((&(*pCtx).wd))
+		if (*pCtx).sel != nil {
+			(*pCtx).sel <- (*sel)
+		}
+		(*pCtx).wd = nil
 	}
 }
 
