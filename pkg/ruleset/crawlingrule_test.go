@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-func TestCrawlingRule_GetRuleName(t *testing.T) {
+func TestCrawlingRuleGetRuleName(t *testing.T) {
 	c := CrawlingRule{RuleName: " Crawl Social Media "}
 	expected := "Crawl Social Media"
 	if got := c.GetRuleName(); got != expected {
@@ -29,7 +29,7 @@ func TestCrawlingRule_GetRuleName(t *testing.T) {
 	}
 }
 
-func TestCrawlingRule_GetRequestType(t *testing.T) {
+func TestCrawlingRuleGetRequestType(t *testing.T) {
 	c := CrawlingRule{RequestType: " post "}
 	expected := "POST"
 	if got := c.GetRequestType(); got != expected {
@@ -37,7 +37,7 @@ func TestCrawlingRule_GetRequestType(t *testing.T) {
 	}
 }
 
-func TestCrawlingRule_GetTargetElements(t *testing.T) {
+func TestCrawlingRuleGetTargetElements(t *testing.T) {
 	c := CrawlingRule{
 		TargetElements: []TargetElement{
 			{SelectorType: "css", Selector: ".login"},
@@ -49,7 +49,7 @@ func TestCrawlingRule_GetTargetElements(t *testing.T) {
 	}
 }
 
-func TestCrawlingRule_GetFuzzingParameters(t *testing.T) {
+func TestCrawlingRuleGetFuzzingParameters(t *testing.T) {
 	c := CrawlingRule{
 		FuzzingParameters: []FuzzingParameter{
 			{ParameterName: "username", FuzzingType: "fixed_list", Values: []string{"admin", "guest"}},
@@ -61,7 +61,7 @@ func TestCrawlingRule_GetFuzzingParameters(t *testing.T) {
 	}
 }
 
-func TestTargetElement_GetSelectorType(t *testing.T) {
+func TestTargetElementGetSelectorType(t *testing.T) {
 	te := TargetElement{SelectorType: " CSS "}
 	expected := "css"
 	if got := te.GetSelectorType(); got != expected {
@@ -69,7 +69,7 @@ func TestTargetElement_GetSelectorType(t *testing.T) {
 	}
 }
 
-func TestTargetElement_GetSelector(t *testing.T) {
+func TestTargetElementGetSelector(t *testing.T) {
 	te := TargetElement{Selector: " #submit "}
 	expected := "#submit"
 	if got := te.GetSelector(); got != expected {
@@ -77,7 +77,7 @@ func TestTargetElement_GetSelector(t *testing.T) {
 	}
 }
 
-func TestFuzzingParameter_GetParameterName(t *testing.T) {
+func TestFuzzingParameterGetParameterName(t *testing.T) {
 	fp := FuzzingParameter{ParameterName: " Email "}
 	expected := "Email"
 	if got := fp.GetParameterName(); got != expected {
@@ -85,7 +85,7 @@ func TestFuzzingParameter_GetParameterName(t *testing.T) {
 	}
 }
 
-func TestFuzzingParameter_GetFuzzingType(t *testing.T) {
+func TestFuzzingParameterGetFuzzingType(t *testing.T) {
 	fp := FuzzingParameter{FuzzingType: " PATTERN_BASED "}
 	expected := "pattern_based"
 	if got := fp.GetFuzzingType(); got != expected {
@@ -93,7 +93,7 @@ func TestFuzzingParameter_GetFuzzingType(t *testing.T) {
 	}
 }
 
-func TestFuzzingParameter_GetValues(t *testing.T) {
+func TestFuzzingParameterGetValues(t *testing.T) {
 	fp := FuzzingParameter{Values: []string{" test1 ", "test2"}}
 	expected := []string{"test1", "test2"}
 	if got := fp.GetValues(); !reflect.DeepEqual(got, expected) {
@@ -101,7 +101,7 @@ func TestFuzzingParameter_GetValues(t *testing.T) {
 	}
 }
 
-func TestFuzzingParameter_GetPattern(t *testing.T) {
+func TestFuzzingParameterGetPattern(t *testing.T) {
 	fp := FuzzingParameter{Pattern: " .*@example.com "}
 	expected := ".*@example.com"
 	if got := fp.GetPattern(); got != expected {

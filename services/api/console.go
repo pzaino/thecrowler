@@ -103,34 +103,11 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 
 	// Check if Config is empty and set to default JSON if it is
 	if params.Config.IsEmpty() {
-		defaultConfig := map[string]string{}
-		defaultConfigJSON, err := json.Marshal(defaultConfig)
-		if err != nil {
-			return results, fmt.Errorf("failed to marshal default Config: %w", err)
-		}
-		err = json.Unmarshal(defaultConfigJSON, &params.Config)
-		if err != nil {
-			return results, fmt.Errorf("failed to unmarshal JSON into params.Config: %w", err)
-		}
+		params.Config = getDefaultConfig()
 	} else {
-		// Validate and potentially reformat the existing Config JSON
-		// First, marshal the params.Config struct to JSON
-		configJSON, err := json.Marshal(params.Config)
+		err := validateAndReformatConfig(&params.Config)
 		if err != nil {
-			return results, fmt.Errorf("failed to marshal params.Config to JSON: %w", err)
-		}
-		var jsonRaw map[string]interface{}
-		if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
-			// Handle invalid JSON
-			return results, fmt.Errorf("config field contains invalid JSON: %w", err)
-		}
-		// Re-marshal to ensure the JSON is in a standardized format (optional)
-		configJSONChecked, err := json.Marshal(jsonRaw)
-		if err != nil {
-			return results, fmt.Errorf("failed to marshal Config field: %w", err)
-		}
-		if err := json.Unmarshal(configJSONChecked, &params.Config); err != nil {
-			return results, fmt.Errorf("failed to unmarshal validated JSON back to Config struct: %w", err)
+			return results, fmt.Errorf("failed to validate and reformat Config: %w", err)
 		}
 	}
 
@@ -162,6 +139,37 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 
 	results.Message = "Website inserted successfully"
 	return results, nil
+}
+
+func getDefaultConfig() cfg.SourceConfig {
+	defaultConfig := map[string]string{}
+	defaultConfigJSON, _ := json.Marshal(defaultConfig)
+	var config cfg.SourceConfig
+	_ = json.Unmarshal(defaultConfigJSON, &config)
+	return config
+}
+
+func validateAndReformatConfig(config *cfg.SourceConfig) error {
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config to JSON: %w", err)
+	}
+
+	var jsonRaw map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
+		return fmt.Errorf("config field contains invalid JSON: %w", err)
+	}
+
+	configJSONChecked, err := json.Marshal(jsonRaw)
+	if err != nil {
+		return fmt.Errorf("failed to marshal Config field: %w", err)
+	}
+
+	if err := json.Unmarshal(configJSONChecked, config); err != nil {
+		return fmt.Errorf("failed to unmarshal validated JSON back to Config struct: %w", err)
+	}
+
+	return nil
 }
 
 func performRemoveSource(query string, qType int) (ConsoleResponse, error) {

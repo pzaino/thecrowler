@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-func TestActionRule_GetActionType(t *testing.T) {
+func TestActionRuleGetActionType(t *testing.T) {
 	ar := ActionRule{ActionType: " Click "}
 	expected := "click"
 	if got := ar.GetActionType(); got != expected {
@@ -29,7 +29,7 @@ func TestActionRule_GetActionType(t *testing.T) {
 	}
 }
 
-func TestActionRule_GetRuleName(t *testing.T) {
+func TestActionRuleGetRuleName(t *testing.T) {
 	ar := ActionRule{RuleName: " LoginButton "}
 	expected := "LoginButton"
 	if got := ar.GetRuleName(); got != expected {
@@ -37,7 +37,7 @@ func TestActionRule_GetRuleName(t *testing.T) {
 	}
 }
 
-func TestActionRule_GetURL(t *testing.T) {
+func TestActionRuleGetURL(t *testing.T) {
 	ar := ActionRule{URL: " https://example.com/login "}
 	expected := "https://example.com/login"
 	if got := ar.GetURL(); got != expected {
@@ -45,7 +45,7 @@ func TestActionRule_GetURL(t *testing.T) {
 	}
 }
 
-func TestActionRule_GetSelectors(t *testing.T) {
+func TestActionRuleGetSelectors(t *testing.T) {
 	ar := ActionRule{
 		Selectors: []Selector{
 			{SelectorType: "css", Selector: "#login"},
@@ -57,7 +57,7 @@ func TestActionRule_GetSelectors(t *testing.T) {
 	}
 }
 
-func TestActionRule_GetValue(t *testing.T) {
+func TestActionRuleGetValue(t *testing.T) {
 	ar := ActionRule{Value: " user@example.com "}
 	expected := "user@example.com"
 	if got := ar.GetValue(); got != expected {
@@ -65,19 +65,19 @@ func TestActionRule_GetValue(t *testing.T) {
 	}
 }
 
-func TestActionRule_GetWaitConditions(t *testing.T) {
-	// Assuming WaitCondition is correctly implemented
+func TestActionRuleGetWaitConditions(t *testing.T) {
+	// TODO: Assuming WaitCondition is correctly implemented
 }
 
-func TestActionRule_GetConditions(t *testing.T) {
-	// Assuming Conditions is a map that works correctly
+func TestActionRuleGetConditions(t *testing.T) {
+	// TODO: Assuming Conditions is a map that works correctly
 }
 
-func TestActionRule_GetErrorHandling(t *testing.T) {
-	// Assuming ErrorHandling is correctly implemented
+func TestActionRuleGetErrorHandling(t *testing.T) {
+	// TODO: Assuming ErrorHandling is correctly implemented
 }
 
-func TestSelector_GetSelectorType(t *testing.T) {
+func TestSelectorGetSelectorType(t *testing.T) {
 	s := Selector{SelectorType: " ID "}
 	expected := "id"
 	if got := s.GetSelectorType(); got != expected {
@@ -85,7 +85,7 @@ func TestSelector_GetSelectorType(t *testing.T) {
 	}
 }
 
-func TestSelector_GetSelector(t *testing.T) {
+func TestSelectorGetSelector(t *testing.T) {
 	s := Selector{Selector: " #username "}
 	expected := "#username"
 	if got := s.GetSelector(); got != expected {
@@ -93,7 +93,7 @@ func TestSelector_GetSelector(t *testing.T) {
 	}
 }
 
-func TestSelector_GetAttribute(t *testing.T) {
+func TestSelectorGetAttribute(t *testing.T) {
 	s := Selector{Attribute: " value "}
 	expected := "value"
 	if got := s.GetAttribute(); got != expected {
