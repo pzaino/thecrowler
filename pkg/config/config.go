@@ -372,7 +372,7 @@ func (sc *SourceConfig) IsEmpty() bool {
 		return true
 	}
 
-	if !sc.ExecutionPlan[0].IsEmpty() {
+	if sc.ExecutionPlan != nil {
 		return false
 	}
 
