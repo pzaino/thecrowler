@@ -83,6 +83,7 @@ type processContext struct {
 	netInfoRunning  bool                  // Flag to check if network info is already gathered
 	httpInfoRunning bool                  // Flag to check if HTTP info is already gathered
 	siteInfoRunning bool                  // Flag to check if site info is already gathered
+	crawlingRunning bool                  // Flag to check if crawling is still running
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -104,6 +105,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 		return
 	}
 	defer ReturnSeleniumInstance(&processCtx, &sel)
+	processCtx.crawlingRunning = true
 
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
@@ -1338,12 +1340,12 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
 func ReturnSeleniumInstance(pCtx *processContext, sel *SeleniumInstance) {
-	if (*pCtx).wd != nil {
+	if (*pCtx).crawlingRunning {
 		QuitSelenium((&(*pCtx).wd))
 		if (*pCtx).sel != nil {
 			(*pCtx).sel <- (*sel)
 		}
-		(*pCtx).wd = nil
+		(*pCtx).crawlingRunning = false
 	}
 }
 
