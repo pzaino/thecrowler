@@ -104,7 +104,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	if err := processCtx.ConnectToSelenium(sel); err != nil {
 		return
 	}
-	defer ReturnSeleniumInstance(&processCtx, &sel)
+	defer ReturnSeleniumInstance(tID, &processCtx, &sel)
 	processCtx.crawlingRunning = true
 
 	// Crawl the initial URL and get the HTML content
@@ -208,8 +208,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	//QuitSelenium(&processCtx.wd)
 	//}
 	//SeleniumInstances <- sel
-	ReturnSeleniumInstance(&processCtx, &sel)
-	tID.Done()
+	ReturnSeleniumInstance(tID, &processCtx, &sel)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -1339,13 +1338,14 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(pCtx *processContext, sel *SeleniumInstance) {
+func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance) {
 	if (*pCtx).crawlingRunning {
 		QuitSelenium((&(*pCtx).wd))
 		if (*pCtx).sel != nil {
 			(*pCtx).sel <- (*sel)
 		}
 		(*pCtx).crawlingRunning = false
+		wg.Done()
 	}
 }
 
