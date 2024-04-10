@@ -1,0 +1,57 @@
+{
+    "format_version": "1.0",
+    "author": "Test Author",
+    "created_at": "2024-04-10T15:00:00Z",
+    "description": "This is a test document following the specified schema.",
+    "source_name": "Example Source",
+    "crawling_config": {
+      "site": "https://www.example.com"
+    },
+    "execution_plan": [
+      {
+        "label": "Initial Crawl",
+        "conditions": {
+          "url_patterns": [
+            "https://www.example.com/{category}"
+          ]
+        },
+        "rulesets": [
+          "defaultRuleset"
+        ],
+        "additional_conditions": {
+          "max_depth": 5,
+          "limit_per_site": 1000
+        }
+      },
+      {
+        "label": "Follow-up Crawl",
+        "conditions": {
+          "url_patterns": [
+            "https://www.example.com/{category}/{subcategory}"
+          ]
+        },
+        "rule_groups": [
+          "secondaryRulesetGroup"
+        ],
+        "additional_conditions": {
+          "max_depth": 3,
+          "limit_per_site": 500
+        }
+      },
+      {
+        "label": "Final Crawl",
+        "conditions": {
+          "url_patterns": [
+            "https://www.example.com/{category}/{subcategory}/{id}"
+          ]
+        },
+        "rules": [
+          "finalizeRule"
+        ],
+        "additional_conditions": {
+          "max_depth": 1,
+          "limit_per_site": 100
+        }
+      }
+    ]
+  }
