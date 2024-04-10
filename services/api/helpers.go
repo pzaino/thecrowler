@@ -68,5 +68,7 @@ func PrepareInput(input string) string {
 	input = strings.ReplaceAll(input, "\\\"", "\"")
 	// trim external quotes (if any)
 	input = strings.Trim(input, "\"")
+	// trim spaces
+	input = strings.TrimSpace(input)
 	return input
 }

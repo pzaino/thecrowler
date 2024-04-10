@@ -56,6 +56,7 @@ import (
 
 const (
 	dbConnCheckErr = "Error checking database connection: %v\n"
+	dbConnTransErr = "Error committing transaction: %v"
 )
 
 var (
@@ -82,6 +83,7 @@ type processContext struct {
 	netInfoRunning  bool                  // Flag to check if network info is already gathered
 	httpInfoRunning bool                  // Flag to check if HTTP info is already gathered
 	siteInfoRunning bool                  // Flag to check if site info is already gathered
+	crawlingRunning bool                  // Flag to check if crawling is still running
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -102,7 +104,8 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	if err := processCtx.ConnectToSelenium(sel); err != nil {
 		return
 	}
-	defer ReturnSeleniumInstance(&processCtx, &sel)
+	defer ReturnSeleniumInstance(tID, &processCtx, &sel)
+	processCtx.crawlingRunning = true
 
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
@@ -205,8 +208,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	//QuitSelenium(&processCtx.wd)
 	//}
 	//SeleniumInstances <- sel
-	ReturnSeleniumInstance(&processCtx, &sel)
-	tID.Done()
+	ReturnSeleniumInstance(tID, &processCtx, &sel)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -568,7 +570,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
 		return 0
 	}
@@ -630,7 +632,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
 		return 0
 	}
@@ -872,7 +874,7 @@ func rollbackTransaction(tx *sql.Tx) {
 func commitTransaction(tx *sql.Tx) error {
 	err := tx.Commit()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error committing transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		return err
 	}
 	return nil
@@ -1336,10 +1338,14 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(pCtx *processContext, sel *SeleniumInstance) {
-	QuitSelenium((&(*pCtx).wd))
-	if (*pCtx).sel != nil {
-		(*pCtx).sel <- (*sel)
+func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance) {
+	if (*pCtx).crawlingRunning {
+		QuitSelenium((&(*pCtx).wd))
+		if (*pCtx).sel != nil {
+			(*pCtx).sel <- (*sel)
+		}
+		(*pCtx).crawlingRunning = false
+		wg.Done()
 	}
 }
 

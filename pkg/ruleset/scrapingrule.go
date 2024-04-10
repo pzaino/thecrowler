@@ -43,7 +43,7 @@ func (r *ScrapingRule) GetPaths() []string {
 func (r *ScrapingRule) GetURLs() []string {
 	var urls []string
 	for _, u := range r.PreConditions {
-		if strings.TrimSpace(u.Path) == "" {
+		if strings.TrimSpace(u.URL) == "" {
 			continue
 		}
 		urls = append(urls, strings.TrimSpace(u.URL))
