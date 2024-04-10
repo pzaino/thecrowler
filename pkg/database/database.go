@@ -70,29 +70,34 @@ func buildConnectionString(c cfg.Config) string {
 		dbPort = c.Database.Port
 	}
 	var dbHost string
-	if c.Database.Host == "" {
+	if strings.TrimSpace(c.Database.Host) == "" {
 		dbHost = "localhost"
 	} else {
-		dbHost = c.Database.Host
+		dbHost = strings.TrimSpace(c.Database.Host)
 	}
 	var dbUser string
-	if c.Database.User == "" {
+	if strings.TrimSpace(c.Database.User) == "" {
 		dbUser = "crowler"
 	} else {
-		dbUser = c.Database.User
+		dbUser = strings.TrimSpace(c.Database.User)
 	}
 	dbPassword := c.Database.Password
 	var dbName string
-	if c.Database.DBName == "" {
+	if strings.TrimSpace(c.Database.DBName) == "" {
 		dbName = "SitesIndex"
 	} else {
-		dbName = c.Database.DBName
+		dbName = strings.TrimSpace(c.Database.DBName)
 	}
 	var dbSSLMode string
-	if c.Database.SSLMode == "" {
+	if strings.TrimSpace(c.Database.SSLMode) == "" {
 		dbSSLMode = "disable"
 	} else {
-		dbSSLMode = c.Database.SSLMode
+		sslmode := strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
+		// Validate the SSL mode
+		if sslmode != "disable" && sslmode != "require" && sslmode != "verify-ca" && sslmode != "verify-full" {
+			sslmode = "disable"
+		}
+		dbSSLMode = sslmode
 	}
 	connectionString := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
