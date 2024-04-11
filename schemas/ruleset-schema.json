@@ -268,8 +268,22 @@
                                                   "description": "The actual selector or pattern used to find the element based on the selector_type."
                                               },
                                               "attribute": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                      "name": {
+                                                          "type": "string",
+                                                          "description": "The name of the attribute to match for the selector match to be valid."
+                                                      },
+                                                      "value": {
+                                                          "type": "string",
+                                                          "description": "The value to of the attribute to match for the selector to be valid."
+                                                      }
+                                                  },
+                                                  "description": "Optional. The attribute of the element to match"
+                                              },
+                                              "value": {
                                                   "type": "string",
-                                                  "description": "Optional. The attribute of the element to interact with, mainly relevant for actions like 'input_text'."
+                                                  "description": "The value within the selector that we need to match for the action. (this is NOT the value to input!)"
                                               }
                                           },
                                           "required": [

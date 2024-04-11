@@ -87,8 +87,8 @@ func (w *WaitCondition) GetConditionType() string {
 }
 
 // GetSelector returns the selector for the specified wait condition.
-func (w *WaitCondition) GetSelector() string {
-	return strings.TrimSpace(w.Selector)
+func (w *WaitCondition) GetSelector() Selector {
+	return w.Selector
 }
 
 // GetCustomJS returns the custom JS for the specified wait condition.

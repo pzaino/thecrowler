@@ -94,9 +94,17 @@ func TestSelectorGetSelector(t *testing.T) {
 }
 
 func TestSelectorGetAttribute(t *testing.T) {
-	s := Selector{Attribute: " value "}
+	s := Selector{
+		Attribute: struct {
+			Name  string `yaml:"name"`
+			Value string `yaml:"value"`
+		}{
+			Name:  "value",
+			Value: "value",
+		},
+	}
 	expected := "value"
-	if got := s.GetAttribute(); got != expected {
-		t.Errorf("GetAttribute() = %v, want %v", got, expected)
+	if gotName, _ := s.GetAttribute(); gotName != expected {
+		t.Errorf("GetAttribute() = %v, want %v", gotName, expected)
 	}
 }

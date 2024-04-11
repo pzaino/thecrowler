@@ -25,12 +25,21 @@
               {
                 "selector_type": "class",
                 "selector": "disclaimerOK"
+              },
+              {
+                "selector_type": "id",
+                "selector": "cookieOK"
+              },
+              {
+                "selector_type": "element",
+                "selector": "div",
+                "value": "{{accept}}"
               }
             ],
             "wait_conditions": [
               {
                 "condition_type": "delay",
-                "selector": "2"
+                "value": "2"
               }
             ],
             "error_handling": {
