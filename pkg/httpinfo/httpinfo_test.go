@@ -24,6 +24,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	"github.com/pzaino/thecrowler/pkg/ruleset"
 )
 
 var (
@@ -74,7 +75,10 @@ func TestExtractHTTPInfo(t *testing.T) {
 		SSLMode:         "none",
 	}
 
-	info, err := ExtractHTTPInfo(config)
+	rs := []ruleset.Ruleset{}
+	re := ruleset.NewRuleEngine("", rs)
+
+	info, err := ExtractHTTPInfo(config, re)
 	if err != nil {
 		t.Errorf("ExtractHTTPInfo() returned an error: %v", err)
 	}

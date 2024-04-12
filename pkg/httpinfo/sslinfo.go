@@ -43,13 +43,17 @@ const (
 
 // ExtractSSLInfo extracts SSL information from the provided URL
 func (ssl *SSLInfo) ExtractInfo(url string) error {
-	// Call the function to extract SSL information
-	return nil
+	if ssl == nil {
+		return fmt.Errorf("SSLInfo is nil")
+	}
+	return ssl.GetSSLInfo(url, "")
 }
 
 // String returns a string representation of the SSLInfo
 func (ssl *SSLInfo) String() string {
-	return ""
+	// transform the SSLInfo into a string
+	SSLInfoString := fmt.Sprintf("URL: %s\n", ssl.URL) // TODO: Add more fields
+	return SSLInfoString
 }
 
 // NewSSLInfo creates a new SSLInfo instance
