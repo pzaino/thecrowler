@@ -28,6 +28,12 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const (
+	JSONRulesDefaultPath = "./rules/*.json"
+	YAMLRulesDefaultPath = "./rules/*.yaml"
+	DataDefaultPath      = "./data"
+)
+
 type OsFileReader struct{}
 
 func (OsFileReader) ReadFile(filename string) ([]byte, error) {
@@ -177,12 +183,12 @@ func NewConfig() Config {
 		Rulesets: []Ruleset{
 			{
 				Type: "local",
-				Path: []string{"./rules/*.json", "./rules/*.yaml"},
+				Path: []string{JSONRulesDefaultPath, YAMLRulesDefaultPath},
 			},
 		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
-			Path:    "./data",
+			Path:    DataDefaultPath,
 			Port:    0,
 			Region:  "nowhere",
 			Token:   "",
@@ -193,7 +199,7 @@ func NewConfig() Config {
 		},
 		FileStorageAPI: FileStorageAPI{
 			Host:    "",
-			Path:    "./data",
+			Path:    DataDefaultPath,
 			Port:    0,
 			Region:  "nowhere",
 			Token:   "",
@@ -373,34 +379,58 @@ func (c *Config) validateAPI() {
 func (c *Config) validateSelenium() {
 	// Check Selenium
 	for i := range c.Selenium {
-		if strings.TrimSpace(c.Selenium[i].Type) == "" {
-			c.Selenium[i].Type = "chrome"
-		} else {
-			c.Selenium[i].Type = strings.TrimSpace(c.Selenium[i].Type)
-		}
-		if strings.TrimSpace(c.Selenium[i].Path) == "" {
-			c.Selenium[i].Path = ""
-		} else {
-			c.Selenium[i].Path = strings.TrimSpace(c.Selenium[i].Path)
-		}
-		if strings.TrimSpace(c.Selenium[i].DriverPath) == "" {
-			c.Selenium[i].DriverPath = ""
-		} else {
-			c.Selenium[i].DriverPath = strings.TrimSpace(c.Selenium[i].DriverPath)
-		}
-		if strings.TrimSpace(c.Selenium[i].Host) == "" {
-			c.Selenium[i].Host = "localhost"
-		} else {
-			c.Selenium[i].Host = strings.TrimSpace(c.Selenium[i].Host)
-		}
-		if c.Selenium[i].Port < 1 || c.Selenium[i].Port > 65535 {
-			c.Selenium[i].Port = 4444
-		}
-		if c.Selenium[i].ProxyURL == "" {
-			c.Selenium[i].ProxyURL = ""
-		} else {
-			c.Selenium[i].ProxyURL = strings.TrimSpace(c.Selenium[i].ProxyURL)
-		}
+		c.validateSeleniumType(&c.Selenium[i])
+		c.validateSeleniumPath(&c.Selenium[i])
+		c.validateSeleniumDriverPath(&c.Selenium[i])
+		c.validateSeleniumHost(&c.Selenium[i])
+		c.validateSeleniumPort(&c.Selenium[i])
+		c.validateSeleniumProxyURL(&c.Selenium[i])
+	}
+}
+
+func (c *Config) validateSeleniumType(selenium *Selenium) {
+	if strings.TrimSpace(selenium.Type) == "" {
+		selenium.Type = "chrome"
+	} else {
+		selenium.Type = strings.TrimSpace(selenium.Type)
+	}
+}
+
+func (c *Config) validateSeleniumPath(selenium *Selenium) {
+	if strings.TrimSpace(selenium.Path) == "" {
+		selenium.Path = ""
+	} else {
+		selenium.Path = strings.TrimSpace(selenium.Path)
+	}
+}
+
+func (c *Config) validateSeleniumDriverPath(selenium *Selenium) {
+	if strings.TrimSpace(selenium.DriverPath) == "" {
+		selenium.DriverPath = ""
+	} else {
+		selenium.DriverPath = strings.TrimSpace(selenium.DriverPath)
+	}
+}
+
+func (c *Config) validateSeleniumHost(selenium *Selenium) {
+	if strings.TrimSpace(selenium.Host) == "" {
+		selenium.Host = "localhost"
+	} else {
+		selenium.Host = strings.TrimSpace(selenium.Host)
+	}
+}
+
+func (c *Config) validateSeleniumPort(selenium *Selenium) {
+	if selenium.Port < 1 || selenium.Port > 65535 {
+		selenium.Port = 4444
+	}
+}
+
+func (c *Config) validateSeleniumProxyURL(selenium *Selenium) {
+	if selenium.ProxyURL == "" {
+		selenium.ProxyURL = ""
+	} else {
+		selenium.ProxyURL = strings.TrimSpace(selenium.ProxyURL)
 	}
 }
 
@@ -418,11 +448,11 @@ func (c *Config) validateRulesets() {
 			c.Rulesets[i].Type = strings.TrimSpace(c.Rulesets[i].Type)
 		}
 		if len(c.Rulesets[i].Path) == 0 {
-			c.Rulesets[i].Path = []string{"./rules/*.json", "./rules/*.yaml"}
+			c.Rulesets[i].Path = []string{JSONRulesDefaultPath, YAMLRulesDefaultPath}
 		}
 		for j := range c.Rulesets[i].Path {
 			if strings.TrimSpace(c.Rulesets[i].Path[j]) == "" {
-				c.Rulesets[i].Path[j] = "./rules/*.json"
+				c.Rulesets[i].Path[j] = JSONRulesDefaultPath
 			} else {
 				c.Rulesets[i].Path[j] = strings.TrimSpace(c.Rulesets[i].Path[j])
 			}
@@ -443,7 +473,7 @@ func (c *Config) validateImageStorageAPI() {
 		c.ImageStorageAPI.Host = strings.TrimSpace(c.ImageStorageAPI.Host)
 	}
 	if strings.TrimSpace(c.ImageStorageAPI.Path) == "" {
-		c.ImageStorageAPI.Path = "./data"
+		c.ImageStorageAPI.Path = DataDefaultPath
 	} else {
 		c.ImageStorageAPI.Path = strings.TrimSpace(c.ImageStorageAPI.Path)
 	}
@@ -483,7 +513,7 @@ func (c *Config) validateFileStorageAPI() {
 		c.FileStorageAPI.Host = strings.TrimSpace(c.FileStorageAPI.Host)
 	}
 	if strings.TrimSpace(c.FileStorageAPI.Path) == "" {
-		c.FileStorageAPI.Path = "./data"
+		c.FileStorageAPI.Path = DataDefaultPath
 	} else {
 		c.FileStorageAPI.Path = strings.TrimSpace(c.FileStorageAPI.Path)
 	}
