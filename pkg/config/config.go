@@ -177,7 +177,7 @@ func NewConfig() Config {
 		Rulesets: []Ruleset{
 			{
 				Type: "local",
-				Path: []string{"./rules/*.json"},
+				Path: []string{"./rules/*.json", "./rules/*.yaml"},
 			},
 		},
 		ImageStorageAPI: FileStorageAPI{
