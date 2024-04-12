@@ -61,26 +61,34 @@ features that go beyond basic crawling:
   - Keywords Analysis and Language Detection
   - Insightful HTTP Headers, Network Info, WHOIS, DNS, and Geo-localization
   Data
-- **Sophisticated Scraping and Actions**: Leverage rules-based scraping to
-extract precisely what you need, when you need it, and enact automated
-responses.
+- **Sophisticated Ruleset**: To leverage rules-based activities and logic
+  customization, The CROWler offers:
+  - Scraping rules: To extract precisely what you need from websites
+  - Actions rules: To interact with websites in a more dynamic way
+  - Detection rules: To identify specific patterns or elements on a page,
+    technologies used, etc.
+  - Crawling rules: To define how the crawler should behave in different
+    situations (for instance both recursive and non-recursive crawling,
+    fuzzing, etc.)
 - **Powerful Search Engine Integration**: Utilize an API-driven search engine
 equipped with dorking capabilities and comprehensive content search, opening
 new avenues for data analysis and insight.
 
 ### What problem does it solves?
 
-The CROWler is designed to solve the problem of web crawling in a respectful
-and efficient way. It's also designed to be able to crawl private networks
-and intranets, so you can use it to create your own or company search engine.
+The CROWler is designed to solve a set of problems about web crawling, content
+discovery, and data extraction. It's designed to be able to crawl websites in a
+respectful and efficient way. It's also designed to be able to crawl private
+networks and intranets, so you can use it to create your own or company search
+engine.
 
 On top of that it can also be used as the "base" for a more complex cyber security
 tool, as it can be used to gather information about a website, its network, its
-owners, etc.
+owners, which services are being exposed etc.
 
-Given it can also extract information from a website, it can be used to create
-knowledge bases with reference to the sources, or to create a database of
-information about a specific topic.
+Given it can also extract information, it can be used to create knowledge bases
+with reference to the sources, or to create a database of information about a
+specific topic.
 
 Obviously, it can also be used to do keywords analysis, language detection, etc.
 but this is something every single crawler can be used for. However all the
