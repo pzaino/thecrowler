@@ -75,6 +75,6 @@ func (s *Selector) GetSelector() string {
 }
 
 // GetAttribute returns the attribute for the specified selector.
-func (s *Selector) GetAttribute() string {
-	return strings.TrimSpace(s.Attribute)
+func (s *Selector) GetAttribute() (string, string) {
+	return strings.TrimSpace(s.Attribute.Name), strings.TrimSpace(s.Attribute.Value)
 }

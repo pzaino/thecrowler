@@ -259,17 +259,27 @@ var (
 		"slk_2018": "sk",
 	}
 
-	/*
-		// Lists of button texts in different languages for 'Accept' and 'Consent'
-		acceptTexts = []string{
-			"Accept", "Akzeptieren", "Aceptar", "Accettare", "Accetto", "Accepter", "Aceitar",
-			"Godta", "Aanvaarden", "Zaakceptuj", "Elfogad", "Принять", "同意",
-			"承認", "수락", // Add more translations as needed
-		}
-		consentTexts = []string{
-			"Consent", "Zustimmen", "Consentir", "Consentire", "Consento", "Consentement", "Concordar",
-			"Samtykke", "Toestemmen", "Zgoda", "Hozzájárulás", "Согласие", "同意する",
-			"同意", "동의", // Add more translations as needed
-		}
-	*/
+	// Lists of button texts in different languages for 'Accept' and 'Consent'
+	acceptTexts = []string{
+		"Accept", "Akzeptieren", "Aceptar", "Accettare", "Accetto", "Accepter", "Aceitar",
+		"Godta", "Aanvaarden", "Zaakceptuj", "Elfogad", "Принять", "同意",
+		"承認", "수락", // Add more translations as needed
+	}
+	consentTexts = []string{
+		"Consent", "Zustimmen", "Consentir", "Consentire", "Consento", "Consentement", "Concordar",
+		"Samtykke", "Toestemmen", "Zgoda", "Hozzájárulás", "Согласие", "同意する",
+		"同意", "동의", // Add more translations as needed
+	}
+	rejectTexts = []string{
+		"Reject", "Ablehnen", "Rechazar", "Rifiutare", "Rifiuto", "Refuser", "Rejeitar",
+		"Avvise", "Weigeren", "Odrzuć", "Elutasít", "Отклонить", "拒绝",
+		"拒否", "거부", // Add more translations as needed
+	}
+
+	// Global map for selector values to text arrays
+	textMap = map[string][]string{
+		"{{accept}}":  acceptTexts,
+		"{{consent}}": consentTexts,
+		"{{reject}}":  rejectTexts,
+	}
 )

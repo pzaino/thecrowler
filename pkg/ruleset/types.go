@@ -97,15 +97,19 @@ type Element struct {
 type Selector struct {
 	SelectorType string `yaml:"selector_type"`
 	Selector     string `yaml:"selector"`
-	Attribute    string `yaml:"attribute,omitempty"`
+	Attribute    struct {
+		Name  string `yaml:"name"`
+		Value string `yaml:"value"`
+	} `yaml:"attribute,omitempty"`
+	Value string `yaml:"value,omitempty"`
 }
 
 // WaitCondition represents a single wait condition
 type WaitCondition struct {
-	ConditionType string `yaml:"condition_type"`
-	Selector      string `yaml:"selector,omitempty"`
-	CustomJS      string `yaml:"custom_js,omitempty"`
-	Value         string `yaml:"value,omitempty"`
+	ConditionType string   `yaml:"condition_type"`
+	Selector      Selector `yaml:"selector,omitempty"`
+	CustomJS      string   `yaml:"custom_js,omitempty"`
+	Value         string   `yaml:"value,omitempty"`
 }
 
 // PostProcessingStep represents a single post-processing step

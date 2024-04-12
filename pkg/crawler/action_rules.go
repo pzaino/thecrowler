@@ -179,7 +179,7 @@ func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
 
 	// If the element is found, input the text
 	if wdf != nil {
-		err = wdf.SendKeys(selector.Attribute)
+		err = wdf.SendKeys(selector.Value)
 	}
 	return err
 }
@@ -191,30 +191,85 @@ func findElementBySelectorType(wd *selenium.WebDriver, selectors []rules.Selecto
 	var err error
 	var selector rules.Selector
 	for _, selector = range selectors {
-		switch selector.SelectorType {
-		case "css":
-			wdf, err = (*wd).FindElement(selenium.ByCSSSelector, selector.Selector)
-		case "xpath":
-			wdf, err = (*wd).FindElement(selenium.ByXPATH, selector.Selector)
-		case "id":
-			wdf, err = (*wd).FindElement(selenium.ByID, selector.Selector)
-		case "name":
-			wdf, err = (*wd).FindElement(selenium.ByName, selector.Selector)
-		case "linktext":
-			wdf, err = (*wd).FindElement(selenium.ByLinkText, selector.Selector)
-		case "partiallinktext":
-			wdf, err = (*wd).FindElement(selenium.ByPartialLinkText, selector.Selector)
-		case "tagname":
-			wdf, err = (*wd).FindElement(selenium.ByTagName, selector.Selector)
-		case "class":
-			wdf, err = (*wd).FindElement(selenium.ByClassName, selector.Selector)
-		}
+		wdf, err = findElementByType(wd, selector.SelectorType, selector.Selector)
 		if err == nil && wdf != nil {
-			break
+			matchL2 := false
+			if strings.TrimSpace(selector.Attribute.Name) != "" {
+				attrValue, _ := wdf.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+					matchL2 = true
+				}
+			} else {
+				matchL2 = true
+			}
+			matchL3 := false
+			if matchL3 && strings.TrimSpace(selector.Value) != "" {
+				if matchValue(wdf, selector) {
+					matchL3 = true
+				}
+			} else {
+				if matchL2 {
+					matchL3 = true
+				}
+			}
+			if matchL3 {
+				break
+			}
 		}
 	}
 
 	return wdf, selector, err
+}
+
+func findElementByType(wd *selenium.WebDriver, selectorType string, selector string) (selenium.WebElement, error) {
+	switch strings.ToLower(strings.TrimSpace(selectorType)) {
+	case "css":
+		return (*wd).FindElement(selenium.ByCSSSelector, selector)
+	case "xpath":
+		return (*wd).FindElement(selenium.ByXPATH, selector)
+	case "id":
+		return (*wd).FindElement(selenium.ByID, selector)
+	case "name":
+		return (*wd).FindElement(selenium.ByName, selector)
+	case "linktext", "link_text":
+		return (*wd).FindElement(selenium.ByLinkText, selector)
+	case "partiallinktext", "partial_link_text":
+		return (*wd).FindElement(selenium.ByPartialLinkText, selector)
+	case "tagname", "tag_name", "tag", "element":
+		return (*wd).FindElement(selenium.ByTagName, selector)
+	case "class", "classname", "class_name":
+		return (*wd).FindElement(selenium.ByClassName, selector)
+	default:
+		return nil, fmt.Errorf("unsupported selector type: %s", selectorType)
+	}
+}
+
+func matchValue(wdf selenium.WebElement, selector rules.Selector) bool {
+	// Precompute the common value for comparison
+	wdfText, err := wdf.Text()
+	if err != nil {
+		return false
+	}
+	wdfText = strings.ToLower(strings.TrimSpace(wdfText))
+
+	// Check if the selector value is one of the special cases
+	selVal := strings.ToLower(strings.TrimSpace(selector.Value))
+	if texts, ok := textMap[selVal]; ok {
+		for _, val := range texts {
+			if strings.Contains(wdfText, strings.ToLower(strings.TrimSpace(val))) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Generic comparison case
+	if selVal != "" {
+		if wdfText == selVal {
+			return true
+		}
+	}
+	return false
 }
 
 func DefaultActionConfig(url string) cfg.SourceConfig {
