@@ -25,6 +25,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -58,7 +59,7 @@ func validateURL(inputURL string) (bool, error) {
 }
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
-func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
+func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error) {
 	// Validate the URL
 	if ok, err := validateURL(config.URL); !ok {
 		return nil, err
@@ -121,7 +122,7 @@ func ExtractHTTPInfo(config Config) (*HTTPDetails, error) {
 		newConfig.FollowRedirects = true
 
 		// Recursively call ExtractHTTPInfo with the new configuration to extract the new HTTP information
-		return ExtractHTTPInfo(newConfig)
+		return ExtractHTTPInfo(newConfig, re)
 	}
 
 	// Create a new HTTPDetails object

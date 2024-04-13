@@ -394,7 +394,7 @@ func (ctx *processContext) GetHTTPInfo(url string) {
 
 	// Call GetHTTPInfo to retrieve HTTP header information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
-	ctx.hi, err = httpi.ExtractHTTPInfo(c)
+	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re)
 
 	// Check for errors
 	if err != nil {
