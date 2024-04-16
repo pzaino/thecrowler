@@ -307,6 +307,9 @@ func LoadRemoteConfig(cfg Config) (Config, error) {
 	}
 
 	// Create a RESTClient object
+	if strings.TrimSpace(config.Remote.Path) == "/" {
+		config.Remote.Path = ""
+	}
 	url := fmt.Sprintf("http://%s/%s", config.Remote.Host, config.Remote.Path)
 	rulesetBody, err := cmn.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
 	if err != nil {
