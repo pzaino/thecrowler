@@ -18,14 +18,30 @@ package ruleset
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 )
 
 ///// ------------------------ RULESET ---------------------------------- /////
 
+/// -- Creation -- ///
+
+// NewRuleset creates a new Ruleset with the specified name.
+func NewRuleset(name string) Ruleset {
+	return Ruleset{
+		Name:       name,
+		RuleGroups: []RuleGroup{},
+	}
+}
+
+/// --- Retrieving --- ///
+
+// GetRuleGroups returns all the rule groups in a Ruleset.
+func (rs *Ruleset) GetRuleGroups() []RuleGroup {
+	return rs.RuleGroups
+}
+
 // GetActionRules returns all the action rules in a Ruleset.
-func (rs *Ruleset) GetActionRules() []ActionRule {
+func (rs *Ruleset) GetAllActionRules() []ActionRule {
 	var actionRules []ActionRule
 	for _, rg := range rs.RuleGroups {
 		actionRules = append(actionRules, rg.ActionRules...)
@@ -33,62 +49,26 @@ func (rs *Ruleset) GetActionRules() []ActionRule {
 	return actionRules
 }
 
-// GetActionRuleByName returns the action rule with the specified name.
-func (rs *Ruleset) GetActionRuleByName(name string) (ActionRule, error) {
-	// Validate name
-	if name == "" {
-		return ActionRule{}, fmt.Errorf(errEmptyName)
-	}
-
-	// prepare name
-	name = strings.ToLower(strings.TrimSpace(name))
+// GetScrapingRules returns all the scraping rules in a Ruleset.
+func (rs *Ruleset) GetAllScrapingRules() []ScrapingRule {
+	var scrapingRules []ScrapingRule
 	for _, rg := range rs.RuleGroups {
-		for _, r := range rg.ActionRules {
-			if strings.ToLower(strings.TrimSpace(r.RuleName)) == name {
-				return r, nil
-			}
-		}
+		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
 	}
-	return ActionRule{}, fmt.Errorf(errActionNotFound)
+	return scrapingRules
 }
 
-// GetActionRuleByURL returns the action rule for the specified URL.
-func (rs *Ruleset) GetActionRuleByURL(urlStr string) (ActionRule, error) {
-	// Validate URL
-	if urlStr == "" {
-		return ActionRule{}, fmt.Errorf(errEmptyURL)
-	}
-	_, err := url.Parse(urlStr)
-	if err != nil {
-		return ActionRule{}, fmt.Errorf(errParsingURL, err)
-	}
-	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
-	for _, rg := range rs.RuleGroups {
-		for _, r := range rg.ActionRules {
-			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
-				return r, nil
-			}
-		}
-	}
-	return ActionRule{}, fmt.Errorf(errActionNotFound)
-}
-
-// GetRuleGroups returns all the rule groups in a Ruleset.
-func (rs *Ruleset) GetRuleGroups() []RuleGroup {
-	return rs.RuleGroups
-}
+/// --- Searching --- ///
 
 // GetRuleGroupByName returns the rule group with the specified name.
 func (rs *Ruleset) GetRuleGroupByName(name string) (RuleGroup, error) {
 	// Validate name
-	if name == "" {
-		return RuleGroup{}, fmt.Errorf(errEmptyName)
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return RuleGroup{}, err
 	}
-
-	// prepare name
-	name = strings.ToLower(strings.TrimSpace(name))
 	for _, rg := range rs.RuleGroups {
-		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == name {
+		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
 			if !rg.IsValid() {
 				return RuleGroup{}, fmt.Errorf("rule group not valid")
 			}
@@ -101,14 +81,10 @@ func (rs *Ruleset) GetRuleGroupByName(name string) (RuleGroup, error) {
 // GetRuleGroupByURL returns the rule group for the specified URL.
 func (rs *Ruleset) GetRuleGroupByURL(urlStr string) (RuleGroup, error) {
 	// Validate URL
-	if urlStr == "" {
-		return RuleGroup{}, fmt.Errorf(errEmptyURL)
-	}
-	_, err := url.Parse(urlStr)
+	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return RuleGroup{}, fmt.Errorf(errParsingURL, err)
+		return RuleGroup{}, err
 	}
-	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
 	for _, rg := range rs.RuleGroups {
 		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
 			if !rg.IsValid() {
@@ -120,27 +96,50 @@ func (rs *Ruleset) GetRuleGroupByURL(urlStr string) (RuleGroup, error) {
 	return RuleGroup{}, fmt.Errorf(errRuleGroupNotFound)
 }
 
-// GetScrapingRules returns all the scraping rules in a Ruleset.
-func (rs *Ruleset) GetScrapingRules() []ScrapingRule {
-	var scrapingRules []ScrapingRule
-	for _, rg := range rs.RuleGroups {
-		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
+// GetActionRuleByName returns the action rule with the specified name.
+func (rs *Ruleset) GetActionRuleByName(name string) (ActionRule, error) {
+	// Validate name
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return ActionRule{}, err
 	}
-	return scrapingRules
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ActionRules {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
+				return r, nil
+			}
+		}
+	}
+	return ActionRule{}, fmt.Errorf(errActionNotFound)
+}
+
+// GetActionRuleByURL returns the action rule for the specified URL.
+func (rs *Ruleset) GetActionRuleByURL(urlStr string) (ActionRule, error) {
+	// Validate URL
+	parsedURL, err := PrepareURLForSearch(urlStr)
+	if err != nil {
+		return ActionRule{}, err
+	}
+	for _, rg := range rs.RuleGroups {
+		for _, r := range rg.ActionRules {
+			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+				return r, nil
+			}
+		}
+	}
+	return ActionRule{}, fmt.Errorf(errActionNotFound)
 }
 
 // GetScrapingRuleByName returns the scraping rule with the specified name.
 func (rs *Ruleset) GetScrapingRuleByName(name string) (ScrapingRule, error) {
 	// Validate name
-	if name == "" {
-		return ScrapingRule{}, fmt.Errorf(errEmptyName)
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return ScrapingRule{}, err
 	}
-
-	// prepare name
-	name = strings.ToLower(strings.TrimSpace(name))
 	for _, rg := range rs.RuleGroups {
 		for _, r := range rg.ScrapingRules {
-			if strings.ToLower(strings.TrimSpace(r.RuleName)) == name {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
 				return r, nil
 			}
 		}
@@ -151,16 +150,14 @@ func (rs *Ruleset) GetScrapingRuleByName(name string) (ScrapingRule, error) {
 // GetScrapingRuleByPath returns the scraping rule for the specified path.
 func (rs *Ruleset) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
 	// Validate path
-	if path == "" {
-		return ScrapingRule{}, fmt.Errorf(errEmptyPath)
+	parsedPath, err := PreparePathForSearch(path)
+	if err != nil {
+		return ScrapingRule{}, err
 	}
-
-	// prepare path
-	path = strings.ToLower(strings.TrimSpace(path))
 	for _, rg := range rs.RuleGroups {
 		for _, r := range rg.ScrapingRules {
 			for _, p := range r.PreConditions {
-				if strings.ToLower(strings.TrimSpace(p.Path)) == path {
+				if strings.ToLower(strings.TrimSpace(p.Path)) == parsedPath {
 					return r, nil
 				}
 			}
@@ -172,14 +169,10 @@ func (rs *Ruleset) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
 // GetScrapingRuleByURL returns the scraping rule for the specified URL.
 func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 	// Validate URL
-	if urlStr == "" {
-		return ScrapingRule{}, fmt.Errorf(errEmptyURL)
-	}
-	_, err := url.Parse(urlStr)
+	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return ScrapingRule{}, fmt.Errorf(errParsingURL, err)
+		return ScrapingRule{}, err
 	}
-	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
 	for _, rg := range rs.RuleGroups {
 		for _, r := range rg.ScrapingRules {
 			for _, u := range r.PreConditions {
@@ -194,7 +187,7 @@ func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 
 // GetEnabledRuleGroups returns a slice of RuleGroup containing only the enabled rule groups.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled ones to the result slice.
-func (s *Ruleset) GetEnabledRuleGroups() []RuleGroup {
+func (s *Ruleset) GetAllEnabledRuleGroups() []RuleGroup {
 	var enabledRuleGroups []RuleGroup
 
 	for _, rg := range s.RuleGroups {
@@ -206,9 +199,10 @@ func (s *Ruleset) GetEnabledRuleGroups() []RuleGroup {
 	return enabledRuleGroups
 }
 
-// GetEnabledRules returns a slice of Rule containing only the enabled rules.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled rules to the result slice.
-func (s *Ruleset) GetEnabledRules() []ScrapingRule {
+// GetAllEnabledRules returns a slice of Rule containing only the enabled rules.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled rules
+// to the result slice.
+func (s *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
 	var enabledRules []ScrapingRule
 
 	for _, rg := range s.RuleGroups {
@@ -220,9 +214,54 @@ func (s *Ruleset) GetEnabledRules() []ScrapingRule {
 	return enabledRules
 }
 
+// GetAllEnabledActionRules returns a slice of Rule containing only the enabled action rules.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled action rules
+// to the result slice.
+func (s *Ruleset) GetAllEnabledActionRules() []ActionRule {
+	var enabledRules []ActionRule
+
+	for _, rg := range s.RuleGroups {
+		if rg.IsEnabled {
+			enabledRules = append(enabledRules, rg.ActionRules...)
+		}
+	}
+
+	return enabledRules
+}
+
+// GetAllEnabledCrawlingRules returns a slice of Rule containing only the enabled crawling rules.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled crawling rules
+// to the result slice.
+func (s *Ruleset) GetAllEnabledCrawlingRules() []CrawlingRule {
+	var enabledRules []CrawlingRule
+
+	for _, rg := range s.RuleGroups {
+		if rg.IsEnabled {
+			enabledRules = append(enabledRules, rg.CrawlingRules...)
+		}
+	}
+
+	return enabledRules
+}
+
+// GetAllEnabledDetectionRules returns a slice of Rule containing only the enabled detection rules.
+// It iterates over the RuleGroups in the SiteRules and appends the enabled detection rules
+// to the result slice.
+func (s *Ruleset) GetAllEnabledDetectionRules() []DetectionRule {
+	var enabledRules []DetectionRule
+
+	for _, rg := range s.RuleGroups {
+		if rg.IsEnabled {
+			enabledRules = append(enabledRules, rg.DetectionRules...)
+		}
+	}
+
+	return enabledRules
+}
+
 // GetEnabledRulesByGroup returns a slice of Rule containing only the enabled rules for the specified group.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified group to the result slice.
-func (s *Ruleset) GetEnabledRulesByGroup(groupName string) []ScrapingRule {
+func (s *Ruleset) GetEnabledRulesByGroupName(groupName string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 
 	for _, rg := range s.RuleGroups {
@@ -238,16 +277,27 @@ func (s *Ruleset) GetEnabledRulesByGroup(groupName string) []ScrapingRule {
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path to the result slice.
 func (s *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
 	var enabledRules []ScrapingRule
-	path = strings.TrimSpace(path)
+	parsedPath, err := PreparePathForSearch(path)
+	if err != nil {
+		return enabledRules
+	}
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled {
-			for _, r := range rg.ScrapingRules {
-				for _, p := range r.PreConditions {
-					if strings.TrimSpace(p.Path) == path {
-						enabledRules = append(enabledRules, r)
-					}
-				}
+			enabledRules = append(enabledRules, s.getEnabledScrapingRulesByPathHelper(rg, parsedPath)...)
+		}
+	}
+
+	return enabledRules
+}
+
+func (s *Ruleset) getEnabledScrapingRulesByPathHelper(rg RuleGroup, parsedPath string) []ScrapingRule {
+	var enabledRules []ScrapingRule
+
+	for _, r := range rg.ScrapingRules {
+		for _, p := range r.PreConditions {
+			if strings.TrimSpace(p.Path) == parsedPath {
+				enabledRules = append(enabledRules, r)
 			}
 		}
 	}
@@ -255,22 +305,24 @@ func (s *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
 	return enabledRules
 }
 
-// GetEnabledRulesByPathAndGroup returns a slice of Rule containing only the enabled rules for the specified path and group.
-// It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path and group to the result slice.
-func (s *Ruleset) GetEnabledRulesByPathAndGroup(path, groupName string) []ScrapingRule {
+// GetEnabledRulesByPathAndGroup returns a slice of Rule containing only the
+// enabled rules for the specified path and group. It iterates over the RuleGroups
+// in the SiteRules and appends the enabled rules for the specified path and group
+// to the result slice.
+func (s *Ruleset) GetEnabledScrapingRulesByPathAndGroup(path, groupName string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 	path = strings.TrimSpace(path)
 
 	for _, rg := range s.RuleGroups {
 		if rg.IsEnabled && rg.GroupName == groupName {
-			enabledRules = append(enabledRules, s.getEnabledRulesByPathAndGroupHelper(rg, path)...)
+			enabledRules = append(enabledRules, s.getEnabledScrapingRulesByPathAndGroupHelper(rg, path)...)
 		}
 	}
 
 	return enabledRules
 }
 
-func (s *Ruleset) getEnabledRulesByPathAndGroupHelper(rg RuleGroup, path string) []ScrapingRule {
+func (s *Ruleset) getEnabledScrapingRulesByPathAndGroupHelper(rg RuleGroup, path string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 
 	for _, r := range rg.ScrapingRules {

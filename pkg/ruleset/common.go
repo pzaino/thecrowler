@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,14 +34,17 @@ import (
 )
 
 const (
-	errRulesetNotFound   = "ruleset not found"
-	errRuleGroupNotFound = "rule group not found"
+	errNotFound          = "not found"
+	errRulesetNotFound   = "ruleset " + errNotFound
+	errRuleGroupNotFound = "rule group " + errNotFound
 	errEmptyPath         = "empty path provided"
 	errEmptyURL          = "empty URL provided"
 	errParsingURL        = "error parsing URL: %s"
 	errEmptyName         = "empty name provided"
-	errActionNotFound    = "action rule not found"
-	errScrapingNotFound  = "scraping rule not found"
+	errActionNotFound    = "action rule" + errNotFound
+	errScrapingNotFound  = "scraping rule" + errNotFound
+	errCrawlingNotFound  = "crawling rule" + errNotFound
+	errDetectionNotFound = "detection rule" + errNotFound
 )
 
 // UnmarshalYAML parses date strings from the YAML file.
@@ -331,4 +335,31 @@ func LoadSchema(schemaPath string) (*jsonschema.Schema, error) {
 	}
 
 	return schema, nil
+}
+
+/// --- Prepare Items for Search --- ///
+
+func PrepareURLForSearch(urlStr string) (string, error) {
+	if urlStr == "" {
+		return "", fmt.Errorf(errEmptyURL)
+	}
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return "", fmt.Errorf(errParsingURL, err)
+	}
+	return strings.ToLower(strings.TrimSpace(urlStr)), nil
+}
+
+func PrepareNameForSearch(name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf(errEmptyName)
+	}
+	return strings.ToLower(strings.TrimSpace(name)), nil
+}
+
+func PreparePathForSearch(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf(errEmptyPath)
+	}
+	return strings.ToLower(strings.TrimSpace(path)), nil
 }

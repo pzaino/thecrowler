@@ -137,7 +137,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	info.FollowRedirects = config.FollowRedirects
 
 	// Analyze response body for additional information
-	detectedItems, err := analyzeResponse(resp, info)
+	detectedItems, err := analyzeResponse(resp, info, re)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func handleRedirect(req *http.Request, via []*http.Request, config Config, trans
 // AnalyzeResponse analyzes the response body and header for additional server-related information
 // and possible technologies used
 // Note: In the future this needs to be moved in http_rules logic
-func analyzeResponse(resp *http.Response, info *HTTPDetails) (map[string]string, error) {
+func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEngine) (map[string]string, error) {
 	// Get the response headers
 	header := &(*info).ResponseHeaders
 
@@ -187,7 +187,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails) (map[string]string,
 	var infoList map[string]string = make(map[string]string)
 
 	// Detect CMS
-	x := detectCMS(responseBody, header)
+	x := detectCMS(responseBody, header, re)
 	for k, v := range *x {
 		infoList[k] = v
 	}
@@ -211,7 +211,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails) (map[string]string,
 	return infoList, nil
 }
 
-func detectCMS(responseBody string, header *http.Header) *map[string]string {
+func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine) *map[string]string {
 	cmsNames := map[string]string{
 		"wordpress":   "WordPress",
 		"joomla":      "Joomla",

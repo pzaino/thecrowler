@@ -216,7 +216,7 @@ func TestFindRulesetByName(t *testing.T) {
 
 	// Test case 2: Empty ruleset name
 	name = ""
-	expectedError := "empty ruleset name provided"
+	expectedError := "empty name provided"
 	ruleset, err = engine.FindRulesetByName(name)
 	if err == nil {
 		t.Errorf("Expected error: %s, got nil", expectedError)

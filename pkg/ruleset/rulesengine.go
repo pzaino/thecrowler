@@ -28,6 +28,10 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
+///// ------------------------ RULESENGINE ---------------------------------- /////
+
+/// --- Creation --- ///
+
 // NewRuleEngine creates a new instance of RuleEngine with the provided site rules.
 // It initializes the RuleEngine with the given sites and returns a pointer to the created RuleEngine.
 func NewRuleEngine(schemaPath string, rulesets []Ruleset) *RuleEngine {
@@ -79,6 +83,48 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 	}
 }
 
+// NewRuleEngineWithParser creates a new instance of RuleEngine with the provided site rules.
+func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error) {
+	rulesets, err := parser.ParseRules(nil, file)
+	if err != nil {
+		return nil, err
+	}
+	return &RuleEngine{
+		Schema:   nil,
+		Rulesets: rulesets,
+	}, nil
+}
+
+// LoadRulesFromFile loads the rules from the provided file names list and returns
+// a pointer to the created RuleEngine.
+func (re *RuleEngine) LoadRulesFromFile(files []string) error {
+	for _, file := range files {
+		ruleset, err := BulkLoadRules(re.Schema, file)
+		if err != nil {
+			return err
+		}
+		re.Rulesets = append(re.Rulesets, ruleset...)
+	}
+
+	return nil
+}
+
+// LoadRulesFromConfig loads the rules from the configuration file and returns
+// a pointer to the created RuleEngine.
+func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
+	for _, rs := range config.Rulesets {
+		rulesets, err := loadRulesFromConfig(re.Schema, rs)
+		if err != nil {
+			return err
+		}
+		re.Rulesets = append(re.Rulesets, *rulesets...)
+	}
+	return nil
+}
+
+/// --- Validation --- ///
+
+// ValidateRuleset validates the provided ruleset against the RuleEngine's schema.
 func (re *RuleEngine) ValidateRuleset(ruleset Ruleset) error {
 	if re.Schema == nil {
 		return fmt.Errorf("this RuleEngine has no validation schema")
@@ -105,30 +151,6 @@ func (re *RuleEngine) ValidateRuleset(ruleset Ruleset) error {
 	return nil
 }
 
-// NewRuleEngineWithParser creates a new instance of RuleEngine with the provided site rules.
-func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error) {
-	rulesets, err := parser.ParseRules(nil, file)
-	if err != nil {
-		return nil, err
-	}
-	return &RuleEngine{
-		Schema:   nil,
-		Rulesets: rulesets,
-	}, nil
-}
-
-func (re *RuleEngine) LoadRulesFromFile(files []string) error {
-	for _, file := range files {
-		ruleset, err := BulkLoadRules(re.Schema, file)
-		if err != nil {
-			return err
-		}
-		re.Rulesets = append(re.Rulesets, ruleset...)
-	}
-
-	return nil
-}
-
 // MarshalJSON returns the JSON representation of the RuleEngine.
 func (re *RuleEngine) MarshalJSON() ([]byte, error) {
 	// transform the RuleEngine to JSON
@@ -143,6 +165,8 @@ func (re *RuleEngine) MarshalJSON() ([]byte, error) {
 
 	return jsonData, err
 }
+
+/// --- Ruleset Manipulation --- ///
 
 // AddRuleset adds a new ruleset to the RuleEngine.
 func (re *RuleEngine) AddRuleset(ruleset Ruleset) {
@@ -169,67 +193,61 @@ func (re *RuleEngine) UpdateRuleset(ruleset Ruleset) {
 	}
 }
 
-// GetScrapingRule returns a scraping rule with the specified name.
-func (re *RuleEngine) GetScrapingRule(name string) (ScrapingRule, error) {
+/// --- Retrieving --- ///
+
+// GetAllRulesets returns all rulesets in the RuleEngine.
+func (re *RuleEngine) GetAllRulesets() []Ruleset {
+	return re.Rulesets
+}
+
+// GetAllRuleGroups returns all the rule groups in the RuleEngine.
+func (re *RuleEngine) GetAllRuleGroups() []RuleGroup {
+	var ruleGroups []RuleGroup
+	for _, rs := range re.Rulesets {
+		ruleGroups = append(ruleGroups, rs.RuleGroups...)
+	}
+	return ruleGroups
+}
+
+// GetAllScrapingRules returns all the scraping rules in the RuleEngine.
+func (re *RuleEngine) GetAllScrapingRules() []ScrapingRule {
+	var scrapingRules []ScrapingRule
 	for _, rs := range re.Rulesets {
 		for _, rg := range rs.RuleGroups {
-			for _, r := range rg.ScrapingRules {
-				if r.RuleName == name {
-					return r, nil
-				}
-			}
+			scrapingRules = append(scrapingRules, rg.ScrapingRules...)
 		}
 	}
-	return ScrapingRule{}, fmt.Errorf("rule not found")
+	return scrapingRules
 }
 
-// GetActionRule returns an action rule with the specified name.
-func (re *RuleEngine) GetActionRule(name string) (ActionRule, error) {
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			for _, r := range rg.ActionRules {
-				if r.RuleName == name {
-					return r, nil
-				}
-			}
-		}
+// GetAllActionRules returns all the action rules in the RuleEngine.
+func (re *RuleEngine) GetAllActionRules() []ActionRule {
+	var actionRules []ActionRule
+	for _, rg := range re.GetAllRuleGroups() {
+		actionRules = append(actionRules, rg.ActionRules...)
 	}
-	return ActionRule{}, fmt.Errorf("rule not found")
+	return actionRules
 }
 
-// GetRuleGroup returns a rule group with the specified name.
-func (re *RuleEngine) GetRuleGroup(name string) (RuleGroup, error) {
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			if rg.GroupName == name {
-				return rg, nil
-			}
-		}
+// GetAllCrawlingRules returns all the crawling rules in the RuleEngine.
+func (re *RuleEngine) GetAllCrawlingRules() []CrawlingRule {
+	var crawlingRules []CrawlingRule
+	for _, rg := range re.GetAllRuleGroups() {
+		crawlingRules = append(crawlingRules, rg.CrawlingRules...)
 	}
-	return RuleGroup{}, fmt.Errorf(errRuleGroupNotFound)
+	return crawlingRules
 }
 
-// GetRuleset returns a ruleset with the specified name.
-func (re *RuleEngine) GetRuleset(name string) (Ruleset, error) {
-	for _, rs := range re.Rulesets {
-		if rs.Name == name {
-			return rs, nil
-		}
+// GetAllDetectionRules returns all the detection rules in the RuleEngine.
+func (re *RuleEngine) GetAllDetectionRules() []DetectionRule {
+	var detectionRules []DetectionRule
+	for _, rg := range re.GetAllRuleGroups() {
+		detectionRules = append(detectionRules, rg.DetectionRules...)
 	}
-	return Ruleset{}, fmt.Errorf(errRulesetNotFound)
+	return detectionRules
 }
 
-// LoadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
-func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
-	for _, rs := range config.Rulesets {
-		rulesets, err := loadRulesFromConfig(re.Schema, rs)
-		if err != nil {
-			return err
-		}
-		re.Rulesets = append(re.Rulesets, *rulesets...)
-	}
-	return nil
-}
+/// --- Counting --- ///
 
 // Return the number of rulesets in the RuleEngine.
 func (re *RuleEngine) CountRulesets() int {
@@ -248,10 +266,8 @@ func (re *RuleEngine) CountRuleGroups() int {
 // Return the number of ScrapingRules in the RuleEngine.
 func (re *RuleEngine) CountScrapingRules() int {
 	var count int
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			count += len(rg.ScrapingRules)
-		}
+	for _, rg := range re.GetAllRuleGroups() {
+		count += len(rg.ScrapingRules)
 	}
 	return count
 }
@@ -259,32 +275,61 @@ func (re *RuleEngine) CountScrapingRules() int {
 // Return the number of ActionRules in the RuleEngine.
 func (re *RuleEngine) CountActionRules() int {
 	var count int
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			count += len(rg.ActionRules)
-		}
+	for _, rg := range re.GetAllRuleGroups() {
+		count += len(rg.ActionRules)
+	}
+	return count
+}
+
+// Return the number of CrawlingRules in the RuleEngine.
+func (re *RuleEngine) CountCrawlingRules() int {
+	var count int
+	for _, rg := range re.GetAllRuleGroups() {
+		count += len(rg.CrawlingRules)
+	}
+	return count
+}
+
+// Return the number of DetectionRules in the RuleEngine.
+func (re *RuleEngine) CountDetectionRules() int {
+	var count int
+	for _, rg := range re.GetAllRuleGroups() {
+		count += len(rg.DetectionRules)
 	}
 	return count
 }
 
 // Return the number of rules in the RuleEngine.
 func (re *RuleEngine) CountRules() int {
-	return re.CountScrapingRules() + re.CountActionRules()
+	return re.CountScrapingRules() + re.CountActionRules() + re.CountCrawlingRules() + re.CountDetectionRules()
 }
+
+/// --- Searching --- ///
 
 // GetRulesetByURL returns the ruleset for the specified URL.
 func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 	// Validate URL
-	if urlStr == "" {
-		return nil, fmt.Errorf(errEmptyURL)
-	}
-	_, err := url.Parse(urlStr)
+	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return nil, fmt.Errorf(errParsingURL, err)
+		return nil, err
 	}
-	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
 	for _, rs := range re.Rulesets {
 		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedURL || strings.ToLower(strings.TrimSpace(rs.Name)) == "*" {
+			return &rs, nil
+		}
+	}
+	return nil, fmt.Errorf(errRulesetNotFound)
+}
+
+// GetRulesetByName returns the ruleset for the specified name.
+func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
+	// Validate name
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
+	}
+	for _, rs := range re.Rulesets {
+		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedName {
 			return &rs, nil
 		}
 	}
@@ -294,20 +339,14 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 // GetRulesGroupByURL returns the rules group for the specified URL.
 func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 	// Validate URL
-	if urlStr == "" {
-		return nil, fmt.Errorf(errEmptyURL)
-	}
-	_, err := url.Parse(urlStr)
+	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return nil, fmt.Errorf(errParsingURL, err)
+		return nil, err
 	}
-	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
-				if rg.IsValid() {
-					return &rg, nil
-				}
+	for _, rg := range re.GetAllRuleGroups() {
+		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
+			if rg.IsValid() {
+				return &rg, nil
 			}
 		}
 	}
@@ -317,54 +356,34 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 // GetRulesGroupByName returns the rules group for the specified name.
 func (re *RuleEngine) GetRuleGroupByName(name string) (*RuleGroup, error) {
 	// Validate name
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, fmt.Errorf(errEmptyName)
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
 	}
-	parsedName := strings.ToLower(name)
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
-				if rg.IsValid() {
-					return &rg, nil
-				} else {
-					return nil, fmt.Errorf("RuleGroup '%s' is not valid", rg.GroupName)
-				}
+	for _, rg := range re.GetAllRuleGroups() {
+		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
+			if rg.IsValid() {
+				return &rg, nil
+			} else {
+				return nil, fmt.Errorf("RuleGroup '%s' is not valid", rg.GroupName)
 			}
 		}
 	}
 	return nil, fmt.Errorf(errRuleGroupNotFound)
 }
 
-// GetRulesetByName returns the ruleset for the specified name.
-func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
-	// Validate name
-	if name == "" {
-		return nil, fmt.Errorf(errEmptyName)
-	}
-	parsedName := strings.ToLower(strings.TrimSpace(name))
-	for _, rs := range re.Rulesets {
-		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedName {
-			return &rs, nil
-		}
-	}
-	return nil, fmt.Errorf(errRulesetNotFound)
-}
-
 // GetActionRuleByName returns the action rule with the specified name.
 func (re *RuleEngine) GetActionRuleByName(name string) (*ActionRule, error) {
 	// Validate name
-	if name == "" {
-		return nil, fmt.Errorf(errEmptyName)
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
 	}
-	parsedName := strings.ToLower(strings.TrimSpace(name))
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			for _, r := range rg.ActionRules {
-				//cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking rule: '%s' == '%s'", r.RuleName, parsedName)
-				if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
-					return &r, nil
-				}
+	for _, rg := range re.GetAllRuleGroups() {
+		for _, r := range rg.ActionRules {
+			//cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking rule: '%s' == '%s'", r.RuleName, parsedName)
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
+				return &r, nil
 			}
 		}
 	}
@@ -374,20 +393,14 @@ func (re *RuleEngine) GetActionRuleByName(name string) (*ActionRule, error) {
 // GetActionRuleByURL returns the action rule for the specified URL.
 func (re *RuleEngine) GetActionRuleByURL(urlStr string) (*ActionRule, error) {
 	// Validate URL
-	if urlStr == "" {
-		return nil, fmt.Errorf(errEmptyURL)
-	}
-	_, err := url.Parse(urlStr)
+	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return nil, fmt.Errorf(errParsingURL, err)
+		return nil, err
 	}
-	parsedURL := strings.ToLower(strings.TrimSpace(urlStr))
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			for _, r := range rg.ActionRules {
-				if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
-					return &r, nil
-				}
+	for _, rg := range re.GetAllRuleGroups() {
+		for _, r := range rg.ActionRules {
+			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+				return &r, nil
 			}
 		}
 	}
@@ -397,16 +410,14 @@ func (re *RuleEngine) GetActionRuleByURL(urlStr string) (*ActionRule, error) {
 // GetScrapingRuleByName returns the scraping rule with the specified name.
 func (re *RuleEngine) GetScrapingRuleByName(name string) (*ScrapingRule, error) {
 	// Validate name
-	if name == "" {
-		return nil, fmt.Errorf(errEmptyName)
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
 	}
-	parsedName := strings.ToLower(strings.TrimSpace(name))
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			for _, r := range rg.ScrapingRules {
-				if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
-					return &r, nil
-				}
+	for _, rg := range re.GetAllRuleGroups() {
+		for _, r := range rg.ScrapingRules {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
+				return &r, nil
 			}
 		}
 	}
@@ -416,18 +427,50 @@ func (re *RuleEngine) GetScrapingRuleByName(name string) (*ScrapingRule, error) 
 // GetScrapingRuleByPath returns the scraping rule for the specified path.
 func (re *RuleEngine) GetScrapingRuleByPath(path string) (*ScrapingRule, error) {
 	// Validate path
-	if path == "" {
-		return nil, fmt.Errorf(errEmptyPath)
+	parsedPath, err := PreparePathForSearch(path)
+	if err != nil {
+		return nil, err
 	}
-	parsedPath := strings.ToLower(strings.TrimSpace(path))
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			if rule, err := findScrapingRuleByPath(parsedPath, rg.ScrapingRules); err == nil {
-				return rule, nil
-			}
+	for _, rg := range re.GetAllRuleGroups() {
+		if rule, err := findScrapingRuleByPath(parsedPath, rg.ScrapingRules); err == nil {
+			return rule, nil
 		}
 	}
 	return nil, fmt.Errorf(errScrapingNotFound)
+}
+
+// GetCrawlingRuleByName returns the crawling rule with the specified name.
+func (re *RuleEngine) GetCrawlingRuleByName(name string) (*CrawlingRule, error) {
+	// Validate name
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
+	}
+	for _, rg := range re.GetAllRuleGroups() {
+		for _, r := range rg.CrawlingRules {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
+				return &r, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf(errCrawlingNotFound)
+}
+
+// GetDetectionRuleByName returns the detection rule with the specified name.
+func (re *RuleEngine) GetDetectionRuleByName(name string) (*DetectionRule, error) {
+	// Validate name
+	parsedName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
+	}
+	for _, rg := range re.GetAllRuleGroups() {
+		for _, r := range rg.DetectionRules {
+			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
+				return &r, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf(errDetectionNotFound)
 }
 
 // IsGroupValid checks if the provided RuleGroup is valid.
@@ -486,12 +529,14 @@ func (re *RuleEngine) IsGroupValid(group RuleGroup) bool {
 // FindRulesForSite finds the rules for the provided URL.
 // It returns a pointer to the SiteRules for the provided URL or an error if no rules are found.
 func (re *RuleEngine) FindRulesForSite(inputURL string) (*Ruleset, error) {
-	if inputURL == "" {
-		return nil, fmt.Errorf(errEmptyURL)
+	// Validate the input URL
+	checkedURL, err := PrepareURLForSearch(inputURL)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse the input URL to extract the domain
-	parsedURL, err := url.Parse(inputURL)
+	parsedURL, err := url.Parse(checkedURL)
 	if err != nil {
 		return nil, fmt.Errorf(errParsingURL, err)
 	}
@@ -514,11 +559,11 @@ func (re *RuleEngine) FindRulesForSite(inputURL string) (*Ruleset, error) {
 
 // FindRulesetByName returns the ruleset with the provided name (if any).
 func (re *RuleEngine) FindRulesetByName(name string) (*Ruleset, error) {
-	if name == "" {
-		return nil, fmt.Errorf("empty ruleset name provided")
+	// Validate the input name
+	inputName, err := PrepareNameForSearch(name)
+	if err != nil {
+		return nil, err
 	}
-
-	inputName := strings.ToLower(strings.TrimSpace(name))
 
 	// Iterate over the SiteRules to find a matching domain
 	for _, ruleset := range re.Rulesets {
