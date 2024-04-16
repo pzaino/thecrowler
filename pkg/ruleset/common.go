@@ -20,8 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,26 +279,13 @@ func loadRulesFromRemote(schema *jsonschema.Schema, config cfg.Ruleset) (*[]Rule
 		}
 
 		url := fmt.Sprintf("http://%s/%s", config.Host, path)
-		httpClient := &http.Client{
-			Transport: cmn.SafeTransport(config.Timeout, config.SSLMode),
-		}
-		resp, err := httpClient.Get(url)
+		rulesetBody, err := cmn.FetchRemoteFile(url, config.Timeout, config.SSLMode)
 		if err != nil {
 			return &ruleset, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return &ruleset, fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return &ruleset, fmt.Errorf("failed to read response body: %v", err)
-		}
 
 		// Process ENV variables
-		interpolatedData := cmn.InterpolateEnvVars(string(body))
+		interpolatedData := cmn.InterpolateEnvVars(rulesetBody)
 
 		// I am assuming that the response body is actually a ruleset
 		// this may need reviewing later on.
@@ -309,7 +294,6 @@ func loadRulesFromRemote(schema *jsonschema.Schema, config cfg.Ruleset) (*[]Rule
 		if err != nil {
 			return &ruleset, fmt.Errorf("failed to parse new rules chunk: %v", err)
 		}
-		resp.Body.Close()
 		ruleset = append(ruleset, rules...)
 	}
 
