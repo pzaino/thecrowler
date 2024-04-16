@@ -44,7 +44,7 @@ func (rs *Ruleset) GetAllRuleGroups() []RuleGroup {
 func (rs *Ruleset) GetAllEnabledRuleGroups() []RuleGroup {
 	var enabledRuleGroups []RuleGroup
 	for _, rg := range rs.RuleGroups {
-		if rg.IsEnabled && rg.IsValid() {
+		if rg.IsValid() {
 			enabledRuleGroups = append(enabledRuleGroups, rg)
 		}
 	}
@@ -148,11 +148,8 @@ func (rs *Ruleset) GetRuleGroupByName(name string) (RuleGroup, error) {
 	if err != nil {
 		return RuleGroup{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
-			if !rg.IsValid() {
-				return RuleGroup{}, fmt.Errorf("rule group not valid")
-			}
 			return rg, nil
 		}
 	}
@@ -166,11 +163,8 @@ func (rs *Ruleset) GetRuleGroupByURL(urlStr string) (RuleGroup, error) {
 	if err != nil {
 		return RuleGroup{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
-			if !rg.IsValid() {
-				return RuleGroup{}, fmt.Errorf("rule group not valid")
-			}
 			return rg, nil
 		}
 	}
@@ -184,7 +178,7 @@ func (rs *Ruleset) GetActionRuleByName(name string) (ActionRule, error) {
 	if err != nil {
 		return ActionRule{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		for _, r := range rg.ActionRules {
 			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
 				return r, nil
@@ -201,7 +195,7 @@ func (rs *Ruleset) GetActionRuleByURL(urlStr string) (ActionRule, error) {
 	if err != nil {
 		return ActionRule{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		for _, r := range rg.ActionRules {
 			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
 				return r, nil
@@ -218,7 +212,7 @@ func (rs *Ruleset) GetScrapingRuleByName(name string) (ScrapingRule, error) {
 	if err != nil {
 		return ScrapingRule{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		for _, r := range rg.ScrapingRules {
 			if strings.ToLower(strings.TrimSpace(r.RuleName)) == parsedName {
 				return r, nil
@@ -235,7 +229,7 @@ func (rs *Ruleset) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
 	if err != nil {
 		return ScrapingRule{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		for _, r := range rg.ScrapingRules {
 			for _, p := range r.PreConditions {
 				if strings.ToLower(strings.TrimSpace(p.Path)) == parsedPath {
@@ -254,7 +248,7 @@ func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 	if err != nil {
 		return ScrapingRule{}, err
 	}
-	for _, rg := range rs.RuleGroups {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		for _, r := range rg.ScrapingRules {
 			for _, u := range r.PreConditions {
 				if strings.ToLower(strings.TrimSpace(u.URL)) == parsedURL {
@@ -289,7 +283,7 @@ func (s *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
 		return enabledRules
 	}
 
-	for _, rg := range s.RuleGroups {
+	for _, rg := range s.GetAllEnabledRuleGroups() {
 		if rg.IsEnabled {
 			enabledRules = append(enabledRules, s.getEnabledScrapingRulesByPathHelper(rg, parsedPath)...)
 		}
@@ -320,8 +314,8 @@ func (s *Ruleset) GetEnabledScrapingRulesByPathAndGroup(path, groupName string) 
 	var enabledRules []ScrapingRule
 	path = strings.TrimSpace(path)
 
-	for _, rg := range s.RuleGroups {
-		if rg.IsEnabled && rg.GroupName == groupName {
+	for _, rg := range s.GetAllEnabledRuleGroups() {
+		if rg.GroupName == groupName {
 			enabledRules = append(enabledRules, s.getEnabledScrapingRulesByPathAndGroupHelper(rg, path)...)
 		}
 	}
