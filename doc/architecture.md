@@ -18,6 +18,12 @@ and index them.
 If you need to scale up the system, you can simply spin up more instances of the
 Crowler Engine service and Chrome/Selenium services.
 
+The CROWler engine is responsible for fetch the "Sources" URLs provided by the API
+or the user, and then using the rulesets, interact with the page, collect data,
+store it in the database and detect entities.
+
+For more info on the ruleset architecture see [Ruleset Architecture](./ruleset_architecture.md).
+
 ## Architecture diagram
 
 ![TheCROWler Microservice Architecture](./GeneralArchitecture.jpg)
