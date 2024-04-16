@@ -85,7 +85,7 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url 
 
 func executeScrapingRulesInRuleset(rs *rules.Ruleset, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
-	for _, r := range rs.GetAllScrapingRules() {
+	for _, r := range rs.GetAllEnabledScrapingRules() {
 		// Execute the rule
 		scrapedData, err := executeScrapingRule(&r, wd)
 		if err != nil {

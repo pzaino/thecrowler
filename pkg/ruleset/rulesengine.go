@@ -209,6 +209,17 @@ func (re *RuleEngine) GetAllRuleGroups() []RuleGroup {
 	return ruleGroups
 }
 
+// GetAllEnabledRuleGroups returns all the rule groups in the RuleEngine.
+func (re *RuleEngine) GetAllEnabledRuleGroups() []RuleGroup {
+	var ruleGroups []RuleGroup
+	for _, rg := range re.GetAllRuleGroups() {
+		if rg.IsEnabled && re.IsGroupValid(rg) {
+			ruleGroups = append(ruleGroups, rg)
+		}
+	}
+	return ruleGroups
+}
+
 // GetAllScrapingRules returns all the scraping rules in the RuleEngine.
 func (re *RuleEngine) GetAllScrapingRules() []ScrapingRule {
 	var scrapingRules []ScrapingRule
@@ -242,6 +253,42 @@ func (re *RuleEngine) GetAllCrawlingRules() []CrawlingRule {
 func (re *RuleEngine) GetAllDetectionRules() []DetectionRule {
 	var detectionRules []DetectionRule
 	for _, rg := range re.GetAllRuleGroups() {
+		detectionRules = append(detectionRules, rg.DetectionRules...)
+	}
+	return detectionRules
+}
+
+// GetAllEnabledScrapingRules returns all the enabled scraping rules in the RuleEngine.
+func (re *RuleEngine) GetAllEnabledScrapingRules() []ScrapingRule {
+	var scrapingRules []ScrapingRule
+	for _, rg := range re.GetAllEnabledRuleGroups() {
+		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
+	}
+	return scrapingRules
+}
+
+// GetAllEnabledActionRules returns all the enabled action rules in the RuleEngine.
+func (re *RuleEngine) GetAllEnabledActionRules() []ActionRule {
+	var actionRules []ActionRule
+	for _, rg := range re.GetAllEnabledRuleGroups() {
+		actionRules = append(actionRules, rg.ActionRules...)
+	}
+	return actionRules
+}
+
+// GetAllEnabledCrawlingRules returns all the enabled crawling rules in the RuleEngine.
+func (re *RuleEngine) GetAllEnabledCrawlingRules() []CrawlingRule {
+	var crawlingRules []CrawlingRule
+	for _, rg := range re.GetAllEnabledRuleGroups() {
+		crawlingRules = append(crawlingRules, rg.CrawlingRules...)
+	}
+	return crawlingRules
+}
+
+// GetAllEnabledDetectionRules returns all the enabled detection rules in the RuleEngine.
+func (re *RuleEngine) GetAllEnabledDetectionRules() []DetectionRule {
+	var detectionRules []DetectionRule
+	for _, rg := range re.GetAllEnabledRuleGroups() {
 		detectionRules = append(detectionRules, rg.DetectionRules...)
 	}
 	return detectionRules
