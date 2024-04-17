@@ -28,12 +28,16 @@ type EncodedCmd struct {
 
 const (
 	// TokenRandom is the token for the random(x, y) command
-	TokenRandom = 1 // Define a constant for each command's token
-	// Add new tokens for additional commands here
+	TokenRandom = 1
+	// TokenTime is the token for the time() command
+	TokenTime = 2
+	// TokenURL is the token for the URL command (which always represent the current URL)
+	TokenURL = 3
 )
 
 // commandTokenMap maps command strings to their respective Token IDs.
 var commandTokenMap = map[string]int{
 	"random": TokenRandom,
-	// Add new commands and their tokens here
+	"time":   TokenTime,
+	"url":    TokenURL,
 }
