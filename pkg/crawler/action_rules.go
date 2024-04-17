@@ -54,7 +54,7 @@ func processURLRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 		if rs != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
 			// Execute all the rules in the ruleset
-			executeActionRules(rs.GetActionRules(), wd)
+			executeActionRules(rs.GetAllEnabledActionRules(), wd)
 		}
 	} else {
 		rg, err := ctx.re.GetRuleGroupByURL(url)
@@ -435,7 +435,7 @@ func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned
 			cmn.DebugMsg(cmn.DbgLvlError, "Error getting ruleset: %v", err)
 		} else {
 			// Execute the ruleset
-			executeActionRules(rs.GetActionRules(), wd)
+			executeActionRules(rs.GetAllEnabledActionRules(), wd)
 		}
 	}
 }

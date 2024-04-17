@@ -120,7 +120,7 @@ func NewConfig() Config {
 	return Config{
 		Remote: Remote{
 			Host:    "localhost",
-			Path:    "./",
+			Path:    "/",
 			Port:    0,
 			Region:  "nowhere",
 			Token:   "",
@@ -263,10 +263,19 @@ func LoadConfig(confName string) (Config, error) {
 		return Config{}, fmt.Errorf("configuration file is empty")
 	}
 
-	// Check if the configuration file contains valid values
-	err = config.Validate()
-	if err != nil {
-		return Config{}, err
+	if config.Remote != (Remote{}) && (config.Remote.Type == "remote") {
+		// This local configuration references a remote configuration
+		// Load the remote configuration
+		config, err = LoadRemoteConfig(config)
+		if err != nil {
+			return config, err
+		}
+	} else {
+		// Check if the configuration file contains valid values
+		err = config.Validate()
+		if err != nil {
+			return config, err
+		}
 	}
 
 	// cast config.DebugLevel to common.DbgLevel
@@ -280,6 +289,56 @@ func LoadConfig(confName string) (Config, error) {
 	return config, err
 }
 
+// LoadRemoteConfig is responsible for retrieving the configuration file
+// from a "remote" distribution server and return the Config struct
+func LoadRemoteConfig(cfg Config) (Config, error) {
+	// Create a new configuration object
+	config := NewConfig()
+
+	// Check if the remote configuration is empty
+	if cfg.Remote == (Remote{}) {
+		return Config{}, fmt.Errorf("remote configuration is empty")
+	}
+
+	// Check if the remote configuration contains valid values
+	err := cfg.validateRemote()
+	if err != nil {
+		return Config{}, err
+	}
+
+	// Create a RESTClient object
+	if strings.TrimSpace(config.Remote.Path) == "/" {
+		config.Remote.Path = ""
+	}
+	url := fmt.Sprintf("http://%s/%s", config.Remote.Host, config.Remote.Path)
+	rulesetBody, err := cmn.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
+	if err != nil {
+		return config, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
+	}
+
+	// Process ENV variables
+	interpolatedData := cmn.InterpolateEnvVars(rulesetBody)
+
+	// If the configuration file has been found and is not empty, unmarshal it
+	interpolatedData = strings.TrimSpace(interpolatedData)
+	if (interpolatedData != "") && (interpolatedData != "\n") && (interpolatedData != "\r\n") {
+		err = yaml.Unmarshal([]byte(interpolatedData), &config)
+		if err != nil {
+			return config, err
+		}
+	}
+
+	// Check if the configuration is correct:
+	err = config.Validate()
+	if err != nil {
+		return config, err
+	}
+
+	return config, nil
+}
+
+// Validate checks if the configuration file contains valid values.
+// Where possible, if a provided value is wrong, it's replaced with a default value.
 func (c *Config) Validate() error {
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
@@ -295,6 +354,87 @@ func (c *Config) Validate() error {
 	c.validateDebugLevel()
 
 	return nil
+}
+
+func (c *Config) validateRemote() error {
+	c.validateRemoteHost()
+	c.validateRemotePath()
+	c.validateRemotePort()
+	c.validateRemoteRegion()
+	c.validateRemoteToken()
+	c.validateRemoteSecret()
+	c.validateRemoteTimeout()
+	c.validateRemoteType()
+	c.validateRemoteSSLMode()
+	return nil
+}
+
+func (c *Config) validateRemoteHost() {
+	if strings.TrimSpace(c.Remote.Host) == "" {
+		c.Remote.Host = "localhost"
+	} else {
+		c.Remote.Host = strings.TrimSpace(c.Remote.Host)
+	}
+}
+
+func (c *Config) validateRemotePath() {
+	if strings.TrimSpace(c.Remote.Path) == "" {
+		c.Remote.Path = "/"
+	} else {
+		c.Remote.Path = strings.TrimSpace(c.Remote.Path)
+	}
+}
+
+func (c *Config) validateRemotePort() {
+	if c.Remote.Port < 1 || c.Remote.Port > 65535 {
+		c.Remote.Port = 8081
+	}
+}
+
+func (c *Config) validateRemoteRegion() {
+	if strings.TrimSpace(c.Remote.Region) == "" {
+		c.Remote.Region = ""
+	} else {
+		c.Remote.Region = strings.TrimSpace(c.Remote.Region)
+	}
+}
+
+func (c *Config) validateRemoteToken() {
+	if strings.TrimSpace(c.Remote.Token) == "" {
+		c.Remote.Token = ""
+	} else {
+		c.Remote.Token = strings.TrimSpace(c.Remote.Token)
+	}
+}
+
+func (c *Config) validateRemoteSecret() {
+	if strings.TrimSpace(c.Remote.Secret) == "" {
+		c.Remote.Secret = ""
+	} else {
+		c.Remote.Secret = strings.TrimSpace(c.Remote.Secret)
+	}
+}
+
+func (c *Config) validateRemoteTimeout() {
+	if c.Remote.Timeout < 1 {
+		c.Remote.Timeout = 15
+	}
+}
+
+func (c *Config) validateRemoteType() {
+	if strings.TrimSpace(c.Remote.Type) == "" {
+		c.Remote.Type = "local"
+	} else {
+		c.Remote.Type = strings.TrimSpace(c.Remote.Type)
+	}
+}
+
+func (c *Config) validateRemoteSSLMode() {
+	if strings.TrimSpace(c.Remote.SSLMode) == "" {
+		c.Remote.SSLMode = "disable"
+	} else {
+		c.Remote.SSLMode = strings.ToLower(strings.TrimSpace(c.Remote.SSLMode))
+	}
 }
 
 func (c *Config) validateCrawler() {
