@@ -45,9 +45,12 @@ func TestHTTPHeaderFieldGetKey(t *testing.T) {
 }
 
 func TestHTTPHeaderFieldGetValue(t *testing.T) {
-	h := HTTPHeaderField{Value: " application/json "}
+	h := HTTPHeaderField{Value: []string{
+		" application/json ",
+	},
+	}
 	expected := "application/json"
-	if got := h.GetValue(); got != expected {
+	if got := h.GetValue(0); got != expected {
 		t.Errorf("GetValue() = %v, want %v", got, expected)
 	}
 }

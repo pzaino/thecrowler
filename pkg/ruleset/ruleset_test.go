@@ -84,12 +84,6 @@ var rulesets = []Ruleset{
 					},
 				},
 			},
-		},
-	},
-	{
-		Name:          "another-example.com",
-		FormatVersion: "1.0",
-		RuleGroups: []RuleGroup{
 			{
 				GroupName: "GroupA",
 				ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},

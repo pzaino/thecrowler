@@ -38,12 +38,12 @@ func (d *DetectionRule) GetObjectVersion() string {
 }
 
 // GetHTTPHeaderFields returns the HTTP header fields for the specified detection rule.
-func (d *DetectionRule) GetHTTPHeaderFields() []HTTPHeaderField {
+func (d *DetectionRule) GetAllHTTPHeaderFields() []HTTPHeaderField {
 	return d.HTTPHeaderFields
 }
 
 // GetPageContentPatterns returns the page content patterns for the specified detection rule.
-func (d *DetectionRule) GetPageContentPatterns() []string {
+func (d *DetectionRule) GetAllPageContentPatterns() []string {
 	trimmedPatterns := []string{}
 	for _, pattern := range d.PageContentPatterns {
 		trimmedPatterns = append(trimmedPatterns, strings.TrimSpace(pattern))
@@ -52,7 +52,7 @@ func (d *DetectionRule) GetPageContentPatterns() []string {
 }
 
 // GetURLMicroSignatures returns the URL micro-signatures for the specified detection rule.
-func (d *DetectionRule) GetURLMicroSignatures() []string {
+func (d *DetectionRule) GetAllURLMicroSignatures() []string {
 	trimmedSignatures := []string{}
 	for _, signature := range d.URLMicroSignatures {
 		trimmedSignatures = append(trimmedSignatures, strings.TrimSpace(signature))
@@ -61,8 +61,44 @@ func (d *DetectionRule) GetURLMicroSignatures() []string {
 }
 
 // GetMetaTags returns the meta tags for the specified detection rule.
-func (d *DetectionRule) GetMetaTags() []MetaTag {
+func (d *DetectionRule) GetAllMetaTags() []MetaTag {
 	return d.MetaTags
+}
+
+/// --- Special Getters --- ///
+
+// GetAllHTTPHeaderFieldsMap returns a map of all HTTP header fields for the specified detection rules.
+func GetAllHTTPHeaderFieldsMap(d *[]DetectionRule) map[string]map[string]HTTPHeaderField {
+	headers := make(map[string]map[string]HTTPHeaderField)
+	for _, rule := range *d {
+		for _, header := range rule.HTTPHeaderFields {
+			if header.GetKey() == "*" {
+				item := make(map[string]HTTPHeaderField)
+				item[strings.ToLower(header.GetKey())] = header
+				headers[strings.ToLower(rule.ObjectName)] = item
+			}
+		}
+	}
+
+	return headers
+}
+
+// GetHTTPHeaderFieldsMapByKey returns a map of all HTTP header fields for the specified detection rules.
+func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[string]HTTPHeaderField {
+	headers := make(map[string]map[string]HTTPHeaderField)
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, rule := range *d {
+		for _, header := range rule.HTTPHeaderFields {
+			if strings.ToLower(strings.TrimSpace(header.GetKey())) != key {
+				continue
+			}
+			item := make(map[string]HTTPHeaderField)
+			item[strings.ToLower(header.GetKey())] = header
+			headers[strings.ToLower(rule.ObjectName)] = item
+		}
+	}
+
+	return headers
 }
 
 ///// --------------------- HTTPHeaderField ------------------------------- /////
@@ -73,8 +109,25 @@ func (h *HTTPHeaderField) GetKey() string {
 }
 
 // GetValue returns the value of the HTTP header field.
-func (h *HTTPHeaderField) GetValue() string {
-	return strings.TrimSpace(h.Value)
+func (h *HTTPHeaderField) GetValue(index int) string {
+	if index >= len(h.Value) {
+		return ""
+	}
+	return strings.TrimSpace(h.Value[index])
+}
+
+// GetAllValues returns all the values of the HTTP header field.
+func (h *HTTPHeaderField) GetAllValues() []string {
+	trimmedValues := []string{}
+	for _, value := range h.Value {
+		trimmedValues = append(trimmedValues, strings.TrimSpace(value))
+	}
+	return trimmedValues
+}
+
+// GetConfidence returns the confidence level of the HTTP header field.
+func (h *HTTPHeaderField) GetConfidence() int {
+	return h.Confidence
 }
 
 ///// --------------------- MetaTag ------------------------------- /////

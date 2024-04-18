@@ -46,15 +46,15 @@ type Ruleset struct {
 // RuleGroup represents a group of rules
 type RuleGroup struct {
 	GroupName            string               `yaml:"group_name"`
-	ValidFrom            CustomTime           `yaml:"valid_from"`
-	ValidTo              CustomTime           `yaml:"valid_to"`
+	ValidFrom            CustomTime           `yaml:"valid_from,omitempty"`
+	ValidTo              CustomTime           `yaml:"valid_to,omitempty"`
 	IsEnabled            bool                 `yaml:"is_enabled"`
-	ScrapingRules        []ScrapingRule       `yaml:"scraping_rules"`
-	ActionRules          []ActionRule         `yaml:"action_rules"`
+	ScrapingRules        []ScrapingRule       `yaml:"scraping_rules,omitempty"`
+	ActionRules          []ActionRule         `yaml:"action_rules,omitempty"`
 	DetectionRules       []DetectionRule      `yaml:"detection_rules,omitempty"`
 	CrawlingRules        []CrawlingRule       `yaml:"crawling_rules,omitempty"`
-	EnvironmentSettings  EnvironmentSettings  `yaml:"environment_settings"`
-	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration"`
+	EnvironmentSettings  EnvironmentSettings  `yaml:"environment_settings,omitempty"`
+	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration,omitempty"`
 }
 
 type PreCondition struct {
@@ -129,10 +129,17 @@ type DetectionRule struct {
 	MetaTags            []MetaTag         `yaml:"meta_tags,omitempty"`
 }
 
+// DetectionConfidence represents a confidence level in case the value is detected
+type DetectionConfidence struct {
+	Value      string `yaml:"value"`
+	Confidence int    `yaml:"confidence"`
+}
+
 // HTTPHeaderField represents a pattern for matching HTTP header fields
 type HTTPHeaderField struct {
-	Key   string `yaml:"key"`
-	Value string `yaml:"value"`
+	Key        string   `yaml:"key"`
+	Value      []string `yaml:"value"`
+	Confidence int      `yaml:"confidence"`
 }
 
 // MetaTag represents a pattern for matching HTML meta tags

@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 )
 
 /////////
@@ -142,6 +143,10 @@ func InterpretCmd(encodedCmd EncodedCmd) (string, error) {
 		return encodedCmd.ArgValue, nil
 	case TokenRandom: // Token representing the 'random' command
 		return handleRandomCommand(encodedCmd.Args)
+	case TokenTime: // Token representing the 'time' command
+		return handleTimeCommand(encodedCmd.Args)
+	case TokenURL: // Token representing the 'url' command
+		return "*", nil
 	default:
 		return "", fmt.Errorf("unknown command token: %d", encodedCmd.Token)
 	}
@@ -190,6 +195,39 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 	// Shift the number to [min, max]
 	result := int(n.Int64()) + min
 	return strconv.Itoa(result), nil
+}
+
+// handleTimeCommand processes the 'time' command given its arguments.
+func handleTimeCommand(args []EncodedCmd) (string, error) {
+	if len(args) == 0 {
+		return time.Now().String(), fmt.Errorf("time command expects 1 argument, got %d", len(args))
+	}
+
+	// Process arguments recursively
+	timeFormat, err := InterpretCmd(args[0])
+	if err != nil {
+		return time.Now().String(), err
+	}
+	timeToken := strings.ToLower(strings.TrimSpace(timeFormat))
+	switch timeToken {
+	case "unix":
+		uxTimeStr := strconv.FormatInt(time.Now().Unix(), 10)
+		return uxTimeStr, nil
+	case "unixnano":
+		uxTimeStr := strconv.FormatInt(time.Now().UnixNano(), 10)
+		return uxTimeStr, nil
+	case "rfc3339":
+		return time.Now().Format(time.RFC3339), nil
+	case "now":
+		return time.Now().String(), nil
+	default:
+		// Check if timeFormat is valid to be used with time.Format
+		_, err = time.Parse(timeFormat, "2006-01-02T15:04:05Z07:00")
+		if err != nil {
+			return time.Now().String(), fmt.Errorf("invalid time format: %s", timeFormat)
+		}
+		return string(time.Now().Format(timeFormat)), nil
+	}
 }
 
 // ----- Expression evaluation functions ----- //
