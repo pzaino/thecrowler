@@ -92,10 +92,11 @@ func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 		// Extract file's extension from file string.
 		// For example json for example.json or yaml for example.yaml
 		fileType := cmn.GetFileExt(file)
-		if fileType != "yaml" && fileType != "json" && fileType != "" {
+		if (fileType != "yaml") && (fileType != "json") && (fileType != "") && (fileType != "yml") {
 			// Ignore unsupported file types
 			continue
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Loading rules from file: %s", file)
 
 		// Load the specified file
 		rulesFile, err := os.ReadFile(file)
@@ -104,13 +105,17 @@ func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 		}
 
 		// Parse it and get the correspondent Ruleset
+		loadedOK := true
 		ruleset, err := parseRuleset(schema, &rulesFile, fileType)
 		if err != nil {
-			return rulesets, err
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse ruleset: %v", err)
+			loadedOK = false
 		}
 
 		// It's valid, let's add it to the rulesets list
-		rulesets = append(rulesets, ruleset...)
+		if loadedOK {
+			rulesets = append(rulesets, ruleset)
+		}
 	}
 
 	return rulesets, nil
@@ -119,29 +124,29 @@ func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 // parseRuleset is responsible for parsing a given ruleset.
 // if a parsing schema is provided then it uses that, otherwise it
 // parses only the correct YAML/JSON syntax for the given ruleset.
-func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) ([]Ruleset, error) {
+func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Ruleset, error) {
 	var err error
 
 	// Parse the YAML/JSON Ruleset using the provided schema
 	if schema != nil {
 		err = validateRuleset(schema, file, fileType)
 		if err != nil {
-			return nil, err
+			return Ruleset{}, err
 		}
 		fileType = "yaml"
 	}
 
-	var ruleset []Ruleset
+	var ruleset Ruleset
 	fileData := *file
-	if fileType == "yaml" || fileType == "" {
+	if (fileType == "yaml") || (fileType == "yml") || fileType == "" {
 		err = yaml.Unmarshal(fileData, &ruleset)
 		if err != nil {
-			return nil, err
+			return ruleset, err
 		}
 	} else {
 		err = json.Unmarshal(fileData, &ruleset)
 		if err != nil {
-			return nil, err
+			return ruleset, err
 		}
 	}
 
@@ -153,7 +158,7 @@ func validateRuleset(schema *jsonschema.Schema, ruleFile *[]byte, fileType strin
 	ruleData := *ruleFile
 
 	// Unmarshal based on fileType.
-	if fileType == "yaml" || fileType == "" {
+	if (fileType == "yaml") || (fileType == "yml") || (fileType == "") {
 		if err := yaml.Unmarshal(ruleData, &jsonData); err != nil {
 			return fmt.Errorf("error unmarshalling YAML: %v", err)
 		}
@@ -298,7 +303,7 @@ func loadRulesFromRemote(schema *jsonschema.Schema, config cfg.Ruleset) (*[]Rule
 		if err != nil {
 			return &ruleset, fmt.Errorf("failed to parse new rules chunk: %v", err)
 		}
-		ruleset = append(ruleset, rules...)
+		ruleset = append(ruleset, rules)
 	}
 
 	return &ruleset, nil

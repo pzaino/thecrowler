@@ -101,11 +101,12 @@ func (re *RuleEngine) LoadRulesFromFile(files []string) error {
 	for _, file := range files {
 		ruleset, err := BulkLoadRules(re.Schema, file)
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "Failed to load rules from file: %v", err)
 			return err
 		}
 		re.Rulesets = append(re.Rulesets, ruleset...)
 	}
-
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "Rulesets loaded and validated:\n%v", re.Rulesets)
 	return nil
 }
 
@@ -530,7 +531,7 @@ func (re *RuleEngine) IsGroupValid(group RuleGroup) bool {
 
 	// Check if the rules group has a valid_from and valid_to date
 	if (group.ValidFrom.IsEmpty()) && (group.ValidTo.IsEmpty()) {
-		cmn.DebugMsg(cmn.DbgLvlError, "No valid_from and valid_to dates found for group: %s", group.GroupName)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Given no valid_from and valid_to fields were found for group '%s', it's always valid.", group.GroupName)
 		return true
 	}
 

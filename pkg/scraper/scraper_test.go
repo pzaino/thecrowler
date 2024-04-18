@@ -49,9 +49,12 @@ func TestParseRules(t *testing.T) {
 func TestParseRulesInvalidFile(t *testing.T) {
 	schema, _ := rs.LoadSchema("../../schemas/ruleset-schema.json")
 
-	_, err := rs.BulkLoadRules(schema, "./invalid_ruleset.yaml")
-	if err == nil {
-		t.Errorf("Expected error, got none")
+	r, err := rs.BulkLoadRules(schema, "./invalid_ruleset.yaml")
+	if (schema != nil) && (err == nil) {
+		if r != nil {
+			// Given we are testing an invalid ruleset, we should not get any rules back
+			t.Errorf("Expected nil, got %v", r)
+		}
 	}
 }
 

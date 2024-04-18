@@ -60,6 +60,8 @@ func validateURL(inputURL string) (bool, error) {
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
 func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error) {
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Extracting HTTP information for URL: %s", config.URL)
+
 	// Validate the URL
 	if ok, err := validateURL(config.URL); !ok {
 		return nil, err
@@ -212,119 +214,95 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEng
 }
 
 func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine) *map[string]string {
-	cmsNames := map[string]string{
-		"wordpress":   "WordPress",
-		"joomla":      "Joomla",
-		"drupal":      "Drupal",
-		"magento":     "Magento",
-		"prestashop":  "PrestaShop",
-		"shopify":     "Shopify",
-		"typo3":       "TYPO3",
-		"bitrix":      "1C-Bitrix",
-		"modx":        "MODX",
-		"opencart":    "OpenCart",
-		"vbulletin":   "vBulletin",
-		"whmcs":       "WHMCS",
-		"mediawiki":   "MediaWiki",
-		"django":      "Django",
-		"laravel":     "Laravel",
-		"codeigniter": "CodeIgniter",
-		"symfony":     "Symfony",
-		"express":     "Express",
-		"angular":     "Angular",
-		"react":       "React",
-		"vue":         "Vue",
-		"ember":       "Ember",
-		"backbone":    "Backbone",
-		"meteor":      "Meteor",
-		"rails":       "Ruby on Rails",
-		"phalcon":     "Phalcon",
-		"yii":         "Yii",
-		"flask":       "Flask",
-		"spring":      "Spring",
-		"struts":      "Apache Struts",
-		"play":        "Play Framework",
-		"koa":         "Koa",
-		"sails":       "Sails.js",
-		"nuxt":        "Nuxt.js",
-		"next":        "Next.js",
-		"gatsby":      "Gatsby",
-	}
-
 	const (
-		xgenerator = "X-Generator"
+		hostHeader = "Host-Header"
+		xGenerator = "X-Generator"
+		xPoweredBy = "X-Powered-By"
 	)
 
-	// Initialize a slice to store the detected CMS
-	var detectedCMS map[string]string = make(map[string]string)
+	// CMS micro-signatures
+	Patterns := re.GetAllEnabledDetectionRules()
 
+	// transform the header patterns into a map
+	CMSPatterns := ruleset.GetAllHTTPHeaderFieldsMap(&Patterns)
+
+	// Initialize a slice to store the detected CMS
+	var detectedCMS map[string]int = make(map[string]int)
+
+	// Normalize the response body
 	responseBody = strings.ToLower(strings.TrimSpace(responseBody))
-	detectCMSByHostHeader(header, cmsNames, &detectedCMS)
-	detectCMSByXPoweredByHeader(header, cmsNames, &detectedCMS)
+
+	// Check the Host header
+	if header.Get(hostHeader) != "" && len(CMSPatterns) > 0 {
+		detectTechByTag(header, hostHeader, &CMSPatterns, &detectedCMS)
+	}
+	if header.Get(xPoweredBy) != "" {
+		XPBPatterns := ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, xPoweredBy)
+		// Check the X-Powered-By header
+		detectTechByTag(header, xPoweredBy, &XPBPatterns, &detectedCMS)
+	}
+	// Check the Link for micro-signatures
 	detectCMSByLinkHeader(header, &detectedCMS)
 
-	// SOme extra tags that may help:
-	if header.Get(xgenerator) != "" {
-		detectedCMS[xgenerator] = header.Get(xgenerator)
+	// Some extra tags that may help:
+	if header.Get(xGenerator) != "" {
+		detectedCMS[xGenerator] += 1
 	}
 	if header.Get("X-Nextjs-Cache") != "" {
-		detectedCMS["Next.js"] = "yes"
+		detectedCMS["Next.js"] += 10
 	}
 	if header.Get("X-Drupal-Cache") != "" || header.Get("X-Drupal-Dynamic-Cache") != "" {
-		detectedCMS["Drupal"] = "yes"
+		detectedCMS["Drupal"] += 5
 	}
 
 	if len(detectedCMS) == 0 {
 		// nothing found, so let's try the "heavy weapons": response body
-		detectCMSByKeyword(responseBody, cmsNames, &detectedCMS)
+		detectCMSByKeyword(responseBody, CMSPatterns, &detectedCMS)
 	}
-	return &detectedCMS
+
+	// Transform the detectedCMS map into a map of strings
+	var detectedCMSStr map[string]string = make(map[string]string)
+	for k, v := range detectedCMS {
+		// calculate "confidence" based on the value of v
+		if v > 10 {
+			detectedCMSStr[k] = "yes"
+		} else {
+			detectedCMSStr[k] = "maybe"
+		}
+	}
+	return &detectedCMSStr
 }
 
-func detectCMSByKeyword(responseBody string, cmsNames map[string]string, detectedCMS *map[string]string) {
+func detectCMSByKeyword(responseBody string, cmsNames map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
 	for cms := range cmsNames {
 		if strings.Contains(responseBody, "powered by "+cms) {
-			(*detectedCMS)[cmsNames[cms]] = "yes"
+			(*detectedCMS)[cmsNames[cms].Key] += cmsNames[cms].Confidence
 		}
 	}
 }
 
-func detectCMSByHostHeader(header *http.Header, cmsNames map[string]string, detectedCMS *map[string]string) {
-	hh := (*header)["Host-Header"]
+func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
+	hh := (*header)[tagName]
 	if len(hh) != 0 {
 		for _, tag := range hh {
 			tag = strings.ToLower(tag)
-			for cms := range cmsNames {
+			for cms := range *cmsNames {
 				if strings.Contains(tag, cms) {
-					(*detectedCMS)[cmsNames[cms]] = "yes"
+					(*detectedCMS)[(*cmsNames)[cms].Value] += (*cmsNames)[cms].Confidence
 				}
 			}
 		}
 	}
 }
 
-func detectCMSByXPoweredByHeader(header *http.Header, cmsNames map[string]string, detectedCMS *map[string]string) {
-	xpb := (*header)["X-Powered-By"]
-	if len(xpb) != 0 {
-		for _, tag := range xpb {
-			tag = strings.ToLower(tag)
-			for cms := range cmsNames {
-				if strings.Contains(tag, cms) {
-					(*detectedCMS)[cmsNames[cms]] = "yes"
-				}
-			}
-		}
-	}
-}
-
-func detectCMSByLinkHeader(header *http.Header, detectedCMS *map[string]string) {
+func detectCMSByLinkHeader(header *http.Header, detectedCMS *map[string]int) {
 	lh := (*header)["Link"]
 	if len(lh) != 0 {
 		for _, tag := range lh {
 			tag = strings.ToLower(tag)
 			cms := detectCMSMicroSignatures(tag)
 			if cms != "unknown" {
-				(*detectedCMS)[cms] += "yes"
+				(*detectedCMS)[cms] += 1
 			}
 		}
 	}

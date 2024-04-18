@@ -1,62 +1,60 @@
-[
-  {
-    "format_version": "1.0",
-    "author": "YourName",
-    "created_at": "2024-03-01T12:00:00Z",
-    "description": "Automatically accepts website cookie policies across different languages, with XPath and regex examples.",
-    "ruleset_name": "CookiePolicyAcceptanceMultilingual",
-    "rule_groups": [
-      {
-        "group_name": "CookieAcceptanceRulesExtended",
-        "is_enabled": true,
-        "action_rules": [
-          {
-            "rule_name": "ClickAcceptCookiesButton",
-            "action_type": "click",
-            "selectors": [
-              {
-                "selector_type": "css",
-                "selector": ".cookie-accept, .accept-cookies, #accept-cookies, #akzeptieren, #aceptar-cookies, #accepter, #accetta, button[name='accept_cookies'], button[class*='cookieAccept'], a[role='button'][href*='acceptCookies'], div[class*='cookie'][id*='accept'], div[id*='cookie'][class*='ok'], div[class*='cookie'][role*='button']"
-              },
-              {
-                "selector_type": "xpath",
-                "selector": "//button[contains(text(), 'Accept') or contains(text(), 'Akzeptieren') or contains(text(), 'Aceptar') or contains(text(), 'Accepter') or contains(text(), 'Accetta')]"
-              },
-              {
-                "selector_type": "class",
-                "selector": "disclaimerOK"
-              },
-              {
-                "selector_type": "id",
-                "selector": "cookieOK"
-              },
-              {
-                "selector_type": "element",
-                "selector": "div",
-                "value": "{{accept}}"
-              }
-            ],
-            "wait_conditions": [
-              {
-                "condition_type": "delay",
-                "value": "2"
-              }
-            ],
-            "error_handling": {
-              "retry_count": 3,
-              "retry_delay": 5
+{
+  "format_version": "1.0",
+  "author": "Paolo Fabio Zaino",
+  "created_at": "2024-03-01T12:00:00Z",
+  "description": "Automatically accepts website cookie policies across different languages, with XPath and regex examples.",
+  "ruleset_name": "CookiePolicyAcceptanceMultilingual",
+  "rule_groups": [
+    {
+      "group_name": "CookieAcceptanceRulesExtended",
+      "is_enabled": true,
+      "action_rules": [
+        {
+          "rule_name": "ClickAcceptCookiesButton",
+          "action_type": "click",
+          "selectors": [
+            {
+              "selector_type": "css",
+              "selector": ".cookie-accept, .accept-cookies, #accept-cookies, #akzeptieren, #aceptar-cookies, #accepter, #accetta, button[name='accept_cookies'], button[class*='cookieAccept'], a[role='button'][href*='acceptCookies'], div[class*='cookie'][id*='accept'], div[id*='cookie'][class*='ok'], div[class*='cookie'][role*='button']"
+            },
+            {
+              "selector_type": "xpath",
+              "selector": "//button[contains(text(), 'Accept') or contains(text(), 'Akzeptieren') or contains(text(), 'Aceptar') or contains(text(), 'Accepter') or contains(text(), 'Accetta')]"
+            },
+            {
+              "selector_type": "class",
+              "selector": "disclaimerOK"
+            },
+            {
+              "selector_type": "id",
+              "selector": "cookieOK"
+            },
+            {
+              "selector_type": "element",
+              "selector": "div",
+              "value": "{{accept}}"
             }
+          ],
+          "wait_conditions": [
+            {
+              "condition_type": "delay",
+              "value": "2"
+            }
+          ],
+          "error_handling": {
+            "retry_count": 3,
+            "retry_delay": 5
           }
-        ],
-        "environment_settings": {
-          "headless_mode": false,
-          "custom_browser_options": {}
-        },
-        "logging_configuration": {
-          "log_level": "INFO",
-          "log_file": "/path/to/your/logfile.log"
         }
+      ],
+      "environment_settings": {
+        "headless_mode": false,
+        "custom_browser_options": {}
+      },
+      "logging_configuration": {
+        "log_level": "INFO",
+        "log_file": "/path/to/your/logfile.log"
       }
-    ]
-  }
-]
+    }
+  ]
+}

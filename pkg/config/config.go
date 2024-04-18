@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	JSONRulesDefaultPath = "./rules/*.json"
-	YAMLRulesDefaultPath = "./rules/*.yaml"
-	DataDefaultPath      = "./data"
+	JSONRulesDefaultPath  = "./rules/*.json"
+	YAMLRulesDefaultPath1 = "./rules/*.yaml"
+	YAMLRulesDefaultPath2 = "./rules/*.yml"
+	DataDefaultPath       = "./data"
 )
 
 type OsFileReader struct{}
@@ -183,7 +184,11 @@ func NewConfig() Config {
 		Rulesets: []Ruleset{
 			{
 				Type: "local",
-				Path: []string{JSONRulesDefaultPath, YAMLRulesDefaultPath},
+				Path: []string{
+					JSONRulesDefaultPath,
+					YAMLRulesDefaultPath1,
+					YAMLRulesDefaultPath2,
+				},
 			},
 		},
 		ImageStorageAPI: FileStorageAPI{
@@ -588,7 +593,7 @@ func (c *Config) validateRulesets() {
 			c.Rulesets[i].Type = strings.TrimSpace(c.Rulesets[i].Type)
 		}
 		if len(c.Rulesets[i].Path) == 0 {
-			c.Rulesets[i].Path = []string{JSONRulesDefaultPath, YAMLRulesDefaultPath}
+			c.Rulesets[i].Path = []string{JSONRulesDefaultPath, YAMLRulesDefaultPath1, YAMLRulesDefaultPath2}
 		}
 		for j := range c.Rulesets[i].Path {
 			if strings.TrimSpace(c.Rulesets[i].Path[j]) == "" {
