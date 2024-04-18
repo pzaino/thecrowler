@@ -68,12 +68,14 @@ func (d *DetectionRule) GetAllMetaTags() []MetaTag {
 /// --- Special Getters --- ///
 
 // GetAllHTTPHeaderFieldsMap returns a map of all HTTP header fields for the specified detection rules.
-func GetAllHTTPHeaderFieldsMap(d *[]DetectionRule) map[string]HTTPHeaderField {
-	headers := make(map[string]HTTPHeaderField)
+func GetAllHTTPHeaderFieldsMap(d *[]DetectionRule) map[string]map[string]HTTPHeaderField {
+	headers := make(map[string]map[string]HTTPHeaderField)
 	for _, rule := range *d {
 		for _, header := range rule.HTTPHeaderFields {
 			if header.GetKey() == "*" {
-				headers[strings.ToLower(header.GetValue())] = header
+				item := make(map[string]HTTPHeaderField)
+				item[strings.ToLower(header.GetKey())] = header
+				headers[strings.ToLower(rule.ObjectName)] = item
 			}
 		}
 	}
@@ -82,15 +84,20 @@ func GetAllHTTPHeaderFieldsMap(d *[]DetectionRule) map[string]HTTPHeaderField {
 }
 
 // GetHTTPHeaderFieldsMapByKey returns a map of all HTTP header fields for the specified detection rules.
-func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]HTTPHeaderField {
-	headers := make(map[string]HTTPHeaderField)
+func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[string]HTTPHeaderField {
+	headers := make(map[string]map[string]HTTPHeaderField)
+	key = strings.ToLower(strings.TrimSpace(key))
 	for _, rule := range *d {
 		for _, header := range rule.HTTPHeaderFields {
-			if header.GetKey() == key {
-				headers[strings.ToLower(header.GetValue())] = header
+			if strings.ToLower(strings.TrimSpace(header.GetKey())) != key {
+				continue
 			}
+			item := make(map[string]HTTPHeaderField)
+			item[strings.ToLower(header.GetKey())] = header
+			headers[strings.ToLower(rule.ObjectName)] = item
 		}
 	}
+
 	return headers
 }
 
@@ -102,8 +109,20 @@ func (h *HTTPHeaderField) GetKey() string {
 }
 
 // GetValue returns the value of the HTTP header field.
-func (h *HTTPHeaderField) GetValue() string {
-	return strings.TrimSpace(h.Value)
+func (h *HTTPHeaderField) GetValue(index int) string {
+	if index >= len(h.Value) {
+		return ""
+	}
+	return strings.TrimSpace(h.Value[index])
+}
+
+// GetAllValues returns all the values of the HTTP header field.
+func (h *HTTPHeaderField) GetAllValues() []string {
+	trimmedValues := []string{}
+	for _, value := range h.Value {
+		trimmedValues = append(trimmedValues, strings.TrimSpace(value))
+	}
+	return trimmedValues
 }
 
 // GetConfidence returns the confidence level of the HTTP header field.

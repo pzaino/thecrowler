@@ -384,7 +384,10 @@
                                                     "description": "The name of the HTTP header field."
                                                 },
                                                 "value": {
-                                                    "type": "string",
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "string"
+                                                    },
                                                     "description": "The expected value of the HTTP header field."
                                                 },
                                                 "confidence": {

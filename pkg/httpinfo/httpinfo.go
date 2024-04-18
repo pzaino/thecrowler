@@ -217,14 +217,10 @@ func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine)
 	const (
 		hostHeader = "Host-Header"
 		xGenerator = "X-Generator"
-		xPoweredBy = "X-Powered-By"
 	)
 
 	// CMS micro-signatures
 	Patterns := re.GetAllEnabledDetectionRules()
-
-	// transform the header patterns into a map
-	CMSPatterns := ruleset.GetAllHTTPHeaderFieldsMap(&Patterns)
 
 	// Initialize a slice to store the detected CMS
 	var detectedCMS map[string]int = make(map[string]int)
@@ -232,39 +228,36 @@ func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine)
 	// Normalize the response body
 	responseBody = strings.ToLower(strings.TrimSpace(responseBody))
 
-	// Check the Host header
-	if header.Get(hostHeader) != "" && len(CMSPatterns) > 0 {
-		detectTechByTag(header, hostHeader, &CMSPatterns, &detectedCMS)
+	// Iterate through all the header tags and check for CMS signatures
+	for headerTag := range *header {
+		// Get the HTTP header fields for the specific tag
+		var Signatures map[string]map[string]ruleset.HTTPHeaderField
+		if headerTag == hostHeader {
+			Signatures = ruleset.GetAllHTTPHeaderFieldsMap(&Patterns)
+		} else {
+			Signatures = ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, headerTag)
+		}
+		if (Signatures != nil) && len(Signatures) > 0 {
+			detectTechByTag(header, headerTag, &Signatures, &detectedCMS)
+		}
 	}
-	if header.Get(xPoweredBy) != "" {
-		XPBPatterns := ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, xPoweredBy)
-		// Check the X-Powered-By header
-		detectTechByTag(header, xPoweredBy, &XPBPatterns, &detectedCMS)
-	}
-	// Check the Link for micro-signatures
-	detectCMSByLinkHeader(header, &detectedCMS)
 
 	// Some extra tags that may help:
 	if header.Get(xGenerator) != "" {
 		detectedCMS[xGenerator] += 1
 	}
-	if header.Get("X-Nextjs-Cache") != "" {
-		detectedCMS["Next.js"] += 10
-	}
-	if header.Get("X-Drupal-Cache") != "" || header.Get("X-Drupal-Dynamic-Cache") != "" {
-		detectedCMS["Drupal"] += 5
-	}
 
 	if len(detectedCMS) == 0 {
 		// nothing found, so let's try the "heavy weapons": response body
-		detectCMSByKeyword(responseBody, CMSPatterns, &detectedCMS)
+		Signatures := ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, "*")
+		detectCMSByKeyword(responseBody, &Signatures, &detectedCMS)
 	}
 
 	// Transform the detectedCMS map into a map of strings
 	var detectedCMSStr map[string]string = make(map[string]string)
 	for k, v := range detectedCMS {
 		// calculate "confidence" based on the value of v
-		if v > 10 {
+		if v >= 10 {
 			detectedCMSStr[k] = "yes"
 		} else {
 			detectedCMSStr[k] = "maybe"
@@ -273,55 +266,33 @@ func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine)
 	return &detectedCMSStr
 }
 
-func detectCMSByKeyword(responseBody string, cmsNames map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
-	for cms := range cmsNames {
-		if strings.Contains(responseBody, "powered by "+cms) {
-			(*detectedCMS)[cmsNames[cms].Key] += cmsNames[cms].Confidence
+func detectCMSByKeyword(responseBody string, signatures *map[string]map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
+	for sig := range *signatures {
+		item := (*signatures)[sig]
+		for _, signature := range item["*"].Value {
+			if strings.Contains(responseBody, "powered by "+strings.TrimSpace(signature)) {
+				(*detectedCMS)[sig] += item["*"].Confidence
+			}
 		}
 	}
 }
 
-func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
-	hh := (*header)[tagName]
+func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
+	hh := (*header)[tagName] // get the header value (header tag name is case sensitive)
+	tagName = strings.ToLower(tagName)
 	if len(hh) != 0 {
 		for _, tag := range hh {
 			tag = strings.ToLower(tag)
-			for cms := range *cmsNames {
-				if strings.Contains(tag, cms) {
-					(*detectedCMS)[(*cmsNames)[cms].Value] += (*cmsNames)[cms].Confidence
+			for ObjName := range *cmsNames {
+				item := (*cmsNames)[ObjName]
+				for _, signature := range item[tagName].Value {
+					if strings.Contains(tag, strings.ToLower(strings.TrimSpace(signature))) {
+						(*detectedCMS)[ObjName] += item[tagName].Confidence
+					}
 				}
 			}
 		}
 	}
-}
-
-func detectCMSByLinkHeader(header *http.Header, detectedCMS *map[string]int) {
-	lh := (*header)["Link"]
-	if len(lh) != 0 {
-		for _, tag := range lh {
-			tag = strings.ToLower(tag)
-			cms := detectCMSMicroSignatures(tag)
-			if cms != "unknown" {
-				(*detectedCMS)[cms] += 1
-			}
-		}
-	}
-}
-
-func detectCMSMicroSignatures(text string) string {
-	for cms, patterns := range CMSPatterns {
-		allMatch := true // Assume all patterns match initially
-		for _, pattern := range patterns {
-			if !pattern.MatchString(text) {
-				allMatch = false // If any pattern does not match, set to false and break
-				break
-			}
-		}
-		if allMatch {
-			return cms // Return the CMS name if all patterns matched
-		}
-	}
-	return "unknown" // Return "unknown" if no CMS matches all its patterns
 }
 
 /* Not ready yet:

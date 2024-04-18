@@ -137,9 +137,9 @@ type DetectionConfidence struct {
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
 type HTTPHeaderField struct {
-	Key        string `yaml:"key"`
-	Value      string `yaml:"value"`
-	Confidence int    `yaml:"confidence"`
+	Key        string   `yaml:"key"`
+	Value      []string `yaml:"value"`
+	Confidence int      `yaml:"confidence"`
 }
 
 // MetaTag represents a pattern for matching HTML meta tags

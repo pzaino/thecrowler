@@ -294,8 +294,10 @@ items:
                         type: string
                         description: The name of the HTTP header field.
                       value:
-                        type: string
-                        description: The expected value of the HTTP header field.
+                        type: array
+                        items:
+                          type: string
+                        description: The expected value(s) of the HTTP header field.
                       confidence:
                         type: number
                         description: Optional. The confidence level for the detection, ranging from 0 to 10.
