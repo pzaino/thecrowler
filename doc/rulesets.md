@@ -112,7 +112,7 @@ For more examples of working rules please have a look at the default
 For more info on all the available fields and their meaning, please refer to the
 [ruleset schema](./schemas/ruleset-schema.json).
 
-Or you can have a look at the Rules Reference [here](./rules_reference.md).
+Or you can have a look at the Rules Reference [here](./ruleset_reference.md).
 
 Let's have a look at the structure of the ruleset:
 
