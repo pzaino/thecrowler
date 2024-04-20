@@ -305,13 +305,30 @@ items:
                 page_content_patterns:
                   type: array
                   items:
-                    type: string
+                    type: object
+                    properties:
+                      key:
+                        type: string
+                        description: The name of the tag to find in the page content.
+                      value:
+                        type: string
+                        description: The pattern to match within the page content's tag.
+                      confidence:
+                        type: number
+                        description: Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).
                     description: Phrases or character sequences within page content indicative of specific technology.
                   description: Patterns within the page content that match specific technologies.
                 url_micro_signatures:
                   type: array
                   items:
-                    type: string
+                    type: object
+                    properties:
+                      value:
+                        type: string
+                        description: The micro-signature to match in the URL.
+                      confidence:
+                        type: number
+                        description: Optional. The confidence level for the detection, ranging from 0 to 10.
                     description: Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress.
                   description: URL patterns indicative of specific technologies.
                 meta_tags:
