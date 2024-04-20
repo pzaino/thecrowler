@@ -368,3 +368,18 @@ func PreparePathForSearch(path string) (string, error) {
 	}
 	return strings.ToLower(strings.TrimSpace(path)), nil
 }
+
+// PrepareSlice prepares a slice of strings by trimming and lowercasing each element.
+func PrepareSlice(slice []string, flags int) []string {
+	var prepared []string
+	for _, s := range slice {
+		if flags&01 == 01 {
+			s = strings.TrimSpace(s)
+		}
+		if flags&02 == 02 {
+			s = strings.ToLower(s)
+		}
+		prepared = append(prepared, s)
+	}
+	return prepared
+}

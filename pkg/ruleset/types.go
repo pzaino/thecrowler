@@ -139,7 +139,7 @@ type DetectionRule struct {
 // HTTPHeaderField represents a pattern for matching HTTP header fields
 type HTTPHeaderField struct {
 	Key        string   `yaml:"key"`
-	Value      []string `yaml:"value"`
+	Value      []string `yaml:"value,omitempty"`
 	Confidence float32  `yaml:"confidence"`
 }
 
@@ -151,9 +151,10 @@ type URLMicroSignature struct {
 
 // PageContent micro-signatures are patterns that can be found in the page content
 type PageContentSignature struct {
-	Key        string  `yaml:"key"`
-	Signature  string  `yaml:"value"`
-	Confidence float32 `yaml:"confidence"`
+	Key        string   `yaml:"key"`
+	Attribute  string   `yaml:"attribute,omitempty"`
+	Signature  []string `yaml:"value,omitempty"`
+	Confidence float32  `yaml:"confidence"`
 }
 
 // MetaTag represents a pattern for matching HTML meta tags

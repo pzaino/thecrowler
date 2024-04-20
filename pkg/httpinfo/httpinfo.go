@@ -287,16 +287,25 @@ func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]r
 
 func detectTechBySignature(responseBody string, doc *goquery.Document, signature ruleset.PageContentSignature, sig string, detectedTech *map[string]float32) {
 	if signature.Key == "*" {
-		if strings.Contains(responseBody, signature.Signature) {
-			(*detectedTech)[sig] += signature.Confidence
-		}
+		detectTechBySignatureValue(responseBody, signature.Signature, sig, detectedTech, signature.Confidence)
 	} else {
 		doc.Find(signature.Key).Each(func(index int, htmlItem *goquery.Selection) {
-			text := htmlItem.Text()
-			if strings.Contains(text, signature.Signature) {
-				(*detectedTech)[sig] += signature.Confidence
+			var text string
+			if (signature.Attribute != "") && (signature.Attribute != "text") {
+				text = htmlItem.AttrOr(strings.ToLower(strings.TrimSpace(signature.Attribute)), "")
+			} else {
+				text = htmlItem.Text()
 			}
+			detectTechBySignatureValue(text, signature.Signature, sig, detectedTech, signature.Confidence)
 		})
+	}
+}
+
+func detectTechBySignatureValue(text string, signatures []string, sig string, detectedTech *map[string]float32, confidence float32) {
+	for _, sigValue := range signatures {
+		if strings.Contains(text, sigValue) {
+			(*detectedTech)[sig] += confidence
+		}
 	}
 }
 

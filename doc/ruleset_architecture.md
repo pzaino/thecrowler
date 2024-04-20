@@ -96,3 +96,8 @@ The CROWler supports the following rule types:
 
 Conditions are the criteria that must be met for the rule to be executed.
 Each rule type may present different types of conditions.
+
+## Ruleset Reference
+
+Check this [link](doc/ruleset_reference.md) for a detailed reference of
+the ruleset schema.
