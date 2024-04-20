@@ -1,7 +1,7 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
-    "description": "Schema for a file containing multiple rulesets, each with its own configuration for web scraping and automation tasks.",
+    "description": "The CROWler ruleset schema defines the structure of a ruleset file, which contains rules for scraping, action execution, detection, and crawling.",
     "items": {
         "type": "object",
         "properties": {
@@ -407,8 +407,15 @@
                                                     "type": "string",
                                                     "description": "The name of the tag to find in the page content."
                                                 },
-                                                "value": {
+                                                "attribute": {
                                                     "type": "string",
+                                                    "description": "Optional. The attribute of the tag to match, e.g., 'src' for img tag etc. (use 'text' for text content)."
+                                                },
+                                                "value": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "string"
+                                                    },
                                                     "description": "The pattern to match within the page content's tag."
                                                 },
                                                 "confidence": {
