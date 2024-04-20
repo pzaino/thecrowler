@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/PuerkitoBio/goquery"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -189,18 +190,9 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEng
 	var infoList map[string]string = make(map[string]string)
 
 	// Detect CMS
-	x := detectCMS(responseBody, header, re)
+	x := detectTechnologies(info.URL, responseBody, header, re)
 	for k, v := range *x {
 		infoList[k] = v
-	}
-
-	// Look for multiple patterns or keywords in the response body
-	if strings.Contains(strings.ToLower(responseBody), "powered by laravel") {
-		infoList["laravel_framework"] = "yes"
-	}
-
-	if strings.Contains(strings.ToLower(responseBody), "javaScript framework: react") {
-		infoList["react_framework"] = "yes"
 	}
 
 	// If no additional information is found, add a default message
@@ -213,7 +205,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEng
 	return infoList, nil
 }
 
-func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine) *map[string]string {
+func detectTechnologies(url string, responseBody string, header *http.Header, re *ruleset.RuleEngine) *map[string]string {
 	const (
 		hostHeader = "Host-Header"
 		xGenerator = "X-Generator"
@@ -223,7 +215,7 @@ func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine)
 	Patterns := re.GetAllEnabledDetectionRules()
 
 	// Initialize a slice to store the detected CMS
-	var detectedCMS map[string]int = make(map[string]int)
+	var detectedTech map[string]float32 = make(map[string]float32)
 
 	// Normalize the response body
 	responseBody = strings.ToLower(strings.TrimSpace(responseBody))
@@ -238,46 +230,77 @@ func detectCMS(responseBody string, header *http.Header, re *ruleset.RuleEngine)
 			Signatures = ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, headerTag)
 		}
 		if (Signatures != nil) && len(Signatures) > 0 {
-			detectTechByTag(header, headerTag, &Signatures, &detectedCMS)
+			detectTechByTag(header, headerTag, &Signatures, &detectedTech)
 		}
 	}
+
+	// Try to detect technologies using URL's micro-signatures (e.g., /wp-content/)
+	URLSignatures := ruleset.GetAllURLMicroSignaturesMap(&Patterns)
+	detectTechByURL(url, &URLSignatures, &detectedTech)
+
+	// Try to detect technologies using meta tags
+	MetaTagsSignatures := ruleset.GetAllMetaTagsMap(&Patterns)
+	detectTechByMetaTags(responseBody, &MetaTagsSignatures, &detectedTech)
 
 	// Some extra tags that may help:
 	if header.Get(xGenerator) != "" {
-		detectedCMS[xGenerator] += 1
+		detectedTech[xGenerator] += 1
 	}
 
-	if len(detectedCMS) == 0 {
-		// nothing found, so let's try the "heavy weapons": response body
-		Signatures := ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, "*")
-		detectCMSByKeyword(responseBody, &Signatures, &detectedCMS)
-	}
+	// Check the response body for Technologies signatures
+	Signatures := ruleset.GetAllPageContentPatternsMap(&Patterns)
+	detectTechnologiesByKeyword(responseBody, &Signatures, &detectedTech)
 
-	// Transform the detectedCMS map into a map of strings
-	var detectedCMSStr map[string]string = make(map[string]string)
-	for k, v := range detectedCMS {
+	// Transform the detectedTech map into a map of strings
+	var detectedTechStr map[string]string = make(map[string]string)
+	for k, v := range detectedTech {
 		// calculate "confidence" based on the value of v
-		if v >= 10 {
-			detectedCMSStr[k] = "yes"
+		if v <= re.DetectionConfig.NoiseThreshold {
+			continue
+		}
+		if v < re.DetectionConfig.MaybeThreshold {
+			detectedTechStr[k] = "traces"
+		} else if v >= re.DetectionConfig.DetectedThreshold {
+			detectedTechStr[k] = "yes"
 		} else {
-			detectedCMSStr[k] = "maybe"
+			detectedTechStr[k] = "maybe"
 		}
 	}
-	return &detectedCMSStr
+	return &detectedTechStr
 }
 
-func detectCMSByKeyword(responseBody string, signatures *map[string]map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
+func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]ruleset.PageContentSignature, detectedTech *map[string]float32) {
+	// Create a new document from the HTML string
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
+	if err != nil {
+		fmt.Printf("error loading HTML: %s\n", err)
+		return
+	}
+	// Iterate through all the signatures and check for possible technologies
 	for sig := range *signatures {
 		item := (*signatures)[sig]
-		for _, signature := range item["*"].Value {
-			if strings.Contains(responseBody, "powered by "+strings.TrimSpace(signature)) {
-				(*detectedCMS)[sig] += item["*"].Confidence
-			}
+		for _, signature := range item {
+			detectTechBySignature(responseBody, doc, signature, sig, detectedTech)
 		}
 	}
 }
 
-func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]map[string]ruleset.HTTPHeaderField, detectedCMS *map[string]int) {
+func detectTechBySignature(responseBody string, doc *goquery.Document, signature ruleset.PageContentSignature, sig string, detectedTech *map[string]float32) {
+	if signature.Key == "*" {
+		if strings.Contains(responseBody, signature.Signature) {
+			(*detectedTech)[sig] += signature.Confidence
+		}
+	} else {
+		doc.Find(signature.Key).Each(func(index int, htmlItem *goquery.Selection) {
+			text := htmlItem.Text()
+			if strings.Contains(text, signature.Signature) {
+				(*detectedTech)[sig] += signature.Confidence
+			}
+		})
+	}
+}
+
+func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]float32) {
 	hh := (*header)[tagName] // get the header value (header tag name is case sensitive)
 	tagName = strings.ToLower(tagName)
 	if len(hh) != 0 {
@@ -287,9 +310,41 @@ func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]m
 				item := (*cmsNames)[ObjName]
 				for _, signature := range item[tagName].Value {
 					if strings.Contains(tag, strings.ToLower(strings.TrimSpace(signature))) {
-						(*detectedCMS)[ObjName] += item[tagName].Confidence
+						(*detectedTech)[ObjName] += item[tagName].Confidence
 					}
 				}
+			}
+		}
+	}
+}
+
+func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.MetaTag, detectedTech *map[string]float32) {
+	// Create a new document from the HTML string
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
+	if err != nil {
+		fmt.Printf("error loading HTML: %s\n", err)
+		return
+	}
+	// Iterate through all the meta tags and check for possible technologies
+	for ObjName := range *signatures {
+		for _, signature := range (*signatures)[ObjName] {
+			doc.Find("meta").Each(func(index int, htmlItem *goquery.Selection) {
+				if strings.EqualFold(htmlItem.AttrOr("name", ""), signature.Name) {
+					text := strings.ToLower(htmlItem.AttrOr("content", ""))
+					if strings.Contains(text, signature.Content) {
+						(*detectedTech)[ObjName] += signature.Confidence
+					}
+				}
+			})
+		}
+	}
+}
+
+func detectTechByURL(url string, URLSignatures *map[string][]ruleset.URLMicroSignature, detectedTech *map[string]float32) {
+	for ObjName := range *URLSignatures {
+		for _, signature := range (*URLSignatures)[ObjName] {
+			if strings.Contains(url, signature.Signature) {
+				(*detectedTech)[ObjName] += signature.Confidence
 			}
 		}
 	}

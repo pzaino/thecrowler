@@ -24,8 +24,15 @@ import (
 
 // RuleEngine represents the top-level structure for the rule engine
 type RuleEngine struct {
-	Schema   *jsonschema.Schema `yaml:"schema"`
-	Rulesets []Ruleset          `yaml:"rulesets"`
+	Schema          *jsonschema.Schema `yaml:"schema"`
+	Rulesets        []Ruleset          `yaml:"rulesets"`
+	DetectionConfig DetectionConfig    `yaml:"detection_config"`
+}
+
+type DetectionConfig struct {
+	NoiseThreshold    float32 `yaml:"noise_threshold"`
+	MaybeThreshold    float32 `yaml:"maybe_threshold"`
+	DetectedThreshold float32 `yaml:"detected_threshold"`
 }
 
 // CustomTime wraps time.Time to provide custom parsing.
@@ -120,32 +127,40 @@ type PostProcessingStep struct {
 
 // DetectionRule represents a rule for detecting specific technologies or objects
 type DetectionRule struct {
-	RuleName            string            `yaml:"rule_name"`
-	ObjectName          string            `yaml:"object_name"`
-	ObjectVersion       string            `yaml:"object_version,omitempty"`
-	HTTPHeaderFields    []HTTPHeaderField `yaml:"http_header_fields,omitempty"`
-	PageContentPatterns []string          `yaml:"page_content_patterns,omitempty"`
-	URLMicroSignatures  []string          `yaml:"url_micro_signatures,omitempty"`
-	MetaTags            []MetaTag         `yaml:"meta_tags,omitempty"`
-}
-
-// DetectionConfidence represents a confidence level in case the value is detected
-type DetectionConfidence struct {
-	Value      string `yaml:"value"`
-	Confidence int    `yaml:"confidence"`
+	RuleName            string                 `yaml:"rule_name"`
+	ObjectName          string                 `yaml:"object_name"`
+	ObjectVersion       string                 `yaml:"object_version,omitempty"`
+	HTTPHeaderFields    []HTTPHeaderField      `yaml:"http_header_fields,omitempty"`
+	PageContentPatterns []PageContentSignature `yaml:"page_content_patterns,omitempty"`
+	URLMicroSignatures  []URLMicroSignature    `yaml:"url_micro_signatures,omitempty"`
+	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
 type HTTPHeaderField struct {
 	Key        string   `yaml:"key"`
 	Value      []string `yaml:"value"`
-	Confidence int      `yaml:"confidence"`
+	Confidence float32  `yaml:"confidence"`
+}
+
+// URLMicroSignature represents a pattern for matching URL micro-signatures
+type URLMicroSignature struct {
+	Signature  string  `yaml:"value"`
+	Confidence float32 `yaml:"confidence"`
+}
+
+// PageContent micro-signatures are patterns that can be found in the page content
+type PageContentSignature struct {
+	Key        string  `yaml:"key"`
+	Signature  string  `yaml:"value"`
+	Confidence float32 `yaml:"confidence"`
 }
 
 // MetaTag represents a pattern for matching HTML meta tags
 type MetaTag struct {
-	Name    string `yaml:"name"`
-	Content string `yaml:"content"`
+	Name       string  `yaml:"name"`
+	Content    string  `yaml:"content"`
+	Confidence float32 `yaml:"confidence"`
 }
 
 // CrawlingRule represents a crawling rule for URL fuzzing and form handling

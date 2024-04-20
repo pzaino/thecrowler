@@ -41,6 +41,11 @@ func NewRuleEngine(schemaPath string, rulesets []Ruleset) *RuleEngine {
 		return &RuleEngine{
 			Schema:   nil,
 			Rulesets: rulesets,
+			DetectionConfig: DetectionConfig{
+				NoiseThreshold:    1.0,
+				MaybeThreshold:    5.0,
+				DetectedThreshold: 10.0,
+			},
 		}
 	}
 
@@ -72,6 +77,11 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 			Rulesets: []Ruleset{
 				{},
 			},
+			DetectionConfig: DetectionConfig{
+				NoiseThreshold:    1.0,
+				MaybeThreshold:    5.0,
+				DetectedThreshold: 10.0,
+			},
 		}
 	}
 
@@ -92,6 +102,11 @@ func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error
 	return &RuleEngine{
 		Schema:   nil,
 		Rulesets: rulesets,
+		DetectionConfig: DetectionConfig{
+			NoiseThreshold:    1.0,
+			MaybeThreshold:    5.0,
+			DetectedThreshold: 10.0,
+		},
 	}, nil
 }
 
@@ -106,7 +121,7 @@ func (re *RuleEngine) LoadRulesFromFile(files []string) error {
 		}
 		re.Rulesets = append(re.Rulesets, ruleset...)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "Rulesets loaded and validated:\n%v", re.Rulesets)
+
 	return nil
 }
 
