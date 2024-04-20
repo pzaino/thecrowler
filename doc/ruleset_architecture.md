@@ -99,5 +99,5 @@ Each rule type may present different types of conditions.
 
 ## Ruleset Reference
 
-Check this [link](doc/ruleset_reference.md) for a detailed reference of
+Check this [link](./ruleset_reference.md) for a detailed reference of
 the ruleset schema.

@@ -5,8 +5,10 @@ information to extract and which to ignore. Rulesets are defined in a YAML file
 and are used to define the following:
 
 - Detect and interact with a website fields and buttons
+- Define what you wish to visit from a website (recursive crawling and/or fuzzing)
 - Define which portions of a page to extract and how to store the extracted
   information
+- Define which entities to detect and how to store the detected entities (technologies used on a website, products, etc.)
 
 Extracted data is stored in a JSON document, which is then stored in the DB and
 each field is indexed and mapped to a "dorking" category. The mapping is defined
@@ -14,83 +16,103 @@ by the ruleset and is used to enrich and facilitate information searching.
 
 ## Ruleset Structure
 
-A ruleset can be stored in a YAML file, each JSON file can contains multiple
-rulesets. The ruleset structure is as follows:
+A ruleset can be stored in a YAML file (or a JSON file). Each file can contain
+a single ruleset. The crowler can load multiple rulesets from multiple files.
+
+Rulesets can be distributed either as files or fetched from a remote server.
+
+The ruleset structure is as follows:
 
 ```yaml
 ---
-- ruleset_name: "Example Items Extraction Ruleset"
-  format_version: "1.0"
-  rule_groups:
-    - group_name: "Group1"
-      valid_from: "2021-01-01T00:00:00Z"
-      valid_to: "2029-12-31T00:00:00Z"
-      is_enabled: true
-      scraping_rules:
-        - rule_name: "Articles"
-          path: "/articles"
-          elements:
-            - key: "title"
-              selectors:
-                - selector_type: "css"
-                  selector: "h1.article-title"
-                - selector_type: "xpath"
-                  selector: "//h1[@class='article-title']"
-            - key: "content"
-              selectors:
-                - selector_type: "css"
-                  selector: "div.article-content"
-            - key: "date"
-              selectors:
-                - selector_type: "css"
-                  selector: "span.date"
-          js_files: true
-          technology_patterns:
-            - "jquery"
-            - "bootstrap"
-
-    - group_name: "Group2"
-      valid_from: "2021-01-01T00:00:00Z"
-      valid_to: "2021-12-31T00:00:00Z"
-      is_enabled: false
-      scraping_rules:
-        - rule_name: "News"
-          path: "/news"
-          elements:
-            - key: "headline"
-              selectors:
-                - selector_type: "css"
-                  selector: "h1.headline"
-            - key: "summary"
-              selectors:
-                - selector_type: "css"
-                  selector: "p.summary"
-          js_files: false
-
-- ruleset_name: "another-example.com"
-  format_version: "1.0"
-  rule_groups:
-    - group_name: "GroupA"
-      valid_from: "2021-01-01T00:00:00Z"
-      valid_to: "2023-12-31T00:00:00Z"
-      is_enabled: true
-      scraping_rules:
-        - rule_name: "Products"
-          path: "/products"
-          elements:
-            - key: "name"
-              selectors:
+ruleset_name: "Example Items Extraction Ruleset"
+format_version: "1.0.4"
+author: "TheCROWler Team"
+rule_groups:
+  - group_name: "Group1"
+    valid_from: "2021-01-01T00:00:00Z"
+    valid_to: "2029-12-31T00:00:00Z"
+    is_enabled: true
+    scraping_rules:
+      - rule_name: "Articles"
+        pre_conditions:
+          - path: "/articles"
+        elements:
+          - key: "title"
+            selectors:
               - selector_type: "css"
-                selector: "div.product-name"
-            - key: "price"
-              selectors:
+                selector: "h1.article-title"
+              - selector_type: "xpath"
+                selector: "//h1[@class='article-title']"
+          - key: "content"
+            selectors:
               - selector_type: "css"
-                selector: "span.price"
+                selector: "div.article-content"
+          - key: "date"
+            selectors:
+              - selector_type: "css"
+                selector: "span.date"
+        js_files: true
+        technology_patterns:
+          - "jquery"
+          - "bootstrap"
+    post_processing:
+      - step_type: "remove"
+        selector: "div.ads"
+      - step_type: "replace"
+        selector: "div.article-content"
+        replacement: "div.article-content > p"
+      - step_type: "custom_js"
+        js_code: "document.querySelector('div.article-content').remove()"
+
+  - group_name: "Group2"
+    valid_from: "2021-01-01T00:00:00Z"
+    valid_to: "2021-12-31T00:00:00Z"
+    is_enabled: false
+    scraping_rules:
+      - rule_name: "News"
+        pre_conditions:
+          - path: "/news"
+        elements:
+          - key: "headline"
+            selectors:
+              - selector_type: "css"
+                selector: "h1.headline"
+          - key: "summary"
+            selectors:
+              - selector_type: "css"
+                selector: "p.summary"
+        js_files: false
+
+  - group_name: "GroupA"
+    valid_from: "2021-01-01T00:00:00Z"
+    valid_to: "2023-12-31T00:00:00Z"
+    is_enabled: true
+    scraping_rules:
+      - rule_name: "Products"
+        pre_conditions:
+          - url: "https://www.another-example.com"
+            path: "/products"
+        elements:
+          - key: "name"
+            selectors:
+            - selector_type: "css"
+              selector: "div.product-name"
+          - key: "price"
+            selectors:
+            - selector_type: "css"
+              selector: "span.price"
+
 
 ```
 
+For more examples of working rules please have a look at the default
+[rulesets](../rules/).
+
 For more info on all the available fields and their meaning, please refer to the
 [ruleset schema](./schemas/ruleset-schema.json).
+
+Or you can have a look at the Rules Reference [here](./rules_reference.md).
 
 Let's have a look at the structure of the ruleset:
 
@@ -181,14 +203,6 @@ Let's have a look at the structure of the ruleset:
       `false`, then no JavaScript file will be extracted and stored in the JSON
       document (unless you have made a rule specifically targeted to extract
       JavaScript files).
-
-    - `technology_patterns`: A list of technology patterns. Each technology
-      pattern is a string. This field is optional. If you specify a list of
-      technology patterns, then the scraping rule will be applied to any URL
-      which presents such technologies. If you do not specify a list of
-      technology patterns, then the scraping rule will be applied to any URL.
-      Keep in mind that this approach may not always work as expected (because
-      certain technologies might be cloaked or obfuscated).
 
 ## How to use a ruleset
 
