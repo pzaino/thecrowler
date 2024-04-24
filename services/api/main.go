@@ -229,20 +229,24 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := performSearch(query)
-	results.Kind = "customsearch#search"
-	results.URL.Type = "application/json"
-	results.URL.Template = getQueryTemplate("search", "v1", r.Method)
-	results.Queries.Request = append(results.Queries.Request, QueryRequest{
-		"search",
-		len(results.Items),
-		query,
-		len(results.Items),
-		0,
-		"utf8",
-		"utf8",
-		"off",
-		"0",
-	})
+	results.SetHeaderFields(
+		"customsearch#search",
+		jsonResponse,
+		GetQueryTemplate("search", "v1", r.Method),
+		[]QueryRequest{
+			{
+				"search",
+				len(results.Items),
+				query,
+				len(results.Items),
+				0,
+				"utf8",
+				"utf8",
+				"off",
+				"0",
+			},
+		},
+	)
 
 	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
 
@@ -290,20 +294,24 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, retCode)
 	} else {
-		results.Kind = "netinfo#search"
-		results.URL.Type = "application/json"
-		results.URL.Template = getQueryTemplate("netinfo", "v1", r.Method)
-		results.Queries.Request = append(results.Queries.Request, QueryRequest{
-			"search",
-			len(results.Items),
-			query,
-			len(results.Items),
-			0,
-			"utf8",
-			"utf8",
-			"off",
-			"0",
-		})
+		results.SetHeaderFields(
+			"netinfo#search",
+			jsonResponse,
+			GetQueryTemplate("netinfo", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					0,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
+				},
+			},
+		)
 		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
 	}
 }
@@ -318,7 +326,7 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := performHTTPInfoSearch(query, getQTypeFromName(r.Method))
-	if results.isEmpty() {
+	if results.IsEmpty() {
 		var retCode int
 		if config.API.Return404 {
 			retCode = http.StatusNotFound
@@ -327,30 +335,25 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, retCode)
 	} else {
-		results.Kind = "httpinfo#search"
-		results.URL.Type = "application/json"
-		results.URL.Template = getQueryTemplate("httpinfo", "v1", r.Method)
-		results.Queries.Request = append(results.Queries.Request, QueryRequest{
-			"search",
-			len(results.Items),
-			query,
-			len(results.Items),
-			0,
-			"utf8",
-			"utf8",
-			"off",
-			"0",
-		})
+		results.SetHeaderFields(
+			"httpinfo#search",
+			jsonResponse,
+			GetQueryTemplate("httpinfo", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					0,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
+				},
+			},
+		)
 		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
-	}
-}
-
-func getQueryTemplate(kind string, version string, method string) string {
-	if method == "GET" {
-		return fmt.Sprintf("%s http(s)://%s/%s/%s?q={q}", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
-	} else {
-		// return the template for POST requests
-		return fmt.Sprintf("%s http(s)://%s/%s/%s", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
 	}
 }
 
