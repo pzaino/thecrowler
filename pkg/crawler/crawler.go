@@ -100,11 +100,30 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 		re:     re,
 	}
 
+	var err error
+
+	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
+	if !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") && !strings.HasPrefix(source.URL, "ftp://") && !strings.HasPrefix(source.URL, "ftps://") {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", source.URL)
+		processCtx.GetNetInfo(source.URL)
+		processCtx.IndexNetInfo()
+		SeleniumInstances <- sel
+		tID.Done()
+		UpdateSourceState(db, source.URL, nil)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
+		return
+	}
+
 	// Connect to Selenium
-	if err := processCtx.ConnectToSelenium(sel); err != nil {
+	if err = processCtx.ConnectToSelenium(sel); err != nil {
+		UpdateSourceState(db, source.URL, err)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Error connecting to Selenium: %v", err)
+		SeleniumInstances <- sel
+		tID.Done()
 		return
 	}
 	defer ReturnSeleniumInstance(tID, &processCtx, &sel)
+	defer UpdateSourceState(db, source.URL, err)
 	processCtx.crawlingRunning = true
 
 	// Crawl the initial URL and get the HTML content
@@ -124,7 +143,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 		// and update the source state in the database
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
 		SeleniumInstances <- sel
-		updateSourceState(db, source.URL, err)
+		UpdateSourceState(db, source.URL, err)
 		return
 	}
 	initialLinks := extractLinks(htmlContent)
@@ -215,7 +234,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	processCtx.IndexNetInfo()
 
 	// Update the source state in the database
-	updateSourceState(db, source.URL, nil)
+	//UpdateSourceState(db, source.URL, nil)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
 }
 
@@ -241,7 +260,7 @@ func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 			// and update the source state in the database
 			cmn.DebugMsg(cmn.DbgLvlError, "Error re-connecting to Selenium: %v", err)
 			ctx.sel <- sel
-			updateSourceState(*ctx.db, ctx.source.URL, err)
+			UpdateSourceState(*ctx.db, ctx.source.URL, err)
 			return
 		}
 	}
@@ -254,7 +273,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting HTML content: %v", err)
 		ctx.sel <- sel // Assuming 'sel' is accessible
-		updateSourceState(*ctx.db, ctx.source.URL, err)
+		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 		return pageSource, err
 	}
 
@@ -418,70 +437,9 @@ func (ctx *processContext) IndexNetInfo() int64 {
 	return indexNetInfo(*ctx.db, ctx.source.URL, pageInfo)
 }
 
-// handleConsent is responsible for handling consent windows (e.g., cookie consent)
-/*
-func handleConsent(wd selenium.WebDriver) {
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking for 'consent' or 'cookie accept' windows...")
-	for _, text := range append(acceptTexts, consentTexts...) {
-		if clicked := findAndClickButton(wd, text); clicked {
-			break
-		}
-	}
-	cmn.DebugMsg(cmn.DbgLvlInfo, "completed.")
-}
-
-func findAndClickButton(wd selenium.WebDriver, buttonText string) bool {
-	buttonTextLower := strings.ToLower(buttonText)
-	consentSelectors := []string{
-		// IDs and classes containing buttonText
-		fmt.Sprintf("//*[@id[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]]", buttonTextLower),
-		fmt.Sprintf("//*[@class[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]]", buttonTextLower),
-		// Text-based buttons and links
-		fmt.Sprintf("//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '%s')]", buttonTextLower),
-		// Image-based buttons (alt text)
-		fmt.Sprintf("//img[contains(@alt, '%s')]", buttonText),
-		// Add more selectors as necessary
-	}
-
-	for _, selector := range consentSelectors {
-		if clickButtonBySelector(wd, selector) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func clickButtonBySelector(wd selenium.WebDriver, selector string) bool {
-	elements, err := wd.FindElements(selenium.ByXPATH, selector)
-	if err != nil {
-		return false
-	}
-
-	for _, element := range elements {
-		if isVisibleAndClickable(element) {
-			err = element.Click()
-			if err == nil {
-				return true
-			}
-			// Log or handle the error if click failed
-		}
-	}
-
-	time.Sleep(1 * time.Second)
-	return false
-}
-
-func isVisibleAndClickable(element selenium.WebElement) bool {
-	visible, _ := element.IsDisplayed()
-	clickable, _ := element.IsEnabled()
-	return visible && clickable
-}
-*/
-
-// updateSourceState is responsible for updating the state of a Source in
+// UpdateSourceState is responsible for updating the state of a Source in
 // the database after crawling it (it does consider errors too)
-func updateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
+func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 	var err error
 
 	// Before updating the source state, check if the database connection is still alive

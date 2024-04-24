@@ -16,6 +16,10 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
@@ -179,12 +183,110 @@ type HTTPInfoResponse struct {
 	Items []HTTPInfoRow `json:"items"`
 }
 
-func (r *HTTPInfoResponse) isEmpty() bool {
+// SearchResponse is an interface that defines the methods that
+// a search response should implement.
+type SearchResponse interface {
+	IsEmpty() bool
+	SetHeaderFields(kind, urlType, urlTemplate string, requests, nextPages []QueryRequest)
+	Populate(data []byte) error // Assuming data comes as a byte array of JSON
+}
+
+// IsEmpty returns true if the response is empty
+func (r *HTTPInfoResponse) IsEmpty() bool {
 	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *HTTPInfoResponse) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
+// Populate populates the response with the data
+func (r *HTTPInfoResponse) Populate(data []byte) error {
+	if err := json.Unmarshal(data, &r.Items); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IsEmpty returns true if the response is empty
+func (r *NetInfoResponse) IsEmpty() bool {
+	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *NetInfoResponse) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
+// Populate populates the response with the data
+func (r *NetInfoResponse) Populate(data []byte) error {
+	if err := json.Unmarshal(data, &r.Items); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IsEmpty returns true if the response is empty
+func (r *APIResponse) IsEmpty() bool {
+	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *APIResponse) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
+// Populate populates the response with the data
+func (r *APIResponse) Populate(data []byte) error {
+	if err := json.Unmarshal(data, &r.Items); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IsEmpty returns true if the response is empty
+func (r *SearchResult) IsEmpty() bool {
+	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *SearchResult) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
+// Populate populates the response with the data
+func (r *SearchResult) Populate(data []byte) error {
+	if err := json.Unmarshal(data, &r.Items); err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetQueryTemplate(kind string, version string, method string) string {
+	if method == "GET" {
+		return fmt.Sprintf("%s http(s)://%s/%s/%s?q={q}", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
+	} else {
+		// return the template for POST requests
+		return fmt.Sprintf("%s http(s)://%s/%s/%s", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
+	}
 }
 
 // Enum for qType (query type)
 const (
-	postQuery = 0
-	getQuery  = 1
+	postQuery    = 0
+	getQuery     = 1
+	jsonResponse = "application/json"
 )

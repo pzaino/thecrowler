@@ -185,7 +185,7 @@ func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance, RulesEngin
 		}
 
 		// Crawl each source
-		crawlSources(*db, sel, sourcesToCrawl, RulesEngine)
+		crawlSources(*db, sel, &sourcesToCrawl, RulesEngine)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.Unlock()
@@ -201,19 +201,18 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []cdb.Source, RulesEngine *rules.RuleEngine) {
-	if len(sources) == 0 {
+func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]cdb.Source, RulesEngine *rules.RuleEngine) {
+	if len(*sources) == 0 {
 		return
 	}
 
 	// We have some sources to crawl, let's start the crawling process
-	var wg sync.WaitGroup // Declare a WaitGroup
-
-	for _, source := range sources {
-		wg.Add(1)                 // Increment the WaitGroup counter
-		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
-			//defer wg.Done() // Decrement the counter when the goroutine completes
+	var wg sync.WaitGroup
+	for idx, source := range *sources {
+		wg.Add(1)
+		go func(src cdb.Source) {
 			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine)
+			(*sources)[idx].Status = 1
 		}(source) // Pass the current source
 	}
 
