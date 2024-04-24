@@ -69,16 +69,83 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	}
 
 	// Validate IP address
-	host := urlToHost(config.URL)
-	// Get the IP address for the host
+	if err := validateIPAddress(config.URL); err != nil {
+		return nil, err
+	}
+
+	// Retrieve SSL Info (if it's HTTPS)
+	sslInfo, err := getSSLInfo(config.URL)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error retrieving SSL information: %v", err)
+	}
+
+	// Create a new HTTP client
+	httpClient := createHTTPClient(config)
+
+	// Send HTTP request
+	resp, err := sendHTTPRequest(httpClient, config)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Handle redirects
+	if shouldFollowRedirects(config, resp) {
+		return handleRedirects(config, re, resp)
+	}
+
+	// Create a new HTTPDetails object
+	info := new(HTTPDetails)
+
+	// Collect response headers
+	info.ResponseHeaders = resp.Header
+
+	// Extract response headers
+	info.URL = config.URL
+	info.CustomHeaders = config.CustomHeader
+	info.FollowRedirects = config.FollowRedirects
+	info.SSLInfo = ConvertSSLInfoToDetails(*sslInfo)
+
+	// Analyze response body for additional information
+	detectedItems, err := analyzeResponse(resp, info, re)
+	if err != nil {
+		return nil, err
+	}
+	info.DetectedAssets = make(map[string]string)
+	for k, v := range detectedItems {
+		info.DetectedAssets[k] = v
+	}
+
+	return info, nil
+}
+
+func validateIPAddress(url string) error {
+	host := urlToHost(url)
 	ips := cmn.HostToIP(host)
 	for _, ip := range ips {
 		if cmn.IsDisallowedIP(ip, 0) {
-			return nil, fmt.Errorf("IP address not allowed: %s", config.URL)
+			return fmt.Errorf("IP address not allowed: %s", url)
 		}
 	}
+	return nil
+}
 
-	// Ok, the URL is safe, let's create a new HTTP request config.SSLMode
+func getSSLInfo(url string) (*SSLInfo, error) {
+	sslInfo := NewSSLInfo()
+	if strings.HasPrefix(url, "https") {
+		err := sslInfo.GetSSLInfo(url, "443")
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug1, "Error retrieving SSL information: %v", err)
+		}
+		err = sslInfo.ValidateCertificate()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug1, "Error validating SSL certificate: %v", err)
+		}
+	}
+	return sslInfo, nil
+}
+
+func createHTTPClient(config Config) *http.Client {
 	transport := cmn.SafeTransport(config.Timeout, "ignore")
 	transport.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true, // Skip TLS certificate verification
@@ -93,6 +160,10 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 			return handleRedirect(req, via, config, transport)
 		},
 	}
+	return httpClient
+}
+
+func sendHTTPRequest(httpClient *http.Client, config Config) (*http.Response, error) {
 	req, err := http.NewRequest("GET", config.URL, nil)
 	if err != nil {
 		return nil, err
@@ -107,49 +178,23 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	return resp, nil
+}
 
-	// Check if the response is a redirect (3xx)
-	if config.FollowRedirects && (resp.StatusCode >= 300 && resp.StatusCode < 400) {
-		// Handle the redirect as needed
-		cmn.DebugMsg(cmn.DbgLvlDebug1, "Redirect detected, handle it as needed.")
+func shouldFollowRedirects(config Config, resp *http.Response) bool {
+	return config.FollowRedirects && (resp.StatusCode >= 300 && resp.StatusCode < 400)
+}
 
-		// Extract the new location from the response header
-		newLocation := resp.Header.Get("Location")
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Redirect location: %s", newLocation)
+func handleRedirects(config Config, re *ruleset.RuleEngine, resp *http.Response) (*HTTPDetails, error) {
+	newLocation := resp.Header.Get("Location")
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Redirect location: %s", newLocation)
 
-		// Create a new configuration with the new location
-		newConfig := config
-		newConfig.URL = newLocation
-		newConfig.CustomHeader = map[string]string{"User-Agent": cmn.UsrAgentStrMap["desktop01"]}
-		newConfig.FollowRedirects = true
+	newConfig := config
+	newConfig.URL = newLocation
+	newConfig.CustomHeader = map[string]string{"User-Agent": cmn.UsrAgentStrMap["desktop01"]}
+	newConfig.FollowRedirects = true
 
-		// Recursively call ExtractHTTPInfo with the new configuration to extract the new HTTP information
-		return ExtractHTTPInfo(newConfig, re)
-	}
-
-	// Create a new HTTPDetails object
-	info := new(HTTPDetails)
-
-	// Collect response headers
-	info.ResponseHeaders = resp.Header
-
-	// Extract response headers
-	info.URL = config.URL
-	info.CustomHeaders = config.CustomHeader
-	info.FollowRedirects = config.FollowRedirects
-
-	// Analyze response body for additional information
-	detectedItems, err := analyzeResponse(resp, info, re)
-	if err != nil {
-		return nil, err
-	}
-	info.DetectedAssets = make(map[string]string)
-	for k, v := range detectedItems {
-		info.DetectedAssets[k] = v
-	}
-
-	return info, nil
+	return ExtractHTTPInfo(newConfig, re)
 }
 
 func handleRedirect(req *http.Request, via []*http.Request, config Config, transport *http.Transport) error {

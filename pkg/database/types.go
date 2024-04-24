@@ -72,6 +72,9 @@ type Source struct {
 	Flags int
 	// Config is a JSON object containing the configuration for the source.
 	Config *json.RawMessage // we use json.RawMessage to avoid unmarshalling the JSON object
+
+	// The following fields are not stored in the database but are used internally.
+	Status int
 }
 
 // DefaultSourceCfgJSON is the default configuration for a source in JSON format.

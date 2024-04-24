@@ -207,12 +207,10 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources []c
 	}
 
 	// We have some sources to crawl, let's start the crawling process
-	var wg sync.WaitGroup // Declare a WaitGroup
-
+	var wg sync.WaitGroup
 	for _, source := range sources {
-		wg.Add(1)                 // Increment the WaitGroup counter
-		go func(src cdb.Source) { // Pass the source as a parameter to the goroutine
-			//defer wg.Done() // Decrement the counter when the goroutine completes
+		wg.Add(1)
+		go func(src cdb.Source) {
 			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine)
 		}(source) // Pass the current source
 	}

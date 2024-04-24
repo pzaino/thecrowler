@@ -17,8 +17,10 @@ package httpinfo
 
 import (
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"fmt"
 	"net/http"
-	"regexp"
 	"time"
 )
 
@@ -74,6 +76,7 @@ type HTTPDetails struct {
 	CustomHeaders   map[string]string `json:"custom_headers"`
 	FollowRedirects bool              `json:"follow_redirects"`
 	ResponseHeaders http.Header       `json:"response_headers"`
+	SSLInfo         SSLDetails        `json:"ssl_info"`
 	DetectedAssets  map[string]string `json:"detected_assets"`
 }
 
@@ -159,15 +162,109 @@ type SSLInfo struct {
 	CertExpiration               time.Time           `json:"cert_expiration"`
 }
 
-// CMS Micro-Signature Patterns table: CMS name -> list of patterns
-var CMSPatterns = map[string][]*regexp.Regexp{
-	"Wordpress": {
-		regexp.MustCompile(`/wp-json/`),
-		regexp.MustCompile(`/api.w.org/`),
-	},
-	"Drupal": {
-		regexp.MustCompile(`/some-drupal-signature/`),
-		regexp.MustCompile(`/another-drupal-pattern/`),
-	},
-	// Add more CMS and patterns as needed
+// SSLDetails is identical to SSLInfo, however it is designed to be easy to unmarshal/marshal
+// from/to JSON, so it's used to store data on the DB and return data from requests.
+type SSLDetails struct {
+	URL                          string      `json:"url"`
+	Issuers                      []string    `json:"issuers"`              // List of issuers
+	FQDNs                        []string    `json:"fqdns"`                // List of FQDNs the certificate is valid for
+	PublicKeys                   []string    `json:"public_keys"`          // Public key info, possibly base64-encoded
+	SignatureAlgorithms          []string    `json:"signature_algorithms"` // Signature algorithms used
+	CertChains                   []CertChain `json:"cert_chain"`           // Base64-encoded certificates
+	IsCertChainOrderValid        bool        `json:"is_cert_chain_order_valid"`
+	IsRootTrustworthy            bool        `json:"is_root_trustworthy"`
+	IsCertValid                  bool        `json:"is_cert_valid"`
+	IsCertExpired                bool        `json:"is_cert_expired"`
+	IsCertRevoked                bool        `json:"is_cert_revoked"`
+	IsCertSelfSigned             bool        `json:"is_cert_self_signed"`
+	IsCertCA                     bool        `json:"is_cert_ca"`
+	IsCertIntermediate           bool        `json:"is_cert_intermediate"`
+	IsCertLeaf                   bool        `json:"is_cert_leaf"`
+	IsCertTrusted                bool        `json:"is_cert_trusted"`
+	IsCertTechnicallyConstrained bool        `json:"is_cert_technically_constrained"`
+	IsCertEV                     bool        `json:"is_cert_ev"`
+	IsCertEVSSL                  bool        `json:"is_cert_ev_ssl"`
+	CertExpiration               string      `json:"cert_expiration"` // Use string to simplify
+}
+
+// CertChain is a struct to store the base64-encoded certificate chain
+type CertChain struct {
+	Certificates []string `json:"certificates"`
+}
+
+// ConvertSSLInfoToDetails converts SSLInfo to SSLDetails
+func ConvertSSLInfoToDetails(info SSLInfo) SSLDetails {
+	certChainBase64 := make([]CertChain, len(info.CertChain))
+	issuers := make([]string, len(info.CertChain))
+	fqdns := make([]string, 0)
+	publicKeys := make([]string, len(info.CertChain))
+	signatureAlgorithms := make([]string, len(info.CertChain))
+
+	for i, cert := range info.CertChain {
+		// Base64 encode the certificate
+		block := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		}
+		certData := pem.EncodeToMemory(block)
+		certChainBase64[i].Certificates = make([]string, 1)
+		certChainBase64[i].Certificates[0] = base64.StdEncoding.EncodeToString(certData)
+
+		// Get issuer details
+		issuers[i] = cert.Issuer.CommonName
+
+		// Get FQDNs
+		fqdns = append(fqdns, cert.DNSNames...)
+
+		// Get IP addresses if needed
+		for _, ip := range cert.IPAddresses {
+			fqdns = append(fqdns, ip.String())
+		}
+
+		// Get public key info (encoded or detailed as needed)
+		publicKeyBytes, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+		if err == nil {
+			publicKeys[i] = base64.StdEncoding.EncodeToString(publicKeyBytes)
+		}
+
+		// Get signature algorithm
+		signatureAlgorithms[i] = cert.SignatureAlgorithm.String()
+	}
+
+	return SSLDetails{
+		URL:                          info.URL,
+		CertChains:                   certChainBase64,
+		Issuers:                      issuers,
+		FQDNs:                        fqdns,
+		PublicKeys:                   publicKeys,
+		SignatureAlgorithms:          signatureAlgorithms,
+		IsCertChainOrderValid:        info.IsCertChainOrderValid,
+		IsRootTrustworthy:            info.IsRootTrustworthy,
+		IsCertValid:                  info.IsCertValid,
+		IsCertExpired:                info.IsCertExpired,
+		IsCertRevoked:                info.IsCertRevoked,
+		IsCertSelfSigned:             info.IsCertSelfSigned,
+		IsCertCA:                     info.IsCertCA,
+		IsCertIntermediate:           info.IsCertIntermediate,
+		IsCertLeaf:                   info.IsCertLeaf,
+		IsCertTrusted:                info.IsCertTrusted,
+		IsCertTechnicallyConstrained: info.IsCertTechnicallyConstrained,
+		IsCertEV:                     info.IsCertEV,
+		IsCertEVSSL:                  info.IsCertEVSSL,
+		CertExpiration:               info.CertExpiration.Format("2006-01-02"),
+	}
+}
+
+// DecodeCert decodes a base64-encoded certificate stored in SSLDetails
+func DecodeCert(certBase64 string) (*x509.Certificate, error) {
+	certPEM, err := base64.StdEncoding.DecodeString(certBase64)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("failed to decode PEM block containing the certificate")
+	}
+
+	return x509.ParseCertificate(block.Bytes)
 }
