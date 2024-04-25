@@ -41,7 +41,7 @@ Sources list.
 
 The CROWler provides an API to query the database. The API is a REST API and is
 documented using Swagger. To access the Swagger documentation, go to
-`http://localhost:8080/search?q=<your query>` with a RESTFUL client.
+`http://localhost:8080/v1/search?q=<your query>` with a RESTFUL client.
 
 If you have built The CROWler from source, you can run the API by running the
 API with the following command:
@@ -52,3 +52,31 @@ API with the following command:
 
 If you used docker compose to install The CROWler, then the API is already
 up and running.
+
+The API offers a set of end points to search for data in the crowler and, if
+you enabled the console feature in your config.yaml, it will also offer a set
+of end points to manage your sources (aka, add/remove etc sources).
+
+The end-points added so far are:
+
+- [GET] `/v1/search?q=<your query>`: This end-point will search the database
+  for the query you provide and return the results in JSON format.
+- [GET] `/v1/netinfo?q=<your query>`: This end-point will search the database
+  for the query you provide and return the results in JSON format. The results
+  will include the network information of the site.
+- [GET] `/v1/httpinfo?q=<your query>`: This end-point will search the database
+  for the query you provide and return the results in JSON format. The results
+  will include the HTTP information of the site, detected technologies and SSL
+  Info.
+- [GET] `/v1/screenshot?q=<your query>`: This end-point will search the
+  database for the query you provide and return the results in JSON format. The
+  results will include the screenshot of the site.
+
+There are equivalent end-points in [POST] for all the above end-points.
+Those accept a JSON document with more options than the GET end-points.
+
+The q parameter supports dorking operators. For example, you can search for
+`title:admin` to search for sites with the word "admin" in the title.
+And they also support logical operators. For example, you can search for
+`title:admin||administrator` to search for sites with the word "admin" OR
+the word "administrator" in the title.
