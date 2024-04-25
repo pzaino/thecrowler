@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.22.2 AS builder
+# Build stage (using golang:1.22.2)
+FROM golang@sha256:d5302d40dc5fbbf38ec472d1848a9d2391a13f93293a6a5b0b87c99dc0eaa6ae AS builder
 WORKDIR /app
 COPY ./cmd ./cmd
 COPY ./pkg ./pkg
@@ -14,8 +14,8 @@ COPY ./rules/ ./rules
 RUN chmod +x autobuild.sh
 RUN ./autobuild.sh
 
-# Run stage
-FROM alpine:3.14.2
+# Run stage (using alpine:3.14.2)
+FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
 WORKDIR /app
 
 # Install necessary packages
