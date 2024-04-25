@@ -74,6 +74,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	}
 
 	// Retrieve SSL Info (if it's HTTPS)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "Collecting SSL/TLS information for URL: %s", config.URL)
 	sslInfo, err := getSSLInfo(config.URL)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error retrieving SSL information: %v", err)
@@ -83,6 +84,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	httpClient := createHTTPClient(config)
 
 	// Send HTTP request
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "Collecting HTTP Header information for URL: %s", config.URL)
 	resp, err := sendHTTPRequest(httpClient, config)
 	if err != nil {
 		return nil, err
@@ -104,7 +106,10 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	info.URL = config.URL
 	info.CustomHeaders = config.CustomHeader
 	info.FollowRedirects = config.FollowRedirects
-	info.SSLInfo = ConvertSSLInfoToDetails(*sslInfo)
+	info.SSLInfo, err = ConvertSSLInfoToDetails(*sslInfo)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error converting SSL info to details: %v", err)
+	}
 
 	// Analyze response body for additional information
 	detectedItems, err := analyzeResponse(resp, info, re)

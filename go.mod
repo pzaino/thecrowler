@@ -20,6 +20,8 @@ require (
 	github.com/stretchr/testify v1.9.0
 )
 
+require golang.org/x/crypto v0.22.0 // indirect
+
 require (
 	github.com/Ullaakut/nmap v2.0.2+incompatible
 	github.com/kr/pretty v0.3.0 // indirect

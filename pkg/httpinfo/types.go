@@ -21,6 +21,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -166,11 +168,17 @@ type SSLInfo struct {
 // from/to JSON, so it's used to store data on the DB and return data from requests.
 type SSLDetails struct {
 	URL                          string      `json:"url"`
-	Issuers                      []string    `json:"issuers"`              // List of issuers
-	FQDNs                        []string    `json:"fqdns"`                // List of FQDNs the certificate is valid for
-	PublicKeys                   []string    `json:"public_keys"`          // Public key info, possibly base64-encoded
-	SignatureAlgorithms          []string    `json:"signature_algorithms"` // Signature algorithms used
-	CertChains                   []CertChain `json:"cert_chain"`           // Base64-encoded certificates
+	Issuers                      []string    `json:"issuers"`                    // List of issuers
+	OwnerOrganizations           []string    `json:"owner_organizations"`        // Organizations
+	OwnerOrganizationalUnits     []string    `json:"owner_organizational_units"` // Organizational Units
+	OwnerCountries               []string    `json:"owner_countries"`            // Countries
+	OwnerStates                  []string    `json:"owner_states"`               // States
+	OwnerLocalities              []string    `json:"owner_localities"`           // Localities
+	OwnerCommonNames             []string    `json:"owner_common_names"`         // Common Names
+	FQDNs                        []string    `json:"fqdns"`                      // List of FQDNs the certificate is valid for
+	PublicKeys                   []string    `json:"public_keys"`                // Public key info, possibly base64-encoded
+	SignatureAlgorithms          []string    `json:"signature_algorithms"`       // Signature algorithms used
+	CertChains                   []CertChain `json:"cert_chain"`                 // Base64-encoded certificates
 	IsCertChainOrderValid        bool        `json:"is_cert_chain_order_valid"`
 	IsRootTrustworthy            bool        `json:"is_root_trustworthy"`
 	IsCertValid                  bool        `json:"is_cert_valid"`
@@ -193,13 +201,19 @@ type CertChain struct {
 }
 
 // ConvertSSLInfoToDetails converts SSLInfo to SSLDetails
-func ConvertSSLInfoToDetails(info SSLInfo) SSLDetails {
+func ConvertSSLInfoToDetails(info SSLInfo) (SSLDetails, error) {
 	certChainBase64 := make([]CertChain, len(info.CertChain))
 	issuers := make([]string, len(info.CertChain))
-	fqdns := make([]string, 0)
 	publicKeys := make([]string, len(info.CertChain))
 	signatureAlgorithms := make([]string, len(info.CertChain))
+	ownerOrganizations := make([]string, len(info.CertChain))
+	ownerOrganizationalUnits := make([]string, len(info.CertChain))
+	ownerCountries := make([]string, len(info.CertChain))
+	ownerStates := make([]string, len(info.CertChain))
+	ownerLocalities := make([]string, len(info.CertChain))
+	ownerCommonNames := make([]string, len(info.CertChain))
 
+	fqdnSet := make(map[string]struct{}) // Let's use a map to avoid duplicates
 	for i, cert := range info.CertChain {
 		// Base64 encode the certificate
 		block := &pem.Block{
@@ -213,12 +227,20 @@ func ConvertSSLInfoToDetails(info SSLInfo) SSLDetails {
 		// Get issuer details
 		issuers[i] = cert.Issuer.CommonName
 
-		// Get FQDNs
-		fqdns = append(fqdns, cert.DNSNames...)
+		// Get owner details
+		ownerOrganizations[i] = strings.Join(cert.Subject.Organization, ", ")
+		ownerOrganizationalUnits[i] = strings.Join(cert.Subject.OrganizationalUnit, ", ")
+		ownerCountries[i] = strings.Join(cert.Subject.Country, ", ")
+		ownerStates[i] = strings.Join(cert.Subject.Province, ", ")
+		ownerLocalities[i] = strings.Join(cert.Subject.Locality, ", ")
+		ownerCommonNames[i] = cert.Subject.CommonName
 
-		// Get IP addresses if needed
+		// Get FQDNs
+		for _, name := range cert.DNSNames {
+			fqdnSet[name] = struct{}{}
+		}
 		for _, ip := range cert.IPAddresses {
-			fqdns = append(fqdns, ip.String())
+			fqdnSet[ip.String()] = struct{}{}
 		}
 
 		// Get public key info (encoded or detailed as needed)
@@ -231,10 +253,23 @@ func ConvertSSLInfoToDetails(info SSLInfo) SSLDetails {
 		signatureAlgorithms[i] = cert.SignatureAlgorithm.String()
 	}
 
+	// Convert the FQDN map to a slice
+	fqdns := make([]string, 0, len(fqdnSet))
+	for name := range fqdnSet {
+		fqdns = append(fqdns, name)
+	}
+	sort.Strings(fqdns)
+
 	return SSLDetails{
 		URL:                          info.URL,
 		CertChains:                   certChainBase64,
 		Issuers:                      issuers,
+		OwnerOrganizations:           ownerOrganizations,
+		OwnerOrganizationalUnits:     ownerOrganizationalUnits,
+		OwnerCountries:               ownerCountries,
+		OwnerStates:                  ownerStates,
+		OwnerLocalities:              ownerLocalities,
+		OwnerCommonNames:             ownerCommonNames,
 		FQDNs:                        fqdns,
 		PublicKeys:                   publicKeys,
 		SignatureAlgorithms:          signatureAlgorithms,
@@ -252,7 +287,7 @@ func ConvertSSLInfoToDetails(info SSLInfo) SSLDetails {
 		IsCertEV:                     info.IsCertEV,
 		IsCertEVSSL:                  info.IsCertEVSSL,
 		CertExpiration:               info.CertExpiration.Format("2006-01-02"),
-	}
+	}, nil
 }
 
 // DecodeCert decodes a base64-encoded certificate stored in SSLDetails
