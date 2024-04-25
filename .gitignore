@@ -32,3 +32,4 @@ config.sh
 # Testing environments
 sonar-project.properties
 .scannerwork/**
+AllCertificatesRecordReport.csv

@@ -16,6 +16,7 @@
 package httpinfo
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/csv"
@@ -28,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ocsp"
 )
 
 // Globals:
@@ -160,7 +163,7 @@ func (ssl *SSLInfo) ValidateCertificate() error {
 	}
 
 	// Check if the certificate is revoked:
-	ssl.IsCertRevoked, err = checkCertificateRevocation(ssl.CertChain)
+	ssl.IsCertRevoked, err = checkCertificateRevocation(ssl.CertChain[0], ssl.CertChain[1])
 	if err != nil {
 		return err
 	}
@@ -380,11 +383,36 @@ func checkCertificateRevocationList(certChain []*x509.Certificate) ([]string, er
 }
 */
 
-func checkCertificateRevocation(certChain []*x509.Certificate) (bool, error) {
-	// Check if the certificate is revoked:
-	isCertRevoked := certChain[0] != nil && certChain[0].OCSPServer != nil && certChain[0].OCSPServer[0] != ""
-	//certChain[0].OCSPServer[0] == "http://ocsp.digicert.com"
-	return isCertRevoked, nil
+// Check if the certificate has been revoked, using OCSP
+func checkCertificateRevocation(cert *x509.Certificate, issuerCert *x509.Certificate) (bool, error) {
+	if len(cert.OCSPServer) == 0 {
+		return false, nil // No OCSP servers listed, can't check revocation via OCSP
+	}
+
+	ocspURL := cert.OCSPServer[0] // Get the first OCSP server in the list
+	req, err := ocsp.CreateRequest(cert, issuerCert, nil)
+	if err != nil {
+		return false, err // Error creating OCSP request
+	}
+
+	// Send the OCSP request and get the response
+	httpResponse, err := http.Post(ocspURL, "application/ocsp-request", bytes.NewReader(req))
+	if err != nil {
+		return false, err // Error sending the OCSP request
+	}
+	defer httpResponse.Body.Close()
+
+	responseBytes, err := io.ReadAll(httpResponse.Body)
+	if err != nil {
+		return false, err // Error reading the OCSP response
+	}
+
+	ocspResponse, err := ocsp.ParseResponse(responseBytes, issuerCert)
+	if err != nil {
+		return false, err // Error parsing the OCSP response
+	}
+
+	return ocspResponse.Status == ocsp.Revoked, nil
 }
 
 func checkCertificateTechnicalConstraints(certChain []*x509.Certificate) (bool, error) {
@@ -678,8 +706,8 @@ func checkTrustworthyRoot(certChain []*x509.Certificate) (bool, error) {
 	// Check if the root certificate is trustworthy
 	rootCert := certChain[len(certChain)-1]
 	//fmt.Println("Root Authority found:", rootCert)
-	fmt.Println("- Root Authority: ", rootCert.Subject.CommonName)
-	fmt.Println("- Root Issuer: ", rootCert.Issuer.CommonName)
+	//fmt.Println("- Root Authority: ", rootCert.Subject.CommonName)
+	//fmt.Println("- Root Issuer: ", rootCert.Issuer.CommonName)
 
 	RootAuthVerified := isRootAuthorityVerified(rootCert)
 	issuerVerified := isIssuerVerified(rootCert)
