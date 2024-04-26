@@ -120,6 +120,7 @@ type ServiceScoutConfig struct {
 	HostTimeout    string `yaml:"host_timeout"`    // --host-timeout (Give up on target after this long)
 	MinRate        string `yaml:"min_rate"`        // --min-rate (Send packets no slower than this)
 	MaxRetries     int    `yaml:"max_retries"`     // --max-retries (Caps the number of port scan probe retransmissions)
+	MaxPortNumber  int    `yaml:"max_port_number"` // allows to specify the maximum port number to scan (default is 9000)
 
 	// Output (TBD)
 	/*

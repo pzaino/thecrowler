@@ -17,10 +17,12 @@ package httpinfo
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -112,7 +114,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	}
 
 	// Analyze response body for additional information
-	detectedItems, err := analyzeResponse(resp, info, re)
+	detectedItems, err := analyzeResponse(resp, info, sslInfo, re)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +224,7 @@ func handleRedirect(req *http.Request, via []*http.Request, config Config, trans
 // AnalyzeResponse analyzes the response body and header for additional server-related information
 // and possible technologies used
 // Note: In the future this needs to be moved in http_rules logic
-func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEngine) (map[string]string, error) {
+func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine) (map[string]string, error) {
 	// Get the response headers
 	header := &(*info).ResponseHeaders
 
@@ -240,7 +242,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEng
 	var infoList map[string]string = make(map[string]string)
 
 	// Detect CMS
-	x := detectTechnologies(info.URL, responseBody, header, re)
+	x := detectTechnologies(info.URL, responseBody, header, sslInfo, re)
 	for k, v := range *x {
 		infoList[k] = v
 	}
@@ -255,7 +257,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, re *ruleset.RuleEng
 	return infoList, nil
 }
 
-func detectTechnologies(url string, responseBody string, header *http.Header, re *ruleset.RuleEngine) *map[string]string {
+func detectTechnologies(url string, responseBody string, header *http.Header, sslInfo *SSLInfo, re *ruleset.RuleEngine) *map[string]string {
 	const (
 		hostHeader = "Host-Header"
 		xGenerator = "X-Generator"
@@ -287,10 +289,12 @@ func detectTechnologies(url string, responseBody string, header *http.Header, re
 	// Try to detect technologies using URL's micro-signatures (e.g., /wp-content/)
 	URLSignatures := ruleset.GetAllURLMicroSignaturesMap(&Patterns)
 	detectTechByURL(url, &URLSignatures, &detectedTech)
+	URLSignatures = nil
 
 	// Try to detect technologies using meta tags
 	MetaTagsSignatures := ruleset.GetAllMetaTagsMap(&Patterns)
 	detectTechByMetaTags(responseBody, &MetaTagsSignatures, &detectedTech)
+	MetaTagsSignatures = nil
 
 	// Some extra tags that may help:
 	if header.Get(xGenerator) != "" {
@@ -300,6 +304,14 @@ func detectTechnologies(url string, responseBody string, header *http.Header, re
 	// Check the response body for Technologies signatures
 	Signatures := ruleset.GetAllPageContentPatternsMap(&Patterns)
 	detectTechnologiesByKeyword(responseBody, &Signatures, &detectedTech)
+	Signatures = nil
+
+	// Check for SSL/TLS technologies
+	if sslInfo != nil {
+		sslSignatures := ruleset.GetAllSSLSignaturesMap(&Patterns)
+		detectTechBySSL(sslInfo, &sslSignatures, &detectedTech)
+		sslSignatures = nil
+	}
 
 	// Transform the detectedTech map into a map of strings
 	var detectedTechStr map[string]string = make(map[string]string)
@@ -317,6 +329,41 @@ func detectTechnologies(url string, responseBody string, header *http.Header, re
 		}
 	}
 	return &detectedTechStr
+}
+
+func detectTechBySSL(sslInfo *SSLInfo, sslSignatures *map[string][]ruleset.SSLSignature, detectedTech *map[string]float32) {
+	for ObjName := range *sslSignatures {
+		for _, signature := range (*sslSignatures)[ObjName] {
+			detectSSLTechBySignatureValue(sslInfo.CertChain, signature, detectedTech, ObjName)
+		}
+	}
+}
+
+func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature ruleset.SSLSignature, detectedTech *map[string]float32, ObjName string) {
+	for _, cert := range certChain {
+		// Get Certificate field based on the signature key
+		certField, err := getCertificateField(cert, signature.Key)
+		if err != nil {
+			continue
+		} else {
+			for _, signatureValue := range signature.Value {
+				if strings.Contains(certField, signatureValue) {
+					(*detectedTech)[ObjName] += signature.Confidence
+				}
+			}
+		}
+	}
+}
+
+func getCertificateField(cert *x509.Certificate, key string) (string, error) {
+	sValue := reflect.ValueOf(cert.Subject)
+	sType := sValue.Type()
+	for i := 0; i < sValue.NumField(); i++ {
+		if sType.Field(i).Name == key {
+			return sValue.Field(i).String(), nil
+		}
+	}
+	return "", fmt.Errorf("field not found: %s", key)
 }
 
 func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]ruleset.PageContentSignature, detectedTech *map[string]float32) {

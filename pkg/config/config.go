@@ -33,6 +33,9 @@ const (
 	YAMLRulesDefaultPath1 = "./rules/*.yaml"
 	YAMLRulesDefaultPath2 = "./rules/*.yml"
 	DataDefaultPath       = "./data"
+	SSDefaultTimeProfile  = 3
+	SSDefaultTimeout      = 3600
+	SSDefaultDelayTime    = 100
 )
 
 type OsFileReader struct{}
@@ -236,11 +239,14 @@ func NewConfig() Config {
 			},
 			ServiceScout: ServiceScoutConfig{
 				Enabled:          false,
-				Timeout:          600,
+				Timeout:          SSDefaultTimeout,
+				HostTimeout:      fmt.Sprint((SSDefaultTimeout - (SSDefaultTimeout / 4))),
 				OSFingerprinting: false,
 				ServiceDetection: true,
 				NoDNSResolution:  true,
-				ScanDelay:        "1",
+				MaxPortNumber:    9000,
+				ScanDelay:        fmt.Sprint(SSDefaultDelayTime),
+				TimingTemplate:   fmt.Sprint(SSDefaultTimeProfile),
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,
@@ -764,12 +770,28 @@ func (c *NetLookupConfig) validate() {
 func (c *ServiceScoutConfig) validate() {
 	if c.Enabled {
 		if c.Timeout < 1 {
-			c.Timeout = 600
+			c.Timeout = SSDefaultTimeout
+		}
+		if strings.TrimSpace(c.HostTimeout) == "" {
+			c.HostTimeout = fmt.Sprint((c.Timeout - (c.Timeout / 4)))
+		} else {
+			c.HostTimeout = strings.TrimSpace(c.HostTimeout)
 		}
 		if strings.TrimSpace(c.ScanDelay) == "" {
-			c.ScanDelay = "1"
+			c.ScanDelay = fmt.Sprint(SSDefaultDelayTime)
 		} else {
 			c.ScanDelay = strings.TrimSpace(c.ScanDelay)
+		}
+		if c.MaxPortNumber < 1 {
+			c.MaxPortNumber = 9000
+		}
+		if c.MaxPortNumber > 65535 {
+			c.MaxPortNumber = 65535
+		}
+		if strings.TrimSpace(c.TimingTemplate) == "" {
+			c.TimingTemplate = fmt.Sprint(SSDefaultTimeProfile)
+		} else {
+			c.TimingTemplate = strings.TrimSpace(c.TimingTemplate)
 		}
 	}
 }
