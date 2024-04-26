@@ -148,7 +148,10 @@ items:
                       details:
                         type: object
                         description: Detailed configuration for the post-processing step, structure depends on the step_type.
-                  description: Post-processing steps for the scraped data to transform, validate, or clean it.
+                  description: "Post-processing steps for the scraped data to transform, validate, or clean it. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
+                  required:
+                    - step_type
+                    - details
               required:
                 - rule_name
                 - elements
@@ -323,6 +326,24 @@ items:
                         description: Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).
                     description: Phrases or character sequences within page content indicative of specific technology.
                   description: Patterns within the page content that match specific technologies.
+                certificates_patterns:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      key:
+                        type: string
+                        description: The name of the field in an SSL/TLS certificate to find.
+                      value:
+                        type: array
+                        items:
+                          type: string
+                        description: The pattern to match within the field's value.
+                      confidence:
+                        type: number
+                        description: Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).
+                    description: Phrases or character sequences within certain certificate's fields indicative of specific technology.
+                  description: Patterns within the Certificate content that match specific technologies.
                 url_micro_signatures:
                   type: array
                   items:
@@ -354,6 +375,7 @@ items:
               anyOf:
                 - required: [http_header_fields]
                 - required: [page_content_patterns]
+                - required: [certificates_patterns]
                 - required: [url_micro_signatures]
                 - required: [meta_tags]
           crawling_rules:

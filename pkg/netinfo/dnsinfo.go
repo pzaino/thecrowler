@@ -73,6 +73,22 @@ func parseDNSInfo(ni *NetInfo, domain, host, output string) error {
 			stage = 2
 		}
 		dnsInfo.parseDNSRecords(output)
+		/* if add-DNS-records to IP list is enabled, add the A records to the IP list
+		for _, record := range dnsInfo.Records {
+			if record.Type == "A" {
+				inList := false
+				for _, ip := range ni.IPs.IP {
+					if ip == record.Response {
+						inList = true
+						break
+					}
+				}
+				if !inList {
+					ni.IPs.IP = append(ni.IPs.IP, record.Response)
+				}
+			}
+		}
+		*/
 
 		// Check for unresolved answers:
 		for _, record := range dnsInfo.Records {

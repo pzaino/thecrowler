@@ -71,15 +71,13 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout warning: %v", warning)
 		}
 	}
+	// log the raw results if we are in debug mode:
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
 
-	// display the results
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout results: %v", result)
-
 	// Parse the scan result
-	//parseScanResult(result, &host)
 	hosts := parseScanResults(result)
 
 	return hosts, nil
@@ -93,7 +91,6 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	}
 	options = append(options, nmap.WithTargets(ip))
 	options = append(options, nmap.WithContext(*ctx))
-	options = append(options, nmap.WithPorts("1-9000"))
 
 	// Add options based on the config fields
 	if cfg.PingScan {
@@ -108,18 +105,28 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	if cfg.AggressiveScan {
 		options = append(options, nmap.WithAggressiveScan())
 	}
+	// Prepare scripts to use for the scan
+	if len(cfg.ScriptScan) == 0 {
+		cfg.ScriptScan = []string{"default"}
+	}
 	if len(cfg.ScriptScan) != 0 {
 		options = append(options, nmap.WithScripts(cfg.ScriptScan...))
 	}
 	if cfg.ServiceDetection {
+		options = append(options, nmap.WithCustomArguments("-Pn"))
+		options = append(options, nmap.WithPorts("1-"+strconv.Itoa(cfg.MaxPortNumber)))
 		options = append(options, nmap.WithServiceInfo())
+		//options = append(options, nmap.WithCustomArguments("--version-intensity 5"))
 	}
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())
 	}
 	if cfg.ScanDelay != "" {
 		scDelay := exi.GetFloat(cfg.ScanDelay)
-		options = append(options, nmap.WithScanDelay(time.Duration(scDelay)))
+		if scDelay < 1 {
+			scDelay += 1
+		}
+		options = append(options, nmap.WithScanDelay(time.Duration(scDelay)*time.Millisecond))
 	}
 	if cfg.TimingTemplate != "" {
 		// transform cfg.Timing into int16
@@ -129,6 +136,10 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 		}
 		timingTemplate := nmap.Timing(int16(timing)) // Convert int to nmap.Timing
 		options = append(options, nmap.WithTimingTemplate(timingTemplate))
+	}
+	if cfg.HostTimeout != "" {
+		hostTimeout := exi.GetFloat(cfg.HostTimeout)
+		options = append(options, nmap.WithHostTimeout(time.Duration(hostTimeout)*time.Second))
 	}
 
 	return options, nil
@@ -149,14 +160,22 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 			hostInfo.Hostname = hostResult.Hostnames[0].Name
 		}
 
-		for _, port := range hostResult.Ports {
-			portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
-				Port:     int(port.ID),
-				Protocol: port.Protocol,
-				State:    port.State.State,
-				Service:  port.Service.Name,
+		if len(hostResult.Ports) > 0 {
+			for _, port := range hostResult.Ports {
+				portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
+					Port:     int(port.ID),
+					Protocol: port.Protocol,
+					State:    port.State.State,
+					Service:  port.Service.Name,
+				}
+				hostInfo.Ports = append(hostInfo.Ports, portInfo)
 			}
-			hostInfo.Ports = append(hostInfo.Ports, portInfo)
+		}
+
+		if len(hostResult.OS.Matches) > 0 {
+			for _, match := range hostResult.OS.Matches {
+				hostInfo.OS = append(hostInfo.OS, match.Name)
+			}
 		}
 
 		hosts = append(hosts, hostInfo)
@@ -181,18 +200,25 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 
 			hosts, err := ni.scanHost(scanCfg, ip)
 			if err != nil {
-				// Log error or handle it according to your error policy
+				// Log error or handle it according to your error policy and skip this host
 				cmn.DebugMsg(cmn.DbgLvlDebug, "error scanning host %s: %v", ip, err)
-				return
 			}
-
+			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", hosts)
+			// check if hosts is empty and if it is add an empty HostInfo struct to it
+			if len(hosts) == 0 {
+				hosts = append(hosts, HostInfo{
+					IP: ip,
+				})
+			}
 			mu.Lock()
 			fHosts = append(fHosts, hosts...)
 			mu.Unlock()
+			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", fHosts)
 		}(ip)
 	}
 
 	wg.Wait()
+	cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout scan completed")
 
 	return fHosts, nil
 }

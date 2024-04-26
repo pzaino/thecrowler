@@ -179,6 +179,7 @@ type HostInfo struct {
 	IP       string     `json:"ip,omitempty"`
 	Hostname string     `json:"hostname,omitempty"`
 	Ports    []PortInfo `json:"ports,omitempty"`
+	OS       []string   `json:"os,omitempty"`
 }
 
 // PortInfo contains the information about a single port

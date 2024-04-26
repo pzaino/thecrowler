@@ -25,13 +25,34 @@ import (
 
 // GetIPs returns the IP addresses of the provided URL
 func (ni *NetInfo) GetIPs() error {
-	host := urlToDomain(ni.URL)
+	host := urlToHost(ni.URL)
 
+	// Get IP addresses
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		return fmt.Errorf("error looking up IP addresses: %v", err)
+		return fmt.Errorf("error looking up host IP addresses: %v", err)
 	}
 	ipsStr := ipsToString(ips)
+
+	ipMap := make(map[string]bool)
+	for _, ip := range ipsStr {
+		ipMap[ip] = true
+	}
+
+	// Get IP addresses for the domain
+	host = urlToDomain(ni.URL)
+	ips, err = net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("error looking up domain IP addresses: %v", err)
+	}
+	for _, ip := range ips {
+		ipMap[ip.String()] = true
+	}
+
+	ipsStr = make([]string, 0, len(ipMap))
+	for ip := range ipMap {
+		ipsStr = append(ipsStr, ip)
+	}
 
 	var newIPData []IPInfo
 

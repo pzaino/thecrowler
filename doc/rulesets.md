@@ -5,14 +5,20 @@ information to extract and which to ignore. Rulesets are defined in a YAML file
 and are used to define the following:
 
 - Detect and interact with a website fields and buttons
-- Define what you wish to visit from a website (recursive crawling and/or fuzzing)
+- Define what you wish to visit from a website (recursive crawling and/or
+  fuzzing)
 - Define which portions of a page to extract and how to store the extracted
   information
-- Define which entities to detect and how to store the detected entities (technologies used on a website, products, etc.)
+- Define which entities to detect and how to store the detected entities
+  (technologies used on a website, products, etc.)
 
 Extracted data is stored in a JSON document, which is then stored in the DB and
 each field is indexed and mapped to a "dorking" category. The mapping is defined
 by the ruleset and is used to enrich and facilitate information searching.
+
+**Please Note**: If you need help writing, debugging, or validating your ruleset,
+you can use an automated service on Open AI ChatGPT, that can help you with that.
+Link to the service is [here](https://chat.openai.com/g/g-dEfqHkqrW-the-crowler-ruleset-support).
 
 ## Ruleset Structure
 
