@@ -173,6 +173,12 @@ func ApplyPostProcessingStep(step *rs.PostProcessingStep, data *[]byte) {
 		ppStepRemove(data, step)
 	case "transform":
 		ppStepTransform(data, step)
+	case "validate":
+		ppStepValidate(data, step)
+	case "clean":
+		ppStepClean(data, step)
+	default:
+		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
 	}
 }
 
@@ -186,6 +192,14 @@ func ppStepReplace(data *[]byte, step *rs.PostProcessingStep) {
 func ppStepRemove(data *[]byte, step *rs.PostProcessingStep) {
 	// Remove all instances of step.Details["target"] from data
 	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
+}
+
+func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
+	// TODO: Implement the validation logic here
+}
+
+func ppStepClean(data *[]byte, step *rs.PostProcessingStep) {
+	// TODO: Implement the cleaning logic here
 }
 
 // ppStepTransform applies the "transform" post-processing step to the provided data.

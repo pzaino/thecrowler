@@ -99,8 +99,56 @@ func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
 			return executeActionScroll(r, wd)
 		case "input_text":
 			return executeActionInput(r, wd)
+		case "clear":
+			// Clear the input field
+			wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+			if err != nil {
+				return err
+			}
+			return wdf.Clear()
 		case "execute_javascript":
 			return executeActionJS(r, wd)
+		case "take_screenshot":
+			// Take a screenshot
+			_, err := TakeScreenshot(wd, r.Value)
+			return err
+		case "key_down":
+			// Press a key
+			return (*wd).KeyDown(r.Value)
+		case "key_up":
+			// Release a key
+			return (*wd).KeyUp(r.Value)
+		case "mouse_hover":
+			// Hover the mouse over an element
+			return executeMoveToElement(r, wd)
+		case "forward":
+			// Go forward
+			return (*wd).Forward()
+		case "back":
+			// Go back
+			return (*wd).Back()
+		case "refresh":
+			// Refresh the page
+			return (*wd).Refresh()
+		case "switch_to_frame":
+			// Switch to a frame
+			wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+			if err != nil {
+				return err
+			}
+			return (*wd).SwitchFrame(wdf)
+		case "switch_to_window":
+			// Switch to a window
+			return (*wd).SwitchWindow(r.Value)
+		case "scroll_to_element":
+			// TODO: Scroll to an element
+			return nil
+		case "scroll_by_amount":
+			// Scroll by an amount
+			y := cmn.StringToInt(r.Value)
+			scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
+			_, err := (*wd).ExecuteScript(scrollScript, nil)
+			return err
 		}
 		return fmt.Errorf("action type not supported: %s", r.ActionType)
 	}
@@ -137,6 +185,33 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		err := wdf.Click()
 		return err
 	}
+	return err
+}
+
+func executeMoveToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+	if err != nil {
+		return err
+	}
+	id, err := wdf.GetAttribute("id")
+	if err != nil {
+		id, err = wdf.GetAttribute("name")
+		if err != nil {
+			return err
+		}
+	}
+	script := `
+		var elem = document.getElementById('` + id + `');
+		var evt = new MouseEvent('mousemove', {
+			bubbles: true,
+			cancelable: true,
+			clientX: elem.getBoundingClientRect().left,
+			clientY: elem.getBoundingClientRect().top,
+			view: window
+		});
+		elem.dispatchEvent(evt);
+	`
+	_, err = (*wd).ExecuteScript(script, nil)
 	return err
 }
 
