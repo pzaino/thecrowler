@@ -71,16 +71,13 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout warning: %v", warning)
 		}
 	}
+	// log the raw results if we are in debug mode:
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
 
-	// display the results
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
-
 	// Parse the scan result
-	//parseScanResult(result, &host)
 	hosts := parseScanResults(result)
 
 	return hosts, nil
@@ -94,7 +91,6 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	}
 	options = append(options, nmap.WithTargets(ip))
 	options = append(options, nmap.WithContext(*ctx))
-	options = append(options, nmap.WithPorts("1-"+strconv.Itoa(cfg.MaxPortNumber)))
 
 	// Add options based on the config fields
 	if cfg.PingScan {
@@ -109,12 +105,18 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	if cfg.AggressiveScan {
 		options = append(options, nmap.WithAggressiveScan())
 	}
+	// Prepare scripts to use for the scan
+	if len(cfg.ScriptScan) == 0 {
+		cfg.ScriptScan = []string{"default"}
+	}
 	if len(cfg.ScriptScan) != 0 {
 		options = append(options, nmap.WithScripts(cfg.ScriptScan...))
 	}
 	if cfg.ServiceDetection {
-		options = append(options, nmap.WithServiceInfo())
 		options = append(options, nmap.WithCustomArguments("-Pn"))
+		options = append(options, nmap.WithPorts("1-"+strconv.Itoa(cfg.MaxPortNumber)))
+		options = append(options, nmap.WithServiceInfo())
+		//options = append(options, nmap.WithCustomArguments("--version-intensity 5"))
 	}
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())

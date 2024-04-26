@@ -245,7 +245,7 @@ func NewConfig() Config {
 				ServiceDetection: true,
 				NoDNSResolution:  true,
 				MaxPortNumber:    9000,
-				ScanDelay:        fmt.Sprint(SSDefaultDelayTime),
+				ScanDelay:        "", // fmt.Sprint(SSDefaultDelayTime),
 				TimingTemplate:   fmt.Sprint(SSDefaultTimeProfile),
 			},
 			Geolocation: GeoLookupConfig{
@@ -778,7 +778,7 @@ func (c *ServiceScoutConfig) validate() {
 			c.HostTimeout = strings.TrimSpace(c.HostTimeout)
 		}
 		if strings.TrimSpace(c.ScanDelay) == "" {
-			c.ScanDelay = fmt.Sprint(SSDefaultDelayTime)
+			c.ScanDelay = "" // fmt.Sprint(SSDefaultDelayTime)
 		} else {
 			c.ScanDelay = strings.TrimSpace(c.ScanDelay)
 		}
