@@ -72,6 +72,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 		}
 	}
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
 
@@ -113,6 +114,7 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Conte
 	}
 	if cfg.ServiceDetection {
 		options = append(options, nmap.WithServiceInfo())
+		options = append(options, nmap.WithCustomArguments("-Pn"))
 	}
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())
@@ -198,19 +200,18 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 			if err != nil {
 				// Log error or handle it according to your error policy and skip this host
 				cmn.DebugMsg(cmn.DbgLvlDebug, "error scanning host %s: %v", ip, err)
-			} else {
-				cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", hosts)
-				// check if hosts is empty and if it is add an empty HostInfo struct to it
-				if len(hosts) == 0 {
-					hosts = append(hosts, HostInfo{
-						IP: ip,
-					})
-				}
-				mu.Lock()
-				fHosts = append(fHosts, hosts...)
-				mu.Unlock()
-				cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", fHosts)
 			}
+			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", hosts)
+			// check if hosts is empty and if it is add an empty HostInfo struct to it
+			if len(hosts) == 0 {
+				hosts = append(hosts, HostInfo{
+					IP: ip,
+				})
+			}
+			mu.Lock()
+			fHosts = append(fHosts, hosts...)
+			mu.Unlock()
+			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", fHosts)
 		}(ip)
 	}
 
