@@ -132,12 +132,20 @@ type DetectionRule struct {
 	ObjectVersion       string                 `yaml:"object_version,omitempty"`
 	HTTPHeaderFields    []HTTPHeaderField      `yaml:"http_header_fields,omitempty"`
 	PageContentPatterns []PageContentSignature `yaml:"page_content_patterns,omitempty"`
+	SSLSignatures       []SSLSignature         `yaml:"ssl_patterns,omitempty"`
 	URLMicroSignatures  []URLMicroSignature    `yaml:"url_micro_signatures,omitempty"`
 	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
 type HTTPHeaderField struct {
+	Key        string   `yaml:"key"`
+	Value      []string `yaml:"value,omitempty"`
+	Confidence float32  `yaml:"confidence"`
+}
+
+// SSLSignature represents a pattern for matching SSL Certificate fields
+type SSLSignature struct {
 	Key        string   `yaml:"key"`
 	Value      []string `yaml:"value,omitempty"`
 	Confidence float32  `yaml:"confidence"`

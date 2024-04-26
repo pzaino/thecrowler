@@ -56,6 +56,11 @@ func (d *DetectionRule) GetAllPageContentPatterns() []PageContentSignature {
 	return trimmedPatterns
 }
 
+// GetAllSSLSignatures returns the SSL signatures for the specified detection rule.
+func (d *DetectionRule) GetAllSSLSignatures() []SSLSignature {
+	return d.SSLSignatures
+}
+
 // GetURLMicroSignatures returns the URL micro-signatures for the specified detection rule.
 func (d *DetectionRule) GetAllURLMicroSignatures() []URLMicroSignature {
 	trimmedSignatures := []URLMicroSignature{}
@@ -135,6 +140,15 @@ func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSi
 		patterns[strings.ToLower(rule.ObjectName)] = rule.PageContentPatterns
 	}
 	return patterns
+}
+
+// GetAllSSLSignaturesMap returns a map of all SSL signatures for the specified detection rules.
+func GetAllSSLSignaturesMap(d *[]DetectionRule) map[string][]SSLSignature {
+	signatures := make(map[string][]SSLSignature)
+	for _, rule := range *d {
+		signatures[strings.ToLower(rule.ObjectName)] = rule.SSLSignatures
+	}
+	return signatures
 }
 
 // GetAllMetaTagsMap returns a map of all meta tags for the specified detection rules.
