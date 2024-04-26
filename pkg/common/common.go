@@ -238,3 +238,12 @@ func InterpolateEnvVars(input string) string {
 		return os.Getenv(trimmedVarName)
 	})
 }
+
+// Convert a string to an integer
+func StringToInt(s string) int {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return i
+}
