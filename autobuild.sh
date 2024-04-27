@@ -64,6 +64,17 @@ else
     exit $rval
 fi
 
+cmd_name="browserAutomation"
+CGO_ENABLED=1 go build ./cmd/${cmd_name}
+rval=$?
+if [ "${rval}" == "0" ]; then
+    echo "${cmd_name} command line tool built successfully!"
+    moveFile ${cmd_name} ./bin
+else
+    echo "${cmd_name} command line tool build failed!"
+    exit $rval
+fi
+
 cmd_name="api"
 CGO_ENABLED=0 go build ./services/${cmd_name}
 rval=$?

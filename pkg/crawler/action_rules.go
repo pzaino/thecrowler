@@ -125,10 +125,95 @@ func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
 			return executeActionScrollToElement(r, wd)
 		case "scroll_by_amount":
 			return executeActionScrollByAmount(r, wd)
+		case "click_and_hold":
+			return executeActionClickAndHold(r, wd)
+		case "release":
+			return executeActionRelease(r, wd)
 		}
 		return fmt.Errorf("action type not supported: %s", r.ActionType)
 	}
 	return nil
+}
+
+func executeActionClickAndHold(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+	if err != nil {
+		return err
+	}
+	// JavaScript to simulate a click and hold
+	id, err := wdf.GetAttribute("id")
+	if err != nil {
+		id, err = wdf.GetAttribute("name")
+		if err != nil {
+			return err
+		}
+	}
+	script := `
+		var elem = document.getElementById('` + id + `');
+		var evt1 = new MouseEvent('mousemove', {
+			bubbles: true,
+			cancelable: true,
+			clientX: elem.getBoundingClientRect().left,
+			clientY: elem.getBoundingClientRect().top,
+			view: window
+		});
+		var evt2 = new MouseEvent('mousedown', {
+			bubbles: true,
+			cancelable: true,
+			clientX: elem.getBoundingClientRect().left,
+			clientY: elem.getBoundingClientRect().top,
+			view: window
+		});
+		elem.dispatchEvent(evt1);
+		elem.dispatchEvent(evt2);
+	`
+	_, err = (*wd).ExecuteScript(script, nil)
+	return err
+}
+
+func executeActionRelease(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	var element selenium.WebElement
+	if r.Selectors != nil {
+		element, _, _ = findElementBySelectorType(wd, r.Selectors)
+	}
+	var script string
+	if element != nil {
+		id, err := element.GetAttribute("id")
+		if err != nil {
+			id, err = element.GetAttribute("name")
+			if err != nil {
+				return err
+			}
+		}
+		script = `
+			var elem = document.getElementById('` + id + `');
+			var evt3 = new MouseEvent('mouseup', {
+				bubbles: true,
+				cancelable: true,
+				clientX: elem.getBoundingClientRect().left,
+				clientY: elem.getBoundingClientRect().top,
+				view: window
+			});
+			elem.dispatchEvent(evt3);
+		`
+	} else {
+		// Get the element at the current mouse coordinates:
+		script = `
+			const x = event.clientX;
+			const y = event.clientY;
+			elem = document.elementFromPoint(x, y);
+			var evt3 = new MouseEvent('mouseup', {
+				bubbles: true,
+				cancelable: true,
+				clientX: elem.getBoundingClientRect().left,
+				clientY: elem.getBoundingClientRect().top,
+				view: window
+			});
+			elem.dispatchEvent(evt3);
+		`
+	}
+	_, err := (*wd).ExecuteScript(script, nil)
+	return err
 }
 
 func executeActionClear(r *rules.ActionRule, wd *selenium.WebDriver) error {
