@@ -1,6 +1,8 @@
 #!/bin/bash
 
 # This script is used to build the project automatically.
+build_objs="$1"
+rval=0
 
 # Utility functions
 function checkError() {
@@ -32,60 +34,88 @@ checkError "Go is not installed!"
 rm -rf ./bin
 mkdir ./bin
 
-CGO_ENABLED=0 go build
-rval=$?
-if [ "${rval}" == "0" ]; then
-    echo "TheCrowler built successfully!"
-    moveFile TheCrowler ./bin
-else
-    echo "TheCrowler build failed!"
-    exit $rval
+if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "engine" ] ||
+    [ "${build_objs}" == "cr" ] ||
+    [ "${build_objs}" == "" ];
+then
+    CGO_ENABLED=0 go build
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "TheCrowler built successfully!"
+        moveFile TheCrowler ./bin
+    else
+        echo "TheCrowler build failed!"
+        exit $rval
+    fi
 fi
 
-cmd_name="addSource"
-CGO_ENABLED=0 go build ./cmd/${cmd_name}
-rval=$?
-if [ "${rval}" == "0" ]; then
-    echo "${cmd_name} command line tool built successfully!"
-    moveFile ${cmd_name} ./bin
-else
-    echo "${cmd_name} command line tool build failed!"
-    exit $rval
+if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "addSource" ] ||
+    [ "${build_objs}" == "as" ] ||
+    [ "${build_objs}" == "" ];
+then
+    cmd_name="addSource"
+    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
 fi
 
-cmd_name="removeSource"
-CGO_ENABLED=0 go build ./cmd/${cmd_name}
-rval=$?
-if [ "${rval}" == "0" ]; then
-    echo "${cmd_name} command line tool built successfully!"
-    moveFile ${cmd_name} ./bin
-else
-    echo "${cmd_name} command line tool build failed!"
-    exit $rval
+if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "removeSource" ] ||
+    [ "${build_objs}" == "rs" ] ||
+    [ "${build_objs}" == "" ];
+then
+    cmd_name="removeSource"
+    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
 fi
 
-cmd_name="browserAutomation"
-CGO_ENABLED=1 go build ./cmd/${cmd_name}
-rval=$?
-if [ "${rval}" == "0" ]; then
-    echo "${cmd_name} command line tool built successfully!"
-    moveFile ${cmd_name} ./bin
-else
-    echo "${cmd_name} command line tool build failed!"
-    exit $rval
+if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "browserAutomation" ] ||
+    [ "${build_objs}" == "rb" ];
+then
+    cmd_name="browserAutomation"
+    CGO_ENABLED=1 go build ./cmd/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
 fi
 
-cmd_name="api"
-CGO_ENABLED=0 go build ./services/${cmd_name}
-rval=$?
-if [ "${rval}" == "0" ]; then
-    echo "${cmd_name} command line tool built successfully!"
-    moveFile ${cmd_name} ./bin
-else
-    echo "${cmd_name} command line tool build failed!"
-    exit $rval
+if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "api" ] ||
+    [ "${build_objs}" == "" ];
+then
+    cmd_name="api"
+    CGO_ENABLED=0 go build ./services/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
 fi
 
-exit $rval
+exit "$rval"
 
 # Path: autobuild.sh
