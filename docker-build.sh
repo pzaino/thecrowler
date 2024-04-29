@@ -64,7 +64,8 @@ SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELESE}"
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     PLATFORM="linux/arm64/v8"
     POSTGRES_IMAGE="arm64v8/"
-    SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
 fi
 export PLATFORMS=$PLATFORM
 
@@ -88,6 +89,27 @@ git checkout "${SELENIUM_RELEASE}"
 git pull origin "${SELENIUM_RELEASE}"
 # patch Selenium Dockefile and start-selenium-standalone.sh files:
 cp ../selenium-patches/Dockerfile ./Standalone/Dockerfile
+if [ "$PLATFORM" == "linux/arm64/v8" ];
+then
+    # We need to patch the Dockerfile_Base file for ARM64
+    patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
+    echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
+    if [ -f "../selenium-patches/${patch_file}" ];
+    then
+        pushd ./Base || exit 1
+        cp "../../selenium-patches/${patch_file}" "./${patch_file}"
+        if patch Dockerfile ./${patch_file}; then
+            echo "Patch applied successfully."
+        else
+            echo "Failed to apply patch."
+            exit 1
+        fi
+        popd || exit 1
+    else
+        echo "No patch file found for ${patch_file}, skipping patching."
+    fi
+fi
+# Add Rbee to the Selenium image
 mkdir -p ./Standalone/Rbee
 cp -r ../cmd ./Standalone/Rbee/cmd
 cp -r ../pkg ./Standalone/Rbee/pkg
@@ -101,7 +123,12 @@ cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomatio
 cp ../autobuild.sh ./Standalone/Rbee/autobuild.sh
 
 # build Selenium image
-make standalone_chrome
+if [ "${ARCH}" != "linux/amd64" ]; then
+    # Google chrome is not yet supported officially on ARM64
+    make standalone_firefox
+else
+    make standalone_chrome
+fi
 
 # Run Docker Compose
 docker-compose up --build
