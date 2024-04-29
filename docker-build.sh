@@ -40,23 +40,26 @@ fi
 ARCH=$(uname -m)
 PLATFORM="linux/amd64"
 POSTGRES_IMAGE=""
+
+export SELENIUM_VER_NUM="4.18.1"
+export SELENIUM_BUILDID="20240224"
+#export SELENIUM_VER_NUM="4.20.0"
+#export SELENIUM_BUILDID="20240428"
+
 if [ "${SELENIUM_RELEASE}" == "" ];
 then
-    export SELENIUM_RELEASE="4.18.1-20240224"
-    #export SELENIUM_RELEASE="4.20.0-20240428"
+    export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 fi
-if [ "${SELENIUM_RELEASE}" == "4.18.1-20240224" ];
-then
-    # Due to a mistake in the Selenium containe rbuild process for this release
-    # we need to "rebrand" this release to 4.18.1-20240429 (as this is the build name)
-    export SELENIUM_PROD_RELESE="4.18.1-20240429"
-else
-    export SELENIUM_PROD_RELESE="${SELENIUM_RELEASE}"
-fi
+
+# Generate a Docker image name for today's build (that we are about to do)
+CURRENT_DATE=$(date +%Y%m%d)
+export SELENIUM_PROD_RELESE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
+
 if [ "$SELENIUM_PORT" == "" ];
 then
     export SELENIUM_PORT=4444
 fi
+
 SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELESE}"
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     PLATFORM="linux/arm64/v8"
