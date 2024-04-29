@@ -302,10 +302,16 @@ func (ni *NetInfo) GetIPsFromHosts() error {
 }
 
 func getEntities(ni *NetInfo) error {
-	// Get IP addresses
-	err := ni.GetIPs()
-	if err != nil {
-		return err
+	var err error
+	// Check if url is an IP address
+	if net.ParseIP(ni.URL) != nil {
+		ni.IPs.IP = append(ni.IPs.IP, ni.URL)
+	} else {
+		// Get IP addresses
+		err = ni.GetIPs()
+		if err != nil {
+			return err
+		}
 	}
 	if len(ni.IPs.IP) == 0 {
 		err = ni.GetHosts()
