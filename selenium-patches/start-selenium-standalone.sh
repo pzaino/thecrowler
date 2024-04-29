@@ -2,9 +2,6 @@
 #
 # IMPORTANT: Change this file only in directory Standalone!
 
-# start Rbee for theCROWler
-/opt/bin/browserAutomation &
-
 if [ -n "$SE_SUB_PATH" ]; then
   echo "Using SE_SUB_PATH: ${SE_SUB_PATH}"
   SUB_PATH_CONFIG="--sub-path ${SE_SUB_PATH}"

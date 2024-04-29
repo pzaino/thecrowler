@@ -40,20 +40,28 @@ fi
 ARCH=$(uname -m)
 PLATFORM="linux/amd64"
 POSTGRES_IMAGE=""
-SELENIUM_IMAGE="selenium/standalone-chrome:4.18.1-20240224"
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    PLATFORM="linux/arm64/v8"
-    POSTGRES_IMAGE="arm64v8/"
-    SELENIUM_IMAGE="seleniarm/standalone-chromium"
-fi
-if [ "$SELENIUM_RELEASE" == "" ];
+if [ "${SELENIUM_RELEASE}" == "" ];
 then
-    #SELENIUM_RELEASE=4.18.1-20240224
-    SELENIUM_RELEASE=4.20.0-20240428
+    export SELENIUM_RELEASE="4.18.1-20240224"
+    #export SELENIUM_RELEASE="4.20.0-20240428"
+fi
+if [ "${SELENIUM_RELEASE}" == "4.18.1-20240224" ];
+then
+    # Due to a mistake in the Selenium containe rbuild process for this release
+    # we need to "rebrand" this release to 4.18.1-20240429 (as this is the build name)
+    export SELENIUM_PROD_RELESE="4.18.1-20240429"
+else
+    export SELENIUM_PROD_RELESE="${SELENIUM_RELEASE}"
 fi
 if [ "$SELENIUM_PORT" == "" ];
 then
-    SELENIUM_PORT=4444
+    export SELENIUM_PORT=4444
+fi
+SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELESE}"
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    PLATFORM="linux/arm64/v8"
+    POSTGRES_IMAGE="arm64v8/"
+    SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
 fi
 
 # Export platform as an environment variable
@@ -76,7 +84,7 @@ git checkout "${SELENIUM_RELEASE}"
 git pull origin "${SELENIUM_RELEASE}"
 # patch Selenium Dockefile and start-selenium-standalone.sh files:
 cp ../selenium-patches/Dockerfile ./Standalone/Dockerfile
-cp ../selenium-patches/start-selenium-standalone.sh ./Standalone/start-selenium-standalone.sh
+#cp ../selenium-patches/start-selenium-standalone.sh ./Standalone/start-selenium-standalone.sh
 mkdir -p ./Standalone/Rbee
 cp -r ../cmd ./Standalone/Rbee/cmd
 cp -r ../pkg ./Standalone/Rbee/pkg

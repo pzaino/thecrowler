@@ -55,7 +55,7 @@ USER ${SEL_UID}
 #====================================
 COPY --chown="${SEL_UID}:${SEL_GID}" start-selenium-standalone.sh /opt/bin/start-selenium-standalone.sh
 COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/bin/browserAutomation /opt/bin/browserAutomation
-COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/browserAutomation.conf /opt/bin/
+COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/browserAutomation.conf /etc/supervisor/conf.d/browserAutomation.conf
 
 #==============================
 # Supervisor configuration file
