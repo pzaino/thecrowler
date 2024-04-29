@@ -41,31 +41,32 @@ ARCH=$(uname -m)
 PLATFORM="linux/amd64"
 POSTGRES_IMAGE=""
 
+# Set the Selenium version and build ID
 export SELENIUM_VER_NUM="4.18.1"
 export SELENIUM_BUILDID="20240224"
 #export SELENIUM_VER_NUM="4.20.0"
 #export SELENIUM_BUILDID="20240428"
-
-if [ "${SELENIUM_RELEASE}" == "" ];
-then
-    export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
-fi
+export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
 # Generate a Docker image name for today's build (that we are about to do)
 CURRENT_DATE=$(date +%Y%m%d)
 export SELENIUM_PROD_RELESE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
 
+# Set the Selenium default port
 if [ "$SELENIUM_PORT" == "" ];
 then
     export SELENIUM_PORT=4444
 fi
 
+# Set the platform for the host architecture
+PLATFORM="linux/amd64"
 SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELESE}"
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     PLATFORM="linux/arm64/v8"
     POSTGRES_IMAGE="arm64v8/"
     SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
 fi
+export PLATFORMS=$PLATFORM
 
 # Export platform as an environment variable
 export DOCKER_DEFAULT_PLATFORM=$PLATFORM
@@ -87,7 +88,6 @@ git checkout "${SELENIUM_RELEASE}"
 git pull origin "${SELENIUM_RELEASE}"
 # patch Selenium Dockefile and start-selenium-standalone.sh files:
 cp ../selenium-patches/Dockerfile ./Standalone/Dockerfile
-#cp ../selenium-patches/start-selenium-standalone.sh ./Standalone/start-selenium-standalone.sh
 mkdir -p ./Standalone/Rbee
 cp -r ../cmd ./Standalone/Rbee/cmd
 cp -r ../pkg ./Standalone/Rbee/pkg
