@@ -162,6 +162,7 @@ type PageContentSignature struct {
 	Key        string   `yaml:"key"`
 	Attribute  string   `yaml:"attribute,omitempty"`
 	Signature  []string `yaml:"value,omitempty"`
+	Text       []string `yaml:"text,omitempty"`
 	Confidence float32  `yaml:"confidence"`
 }
 

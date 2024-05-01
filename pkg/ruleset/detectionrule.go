@@ -49,6 +49,7 @@ func (d *DetectionRule) GetAllPageContentPatterns() []PageContentSignature {
 		trimmedPatterns = append(trimmedPatterns, PageContentSignature{
 			Key:        strings.TrimSpace(pattern.Key),
 			Signature:  PrepareSlice(pattern.Signature, 1), // flag = 1 only trim spaces
+			Text:       PrepareSlice(pattern.Text, 0),
 			Confidence: pattern.Confidence,
 		},
 		)
