@@ -389,15 +389,16 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 		doc.Find(signature.Key).Each(func(index int, htmlItem *goquery.Selection) {
 			var text1 string
 			var text2 string
+			var attrExists bool
 			if (signature.Attribute != "") && (signature.Attribute != "text") {
-				text1 = htmlItem.AttrOr(strings.ToLower(strings.TrimSpace(signature.Attribute)), "")
+				text1, attrExists = htmlItem.Attr(strings.ToLower(strings.TrimSpace(signature.Attribute)))
 			}
 			text2 = htmlItem.Text()
-			if text1 != "" {
+			if attrExists {
 				detectTechBySignatureValue(text1, signature.Signature, sig, detectedTech, signature.Confidence)
 			}
-			if text2 != "" {
-				detectTechBySignatureValue(text2, signature.Signature, sig, detectedTech, signature.Confidence)
+			if len(signature.Text) > 0 {
+				detectTechBySignatureValue(text2, signature.Text, sig, detectedTech, signature.Confidence)
 			}
 		})
 	}
