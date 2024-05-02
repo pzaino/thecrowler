@@ -138,6 +138,13 @@ func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignat
 func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSignature {
 	patterns := make(map[string][]PageContentSignature)
 	for _, rule := range *d {
+		key := strings.ToLower(rule.ObjectName)
+		// Check if the key already exists
+		if _, ok := patterns[key]; ok {
+			// Append the new patterns to the existing ones
+			patterns[key] = append(patterns[key], rule.PageContentPatterns...)
+			continue
+		}
 		patterns[strings.ToLower(rule.ObjectName)] = rule.PageContentPatterns
 	}
 	return patterns
