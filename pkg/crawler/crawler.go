@@ -1107,8 +1107,10 @@ func worker(processCtx *processContext, id int, jobs chan string) {
 			continue
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
-		processJob(processCtx, id, url)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
+		err := processJob(processCtx, id, url)
+		if err == nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
+		}
 		if config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(config.Crawler.Delay)
 			time.Sleep(time.Duration(delay) * time.Second)
@@ -1131,11 +1133,11 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 	return false
 }
 
-func processJob(processCtx *processContext, id int, url string) {
+func processJob(processCtx *processContext, id int, url string) error {
 	htmlContent, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
-		return
+		return err
 	}
 	pageCache := extractPageInfo(htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
@@ -1147,6 +1149,7 @@ func processJob(processCtx *processContext, id int, url string) {
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
+	return nil
 }
 
 // combineURLs is a utility function to combine a base URL with a relative URL
