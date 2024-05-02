@@ -424,7 +424,11 @@ func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]m
 			for ObjName := range *cmsNames {
 				item := (*cmsNames)[ObjName]
 				for _, signature := range item[tagName].Value {
-					if strings.Contains(tag, strings.ToLower(strings.TrimSpace(signature))) {
+					if signature != "*" {
+						if strings.Contains(tag, strings.ToLower(strings.TrimSpace(signature))) {
+							(*detectedTech)[ObjName] += item[tagName].Confidence
+						}
+					} else {
 						(*detectedTech)[ObjName] += item[tagName].Confidence
 					}
 				}
@@ -446,7 +450,11 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 			doc.Find("meta").Each(func(index int, htmlItem *goquery.Selection) {
 				if strings.EqualFold(htmlItem.AttrOr("name", ""), signature.Name) {
 					text := strings.ToLower(htmlItem.AttrOr("content", ""))
-					if strings.Contains(text, signature.Content) {
+					if signature.Content != "*" {
+						if strings.Contains(text, signature.Content) {
+							(*detectedTech)[ObjName] += signature.Confidence
+						}
+					} else {
 						(*detectedTech)[ObjName] += signature.Confidence
 					}
 				}

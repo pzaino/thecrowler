@@ -123,7 +123,7 @@ cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomatio
 cp ../autobuild.sh ./Standalone/Rbee/autobuild.sh
 
 # build Selenium image
-if [ "${ARCH}" != "linux/amd64" ]; then
+if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     # Google chrome is not yet supported officially on ARM64
     make standalone_firefox
 else
