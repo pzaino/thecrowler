@@ -405,9 +405,25 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 }
 
 func detectTechBySignatureValue(text string, signatures []string, sig string, detectedTech *map[string]float32, confidence float32) {
+	fmt.Printf("--------------------\n")
+	fmt.Printf("text: %s\n", text)
+	fmt.Printf("signatures: %v\n", signatures)
+	fmt.Printf("--------------------\n")
 	for _, sigValue := range signatures {
 		if sigValue != "*" {
-			if strings.Contains(text, sigValue) {
+			if strings.HasPrefix(sigValue, "^") {
+				if strings.HasPrefix(text, sigValue[1:]) {
+					(*detectedTech)[sig] += confidence
+				}
+			} else if strings.HasSuffix(sigValue, "$") {
+				if strings.HasSuffix(text, sigValue[:len(sigValue)-1]) {
+					(*detectedTech)[sig] += confidence
+				}
+			} else if strings.HasPrefix(sigValue, "!") {
+				if !strings.Contains(text, sigValue[1:]) {
+					(*detectedTech)[sig] += confidence
+				}
+			} else if strings.Contains(text, sigValue) {
 				(*detectedTech)[sig] += confidence
 			}
 		} else {
