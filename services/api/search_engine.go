@@ -279,7 +279,7 @@ func buildCombinedQuery(queryBody string, queryParts [][]string) string {
 
 		combinedQuery += "(" + strings.Join(group, " ") + ")"
 	}
-	combinedQuery += ";"
+	//combinedQuery += ";"
 
 	return combinedQuery
 }
@@ -343,6 +343,9 @@ func performSearch(query string) (SearchResult, error) {
 	if err != nil {
 		return SearchResult{}, err
 	}
+
+	sqlQuery = sqlQuery + ";"
+
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
@@ -471,6 +474,8 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 	if err != nil {
 		return "", nil, err
 	}
+
+	sqlQuery = sqlQuery + " ORDER BY s.created_at DESC;"
 
 	return sqlQuery, sqlParams, nil
 }
@@ -618,6 +623,8 @@ func parseNetInfoGetQuery(input string) (string, []interface{}, error) {
 		return "", nil, err
 	}
 
+	sqlQuery = sqlQuery + " ORDER BY ni.created_at DESC;"
+
 	return sqlQuery, sqlParams, nil
 }
 
@@ -755,6 +762,8 @@ func parseHTTPInfoGetQuery(input string) (string, []interface{}, error) {
 	if err != nil {
 		return "", nil, err
 	}
+
+	sqlQuery = sqlQuery + " ORDER BY hi.created_at DESC;"
 
 	return sqlQuery, sqlParams, nil
 }
