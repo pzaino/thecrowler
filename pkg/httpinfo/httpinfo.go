@@ -314,9 +314,6 @@ func detectTechnologies(url string, responseBody string, header *http.Header, ss
 	}
 
 	// Transform the detectedTech map into a map of strings
-	//fmt.Printf("Detection Noise Threshold: %f\n", re.DetectionConfig.NoiseThreshold)
-	//fmt.Printf("Detection Maybe Threshold: %f\n", re.DetectionConfig.MaybeThreshold)
-	//fmt.Printf("Detection Detected Threshold: %f\n", re.DetectionConfig.DetectedThreshold)
 	var detectedTechStr map[string]string = make(map[string]string)
 	for k, v := range detectedTech {
 		//fmt.Printf("Detected technology: %s - %f\n", k, v)
@@ -374,7 +371,7 @@ func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]r
 	// Create a new document from the HTML string
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
 	if err != nil {
-		fmt.Printf("error loading HTML: %s\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "error loading HTML: %s", err)
 		return
 	}
 	// Iterate through all the signatures and check for possible technologies
@@ -410,57 +407,76 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 
 func detectTechBySignatureValue(text string, signatures []string, sig string, detectedTech *map[string]float32, confidence float32) {
 	for _, sigValue := range signatures {
-		if sigValue != "*" {
-			if strings.HasPrefix(sigValue, "^") {
-				if strings.HasPrefix(text, sigValue[1:]) {
-					(*detectedTech)[sig] += confidence
-				}
-			} else if strings.HasSuffix(sigValue, "$") {
-				if strings.HasSuffix(text, sigValue[:len(sigValue)-1]) {
-					(*detectedTech)[sig] += confidence
-				}
-			} else if strings.HasPrefix(sigValue, "!") {
-				if !strings.Contains(text, sigValue[1:]) {
-					(*detectedTech)[sig] += confidence
-				}
-			} else if strings.Contains(text, sigValue) {
-				(*detectedTech)[sig] += confidence
-			}
-		} else {
-			(*detectedTech)[sig] += confidence
+		if sigValue != "" {
+			detectTechBySignatureValueHelper(text, sigValue, sig, detectedTech, confidence)
 		}
 	}
 }
 
-func detectTechByTag(header *http.Header, tagName string, cmsNames *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]float32) {
+func detectTechBySignatureValueHelper(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+	if sigValue != "*" {
+		detectTechByPrefix(text, sigValue, sig, detectedTech, confidence)
+		detectTechBySuffix(text, sigValue, sig, detectedTech, confidence)
+		detectTechByNegation(text, sigValue, sig, detectedTech, confidence)
+		detectTechByContains(text, sigValue, sig, detectedTech, confidence)
+	} else {
+		(*detectedTech)[sig] += confidence
+	}
+}
+
+func detectTechByPrefix(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+	if strings.HasPrefix(sigValue, "^") && strings.HasPrefix(text, sigValue[1:]) {
+		(*detectedTech)[sig] += confidence
+	}
+}
+
+func detectTechBySuffix(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+	if strings.HasSuffix(sigValue, "$") && strings.HasSuffix(text, sigValue[:len(sigValue)-1]) {
+		(*detectedTech)[sig] += confidence
+	}
+}
+
+func detectTechByNegation(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+	if strings.HasPrefix(sigValue, "!") && !strings.Contains(text, sigValue[1:]) {
+		(*detectedTech)[sig] += confidence
+	}
+}
+
+func detectTechByContains(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+	//fmt.Printf("Text: %s\n", text)
+	//fmt.Printf("Signature: %s\n", sigValue)
+	if strings.Contains(text, sigValue) {
+		//fmt.Printf("Detected technology: %s - %f\n", sig, confidence)
+		(*detectedTech)[sig] += confidence
+	}
+}
+
+func detectTechByTag(header *http.Header, tagName string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]float32) {
 	hh := (*header)[tagName] // get the header value (header tag name is case sensitive)
 	tagName = strings.ToLower(tagName)
 	if len(hh) != 0 {
 		for _, tag := range hh {
 			tag = strings.ToLower(tag)
-			for ObjName := range *cmsNames {
-				item := (*cmsNames)[ObjName]
-				for _, signature := range item[tagName].Value {
-					if signature != "*" {
-						if strings.HasPrefix(signature, "^") {
-							if strings.HasPrefix(tag, strings.ToLower(strings.TrimSpace(signature[1:]))) {
-								(*detectedTech)[ObjName] += item[tagName].Confidence
-							}
-						} else if strings.HasSuffix(signature, "$") {
-							if strings.HasSuffix(tag, strings.ToLower(strings.TrimSpace(signature[:len(signature)-1]))) {
-								(*detectedTech)[ObjName] += item[tagName].Confidence
-							}
-						} else if strings.HasPrefix(signature, "!") {
-							if !strings.Contains(tag, strings.ToLower(strings.TrimSpace(signature[1:]))) {
-								(*detectedTech)[ObjName] += item[tagName].Confidence
-							}
-						} else if strings.Contains(tag, strings.ToLower(strings.TrimSpace(signature))) {
-							(*detectedTech)[ObjName] += item[tagName].Confidence
-						}
-					} else {
-						(*detectedTech)[ObjName] += item[tagName].Confidence
-					}
-				}
+			detectTechByTagHelper(tagName, tag, detectRules, detectedTech)
+		}
+	}
+}
+
+func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]float32) {
+	for ObjName := range *detectRules {
+		item := (*detectRules)[ObjName]
+		for _, signature := range item[tagName].Value {
+			if signature == "" {
+				continue
+			}
+			if signature != "*" {
+				signature := strings.ToLower(signature)
+				detectTechByPrefix(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
+				detectTechByContains(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
+				detectTechBySuffix(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
+				detectTechByNegation(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
+			} else {
+				(*detectedTech)[ObjName] += item[tagName].Confidence
 			}
 		}
 	}
@@ -470,7 +486,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 	// Create a new document from the HTML string
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
 	if err != nil {
-		fmt.Printf("error loading HTML: %s\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "error loading HTML: %s", err)
 		return
 	}
 	// Iterate through all the meta tags and check for possible technologies
@@ -478,29 +494,25 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 		for _, signature := range (*signatures)[ObjName] {
 			doc.Find("meta").Each(func(index int, htmlItem *goquery.Selection) {
 				if strings.EqualFold(htmlItem.AttrOr("name", ""), signature.Name) {
-					text := strings.ToLower(htmlItem.AttrOr("content", ""))
-					if signature.Content != "*" {
-						if strings.HasPrefix(signature.Content, "^") {
-							if strings.HasPrefix(text, signature.Content[1:]) {
-								(*detectedTech)[ObjName] += signature.Confidence
-							}
-						} else if strings.HasSuffix(signature.Content, "$") {
-							if strings.HasSuffix(text, signature.Content[:len(signature.Content)-1]) {
-								(*detectedTech)[ObjName] += signature.Confidence
-							}
-						} else if strings.HasPrefix(signature.Content, "!") {
-							if !strings.Contains(text, signature.Content[1:]) {
-								(*detectedTech)[ObjName] += signature.Confidence
-							}
-						} else if strings.Contains(text, signature.Content) {
-							(*detectedTech)[ObjName] += signature.Confidence
-						}
-					} else {
-						(*detectedTech)[ObjName] += signature.Confidence
+					text, contExists := htmlItem.Attr("content")
+					if contExists && signature.Content != "" {
+						text = strings.ToLower(text)
+						detectTechByMetaTagContent(text, signature, ObjName, detectedTech)
 					}
 				}
 			})
 		}
+	}
+}
+
+func detectTechByMetaTagContent(text string, signature ruleset.MetaTag, ObjName string, detectedTech *map[string]float32) {
+	if signature.Content != "*" {
+		detectTechByPrefix(text, signature.Content, ObjName, detectedTech, signature.Confidence)
+		detectTechBySuffix(text, signature.Content, ObjName, detectedTech, signature.Confidence)
+		detectTechByNegation(text, signature.Content, ObjName, detectedTech, signature.Confidence)
+		detectTechByContains(text, signature.Content, ObjName, detectedTech, signature.Confidence)
+	} else {
+		(*detectedTech)[ObjName] += signature.Confidence
 	}
 }
 
@@ -547,7 +559,7 @@ func urlToDomain(inputURL string) string {
 	// Use EffectiveTLDPlusOne to correctly handle domains like "example.co.uk"
 	domain, err := publicsuffix.EffectiveTLDPlusOne(h)
 	if err != nil {
-		fmt.Printf("Error extracting domain from URL: %v\n", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error extracting domain from URL: %v", err)
 		return ""
 	}
 	return domain
