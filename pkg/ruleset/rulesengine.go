@@ -90,6 +90,11 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 		Rulesets: []Ruleset{
 			{},
 		},
+		DetectionConfig: DetectionConfig{
+			NoiseThreshold:    1.0,
+			MaybeThreshold:    5.0,
+			DetectedThreshold: 10.0,
+		},
 	}
 }
 

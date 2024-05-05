@@ -47,6 +47,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tebeka/selenium"
 	"github.com/tebeka/selenium/chrome"
+	"github.com/tebeka/selenium/log"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -84,6 +85,7 @@ type processContext struct {
 	httpInfoRunning bool                  // Flag to check if HTTP info is already gathered
 	siteInfoRunning bool                  // Flag to check if site info is already gathered
 	crawlingRunning bool                  // Flag to check if crawling is still running
+	perfLogs        []string              // Performance logs
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -889,6 +891,16 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	// Run Action Rules if any
 	processActionRules(&wd, ctx, url)
 
+	// Collect Page logs
+	logs, err := wd.Log("performance")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
+	} else {
+		for _, entry := range logs {
+			ctx.perfLogs = append(ctx.perfLogs, entry.Message)
+		}
+	}
+
 	return wd, err0
 }
 
@@ -1107,8 +1119,10 @@ func worker(processCtx *processContext, id int, jobs chan string) {
 			continue
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
-		processJob(processCtx, id, url)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
+		err := processJob(processCtx, id, url)
+		if err == nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
+		}
 		if config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(config.Crawler.Delay)
 			time.Sleep(time.Duration(delay) * time.Second)
@@ -1131,11 +1145,11 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 	return false
 }
 
-func processJob(processCtx *processContext, id int, url string) {
+func processJob(processCtx *processContext, id int, url string) error {
 	htmlContent, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
-		return
+		return err
 	}
 	pageCache := extractPageInfo(htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
@@ -1147,6 +1161,7 @@ func processJob(processCtx *processContext, id int, url string) {
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
+	return nil
 }
 
 // combineURLs is a utility function to combine a base URL with a relative URL
@@ -1264,10 +1279,21 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 	}
 
+	// Append logging settings if available
+	args = append(args, "--enable-logging")
+	args = append(args, "--v=1")
+	args = append(args, "--log-net-log=./netlog.json")
+
 	caps.AddChrome(chrome.Capabilities{
 		Args: args,
 		W3C:  true,
 	})
+
+	// Enable logging
+	logSel := log.Capabilities{}
+	logSel["performance"] = "ALL"
+	logSel["browser"] = "ALL"
+	caps.AddLogging(logSel)
 
 	var protocol string
 	if sel.Config.SSLMode == "enable" {

@@ -100,59 +100,181 @@ func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		case "input_text":
 			return executeActionInput(r, wd)
 		case "clear":
-			// Clear the input field
-			wdf, _, err := findElementBySelectorType(wd, r.Selectors)
-			if err != nil {
-				return err
-			}
-			return wdf.Clear()
+			return executeActionClear(r, wd)
 		case "execute_javascript":
 			return executeActionJS(r, wd)
 		case "take_screenshot":
-			// Take a screenshot
-			_, err := TakeScreenshot(wd, r.Value)
-			return err
+			return executeActionScreenshot(r, wd)
 		case "key_down":
-			// Press a key
-			return (*wd).KeyDown(r.Value)
+			return executeActionKeyDown(r, wd)
 		case "key_up":
-			// Release a key
-			return (*wd).KeyUp(r.Value)
+			return executeActionKeyUp(r, wd)
 		case "mouse_hover":
-			// Hover the mouse over an element
-			return executeMoveToElement(r, wd)
+			return executeActionMouseHover(r, wd)
 		case "forward":
-			// Go forward
-			return (*wd).Forward()
+			return executeActionForward(wd)
 		case "back":
-			// Go back
-			return (*wd).Back()
+			return executeActionBack(wd)
 		case "refresh":
-			// Refresh the page
-			return (*wd).Refresh()
+			return executeActionRefresh(wd)
 		case "switch_to_frame":
-			// Switch to a frame
-			wdf, _, err := findElementBySelectorType(wd, r.Selectors)
-			if err != nil {
-				return err
-			}
-			return (*wd).SwitchFrame(wdf)
+			return executeActionSwitchFrame(r, wd)
 		case "switch_to_window":
-			// Switch to a window
-			return (*wd).SwitchWindow(r.Value)
+			return executeActionSwitchWindow(r, wd)
 		case "scroll_to_element":
-			// TODO: Scroll to an element
-			return nil
+			return executeActionScrollToElement(r, wd)
 		case "scroll_by_amount":
-			// Scroll by an amount
-			y := cmn.StringToInt(r.Value)
-			scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
-			_, err := (*wd).ExecuteScript(scrollScript, nil)
-			return err
+			return executeActionScrollByAmount(r, wd)
+		case "click_and_hold":
+			return executeActionClickAndHold(r, wd)
+		case "release":
+			return executeActionRelease(r, wd)
 		}
 		return fmt.Errorf("action type not supported: %s", r.ActionType)
 	}
 	return nil
+}
+
+func executeActionClickAndHold(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+	if err != nil {
+		return err
+	}
+	// JavaScript to simulate a click and hold
+	id, err := wdf.GetAttribute("id")
+	if err != nil {
+		id, err = wdf.GetAttribute("name")
+		if err != nil {
+			return err
+		}
+	}
+	script := `
+		var elem = document.getElementById('` + id + `');
+		var evt1 = new MouseEvent('mousemove', {
+			bubbles: true,
+			cancelable: true,
+			clientX: elem.getBoundingClientRect().left,
+			clientY: elem.getBoundingClientRect().top,
+			view: window
+		});
+		var evt2 = new MouseEvent('mousedown', {
+			bubbles: true,
+			cancelable: true,
+			clientX: elem.getBoundingClientRect().left,
+			clientY: elem.getBoundingClientRect().top,
+			view: window
+		});
+		elem.dispatchEvent(evt1);
+		elem.dispatchEvent(evt2);
+	`
+	_, err = (*wd).ExecuteScript(script, nil)
+	return err
+}
+
+func executeActionRelease(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	var element selenium.WebElement
+	if r.Selectors != nil {
+		element, _, _ = findElementBySelectorType(wd, r.Selectors)
+	}
+	var script string
+	if element != nil {
+		id, err := element.GetAttribute("id")
+		if err != nil {
+			id, err = element.GetAttribute("name")
+			if err != nil {
+				return err
+			}
+		}
+		script = `
+			var elem = document.getElementById('` + id + `');
+			var evt3 = new MouseEvent('mouseup', {
+				bubbles: true,
+				cancelable: true,
+				clientX: elem.getBoundingClientRect().left,
+				clientY: elem.getBoundingClientRect().top,
+				view: window
+			});
+			elem.dispatchEvent(evt3);
+		`
+	} else {
+		// Get the element at the current mouse coordinates:
+		script = `
+			const x = event.clientX;
+			const y = event.clientY;
+			elem = document.elementFromPoint(x, y);
+			var evt3 = new MouseEvent('mouseup', {
+				bubbles: true,
+				cancelable: true,
+				clientX: elem.getBoundingClientRect().left,
+				clientY: elem.getBoundingClientRect().top,
+				view: window
+			});
+			elem.dispatchEvent(evt3);
+		`
+	}
+	_, err := (*wd).ExecuteScript(script, nil)
+	return err
+}
+
+func executeActionClear(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+	if err != nil {
+		return err
+	}
+	return wdf.Clear()
+}
+
+func executeActionScreenshot(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	_, err := TakeScreenshot(wd, r.Value)
+	return err
+}
+
+func executeActionKeyDown(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	return (*wd).KeyDown(r.Value)
+}
+
+func executeActionKeyUp(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	return (*wd).KeyUp(r.Value)
+}
+
+func executeActionMouseHover(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	return executeMoveToElement(r, wd)
+}
+
+func executeActionForward(wd *selenium.WebDriver) error {
+	return (*wd).Forward()
+}
+
+func executeActionBack(wd *selenium.WebDriver) error {
+	return (*wd).Back()
+}
+
+func executeActionRefresh(wd *selenium.WebDriver) error {
+	return (*wd).Refresh()
+}
+
+func executeActionSwitchFrame(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+	if err != nil {
+		return err
+	}
+	return (*wd).SwitchFrame(wdf)
+}
+
+func executeActionSwitchWindow(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	return (*wd).SwitchWindow(r.Value)
+}
+
+func executeActionScrollToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	// TODO: Scroll to an element
+	return nil
+}
+
+func executeActionScrollByAmount(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	y := cmn.StringToInt(r.Value)
+	scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
+	_, err := (*wd).ExecuteScript(scrollScript, nil)
+	return err
 }
 
 // executeWaitCondition is responsible for executing a "wait" condition

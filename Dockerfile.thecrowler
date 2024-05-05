@@ -36,7 +36,7 @@ COPY --from=builder /app/rules /app/rules
 RUN chmod +x thecrowler
 
 # Create the data directory and ensure correct permissions
-RUN mkdir /app/data && chown -R crowler:crowler /app
+RUN mkdir -p /app/data/images && chown -R crowler:crowler /app
 
 USER crowler
 

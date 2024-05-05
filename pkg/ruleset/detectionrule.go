@@ -49,6 +49,7 @@ func (d *DetectionRule) GetAllPageContentPatterns() []PageContentSignature {
 		trimmedPatterns = append(trimmedPatterns, PageContentSignature{
 			Key:        strings.TrimSpace(pattern.Key),
 			Signature:  PrepareSlice(pattern.Signature, 1), // flag = 1 only trim spaces
+			Text:       PrepareSlice(pattern.Text, 0),
 			Confidence: pattern.Confidence,
 		},
 		)
@@ -98,6 +99,12 @@ func GetAllHTTPHeaderFieldsMap(d *[]DetectionRule) map[string]map[string]HTTPHea
 			if header.GetKey() == "*" {
 				item := make(map[string]HTTPHeaderField)
 				item[strings.ToLower(header.GetKey())] = header
+				// Check if the key already exists
+				if _, ok := headers[strings.ToLower(rule.ObjectName)]; ok {
+					// Append the new header to the existing ones
+					headers[strings.ToLower(rule.ObjectName)][strings.ToLower(header.GetKey())] = header
+					continue
+				}
 				headers[strings.ToLower(rule.ObjectName)] = item
 			}
 		}
@@ -117,6 +124,12 @@ func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[
 			}
 			item := make(map[string]HTTPHeaderField)
 			item[strings.ToLower(header.GetKey())] = header
+			// Check if the key already exists
+			if _, ok := headers[strings.ToLower(rule.ObjectName)]; ok {
+				// Append the new header to the existing ones
+				headers[strings.ToLower(rule.ObjectName)][strings.ToLower(header.GetKey())] = header
+				continue
+			}
 			headers[strings.ToLower(rule.ObjectName)] = item
 		}
 	}
@@ -128,6 +141,12 @@ func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[
 func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignature {
 	signatures := make(map[string][]URLMicroSignature)
 	for _, rule := range *d {
+		// Check if the key already exists
+		if _, ok := signatures[strings.ToLower(rule.ObjectName)]; ok {
+			// Append the new signatures to the existing ones
+			signatures[strings.ToLower(rule.ObjectName)] = append(signatures[strings.ToLower(rule.ObjectName)], rule.URLMicroSignatures...)
+			continue
+		}
 		signatures[strings.ToLower(rule.ObjectName)] = rule.URLMicroSignatures
 	}
 	return signatures
@@ -137,6 +156,13 @@ func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignat
 func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSignature {
 	patterns := make(map[string][]PageContentSignature)
 	for _, rule := range *d {
+		key := strings.ToLower(rule.ObjectName)
+		// Check if the key already exists
+		if _, ok := patterns[key]; ok {
+			// Append the new patterns to the existing ones
+			patterns[key] = append(patterns[key], rule.PageContentPatterns...)
+			continue
+		}
 		patterns[strings.ToLower(rule.ObjectName)] = rule.PageContentPatterns
 	}
 	return patterns
@@ -146,6 +172,12 @@ func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSi
 func GetAllSSLSignaturesMap(d *[]DetectionRule) map[string][]SSLSignature {
 	signatures := make(map[string][]SSLSignature)
 	for _, rule := range *d {
+		// Check if the key already exists
+		if _, ok := signatures[strings.ToLower(rule.ObjectName)]; ok {
+			// Append the new signatures to the existing ones
+			signatures[strings.ToLower(rule.ObjectName)] = append(signatures[strings.ToLower(rule.ObjectName)], rule.SSLSignatures...)
+			continue
+		}
 		signatures[strings.ToLower(rule.ObjectName)] = rule.SSLSignatures
 	}
 	return signatures
@@ -155,6 +187,12 @@ func GetAllSSLSignaturesMap(d *[]DetectionRule) map[string][]SSLSignature {
 func GetAllMetaTagsMap(d *[]DetectionRule) map[string][]MetaTag {
 	tags := make(map[string][]MetaTag)
 	for _, rule := range *d {
+		// Check if the key already exists
+		if _, ok := tags[strings.ToLower(rule.ObjectName)]; ok {
+			// Append the new tags to the existing ones
+			tags[strings.ToLower(rule.ObjectName)] = append(tags[strings.ToLower(rule.ObjectName)], rule.MetaTags...)
+			continue
+		}
 		tags[strings.ToLower(rule.ObjectName)] = rule.MetaTags
 	}
 	return tags

@@ -210,10 +210,10 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]
 	var wg sync.WaitGroup
 	for idx, source := range *sources {
 		wg.Add(1)
-		go func(src cdb.Source) {
+		go func(src cdb.Source, index int) {
 			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine)
-			(*sources)[idx].Status = 1
-		}(source) // Pass the current source
+			(*sources)[index].Status = 1
+		}(source, idx) // Pass the current source and index
 	}
 
 	wg.Wait() // Block until all goroutines have decremented the counter
@@ -253,6 +253,13 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading rules from configuration: %v", err)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Rulesets loaded: %d", RulesEngine.CountRulesets())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Detection rules loaded: %d", RulesEngine.CountDetectionRules())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "  Detection Noise Threshold: %f", RulesEngine.DetectionConfig.NoiseThreshold)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "  Detection Maybe Threshold: %f", RulesEngine.DetectionConfig.MaybeThreshold)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "  Detection Detected Threshold: %f", RulesEngine.DetectionConfig.DetectedThreshold)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Action rules loaded: %d", RulesEngine.CountActionRules())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Scraping rules loaded: %d", RulesEngine.CountScrapingRules())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling rules loaded: %d", RulesEngine.CountCrawlingRules())
 
 	// Start the crawler
 	crowler.StartCrawler(*config)

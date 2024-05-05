@@ -413,14 +413,18 @@
                                                 },
                                                 "attribute": {
                                                     "type": "string",
-                                                    "description": "Optional. The attribute of the tag to match, e.g., 'src' for img tag etc. (use 'text' for text content)."
+                                                    "description": "Optional. The attribute of the tag to match, e.g., 'src' for img tag etc. (leave empty if you want to match the tag's innerText only)."
                                                 },
                                                 "value": {
                                                     "type": "array",
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The pattern to match within the page content's tag."
+                                                    "description": "The pattern to match within the tag's attribute content."
+                                                },
+                                                "text": {
+                                                    "type": "string",
+                                                    "description": "Optional. The text to match in the tag's innerText."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
