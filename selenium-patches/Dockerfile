@@ -31,12 +31,8 @@ RUN apt install -y libx11-dev libxtst-dev libxext-dev
 WORKDIR /src
 COPY ./Rbee/cmd ./cmd
 COPY ./Rbee/pkg ./pkg
-COPY ./Rbee/services ./services
 COPY ./Rbee/go.mod .
 COPY ./Rbee/go.sum .
-COPY ./Rbee/main.go .
-COPY ./Rbee/config.yaml .
-COPY ./Rbee/schemas/ ./schemas
 COPY ./Rbee/autobuild.sh .
 COPY ./Rbee/browserAutomation.conf .
 RUN chmod +x autobuild.sh
@@ -54,7 +50,7 @@ USER ${SEL_UID}
 # Scripts to run Selenium Standalone
 #====================================
 COPY --chown="${SEL_UID}:${SEL_GID}" start-selenium-standalone.sh /opt/bin/start-selenium-standalone.sh
-COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/bin/browserAutomation /opt/bin/browserAutomation
+COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/bin/rbee /opt/bin/rbee
 COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/browserAutomation.conf /etc/supervisor/conf.d/browserAutomation.conf
 
 #==============================

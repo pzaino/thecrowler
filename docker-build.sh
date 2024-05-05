@@ -83,6 +83,15 @@ if [ $rval -ne 0 ]; then
     echo "Failed to clone the Selenium repository"
     exit 1
 fi
+rm -rf Rbee
+git clone https://github.com/pzaino/RBee.git ./Rbee
+rval=$?
+if [ $rval -ne 0 ]; then
+    echo "Failed to clone the RBee repository"
+    exit 1
+fi
+mkdir -p ./Rbee/pkg
+
 # Prepare Sources
 cd ./docker-selenium || exit 1
 git checkout "${SELENIUM_RELEASE}"
@@ -110,17 +119,8 @@ then
     fi
 fi
 # Add Rbee to the Selenium image
-mkdir -p ./Standalone/Rbee
-cp -r ../cmd ./Standalone/Rbee/cmd
-cp -r ../pkg ./Standalone/Rbee/pkg
-cp -r ../services ./Standalone/Rbee/services
-cp -r ../schemas ./Standalone/Rbee/schemas
-cp -r ../go.mod ./Standalone/Rbee/go.mod
-cp -r ../go.sum ./Standalone/Rbee/go.sum
-cp -r ../config.sh ./Standalone/Rbee/config.yaml
-cp ../main.go ./Standalone/Rbee/main.go
+cp -r ../Rbee ./Standalone/
 cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomation.conf
-cp ../autobuild.sh ./Standalone/Rbee/autobuild.sh
 
 # build Selenium image
 if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then

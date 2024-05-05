@@ -85,22 +85,6 @@ then
 fi
 
 if  [ "${build_objs}" == "all" ] ||
-    [ "${build_objs}" == "browserAutomation" ] ||
-    [ "${build_objs}" == "rb" ];
-then
-    cmd_name="browserAutomation"
-    CGO_ENABLED=1 go build ./cmd/${cmd_name}
-    rval=$?
-    if [ "${rval}" == "0" ]; then
-        echo "${cmd_name} command line tool built successfully!"
-        moveFile ${cmd_name} ./bin
-    else
-        echo "${cmd_name} command line tool build failed!"
-        exit $rval
-    fi
-fi
-
-if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "api" ] ||
     [ "${build_objs}" == "" ];
 then

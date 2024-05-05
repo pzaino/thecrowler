@@ -28,6 +28,8 @@ config.sh
 
 # build artefacts
 .vscode/
+docker-selenium/
+Rbee/
 
 # Testing environments
 sonar-project.properties
