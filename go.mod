@@ -20,12 +20,14 @@ require (
 	github.com/stretchr/testify v1.9.0
 )
 
-require golang.org/x/crypto v0.22.0
+require (
+	github.com/go-vgo/robotgo v0.110.1
+	golang.org/x/crypto v0.22.0
+)
 
 require (
 	github.com/gen2brain/shm v0.1.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-vgo/robotgo v0.110.1 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/kbinani/screenshot v0.0.0-20230812210009-b87d31814237 // indirect
 	github.com/lufia/plan9stats v0.0.0-20240408141607-282e7b5d6b74 // indirect
