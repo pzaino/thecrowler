@@ -30,6 +30,8 @@ config.sh
 .vscode/
 docker-selenium/
 Rbee/
+bin/
+images/*.png
 
 # Testing environments
 sonar-project.properties
