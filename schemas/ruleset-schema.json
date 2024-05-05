@@ -392,7 +392,7 @@
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The expected value of the HTTP header field."
+                                                    "description": "The expected value of the HTTP header field. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -420,11 +420,11 @@
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The pattern to match within the tag's attribute content."
+                                                    "description": "The pattern to match within the tag's attribute content. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
                                                 },
                                                 "text": {
                                                     "type": "string",
-                                                    "description": "Optional. The text to match in the tag's innerText."
+                                                    "description": "Optional. The text to match in the tag's innerText. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -449,7 +449,7 @@
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The pattern to match within the field's value."
+                                                    "description": "The pattern to match within the field's value. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -466,7 +466,7 @@
                                             "properties": {
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "The micro-signature to match in the URL."
+                                                    "description": "The micro-signature to match in the URL. This is NOT a regex pattern, but a simple string pattern."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -489,7 +489,7 @@
                                             },
                                             "content": {
                                                 "type": "string",
-                                                "description": "The content attribute of the meta tag, which holds the value to match."
+                                                "description": "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
                                             }
                                         }
                                     },
