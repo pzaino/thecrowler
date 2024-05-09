@@ -1,0 +1,56 @@
+database:
+  type: postgres
+  host: ${POSTGRES_DB_HOST}
+  port: 5432
+  user: ${CROWLER_DB_USER}
+  password: ${CROWLER_DB_PASSWORD}
+  dbname: SitesIndex
+
+crawler:
+  source_screenshot: true
+  interval: random(random(1,2), random(3,5))
+  workers: 5
+  depth: 1
+  delay: random(1,2)
+  timeout: 10
+  maintenance: 60
+
+api:
+  port: 8080
+  host: 0.0.0.0
+  timeout: 10
+  enable_console: true
+  return_404: false
+
+selenium:
+  - type: chrome
+    path: ""
+    port: 4444
+    headless: true
+    host: selenium
+    use_service: false
+    sslmode: disable
+
+image_storage:
+  type: local
+  path: /app/data/images
+
+network_info:
+  netlookup:
+    enabled: true
+    timeout: 15
+  dns:
+    enabled: true
+    timeout: 15
+  whois:
+    enabled: true
+    timeout: 15
+  service_scout:
+    enabled: true
+    timeout: 300
+  geolocation:
+    enabled: false
+    timeout: 15
+
+debug_level: 0
+
