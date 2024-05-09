@@ -37,3 +37,4 @@ images/*.png
 sonar-project.properties
 .scannerwork/**
 AllCertificatesRecordReport.csv
+test*.json
