@@ -48,6 +48,6 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.24.0
+	golang.org/x/net v0.25.0
 	golang.org/x/text v0.15.0 // indirect
 )
