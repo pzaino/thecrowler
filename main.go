@@ -208,12 +208,19 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]
 
 	// We have some sources to crawl, let's start the crawling process
 	var wg sync.WaitGroup
+	selIdx := 0 // Selenium instance index
 	for idx, source := range *sources {
 		wg.Add(1)
-		go func(src cdb.Source, index int) {
-			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine)
+		go func(src cdb.Source, index int, selIdx int) {
+			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine, selIdx)
 			(*sources)[index].Status = 1
-		}(source, idx) // Pass the current source and index
+		}(source, idx, selIdx) // Pass the current source and index
+		if len(config.Selenium) > 1 {
+			selIdx++
+			if selIdx >= len(config.Selenium) {
+				selIdx = 0
+			}
+		}
 	}
 
 	wg.Wait() // Block until all goroutines have decremented the counter
