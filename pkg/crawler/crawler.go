@@ -59,6 +59,7 @@ import (
 const (
 	dbConnCheckErr = "Error checking database connection: %v\n"
 	dbConnTransErr = "Error committing transaction: %v"
+	selConnError   = "Error connecting to Selenium: %v"
 )
 
 var (
@@ -121,7 +122,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	// Connect to Selenium
 	if err = processCtx.ConnectToSelenium(sel); err != nil {
 		UpdateSourceState(db, source.URL, err)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Error connecting to Selenium: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		SeleniumInstances <- sel
 		tID.Done()
 		return
@@ -247,7 +248,7 @@ func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
 	var err error
 	ctx.wd, err = ConnectSelenium(sel, 0)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to Selenium: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 		ctx.sel <- sel
 		return err
 	}
@@ -1445,7 +1446,7 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 		*/
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to Selenium: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 			time.Sleep(5 * time.Second)
 		} else {
 			break
