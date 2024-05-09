@@ -172,15 +172,16 @@ func NewConfig() Config {
 		},
 		Selenium: []Selenium{
 			{
-				Path:       "",
-				DriverPath: "",
-				Type:       "chrome",
-				Port:       4444,
-				Host:       "localhost",
-				Headless:   true,
-				UseService: false,
-				SSLMode:    "disable",
-				ProxyURL:   "",
+				Path:        "",
+				DriverPath:  "",
+				Type:        "chrome",
+				ServiceType: "standalone",
+				Port:        4444,
+				Host:        "localhost",
+				Headless:    true,
+				UseService:  false,
+				SSLMode:     "disable",
+				ProxyURL:    "",
 			},
 		},
 		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
@@ -531,6 +532,7 @@ func (c *Config) validateSelenium() {
 	// Check Selenium
 	for i := range c.Selenium {
 		c.validateSeleniumType(&c.Selenium[i])
+		c.validateSeleniumServiceType(&c.Selenium[i])
 		c.validateSeleniumPath(&c.Selenium[i])
 		c.validateSeleniumDriverPath(&c.Selenium[i])
 		c.validateSeleniumHost(&c.Selenium[i])
@@ -544,6 +546,14 @@ func (c *Config) validateSeleniumType(selenium *Selenium) {
 		selenium.Type = "chrome"
 	} else {
 		selenium.Type = strings.TrimSpace(selenium.Type)
+	}
+}
+
+func (c *Config) validateSeleniumServiceType(selenium *Selenium) {
+	if strings.TrimSpace(selenium.ServiceType) == "" {
+		selenium.ServiceType = "standalone"
+	} else {
+		selenium.ServiceType = strings.TrimSpace(selenium.ServiceType)
 	}
 }
 

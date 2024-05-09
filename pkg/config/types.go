@@ -171,15 +171,16 @@ type API struct {
 
 // Selenium represents the Selenium configuration
 type Selenium struct {
-	Path       string `yaml:"path"`        // Path to the Selenium executable
-	DriverPath string `yaml:"driver_path"` // Path to the Selenium driver executable
-	Type       string `yaml:"type"`        // Type of Selenium driver
-	Port       int    `yaml:"port"`        // Port number for Selenium server
-	Host       string `yaml:"host"`        // Hostname of the Selenium server
-	Headless   bool   `yaml:"headless"`    // Whether to run Selenium in headless mode
-	UseService bool   `yaml:"use_service"` // Whether to use Selenium service as well or not
-	SSLMode    string `yaml:"sslmode"`     // SSL mode for Selenium connection (e.g., "disable")
-	ProxyURL   string `yaml:"proxy_url"`   // Proxy URL for Selenium connection
+	Path        string `yaml:"path"`         // Path to the Selenium executable
+	DriverPath  string `yaml:"driver_path"`  // Path to the Selenium driver executable
+	Type        string `yaml:"type"`         // Type of Selenium driver
+	ServiceType string `yaml:"service_type"` // Type of Selenium service (standalone, hub)
+	Port        int    `yaml:"port"`         // Port number for Selenium server
+	Host        string `yaml:"host"`         // Hostname of the Selenium server
+	Headless    bool   `yaml:"headless"`     // Whether to run Selenium in headless mode
+	UseService  bool   `yaml:"use_service"`  // Whether to use Selenium service as well or not
+	SSLMode     string `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
+	ProxyURL    string `yaml:"proxy_url"`    // Proxy URL for Selenium connection
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper

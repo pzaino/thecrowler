@@ -38,20 +38,136 @@ type MetaTag struct {
 
 // PageInfo represents the information of a web page.
 type PageInfo struct {
-	URL          string             // The URL of the web page.
+	URL          string             `json:"URL"` // The URL of the web page.
 	sourceID     int64              // The ID of the source.
-	Title        string             // The title of the web page.
-	Summary      string             // A summary of the web page content.
-	BodyText     string             // The main body text of the web page.
-	HTML         string             // The HTML content of the web page.
-	MetaTags     []MetaTag          // The meta tags of the web page.
-	Keywords     map[string]string  // The keywords of the web page.
-	DetectedType string             // The detected document type of the web page.
-	DetectedLang string             // The detected language of the web page.
-	NetInfo      *neti.NetInfo      // The network information of the web page.
-	HTTPInfo     *httpi.HTTPDetails // The HTTP header information of the web page.
-	ScrapedData  string             // The scraped data from the web page.
-	Links        []string           // The links found in the web page.
+	Title        string             `json:"title"`         // The title of the web page.
+	Summary      string             `json:"summary"`       // A summary of the web page content.
+	BodyText     string             `json:"body_text"`     // The main body text of the web page.
+	HTML         string             `json:"html"`          // The HTML content of the web page.
+	MetaTags     []MetaTag          `json:"meta_tags"`     // The meta tags of the web page.
+	Keywords     map[string]string  `json:"keywords"`      // The keywords of the web page.
+	DetectedType string             `json:"detected_type"` // The detected document type of the web page.
+	DetectedLang string             `json:"detected_lang"` // The detected language of the web page.
+	NetInfo      *neti.NetInfo      `json:"net_info"`      // The network information of the web page.
+	HTTPInfo     *httpi.HTTPDetails `json:"http_info"`     // The HTTP header information of the web page.
+	ScrapedData  string             `json:"scraped_data"`  // The scraped data from the web page.
+	Links        []string           `json:"links"`         // The links found in the web page.
+	PerfInfo     PerformanceLog     `json:"performance"`   // The performance information of the web page.
+}
+
+type PerformanceLog struct {
+	TCPConnection   float64               `json:"tcp_connection"`     // The time to establish a TCP connection.
+	TimeToFirstByte float64               `json:"time_to_first_byte"` // The time to first byte.
+	ContentLoad     float64               `json:"content_load"`       // The time to load the content.
+	DNSLookup       float64               `json:"dns_lookup"`         // Number of DNS lookups.
+	PageLoad        float64               `json:"page_load"`          // The time to load the page.
+	LogEntries      []PerformanceLogEntry `json:"log_entries"`        // The log entries of the web page.
+}
+
+// PerformanceLog represents a structure for performance log entries
+type PerformanceLogEntry struct {
+	Message LogMessage `json:"message"` // The log message.
+	Webview string     `json:"webview"` // The webview.
+}
+
+// LogMessage represents a log message
+type LogMessage struct {
+	Method string    `json:"method"` // The method of the log message.
+	Params LogParams `json:"params"` // The parameters of the log message.
+}
+
+// LogParams represents the parameters of a log message
+type LogParams struct {
+	ResponseInfo LogResponseInfo `json:"response"`       // The extra information of the response.
+	TimeStamp    float64         `json:"timestamp"`      // The timestamp of the log message.
+	Type         string          `json:"type,omitempty"` // The type of the log message.
+}
+
+// ResponseExtraInfo represents additional information about a response in network logs.
+type LogResponseInfo struct {
+	BlockedCookies         []BlockedCookie    `json:"blockedCookies,omitempty"`         // The blocked cookies.
+	Headers                map[string]string  `json:"headers,omitempty"`                // The headers of the response.
+	RequestID              string             `json:"requestId"`                        // The ID of the request.
+	ResourceIPAddressSpace string             `json:"resourceIPAddressSpace,omitempty"` // The IP address space of the resource.
+	StatusCode             int                `json:"statusCode"`                       // The status code of the response.
+	StatusText             string             `json:"statusText"`                       // The status text of the response.
+	MimeType               string             `json:"mimeType,omitempty"`               // The MIME type of the response.
+	Protocol               string             `json:"protocol,omitempty"`               // The protocol of the response.
+	RemoteIPAddress        string             `json:"remoteIPAddress,omitempty"`        // The remote IP address.
+	RemotePort             int                `json:"remotePort,omitempty"`             // The remote port.
+	ResponseTime           float64            `json:"responseTime,omitempty"`           // The response time.
+	SecurityDetails        LogSecurityDetails `json:"securityDetails,omitempty"`        // Security details of the response.
+	SecurityState          string             `json:"securityState,omitempty"`          // Security state of the response.
+	Timing                 LogResponseTiming  `json:"timing,omitempty"`                 // Timing information.
+	URL                    string             `json:"url"`                              // The URL of the response.
+}
+
+// SecurityDetails holds detailed security information from the network logs.
+type LogSecurityDetails struct {
+	CertificateID                     int      `json:"certificateId"`
+	CertificateTransparencyCompliance string   `json:"certificateTransparencyCompliance"`
+	Cipher                            string   `json:"cipher"`
+	EncryptedClientHello              bool     `json:"encryptedClientHello"`
+	Issuer                            string   `json:"issuer"`
+	KeyExchange                       string   `json:"keyExchange"`
+	KeyExchangeGroup                  string   `json:"keyExchangeGroup"`
+	Protocol                          string   `json:"protocol"`
+	SANList                           []string `json:"sanList"`
+	ServerSignatureAlgorithm          int      `json:"serverSignatureAlgorithm"`
+	SubjectName                       string   `json:"subjectName"`
+	ValidFrom                         float64  `json:"validFrom"`
+	ValidTo                           float64  `json:"validTo"`
+}
+
+// ResponseTiming holds timing information from the network logs.
+type LogResponseTiming struct {
+	ConnectEnd               float64 `json:"connectEnd"`
+	ConnectStart             float64 `json:"connectStart"`
+	DNSEnd                   float64 `json:"dnsEnd"`
+	DNSStart                 float64 `json:"dnsStart"`
+	ReceiveHeadersEnd        float64 `json:"receiveHeadersEnd"`
+	RequestTime              float64 `json:"requestTime"`
+	SendEnd                  float64 `json:"sendEnd"`
+	SendStart                float64 `json:"sendStart"`
+	SSLStart                 float64 `json:"sslStart"`
+	SSLEnd                   float64 `json:"sslEnd"`
+	WorkerStart              float64 `json:"workerStart"`
+	WorkerFetchStart         float64 `json:"workerFetchStart"`
+	WorkerReady              float64 `json:"workerReady"`
+	WorkerRespondWithSettled float64 `json:"workerRespondWithSettled"`
+}
+
+// BlockedCookie represents a blocked cookie object
+type BlockedCookie struct {
+	BlockedReasons []string `json:"blockedReasons"` // The reasons why the cookie was blocked.
+	Cookie         Cookie   `json:"cookie"`         // The cookie that was blocked.
+	CookieLine     string   `json:"cookieLine"`     // The cookie line.
+}
+
+// Cookie represents a cookie object
+type Cookie struct {
+	Domain       string  `json:"domain"`       // The domain of the cookie.
+	Expires      float64 `json:"expires"`      // The expiration time of the cookie.
+	HTTPOnly     bool    `json:"httpOnly"`     // Whether the cookie is HTTP only.
+	Name         string  `json:"name"`         // The name of the cookie.
+	Path         string  `json:"path"`         // The path of the cookie.
+	Priority     string  `json:"priority"`     // The priority of the cookie.
+	SameParty    bool    `json:"sameParty"`    // Whether the cookie is from the same party.
+	SameSite     string  `json:"sameSite"`     // The same site attribute of the cookie.
+	Secure       bool    `json:"secure"`       // Whether the cookie is secure.
+	Session      bool    `json:"session"`      // Whether the cookie is a session cookie.
+	Size         int     `json:"size"`         // The size of the cookie.
+	SourcePort   int     `json:"sourcePort"`   // The source port of the cookie.
+	SourceScheme string  `json:"sourceScheme"` // The source scheme of the cookie.
+	Value        string  `json:"value"`        // The value of the cookie.
+}
+
+// PageDetails represents the details of a collected web page
+type PageDetails struct {
+	URL      string           `json:"URL"`         // The URL of the web page.
+	Title    string           `json:"title"`       // The title of the web page.
+	PerfInfo []PerformanceLog `json:"performance"` // The performance information of the web page.
+	Links    []string         `json:"links"`       // The links found in the web page.
 }
 
 // Screenshot represents the metadata of a webpage screenshot
@@ -72,31 +188,57 @@ type ScraperRuleEngine struct {
 	*rs.RuleEngine // generic rule engine
 }
 
+const (
+	browserGpuDefault        = "--disable-gpu"
+	browserJSDefault         = "--enable-javascript"
+	browserStartMaxDefault   = "--start-maximized"
+	browserWindowSizeDefault = "--window-size=1920,1080"
+	browserExtensionsDefault = "--disable-extensions"
+	browserSandboxDefault    = "--no-sandbox"
+	browserInfoBarsDefault   = "--disable-infobars"
+	browserPopupsDefault     = "--disable-popup-blocking"
+	browserShmDefault        = "--disable-dev-shm-usage"
+)
+
 var (
 	browserSettingsMap = map[string]map[string]string{
 		"chrome": {
 			"browserName":   "chrome",
-			"windowSize":    "--window-size=1920,1080", // Set the window size to 1920x1080
-			"initialWindow": "--start-maximized",       // (--start-maximized) Start with a maximized window
-			"sandbox":       "--no-sandbox",            // Bypass OS security model, necessary in some environments
-			"infoBars":      "--disable-infobars",      // Disables the "Chrome is being controlled by automated test software" infobar
-			"extensions":    "--disable-extensions",    // Disables extensions to get a cleaner browsing experience
-			"popups":        "",                        // Disable pop-up blocking (--disable-popup-blocking)
-			"gpu":           "--disable-gpu",           // (--disable-gpu) Disable GPU hardware acceleration, if necessary
-			"javascript":    "--enable-javascript",     // (--enable-javascript) Enable JavaScript, which is typically enabled in real user browsers
-			"headless":      "",                        // Run in headless mode (--headless)
-			"incognito":     "",                        // Run in incognito mode
-			"disableDevShm": "--disable-dev-shm-usage", // Disable /dev/shm use
+			"windowSize":    browserWindowSizeDefault, // Set the window size to 1920x1080
+			"initialWindow": browserStartMaxDefault,   // (--start-maximized) Start with a maximized window
+			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
+			"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
+			"extensions":    browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
+			"popups":        browserPopupsDefault,     // Disable pop-up blocking (--disable-popup-blocking)
+			"gpu":           browserGpuDefault,        // (--disable-gpu) Disable GPU hardware acceleration, if necessary
+			"javascript":    browserJSDefault,         // (--enable-javascript) Enable JavaScript, which is typically enabled in real user browsers
+			"headless":      "",                       // Run in headless mode (--headless)
+			"incognito":     "",                       // Run in incognito mode
+			"disableDevShm": browserShmDefault,        // Disable /dev/shm use
 		},
 		"firefox": {
 			"browserName":   "firefox",
-			"initialWindow": "--start-maximized",        // Start with a maximized window
-			"sandbox":       "--no-sandbox",             // Bypass OS security model, necessary in some environments
-			"infoBars":      "--disable-infobars",       // Disables the "Chrome is being controlled by automated test software" infobar
-			"extensions":    "--disable-extensions",     // Disables extensions to get a cleaner browsing experience
-			"popups":        "--disable-popup-blocking", // Disable pop-up blocking
-			"gpu":           "--disable-gpu",            // Disable GPU hardware acceleration, if necessary
-			"javascript":    "--enable-javascript",      // Enable JavaScript, which is typically enabled in real user browsers
+			"initialWindow": browserStartMaxDefault,   // Start with a maximized window
+			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
+			"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
+			"extensions":    browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
+			"popups":        browserPopupsDefault,     // Disable pop-up blocking
+			"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
+			"javascript":    browserJSDefault,         // Enable JavaScript, which is typically enabled in real user browsers
+		},
+		"chromium": {
+			"browserName":   "chromium",
+			"windowSize":    browserWindowSizeDefault, // Set the window size to 1920x1080
+			"initialWindow": browserStartMaxDefault,   // Start with a maximized window
+			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
+			"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
+			"extensions":    browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
+			"popups":        browserPopupsDefault,     // Disable pop-up blocking
+			"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
+			"javascript":    browserJSDefault,         // Enable JavaScript, which is typically enabled in real user browsers
+			"headless":      "",                       // Run in headless mode
+			"incognito":     "",                       // Run in incognito mode
+			"disableDevShm": browserShmDefault,        // Disable /dev/shm use
 		},
 	}
 

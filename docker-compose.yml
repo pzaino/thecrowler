@@ -14,7 +14,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./pkg/database/postgresql-setup-v1.2.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.2.pgsql
+      - ./pkg/database/postgresql-setup-v1.3.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.3.pgsql
 
   searchapi:
     container_name: thecrowler_searchapi

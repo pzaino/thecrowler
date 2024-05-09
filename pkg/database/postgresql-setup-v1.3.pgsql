@@ -11,25 +11,39 @@
 --------------------------------------------------------------------------------
 -- Database Tables setup
 
+-- InformationSeeds table stores the seed information for the crawler
+CREATE TABLE IF NOT EXISTS InformationSeed (
+    information_seed_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    information_seed VARCHAR(256) NOT NULL,     -- The size of an information seed is limited to 256
+                                                -- characters due to the fact that it's used to dork
+                                                -- search engines for sources that may be related to
+                                                -- the information seed.
+    config JSONB                                -- Stores JSON document with all details about
+                                                -- the information seed configuration for the crawler
+);
+
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP,
-    url TEXT NOT NULL UNIQUE,         -- Using TEXT for long URLs
-    status VARCHAR(50) DEFAULT 'new' NOT NULL, -- All new sources are set to 'new' by default
+    url TEXT NOT NULL UNIQUE,                   -- Using TEXT for long URLs
+    status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default
     last_crawled_at TIMESTAMP,
-    last_error TEXT,                  -- Using TEXT for potentially long error messages
+    last_error TEXT,                            -- Using TEXT for potentially long error messages
     last_error_at TIMESTAMP,
-    restricted INTEGER DEFAULT 2 NOT NULL,     -- 0 = fully restricted (just this URL)
-                                      -- 1 = l3 domain restricted (everything within this URL l3 domain)
-                                      -- 2 = l2 domain restricted
-                                      -- 3 = l1 domain restricted
-                                      -- 4 = no restrictions
+    restricted INTEGER DEFAULT 2 NOT NULL,      -- 0 = fully restricted (just this URL)
+                                                -- 1 = l3 domain restricted (everything within this
+                                                --     URL l3 domain)
+                                                -- 2 = l2 domain restricted
+                                                -- 3 = l1 domain restricted
+                                                -- 4 = no restrictions
     disabled BOOLEAN DEFAULT FALSE,
     flags INTEGER DEFAULT 0 NOT NULL,
-    config JSONB                      -- Stores JSON document with all details about the source
-                                      -- configuration for the crawler
+    config JSONB                                -- Stores JSON document with all details about
+                                                -- the source configuration for the crawler
 );
 
 -- Owners table stores the information about the owners of the sources
@@ -37,8 +51,10 @@ CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    details_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the details for fast comparison and uniqueness
-    details JSONB NOT NULL             -- Stores JSON document with all details about the owner
+    details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
+                                                -- and uniqueness.
+    details JSONB NOT NULL                      -- Stores JSON document with all details about
+                                                -- the owner.
 );
 
 -- NetInfo table stores the network information retrieved from the sources
@@ -46,7 +62,8 @@ CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    details_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the details for fast comparison and uniqueness
+    details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
+                                                -- and uniqueness.
     details JSONB NOT NULL
 );
 
@@ -55,7 +72,8 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    details_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the details for fast comparison and uniqueness
+    details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
+                                                -- and uniqueness
     details JSONB NOT NULL
 );
 
@@ -64,12 +82,11 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    page_url TEXT NOT NULL UNIQUE,                  -- Using TEXT for long URLs
-    title VARCHAR(255),
-    summary TEXT NOT NULL,                          -- Assuming summary is always required
-    detected_type VARCHAR(8),                       -- (content type) denormalized for fast searches
-    detected_lang VARCHAR(8),                       -- (URI language) denormalized for fast searches
-    content TEXT
+    page_url TEXT NOT NULL UNIQUE,              -- Using TEXT for long URLs
+    title VARCHAR(255),                         -- Page title might be NULL
+    summary TEXT NOT NULL,                      -- Assuming summary is always required
+    detected_type VARCHAR(8),                   -- (content type) denormalized for fast searches
+    detected_lang VARCHAR(8)                    -- (URI language) denormalized for fast searches
 );
 
 -- Screenshots table stores the screenshots details of the indexed pages
@@ -96,11 +113,17 @@ CREATE TABLE IF NOT EXISTS WebObjects (
     object_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    object_link TEXT NOT NULL DEFAULT 'db', -- The link to where the object is stored if not in the DB
+    object_link TEXT NOT NULL DEFAULT 'db',     -- The link to where the object is stored if not
+                                                -- in the DB.
     object_type VARCHAR(255) NOT NULL DEFAULT 'text/html', -- The type of the object, for fast searches
-    object_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 hash of the object for fast comparison and uniqueness
-    object_content TEXT, -- The actual content of the object, nullable if stored externally
-    object_html TEXT -- The HTML content of the object, nullable if stored externally
+    object_hash VARCHAR(64) UNIQUE NOT NULL,    -- SHA256 hash of the object for fast comparison
+                                                -- and uniqueness.
+    object_content TEXT,                        -- The actual content of the object, nullable if
+                                                -- stored externally.
+    object_html TEXT,                            -- The HTML content of the object, nullable if
+                                                -- stored externally.
+    details JSONB NOT NULL                      -- Stores JSON document with all details about
+                                                -- the object.
 );
 
 -- MetaTags table stores the meta tags from the SearchIndex
@@ -108,7 +131,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
-    UNIQUE(name, content) -- Ensure that each name-content pair is unique
+    UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
 
 -- Keywords table stores all the found keywords during an indexing
@@ -117,6 +140,16 @@ CREATE TABLE IF NOT EXISTS Keywords (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     keyword VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- SourceInformationSeed table stores the relationship between sources and their information seeds
+CREATE TABLE IF NOT EXISTS SourceInformationSeed (
+    source_information_seed_id BIGSERIAL PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
+    information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source_id, information_seed_id)
 );
 
 -- SourceOwnerIndex table stores the relationship between sources and their owners
@@ -134,7 +167,8 @@ CREATE TABLE IF NOT EXISTS SourceOwnerIndex (
         FOREIGN KEY(owner_id)
         REFERENCES Owners(owner_id)
         ON DELETE CASCADE,
-    UNIQUE(source_id, owner_id), -- Ensures unique combinations of source_id and owner_id
+    UNIQUE(source_id, owner_id),                -- Ensures unique combinations of source_id and
+                                                -- owner_id
     FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     FOREIGN KEY (owner_id) REFERENCES Owners(owner_id) ON DELETE CASCADE
 );
@@ -154,7 +188,8 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
         FOREIGN KEY(index_id)
         REFERENCES SearchIndex(index_id)
         ON DELETE CASCADE,
-    UNIQUE(source_id, index_id), -- Ensures unique combinations of source_id and index_id
+    UNIQUE(source_id, index_id),                -- Ensures unique combinations of source_id
+                                                -- and index_id
     FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE
 );
@@ -166,7 +201,8 @@ CREATE TABLE IF NOT EXISTS PageWebObjectsIndex (
     object_id BIGINT NOT NULL REFERENCES WebObjects(object_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(index_id, object_id), -- Ensures that the same object is not linked multiple times to the same page
+    UNIQUE(index_id, object_id),                -- Ensures that the same object is not linked
+                                                -- multiple times to the same page.
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (object_id) REFERENCES WebObjects(object_id) ON DELETE CASCADE
 );
@@ -177,7 +213,7 @@ CREATE TABLE IF NOT EXISTS SearchIndexMetaTags (
     index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
     metatag_id BIGINT NOT NULL REFERENCES MetaTags(metatag_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    UNIQUE(index_id, metatag_id), -- Prevents duplicate associations
+    UNIQUE(index_id, metatag_id),               -- Prevents duplicate associations
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (metatag_id) REFERENCES MetaTags(metatag_id) ON DELETE CASCADE
 );
@@ -190,7 +226,8 @@ CREATE TABLE IF NOT EXISTS KeywordIndex (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     occurrences INTEGER,
-    UNIQUE(keyword_id, index_id), -- Ensures unique combinations of keyword_id and index_id
+    UNIQUE(keyword_id, index_id),               -- Ensures unique combinations of keyword_id
+                                                -- and index_id
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (keyword_id) REFERENCES Keywords(keyword_id) ON DELETE CASCADE
 );
@@ -202,7 +239,8 @@ CREATE TABLE IF NOT EXISTS NetInfoIndex (
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(netinfo_id, index_id), -- Ensures unique combinations of netinfo_id and index_id
+    UNIQUE(netinfo_id, index_id),               -- Ensures unique combinations of netinfo_id
+                                                -- and index_id
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (netinfo_id) REFERENCES NetInfo(netinfo_id) ON DELETE CASCADE
 );
@@ -214,7 +252,8 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(httpinfo_id, index_id), -- Ensures unique combinations of httpinfo_id and index_id
+    UNIQUE(httpinfo_id, index_id),              -- Ensures unique combinations of httpinfo_id
+                                                -- and index_id
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (httpinfo_id) REFERENCES HTTPInfo(httpinfo_id) ON DELETE CASCADE
 );
@@ -436,17 +475,6 @@ BEGIN
 END
 $$;
 
--- Creates an index for the SearchIndex content column
-DO $$
-BEGIN
-    -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_content') THEN
-        -- Create the index if it doesn't exist
-        CREATE INDEX idx_searchindex_content ON SearchIndex(left(content, 1000) text_pattern_ops) WHERE content IS NOT NULL;
-    END IF;
-END
-$$;
-
 -- Creates an index for the SearchIndex last_updated_at column
 DO $$
 BEGIN
@@ -564,6 +592,22 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_last_updated_at') THEN
         -- Create the index if it doesn't exist
         CREATE INDEX idx_webobjects_last_updated_at ON WebObjects(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the details column in the WebObjects table
+-- This index is used to search for specific keys in the JSONB column
+-- The jsonb_path_ops operator class is used to index the JSONB column
+-- for queries that use the @> operator to search for keys in the JSONB column
+-- The jsonb_path_ops operator class is optimized for queries that use the @> operator
+-- to search for keys in the JSONB column
+DO $$
+BEGIN
+    -- Check if the index already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_webobjects_details') THEN
+        -- Create the index if it doesn't exist
+        CREATE INDEX idx_json_webobjects_details ON WebObjects USING gin (details jsonb_path_ops);
     END IF;
 END
 $$;
@@ -731,6 +775,32 @@ BEGIN
 		FOR EACH ROW
 		EXECUTE FUNCTION update_last_updated_at_column();
 	END IF;
+END
+$$;
+
+-- Create a trigger to update the last_updated_at column for InformationSeed table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_information_seed_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_information_seed_last_updated_before_update
+        BEFORE UPDATE ON InformationSeed
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+-- Create a trigger to update the last_updated_at column for SourceInformationSeed table
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_source_information_seed_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_source_information_seed_last_updated_before_update
+        BEFORE UPDATE ON SourceInformationSeed
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
 END
 $$;
 
