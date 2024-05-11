@@ -118,9 +118,9 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	if err != nil {
 		return nil, err
 	}
-	info.DetectedAssets = make(map[string]string)
+	info.DetectedEntities = make(map[string]DetectedEntity)
 	for k, v := range detectedItems {
-		info.DetectedAssets[k] = v
+		info.DetectedEntities[k] = v
 	}
 
 	return info, nil
@@ -224,7 +224,7 @@ func handleRedirect(req *http.Request, via []*http.Request, config Config, trans
 // AnalyzeResponse analyzes the response body and header for additional server-related information
 // and possible technologies used
 // Note: In the future this needs to be moved in http_rules logic
-func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine) (map[string]string, error) {
+func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine) (map[string]DetectedEntity, error) {
 	// Get the response headers
 	header := &(*info).ResponseHeaders
 
@@ -239,50 +239,62 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, r
 
 	// Initialize the infoList map
 	// infoList := make(map[string]string)
-	var infoList map[string]string = make(map[string]string)
+	infoList := make(map[string]DetectedEntity)
 
-	// Detect CMS
+	// Detect Entities on the page/site
 	x := detectTechnologies(info.URL, responseBody, header, sslInfo, re)
 	for k, v := range *x {
 		infoList[k] = v
 	}
 
-	// If no additional information is found, add a default message
-	if len(infoList) == 0 {
-		infoList["analysis_result"] = "No additional information found"
-	} else {
-		infoList["analysis_result"] = "Additional information found"
-	}
-
 	return infoList, nil
 }
 
-func detectTechnologies(url string, responseBody string, header *http.Header, sslInfo *SSLInfo, re *ruleset.RuleEngine) *map[string]string {
-	const (
-		hostHeader = "Host-Header"
-		xGenerator = "X-Generator"
-	)
+// detectionEntityDetails is used internally to represent the details of an entity detection
+type detectionEntityDetails struct {
+	entityType      string
+	matchedPatterns []string
+	confidence      float32
+}
 
-	// CMS micro-signatures
+func detectTechnologies(url string, responseBody string,
+	header *http.Header, sslInfo *SSLInfo,
+	re *ruleset.RuleEngine) *map[string]DetectedEntity {
+	// micro-signatures
 	Patterns := re.GetAllEnabledDetectionRules()
 
-	// Initialize a slice to store the detected CMS
-	var detectedTech map[string]float32 = make(map[string]float32)
+	// Initialize a slice to store the detected stuff
+	detectedTech := make(map[string]detectionEntityDetails)
 
 	// Normalize the response body
 	responseBody = strings.ToLower(strings.TrimSpace(responseBody))
 
 	// Iterate through all the header tags and check for CMS signatures
-	for headerTag := range *header {
-		// Get the HTTP header fields for the specific tag
-		var Signatures map[string]map[string]ruleset.HTTPHeaderField
-		if headerTag == hostHeader {
-			Signatures = ruleset.GetAllHTTPHeaderFieldsMap(&Patterns)
-		} else {
-			Signatures = ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, headerTag)
+	if header != nil {
+		const (
+			hostHeader = "Host-Header"
+			xGenerator = "X-Generator"
+		)
+		for headerTag := range *header {
+			// Get the HTTP header fields for the specific tag
+			var Signatures map[string]map[string]ruleset.HTTPHeaderField
+			if headerTag == hostHeader {
+				Signatures = ruleset.GetAllHTTPHeaderFieldsMap(&Patterns)
+			} else {
+				Signatures = ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, headerTag)
+			}
+			if (Signatures != nil) && len(Signatures) > 0 {
+				detectTechByTag(header, headerTag, &Signatures, &detectedTech)
+			}
 		}
-		if (Signatures != nil) && len(Signatures) > 0 {
-			detectTechByTag(header, headerTag, &Signatures, &detectedTech)
+		// Some extra tags that may help:
+		if header.Get(xGenerator) != "" {
+			entity := detectionEntityDetails{
+				entityType:      "header_field",
+				confidence:      10,
+				matchedPatterns: []string{xGenerator},
+			}
+			detectedTech[xGenerator] = entity
 		}
 	}
 
@@ -295,11 +307,6 @@ func detectTechnologies(url string, responseBody string, header *http.Header, ss
 	MetaTagsSignatures := ruleset.GetAllMetaTagsMap(&Patterns)
 	detectTechByMetaTags(responseBody, &MetaTagsSignatures, &detectedTech)
 	MetaTagsSignatures = nil
-
-	// Some extra tags that may help:
-	if header.Get(xGenerator) != "" {
-		detectedTech[xGenerator] += 1
-	}
 
 	// Check the response body for Technologies signatures
 	Signatures := ruleset.GetAllPageContentPatternsMap(&Patterns)
@@ -314,25 +321,43 @@ func detectTechnologies(url string, responseBody string, header *http.Header, ss
 	}
 
 	// Transform the detectedTech map into a map of strings
-	var detectedTechStr map[string]string = make(map[string]string)
+	detectedTechStr := make(map[string]DetectedEntity)
 	for k, v := range detectedTech {
-		//fmt.Printf("Detected technology: %s - %f\n", k, v)
-		// calculate "confidence" based on the value of v
-		if v <= re.DetectionConfig.NoiseThreshold {
+		// calculate "confidence" based on the value of x
+		x := v.confidence
+		c := calculateConfidence(x, re.DetectionConfig.NoiseThreshold, re.DetectionConfig.MaybeThreshold, re.DetectionConfig.DetectedThreshold)
+		if c <= 10 {
 			continue
 		}
-		if v < re.DetectionConfig.MaybeThreshold {
-			detectedTechStr[k] = "traces"
-		} else if v >= re.DetectionConfig.DetectedThreshold {
-			detectedTechStr[k] = "yes"
-		} else {
-			detectedTechStr[k] = "maybe"
+		v.confidence = c
+		entity := DetectedEntity{
+			EntityName:      k,
+			EntityType:      v.entityType,
+			Confidence:      v.confidence,
+			MatchedPatterns: v.matchedPatterns,
 		}
+		detectedTechStr[k] = entity
 	}
 	return &detectedTechStr
 }
 
-func detectTechBySSL(sslInfo *SSLInfo, sslSignatures *map[string][]ruleset.SSLSignature, detectedTech *map[string]float32) {
+func calculateConfidence(x, Noise, Maybe, Detected float32) float32 {
+	if x < 0 {
+		return 0 // Consider values below 0 as 0 confidence
+	} else if x < Noise {
+		return (x / Noise) * 10 // Maps [0, Noise) to [0%, 10%]
+	} else if x < Maybe {
+		return 10 + ((x-Noise)/(Maybe-Noise))*30 // Maps [Noise, Maybe) to [10%, 40%]
+	} else if x < Detected {
+		return 40 + ((x-Maybe)/(Detected-Maybe))*60 // Maps [Maybe, Detected) to [40%, 100%]
+	} else {
+		// Maps [Detected, ∞) to [40%, 100%]
+		// i.e. this ensures that confidence doesn't exceed 100%
+		return min(100, 40+((x-Detected)/(Detected-Maybe))*60)
+	}
+}
+
+func detectTechBySSL(sslInfo *SSLInfo, sslSignatures *map[string][]ruleset.SSLSignature, detectedTech *map[string]detectionEntityDetails) {
 	for ObjName := range *sslSignatures {
 		for _, signature := range (*sslSignatures)[ObjName] {
 			detectSSLTechBySignatureValue(sslInfo.CertChain, signature, detectedTech, ObjName)
@@ -340,7 +365,10 @@ func detectTechBySSL(sslInfo *SSLInfo, sslSignatures *map[string][]ruleset.SSLSi
 	}
 }
 
-func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature ruleset.SSLSignature, detectedTech *map[string]float32, ObjName string) {
+func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature ruleset.SSLSignature, detectedTech *map[string]detectionEntityDetails, ObjName string) {
+	const (
+		detectionType = "ssl_certificate"
+	)
 	for _, cert := range certChain {
 		// Get Certificate field based on the signature key
 		certField, err := getCertificateField(cert, signature.Key)
@@ -349,7 +377,8 @@ func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature rule
 		} else {
 			for _, signatureValue := range signature.Value {
 				if strings.Contains(certField, signatureValue) {
-					(*detectedTech)[ObjName] += signature.Confidence
+					updateDetectedTech(detectedTech, ObjName, signature.Confidence, signatureValue)
+					updateDetectedType(detectedTech, ObjName, detectionType)
 				}
 			}
 		}
@@ -367,7 +396,7 @@ func getCertificateField(cert *x509.Certificate, key string) (string, error) {
 	return "", fmt.Errorf("field not found: %s", key)
 }
 
-func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]ruleset.PageContentSignature, detectedTech *map[string]float32) {
+func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]ruleset.PageContentSignature, detectedTech *map[string]detectionEntityDetails) {
 	// Create a new document from the HTML string
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
 	if err != nil {
@@ -383,7 +412,7 @@ func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]r
 	}
 }
 
-func detectTechBySignature(responseBody string, doc *goquery.Document, signature ruleset.PageContentSignature, sig string, detectedTech *map[string]float32) {
+func detectTechBySignature(responseBody string, doc *goquery.Document, signature ruleset.PageContentSignature, sig string, detectedTech *map[string]detectionEntityDetails) {
 	if signature.Key == "*" {
 		detectTechBySignatureValue(responseBody, signature.Signature, sig, detectedTech, signature.Confidence)
 	} else {
@@ -405,7 +434,7 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 	}
 }
 
-func detectTechBySignatureValue(text string, signatures []string, sig string, detectedTech *map[string]float32, confidence float32) {
+func detectTechBySignatureValue(text string, signatures []string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
 	for _, sigValue := range signatures {
 		if sigValue != "" {
 			detectTechBySignatureValueHelper(text, sigValue, sig, detectedTech, confidence)
@@ -413,45 +442,79 @@ func detectTechBySignatureValue(text string, signatures []string, sig string, de
 	}
 }
 
-func detectTechBySignatureValueHelper(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+func detectTechBySignatureValueHelper(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
+	const detectionType = "html_body"
 	if sigValue != "*" {
 		detectTechByPrefix(text, sigValue, sig, detectedTech, confidence)
 		detectTechBySuffix(text, sigValue, sig, detectedTech, confidence)
 		detectTechByNegation(text, sigValue, sig, detectedTech, confidence)
 		detectTechByContains(text, sigValue, sig, detectedTech, confidence)
 	} else {
-		(*detectedTech)[sig] += confidence
+		// Just call updateDetectedTech if the signature is "*"
+		updateDetectedTech(detectedTech, sig, confidence, "*")
+	}
+	updateDetectedType(detectedTech, sig, detectionType)
+}
+
+func updateDetectedTech(detectedTech *map[string]detectionEntityDetails, sig string, confidence float32, matchedSig string) {
+	entity, ok := (*detectedTech)[sig]
+	if ok {
+		// If the entry exists, update its confidence and matched patterns
+		entity.confidence += confidence
+	} else {
+		// Initialize a new entity if the entry doesn't exist
+		entity.confidence = confidence
+		entity.matchedPatterns = make([]string, 0)
+	}
+	// Append the pattern regardless of whether the entry exists or not
+	entity.matchedPatterns = append(entity.matchedPatterns, matchedSig)
+
+	// Save the updated entity back to the map
+	(*detectedTech)[sig] = entity
+}
+
+func updateDetectedType(detectedTech *map[string]detectionEntityDetails, sig string, detectionType string) {
+	entity := (*detectedTech)[sig]
+	if entity.confidence != 0 {
+		if entity.entityType == "" {
+			entity.entityType = detectionType
+		} else {
+			if !strings.Contains(entity.entityType, detectionType) {
+				entity.entityType += "," + detectionType
+			}
+		}
+		(*detectedTech)[sig] = entity
 	}
 }
 
-func detectTechByPrefix(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+func detectTechByPrefix(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
 	if strings.HasPrefix(sigValue, "^") && strings.HasPrefix(text, sigValue[1:]) {
-		(*detectedTech)[sig] += confidence
+		updateDetectedTech(detectedTech, sig, confidence, sigValue)
 	}
 }
 
-func detectTechBySuffix(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+func detectTechBySuffix(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
 	if strings.HasSuffix(sigValue, "$") && strings.HasSuffix(text, sigValue[:len(sigValue)-1]) {
-		(*detectedTech)[sig] += confidence
+		updateDetectedTech(detectedTech, sig, confidence, sigValue)
 	}
 }
 
-func detectTechByNegation(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+func detectTechByNegation(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
 	if strings.HasPrefix(sigValue, "!") && !strings.Contains(text, sigValue[1:]) {
-		(*detectedTech)[sig] += confidence
+		updateDetectedTech(detectedTech, sig, confidence, sigValue)
 	}
 }
 
-func detectTechByContains(text string, sigValue string, sig string, detectedTech *map[string]float32, confidence float32) {
+func detectTechByContains(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
 	//fmt.Printf("Text: %s\n", text)
 	//fmt.Printf("Signature: %s\n", sigValue)
 	if strings.Contains(text, sigValue) {
 		//fmt.Printf("Detected technology: %s - %f\n", sig, confidence)
-		(*detectedTech)[sig] += confidence
+		updateDetectedTech(detectedTech, sig, confidence, sigValue)
 	}
 }
 
-func detectTechByTag(header *http.Header, tagName string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]float32) {
+func detectTechByTag(header *http.Header, tagName string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]detectionEntityDetails) {
 	hh := (*header)[tagName] // get the header value (header tag name is case sensitive)
 	tagName = strings.ToLower(tagName)
 	if len(hh) != 0 {
@@ -462,7 +525,10 @@ func detectTechByTag(header *http.Header, tagName string, detectRules *map[strin
 	}
 }
 
-func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]float32) {
+func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]detectionEntityDetails) {
+	const (
+		detectionType = "header_field"
+	)
 	for ObjName := range *detectRules {
 		item := (*detectRules)[ObjName]
 		for _, signature := range item[tagName].Value {
@@ -476,19 +542,21 @@ func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]m
 				detectTechBySuffix(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
 				detectTechByNegation(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
 			} else {
-				(*detectedTech)[ObjName] += item[tagName].Confidence
+				updateDetectedTech(detectedTech, ObjName, item[tagName].Confidence, "*")
 			}
+			updateDetectedType(detectedTech, ObjName, detectionType)
 		}
 	}
 }
 
-func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.MetaTag, detectedTech *map[string]float32) {
+func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.MetaTag, detectedTech *map[string]detectionEntityDetails) {
 	// Create a new document from the HTML string
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "error loading HTML: %s", err)
 		return
 	}
+	const detectionType = "meta_tags"
 	// Iterate through all the meta tags and check for possible technologies
 	for ObjName := range *signatures {
 		for _, signature := range (*signatures)[ObjName] {
@@ -499,51 +567,34 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 						text = strings.ToLower(text)
 						detectTechByMetaTagContent(text, signature, ObjName, detectedTech)
 					}
+					updateDetectedType(detectedTech, ObjName, detectionType)
 				}
 			})
 		}
 	}
 }
 
-func detectTechByMetaTagContent(text string, signature ruleset.MetaTag, ObjName string, detectedTech *map[string]float32) {
+func detectTechByMetaTagContent(text string, signature ruleset.MetaTag, ObjName string, detectedTech *map[string]detectionEntityDetails) {
 	if signature.Content != "*" {
 		detectTechByPrefix(text, signature.Content, ObjName, detectedTech, signature.Confidence)
 		detectTechBySuffix(text, signature.Content, ObjName, detectedTech, signature.Confidence)
 		detectTechByNegation(text, signature.Content, ObjName, detectedTech, signature.Confidence)
 		detectTechByContains(text, signature.Content, ObjName, detectedTech, signature.Confidence)
 	} else {
-		(*detectedTech)[ObjName] += signature.Confidence
+		updateDetectedTech(detectedTech, ObjName, signature.Confidence, "*")
 	}
 }
 
-func detectTechByURL(url string, URLSignatures *map[string][]ruleset.URLMicroSignature, detectedTech *map[string]float32) {
+func detectTechByURL(url string, URLSignatures *map[string][]ruleset.URLMicroSignature, detectedTech *map[string]detectionEntityDetails) {
 	for ObjName := range *URLSignatures {
 		for _, signature := range (*URLSignatures)[ObjName] {
 			if strings.Contains(url, signature.Signature) {
-				(*detectedTech)[ObjName] += signature.Confidence
+				updateDetectedTech(detectedTech, ObjName, signature.Confidence, signature.Signature)
+				updateDetectedType(detectedTech, ObjName, "url")
 			}
 		}
 	}
 }
-
-/* Not ready yet:
-// checkCDN checks the response headers for common CDN-related headers
-func checkCDN(headers http.Header) {
-	cdnHeaders := map[string]string{
-		"Via":             "Might indicate a CDN or proxy",
-		"X-Cache":         "Common in CDN responses",
-		"X-Cache-Hit":     "Indicates cache status in some CDNs",
-		"CF-Cache-Status": "Specific to Cloudflare",
-		// Add more CDN-specific headers as needed
-	}
-
-	for header, desc := range cdnHeaders {
-		if value := headers.Get(header); value != "" {
-			fmt.Printf("%v: %v (%s)\n", header, value, desc)
-		}
-	}
-}
-*/
 
 // helper function to extract the domain from a URL
 func urlToDomain(inputURL string) string {
