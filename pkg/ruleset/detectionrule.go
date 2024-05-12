@@ -18,6 +18,8 @@ package ruleset
 
 import (
 	"strings"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 ///// --------------------- DetectionRule ------------------------------- /////
@@ -48,8 +50,8 @@ func (d *DetectionRule) GetAllPageContentPatterns() []PageContentSignature {
 	for _, pattern := range d.PageContentPatterns {
 		trimmedPatterns = append(trimmedPatterns, PageContentSignature{
 			Key:        strings.TrimSpace(pattern.Key),
-			Signature:  PrepareSlice(pattern.Signature, 1), // flag = 1 only trim spaces
-			Text:       PrepareSlice(pattern.Text, 0),
+			Signature:  cmn.PrepareSlice(&pattern.Signature, 1), // flag = 1 only trim spaces
+			Text:       cmn.PrepareSlice(&pattern.Text, 0),
 			Confidence: pattern.Confidence,
 		},
 		)

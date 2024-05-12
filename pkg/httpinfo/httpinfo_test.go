@@ -78,7 +78,7 @@ func TestExtractHTTPInfo(t *testing.T) {
 	rs := []ruleset.Ruleset{}
 	re := ruleset.NewRuleEngine("", rs)
 
-	info, err := ExtractHTTPInfo(config, re)
+	info, err := ExtractHTTPInfo(config, re, "")
 	if err != nil {
 		t.Errorf("ExtractHTTPInfo() returned an error: %v", err)
 	}

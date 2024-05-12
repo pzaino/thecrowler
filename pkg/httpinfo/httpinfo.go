@@ -62,7 +62,7 @@ func validateURL(inputURL string) (bool, error) {
 }
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
-func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error) {
+func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) (*HTTPDetails, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Extracting HTTP information for URL: %s", config.URL)
 
 	// Validate the URL
@@ -114,7 +114,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine) (*HTTPDetails, error
 	}
 
 	// Analyze response body for additional information
-	detectedItems, err := analyzeResponse(resp, info, sslInfo, re)
+	detectedItems, err := analyzeResponse(resp, info, sslInfo, re, &htmlContent)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func handleRedirects(config Config, re *ruleset.RuleEngine, resp *http.Response)
 	newConfig.CustomHeader = map[string]string{"User-Agent": cmn.UsrAgentStrMap["desktop01"]}
 	newConfig.FollowRedirects = true
 
-	return ExtractHTTPInfo(newConfig, re)
+	return ExtractHTTPInfo(newConfig, re, "")
 }
 
 func handleRedirect(req *http.Request, via []*http.Request, config Config, transport *http.Transport) error {
@@ -224,7 +224,7 @@ func handleRedirect(req *http.Request, via []*http.Request, config Config, trans
 // AnalyzeResponse analyzes the response body and header for additional server-related information
 // and possible technologies used
 // Note: In the future this needs to be moved in http_rules logic
-func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine) (map[string]DetectedEntity, error) {
+func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine, htmlContent *string) (map[string]DetectedEntity, error) {
 	// Get the response headers
 	header := &(*info).ResponseHeaders
 
@@ -236,6 +236,11 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, r
 
 	// Convert the response body to a string
 	responseBody := string(bodyBytes)
+	if strings.TrimSpace(responseBody) == "" {
+		// If the response body is empty, use the provided HTML content
+		// (it is possible that a WAF or similar is blocking the request)
+		responseBody = (*htmlContent)
+	}
 
 	// Initialize the infoList map
 	// infoList := make(map[string]string)
@@ -416,7 +421,9 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 	if signature.Key == "*" {
 		detectTechBySignatureValue(responseBody, signature.Signature, sig, detectedTech, signature.Confidence)
 	} else {
-		doc.Find(signature.Key).Each(func(index int, htmlItem *goquery.Selection) {
+		// prepare the signature key
+		key := strings.ToLower(strings.TrimSpace(signature.Key))
+		doc.Find(key).Each(func(index int, htmlItem *goquery.Selection) {
 			var text1 string
 			var text2 string
 			var attrExists bool
@@ -443,7 +450,7 @@ func detectTechBySignatureValue(text string, signatures []string, sig string, de
 }
 
 func detectTechBySignatureValueHelper(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
-	const detectionType = "html_body"
+	const detectionType = "html"
 	if sigValue != "*" {
 		detectTechByPrefix(text, sigValue, sig, detectedTech, confidence)
 		detectTechBySuffix(text, sigValue, sig, detectedTech, confidence)
@@ -466,8 +473,10 @@ func updateDetectedTech(detectedTech *map[string]detectionEntityDetails, sig str
 		entity.confidence = confidence
 		entity.matchedPatterns = make([]string, 0)
 	}
-	// Append the pattern regardless of whether the entry exists or not
-	entity.matchedPatterns = append(entity.matchedPatterns, matchedSig)
+	// Append the pattern if it's not already added
+	if !cmn.SliceContains(entity.matchedPatterns, matchedSig) {
+		entity.matchedPatterns = append(entity.matchedPatterns, matchedSig)
+	}
 
 	// Save the updated entity back to the map
 	(*detectedTech)[sig] = entity
@@ -527,7 +536,7 @@ func detectTechByTag(header *http.Header, tagName string, detectRules *map[strin
 
 func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]detectionEntityDetails) {
 	const (
-		detectionType = "header_field"
+		detectionType = "http_header"
 	)
 	for ObjName := range *detectRules {
 		item := (*detectRules)[ObjName]
@@ -561,7 +570,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 	for ObjName := range *signatures {
 		for _, signature := range (*signatures)[ObjName] {
 			doc.Find("meta").Each(func(index int, htmlItem *goquery.Selection) {
-				if strings.EqualFold(htmlItem.AttrOr("name", ""), signature.Name) {
+				if strings.EqualFold(htmlItem.AttrOr("name", ""), strings.TrimSpace(signature.Name)) {
 					text, contExists := htmlItem.Attr("content")
 					if contExists && signature.Content != "" {
 						text = strings.ToLower(text)
@@ -576,10 +585,10 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 
 func detectTechByMetaTagContent(text string, signature ruleset.MetaTag, ObjName string, detectedTech *map[string]detectionEntityDetails) {
 	if signature.Content != "*" {
-		detectTechByPrefix(text, signature.Content, ObjName, detectedTech, signature.Confidence)
-		detectTechBySuffix(text, signature.Content, ObjName, detectedTech, signature.Confidence)
-		detectTechByNegation(text, signature.Content, ObjName, detectedTech, signature.Confidence)
-		detectTechByContains(text, signature.Content, ObjName, detectedTech, signature.Confidence)
+		detectTechByPrefix(text, strings.ToLower(signature.Content), ObjName, detectedTech, signature.Confidence)
+		detectTechBySuffix(text, strings.ToLower(signature.Content), ObjName, detectedTech, signature.Confidence)
+		detectTechByNegation(text, strings.ToLower(signature.Content), ObjName, detectedTech, signature.Confidence)
+		detectTechByContains(text, strings.ToLower(signature.Content), ObjName, detectedTech, signature.Confidence)
 	} else {
 		updateDetectedTech(detectedTech, ObjName, signature.Confidence, "*")
 	}

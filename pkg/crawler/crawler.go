@@ -166,7 +166,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	processCtx.wgNetInfo.Add(1)
 	go func() {
 		defer processCtx.wgNetInfo.Done()
-		processCtx.GetHTTPInfo(processCtx.source.URL)
+		processCtx.GetHTTPInfo(processCtx.source.URL, htmlContent)
 	}()
 	processCtx.httpInfoRunning = true
 
@@ -471,7 +471,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 }
 
 // GetHTTPInfo is responsible for gathering HTTP header information for a Source
-func (ctx *processContext) GetHTTPInfo(url string) {
+func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
 	browser := ctx.config.Selenium[ctx.SelID].Type
@@ -486,7 +486,7 @@ func (ctx *processContext) GetHTTPInfo(url string) {
 
 	// Call GetHTTPInfo to retrieve HTTP header information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
-	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re)
+	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
 
 	// Check for errors
 	if err != nil {

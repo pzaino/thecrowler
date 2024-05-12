@@ -38,3 +38,4 @@ sonar-project.properties
 .scannerwork/**
 AllCertificatesRecordReport.csv
 test*.json
+/cmd/bench
