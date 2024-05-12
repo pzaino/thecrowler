@@ -114,7 +114,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) 
 	}
 
 	// Analyze response body for additional information
-	detectedItems, err := analyzeResponse(resp, info, sslInfo, re, htmlContent)
+	detectedItems, err := analyzeResponse(resp, info, sslInfo, re, &htmlContent)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func handleRedirect(req *http.Request, via []*http.Request, config Config, trans
 // AnalyzeResponse analyzes the response body and header for additional server-related information
 // and possible technologies used
 // Note: In the future this needs to be moved in http_rules logic
-func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine, htmlContent string) (map[string]DetectedEntity, error) {
+func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, re *ruleset.RuleEngine, htmlContent *string) (map[string]DetectedEntity, error) {
 	// Get the response headers
 	header := &(*info).ResponseHeaders
 
@@ -239,7 +239,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails, sslInfo *SSLInfo, r
 	if strings.TrimSpace(responseBody) == "" {
 		// If the response body is empty, use the provided HTML content
 		// (it is possible that a WAF or similar is blocking the request)
-		responseBody = htmlContent
+		responseBody = (*htmlContent)
 	}
 
 	// Initialize the infoList map
@@ -450,7 +450,7 @@ func detectTechBySignatureValue(text string, signatures []string, sig string, de
 }
 
 func detectTechBySignatureValueHelper(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
-	const detectionType = "html_body"
+	const detectionType = "html"
 	if sigValue != "*" {
 		detectTechByPrefix(text, sigValue, sig, detectedTech, confidence)
 		detectTechBySuffix(text, sigValue, sig, detectedTech, confidence)
@@ -473,8 +473,10 @@ func updateDetectedTech(detectedTech *map[string]detectionEntityDetails, sig str
 		entity.confidence = confidence
 		entity.matchedPatterns = make([]string, 0)
 	}
-	// Append the pattern regardless of whether the entry exists or not
-	entity.matchedPatterns = append(entity.matchedPatterns, matchedSig)
+	// Append the pattern if it's not already added
+	if !cmn.SliceContains(entity.matchedPatterns, matchedSig) {
+		entity.matchedPatterns = append(entity.matchedPatterns, matchedSig)
+	}
 
 	// Save the updated entity back to the map
 	(*detectedTech)[sig] = entity
@@ -534,7 +536,7 @@ func detectTechByTag(header *http.Header, tagName string, detectRules *map[strin
 
 func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]detectionEntityDetails) {
 	const (
-		detectionType = "header_field"
+		detectionType = "http_header"
 	)
 	for ObjName := range *detectRules {
 		item := (*detectRules)[ObjName]
