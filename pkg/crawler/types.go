@@ -50,10 +50,12 @@ type PageInfo struct {
 	DetectedLang string             `json:"detected_lang"` // The detected language of the web page.
 	NetInfo      *neti.NetInfo      `json:"net_info"`      // The network information of the web page.
 	HTTPInfo     *httpi.HTTPDetails `json:"http_info"`     // The HTTP header information of the web page.
-	ScrapedData  string             `json:"scraped_data"`  // The scraped data from the web page.
+	ScrapedData  []ScrapedItem      `json:"scraped_data"`  // The scraped data from the web page.
 	Links        []string           `json:"links"`         // The links found in the web page.
 	PerfInfo     PerformanceLog     `json:"performance"`   // The performance information of the web page.
 }
+
+type ScrapedItem map[string]interface{}
 
 type PerformanceLog struct {
 	TCPConnection   float64               `json:"tcp_connection"`     // The time to establish a TCP connection.

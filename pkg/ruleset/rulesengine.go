@@ -315,6 +315,21 @@ func (re *RuleEngine) GetAllEnabledDetectionRules() []DetectionRule {
 	return detectionRules
 }
 
+func (re *RuleEngine) GetAllScrapingRulesByURL(url string) []ScrapingRule {
+	// find all scraping rules with the specified URL
+	rules := re.GetAllEnabledScrapingRules()
+	var scrapingRules []ScrapingRule
+	url = strings.ToLower(strings.TrimSpace(url))
+	for _, rule := range rules {
+		for _, condition := range rule.PreConditions {
+			if strings.HasPrefix(url, strings.ToLower(strings.TrimSpace(condition.URL))) {
+				scrapingRules = append(scrapingRules, rule)
+			}
+		}
+	}
+	return scrapingRules
+}
+
 /// --- Counting --- ///
 
 // Return the number of rulesets in the RuleEngine.
@@ -381,11 +396,17 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, rs := range re.Rulesets {
-		if strings.ToLower(strings.TrimSpace(rs.Name)) == parsedURL || strings.ToLower(strings.TrimSpace(rs.Name)) == "*" {
-			return &rs, nil
+	for i := 0; i < len((*re).Rulesets); i++ {
+		rsName := strings.ToLower(strings.TrimSpace(re.Rulesets[i].Name))
+		if rsName == "" || (rsName != "*" && !strings.HasPrefix(rsName, "http") && strings.HasPrefix(rsName, "ftp")) {
+			continue
+		}
+		if strings.HasPrefix(parsedURL, rsName) || rsName == "*" {
+			return &re.Rulesets[i], nil
 		}
 	}
+
+	// No ruleset found
 	return nil, fmt.Errorf(errRulesetNotFound)
 }
 
@@ -412,7 +433,11 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 		return nil, err
 	}
 	for _, rg := range re.GetAllRuleGroups() {
-		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
+		rgName := strings.ToLower(strings.TrimSpace(rg.GroupName))
+		if rgName == "" || (rgName != "*" && !strings.HasPrefix(rgName, "http") && strings.HasPrefix(rgName, "ftp")) {
+			continue
+		}
+		if strings.HasPrefix(parsedURL, rgName) || rgName == "*" {
 			if rg.IsValid() {
 				return &rg, nil
 			}
@@ -467,7 +492,7 @@ func (re *RuleEngine) GetActionRuleByURL(urlStr string) (*ActionRule, error) {
 	}
 	for _, rg := range re.GetAllRuleGroups() {
 		for _, r := range rg.ActionRules {
-			if strings.ToLower(strings.TrimSpace(r.URL)) == parsedURL {
+			if strings.HasPrefix(parsedURL, strings.ToLower(strings.TrimSpace(r.URL))) {
 				return &r, nil
 			}
 		}

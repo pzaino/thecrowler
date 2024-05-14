@@ -38,6 +38,9 @@ import (
 
 // ApplyRule applies the provided scraping rule to the provided web page.
 func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
+	// Debug message
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying rule: %v", rule.RuleName)
+
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
@@ -48,6 +51,7 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 		return extractedData
 	}
+
 	// Parse the HTML content
 	node, err := htmlquery.Parse(strings.NewReader(htmlContent))
 	if err != nil {

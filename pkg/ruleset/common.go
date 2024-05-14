@@ -150,6 +150,9 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 		}
 	}
 
+	// Print the ruleset for debugging purposes
+	//fmt.Printf("%+v\n", ruleset)
+
 	return ruleset, nil
 }
 
