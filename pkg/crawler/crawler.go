@@ -88,27 +88,36 @@ type processContext struct {
 	httpInfoRunning bool                  // Flag to check if HTTP info is already gathered
 	siteInfoRunning bool                  // Flag to check if site info is already gathered
 	crawlingRunning bool                  // Flag to check if crawling is still running
+	getURLMutex     sync.Mutex            // Mutex to protect the getURLContent function
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel SeleniumInstance, SeleniumInstances chan SeleniumInstance, re *rules.RuleEngine, selID int) {
+func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
+	sel SeleniumInstance, SeleniumInstances chan SeleniumInstance,
+	re rules.RuleEngine, selID int) {
+
 	// Initialize the process context
 	processCtx := processContext{
 		source: &source,
 		db:     &db,
 		sel:    SeleniumInstances,
 		config: config,
-		re:     re,
-		SelID:  selID,
+		/*
+			We make a copy of the rule engine when calling CrawlWebsite and then
+			reference that copy, this allows us to reload a rule engine without
+			affecting the crawling process, as well as not having unneeded copies
+			of the rule engine in memory.
+		*/
+		re:    &re,
+		SelID: selID,
 	}
 
-	var err error
-
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
-	if !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") && !strings.HasPrefix(source.URL, "ftp://") && !strings.HasPrefix(source.URL, "ftps://") {
+	if !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") &&
+		!strings.HasPrefix(source.URL, "ftp://") && !strings.HasPrefix(source.URL, "ftps://") {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", source.URL)
 		processCtx.GetNetInfo(source.URL)
 		processCtx.IndexNetInfo()
@@ -118,6 +127,8 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
 		return
 	}
+
+	var err error
 
 	// Connect to Selenium
 	if err = processCtx.ConnectToSelenium(sel); err != nil {
@@ -158,16 +169,18 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 
 	// Get network information
 	processCtx.wgNetInfo.Add(1)
-	go func() {
-		defer processCtx.wgNetInfo.Done()
-		processCtx.GetNetInfo(processCtx.source.URL)
-	}()
+	go func(ctx *processContext) {
+		defer ctx.wgNetInfo.Done()
+		ctx.GetNetInfo(ctx.source.URL)
+	}(&processCtx)
 	processCtx.netInfoRunning = true
 	processCtx.wgNetInfo.Add(1)
-	go func() {
-		defer processCtx.wgNetInfo.Done()
-		processCtx.GetHTTPInfo(processCtx.source.URL, htmlContent)
-	}()
+
+	// Get HTTP header information
+	go func(ctx *processContext, htmlContent string) {
+		defer ctx.wgNetInfo.Done()
+		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
+	}(&processCtx, htmlContent)
 	processCtx.httpInfoRunning = true
 
 	// Crawl the website
@@ -226,12 +239,6 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source, sel Se
 	}
 
 	// Return the Selenium instance to the channel
-	//if processCtx.config.NetworkInfo.ServiceScout.Enabled {
-	// If the network scanner is enabled, that can take a long time to complete
-	// so let's quit the Selenium instance here and let the network scanner finish
-	//QuitSelenium(&processCtx.wd)
-	//}
-	//SeleniumInstances <- sel
 	ReturnSeleniumInstance(tID, &processCtx, &sel)
 
 	// Index the network information
@@ -274,6 +281,12 @@ func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
 func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
+
+	// Set the processCtx.GetURLMutex to protect the getURLContent function
+	ctx.getURLMutex.Lock()
+	defer ctx.getURLMutex.Unlock()
+
+	// Get the initial URL
 	pageSource, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting HTML content: %v", err)
@@ -283,7 +296,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 
 	// Continue with extracting page info and indexing
-	pageInfo := extractPageInfo(pageSource, ctx)
+	pageInfo := extractPageInfo(&pageSource, ctx)
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.Links = extractLinks(pageInfo.HTML)
@@ -728,6 +741,58 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
 
+	if len(pageInfo.ScrapedData) > 0 {
+		scrapedDoc1 := make(map[string]interface{})
+		// Transform the scraped data into a JSON object
+		for _, value := range pageInfo.ScrapedData {
+			if value == nil {
+				continue
+			}
+			scrapedItemJSON, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			doc2 := make(map[string]interface{})
+			err = json.Unmarshal(scrapedItemJSON, &doc2)
+			if err != nil {
+				return err
+			}
+
+			// Add scrapedItemJSON to ScrapedJSON document
+			mergeMaps(scrapedDoc1, doc2)
+		}
+		// Convert the scraped data to JSON
+		scrapedDataJSON, err := json.Marshal(scrapedDoc1)
+		if err != nil {
+			return err
+		}
+
+		// Combine the scraped data and the details
+		if len(scrapedDataJSON) > 0 {
+			var doc1 map[string]interface{}
+			var doc2 map[string]interface{}
+
+			err := json.Unmarshal(detailsJSON, &doc1)
+			if err != nil {
+				return err
+			}
+			err = json.Unmarshal(scrapedDataJSON, &doc2)
+			if err != nil {
+				return err
+			}
+
+			// Merges doc2 into doc1
+			mergeMaps(doc1, doc2)
+
+			detailsJSON, err = json.Marshal(doc1)
+			if err != nil {
+				return err
+			}
+		}
+		// Print the detailsJSON
+		//fmt.Println(string(detailsJSON))
+	}
+
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
 	hasher.Write([]byte(pageInfo.BodyText))
@@ -757,6 +822,22 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 	}
 
 	return nil
+}
+
+func mergeMaps(dst, src map[string]interface{}) {
+	for key, valueSrc := range src {
+		if valueDst, ok := dst[key]; ok {
+			// Check if both are maps and do a recursive merge
+			if mapValueSrc, okSrc := valueSrc.(map[string]interface{}); okSrc {
+				if mapValueDst, okDst := valueDst.(map[string]interface{}); okDst {
+					mergeMaps(mapValueDst, mapValueSrc)
+					continue
+				}
+			}
+			// Otherwise, replace the destination value with the source value
+		}
+		dst[key] = valueSrc
+	}
 }
 
 // insertNetInfo inserts network information into the database for a given index ID.
@@ -965,25 +1046,38 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 // from Selenium and returning it as a WebDriver object
 func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, error) {
 	// Navigate to a page and interact with elements.
-	err0 := wd.Get(url)
+	if err := wd.Get(url); err != nil {
+		return nil, fmt.Errorf("failed to navigate to %s: %v", url, err)
+	}
+
+	// Wait for Page to Load
 	delay := exi.GetFloat(config.Crawler.Interval)
+	if delay <= 0 {
+		delay = 3
+	}
 	if level > 0 {
 		time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
 	} else {
 		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
 	}
 
+	// Check current URL
+	_, err := wd.CurrentURL()
+	if err != nil {
+		return wd, fmt.Errorf("failed to get current URL after navigation: %v", err)
+	}
+
 	// Run Action Rules if any
 	processActionRules(&wd, ctx, url)
 
-	return wd, err0
+	return wd, nil
 }
 
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
-func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
-	htmlContent, _ := webPage.PageSource()
+func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext) PageInfo {
+	htmlContent, _ := (*webPage).PageSource()
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
@@ -993,12 +1087,24 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 	// Run scraping rules if any
 	var scrapedData string
 	var url string
-	url, err = webPage.CurrentURL()
+	url, err = (*webPage).CurrentURL()
 	if err == nil {
-		scrapedData = processScrapingRules(&webPage, ctx, url)
+		scrapedData = processScrapingRules(webPage, ctx, url)
+	}
+	var scrapedList []ScrapedItem
+	if scrapedData != "" {
+		// put ScrapedData into a map
+		scrapedMap := make(map[string]interface{})
+		err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling scraped data: %v", err)
+		}
+
+		// append the map to the list
+		scrapedList = append(scrapedList, scrapedMap)
 	}
 
-	title, _ := webPage.Title()
+	title, _ := (*webPage).Title()
 	summary := doc.Find("meta[name=description]").AttrOr("content", "")
 	bodyText := doc.Find("body").Text()
 	// transform tabs into spaces
@@ -1008,7 +1114,7 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 
 	metaTags := extractMetaTags(doc)
 
-	currentURL, _ := webPage.CurrentURL()
+	currentURL, _ := (*webPage).CurrentURL()
 
 	return PageInfo{
 		Title:        title,
@@ -1016,9 +1122,9 @@ func extractPageInfo(webPage selenium.WebDriver, ctx *processContext) PageInfo {
 		BodyText:     bodyText,
 		HTML:         htmlContent,
 		MetaTags:     metaTags,
-		DetectedLang: detectLang(webPage),
+		DetectedLang: detectLang((*webPage)),
 		DetectedType: inferDocumentType(currentURL),
-		ScrapedData:  scrapedData,
+		ScrapedData:  scrapedList,
 	}
 }
 
@@ -1221,12 +1327,15 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 }
 
 func processJob(processCtx *processContext, id int, url string) error {
+	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
+	processCtx.getURLMutex.Lock()
+	defer processCtx.getURLMutex.Unlock()
 	htmlContent, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return err
 	}
-	pageCache := extractPageInfo(htmlContent, processCtx)
+	pageCache := extractPageInfo(&htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.BodyText)...)
 

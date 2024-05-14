@@ -33,6 +33,16 @@ func NewRuleset(name string) Ruleset {
 	}
 }
 
+/// --- Checks --- ///
+
+func (rs *Ruleset) IsValid() bool {
+	return rs.Name != "" && len(rs.RuleGroups) > 0
+}
+
+func (rs *Ruleset) IsEmpty() bool {
+	return rs.Name == "" && len(rs.RuleGroups) == 0
+}
+
 /// --- Retrieving --- ///
 
 // GetRuleGroups returns all the rule groups in a Ruleset.

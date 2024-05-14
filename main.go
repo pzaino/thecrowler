@@ -45,9 +45,10 @@ const (
 )
 
 var (
-	configFile  *string    // Configuration file path
-	config      cfg.Config // Configuration "object"
-	configMutex sync.Mutex
+	configFile   *string    // Configuration file path
+	config       cfg.Config // Configuration "object"
+	configMutex  sync.Mutex
+	GRulesEngine rules.RuleEngine // Global rules engine
 )
 
 // This function is responsible for performing database maintenance
@@ -206,15 +207,43 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]
 		return
 	}
 
+	// Local type to pass parameters to the goroutine
+	type pars struct {
+		wg      *sync.WaitGroup
+		db      cdb.Handler
+		src     cdb.Source
+		sel     chan crowler.SeleniumInstance
+		re      rules.RuleEngine
+		sources *[]cdb.Source
+		index   int
+		selIdx  int
+	}
+
 	// We have some sources to crawl, let's start the crawling process
 	var wg sync.WaitGroup
 	selIdx := 0 // Selenium instance index
 	for idx, source := range *sources {
 		wg.Add(1)
-		go func(src cdb.Source, index int, selIdx int) {
-			crowler.CrawlWebsite(&wg, db, src, <-sel, sel, RulesEngine, selIdx)
-			(*sources)[index].Status = 1
-		}(source, idx, selIdx) // Pass the current source and index
+
+		// Prepare the go routine parameters
+		args := pars{
+			wg:      &wg,
+			db:      db,
+			src:     source,
+			sel:     sel,
+			re:      (*RulesEngine),
+			sources: sources,
+			index:   idx,
+			selIdx:  selIdx,
+		}
+
+		// Start a goroutine to crawl the website
+		go func(args pars) {
+			crowler.CrawlWebsite(args.wg, args.db, args.src, <-args.sel, args.sel, args.re, args.selIdx)
+			(*args.sources)[args.index].Status = 1
+		}(args)
+
+		// Move to the next Selenium instance
 		if len(config.Selenium) > 1 {
 			selIdx++
 			if selIdx >= len(config.Selenium) {
@@ -289,9 +318,6 @@ func main() {
 	// Define sel before we set signal handlers
 	var seleniumInstances chan crowler.SeleniumInstance
 
-	// Define RulesEngine before we set signal handlers
-	var RulesEngine rules.RuleEngine
-
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
 	signals := make(chan os.Signal, 1)
@@ -324,7 +350,7 @@ func main() {
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
-				err := initAll(configFile, &config, &db, &seleniumInstances, &RulesEngine)
+				err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine)
 				if err != nil {
 					configMutex.Unlock()
 					cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
@@ -343,7 +369,7 @@ func main() {
 	}()
 
 	// Initialize the crawler
-	err := initAll(configFile, &config, &db, &seleniumInstances, &RulesEngine)
+	err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
 	}
@@ -358,7 +384,7 @@ func main() {
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	checkSources(&db, seleniumInstances, &RulesEngine)
+	checkSources(&db, seleniumInstances, &GRulesEngine)
 
 	// Wait forever
 	//select {}

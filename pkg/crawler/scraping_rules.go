@@ -30,6 +30,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	scraper "github.com/pzaino/thecrowler/pkg/scraper"
+	"golang.org/x/net/html"
 
 	"github.com/tebeka/selenium"
 )
@@ -55,12 +56,12 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url strin
 			configStr := string((*ctx.source.Config))
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
 		}
-	} else {
-		// Check for rules based on the URL
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Scraping rules...")
-		// If the URL matches a rule, execute it
-		scrapedDataDoc += executeScrapingRulesByURL(wd, ctx, url)
 	}
+
+	// Check for rules based on the URL
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Scraping rules...")
+	// If the URL matches a rule, execute it
+	scrapedDataDoc += executeScrapingRulesByURL(wd, ctx, url)
 
 	return scrapedDataDoc
 }
@@ -68,11 +69,13 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url strin
 func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url string) string {
 	scrapedDataDoc := ""
 
+	// Retrieve the ruleset by URL
 	rs, err := ctx.re.GetRulesetByURL(url)
 	if err == nil && rs != nil {
 		// Execute all the rules in the ruleset
 		scrapedDataDoc += executeScrapingRulesInRuleset(rs, wd)
 	} else {
+		// Retrieve the rule group by URL
 		rg, err := ctx.re.GetRuleGroupByURL(url)
 		if err == nil && rg != nil {
 			// Execute all the rules in the rule group
@@ -127,8 +130,28 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 	if (len(r.Conditions) == 0) || checkScrapingConditions(r.Conditions, wd) {
 		extractedData := scraper.ApplyRule(r, wd)
 
+		// Check if the content of the extractedData is HTML
+		processedData := make(map[string]interface{})
+		for key, data := range extractedData {
+			dataStr := fmt.Sprintf("%v", data)
+			if isHTML(dataStr) {
+				// Convert HTML to JSON
+				jsonData, err := ProcessHtmlToJson(dataStr)
+				if err != nil {
+					// escape all the double quotes in the HTML content
+					data = strings.ReplaceAll(dataStr, "\"", "\\\"")
+					processedData[key] = data
+				} else {
+					// Transform key and value into a JSON document
+					processedData[key] = jsonData
+				}
+			} else {
+				processedData[key] = data
+			}
+		}
+
 		// Transform the extracted data into a JSON document
-		jsonData, err := json.Marshal(extractedData)
+		jsonData, err := json.Marshal(processedData)
 		if err != nil {
 			return "", fmt.Errorf("error marshalling JSON: %v", err)
 		}
@@ -143,6 +166,32 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 	}
 
 	return jsonDocument, nil
+}
+
+// isHTML checks if the given string could be HTML by trying to parse it.
+func isHTML(s string) bool {
+	// Minimal check to quickly filter out definitely non-HTML content
+	if !strings.Contains(s, "<") && !strings.Contains(s, ">") {
+		return false
+	}
+
+	doc, err := html.Parse(strings.NewReader(s))
+	if err != nil {
+		return false // If parsing fails, it's likely not HTML
+	}
+
+	var hasElement bool
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data != "html" && n.Data != "head" && n.Data != "body" {
+			hasElement = true
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+	return hasElement
 }
 
 // runPostProcessingSteps runs the post processing steps
@@ -268,4 +317,71 @@ func checkScrapingConditions(conditions map[string]interface{}, wd *selenium.Web
 		}
 	}
 	return canProceed
+}
+
+func parseHTML(htmlData string) ([]map[string]interface{}, error) {
+	doc, err := html.Parse(strings.NewReader(htmlData))
+	if err != nil {
+		return nil, err
+	}
+	var items []map[string]interface{}
+	parseNode(doc, nil, &items)
+	return items, nil
+}
+
+func parseNode(n *html.Node, currentItem map[string]interface{}, items *[]map[string]interface{}) {
+	if n.Type == html.ElementNode {
+		newItem := make(map[string]interface{})
+		for _, a := range n.Attr {
+			newItem[a.Key] = a.Val
+		}
+		if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
+			newItem["text"] = strings.TrimSpace(n.FirstChild.Data)
+		}
+		if len(newItem) > 0 {
+			if currentItem != nil {
+				addChild(currentItem, newItem)
+			} else {
+				addItem(items, newItem)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			parseNode(c, newItem, items)
+		}
+	} else if n.Type == html.TextNode && strings.TrimSpace(n.Data) != "" {
+		if currentItem != nil && len(currentItem) == 0 {
+			currentItem["text"] = strings.TrimSpace(n.Data)
+		}
+	}
+}
+
+func addChild(currentItem map[string]interface{}, newItem map[string]interface{}) {
+	if _, exists := currentItem["children"]; !exists {
+		currentItem["children"] = []map[string]interface{}{}
+	}
+	currentItem["children"] = append(currentItem["children"].([]map[string]interface{}), newItem)
+}
+
+func addItem(items *[]map[string]interface{}, newItem map[string]interface{}) {
+	*items = append(*items, newItem)
+}
+
+func toJson(data []map[string]interface{}) (string, error) {
+	jsonData, err := json.MarshalIndent(data, "", "    ")
+	if err != nil {
+		return "", err
+	}
+	return string(jsonData), nil
+}
+
+func ProcessHtmlToJson(htmlData string) (string, error) {
+	items, err := parseHTML(htmlData)
+	if err != nil {
+		return "", err
+	}
+	jsonOutput, err := toJson(items)
+	if err != nil {
+		return "", err
+	}
+	return jsonOutput, nil
 }

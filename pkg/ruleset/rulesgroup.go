@@ -27,6 +27,8 @@ import (
 
 ///// ---------------------- RuleGroup -------------------------------- /////
 
+/// --- Checks --- ///
+
 // IsGroupValid checks if the provided RuleGroup is valid.
 // It checks if the group is enabled and if the valid_from and valid_to dates are valid.
 func (rg *RuleGroup) IsValid() bool {
@@ -78,6 +80,13 @@ func (rg *RuleGroup) IsValid() bool {
 
 	return false
 }
+
+// IsEmpty checks if the RuleGroup is empty.
+func (rg *RuleGroup) IsEmpty() bool {
+	return len(rg.ActionRules) == 0 && len(rg.ScrapingRules) == 0 && len(rg.CrawlingRules) == 0 && len(rg.DetectionRules) == 0 && len(rg.GroupName) == 0
+}
+
+/// --- Getters --- ///
 
 // GetActionRules returns all the action rules in a RuleGroup.
 func (rg *RuleGroup) GetActionRules() []ActionRule {

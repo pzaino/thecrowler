@@ -90,8 +90,15 @@ items:
                             selector:
                               type: string
                             attribute:
-                              type: string
-                              description: Optional. The attribute of the element to extract, e.g., 'innerText'. Mainly relevant for scraping actions.
+                              type: object
+                              properties:
+                                name:
+                                  type: string
+                                  description: The name of the attribute to extract, e.g., 'class'.
+                                value:
+                                  type: string
+                                  description: The value of the attribute to extract, e.g. 'output'.
+                              description: Optional. The attribute of the element to extract.
                     required:
                       - key
                       - selectors
