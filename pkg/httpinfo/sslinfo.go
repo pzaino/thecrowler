@@ -446,6 +446,7 @@ func ProcessAuthFile() {
 		err := downloadFile("https://ccadb.my.salesforce-sites.com/ccadb/AllCertificateRecordsCSVFormat", filename)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error downloading the CSV file: %v", err)
+			return
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "CCADB All Certificate Records CSV download complete!")
 		}
@@ -454,6 +455,7 @@ func ProcessAuthFile() {
 	file, err := os.Open(filename)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error opening the file: %v", err)
+		return
 	}
 	defer file.Close()
 
@@ -464,6 +466,7 @@ func ProcessAuthFile() {
 	header, err := reader.Read()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error reading header row: %v", err)
+		return
 	}
 
 	// Map column names to indices for efficient access
@@ -480,6 +483,7 @@ func ProcessAuthFile() {
 		}
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error reading record: %v", err)
+			return
 		}
 
 		authority := Authority{
