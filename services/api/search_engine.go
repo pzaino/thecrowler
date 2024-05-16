@@ -584,20 +584,19 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 	// Iterate over the results
 	var results WebObjectResponse
 	for rows.Next() {
-		var link, createdAt, updatedAt, oType, oHash, oContent, oHTML, oDetails string
-		if err := rows.Scan(&link, &createdAt, &updatedAt, &oType, &oHash, &oContent, &oHTML, &oDetails); err != nil {
+		var row WebObjectRow
+		var detailsJSON []byte
+
+		// Read rows and unmarshal the JSON data
+		if err := rows.Scan(&row.ObjectLink, &row.CreatedAt, &row.LastUpdatedAt, &row.ObjectType, &row.ObjectHash, &row.ObjectContent, &row.ObjectHTML, &detailsJSON); err != nil {
 			return WebObjectResponse{}, err
 		}
-		results.Items = append(results.Items, WebObjectRow{
-			ObjectLink:    link,
-			CreatedAt:     createdAt,
-			LastUpdatedAt: updatedAt,
-			ObjectType:    oType,
-			ObjectHash:    oHash,
-			ObjectContent: oContent,
-			ObjectHTML:    oHTML,
-			Details:       oDetails,
-		})
+		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+			return WebObjectResponse{}, err
+		}
+
+		// Append the row to the results
+		results.Items = append(results.Items, row)
 	}
 
 	// Calculate the query execution time
