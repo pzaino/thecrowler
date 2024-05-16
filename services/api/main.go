@@ -187,7 +187,7 @@ func initAPIv1() {
 	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
 	http.Handle("/v1/httpinfo", httpInfoHandlerWithMiddlewares)
 	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
-	http.Handle("/v1/webobjects", webObjectHandlerWithMiddlewares)
+	http.Handle("/v1/webobject", webObjectHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))

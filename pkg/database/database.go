@@ -59,6 +59,10 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 		}
 	}
 
+	handler.db.SetConnMaxLifetime(time.Minute * 5)
+	handler.db.SetMaxOpenConns(25)
+	handler.db.SetMaxIdleConns(25)
+
 	return err
 }
 

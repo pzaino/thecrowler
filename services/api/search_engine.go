@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -563,6 +564,9 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
@@ -570,11 +574,18 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 	}
 	defer rows.Close()
 
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Query execution time: %v", elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
+
 	// Iterate over the results
 	var results WebObjectResponse
 	for rows.Next() {
 		var link, createdAt, updatedAt, oType, oHash, oContent, oHTML, oDetails string
-		if err := rows.Scan(&link, &createdAt, &updatedAt, &oType, &oHash, &oContent, oHTML, oDetails); err != nil {
+		if err := rows.Scan(&link, &createdAt, &updatedAt, &oType, &oHash, &oContent, &oHTML, &oDetails); err != nil {
 			return WebObjectResponse{}, err
 		}
 		results.Items = append(results.Items, WebObjectRow{
@@ -588,6 +599,10 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 			Details:       oDetails,
 		})
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Data encapsulation execution time: %v", elapsed)
 
 	return results, nil
 }
@@ -607,14 +622,17 @@ func parseWebObjectGetQuery(input string) (string, []interface{}, error) {
 	FROM
 		WebObjects AS wo
 	JOIN
-		SearchIndex AS si ON wo.index_id = si.index_id
+		PageWebObjectsIndex AS pwi ON wo.object_id = pwi.object_id
+	JOIN
+		SearchIndex AS si ON pwi.index_id = si.index_id
 	LEFT JOIN
 		KeywordIndex ki ON si.index_id = ki.index_id
 	LEFT JOIN
 		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
-		wo.object_link != '' AND wo.object_link IS NOT NULL AND
-	`
+		wo.object_link != ''
+		AND wo.object_link IS NOT NULL
+		AND `
 
 	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
 	if err != nil {
