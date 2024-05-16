@@ -527,6 +527,152 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	return sqlQuery, sqlParams, nil
 }
 
+func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return WebObjectResponse{}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
+		return WebObjectResponse{}, err
+	}
+	defer db.Close()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+
+	// Parse the user input
+	var sqlQuery string
+	var sqlParams []interface{}
+	if qType == getQuery {
+		// it's a GET request, so we need to interpret the q parameter
+		sqlQuery, sqlParams, err = parseWebObjectGetQuery(query)
+		if err != nil {
+			return WebObjectResponse{}, err
+		}
+	} else {
+		// It's a POST request, so we can use the standard JSON parsing
+		sqlQuery, sqlParams, err = parseWebObjectQuery(query)
+		if err != nil {
+			return WebObjectResponse{}, err
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
+
+	// Execute the query
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	if err != nil {
+		return WebObjectResponse{}, err
+	}
+	defer rows.Close()
+
+	// Iterate over the results
+	var results WebObjectResponse
+	for rows.Next() {
+		var link, createdAt, updatedAt, oType, oHash, oContent, oHTML, oDetails string
+		if err := rows.Scan(&link, &createdAt, &updatedAt, &oType, &oHash, &oContent, oHTML, oDetails); err != nil {
+			return WebObjectResponse{}, err
+		}
+		results.Items = append(results.Items, WebObjectRow{
+			ObjectLink:    link,
+			CreatedAt:     createdAt,
+			LastUpdatedAt: updatedAt,
+			ObjectType:    oType,
+			ObjectHash:    oHash,
+			ObjectContent: oContent,
+			ObjectHTML:    oHTML,
+			Details:       oDetails,
+		})
+	}
+
+	return results, nil
+}
+
+func parseWebObjectGetQuery(input string) (string, []interface{}, error) {
+	// Prepare the query body
+	queryBody := `
+	SELECT DISTINCT
+		wo.object_link,
+		wo.created_at,
+		wo.last_updated_at,
+		wo.object_type,
+		wo.object_hash,
+		wo.object_content,
+		wo.object_html,
+		wo.details
+	FROM
+		WebObjects AS wo
+	JOIN
+		SearchIndex AS si ON wo.index_id = si.index_id
+	LEFT JOIN
+		KeywordIndex ki ON si.index_id = ki.index_id
+	LEFT JOIN
+		Keywords k ON ki.keyword_id = k.keyword_id
+	WHERE
+		wo.object_link != '' AND wo.object_link IS NOT NULL AND
+	`
+
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	if err != nil {
+		return "", nil, err
+	}
+
+	sqlQuery = sqlQuery + " ORDER BY wo.created_at DESC;"
+
+	return sqlQuery, sqlParams, nil
+}
+
+func parseWebObjectQuery(input string) (string, []interface{}, error) {
+	var query string
+	var err error
+	var sqlParams []interface{}
+
+	input = PrepareInput(input)
+
+	// Unmarshal the JSON document
+	var req WebObjectRequest
+	err = json.Unmarshal([]byte(input), &req)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling JSON: %v, %v", err, input)
+		return "", nil, err
+	}
+
+	// Extract the query from the request
+	if len(req.URL) > 0 {
+		query = "%" + req.URL + "%"
+	} else {
+		return "", nil, errors.New(noQueryProvided)
+	}
+
+	// Parse the user input
+	sqlQuery := `
+	SELECT DISTINCT
+		wo.object_link,
+		wo.created_at,
+		wo.last_updated_at,
+		wo.object_type,
+		wo.object_hash,
+		wo.object_content,
+		wo.object_html,
+		wo.details
+	FROM
+		WebObjects AS wo
+	JOIN
+		SearchIndex AS si ON wo.index_id = si.index_id
+	WHERE
+		LOWER(si.page_url) LIKE LOWER($1)
+	AND
+		wo.object_link != '' AND wo.object_link IS NOT NULL;
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
+}
+
 // performNetInfoSearch performs a search for network information.
 func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	// Initialize the database handler
