@@ -36,6 +36,8 @@ const (
 	dbConnErrorLabel    = "Error connecting to the database: %v"
 	SearchLabel         = "Performing search for: %s"
 	noQueryProvided     = "no query provided"
+	queryExecTime       = "Query execution time: %v"
+	dataEncapTime       = "Data encapsulation execution time: %v"
 )
 
 // TODO: Improve Tokenizer and query generator to support more complex queries
@@ -350,12 +352,22 @@ func performSearch(query string) (SearchResult, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take the current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return SearchResult{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take the current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	// Iterate over the results
 	var results SearchResult
@@ -376,6 +388,10 @@ func performSearch(query string) (SearchResult, error) {
 			Snippet: snippet,
 		})
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }
@@ -416,12 +432,22 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return ScreenshotResponse{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	// Iterate over the results
 	var results ScreenshotResponse
@@ -443,7 +469,10 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 		}
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Results: %v", results)
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
+
 	return results, nil
 }
 
@@ -576,7 +605,7 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Query execution time: %v", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
 	start = time.Now()
@@ -601,7 +630,7 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 
 	// Calculate the query execution time
 	elapsed = time.Since(start)
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Data encapsulation execution time: %v", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }
@@ -679,7 +708,9 @@ func parseWebObjectQuery(input string) (string, []interface{}, error) {
 	FROM
 		WebObjects AS wo
 	JOIN
-		SearchIndex AS si ON wo.index_id = si.index_id
+        PageWebObjectsIndex AS pwi ON wo.object_id = pwi.object_id
+    JOIN
+        SearchIndex AS si ON pwi.index_id = si.index_id
 	WHERE
 		LOWER(si.page_url) LIKE LOWER($1)
 	AND
@@ -727,12 +758,22 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return NetInfoResponse{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	var results NetInfoResponse
 	for rows.Next() {
@@ -758,6 +799,10 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	if err := rows.Err(); err != nil {
 		return NetInfoResponse{}, err
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }
@@ -867,12 +912,22 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return HTTPInfoResponse{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	var results HTTPInfoResponse
 	for rows.Next() {
@@ -898,6 +953,10 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	if err := rows.Err(); err != nil {
 		return HTTPInfoResponse{}, err
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }

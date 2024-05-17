@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	crawler "github.com/pzaino/thecrowler/pkg/crawler"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 )
@@ -202,14 +203,14 @@ type WebObjectResponse struct {
 }
 
 type WebObjectRow struct {
-	CreatedAt     string                 `json:"created_at"`
-	LastUpdatedAt string                 `json:"last_updated_at"`
-	ObjectLink    string                 `json:"link"`
-	ObjectType    string                 `json:"type"`
-	ObjectHash    string                 `json:"hash"`
-	ObjectContent string                 `json:"content"`
-	ObjectHTML    string                 `json:"html"`
-	Details       map[string]interface{} `json:"details"`
+	CreatedAt     string                   `json:"created_at"`
+	LastUpdatedAt string                   `json:"last_updated_at"`
+	ObjectLink    string                   `json:"link"`
+	ObjectType    string                   `json:"type"`
+	ObjectHash    string                   `json:"hash"`
+	ObjectContent string                   `json:"content"`
+	ObjectHTML    string                   `json:"html"`
+	Details       crawler.WebObjectDetails `json:"details"`
 }
 
 // SearchResponse is an interface that defines the methods that
