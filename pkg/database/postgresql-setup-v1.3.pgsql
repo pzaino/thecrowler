@@ -1218,6 +1218,8 @@ RETURNS TABLE (
     url TEXT
 ) AS $$
 BEGIN
+    -- RAISE NOTICE 'Starting search for domain: %', domain;
+
     RETURN QUERY
     WITH PartnerSourcesFromNetInfo AS (
         SELECT DISTINCT ssi.source_id
@@ -1241,16 +1243,18 @@ BEGIN
         WHERE wo.details::text LIKE '%' || domain || '%'
     ),
     AllPartnerSources AS (
-        SELECT DISTINCT psni.source_id FROM PartnerSourcesFromNetInfo psni
+        SELECT psni.source_id FROM PartnerSourcesFromNetInfo psni
         UNION
-        SELECT DISTINCT pshi.source_id FROM PartnerSourcesFromHTTPInfo pshi
+        SELECT pshi.source_id FROM PartnerSourcesFromHTTPInfo pshi
         UNION
-        SELECT DISTINCT pswo.source_id FROM PartnerSourcesFromWebObjects pswo
+        SELECT pswo.source_id FROM PartnerSourcesFromWebObjects pswo
     )
 
     SELECT DISTINCT s.source_id, s.url
     FROM Sources s
     JOIN AllPartnerSources aps ON s.source_id = aps.source_id;
+
+    -- RAISE NOTICE 'Finished search for domain: %', domain;
 END;
 $$ LANGUAGE plpgsql;
 
