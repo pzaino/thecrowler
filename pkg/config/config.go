@@ -169,7 +169,7 @@ func NewConfig() Config {
 		API: API{
 			Host:              "localhost",
 			Port:              8080,
-			Timeout:           30,
+			Timeout:           60,
 			ContentSearch:     false,
 			ReturnContent:     false,
 			SSLMode:           "disable",
@@ -286,7 +286,7 @@ func LoadConfig(confName string) (Config, error) {
 		return Config{}, fmt.Errorf("configuration file is empty")
 	}
 
-	if config.Remote != (Remote{}) && (config.Remote.Type == "remote") {
+	if (config.Remote != (Remote{})) && (config.Remote.Type == "remote") {
 		// This local configuration references a remote configuration
 		// Load the remote configuration
 		fetcher := &CMNFetcher{}
@@ -294,8 +294,10 @@ func LoadConfig(confName string) (Config, error) {
 		if err != nil {
 			return config, err
 		}
-	} else {
-		// Check if the configuration file contains valid values
+	}
+
+	// Check if the configuration file contains valid values
+	if !config.IsEmpty() {
 		err = config.Validate()
 		if err != nil {
 			return config, err
@@ -536,7 +538,7 @@ func (c *Config) validateAPI() {
 		c.API.Port = 8080
 	}
 	if c.API.Timeout < 1 {
-		c.API.Timeout = 30
+		c.API.Timeout = 60
 	}
 	if strings.TrimSpace(c.API.RateLimit) == "" {
 		c.API.RateLimit = "10,10"
@@ -966,6 +968,62 @@ func (sc *SourceConfig) IsEmpty() bool {
 	}
 
 	if sc.ExecutionPlan != nil {
+		return false
+	}
+
+	return true
+}
+
+func (cfg *Config) IsEmpty() bool {
+	if cfg == nil {
+		return true
+	}
+
+	if cfg.Remote != (Remote{}) {
+		return false
+	}
+
+	if cfg.Database != (Database{}) {
+		return false
+	}
+
+	if cfg.Crawler != (Crawler{}) {
+		return false
+	}
+
+	if cfg.API != (API{}) {
+		return false
+	}
+
+	if len(cfg.Selenium) != 0 {
+		return false
+	}
+
+	if cfg.ImageStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if cfg.FileStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if cfg.HTTPHeaders != (HTTPConfig{}) {
+		return false
+	}
+
+	if cfg.NetworkInfo.DNS != (DNSConfig{}) ||
+		cfg.NetworkInfo.WHOIS != (WHOISConfig{}) ||
+		cfg.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
+		!cfg.NetworkInfo.ServiceScout.IsEmpty() ||
+		cfg.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
+		return false
+	}
+
+	if cfg.OS != "" {
+		return false
+	}
+
+	if cfg.DebugLevel != 0 {
 		return false
 	}
 

@@ -625,7 +625,7 @@ func TestValidateAPI(t *testing.T) {
 	}
 
 	// Check if the API.Timeout is set to the default timeout (30)
-	if config.API.Timeout != 30 {
+	if config.API.Timeout != 60 {
 		t.Errorf("Expected API.Timeout to be 30, got %v", config.API.Timeout)
 	}
 
