@@ -335,6 +335,11 @@ func detectTechnologies(url string, responseBody string,
 			continue
 		}
 		v.confidence = c
+		if x < 0 {
+			// If x is negative, then the analysis was on the ABSENCE of a technology
+			// In this case we add a special prefix to the entity name
+			k = "no_" + k
+		}
 		entity := DetectedEntity{
 			EntityName:      k,
 			EntityType:      v.entityType,
@@ -347,8 +352,12 @@ func detectTechnologies(url string, responseBody string,
 }
 
 func calculateConfidence(x, Noise, Maybe, Detected float32) float32 {
+	// Confidence calculation based on the value of x
 	if x < 0 {
-		return 0 // Consider values below 0 as 0 confidence
+		// If x is negative, then the analysis was on the ABSENCE of a technology
+		// In this case, we want to calculate the confidence based on the absence of the technology
+		// i.e. the further x is to 0, the higher the confidence
+		return 100 - min(100, -x)
 	} else if x < Noise {
 		return (x / Noise) * 10 // Maps [0, Noise) to [0%, 10%]
 	} else if x < Maybe {
@@ -544,7 +553,15 @@ func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]m
 			if signature == "" {
 				continue
 			}
-			if signature != "*" {
+			if signature == "!*" {
+				// "!*" This means check if the Signature Key is not present in the header.
+				// Usually used for negative detection of headers like Content-Security-Policy
+				// to identify if a site is secure or not.
+				if !strings.Contains(tag, item[tagName].Key) {
+					updateDetectedTech(detectedTech, ObjName, -item[tagName].Confidence, item[tagName].Key)
+					continue
+				}
+			} else if signature != "*" {
 				signature := strings.ToLower(signature)
 				detectTechByPrefix(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
 				detectTechByContains(tag, signature, ObjName, detectedTech, item[tagName].Confidence)

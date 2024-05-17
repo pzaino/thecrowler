@@ -38,6 +38,17 @@ const (
 	SSDefaultDelayTime    = 100
 )
 
+// RemoteFetcher is an interface for fetching remote files.
+type RemoteFetcher interface {
+	FetchRemoteFile(url string, timeout int, sslMode string) (string, error)
+}
+
+type CMNFetcher struct{}
+
+func (f *CMNFetcher) FetchRemoteFile(url string, timeout int, sslMode string) (string, error) {
+	return cmn.FetchRemoteFile(url, timeout, sslMode)
+}
+
 type OsFileReader struct{}
 
 func (OsFileReader) ReadFile(filename string) ([]byte, error) {
@@ -158,7 +169,7 @@ func NewConfig() Config {
 		API: API{
 			Host:              "localhost",
 			Port:              8080,
-			Timeout:           30,
+			Timeout:           60,
 			ContentSearch:     false,
 			ReturnContent:     false,
 			SSLMode:           "disable",
@@ -275,15 +286,18 @@ func LoadConfig(confName string) (Config, error) {
 		return Config{}, fmt.Errorf("configuration file is empty")
 	}
 
-	if config.Remote != (Remote{}) && (config.Remote.Type == "remote") {
+	if (config.Remote != (Remote{})) && (config.Remote.Type == "remote") {
 		// This local configuration references a remote configuration
 		// Load the remote configuration
-		config, err = LoadRemoteConfig(config)
+		fetcher := &CMNFetcher{}
+		config, err = LoadRemoteConfig(config, fetcher)
 		if err != nil {
 			return config, err
 		}
-	} else {
-		// Check if the configuration file contains valid values
+	}
+
+	// Check if the configuration file contains valid values
+	if !config.IsEmpty() {
 		err = config.Validate()
 		if err != nil {
 			return config, err
@@ -303,7 +317,7 @@ func LoadConfig(confName string) (Config, error) {
 
 // LoadRemoteConfig is responsible for retrieving the configuration file
 // from a "remote" distribution server and return the Config struct
-func LoadRemoteConfig(cfg Config) (Config, error) {
+func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	// Create a new configuration object
 	config := NewConfig()
 
@@ -323,7 +337,7 @@ func LoadRemoteConfig(cfg Config) (Config, error) {
 		config.Remote.Path = ""
 	}
 	url := fmt.Sprintf("http://%s/%s", config.Remote.Host, config.Remote.Path)
-	rulesetBody, err := cmn.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
+	rulesetBody, err := fetcher.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
 	if err != nil {
 		return config, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
 	}
@@ -347,6 +361,20 @@ func LoadRemoteConfig(cfg Config) (Config, error) {
 	}
 
 	return config, nil
+}
+
+// ParseConfig parses the configuration file and returns a Config struct.
+func ParseConfig(data []byte) (*Config, error) {
+	var cfg Config
+	err := yaml.Unmarshal(data, &cfg)
+	if err != nil {
+		return nil, err
+	}
+	err = cfg.Validate()
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
 }
 
 // Validate checks if the configuration file contains valid values.
@@ -510,7 +538,7 @@ func (c *Config) validateAPI() {
 		c.API.Port = 8080
 	}
 	if c.API.Timeout < 1 {
-		c.API.Timeout = 30
+		c.API.Timeout = 60
 	}
 	if strings.TrimSpace(c.API.RateLimit) == "" {
 		c.API.RateLimit = "10,10"
@@ -779,30 +807,50 @@ func (c *NetLookupConfig) validate() {
 
 func (c *ServiceScoutConfig) validate() {
 	if c.Enabled {
-		if c.Timeout < 1 {
-			c.Timeout = SSDefaultTimeout
-		}
-		if strings.TrimSpace(c.HostTimeout) == "" {
-			c.HostTimeout = fmt.Sprint((c.Timeout - (c.Timeout / 4)))
-		} else {
-			c.HostTimeout = strings.TrimSpace(c.HostTimeout)
-		}
-		if strings.TrimSpace(c.ScanDelay) == "" {
-			c.ScanDelay = "" // fmt.Sprint(SSDefaultDelayTime)
-		} else {
-			c.ScanDelay = strings.TrimSpace(c.ScanDelay)
-		}
-		if c.MaxPortNumber < 1 {
-			c.MaxPortNumber = 9000
-		}
-		if c.MaxPortNumber > 65535 {
-			c.MaxPortNumber = 65535
-		}
-		if strings.TrimSpace(c.TimingTemplate) == "" {
-			c.TimingTemplate = fmt.Sprint(SSDefaultTimeProfile)
-		} else {
-			c.TimingTemplate = strings.TrimSpace(c.TimingTemplate)
-		}
+		c.validateTimeout()
+		c.validateHostTimeout()
+		c.validateScanDelay()
+		c.validateMaxPortNumber()
+		c.validateTimingTemplate()
+	}
+}
+
+func (c *ServiceScoutConfig) validateTimeout() {
+	if c.Timeout < 1 {
+		c.Timeout = SSDefaultTimeout
+	}
+}
+
+func (c *ServiceScoutConfig) validateHostTimeout() {
+	if strings.TrimSpace(c.HostTimeout) == "" {
+		c.HostTimeout = fmt.Sprint((c.Timeout - (c.Timeout / 4)))
+	} else {
+		c.HostTimeout = strings.TrimSpace(c.HostTimeout)
+	}
+}
+
+func (c *ServiceScoutConfig) validateScanDelay() {
+	if strings.TrimSpace(c.ScanDelay) == "" {
+		c.ScanDelay = "" // fmt.Sprint(SSDefaultDelayTime)
+	} else {
+		c.ScanDelay = strings.TrimSpace(c.ScanDelay)
+	}
+}
+
+func (c *ServiceScoutConfig) validateMaxPortNumber() {
+	if c.MaxPortNumber < 1 {
+		c.MaxPortNumber = 9000
+	}
+	if c.MaxPortNumber > 65535 {
+		c.MaxPortNumber = 65535
+	}
+}
+
+func (c *ServiceScoutConfig) validateTimingTemplate() {
+	if strings.TrimSpace(c.TimingTemplate) == "" {
+		c.TimingTemplate = fmt.Sprint(SSDefaultTimeProfile)
+	} else {
+		c.TimingTemplate = strings.TrimSpace(c.TimingTemplate)
 	}
 }
 
@@ -920,6 +968,62 @@ func (sc *SourceConfig) IsEmpty() bool {
 	}
 
 	if sc.ExecutionPlan != nil {
+		return false
+	}
+
+	return true
+}
+
+func (cfg *Config) IsEmpty() bool {
+	if cfg == nil {
+		return true
+	}
+
+	if cfg.Remote != (Remote{}) {
+		return false
+	}
+
+	if cfg.Database != (Database{}) {
+		return false
+	}
+
+	if cfg.Crawler != (Crawler{}) {
+		return false
+	}
+
+	if cfg.API != (API{}) {
+		return false
+	}
+
+	if len(cfg.Selenium) != 0 {
+		return false
+	}
+
+	if cfg.ImageStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if cfg.FileStorageAPI != (FileStorageAPI{}) {
+		return false
+	}
+
+	if cfg.HTTPHeaders != (HTTPConfig{}) {
+		return false
+	}
+
+	if cfg.NetworkInfo.DNS != (DNSConfig{}) ||
+		cfg.NetworkInfo.WHOIS != (WHOISConfig{}) ||
+		cfg.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
+		!cfg.NetworkInfo.ServiceScout.IsEmpty() ||
+		cfg.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
+		return false
+	}
+
+	if cfg.OS != "" {
+		return false
+	}
+
+	if cfg.DebugLevel != 0 {
 		return false
 	}
 

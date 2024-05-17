@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	crawler "github.com/pzaino/thecrowler/pkg/crawler"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 )
@@ -183,6 +184,35 @@ type HTTPInfoResponse struct {
 	Items []HTTPInfoRow `json:"items"`
 }
 
+// WebObjectRequest represents the structure of the screenshot request POST
+type WebObjectRequest struct {
+	URL string `json:"url"`
+}
+
+type WebObjectResponse struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+	} `json:"queries"`
+	Items []WebObjectRow `json:"items"`
+}
+
+type WebObjectRow struct {
+	CreatedAt     string                   `json:"created_at"`
+	LastUpdatedAt string                   `json:"last_updated_at"`
+	ObjectLink    string                   `json:"link"`
+	ObjectType    string                   `json:"type"`
+	ObjectHash    string                   `json:"hash"`
+	ObjectContent string                   `json:"content"`
+	ObjectHTML    string                   `json:"html"`
+	Details       crawler.WebObjectDetails `json:"details"`
+}
+
 // SearchResponse is an interface that defines the methods that
 // a search response should implement.
 type SearchResponse interface {
@@ -248,6 +278,27 @@ func (r *APIResponse) SetHeaderFields(kind, urlType, urlTemplate string, request
 
 // Populate populates the response with the data
 func (r *APIResponse) Populate(data []byte) error {
+	if err := json.Unmarshal(data, &r.Items); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IsEmpty returns true if the response is empty
+func (r *WebObjectResponse) IsEmpty() bool {
+	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *WebObjectResponse) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
+// Populate populates the response with the data
+func (r *WebObjectResponse) Populate(data []byte) error {
 	if err := json.Unmarshal(data, &r.Items); err != nil {
 		return err
 	}

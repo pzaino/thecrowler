@@ -261,6 +261,96 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
 --------------------------------------------------------------------------------
 -- Indexes and triggers setup
 
+-- Creates an index for the WebObjects table on the object_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_object_id') THEN
+        CREATE INDEX idx_webobjects_object_id ON WebObjects (object_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the PageWebObjectsIndex table on the object_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pagewebobjectsindex_object_id') THEN
+        CREATE INDEX idx_pagewebobjectsindex_object_id ON PageWebObjectsIndex (object_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the PageWebObjectsIndex table on the index_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pagewebobjectsindex_index_id') THEN
+        CREATE INDEX idx_pagewebobjectsindex_index_id ON PageWebObjectsIndex (index_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the SearchIndex table on the index_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_index_id') THEN
+        CREATE INDEX idx_searchindex_index_id ON SearchIndex (index_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the SearchIndex table on the page_url column (for lower-cased searches)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_page_url_lower') THEN
+        CREATE INDEX idx_searchindex_page_url_lower ON SearchIndex (LOWER(page_url));
+    END IF;
+END
+$$;
+
+-- Creates an index for the SearchIndex table on the title column (for lower-cased searches)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_title_lower') THEN
+        CREATE INDEX idx_searchindex_title_lower ON SearchIndex (LOWER(title));
+    END IF;
+END
+$$;
+
+-- Creates an index for the SearchIndex table on the summary column (for lower-cased searches)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_summary_lower') THEN
+        CREATE INDEX idx_searchindex_summary_lower ON SearchIndex (LOWER(summary));
+    END IF;
+END
+$$;
+
+-- Creates an index for the Keywords table on the keyword column (for lower-cased searches)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywords_keyword_lower') THEN
+        CREATE INDEX idx_keywords_keyword_lower ON Keywords (LOWER(keyword));
+    END IF;
+END
+$$;
+
+-- Creates an index for the KeywordIndex table on the keyword_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywordindex_keyword_id') THEN
+        CREATE INDEX idx_keywordindex_keyword_id ON KeywordIndex (keyword_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the KeywordIndex table on the index_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywordindex_index_id') THEN
+        CREATE INDEX idx_keywordindex_index_id ON KeywordIndex (index_id);
+    END IF;
+END
+$$;
+
 -- Creates an index for the Sources url column
 DO $$
 BEGIN
@@ -714,6 +804,22 @@ $$;
 
 --------------------------------------------------------------------------------
 -- Full Text Search setup
+
+-- Add a tsvector column for full-text search
+ALTER TABLE SearchIndex ADD COLUMN tsv tsvector;
+
+-- Update the tsvector column
+UPDATE SearchIndex SET tsv = to_tsvector('english', coalesce(page_url, '') || ' ' || coalesce(title, '') || ' ' || coalesce(summary, ''));
+
+-- Create an index on the tsvector column
+-- Creates an index for the SearchIndex table on the page_url column (for lower-cased searches)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_tsv') THEN
+        CREATE INDEX idx_searchindex_tsv ON SearchIndex USING gin(tsv);
+    END IF;
+END
+$$;
 
 -- Adds a tsvector column for full-text search
 DO $$

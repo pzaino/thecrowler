@@ -181,15 +181,18 @@ func initAPIv1() {
 	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
 	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
 	httpInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(httpInfoHandler)))
-	addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
-	removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
+	webObjectHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webObjectHandler)))
 
 	http.Handle("/v1/search", searchHandlerWithMiddlewares)
 	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
 	http.Handle("/v1/httpinfo", httpInfoHandlerWithMiddlewares)
 	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
+	http.Handle("/v1/webobject", webObjectHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
+		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
+		removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
+
 		http.Handle("/v1/add_source", addSourceHandlerWithMiddlewares)
 		http.Handle("/v1/remove_source", removeSourceHandlerWithMiddlewares)
 	}
@@ -250,6 +253,46 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
 
+}
+
+func webObjectHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in webobject search request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performWebObjectSearch(query, getQTypeFromName(r.Method))
+	if results.IsEmpty() {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+		} else {
+			retCode = successCode
+		}
+		handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusNotFound, retCode)
+	} else {
+		results.SetHeaderFields(
+			"webobject#search",
+			jsonResponse,
+			GetQueryTemplate("webobject", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					0,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
+				},
+			},
+		)
+		handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusInternalServerError, successCode)
+	}
 }
 
 // scrImgSrchHandler handles the search requests for screenshot images

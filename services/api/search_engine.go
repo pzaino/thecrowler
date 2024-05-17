@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -35,6 +36,8 @@ const (
 	dbConnErrorLabel    = "Error connecting to the database: %v"
 	SearchLabel         = "Performing search for: %s"
 	noQueryProvided     = "no query provided"
+	queryExecTime       = "Query execution time: %v"
+	dataEncapTime       = "Data encapsulation execution time: %v"
 )
 
 // TODO: Improve Tokenizer and query generator to support more complex queries
@@ -349,12 +352,22 @@ func performSearch(query string) (SearchResult, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take the current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return SearchResult{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take the current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	// Iterate over the results
 	var results SearchResult
@@ -375,6 +388,10 @@ func performSearch(query string) (SearchResult, error) {
 			Snippet: snippet,
 		})
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }
@@ -415,12 +432,22 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return ScreenshotResponse{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	// Iterate over the results
 	var results ScreenshotResponse
@@ -442,7 +469,10 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 		}
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Results: %v", results)
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
+
 	return results, nil
 }
 
@@ -527,6 +557,170 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	return sqlQuery, sqlParams, nil
 }
 
+func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return WebObjectResponse{}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
+		return WebObjectResponse{}, err
+	}
+	defer db.Close()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+
+	// Parse the user input
+	var sqlQuery string
+	var sqlParams []interface{}
+	if qType == getQuery {
+		// it's a GET request, so we need to interpret the q parameter
+		sqlQuery, sqlParams, err = parseWebObjectGetQuery(query)
+		if err != nil {
+			return WebObjectResponse{}, err
+		}
+	} else {
+		// It's a POST request, so we can use the standard JSON parsing
+		sqlQuery, sqlParams, err = parseWebObjectQuery(query)
+		if err != nil {
+			return WebObjectResponse{}, err
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
+
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
+	// Execute the query
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	if err != nil {
+		return WebObjectResponse{}, err
+	}
+	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
+
+	// Iterate over the results
+	var results WebObjectResponse
+	for rows.Next() {
+		var row WebObjectRow
+		var detailsJSON []byte
+
+		// Read rows and unmarshal the JSON data
+		if err := rows.Scan(&row.ObjectLink, &row.CreatedAt, &row.LastUpdatedAt, &row.ObjectType, &row.ObjectHash, &row.ObjectContent, &row.ObjectHTML, &detailsJSON); err != nil {
+			return WebObjectResponse{}, err
+		}
+		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+			return WebObjectResponse{}, err
+		}
+
+		// Append the row to the results
+		results.Items = append(results.Items, row)
+	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
+
+	return results, nil
+}
+
+func parseWebObjectGetQuery(input string) (string, []interface{}, error) {
+	// Prepare the query body
+	queryBody := `
+	SELECT DISTINCT
+		wo.object_link,
+		wo.created_at,
+		wo.last_updated_at,
+		wo.object_type,
+		wo.object_hash,
+		wo.object_content,
+		wo.object_html,
+		wo.details
+	FROM
+		WebObjects AS wo
+	JOIN
+		PageWebObjectsIndex AS pwi ON wo.object_id = pwi.object_id
+	JOIN
+		SearchIndex AS si ON pwi.index_id = si.index_id
+	LEFT JOIN
+		KeywordIndex ki ON si.index_id = ki.index_id
+	LEFT JOIN
+		Keywords k ON ki.keyword_id = k.keyword_id
+	WHERE
+		wo.object_link != ''
+		AND wo.object_link IS NOT NULL
+		AND `
+
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	if err != nil {
+		return "", nil, err
+	}
+
+	sqlQuery = sqlQuery + " ORDER BY wo.created_at DESC;"
+
+	return sqlQuery, sqlParams, nil
+}
+
+func parseWebObjectQuery(input string) (string, []interface{}, error) {
+	var query string
+	var err error
+	var sqlParams []interface{}
+
+	input = PrepareInput(input)
+
+	// Unmarshal the JSON document
+	var req WebObjectRequest
+	err = json.Unmarshal([]byte(input), &req)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling JSON: %v, %v", err, input)
+		return "", nil, err
+	}
+
+	// Extract the query from the request
+	if len(req.URL) > 0 {
+		query = "%" + req.URL + "%"
+	} else {
+		return "", nil, errors.New(noQueryProvided)
+	}
+
+	// Parse the user input
+	sqlQuery := `
+	SELECT DISTINCT
+		wo.object_link,
+		wo.created_at,
+		wo.last_updated_at,
+		wo.object_type,
+		wo.object_hash,
+		wo.object_content,
+		wo.object_html,
+		wo.details
+	FROM
+		WebObjects AS wo
+	JOIN
+        PageWebObjectsIndex AS pwi ON wo.object_id = pwi.object_id
+    JOIN
+        SearchIndex AS si ON pwi.index_id = si.index_id
+	WHERE
+		LOWER(si.page_url) LIKE LOWER($1)
+	AND
+		wo.object_link != '' AND wo.object_link IS NOT NULL;
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
+}
+
 // performNetInfoSearch performs a search for network information.
 func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	// Initialize the database handler
@@ -564,12 +758,22 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return NetInfoResponse{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	var results NetInfoResponse
 	for rows.Next() {
@@ -595,6 +799,10 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	if err := rows.Err(); err != nil {
 		return NetInfoResponse{}, err
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }
@@ -704,12 +912,22 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
 	// Execute the query
 	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return HTTPInfoResponse{}, err
 	}
 	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
 
 	var results HTTPInfoResponse
 	for rows.Next() {
@@ -735,6 +953,10 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	if err := rows.Err(); err != nil {
 		return HTTPInfoResponse{}, err
 	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
 	return results, nil
 }

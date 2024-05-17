@@ -118,54 +118,60 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
-		for _, wc := range r.WaitConditions {
-			err := executeWaitCondition(&wc, wd)
-			if err != nil {
-				return "", fmt.Errorf("error executing wait condition: %v", err)
-			}
+		err := executeWaitConditions(r.WaitConditions, wd)
+		if err != nil {
+			return "", fmt.Errorf("error executing wait conditions: %v", err)
 		}
 	}
 
 	// Execute the scraping rule
-	if (len(r.Conditions) == 0) || checkScrapingConditions(r.Conditions, wd) {
+	if shouldExecuteScrapingRule(r, wd) {
 		extractedData := scraper.ApplyRule(r, wd)
-
-		// Check if the content of the extractedData is HTML
-		processedData := make(map[string]interface{})
-		for key, data := range extractedData {
-			dataStr := fmt.Sprintf("%v", data)
-			if isHTML(dataStr) {
-				// Convert HTML to JSON
-				jsonData, err := ProcessHtmlToJson(dataStr)
-				if err != nil {
-					// escape all the double quotes in the HTML content
-					data = strings.ReplaceAll(dataStr, "\"", "\\\"")
-					processedData[key] = data
-				} else {
-					// Transform key and value into a JSON document
-					processedData[key] = jsonData
-				}
-			} else {
-				processedData[key] = data
-			}
-		}
-
-		// Transform the extracted data into a JSON document
+		processedData := processExtractedData(extractedData)
 		jsonData, err := json.Marshal(processedData)
 		if err != nil {
 			return "", fmt.Errorf("error marshalling JSON: %v", err)
 		}
-
-		// Execute Post Processing steps
 		if len(r.PostProcessing) != 0 {
 			runPostProcessingSteps(&r.PostProcessing, &jsonData)
 		}
-
-		// Convert bytes to string to get a JSON document
 		jsonDocument = string(jsonData)
 	}
 
 	return jsonDocument, nil
+}
+
+func executeWaitConditions(conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
+	for _, wc := range conditions {
+		err := executeWaitCondition(&wc, wd)
+		if err != nil {
+			return fmt.Errorf("error executing wait condition: %v", err)
+		}
+	}
+	return nil
+}
+
+func shouldExecuteScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) bool {
+	return len(r.Conditions) == 0 || checkScrapingConditions(r.Conditions, wd)
+}
+
+func processExtractedData(extractedData map[string]interface{}) map[string]interface{} {
+	processedData := make(map[string]interface{})
+	for key, data := range extractedData {
+		dataStr := fmt.Sprintf("%v", data)
+		if isHTML(dataStr) {
+			jsonData, err := ProcessHtmlToJson(dataStr)
+			if err != nil {
+				data = strings.ReplaceAll(dataStr, "\"", "\\\"")
+				processedData[key] = data
+			} else {
+				processedData[key] = jsonData
+			}
+		} else {
+			processedData[key] = data
+		}
+	}
+	return processedData
 }
 
 // isHTML checks if the given string could be HTML by trying to parse it.
@@ -331,13 +337,7 @@ func parseHTML(htmlData string) ([]map[string]interface{}, error) {
 
 func parseNode(n *html.Node, currentItem map[string]interface{}, items *[]map[string]interface{}) {
 	if n.Type == html.ElementNode {
-		newItem := make(map[string]interface{})
-		for _, a := range n.Attr {
-			newItem[a.Key] = a.Val
-		}
-		if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
-			newItem["text"] = strings.TrimSpace(n.FirstChild.Data)
-		}
+		newItem := createNewItem(n)
 		if len(newItem) > 0 {
 			if currentItem != nil {
 				addChild(currentItem, newItem)
@@ -353,6 +353,17 @@ func parseNode(n *html.Node, currentItem map[string]interface{}, items *[]map[st
 			currentItem["text"] = strings.TrimSpace(n.Data)
 		}
 	}
+}
+
+func createNewItem(n *html.Node) map[string]interface{} {
+	newItem := make(map[string]interface{})
+	for _, a := range n.Attr {
+		newItem[a.Key] = a.Val
+	}
+	if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
+		newItem["text"] = strings.TrimSpace(n.FirstChild.Data)
+	}
+	return newItem
 }
 
 func addChild(currentItem map[string]interface{}, newItem map[string]interface{}) {
