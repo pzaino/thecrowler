@@ -325,7 +325,7 @@ func main() {
 	var db cdb.Handler
 
 	// Define sel before we set signal handlers
-	var seleniumInstances chan crowler.SeleniumInstance
+	seleniumInstances := make(chan crowler.SeleniumInstance)
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")

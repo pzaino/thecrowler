@@ -341,6 +341,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Index the page
 	ctx.fpIdx = ctx.IndexPage(pageInfo)
+
 	return pageSource, nil
 }
 
@@ -1293,6 +1294,8 @@ func getDomainParts(parts []string, level int) string {
 // worker is the worker function that is responsible for crawling a page
 func worker(processCtx *processContext, id int, jobs chan string) {
 	defer processCtx.wg.Done()
+
+	// Loop over the jobs channel and process each job
 	for url := range jobs {
 		skip := skipURL(processCtx, id, url)
 		if skip {
@@ -1330,11 +1333,15 @@ func processJob(processCtx *processContext, id int, url string) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
+
+	// Get the HTML content of the page
 	htmlContent, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return err
 	}
+
+	// Extract page information
 	pageCache := extractPageInfo(&htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.BodyText)...)
@@ -1377,12 +1384,14 @@ func processJob(processCtx *processContext, id int, url string) error {
 	}
 
 	indexPage(*processCtx.db, url, pageCache)
+
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
+
 	return nil
 }
 
