@@ -1210,6 +1210,52 @@ $$
 LANGUAGE plpgsql;
 
 --------------------------------------------------------------------------------
+-- Special function for data correlation
+
+CREATE OR REPLACE FUNCTION find_correlated_sources_by_domain(domain TEXT)
+RETURNS TABLE (
+    source_id BIGINT,
+    url TEXT
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH PartnerSourcesFromNetInfo AS (
+        SELECT DISTINCT ssi.source_id
+        FROM NetInfo ni
+        JOIN NetInfoIndex nii ON ni.netinfo_id = nii.netinfo_id
+        JOIN SourceSearchIndex ssi ON nii.index_id = ssi.index_id
+        WHERE ni.details::text LIKE '%' || domain || '%'
+    ),
+    PartnerSourcesFromHTTPInfo AS (
+        SELECT DISTINCT ssi.source_id
+        FROM HTTPInfo hi
+        JOIN HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
+        JOIN SourceSearchIndex ssi ON hii.index_id = ssi.index_id
+        WHERE hi.details::text LIKE '%' || domain || '%'
+    ),
+    PartnerSourcesFromWebObjects AS (
+        SELECT DISTINCT ssi.source_id
+        FROM WebObjects wo
+        JOIN PageWebObjectsIndex pwi ON wo.object_id = pwi.object_id
+        JOIN SourceSearchIndex ssi ON pwi.index_id = ssi.index_id
+        WHERE wo.details::text LIKE '%' || domain || '%'
+    ),
+    AllPartnerSources AS (
+        SELECT DISTINCT psni.source_id FROM PartnerSourcesFromNetInfo psni
+        UNION
+        SELECT DISTINCT pshi.source_id FROM PartnerSourcesFromHTTPInfo pshi
+        UNION
+        SELECT DISTINCT pswo.source_id FROM PartnerSourcesFromWebObjects pswo
+    )
+
+    SELECT DISTINCT s.source_id, s.url
+    FROM Sources s
+    JOIN AllPartnerSources aps ON s.source_id = aps.source_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+--------------------------------------------------------------------------------
 -- User and permissions setup
 
 -- Helper functions:

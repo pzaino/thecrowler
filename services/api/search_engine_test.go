@@ -219,7 +219,7 @@ func TestParseAdvancedQuery(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		combinedQuery, queryParams, err := parseAdvancedQuery(test.queryBody, test.input)
+		combinedQuery, queryParams, err := parseAdvancedQuery(test.queryBody, test.input, "")
 
 		if combinedQuery != test.expected.combinedQuery {
 			t.Errorf("parseAdvancedQuery(%q, %q) combinedQuery = %q;\n want %q", test.queryBody, test.input, combinedQuery, test.expected.combinedQuery)

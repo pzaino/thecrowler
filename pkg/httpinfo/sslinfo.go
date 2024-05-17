@@ -328,10 +328,11 @@ func checkCertificateEVSGCCodeSigningSSL(certChain []*x509.Certificate) (bool, e
 	return isCertEVSGCCodeSigningSSL, nil
 }
 
-func checkCertificateExpiration(certChain []*x509.Certificate) (time.Time, error) {
+func checkCertificateExpiration(certChain []*x509.Certificate) (cmn.FlexibleDate, error) {
 	// Check when the certificate expires:
 	certExpiration := certChain[0].NotAfter
-	return certExpiration, nil
+	certExpirationDate := cmn.FlexibleDate(certExpiration)
+	return certExpirationDate, nil
 }
 
 func checkCertificateExpired(certChain []*x509.Certificate) (bool, error) {

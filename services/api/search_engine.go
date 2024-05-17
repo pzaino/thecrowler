@@ -50,6 +50,16 @@ const (
 		FROM jsonb_array_elements(details -> 'service_scout' -> 'hosts') AS hosts
 		WHERE hosts ->> 'ip' = '$1'
 	);
+
+	Or:
+
+	SELECT *
+	FROM NetInfo
+	WHERE EXISTS (
+		SELECT 1
+		FROM jsonb_array_elements(details->'dns') AS dns_element
+		WHERE dns_element->>'domain' LIKE '%example.com%'
+	);
 */
 
 // tokenize splits the input string into tokens.
@@ -177,7 +187,7 @@ func getDefaultFields() []string {
 
 // parseAdvancedQuery interpret the "dorcking" query language and returns the SQL query and its parameters.
 // queryBody represent the SQL query body, while input is the "raw" dorking input.
-func parseAdvancedQuery(queryBody string, input string) (string, []interface{}, error) {
+func parseAdvancedQuery(queryBody string, input string, parsingType string) (string, []interface{}, error) {
 	defaultFields := getDefaultFields()
 	tokens := tokenize(input)
 
@@ -258,7 +268,12 @@ func parseAdvancedQuery(queryBody string, input string) (string, []interface{}, 
 	}
 
 	// Build the combined query
-	combinedQuery := buildCombinedQuery(queryBody, queryParts)
+	var combinedQuery string
+	if parsingType == "" {
+		combinedQuery = buildCombinedQuery(queryBody, queryParts)
+	} else if parsingType == "self-contained" {
+		combinedQuery = queryBody
+	}
 
 	return combinedQuery, queryParams, nil
 }
@@ -342,7 +357,7 @@ func performSearch(query string) (SearchResult, error) {
 	}
 
 	// Parse the user input
-	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, query)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, query, "")
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -500,7 +515,7 @@ func parseScreenshotGetQuery(input string) (string, []interface{}, error) {
 		s.screenshot_link != '' AND s.screenshot_link IS NOT NULL AND
 	`
 
-	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input, "")
 	if err != nil {
 		return "", nil, err
 	}
@@ -662,7 +677,7 @@ func parseWebObjectGetQuery(input string) (string, []interface{}, error) {
 		AND wo.object_link IS NOT NULL
 		AND `
 
-	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input, "")
 	if err != nil {
 		return "", nil, err
 	}
@@ -715,6 +730,199 @@ func parseWebObjectQuery(input string) (string, []interface{}, error) {
 		LOWER(si.page_url) LIKE LOWER($1)
 	AND
 		wo.object_link != '' AND wo.object_link IS NOT NULL;
+	`
+	sqlParams = append(sqlParams, query)
+
+	return sqlQuery, sqlParams, nil
+}
+
+func performCorrelatedSitesSearch(query string, qType int) (CorrelatedSitesResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return CorrelatedSitesResponse{}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
+		return CorrelatedSitesResponse{}, err
+	}
+	defer db.Close()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+
+	// Parse the user input
+	var sqlQuery string
+	var sqlParams []interface{}
+	if qType == getQuery {
+		// it's a GET request, so we need to interpret the q parameter
+		sqlQuery, sqlParams, err = parseCorrelatedSitesGetQuery(query)
+		if err != nil {
+			return CorrelatedSitesResponse{}, err
+		}
+	} else {
+		// It's a POST request, so we can use the standard JSON parsing
+		sqlQuery, sqlParams, err = parseCorrelatedSitesQuery(query)
+		if err != nil {
+			return CorrelatedSitesResponse{}, err
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
+
+	// Take current timer (to monitor query performance)
+	start := time.Now()
+
+	// Execute the query
+	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	if err != nil {
+		return CorrelatedSitesResponse{}, err
+	}
+	defer rows.Close()
+
+	// Calculate the query execution time
+	elapsed := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
+
+	// Take current timer (to monitor encapsulation performance)
+	start = time.Now()
+
+	var results CorrelatedSitesResponse
+	for rows.Next() {
+		var row CorrelatedSitesRow
+		var detailsJSON1 []byte // Use a byte slice to hold the JSONB column data
+		var detailsJSON2 []byte
+
+		// Adjust Scan to match the expected columns returned by your query
+		if err := rows.Scan(&row.SourceID, &row.URL, &detailsJSON1, &detailsJSON2); err != nil {
+			return CorrelatedSitesResponse{}, err
+		}
+
+		// Unmarshal the JSON data (if not NULL)
+		if detailsJSON1 != nil {
+			if err := json.Unmarshal(detailsJSON1, &row.WHOIS); err != nil {
+				return CorrelatedSitesResponse{}, err // Handle JSON unmarshal error
+			}
+		}
+		if detailsJSON2 != nil {
+			if err := json.Unmarshal(detailsJSON2, &row.SSLInfo); err != nil {
+				return CorrelatedSitesResponse{}, err // Handle JSON unmarshal error
+			}
+		}
+
+		// Append the row to the results
+		results.Items = append(results.Items, row)
+	}
+
+	// Ensure to check rows.Err() after the loop to catch any error that occurred during iteration.
+	if err := rows.Err(); err != nil {
+		return CorrelatedSitesResponse{}, err
+	}
+
+	// Calculate the query execution time
+	elapsed = time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
+
+	return results, nil
+}
+
+func parseCorrelatedSitesGetQuery(input string) (string, []interface{}, error) {
+	// Prepare the query body
+	queryBody := `
+	WITH PartnerSources AS (
+		SELECT * FROM find_correlated_sources_by_domain($1)
+	),
+	WhoisAndSSLInfo AS (
+		SELECT
+			ps.source_id,
+			ps.url,
+			ni.details->'whois' AS whois_info,
+			hi.details->'ssl_info' AS ssl_info
+		FROM
+			PartnerSources ps
+		JOIN
+			SourceSearchIndex ssi ON ps.source_id = ssi.source_id
+		LEFT JOIN
+			NetInfoIndex nii ON ssi.index_id = nii.index_id
+		LEFT JOIN
+			NetInfo ni ON nii.netinfo_id = ni.netinfo_id
+		LEFT JOIN
+			HTTPInfoIndex hii ON ssi.index_id = hii.index_id
+		LEFT JOIN
+			HTTPInfo hi ON hii.httpinfo_id = hi.httpinfo_id
+		WHERE
+			(ni.details->'whois' IS NOT NULL OR hi.details->'ssl_info' IS NOT NULL)
+	)
+	SELECT DISTINCT
+		source_id,
+		url,
+		whois_info,
+		ssl_info
+	FROM
+		WhoisAndSSLInfo;
+	`
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input, "self-contained")
+	if err != nil {
+		return "", nil, err
+	}
+
+	return sqlQuery, sqlParams, nil
+}
+
+func parseCorrelatedSitesQuery(input string) (string, []interface{}, error) {
+	var query string
+	var err error
+	var sqlParams []interface{}
+
+	// Unmarshal the JSON document
+	var req CorrelatedSitesRequest
+	err = json.Unmarshal([]byte(input), &req)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Extract the query from the request
+	if len(req.URL) > 0 {
+		query = req.URL
+	} else {
+		return "", nil, errors.New(noQueryProvided)
+	}
+
+	// Parse the user input
+	sqlQuery := `
+	WITH PartnerSources AS (
+		SELECT * FROM find_correlated_sources_by_domain($1)
+	),
+	WhoisAndSSLInfo AS (
+		SELECT
+			ps.source_id,
+			ps.url,
+			ni.details->'whois' AS whois_info,
+			hi.details->'ssl_info' AS ssl_info
+		FROM
+			PartnerSources ps
+		JOIN
+			SourceSearchIndex ssi ON ps.source_id = ssi.source_id
+		LEFT JOIN
+			NetInfoIndex nii ON ssi.index_id = nii.index_id
+		LEFT JOIN
+			NetInfo ni ON nii.netinfo_id = ni.netinfo_id
+		LEFT JOIN
+			HTTPInfoIndex hii ON ssi.index_id = hii.index_id
+		LEFT JOIN
+			HTTPInfo hi ON hii.httpinfo_id = hi.httpinfo_id
+		WHERE
+			(ni.details->'whois' IS NOT NULL OR hi.details->'ssl_info' IS NOT NULL)
+	)
+	SELECT DISTINCT
+		source_id,
+		url,
+		whois_info,
+		ssl_info
+	FROM
+		WhoisAndSSLInfo;
 	`
 	sqlParams = append(sqlParams, query)
 
@@ -785,10 +993,11 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 			return NetInfoResponse{}, err
 		}
 
-		// Assuming that detailsJSON contains an array of neti.NetInfo,
-		// you need to unmarshal the JSON into the NetInfo struct.
-		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
-			return NetInfoResponse{}, err // Handle JSON unmarshal error
+		// Unmarshal the JSON data (if not NULL)
+		if detailsJSON != nil {
+			if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+				return NetInfoResponse{}, err // Handle JSON unmarshal error
+			}
 		}
 
 		// Append the row to the results
@@ -826,7 +1035,7 @@ func parseNetInfoGetQuery(input string) (string, []interface{}, error) {
 		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
 	`
-	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input, "")
 	if err != nil {
 		return "", nil, err
 	}
@@ -939,10 +1148,11 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 			return HTTPInfoResponse{}, err
 		}
 
-		// Assuming that detailsJSON contains an array of neti.NetInfo,
-		// you need to unmarshal the JSON into the NetInfo struct.
-		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
-			return HTTPInfoResponse{}, err // Handle JSON unmarshal error
+		// Unmarshal the JSON data (if not NULL)
+		if detailsJSON != nil {
+			if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+				return HTTPInfoResponse{}, err // Handle JSON unmarshal error
+			}
 		}
 
 		// Append the row to the results
@@ -980,7 +1190,7 @@ func parseHTTPInfoGetQuery(input string) (string, []interface{}, error) {
 		Keywords k ON ki.keyword_id = k.keyword_id
 	WHERE
 	`
-	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input)
+	sqlQuery, sqlParams, err := parseAdvancedQuery(queryBody, input, "")
 	if err != nil {
 		return "", nil, err
 	}
