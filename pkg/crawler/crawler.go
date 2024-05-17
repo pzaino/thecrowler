@@ -1568,7 +1568,7 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance) {
 	if (*pCtx).crawlingRunning {
 		QuitSelenium((&(*pCtx).wd))
-		if (*pCtx).sel != nil {
+		if *(*pCtx).sel != nil {
 			*(*pCtx).sel <- (*sel)
 		}
 		(*pCtx).crawlingRunning = false
