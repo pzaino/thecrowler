@@ -854,18 +854,6 @@ BEGIN
 END
 $$;
 
--- Creates a trigger to update the tsvector column in WebObjects
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_webobjects_content') THEN
-        CREATE TRIGGER trg_webobjects_content
-        BEFORE INSERT OR UPDATE ON WebObjects
-        FOR EACH ROW
-        EXECUTE FUNCTION webobjects_content_trigger();
-    END IF;
-END
-$$;
-
 --------------------------------------------------------------------------------
 --  Functions and Triggers setup
 
