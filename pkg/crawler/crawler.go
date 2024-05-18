@@ -89,6 +89,7 @@ type processContext struct {
 	siteInfoRunning bool                   // Flag to check if site info is already gathered
 	crawlingRunning bool                   // Flag to check if crawling is still running
 	getURLMutex     sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks    map[string]bool        // Map to keep track of visited links
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -114,6 +115,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		re:    re,
 		SelID: selID,
 	}
+	processCtx.visitedLinks = make(map[string]bool)
 
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
 	if !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") &&
@@ -341,6 +343,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Index the page
 	ctx.fpIdx = ctx.IndexPage(pageInfo)
+	ctx.visitedLinks[ctx.source.URL] = true
 
 	return pageSource, nil
 }
@@ -790,8 +793,19 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 				return err
 			}
 		}
-		// Print the detailsJSON
-		//fmt.Println(string(detailsJSON))
+		// For debugging purposes:
+		/*
+			// Extract the "links" tag from detailsJSON
+			var processedDetails map[string]interface{}
+			err = json.Unmarshal(detailsJSON, &processedDetails)
+			if err != nil {
+				return err
+			}
+			// Print the links tag
+			fmt.Printf("Processed Links: %v\n", processedDetails["links"])
+			fmt.Printf("-------------------------\n")
+			fmt.Printf("Received Links: %v\n", pageInfo.Links)
+		*/
 	}
 
 	// Calculate the SHA256 hash of the body text
@@ -1210,6 +1224,11 @@ func extractLinks(htmlContent string) []string {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 	}
 
+	fmt.Println("=====================================")
+	fmt.Println(doc.Text())
+	fmt.Println("=====================================")
+
+	// Find all the links in the document
 	var links []string
 	doc.Find("a").Each(func(index int, item *goquery.Selection) {
 		linkTag := item
@@ -1306,6 +1325,10 @@ func worker(processCtx *processContext, id int, jobs chan string) {
 			skippedURLs = append(skippedURLs, url)
 			continue
 		}
+		if processCtx.visitedLinks[url] {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url)
+			continue
+		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
 		err := processJob(processCtx, id, url, skippedURLs)
 		if err == nil {
@@ -1351,7 +1374,7 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []st
 	// Extract page information
 	pageCache := extractPageInfo(&htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
-	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.BodyText)...)
+	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.HTML)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 
 	// Collect Navigation Timing metrics
@@ -1394,6 +1417,7 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []st
 	}
 
 	indexPage(*processCtx.db, url, pageCache)
+	processCtx.visitedLinks[url] = true
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
