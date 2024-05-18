@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     last_updated_at TIMESTAMP,
     url TEXT NOT NULL UNIQUE,                   -- Using TEXT for long URLs
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default
+    engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source
     last_crawled_at TIMESTAMP,
     last_error TEXT,                            -- Using TEXT for potentially long error messages
     last_error_at TIMESTAMP,
@@ -1179,11 +1180,11 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION update_sources(INTEGER);
+        DROP FUNCTION update_sources(INTEGER, VARCHAR);
     END IF;
 END
 $$;
-CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER)
+CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER, engineID VARCHAR)
 RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
 $$
 BEGIN
@@ -1202,12 +1203,63 @@ BEGIN
         LIMIT limit_val
     )
     UPDATE Sources
-        SET status = 'processing'
+        SET status = 'processing',
+            engine = engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
     RETURNING Sources.source_id, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
 END;
 $$
 LANGUAGE plpgsql;
+
+--------------------------------------------------------------------------------
+-- Special function for data correlation
+
+CREATE OR REPLACE FUNCTION find_correlated_sources_by_domain(domain TEXT)
+RETURNS TABLE (
+    source_id BIGINT,
+    url TEXT
+) AS $$
+BEGIN
+    -- RAISE NOTICE 'Starting search for domain: %', domain;
+
+    RETURN QUERY
+    WITH PartnerSourcesFromNetInfo AS (
+        SELECT DISTINCT ssi.source_id
+        FROM NetInfo ni
+        JOIN NetInfoIndex nii ON ni.netinfo_id = nii.netinfo_id
+        JOIN SourceSearchIndex ssi ON nii.index_id = ssi.index_id
+        WHERE ni.details::text LIKE '%' || domain || '%'
+    ),
+    PartnerSourcesFromHTTPInfo AS (
+        SELECT DISTINCT ssi.source_id
+        FROM HTTPInfo hi
+        JOIN HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
+        JOIN SourceSearchIndex ssi ON hii.index_id = ssi.index_id
+        WHERE hi.details::text LIKE '%' || domain || '%'
+    ),
+    PartnerSourcesFromWebObjects AS (
+        SELECT DISTINCT ssi.source_id
+        FROM WebObjects wo
+        JOIN PageWebObjectsIndex pwi ON wo.object_id = pwi.object_id
+        JOIN SourceSearchIndex ssi ON pwi.index_id = ssi.index_id
+        WHERE wo.details::text LIKE '%' || domain || '%'
+    ),
+    AllPartnerSources AS (
+        SELECT psni.source_id FROM PartnerSourcesFromNetInfo psni
+        UNION
+        SELECT pshi.source_id FROM PartnerSourcesFromHTTPInfo pshi
+        UNION
+        SELECT pswo.source_id FROM PartnerSourcesFromWebObjects pswo
+    )
+
+    SELECT DISTINCT s.source_id, s.url
+    FROM Sources s
+    JOIN AllPartnerSources aps ON s.source_id = aps.source_id;
+
+    -- RAISE NOTICE 'Finished search for domain: %', domain;
+END;
+$$ LANGUAGE plpgsql;
+
 
 --------------------------------------------------------------------------------
 -- User and permissions setup

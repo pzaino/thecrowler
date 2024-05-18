@@ -16,6 +16,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -34,6 +35,27 @@ var (
 // returned by the console API (addSource/removeSOurce etc.).
 type ConsoleResponse struct {
 	Message string `json:"message"`
+}
+
+type StatusResponse struct {
+	Message string              `json:"message"`
+	Items   []StatusResponseRow `json:"items"`
+}
+
+type StatusResponseRow struct {
+	SourceID      uint64           `json:"source_id"`
+	URL           sql.NullString   `json:"url"`
+	Status        sql.NullString   `json:"status"`
+	Engine        sql.NullString   `json:"engine"`
+	CreatedAt     sql.NullString   `json:"created_at"`
+	LastUpdatedAt sql.NullString   `json:"last_updated_at"`
+	LastCrawledAt sql.NullString   `json:"last_crawled_at"`
+	LastError     sql.NullString   `json:"last_error"`
+	LastErrorAt   sql.NullString   `json:"last_error_at"`
+	Restricted    int              `json:"restricted"`
+	Disabled      bool             `json:"disabled"`
+	Flags         int              `json:"flags"`
+	Config        cfg.SourceConfig `json:"config,omitempty"`
 }
 
 // addSourceRequest represents the structure of the add source request
@@ -184,7 +206,7 @@ type HTTPInfoResponse struct {
 	Items []HTTPInfoRow `json:"items"`
 }
 
-// WebObjectRequest represents the structure of the screenshot request POST
+// WebObjectRequest represents the structure of the WebObject request POST
 type WebObjectRequest struct {
 	URL string `json:"url"`
 }
@@ -211,6 +233,33 @@ type WebObjectRow struct {
 	ObjectContent string                   `json:"content"`
 	ObjectHTML    string                   `json:"html"`
 	Details       crawler.WebObjectDetails `json:"details"`
+}
+
+// CorrelatedSitesRequest represents the structure of the Correlated Sites request POST
+type CorrelatedSitesRequest struct {
+	URL string `json:"url"`
+}
+
+// CorrelatedSitesResponse represents the structure of the correlated sites response
+type CorrelatedSitesResponse struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+	} `json:"queries"`
+	Items []CorrelatedSitesRow `json:"items"`
+}
+
+// CorrelatedSitesRow represents the structure of the correlated sites response
+type CorrelatedSitesRow struct {
+	SourceID uint64           `json:"source_id"`
+	URL      string           `json:"url"`
+	WHOIS    []neti.WHOISData `json:"whois"`
+	SSLInfo  httpi.SSLInfo    `json:"ssl_info"`
 }
 
 // SearchResponse is an interface that defines the methods that
@@ -299,6 +348,26 @@ func (r *WebObjectResponse) SetHeaderFields(kind, urlType, urlTemplate string, r
 
 // Populate populates the response with the data
 func (r *WebObjectResponse) Populate(data []byte) error {
+	if err := json.Unmarshal(data, &r.Items); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *CorrelatedSitesResponse) IsEmpty() bool {
+	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *CorrelatedSitesResponse) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
+// Populate populates the response with the data
+func (r *CorrelatedSitesResponse) Populate(data []byte) error {
 	if err := json.Unmarshal(data, &r.Items); err != nil {
 		return err
 	}

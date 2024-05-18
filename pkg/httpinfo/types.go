@@ -23,7 +23,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // Config is a struct to specify the configuration for header extraction
@@ -133,7 +134,7 @@ type SSLInfo struct {
 	IsCertEVSGCCACodeSigningSSL  bool                `json:"is_cert_ev_sgc_ca_code_signing_ssl"`
 	IsCertEVSGCCodeSigning       bool                `json:"is_cert_ev_sgc_ca_code_signing_ev"`
 	IsCertEVSGCCodeSigningSSL    bool                `json:"is_cert_ev_sgc_ca_code_signing_ev_ssl"`
-	CertExpiration               time.Time           `json:"cert_expiration"`
+	CertExpiration               cmn.FlexibleDate    `json:"cert_expiration"`
 }
 
 // SSLDetails is identical to SSLInfo, however it is designed to be easy to unmarshal/marshal
@@ -258,7 +259,7 @@ func ConvertSSLInfoToDetails(info SSLInfo) (SSLDetails, error) {
 		IsCertTechnicallyConstrained: info.IsCertTechnicallyConstrained,
 		IsCertEV:                     info.IsCertEV,
 		IsCertEVSSL:                  info.IsCertEVSSL,
-		CertExpiration:               info.CertExpiration.Format("2006-01-02"),
+		CertExpiration:               info.CertExpiration.String(),
 	}, nil
 }
 

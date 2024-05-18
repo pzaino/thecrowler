@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -102,11 +104,11 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 		l.flags,
 		l.config
 	FROM
-		update_sources($1) AS l
+		update_sources($1,$2) AS l
 	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query within the transaction
-	rows, err := tx.Query(query, config.Crawler.MaxSources)
+	rows, err := tx.Query(query, config.Crawler.MaxSources, cmn.GetEngineID())
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {
@@ -150,10 +152,11 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) {
+func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
+	resourceReleaseTime := time.Now().Add(time.Duration(5) * time.Minute)
 	defer configMutex.Unlock()
 	for {
 		configMutex.Lock()
@@ -181,6 +184,12 @@ func checkSources(db *cdb.Handler, sel chan crowler.SeleniumInstance, RulesEngin
 			}
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.Unlock()
+			if time.Now().After(resourceReleaseTime) {
+				// Release unneeded resources:
+				runtime.GC()         // Run the garbage collector
+				debug.FreeOSMemory() // Force release of unused memory to the OS
+				resourceReleaseTime = time.Now().Add(time.Duration(5) * time.Minute)
+			}
 			time.Sleep(sleepTime)
 			continue
 		}
@@ -202,7 +211,7 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]cdb.Source, RulesEngine *rules.RuleEngine) {
+func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[]cdb.Source, RulesEngine *rules.RuleEngine) {
 	if len(*sources) == 0 {
 		return
 	}
@@ -212,8 +221,8 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]
 		wg      *sync.WaitGroup
 		db      cdb.Handler
 		src     cdb.Source
-		sel     chan crowler.SeleniumInstance
-		re      rules.RuleEngine
+		sel     *chan crowler.SeleniumInstance
+		re      *rules.RuleEngine
 		sources *[]cdb.Source
 		index   int
 		selIdx  int
@@ -231,7 +240,7 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]
 			db:      db,
 			src:     source,
 			sel:     sel,
-			re:      (*RulesEngine),
+			re:      RulesEngine,
 			sources: sources,
 			index:   idx,
 			selIdx:  selIdx,
@@ -239,7 +248,7 @@ func crawlSources(db cdb.Handler, sel chan crowler.SeleniumInstance, sources *[]
 
 		// Start a goroutine to crawl the website
 		go func(args pars) {
-			crowler.CrawlWebsite(args.wg, args.db, args.src, <-args.sel, args.sel, args.re, args.selIdx)
+			crowler.CrawlWebsite(args.wg, args.db, args.src, <-*args.sel, args.sel, args.re, args.selIdx)
 			(*args.sources)[args.index].Status = 1
 		}(args)
 
@@ -316,7 +325,7 @@ func main() {
 	var db cdb.Handler
 
 	// Define sel before we set signal handlers
-	var seleniumInstances chan crowler.SeleniumInstance
+	seleniumInstances := make(chan crowler.SeleniumInstance)
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -384,7 +393,7 @@ func main() {
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	checkSources(&db, seleniumInstances, &GRulesEngine)
+	checkSources(&db, &seleniumInstances, &GRulesEngine)
 
 	// Wait forever
 	//select {}
