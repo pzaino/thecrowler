@@ -54,6 +54,7 @@ type Crawler struct {
 	MaxDepth           int    `yaml:"max_depth"`            // Maximum depth to crawl
 	MaxSources         int    `yaml:"max_sources"`          // Maximum number of sources to crawl
 	Delay              string `yaml:"delay"`                // Delay between requests (in seconds)
+	BrowsingMode       string `yaml:"browsing_mode"`        // Browsing type (e.g., "recursive", "human", "fuzzing")
 }
 
 // DNSConfig represents the DNS information gathering configuration
@@ -181,6 +182,7 @@ type Selenium struct {
 	UseService  bool   `yaml:"use_service"`  // Whether to use Selenium service as well or not
 	SSLMode     string `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
 	ProxyURL    string `yaml:"proxy_url"`    // Proxy URL for Selenium connection
+	DownloadDir string `yaml:"download_dir"` // Download directory for Selenium
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper

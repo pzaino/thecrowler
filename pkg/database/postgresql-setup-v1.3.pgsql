@@ -58,6 +58,18 @@ CREATE TABLE IF NOT EXISTS Owners (
                                                 -- the owner.
 );
 
+-- SearchIndex table stores the indexed information from the sources
+CREATE TABLE IF NOT EXISTS SearchIndex (
+    index_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    page_url TEXT NOT NULL UNIQUE,              -- Using TEXT for long URLs
+    title VARCHAR(255),                         -- Page title might be NULL
+    summary TEXT NOT NULL,                      -- Assuming summary is always required
+    detected_type VARCHAR(8),                   -- (content type) denormalized for fast searches
+    detected_lang VARCHAR(8)                    -- (URI language) denormalized for fast searches
+);
+
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
@@ -76,18 +88,6 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
     details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
                                                 -- and uniqueness
     details JSONB NOT NULL
-);
-
--- SearchIndex table stores the indexed information from the sources
-CREATE TABLE IF NOT EXISTS SearchIndex (
-    index_id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    page_url TEXT NOT NULL UNIQUE,              -- Using TEXT for long URLs
-    title VARCHAR(255),                         -- Page title might be NULL
-    summary TEXT NOT NULL,                      -- Assuming summary is always required
-    detected_type VARCHAR(8),                   -- (content type) denormalized for fast searches
-    detected_lang VARCHAR(8)                    -- (URI language) denormalized for fast searches
 );
 
 -- Screenshots table stores the screenshots details of the indexed pages
@@ -143,8 +143,8 @@ CREATE TABLE IF NOT EXISTS Keywords (
     keyword VARCHAR(100) NOT NULL UNIQUE
 );
 
--- SourceInformationSeed table stores the relationship between sources and their information seeds
-CREATE TABLE IF NOT EXISTS SourceInformationSeed (
+-- SourceInformationSeedIndex table stores the relationship between sources and their information seeds
+CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
     source_information_seed_id BIGSERIAL PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
     information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
@@ -195,8 +195,8 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE
 );
 
--- PageWebObjectsIndex table stores the relationship between indexed pages and the objects found in them
-CREATE TABLE IF NOT EXISTS PageWebObjectsIndex (
+-- WebObjectsIndex table stores the relationship between indexed pages and the objects found in them
+CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     page_object_id BIGSERIAL PRIMARY KEY,
     index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
     object_id BIGINT NOT NULL REFERENCES WebObjects(object_id),
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS PageWebObjectsIndex (
 );
 
 -- Relationship table between SearchIndex and MetaTags
-CREATE TABLE IF NOT EXISTS SearchIndexMetaTags (
+CREATE TABLE IF NOT EXISTS MetaTagsIndex (
     sim_id BIGSERIAL PRIMARY KEY,
     index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
     metatag_id BIGINT NOT NULL REFERENCES MetaTags(metatag_id),
@@ -271,20 +271,20 @@ BEGIN
 END
 $$;
 
--- Creates an index for the PageWebObjectsIndex table on the object_id column
+-- Creates an index for the WebObjectsIndex table on the object_id column
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pagewebobjectsindex_object_id') THEN
-        CREATE INDEX idx_pagewebobjectsindex_object_id ON PageWebObjectsIndex (object_id);
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjectsindex_object_id') THEN
+        CREATE INDEX idx_webobjectsindex_object_id ON WebObjectsIndex (object_id);
     END IF;
 END
 $$;
 
--- Creates an index for the PageWebObjectsIndex table on the index_id column
+-- Creates an index for the WebObjectsIndex table on the index_id column
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pagewebobjectsindex_index_id') THEN
-        CREATE INDEX idx_pagewebobjectsindex_index_id ON PageWebObjectsIndex (index_id);
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjectsindex_index_id') THEN
+        CREATE INDEX idx_webobjectsindex_index_id ON WebObjectsIndex (index_id);
     END IF;
 END
 $$;
@@ -781,24 +781,24 @@ BEGIN
 END
 $$;
 
--- Creates an index for the PageWebObjectsIndex index_id column
+-- Creates an index for the WebObjectsIndex index_id column
 DO $$
 BEGIN
     -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pwoi_index_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_woi_index_id') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_pwoi_index_id ON PageWebObjectsIndex(index_id);
+        CREATE INDEX idx_woi_index_id ON WebObjectsIndex(index_id);
     END IF;
 END
 $$;
 
--- Creates an index for the PageWebObjectsIndex object_id column
+-- Creates an index for the WebObjectsIndex object_id column
 DO $$
 BEGIN
     -- Check if the index already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_pwoi_object_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_woi_object_id') THEN
         -- Create the index if it doesn't exist
-        CREATE INDEX idx_pwoi_object_id ON PageWebObjectsIndex(object_id);
+        CREATE INDEX idx_woi_object_id ON WebObjectsIndex(object_id);
     END IF;
 END
 $$;
@@ -806,13 +806,30 @@ $$;
 --------------------------------------------------------------------------------
 -- Full Text Search setup
 
--- Add a tsvector column for full-text search
-ALTER TABLE SearchIndex ADD COLUMN tsv tsvector;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'searchindex'
+        AND column_name = 'tsv'
+    ) THEN
+        ALTER TABLE SearchIndex ADD COLUMN tsv tsvector;
+    END IF;
+END
+$$;
 
 -- Update the tsvector column
 UPDATE SearchIndex SET tsv = to_tsvector('english', coalesce(page_url, '') || ' ' || coalesce(title, '') || ' ' || coalesce(summary, ''));
 
--- Create an index on the tsvector column
+-- Create a trigger to update the tsvector column
+CREATE OR REPLACE FUNCTION searchindex_tsv_trigger() RETURNS trigger AS $$
+BEGIN
+    NEW.tsv := to_tsvector('english', coalesce(NEW.page_url, '') || ' ' || coalesce(NEW.title, '') || ' ' || coalesce(NEW.summary, ''));
+    RETURN NEW;
+END
+$$ LANGUAGE plpgsql;
+
 -- Creates an index for the SearchIndex table on the page_url column (for lower-cased searches)
 DO $$
 BEGIN
@@ -827,13 +844,10 @@ DO $$
 BEGIN
     -- Check and add the content_fts column if it does not exist
     IF NOT EXISTS (
-        SELECT
-            1
-        FROM
-            information_schema.columns
-        WHERE
-            table_name = 'WebObjects' AND
-            column_name = 'object_content_fts'
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name  = 'webobjects'
+        AND   column_name = 'object_content_fts'
     ) THEN
         ALTER TABLE WebObjects ADD COLUMN object_content_fts tsvector;
     END IF;
@@ -898,13 +912,13 @@ BEGIN
 END
 $$;
 
--- Create a trigger to update the last_updated_at column for SourceInformationSeed table
+-- Create a trigger to update the last_updated_at column for SourceInformationSeedIndex table
 DO $$
 BEGIN
     -- Check if the trigger already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_source_information_seed_last_updated_before_update') THEN
-        CREATE TRIGGER trg_update_source_information_seed_last_updated_before_update
-        BEFORE UPDATE ON SourceInformationSeed
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_sourceinformationseedidx_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_sourceinformationseedidx_last_updated_before_update
+        BEFORE UPDATE ON SourceInformationSeedIndex
         FOR EACH ROW
         EXECUTE FUNCTION update_last_updated_at_column();
     END IF;
@@ -1068,18 +1082,25 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION handle_shared_entity_deletion()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Example for MetaTags; replicate logic for WebObjects and Keywords by adjusting WHERE conditions.
-    IF TG_TABLE_NAME = 'searchindexmetatags' THEN
-        IF (SELECT COUNT(*) FROM SearchIndexMetaTags WHERE metatag_id = OLD.metatag_id) = 0 THEN
+    IF TG_TABLE_NAME = 'metatagsindex' THEN
+        IF (SELECT COUNT(*) FROM MetaTagsIndex WHERE metatag_id = OLD.metatag_id) = 0 THEN
             DELETE FROM MetaTags WHERE metatag_id = OLD.metatag_id;
         END IF;
-    ELSIF TG_TABLE_NAME = 'pagewebobjectsindex' THEN
-        IF (SELECT COUNT(*) FROM PageWebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
+    ELSIF TG_TABLE_NAME = 'webobjectsindex' THEN
+        IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
             DELETE FROM WebObjects WHERE object_id = OLD.object_id;
         END IF;
     ELSIF TG_TABLE_NAME = 'keywordindex' THEN
         IF (SELECT COUNT(*) FROM KeywordIndex WHERE keyword_id = OLD.keyword_id) = 0 THEN
             DELETE FROM Keywords WHERE keyword_id = OLD.keyword_id;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'netinfoindex' THEN
+        IF (SELECT COUNT(*) FROM NetInfoIndex WHERE netinfo_id = OLD.netinfo_id) = 0 THEN
+            DELETE FROM NetInfo WHERE netinfo_id = OLD.netinfo_id;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'httpinfoindex' THEN
+        IF (SELECT COUNT(*) FROM HTTPInfoIndex WHERE httpinfo_id = OLD.httpinfo_id) = 0 THEN
+            DELETE FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id;
         END IF;
     END IF;
     RETURN OLD;
@@ -1087,17 +1108,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Triggers to handle the deletion of shared entities.
--- Repeat this logic for each linking table: SearchIndexMetaTags, PageWebObjectsIndex, KeywordIndex.
--- Adjust the referencing table name and the column names accordingly.
 
 -- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
 DO $$
 BEGIN
     -- Check if the trigger already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_searchindexmetatags') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_metatagsindex') THEN
         -- Create the trigger if it doesn't exist
-        CREATE TRIGGER trg_after_delete_searchindexmetatags
-        AFTER DELETE ON SearchIndexMetaTags
+        CREATE TRIGGER trg_after_delete_metatagsindex
+        AFTER DELETE ON MetaTagsIndex
         FOR EACH ROW
         EXECUTE FUNCTION handle_shared_entity_deletion();
     END IF;
@@ -1108,10 +1127,10 @@ $$;
 DO $$
 BEGIN
     -- Check if the trigger already exists
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_pagewebobjectsindex') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_webobjectsindex') THEN
         -- Create the trigger if it doesn't exist
-        CREATE TRIGGER trg_after_delete_pagewebobjectsindex
-        AFTER DELETE ON PageWebObjectsIndex
+        CREATE TRIGGER trg_after_delete_webobjectsindex
+        AFTER DELETE ON WebObjectsIndex
         FOR EACH ROW
         EXECUTE FUNCTION handle_shared_entity_deletion();
     END IF;
@@ -1132,7 +1151,35 @@ BEGIN
 END
 $$;
 
+-- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_netinfoindex') THEN
+        -- Create the trigger if it doesn't exist
+        CREATE TRIGGER trg_after_delete_netinfoindex
+        AFTER DELETE ON NetInfoIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+END
+$$;
 
+-- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
+DO $$
+BEGIN
+    -- Check if the trigger already exists
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_httpinfoindex') THEN
+        -- Create the trigger if it doesn't exist
+        CREATE TRIGGER trg_after_delete_httpinfoindex
+        AFTER DELETE ON HTTPInfoIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+END
+$$;
+
+-- Function to handle the deletion of SearchIndex entries when no longer linked to any Source.
 CREATE OR REPLACE FUNCTION handle_searchindex_deletion()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -1160,13 +1207,12 @@ END
 $$;
 
 -- Ensure that the ON CASCADE DELETE is defined correctly:
-
 ALTER TABLE Screenshots DROP CONSTRAINT IF EXISTS screenshots_index_id_fkey;
 ALTER TABLE Screenshots ADD CONSTRAINT screenshots_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
-ALTER TABLE pagewebobjectsindex DROP CONSTRAINT IF EXISTS pagewebobjectsindex_index_id_fkey;
-ALTER TABLE pagewebobjectsindex ADD CONSTRAINT pagewebobjectsindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
-ALTER TABLE searchindexmetatags DROP CONSTRAINT IF EXISTS searchindexmetatags_index_id_fkey;
-ALTER TABLE searchindexmetatags ADD CONSTRAINT searchindexmetatags_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
+ALTER TABLE webobjectsindex DROP CONSTRAINT IF EXISTS webobjectsindex_index_id_fkey;
+ALTER TABLE webobjectsindex ADD CONSTRAINT webobjectsindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
+ALTER TABLE metatagsindex DROP CONSTRAINT IF EXISTS metatagsindex_index_id_fkey;
+ALTER TABLE metatagsindex ADD CONSTRAINT metatagsindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
 ALTER TABLE keywordindex DROP CONSTRAINT IF EXISTS keywordindex_index_id_fkey;
 ALTER TABLE keywordindex ADD CONSTRAINT keywordindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
 ALTER TABLE netinfoindex DROP CONSTRAINT IF EXISTS netinfoindex_index_id_fkey;
@@ -1240,8 +1286,8 @@ BEGIN
     PartnerSourcesFromWebObjects AS (
         SELECT DISTINCT ssi.source_id
         FROM WebObjects wo
-        JOIN PageWebObjectsIndex pwi ON wo.object_id = pwi.object_id
-        JOIN SourceSearchIndex ssi ON pwi.index_id = ssi.index_id
+        JOIN WebObjectsIndex woi ON wo.object_id = woi.object_id
+        JOIN SourceSearchIndex ssi ON woi.index_id = ssi.index_id
         WHERE wo.details::text LIKE '%' || domain || '%'
     ),
     AllPartnerSources AS (
