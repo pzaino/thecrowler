@@ -1224,10 +1224,6 @@ func extractLinks(htmlContent string) []string {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 	}
 
-	fmt.Println("=====================================")
-	fmt.Println(doc.Text())
-	fmt.Println("=====================================")
-
 	// Find all the links in the document
 	var links []string
 	doc.Find("a").Each(func(index int, item *goquery.Selection) {
