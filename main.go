@@ -65,11 +65,23 @@ func performDBMaintenance(db cdb.Handler) error {
 
 	if db.DBMS() == "postgres" {
 		maintenanceCommands = []string{
-			"VACUUM searchindex",
-			"VACUUM keywords",
-			"VACUUM keywordindex",
-			"REINDEX TABLE searchindex",
-			"REINDEX TABLE keywordindex",
+			"VACUUM Keywords",
+			"VACUUM MetaTags",
+			"VACUUM WebObjects",
+			"VACUUM SearchIndex",
+			"VACUUM KeywordIndex",
+			"VACUUM MetaTagsIndex",
+			"VACUUM WebObjectsIndex",
+			"REINDEX TABLE WebObjects",
+			"REINDEX TABLE SearchIndex",
+			"REINDEX TABLE KeywordIndex",
+			"REINDEX TABLE WebObjectsIndex",
+			"REINDEX TABLE MetaTagsIndex",
+			"REINDEX TABLE NetInfoIndex",
+			"REINDEX TABLE HTTPInfoIndex",
+			"REINDEX TABLE SourceInformationSeed",
+			"REINDEX TABLE SourceOwnerIndex",
+			"REINDEX TABLE SourceSearchIndex",
 		}
 	}
 

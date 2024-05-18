@@ -333,9 +333,9 @@ func performSearch(query string) (SearchResult, error) {
 		FROM
 			SearchIndex si
 		LEFT JOIN
-			PageWebObjectsIndex pwoi ON si.index_id = pwoi.index_id
+			WebObjectsIndex woi ON si.index_id = woi.index_id
 		LEFT JOIN
-			WebObjects wo ON pwoi.object_id = wo.object_id
+			WebObjects wo ON woi.object_id = wo.object_id
 		LEFT JOIN
 			KeywordIndex ki ON si.index_id = ki.index_id
 		LEFT JOIN
@@ -665,9 +665,9 @@ func parseWebObjectGetQuery(input string) (string, []interface{}, error) {
 	FROM
 		WebObjects AS wo
 	JOIN
-		PageWebObjectsIndex AS pwi ON wo.object_id = pwi.object_id
+		WebObjectsIndex AS wi ON wo.object_id = wi.object_id
 	JOIN
-		SearchIndex AS si ON pwi.index_id = si.index_id
+		SearchIndex AS si ON wi.index_id = si.index_id
 	LEFT JOIN
 		KeywordIndex ki ON si.index_id = ki.index_id
 	LEFT JOIN
@@ -723,9 +723,9 @@ func parseWebObjectQuery(input string) (string, []interface{}, error) {
 	FROM
 		WebObjects AS wo
 	JOIN
-        PageWebObjectsIndex AS pwi ON wo.object_id = pwi.object_id
+        WebObjectsIndex AS woi ON wo.object_id = woi.object_id
     JOIN
-        SearchIndex AS si ON pwi.index_id = si.index_id
+        SearchIndex AS si ON woi.index_id = si.index_id
 	WHERE
 		LOWER(si.page_url) LIKE LOWER($1)
 	AND

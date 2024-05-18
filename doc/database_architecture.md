@@ -131,7 +131,7 @@ erDiagram
         TIMESTAMP last_updated_at
     }
 
-    PageWebObjectsIndex {
+    WebObjectsIndex {
         BIGSERIAL page_object_id PK
         BIGINT index_id FK
         BIGINT object_id FK
@@ -139,7 +139,7 @@ erDiagram
         TIMESTAMP last_updated_at
     }
 
-    SearchIndexMetaTags {
+    MetaTagsIndex {
         BIGSERIAL sim_id PK
         BIGINT index_id FK
         BIGINT metatag_id FK
@@ -178,10 +178,10 @@ erDiagram
     Sources ||--o{ SourceSearchIndex: "has"
     SearchIndex ||--o{ SourceSearchIndex: "indexed by"
     SearchIndex ||--o{ Screenshots: "has"
-    SearchIndex ||--o{ PageWebObjectsIndex: "contains"
-    WebObjects ||--o{ PageWebObjectsIndex: "found in"
-    SearchIndex ||--o{ SearchIndexMetaTags: "has"
-    MetaTags ||--o{ SearchIndexMetaTags: "tagged by"
+    SearchIndex ||--o{ WebObjectsIndex: "contains"
+    WebObjects ||--o{ WebObjectsIndex: "found in"
+    SearchIndex ||--o{ MetaTagsIndex: "has"
+    MetaTags ||--o{ MetaTagsIndex: "tagged by"
     SearchIndex ||--o{ KeywordIndex: "has"
     Keywords ||--o{ KeywordIndex: "used in"
     SearchIndex ||--o{ NetInfoIndex: "has"

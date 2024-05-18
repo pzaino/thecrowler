@@ -333,7 +333,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
 				continue
 			}
-			if log.Message.Method == "Network.responseReceived" && log.Message.Params.ResponseInfo.URL != "" {
+			if len(log.Message.Params.ResponseInfo.URL) > 0 {
 				pageInfo.PerfInfo.LogEntries = append(pageInfo.PerfInfo.LogEntries, log)
 			}
 		}
@@ -815,7 +815,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 
 	// Step 2: Insert into WebObjectsIndex for the associated sourceID
 	_, err = tx.Exec(`
-		INSERT INTO PageWebObjectsIndex (index_id, object_id)
+		INSERT INTO WebObjectsIndex (index_id, object_id)
 		VALUES ($1, $2)
 		ON CONFLICT (index_id, object_id) DO NOTHING`, indexID, objID)
 	if err != nil {
@@ -953,7 +953,7 @@ func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
 
 		// Link the metatag to the SearchIndex
 		_, err = tx.Exec(`
-            INSERT INTO SearchIndexMetaTags (index_id, metatag_id)
+            INSERT INTO MetaTagsIndex (index_id, metatag_id)
             VALUES ($1, $2)
             ON CONFLICT (index_id, metatag_id) DO NOTHING;`, indexID, metatagID)
 		if err != nil {
@@ -1271,6 +1271,7 @@ func isExternalLink(sourceURL, linkURL string, domainLevel int) bool {
 
 	// Get domain parts based on domainLevel
 	srcDomain, linkDomain := getDomainParts(srcDomainParts, domainLevel), getDomainParts(linkDomainParts, domainLevel)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Source Domain: %s, Link Domain: %s", srcDomain, linkDomain)
 
 	// Compare the relevant parts of the domain
 	return srcDomain != linkDomain
@@ -1294,19 +1295,25 @@ func getDomainParts(parts []string, level int) string {
 // worker is the worker function that is responsible for crawling a page
 func worker(processCtx *processContext, id int, jobs chan string) {
 	defer processCtx.wg.Done()
+	var skippedURLs []string
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
+		// Check if the URL should be skipped
 		skip := skipURL(processCtx, id, url)
 		if skip {
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL %s\n", id, url)
+			skippedURLs = append(skippedURLs, url)
 			continue
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
-		err := processJob(processCtx, id, url)
+		err := processJob(processCtx, id, url, skippedURLs)
 		if err == nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
 		}
+		// Clear the skipped URLs
+		skippedURLs = nil
+		// Delay before processing the next job
 		if config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(config.Crawler.Delay)
 			time.Sleep(time.Duration(delay) * time.Second)
@@ -1322,14 +1329,14 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 	if strings.HasPrefix(url, "/") {
 		url, _ = combineURLs(processCtx.source.URL, url)
 	}
-	if processCtx.source.Restricted != 4 && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
+	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
 	return false
 }
 
-func processJob(processCtx *processContext, id int, url string) error {
+func processJob(processCtx *processContext, id int, url string, skippedURLs []string) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -1345,6 +1352,7 @@ func processJob(processCtx *processContext, id int, url string) error {
 	pageCache := extractPageInfo(&htmlContent, processCtx)
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.BodyText)...)
+	pageCache.Links = append(pageCache.Links, skippedURLs...)
 
 	// Collect Navigation Timing metrics
 	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
@@ -1379,7 +1387,9 @@ func processJob(processCtx *processContext, id int, url string) error {
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
 				continue
 			}
-			pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
+			if len(log.Message.Params.ResponseInfo.URL) > 0 {
+				pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
+			}
 		}
 	}
 
