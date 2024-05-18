@@ -33,10 +33,7 @@ const (
 	errIPNotAllowed = "ip address is not allowed"
 )
 
-// InitLogger initializes the logger
-func InitLogger(appName string) {
-	log.SetOutput(os.Stdout)
-
+func GetEngineID() string {
 	// Retrieve process PID
 	pid := os.Getpid()
 
@@ -51,6 +48,16 @@ func InitLogger(appName string) {
 
 	// create process instance name: <hostname>:<pid>:<ppid>
 	processName := hostname + ":" + strconv.Itoa(pid) + ":" + strconv.Itoa(ppid)
+
+	return processName
+}
+
+// InitLogger initializes the logger
+func InitLogger(appName string) {
+	log.SetOutput(os.Stdout)
+
+	// create process instance name: <hostname>:<pid>:<ppid>
+	processName := GetEngineID()
 
 	// Setting the log prefix
 	loggerPrefix = appName + " [" + processName + "]: "

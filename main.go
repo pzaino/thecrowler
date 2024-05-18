@@ -104,11 +104,11 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 		l.flags,
 		l.config
 	FROM
-		update_sources($1) AS l
+		update_sources($1,$2) AS l
 	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query within the transaction
-	rows, err := tx.Query(query, config.Crawler.MaxSources)
+	rows, err := tx.Query(query, config.Crawler.MaxSources, cmn.GetEngineID())
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {

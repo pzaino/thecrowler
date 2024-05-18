@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     last_updated_at TIMESTAMP,
     url TEXT NOT NULL UNIQUE,                   -- Using TEXT for long URLs
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default
+    engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source
     last_crawled_at TIMESTAMP,
     last_error TEXT,                            -- Using TEXT for potentially long error messages
     last_error_at TIMESTAMP,
@@ -1179,11 +1180,11 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION update_sources(INTEGER);
+        DROP FUNCTION update_sources(INTEGER, VARCHAR);
     END IF;
 END
 $$;
-CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER)
+CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER, engineID VARCHAR)
 RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
 $$
 BEGIN
@@ -1202,7 +1203,8 @@ BEGIN
         LIMIT limit_val
     )
     UPDATE Sources
-        SET status = 'processing'
+        SET status = 'processing',
+            engine = engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
     RETURNING Sources.source_id, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
 END;
