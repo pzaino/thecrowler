@@ -189,14 +189,18 @@ func initAPIv1() {
 	http.Handle("/v1/httpinfo", httpInfoHandlerWithMiddlewares)
 	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
 	http.Handle("/v1/webobject", webObjectHandlerWithMiddlewares)
-	http.Handle("/v1/correlatedsites", webCorrelatedSitesHandlerWithMiddlewares)
+	http.Handle("/v1/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
 		removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
+		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
+		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
 
 		http.Handle("/v1/add_source", addSourceHandlerWithMiddlewares)
 		http.Handle("/v1/remove_source", removeSourceHandlerWithMiddlewares)
+		http.Handle("/v1/get_source_status", singleURLstatusHandlerWithMiddlewares)
+		http.Handle("/v1/get_all_source_status", allURLstatusHandlerWithMiddlewares)
 	}
 }
 
@@ -466,4 +470,25 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 	results, err := performRemoveSource(query, getQTypeFromName(r.Method))
 	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+}
+
+// singleURLstatusHandler handles the status requests
+func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in status request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performGetURLStatus(query, getQTypeFromName(r.Method))
+	handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
+}
+
+// allURLstatusHandler handles the status requests for all sources
+func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
+	successCode := http.StatusOK
+
+	results, err := performGetAllURLStatus(getQTypeFromName(r.Method))
+	handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 }

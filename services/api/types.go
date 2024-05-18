@@ -16,6 +16,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -34,6 +35,26 @@ var (
 // returned by the console API (addSource/removeSOurce etc.).
 type ConsoleResponse struct {
 	Message string `json:"message"`
+}
+
+type StatusResponse struct {
+	Message string              `json:"message"`
+	Items   []StatusResponseRow `json:"items"`
+}
+
+type StatusResponseRow struct {
+	SourceID      uint64           `json:"source_id"`
+	URL           sql.NullString   `json:"url"`
+	Status        sql.NullString   `json:"status"`
+	CreatedAt     sql.NullString   `json:"created_at"`
+	LastUpdatedAt sql.NullString   `json:"last_updated_at"`
+	LastCrawledAt sql.NullString   `json:"last_crawled_at"`
+	LastError     sql.NullString   `json:"last_error"`
+	LastErrorAt   sql.NullString   `json:"last_error_at"`
+	Restricted    int              `json:"restricted"`
+	Disabled      bool             `json:"disabled"`
+	Flags         int              `json:"flags"`
+	Config        cfg.SourceConfig `json:"config,omitempty"`
 }
 
 // addSourceRequest represents the structure of the add source request

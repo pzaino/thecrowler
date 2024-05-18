@@ -260,3 +260,156 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	results.Message = "Source and related data removed successfully"
 	return results, nil
 }
+
+func performGetURLStatus(query string, qType int) (StatusResponse, error) {
+	var results StatusResponse
+	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
+
+	if qType == getQuery {
+		// Direct extraction from query if it's a simple GET request
+		sourceURL = query
+	} else {
+		// Handle extraction from a JSON document or other POST data
+		// Assuming you have a method or logic to extract the URL from the POST body
+		return StatusResponse{Message: "Invalid request"}, nil
+	}
+
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return StatusResponse{Message: "Failed to initialize database handler"}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		return StatusResponse{Message: "Error connecting to the database"}, err
+	}
+	defer db.Close()
+
+	// Start a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return StatusResponse{Message: "Failed to start transaction"}, err
+	}
+
+	// Proceed with getting the status
+	results, err = getURLStatus(tx, sourceURL)
+	if err != nil {
+		return StatusResponse{Message: "Failed to get the status"}, err
+	}
+
+	// If everything went well, commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		return StatusResponse{Message: "Failed to commit transaction"}, err
+	}
+
+	return results, nil
+}
+
+func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
+	var results StatusResponse
+	results.Message = "Failed to get the status"
+
+	sourceURL = normalizeURL(sourceURL)
+	sourceURL = fmt.Sprintf("%%%s%%", sourceURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Source URL: %s", sourceURL)
+
+	query := `
+		SELECT source_id,
+			   url,
+			   status,
+			   created_at,
+			   last_updated_at,
+			   last_crawled_at,
+			   last_error,
+			   last_error_at,
+			   restricted,
+			   disabled,
+			   flags
+		FROM Sources
+		WHERE url LIKE $1`
+
+	// Get the status
+	rows, err := tx.Query(query, sourceURL)
+	if err != nil {
+		return results, err
+	}
+	defer rows.Close()
+
+	var statuses []StatusResponseRow
+	for rows.Next() {
+		var row StatusResponseRow
+		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags)
+		if err != nil {
+			return results, err
+		}
+		statuses = append(statuses, row)
+	}
+
+	results.Message = "All Sources statuses"
+	results.Items = statuses
+	return results, nil
+}
+
+func performGetAllURLStatus(qType int) (StatusResponse, error) {
+	// Initialize the database handler
+	db, err := cdb.NewHandler(config)
+	if err != nil {
+		return StatusResponse{Message: "Failed to initialize database handler"}, err
+	}
+
+	// Connect to the database
+	err = db.Connect(config)
+	if err != nil {
+		return StatusResponse{Message: "Error connecting to the database"}, err
+	}
+	defer db.Close()
+
+	// Start a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return StatusResponse{Message: "Failed to start transaction"}, err
+	}
+
+	// Proceed with getting all statuses
+	results, err := getAllURLStatus(tx)
+	if err != nil {
+		return StatusResponse{Message: "Failed to get all statuses"}, err
+	}
+
+	// If everything went well, commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		return StatusResponse{Message: "Failed to commit transaction"}, err
+	}
+
+	return results, nil
+}
+
+func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
+	var results StatusResponse
+	results.Message = "Failed to get all statuses"
+
+	// Proceed with getting all statuses
+	rows, err := tx.Query("SELECT source_id, url, status, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags FROM Sources")
+	if err != nil {
+		return results, err
+	}
+	defer rows.Close()
+
+	var statuses []StatusResponseRow
+	for rows.Next() {
+		var row StatusResponseRow
+		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags)
+		if err != nil {
+			return results, err
+		}
+		statuses = append(statuses, row)
+	}
+
+	results.Message = "All Sources statuses"
+	results.Items = statuses
+	return results, nil
+}
