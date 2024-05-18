@@ -130,6 +130,10 @@
                 "delay": {
                     "type": "string",
                     "description": "This is the delay between requests that the CROWler will use to crawl websites. It is the delay between requests that the CROWler will use to crawl websites. You can use the ExprTerpreter language to set the delay."
+                },
+                "browsing_mode": {
+                    "type": "string",
+                    "description": "This is the browsing mode that the CROWler will use to crawl websites. For example, recursive, human, or fuzzing."
                 }
             }
         },
@@ -224,6 +228,10 @@
                     "sslmode": {
                         "type": "string",
                         "description": "This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler."
+                    },
+                    "download_path": {
+                        "type": "string",
+                        "description": "This is the download path for the selenium driver. It is the path where the selenium driver will download files. This is useful for downloading files from websites. The CROWler will use this path to store the downloaded files."
                     }
                 },
                 "required": [

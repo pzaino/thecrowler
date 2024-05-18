@@ -76,7 +76,7 @@ type processContext struct {
 	db              *cdb.Handler           // The database handler
 	wd              selenium.WebDriver     // The Selenium WebDriver
 	linksMutex      sync.Mutex             // Mutex to protect the newLinks slice
-	newLinks        []string               // The new links found during the crawling process
+	newLinks        []LinkItem             // The new links found during the crawling process
 	source          *cdb.Source            // The source to crawl
 	wg              sync.WaitGroup         // WaitGroup to wait for all page workers to finish
 	wgNetInfo       sync.WaitGroup         // WaitGroup to wait for network info to finish
@@ -164,7 +164,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		UpdateSourceState(db, source.URL, err)
 		return
 	}
-	initialLinks := extractLinks(htmlContent)
+	initialLinks := extractLinks(htmlContent, source.URL)
 
 	// Refresh the page
 	processCtx.RefreshSeleniumConnection(sel)
@@ -195,7 +195,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 	newLinksFound := len(initialLinks)
 	for (currentDepth < maxDepth) && (newLinksFound > 0) {
 		// Create a channel to enqueue jobs
-		jobs := make(chan string, len(allLinks))
+		jobs := make(chan LinkItem, len(allLinks))
 
 		// Launch worker goroutines
 		for w := 1; w <= config.Crawler.Workers-2; w++ {
@@ -223,10 +223,10 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		if len(processCtx.newLinks) > 0 {
 			newLinksFound = len(processCtx.newLinks)
 			allLinks = processCtx.newLinks
-			processCtx.newLinks = []string{} // reset newLinks
+			processCtx.newLinks = []LinkItem{} // reset newLinks
 		} else {
 			newLinksFound = 0
-			processCtx.newLinks = []string{} // reset newLinks
+			processCtx.newLinks = []LinkItem{} // reset newLinks
 		}
 		if newLinksFound == 0 {
 			processCtx.siteInfoRunning = false
@@ -289,7 +289,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	defer ctx.getURLMutex.Unlock()
 
 	// Get the initial URL
-	pageSource, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
+	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting HTML content: %v", err)
 		(*ctx.sel) <- sel // Assuming 'sel' is accessible
@@ -298,10 +298,11 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 
 	// Continue with extracting page info and indexing
-	pageInfo := extractPageInfo(&pageSource, ctx)
+	pageInfo := extractPageInfo(&pageSource, ctx, docType)
+	pageInfo.DetectedType = docType
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
-	pageInfo.Links = extractLinks(pageInfo.HTML)
+	pageInfo.Links = extractLinks(pageInfo.HTML, ctx.source.URL)
 
 	// Collect Navigation Timing metrics
 	metrics, err := retrieveNavigationMetrics(&ctx.wd)
@@ -1059,10 +1060,10 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
-func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, error) {
+func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, string, error) {
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
-		return nil, fmt.Errorf("failed to navigate to %s: %v", url, err)
+		return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
 	}
 
 	// Wait for Page to Load
@@ -1076,60 +1077,89 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
 	}
 
-	// Check current URL
-	_, err := wd.CurrentURL()
-	if err != nil {
-		return wd, fmt.Errorf("failed to get current URL after navigation: %v", err)
+	// Get the Mime Type of the page
+	docType := inferDocumentType(url, &wd)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
+
+	if IsHTML(docType) {
+		// Check current URL
+		_, err := wd.CurrentURL()
+		if err != nil {
+			return wd, docType, fmt.Errorf("failed to get current URL after navigation: %v", err)
+		}
+
+		// Run Action Rules if any
+		processActionRules(&wd, ctx, url)
 	}
 
-	// Run Action Rules if any
-	processActionRules(&wd, ctx, url)
+	return wd, docType, nil
+}
 
-	return wd, nil
+func IsHTML(mime string) bool {
+	if strings.Contains(mime, "text/") || strings.Contains(mime, "application/xhtml+xml") {
+		return true
+	}
+	return false
 }
 
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
-func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext) PageInfo {
-	htmlContent, _ := (*webPage).PageSource()
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
-		return PageInfo{} // Return an empty struct in case of an error
-	}
+func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType string) PageInfo {
+	currentURL, _ := (*webPage).CurrentURL()
 
-	// Run scraping rules if any
-	var scrapedData string
-	var url string
-	url, err = (*webPage).CurrentURL()
-	if err == nil {
-		scrapedData = processScrapingRules(webPage, ctx, url)
-	}
-	var scrapedList []ScrapedItem
-	if scrapedData != "" {
-		// put ScrapedData into a map
-		scrapedMap := make(map[string]interface{})
-		err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
+	// Detect Object Type
+	objType := docType
+	title := currentURL
+	summary := "Downloaded Web Object"
+	bodyText := ""
+	htmlContent := ""
+	metaTags := []MetaTag{}
+	scrapedList := []ScrapedItem{}
+
+	// Get the HTML content of the page
+	if IsHTML(objType) {
+		htmlContent, _ = (*webPage).PageSource()
+		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling scraped data: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+			return PageInfo{} // Return an empty struct in case of an error
 		}
 
-		// append the map to the list
-		scrapedList = append(scrapedList, scrapedMap)
+		// Run scraping rules if any
+		var scrapedData string
+		var url string
+		url, err = (*webPage).CurrentURL()
+		if err == nil {
+			scrapedData = processScrapingRules(webPage, ctx, url)
+		}
+		if scrapedData != "" {
+			// put ScrapedData into a map
+			scrapedMap := make(map[string]interface{})
+			err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling scraped data: %v", err)
+			}
+
+			// append the map to the list
+			scrapedList = append(scrapedList, scrapedMap)
+		}
+
+		title, _ = (*webPage).Title()
+		summary = doc.Find("meta[name=description]").AttrOr("content", "")
+		bodyText = doc.Find("body").Text()
+		// transform tabs into spaces
+		bodyText = strings.Replace(bodyText, "\t", " ", -1)
+		// remove excessive spaces in bodyText
+		bodyText = strings.Join(strings.Fields(bodyText), " ")
+
+		metaTags = extractMetaTags(doc)
+	} else {
+		// Download the web object and store it in the database
+		if err := (*webPage).Get(currentURL); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to download web object: %v", err)
+		}
 	}
-
-	title, _ := (*webPage).Title()
-	summary := doc.Find("meta[name=description]").AttrOr("content", "")
-	bodyText := doc.Find("body").Text()
-	// transform tabs into spaces
-	bodyText = strings.Replace(bodyText, "\t", " ", -1)
-	// remove excessive spaces in bodyText
-	bodyText = strings.Join(strings.Fields(bodyText), " ")
-
-	metaTags := extractMetaTags(doc)
-
-	currentURL, _ := (*webPage).CurrentURL()
 
 	return PageInfo{
 		Title:        title,
@@ -1138,7 +1168,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext) PageInfo 
 		HTML:         htmlContent,
 		MetaTags:     metaTags,
 		DetectedLang: detectLang((*webPage)),
-		DetectedType: inferDocumentType(currentURL),
+		DetectedType: objType,
 		ScrapedData:  scrapedList,
 	}
 }
@@ -1177,15 +1207,20 @@ func convertLangStrToLangCode(lang string) string {
 }
 
 // inferDocumentType returns the document type based on the file extension
-func inferDocumentType(url string) string {
+func inferDocumentType(url string, wd *selenium.WebDriver) string {
 	extension := strings.TrimSpace(strings.ToLower(filepath.Ext(url)))
 	if extension != "" {
 		if docType, ok := docTypeMap[extension]; ok {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
-			return docType
+			return strings.ToLower(strings.TrimSpace(docType))
 		}
 	}
-	return "UNKNOWN"
+	// If the extension is not recognized, try to infer the document type from the content type
+	script := `return document.contentType;`
+	contentType, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		return "UNKNOWN"
+	}
+	return strings.ToLower(strings.TrimSpace(contentType.(string)))
 }
 
 // extractMetaTags is a function that extracts meta tags from a goquery.Document.
@@ -1218,20 +1253,25 @@ func IsValidURL(u string) bool {
 // extractLinks extracts all the links from the given HTML content.
 // It uses the goquery library to parse the HTML and find all the <a> tags.
 // Each link is then added to a slice and returned.
-func extractLinks(htmlContent string) []string {
+func extractLinks(htmlContent string, url string) []LinkItem {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
 	}
 
 	// Find all the links in the document
-	var links []string
+	var links []LinkItem
 	doc.Find("a").Each(func(index int, item *goquery.Selection) {
 		linkTag := item
 		link, _ := linkTag.Attr("href")
 		link = normalizeURL(link, 0)
+		linkItem := LinkItem{
+			PageURL:   url,
+			Link:      link,
+			ElementID: item.AttrOr("id", ""),
+		}
 		if link != "" && IsValidURL(link) {
-			links = append(links, link)
+			links = append(links, linkItem)
 		}
 	})
 	return links
@@ -1308,30 +1348,46 @@ func getDomainParts(parts []string, level int) string {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(processCtx *processContext, id int, jobs chan string) {
+func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 	defer processCtx.wg.Done()
-	var skippedURLs []string
+	var skippedURLs []LinkItem
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
+
 		// Check if the URL should be skipped
-		skip := skipURL(processCtx, id, url)
+		skip := skipURL(processCtx, id, url.Link)
 		if skip {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL %s\n", id, url)
 			skippedURLs = append(skippedURLs, url)
 			continue
 		}
-		if processCtx.visitedLinks[url] {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url)
+		if processCtx.visitedLinks[url.Link] {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: processing job %s\n", id, url)
-		err := processJob(processCtx, id, url, skippedURLs)
-		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: finished job %s\n", id, url)
+
+		// Process the job
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
+		var err error
+		if processCtx.config.Crawler.BrowsingMode == "recursive" {
+			// Recursive Mode
+			urlLink := url.Link
+			if strings.HasPrefix(url.Link, "/") {
+				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
+			}
+			err = processJob(processCtx, id, urlLink, skippedURLs)
+		} else if processCtx.config.Crawler.BrowsingMode == "human" {
+			// Human Mode
+			// Find the <a> element that contains the URL and click it
+			err = clickLink(processCtx, id, url)
 		}
+		if err == nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
+		}
+
 		// Clear the skipped URLs
 		skippedURLs = nil
+
 		// Delay before processing the next job
 		if config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(config.Crawler.Delay)
@@ -1355,22 +1411,133 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 	return false
 }
 
-func processJob(processCtx *processContext, id int, url string, skippedURLs []string) error {
+func clickLink(processCtx *processContext, id int, url LinkItem) error {
+	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
+	processCtx.getURLMutex.Lock()
+	defer processCtx.getURLMutex.Unlock()
+
+	pageURL, err := processCtx.wd.CurrentURL()
+	if err != nil {
+		return err
+	}
+	if url.PageURL != pageURL {
+		// Navigate to the page if not already there
+		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Get docType
+	docType := inferDocumentType(url.Link, &processCtx.wd)
+
+	// find the <a> element that contains the URL
+	element, err := processCtx.wd.FindElement(selenium.ByLinkText, url.Link)
+	if err != nil {
+		return err
+	}
+	// Click the element
+	err = element.Click()
+	if err != nil {
+		return err
+	}
+
+	// Wait for Page to Load
+	delay := exi.GetFloat(config.Crawler.Interval)
+	if delay <= 0 {
+		delay = 3
+	}
+	time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
+
+	// Check current URL
+	currentURL, _ := processCtx.wd.CurrentURL()
+	if currentURL != url.Link {
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error navigating to %s: URL mismatch\n", id, url)
+		return errors.New("URL mismatch")
+	}
+
+	// Execute Action Rules
+	processActionRules(&processCtx.wd, processCtx, url.Link)
+
+	// Extract page information
+	pageCache := extractPageInfo(&processCtx.wd, processCtx, docType)
+	pageCache.sourceID = processCtx.source.ID
+	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.HTML, url.Link)...)
+	urlItem := LinkItem{
+		PageURL:   url.Link,
+		Link:      currentURL,
+		ElementID: "",
+	}
+	pageCache.Links = append(pageCache.Links, urlItem)
+
+	// Collect Navigation Timing metrics
+	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve navigation timing metrics: %v", err)
+	} else {
+		for key, value := range metrics {
+			switch key {
+			case "dns_lookup":
+				pageCache.PerfInfo.DNSLookup = value.(float64)
+			case "tcp_connection":
+				pageCache.PerfInfo.TCPConnection = value.(float64)
+			case "time_to_first_byte":
+				pageCache.PerfInfo.TimeToFirstByte = value.(float64)
+			case "content_load":
+				pageCache.PerfInfo.ContentLoad = value.(float64)
+			case "page_load":
+				pageCache.PerfInfo.PageLoad = value.(float64)
+			}
+		}
+	}
+	// Collect Page logs
+	logs, err := processCtx.wd.Log("performance")
+	if err != nil {
+		return err
+	} else {
+		for _, entry := range logs {
+			//cmn.DebugMsg(cmn.DbgLvlDebug2, "Performance log: %s", entry.Message)
+			var log PerformanceLogEntry
+			err := json.Unmarshal([]byte(entry.Message), &log)
+			if err != nil {
+				return err
+			}
+			if len(log.Message.Params.ResponseInfo.URL) > 0 {
+				pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
+			}
+		}
+	}
+
+	// Index the page
+	indexPage(*processCtx.db, url.Link, pageCache)
+	processCtx.visitedLinks[url.Link] = true
+
+	// Add the new links to the process context
+	if len(pageCache.Links) > 0 {
+		processCtx.linksMutex.Lock()
+		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
+		processCtx.linksMutex.Unlock()
+	}
+
+	return nil
+}
+
+func processJob(processCtx *processContext, id int, url string, skippedURLs []LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
 
 	// Get the HTML content of the page
-	htmlContent, err := getURLContent(url, processCtx.wd, 1, processCtx)
+	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return err
 	}
 
 	// Extract page information
-	pageCache := extractPageInfo(&htmlContent, processCtx)
+	pageCache := extractPageInfo(&htmlContent, processCtx, docType)
 	pageCache.sourceID = processCtx.source.ID
-	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.HTML)...)
+	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.HTML, url)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 
 	// Collect Navigation Timing metrics
@@ -1551,13 +1718,25 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 	args = append(args, "--v=1")
 
 	if browser == "chrome" || browser == "chromium" {
+		chromePrefs := map[string]interface{}{
+			"profile.default_content_settings.popups": 0,
+			"download.default_directory":              sel.Config.DownloadDir,
+		}
 		caps.AddChrome(chrome.Capabilities{
-			Args: args,
-			W3C:  true,
+			Args:  args,
+			W3C:   true,
+			Prefs: chromePrefs,
 		})
 	} else if browser == "firefox" {
+		firefoxCaps := map[string]interface{}{
+			"browser.download.folderList":               2,
+			"browser.download.dir":                      sel.Config.DownloadDir,
+			"browser.helperApps.neverAsk.saveToDisk":    "application/zip",
+			"browser.download.manager.showWhenStarting": false,
+		}
 		caps.AddFirefox(firefox.Capabilities{
-			Args: args,
+			Args:  args,
+			Prefs: firefoxCaps,
 		})
 	}
 

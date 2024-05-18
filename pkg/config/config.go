@@ -165,6 +165,7 @@ func NewConfig() Config {
 			MaxDepth:           0,
 			Delay:              "0",
 			MaxSources:         4,
+			BrowsingMode:       "recursive",
 		},
 		API: API{
 			Host:              "localhost",
@@ -491,6 +492,19 @@ func (c *Config) validateCrawler() {
 	}
 	if c.Crawler.Maintenance < 1 {
 		c.Crawler.Maintenance = 60
+	}
+	if c.Crawler.MaxDepth < 0 {
+		c.Crawler.MaxDepth = 0
+	}
+	if strings.TrimSpace(c.Crawler.Delay) == "" {
+		c.Crawler.Delay = "random(1, 5)"
+	} else {
+		c.Crawler.Delay = strings.TrimSpace(c.Crawler.Delay)
+	}
+	if strings.TrimSpace(c.Crawler.BrowsingMode) == "" {
+		c.Crawler.BrowsingMode = "recursive"
+	} else {
+		c.Crawler.BrowsingMode = strings.TrimSpace(c.Crawler.BrowsingMode)
 	}
 }
 

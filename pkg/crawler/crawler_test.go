@@ -27,18 +27,21 @@ func TestExtractLinks(t *testing.T) {
 	type args struct {
 		htmlContent string
 	}
+	test1 := []LinkItem{{Link: testFQDN}}
+	test2 := []LinkItem{{Link: testFQDN}, {Link: testFQDN}}
+	test3 := []LinkItem{{Link: testFQDN}, {Link: testFQDN}, {Link: testFQDN}}
 	tests := []struct {
 		name string
 		args args
-		want []string
+		want []LinkItem
 	}{
-		{"test1", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{testFQDN}},
-		{"test2", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{testFQDN, testFQDN}},
-		{"test3", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, []string{testFQDN, testFQDN, testFQDN}},
+		{"test1", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a></body></html>"}, test1},
+		{"test2", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, test2},
+		{"test3", args{"<html><head><title>Test</title></head><body><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a><a href=\"https://www.google.com\">Google</a></body></html>"}, test3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := extractLinks(tt.args.htmlContent); !reflect.DeepEqual(got, tt.want) {
+			if got := extractLinks(tt.args.htmlContent, ""); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("extractLinks() = %v, want %v", got, tt.want)
 			}
 		})
