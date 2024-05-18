@@ -736,7 +736,11 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 	// Prepare the "Details" field for insertion
 	details := make(map[string]interface{})
 	details["performance"] = pageInfo.PerfInfo
-	details["links"] = pageInfo.Links
+	links := []string{}
+	for _, link := range pageInfo.Links {
+		links = append(links, link.Link)
+	}
+	details["links"] = links
 
 	// Create a JSON out of the details
 	detailsJSON, err := json.Marshal(details)
