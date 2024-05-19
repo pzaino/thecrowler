@@ -614,6 +614,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, plann
 		} else {
 			// Execute the rule group
 			executeActionRules(rg.GetActionRules(), wd)
+			ctx.Status.TotalActions += len(rg.GetActionRules())
 		}
 	}
 }

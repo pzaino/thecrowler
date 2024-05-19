@@ -17,17 +17,59 @@
 package crawler
 
 import (
+	"sync"
+	"time"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
+	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
+
+// Local type to pass parameters to the goroutine
+type CrawlerPars struct {
+	WG      *sync.WaitGroup
+	DB      cdb.Handler
+	Src     cdb.Source
+	Sel     *chan SeleniumInstance
+	SelIdx  int
+	RE      *rules.RuleEngine
+	Sources *[]cdb.Source
+	Index   int
+	Status  *CrawlerStatus
+}
+
+type CrawlerStatus struct {
+	SourceID        uint64
+	Source          string
+	TotalPages      int
+	TotalLinks      int
+	TotalSkipped    int
+	TotalDuplicates int
+	TotalErrors     int
+	TotalScraped    int
+	TotalActions    int
+	TotalFuzzing    int
+	StartTime       time.Time
+	EndTime         time.Time
+	CurrentDepth    int
+	LastWait        float64
+	LastDelay       float64
+	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
+	NetInfoRunning  int // Flag to check if network info is already gathered
+	HTTPInfoRunning int // Flag to check if HTTP info is already gathered
+	PipelineRunning int // Flag to check if site info is already gathered
+	CrawlingRunning int // Flag to check if crawling is still running
+}
 
 // SeleniumInstance holds a Selenium service and its configuration
 type SeleniumInstance struct {
 	Service *selenium.Service
 	Config  cfg.Selenium
+	Mutex   *sync.Mutex
 }
 
 // MetaTag represents a single meta tag, including its name and content.

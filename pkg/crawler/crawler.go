@@ -70,89 +70,84 @@ var (
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type processContext struct {
-	SelID           int                    // The Selenium ID
-	fpIdx           int64                  // The index of the source page after it's indexed
-	config          cfg.Config             // The configuration object (from the config package)
-	db              *cdb.Handler           // The database handler
-	wd              selenium.WebDriver     // The Selenium WebDriver
-	linksMutex      sync.Mutex             // Mutex to protect the newLinks slice
-	newLinks        []LinkItem             // The new links found during the crawling process
-	source          *cdb.Source            // The source to crawl
-	wg              sync.WaitGroup         // WaitGroup to wait for all page workers to finish
-	wgNetInfo       sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel             *chan SeleniumInstance // The Selenium instances channel
-	ni              *neti.NetInfo          // The network information of the web page
-	hi              *httpi.HTTPDetails     // The HTTP header information of the web page
-	re              *rules.RuleEngine      // The rule engine
-	netInfoRunning  bool                   // Flag to check if network info is already gathered
-	httpInfoRunning bool                   // Flag to check if HTTP info is already gathered
-	siteInfoRunning bool                   // Flag to check if site info is already gathered
-	crawlingRunning bool                   // Flag to check if crawling is still running
-	getURLMutex     sync.Mutex             // Mutex to protect the getURLContent function
-	visitedLinks    map[string]bool        // Map to keep track of visited links
+	SelID        int                    // The Selenium ID
+	fpIdx        int64                  // The index of the source page after it's indexed
+	config       cfg.Config             // The configuration object (from the config package)
+	db           *cdb.Handler           // The database handler
+	wd           selenium.WebDriver     // The Selenium WebDriver
+	linksMutex   sync.Mutex             // Mutex to protect the newLinks slice
+	newLinks     []LinkItem             // The new links found during the crawling process
+	source       *cdb.Source            // The source to crawl
+	wg           sync.WaitGroup         // WaitGroup to wait for all page workers to finish
+	wgNetInfo    sync.WaitGroup         // WaitGroup to wait for network info to finish
+	sel          *chan SeleniumInstance // The Selenium instances channel
+	ni           *neti.NetInfo          // The network information of the web page
+	hi           *httpi.HTTPDetails     // The HTTP header information of the web page
+	re           *rules.RuleEngine      // The rule engine
+	getURLMutex  sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks map[string]bool        // Map to keep track of visited links
+	Status       *CrawlerStatus         // Status of the crawling process
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
-	sel SeleniumInstance, SeleniumInstances *chan SeleniumInstance,
-	re *rules.RuleEngine, selID int) {
-
+func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	// Initialize the process context
 	processCtx := processContext{
-		source: &source,
-		db:     &db,
-		sel:    SeleniumInstances,
+		source: &args.Src,
+		db:     &args.DB,
+		sel:    args.Sel,
 		config: config,
-		/*
-			We make a copy of the rule engine when calling CrawlWebsite and then
-			reference that copy, this allows us to reload a rule engine without
-			affecting the crawling process, as well as not having unneeded copies
-			of the rule engine in memory.
-		*/
-		re:    re,
-		SelID: selID,
+		re:     args.RE,
+		SelID:  args.SelIdx,
+		Status: args.Status,
 	}
 	processCtx.visitedLinks = make(map[string]bool)
 
+	// Pipeline has started
+	processCtx.Status.StartTime = time.Now()
+	processCtx.Status.PipelineRunning = 1
+
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
-	if !strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://") &&
-		!strings.HasPrefix(source.URL, "ftp://") && !strings.HasPrefix(source.URL, "ftps://") {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", source.URL)
-		processCtx.GetNetInfo(source.URL)
+	if !strings.HasPrefix(args.Src.URL, "http://") && !strings.HasPrefix(args.Src.URL, "https://") &&
+		!strings.HasPrefix(args.Src.URL, "ftp://") && !strings.HasPrefix(args.Src.URL, "ftps://") {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
+		processCtx.GetNetInfo(args.Src.URL)
 		processCtx.IndexNetInfo()
-		(*SeleniumInstances) <- sel
-		tID.Done()
-		UpdateSourceState(db, source.URL, nil)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
+		processCtx.Status.PipelineRunning = 2
+		UpdateSourceState(args.DB, args.Src.URL, nil)
+		releaseSelenium <- sel
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
 		return
 	}
 
+	// Initialize the Selenium instance
 	var err error
-
 	// Connect to Selenium
 	if err = processCtx.ConnectToSelenium(sel); err != nil {
-		UpdateSourceState(db, source.URL, err)
+		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
-		(*SeleniumInstances) <- sel
-		tID.Done()
+		processCtx.Status.PipelineRunning = 3
+		releaseSelenium <- sel
 		return
 	}
-	defer ReturnSeleniumInstance(tID, &processCtx, &sel)
-	defer UpdateSourceState(db, source.URL, err)
-	processCtx.crawlingRunning = true
+	processCtx.Status.CrawlingRunning = 1
+	defer ReturnSeleniumInstance(args.WG, &processCtx, &sel, releaseSelenium)
+	defer UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.TotalErrors++
 		return
 	}
 
 	// Get screenshot of the page
-	processCtx.TakeScreenshot(pageSource, source.URL, processCtx.fpIdx)
+	processCtx.TakeScreenshot(pageSource, args.Src.URL, processCtx.fpIdx)
 
 	// Extract the HTML content and extract links
 	htmlContent, err := pageSource.PageSource()
@@ -160,11 +155,11 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
-		(*SeleniumInstances) <- sel
-		UpdateSourceState(db, source.URL, err)
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.TotalErrors++
 		return
 	}
-	initialLinks := extractLinks(htmlContent, source.URL)
+	initialLinks := extractLinks(htmlContent, args.Src.URL)
 
 	// Refresh the page
 	processCtx.RefreshSeleniumConnection(sel)
@@ -175,15 +170,13 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		defer ctx.wgNetInfo.Done()
 		ctx.GetNetInfo(ctx.source.URL)
 	}(&processCtx)
-	processCtx.netInfoRunning = true
-	processCtx.wgNetInfo.Add(1)
 
 	// Get HTTP header information
+	processCtx.wgNetInfo.Add(1)
 	go func(ctx *processContext, htmlContent string) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
 	}(&processCtx, htmlContent)
-	processCtx.httpInfoRunning = true
 
 	// Crawl the website
 	allLinks := initialLinks // links extracted from the initial page
@@ -193,6 +186,7 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		maxDepth = 1
 	}
 	newLinksFound := len(initialLinks)
+	processCtx.Status.TotalLinks = newLinksFound
 	for (currentDepth < maxDepth) && (newLinksFound > 0) {
 		// Create a channel to enqueue jobs
 		jobs := make(chan LinkItem, len(allLinks))
@@ -201,7 +195,6 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		for w := 1; w <= config.Crawler.Workers-2; w++ {
 			processCtx.wg.Add(1)
 			// Goroutine for crawling the website
-			processCtx.siteInfoRunning = true
 			go worker(&processCtx, w, jobs)
 		}
 
@@ -222,34 +215,37 @@ func CrawlWebsite(tID *sync.WaitGroup, db cdb.Handler, source cdb.Source,
 		processCtx.linksMutex.Lock()
 		if len(processCtx.newLinks) > 0 {
 			newLinksFound = len(processCtx.newLinks)
+			processCtx.Status.TotalLinks += newLinksFound
 			allLinks = processCtx.newLinks
 			processCtx.newLinks = []LinkItem{} // reset newLinks
 		} else {
 			newLinksFound = 0
 			processCtx.newLinks = []LinkItem{} // reset newLinks
 		}
-		if newLinksFound == 0 {
-			processCtx.siteInfoRunning = false
-		}
 		processCtx.linksMutex.Unlock()
 
 		// Increment the current depth
 		currentDepth++
+		processCtx.Status.CurrentDepth = currentDepth
 		if config.Crawler.MaxDepth == 0 {
 			maxDepth = currentDepth + 1
 		}
 	}
 
 	// Return the Selenium instance to the channel
-	ReturnSeleniumInstance(tID, &processCtx, &sel)
+	ReturnSeleniumInstance(args.WG, &processCtx, &sel, releaseSelenium)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
 	processCtx.IndexNetInfo()
 
+	// Pipeline has completed
+	processCtx.Status.PipelineRunning = 2
+	processCtx.Status.EndTime = time.Now()
+
 	// Update the source state in the database
-	//UpdateSourceState(db, source.URL, nil)
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", source.URL)
+	//UpdateSourceState(args.DB, args.Src.URL, nil)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
 }
 
 // ConnectSelenium is responsible for connecting to a Selenium instance
@@ -345,6 +341,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	// Index the page
 	ctx.fpIdx = ctx.IndexPage(pageInfo)
 	ctx.visitedLinks[ctx.source.URL] = true
+	ctx.Status.TotalPages = 1
 
 	return pageSource, nil
 }
@@ -472,6 +469,8 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 
 // GetNetInfo is responsible for gathering network information for a Source
 func (ctx *processContext) GetNetInfo(url string) {
+	ctx.Status.NetInfoRunning = 1
+
 	// Create a new NetInfo instance
 	ctx.ni = &neti.NetInfo{}
 	c := ctx.config.NetworkInfo
@@ -480,6 +479,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 	// Call GetNetInfo to retrieve network information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering network information for %s...", ctx.source.URL)
 	err := ctx.ni.GetNetInfo(ctx.source.URL)
+	ctx.Status.NetInfoRunning = 2
 
 	// Check for errors
 	if err != nil {
@@ -490,6 +490,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 
 // GetHTTPInfo is responsible for gathering HTTP header information for a Source
 func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
+	ctx.Status.HTTPInfoRunning = 1
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
 	browser := ctx.config.Selenium[ctx.SelID].Type
@@ -505,6 +506,7 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 	// Call GetHTTPInfo to retrieve HTTP header information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
 	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
+	ctx.Status.HTTPInfoRunning = 2
 
 	// Check for errors
 	if err != nil {
@@ -1075,6 +1077,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	if delay <= 0 {
 		delay = 3
 	}
+	ctx.Status.LastWait = delay
 	if level > 0 {
 		time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
 	} else {
@@ -1147,6 +1150,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 
 			// append the map to the list
 			scrapedList = append(scrapedList, scrapedMap)
+			ctx.Status.TotalScraped++
 		}
 
 		title, _ = (*webPage).Title()
@@ -1362,10 +1366,13 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 		// Check if the URL should be skipped
 		skip := skipURL(processCtx, id, url.Link)
 		if skip {
+			processCtx.Status.TotalSkipped++
 			skippedURLs = append(skippedURLs, url)
 			continue
 		}
 		if processCtx.visitedLinks[url.Link] {
+			// URL already visited
+			processCtx.Status.TotalDuplicates++
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
 			continue
 		}
@@ -1386,7 +1393,10 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 			err = clickLink(processCtx, id, url)
 		}
 		if err == nil {
+			processCtx.Status.TotalPages++
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
+		} else {
+			processCtx.Status.TotalErrors++
 		}
 
 		// Clear the skipped URLs
@@ -1395,6 +1405,7 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 		// Delay before processing the next job
 		if config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(config.Crawler.Delay)
+			processCtx.Status.LastDelay = delay
 			time.Sleep(time.Duration(delay) * time.Second)
 		}
 	}
@@ -1787,14 +1798,15 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance) {
-	if (*pCtx).crawlingRunning {
+func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
-			*(*pCtx).sel <- (*sel)
+			//*(*pCtx).sel <- (*sel)
+			releaseSelenium <- (*sel)
 		}
-		(*pCtx).crawlingRunning = false
-		wg.Done()
+		(*pCtx).Status.CrawlingRunning = 2
+		//wg.Done()
 	}
 }
 
