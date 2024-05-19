@@ -951,7 +951,12 @@ func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) erro
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
 	for _, metatag := range metaTags {
-		name := metatag.Name
+		var name string
+		if len(metatag.Name) > 255 {
+			name = metatag.Name[:255]
+		} else {
+			name = metatag.Name
+		}
 		content := metatag.Content
 
 		var metatagID int64
