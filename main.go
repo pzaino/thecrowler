@@ -228,40 +228,33 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 		return
 	}
 
-	// Local type to pass parameters to the goroutine
-	type pars struct {
-		wg      *sync.WaitGroup
-		db      cdb.Handler
-		src     cdb.Source
-		sel     *chan crowler.SeleniumInstance
-		re      *rules.RuleEngine
-		sources *[]cdb.Source
-		index   int
-		selIdx  int
-	}
-
 	// We have some sources to crawl, let's start the crawling process
 	var wg sync.WaitGroup
 	selIdx := 0 // Selenium instance index
+	PipelineStatus := []crowler.CrawlerStatus{}
 	for idx, source := range *sources {
 		wg.Add(1)
 
+		// Initialize the status
+		PipelineStatus = append(PipelineStatus, crowler.CrawlerStatus{Source: source.URL, StartTime: time.Now()})
+
 		// Prepare the go routine parameters
-		args := pars{
-			wg:      &wg,
-			db:      db,
-			src:     source,
-			sel:     sel,
-			re:      RulesEngine,
-			sources: sources,
-			index:   idx,
-			selIdx:  selIdx,
+		args := crowler.CrawlerPars{
+			WG:      &wg,
+			DB:      db,
+			Src:     source,
+			Sel:     sel,
+			SelIdx:  selIdx,
+			RE:      RulesEngine,
+			Sources: sources,
+			Index:   idx,
+			Status:  &PipelineStatus[idx],
 		}
 
 		// Start a goroutine to crawl the website
-		go func(args pars) {
-			crowler.CrawlWebsite(args.wg, args.db, args.src, <-*args.sel, args.sel, args.re, args.selIdx)
-			(*args.sources)[args.index].Status = 1
+		go func(args crowler.CrawlerPars) {
+			crowler.CrawlWebsite(args)
+			(*args.Sources)[args.Index].Status = 1
 		}(args)
 
 		// Move to the next Selenium instance
@@ -273,7 +266,49 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 		}
 	}
 
+	// Start a goroutine to log the status periodically
+	go func(plStatus *[]crowler.CrawlerStatus) {
+		ticker := time.NewTicker(1 * time.Minute) // Adjust the interval as needed
+		defer ticker.Stop()
+		for range ticker.C {
+			logStatus(plStatus)
+		}
+	}(&PipelineStatus)
+
 	wg.Wait() // Block until all goroutines have decremented the counter
+}
+
+func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
+	// Log the status of the pipelines
+	const (
+		sepLine = "====================================="
+	)
+	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipelines status report")
+	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
+	for idx, status := range *PipelineStatus {
+		totalRunningTime := time.Since(status.StartTime)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "           Pipeline: %d", idx)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "             Source: %s", status.Source)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "   Pipeline running: %s", ternaryStr(status.SiteInfoRunning, "Yes", "No"))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "    NetInfo running: %s", ternaryStr(status.NetInfoRunning, "Yes", "No"))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "   HTTPInfo running: %s", ternaryStr(status.HTTPInfoRunning, "Yes", "No"))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "   Crawling running: %s", ternaryStr(status.CrawlingRunning, "Yes", "No"))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "       Running Time: %s", totalRunningTime)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Total Crawled Pages: %d", status.TotalPages)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "       Total Errors: %d", status.TotalErrors)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "        Total Links: %d", status.TotalLinks)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Total Skipped Links: %d", status.TotalSkipped)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "      Total Scrapes: %d", status.TotalScraped)
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
+}
+
+func ternaryStr(condition bool, trueValue, falseValue string) string {
+	if condition {
+		return trueValue
+	}
+	return falseValue
 }
 
 func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) error {

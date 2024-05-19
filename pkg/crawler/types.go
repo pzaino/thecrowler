@@ -17,12 +17,45 @@
 package crawler
 
 import (
+	"sync"
+	"time"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
+	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
+
+// Local type to pass parameters to the goroutine
+type CrawlerPars struct {
+	WG      *sync.WaitGroup
+	DB      cdb.Handler
+	Src     cdb.Source
+	Sel     *chan SeleniumInstance
+	SelIdx  int
+	RE      *rules.RuleEngine
+	Sources *[]cdb.Source
+	Index   int
+	Status  *CrawlerStatus
+}
+
+type CrawlerStatus struct {
+	Source          string
+	TotalPages      int
+	TotalSkipped    int
+	TotalLinks      int
+	TotalScraped    int
+	TotalErrors     int
+	StartTime       time.Time
+	CurrentDepth    int
+	NetInfoRunning  bool // Flag to check if network info is already gathered
+	HTTPInfoRunning bool // Flag to check if HTTP info is already gathered
+	SiteInfoRunning bool // Flag to check if site info is already gathered
+	CrawlingRunning bool // Flag to check if crawling is still running
+}
 
 // SeleniumInstance holds a Selenium service and its configuration
 type SeleniumInstance struct {
