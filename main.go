@@ -283,28 +283,28 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 	const (
 		sepLine = "====================================="
 	)
-	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipelines status report")
-	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
+	report := "Pipelines status report\n"
+	report += sepLine + "\n"
 	for idx, status := range *PipelineStatus {
 		totalRunningTime := time.Since(status.StartTime)
 		totalLinksToGo := status.TotalLinks - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "               Pipeline: %d", idx)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "                 Source: %s", status.Source)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "        Pipeline status: %s", StatusStr(status.SiteInfoRunning))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "        Crawling status: %s", StatusStr(status.CrawlingRunning))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "         NetInfo status: %s", StatusStr(status.NetInfoRunning))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "        HTTPInfo status: %s", StatusStr(status.HTTPInfoRunning))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "           Running Time: %s", totalRunningTime)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "    Total Crawled Pages: %d", status.TotalPages)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "           Total Errors: %d", status.TotalErrors)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "  Total Collected Links: %d", status.TotalLinks)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "    Total Skipped Links: %d", status.TotalSkipped)
-		cmn.DebugMsg(cmn.DbgLvlInfo, " Total Duplicated Links: %d", status.TotalDuplicates)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Total Links to complete: %d", totalLinksToGo)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "          Total Scrapes: %d", status.TotalScraped)
+		report += fmt.Sprintf("               Pipeline: %d", idx)
+		report += fmt.Sprintf("                 Source: %s", status.Source)
+		report += fmt.Sprintf("        Pipeline status: %s", StatusStr(status.SiteInfoRunning))
+		report += fmt.Sprintf("        Crawling status: %s", StatusStr(status.CrawlingRunning))
+		report += fmt.Sprintf("         NetInfo status: %s", StatusStr(status.NetInfoRunning))
+		report += fmt.Sprintf("        HTTPInfo status: %s", StatusStr(status.HTTPInfoRunning))
+		report += fmt.Sprintf("           Running Time: %s", totalRunningTime)
+		report += fmt.Sprintf("    Total Crawled Pages: %d", status.TotalPages)
+		report += fmt.Sprintf("           Total Errors: %d", status.TotalErrors)
+		report += fmt.Sprintf("  Total Collected Links: %d", status.TotalLinks)
+		report += fmt.Sprintf("    Total Skipped Links: %d", status.TotalSkipped)
+		report += fmt.Sprintf(" Total Duplicated Links: %d", status.TotalDuplicates)
+		report += fmt.Sprintf("Total Links to complete: %d", totalLinksToGo)
+		report += fmt.Sprintf("          Total Scrapes: %d", status.TotalScraped)
 	}
-	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
+	report += sepLine + "\n"
+	cmn.DebugMsg(cmn.DbgLvlInfo, report)
 }
 
 func StatusStr(condition int) string {
