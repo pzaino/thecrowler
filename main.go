@@ -288,27 +288,38 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
 	for idx, status := range *PipelineStatus {
 		totalRunningTime := time.Since(status.StartTime)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "           Pipeline: %d", idx)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "             Source: %s", status.Source)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "   Pipeline running: %s", ternaryStr(status.SiteInfoRunning, "Yes", "No"))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "    NetInfo running: %s", ternaryStr(status.NetInfoRunning, "Yes", "No"))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "   HTTPInfo running: %s", ternaryStr(status.HTTPInfoRunning, "Yes", "No"))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "   Crawling running: %s", ternaryStr(status.CrawlingRunning, "Yes", "No"))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "       Running Time: %s", totalRunningTime)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Total Crawled Pages: %d", status.TotalPages)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "       Total Errors: %d", status.TotalErrors)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "        Total Links: %d", status.TotalLinks)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Total Skipped Links: %d", status.TotalSkipped)
-		cmn.DebugMsg(cmn.DbgLvlInfo, "      Total Scrapes: %d", status.TotalScraped)
+		totalLinksToGo := status.TotalLinks - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "               Pipeline: %d", idx)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "                 Source: %s", status.Source)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "        Pipeline status: %s", StatusStr(status.SiteInfoRunning))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "        Crawling status: %s", StatusStr(status.CrawlingRunning))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "         NetInfo status: %s", StatusStr(status.NetInfoRunning))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "        HTTPInfo status: %s", StatusStr(status.HTTPInfoRunning))
+		cmn.DebugMsg(cmn.DbgLvlInfo, "           Running Time: %s", totalRunningTime)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "    Total Crawled Pages: %d", status.TotalPages)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "           Total Errors: %d", status.TotalErrors)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "  Total Collected Links: %d", status.TotalLinks)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "    Total Skipped Links: %d", status.TotalSkipped)
+		cmn.DebugMsg(cmn.DbgLvlInfo, " Total Duplicated Links: %d", status.TotalDuplicates)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Total Links to complete: %d", totalLinksToGo)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "          Total Scrapes: %d", status.TotalScraped)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, sepLine)
 }
 
-func ternaryStr(condition bool, trueValue, falseValue string) string {
-	if condition {
-		return trueValue
+func StatusStr(condition int) string {
+	switch condition {
+	case 0:
+		return "Not started yet"
+	case 1:
+		return "Running"
+	case 2:
+		return "Completed"
+	case 3:
+		return "Completed with errors"
+	default:
+		return "Unknown"
 	}
-	return falseValue
 }
 
 func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) error {

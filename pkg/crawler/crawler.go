@@ -135,7 +135,7 @@ func CrawlWebsite(args CrawlerPars) {
 	}
 	defer ReturnSeleniumInstance(args.WG, &processCtx, &sel)
 	defer UpdateSourceState(args.DB, args.Src.URL, err)
-	processCtx.Status.CrawlingRunning = true
+	processCtx.Status.CrawlingRunning = 1
 
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
@@ -193,7 +193,7 @@ func CrawlWebsite(args CrawlerPars) {
 		for w := 1; w <= config.Crawler.Workers-2; w++ {
 			processCtx.wg.Add(1)
 			// Goroutine for crawling the website
-			processCtx.Status.SiteInfoRunning = true
+			processCtx.Status.SiteInfoRunning = 1
 			go worker(&processCtx, w, jobs)
 		}
 
@@ -222,7 +222,7 @@ func CrawlWebsite(args CrawlerPars) {
 			processCtx.newLinks = []LinkItem{} // reset newLinks
 		}
 		if newLinksFound == 0 {
-			processCtx.Status.SiteInfoRunning = false
+			processCtx.Status.SiteInfoRunning = 2
 		}
 		processCtx.linksMutex.Unlock()
 
@@ -467,7 +467,7 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 
 // GetNetInfo is responsible for gathering network information for a Source
 func (ctx *processContext) GetNetInfo(url string) {
-	ctx.Status.NetInfoRunning = true
+	ctx.Status.NetInfoRunning = 1
 
 	// Create a new NetInfo instance
 	ctx.ni = &neti.NetInfo{}
@@ -477,7 +477,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 	// Call GetNetInfo to retrieve network information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering network information for %s...", ctx.source.URL)
 	err := ctx.ni.GetNetInfo(ctx.source.URL)
-	ctx.Status.NetInfoRunning = false
+	ctx.Status.NetInfoRunning = 2
 
 	// Check for errors
 	if err != nil {
@@ -488,7 +488,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 
 // GetHTTPInfo is responsible for gathering HTTP header information for a Source
 func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
-	ctx.Status.HTTPInfoRunning = true
+	ctx.Status.HTTPInfoRunning = 1
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
 	browser := ctx.config.Selenium[ctx.SelID].Type
@@ -504,7 +504,7 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 	// Call GetHTTPInfo to retrieve HTTP header information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
 	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
-	ctx.Status.HTTPInfoRunning = false
+	ctx.Status.HTTPInfoRunning = 2
 
 	// Check for errors
 	if err != nil {
@@ -1369,7 +1369,7 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 		}
 		if processCtx.visitedLinks[url.Link] {
 			// URL already visited
-			processCtx.Status.TotalSkipped += 1
+			processCtx.Status.TotalDuplicates += 1
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
 			continue
 		}
@@ -1795,12 +1795,12 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
 func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance) {
-	if (*pCtx).Status.CrawlingRunning {
+	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
 			*(*pCtx).sel <- (*sel)
 		}
-		(*pCtx).Status.CrawlingRunning = false
+		(*pCtx).Status.CrawlingRunning = 2
 		wg.Done()
 	}
 }
