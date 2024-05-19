@@ -5,13 +5,13 @@ database:
   user: ${CROWLER_DB_USER}
   password: ${CROWLER_DB_PASSWORD}
   dbname: SitesIndex
+  sslmode: disable
 
 crawler:
   source_screenshot: true
-  interval: random(random(1,2), random(3,5))
+  interval: random(random(5,15), random(90,150))
   workers: 5
-  depth: 1
-  delay: random(1,2)
+  delay: random(1,5)
   timeout: 10
   maintenance: 60
 
@@ -53,4 +53,3 @@ network_info:
     timeout: 15
 
 debug_level: 0
-

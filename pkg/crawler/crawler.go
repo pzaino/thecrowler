@@ -93,10 +93,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(args CrawlerPars) {
-	// extract Sel because it's not addressable in Go Lang
-	sel := <-*args.Sel
-
+func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	// Initialize the process context
 	processCtx := processContext{
 		source: &args.Src,
@@ -109,38 +106,43 @@ func CrawlWebsite(args CrawlerPars) {
 	}
 	processCtx.visitedLinks = make(map[string]bool)
 
+	// Pipeline has started
+	processCtx.Status.StartTime = time.Now()
+	processCtx.Status.PipelineRunning = 1
+
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
 	if !strings.HasPrefix(args.Src.URL, "http://") && !strings.HasPrefix(args.Src.URL, "https://") &&
 		!strings.HasPrefix(args.Src.URL, "ftp://") && !strings.HasPrefix(args.Src.URL, "ftps://") {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
 		processCtx.IndexNetInfo()
-		(*args.Sel) <- sel
-		args.WG.Done()
+		processCtx.Status.PipelineRunning = 2
 		UpdateSourceState(args.DB, args.Src.URL, nil)
+		releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
 		return
 	}
 
 	// Initialize the Selenium instance
 	var err error
-
 	// Connect to Selenium
 	if err = processCtx.ConnectToSelenium(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
-		(*args.Sel) <- sel
-		args.WG.Done()
+		processCtx.Status.PipelineRunning = 3
+		releaseSelenium <- sel
 		return
 	}
-	defer ReturnSeleniumInstance(args.WG, &processCtx, &sel)
-	defer UpdateSourceState(args.DB, args.Src.URL, err)
 	processCtx.Status.CrawlingRunning = 1
+	defer ReturnSeleniumInstance(args.WG, &processCtx, &sel, releaseSelenium)
+	defer UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.TotalErrors++
 		return
 	}
 
@@ -153,8 +155,8 @@ func CrawlWebsite(args CrawlerPars) {
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
-		(*args.Sel) <- sel
-		UpdateSourceState(args.DB, args.Src.URL, err)
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.TotalErrors++
 		return
 	}
 	initialLinks := extractLinks(htmlContent, args.Src.URL)
@@ -193,7 +195,6 @@ func CrawlWebsite(args CrawlerPars) {
 		for w := 1; w <= config.Crawler.Workers-2; w++ {
 			processCtx.wg.Add(1)
 			// Goroutine for crawling the website
-			processCtx.Status.SiteInfoRunning = 1
 			go worker(&processCtx, w, jobs)
 		}
 
@@ -221,9 +222,6 @@ func CrawlWebsite(args CrawlerPars) {
 			newLinksFound = 0
 			processCtx.newLinks = []LinkItem{} // reset newLinks
 		}
-		if newLinksFound == 0 {
-			processCtx.Status.SiteInfoRunning = 2
-		}
 		processCtx.linksMutex.Unlock()
 
 		// Increment the current depth
@@ -235,11 +233,15 @@ func CrawlWebsite(args CrawlerPars) {
 	}
 
 	// Return the Selenium instance to the channel
-	ReturnSeleniumInstance(args.WG, &processCtx, &sel)
+	ReturnSeleniumInstance(args.WG, &processCtx, &sel, releaseSelenium)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
 	processCtx.IndexNetInfo()
+
+	// Pipeline has completed
+	processCtx.Status.PipelineRunning = 2
+	processCtx.Status.EndTime = time.Now()
 
 	// Update the source state in the database
 	//UpdateSourceState(args.DB, args.Src.URL, nil)
@@ -1075,6 +1077,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	if delay <= 0 {
 		delay = 3
 	}
+	ctx.Status.LastWait = delay
 	if level > 0 {
 		time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
 	} else {
@@ -1363,13 +1366,13 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 		// Check if the URL should be skipped
 		skip := skipURL(processCtx, id, url.Link)
 		if skip {
-			processCtx.Status.TotalSkipped += 1
+			processCtx.Status.TotalSkipped++
 			skippedURLs = append(skippedURLs, url)
 			continue
 		}
 		if processCtx.visitedLinks[url.Link] {
 			// URL already visited
-			processCtx.Status.TotalDuplicates += 1
+			processCtx.Status.TotalDuplicates++
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
 			continue
 		}
@@ -1390,10 +1393,10 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 			err = clickLink(processCtx, id, url)
 		}
 		if err == nil {
-			processCtx.Status.TotalPages += 1
+			processCtx.Status.TotalPages++
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
 		} else {
-			processCtx.Status.TotalErrors += 1
+			processCtx.Status.TotalErrors++
 		}
 
 		// Clear the skipped URLs
@@ -1402,6 +1405,7 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 		// Delay before processing the next job
 		if config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(config.Crawler.Delay)
+			processCtx.Status.LastDelay = delay
 			time.Sleep(time.Duration(delay) * time.Second)
 		}
 	}
@@ -1794,14 +1798,15 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance) {
+func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
-			*(*pCtx).sel <- (*sel)
+			//*(*pCtx).sel <- (*sel)
+			releaseSelenium <- (*sel)
 		}
 		(*pCtx).Status.CrawlingRunning = 2
-		wg.Done()
+		//wg.Done()
 	}
 }
 

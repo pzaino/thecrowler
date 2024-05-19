@@ -49,14 +49,19 @@ type CrawlerStatus struct {
 	TotalLinks      int
 	TotalSkipped    int
 	TotalDuplicates int
-	TotalScraped    int
 	TotalErrors     int
+	TotalScraped    int
+	TotalActions    int
+	TotalFuzzing    int
 	StartTime       time.Time
+	EndTime         time.Time
 	CurrentDepth    int
+	LastWait        float64
+	LastDelay       float64
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 	NetInfoRunning  int // Flag to check if network info is already gathered
 	HTTPInfoRunning int // Flag to check if HTTP info is already gathered
-	SiteInfoRunning int // Flag to check if site info is already gathered
+	PipelineRunning int // Flag to check if site info is already gathered
 	CrawlingRunning int // Flag to check if crawling is still running
 }
 
@@ -64,6 +69,7 @@ type CrawlerStatus struct {
 type SeleniumInstance struct {
 	Service *selenium.Service
 	Config  cfg.Selenium
+	Mutex   *sync.Mutex
 }
 
 // MetaTag represents a single meta tag, including its name and content.
