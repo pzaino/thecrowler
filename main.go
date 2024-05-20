@@ -277,7 +277,6 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 
 			// Acquire a Selenium instance
 			seleniumInstance := <-*args.Sel
-			fmt.Printf("Acquired Selenium instance for %s\n", args.Src.URL)
 
 			// Channel to release the Selenium instance
 			releaseSelenium := make(chan crowler.SeleniumInstance)
