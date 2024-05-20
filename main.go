@@ -306,11 +306,9 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 			*args.Sel <- <-releaseSelenium
 
 		}(args)
-
 	}
 
-	wg.Wait()                                  // Block until all goroutines have decremented the counter
-	PipelineStatus = []crowler.CrawlerStatus{} // Reset the status
+	wg.Wait() // Block until all goroutines have decremented the counter
 }
 
 func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
@@ -324,7 +322,7 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 	runningPipelines := 0
 	for idx := 0; idx < len(*PipelineStatus); idx++ {
 		status := (*PipelineStatus)[idx]
-		if status.StartTime.IsZero() {
+		if status.PipelineRunning == 0 {
 			continue
 		} else {
 			runningPipelines++
