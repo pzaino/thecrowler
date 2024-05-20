@@ -95,16 +95,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // and it's called from the main.go when there is a Source to crawl.
 func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	// Initialize the process context
-	processCtx := processContext{
-		source: &args.Src,
-		db:     &args.DB,
-		sel:    args.Sel,
-		config: config,
-		re:     args.RE,
-		SelID:  args.SelIdx,
-		Status: args.Status,
-	}
-	processCtx.visitedLinks = make(map[string]bool)
+	processCtx := NewProcessContext(args)
 
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
@@ -125,8 +116,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 
 	// Initialize the Selenium instance
 	var err error
-	// Connect to Selenium
-	if err = processCtx.ConnectToSelenium(sel); err != nil {
+	if err := processCtx.ConnectToSelenium(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		processCtx.Status.PipelineRunning = 3
@@ -134,7 +124,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
-	defer ReturnSeleniumInstance(args.WG, &processCtx, &sel, releaseSelenium)
+	defer ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 	defer UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Crawl the initial URL and get the HTML content
@@ -169,22 +159,19 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	go func(ctx *processContext) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetNetInfo(ctx.source.URL)
-	}(&processCtx)
+	}(processCtx)
 
 	// Get HTTP header information
 	processCtx.wgNetInfo.Add(1)
 	go func(ctx *processContext, htmlContent string) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
-	}(&processCtx, htmlContent)
+	}(processCtx, htmlContent)
 
 	// Crawl the website
 	allLinks := initialLinks // links extracted from the initial page
 	var currentDepth int
-	maxDepth := config.Crawler.MaxDepth // set a maximum depth for crawling
-	if maxDepth == 0 {
-		maxDepth = 1
-	}
+	maxDepth := checkMaxDepth(config.Crawler.MaxDepth) // set a maximum depth for crawling
 	newLinksFound := len(initialLinks)
 	processCtx.Status.TotalLinks = newLinksFound
 	for (currentDepth < maxDepth) && (newLinksFound > 0) {
@@ -194,8 +181,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		// Launch worker goroutines
 		for w := 1; w <= config.Crawler.Workers-2; w++ {
 			processCtx.wg.Add(1)
-			// Goroutine for crawling the website
-			go worker(&processCtx, w, jobs)
+			go worker(processCtx, w, jobs) // crawling worker
 		}
 
 		// Enqueue jobs (allLinks)
@@ -203,7 +189,6 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 			jobs <- link
 		}
 		close(jobs)
-
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
 
 		// Wait for workers to finish and collect new links
@@ -233,7 +218,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	}
 
 	// Return the Selenium instance to the channel
-	ReturnSeleniumInstance(args.WG, &processCtx, &sel, releaseSelenium)
+	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -244,8 +229,43 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	processCtx.Status.EndTime = time.Now()
 
 	// Update the source state in the database
-	//UpdateSourceState(args.DB, args.Src.URL, nil)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
+}
+
+// NewProcessContext creates a new process context
+func NewProcessContext(args CrawlerPars) *processContext {
+	newPCtx := processContext{
+		source: &args.Src,
+		db:     &args.DB,
+		sel:    args.Sel,
+		config: config,
+		re:     args.RE,
+		SelID:  args.SelIdx,
+		Status: args.Status,
+	}
+	newPCtx.visitedLinks = make(map[string]bool)
+	return &newPCtx
+}
+
+func checkMaxDepth(maxDepth int) int {
+	if maxDepth == 0 {
+		return 1
+	}
+	return maxDepth
+}
+
+func resetPageInfo(p *PageInfo) {
+	p.URL = ""
+	p.Title = ""
+	p.HTML = ""
+	p.BodyText = ""
+	p.Summary = ""
+	p.DetectedLang = ""
+	p.DetectedType = ""
+	p.PerfInfo = PerformanceLog{}
+	p.MetaTags = []MetaTag{}
+	p.ScrapedData = []ScrapedItem{}
+	p.Links = p.Links[:0] // Reset slice without reallocating
 }
 
 // ConnectSelenium is responsible for connecting to a Selenium instance
@@ -340,6 +360,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Index the page
 	ctx.fpIdx = ctx.IndexPage(&pageInfo)
+	resetPageInfo(&pageInfo) // Reset the PageInfo struct
 	ctx.visitedLinks[ctx.source.URL] = true
 	ctx.Status.TotalPages = 1
 
@@ -1609,7 +1630,6 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
 	} else {
 		for _, entry := range logs {
-			//cmn.DebugMsg(cmn.DbgLvlDebug2, "Performance log: %s", entry.Message)
 			var log PerformanceLogEntry
 			err := json.Unmarshal([]byte(entry.Message), &log)
 			if err != nil {
@@ -1631,6 +1651,7 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
+	resetPageInfo(&pageCache) // Reset the PageInfo object
 
 	return nil
 }

@@ -99,7 +99,7 @@ func recursiveInclude(yamlContent string, baseDir string, reader FileReader) (st
 func getConfigFile(confName string) (Config, error) {
 
 	// Create a new configuration object
-	config := NewConfig()
+	config := *NewConfig()
 
 	// Check if the configuration file exists
 	if !fileExists(confName) {
@@ -131,8 +131,8 @@ func getConfigFile(confName string) (Config, error) {
 }
 
 // NewConfig returns a new Config struct with default values.
-func NewConfig() Config {
-	return Config{
+func NewConfig() *Config {
+	return &Config{
 		Remote: Remote{
 			Host:    "localhost",
 			Path:    "/",
@@ -320,7 +320,7 @@ func LoadConfig(confName string) (Config, error) {
 // from a "remote" distribution server and return the Config struct
 func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	// Create a new configuration object
-	config := NewConfig()
+	config := *NewConfig()
 
 	// Check if the remote configuration is empty
 	if cfg.Remote == (Remote{}) {

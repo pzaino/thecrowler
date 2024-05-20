@@ -37,10 +37,10 @@ func (ni *NetInfo) GetServiceScoutInfo(scanCfg *cfg.ServiceScoutConfig) error {
 		return err
 	}
 
+	// Add the Nmap info to the NetInfo struct
 	nmapInfo := &ServiceScoutInfo{
 		Hosts: hosts,
 	}
-
 	ni.ServiceScout = *nmapInfo
 
 	return nil
@@ -50,21 +50,25 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
 	defer cancel()
 
+	// Check the IP address
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
 		return []HostInfo{}, fmt.Errorf("empty IP address")
 	}
 
+	// Build the Nmap options
 	options, err := buildNmapOptions(cfg, ip, &ctx)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to build nmap options: %w", err)
 	}
 
+	// Create a new scanner
 	scanner, err := nmap.NewScanner(options...)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to create nmap scanner: %w", err)
 	}
 
+	// Run the scan
 	result, warnings, err := scanner.Run()
 	if len(warnings) != 0 {
 		for _, warning := range warnings {
@@ -76,6 +80,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
+	scanner = nil // free the scanner
 
 	// Parse the scan result
 	hosts := parseScanResults(result)
@@ -83,7 +88,8 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	return hosts, nil
 }
 
-func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Context) ([]func(*nmap.Scanner), error) {
+func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
+	ctx *context.Context) ([]func(*nmap.Scanner), error) {
 	var options []func(*nmap.Scanner)
 
 	if cmn.CheckIPVersion(ip) == 6 {
