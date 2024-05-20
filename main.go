@@ -333,7 +333,10 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 		} else {
 			totalRunningTime = status.EndTime.Sub(status.StartTime)
 		}
-		totalLinksToGo := (status.TotalLinks + 1) - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
+		totalLinksToGo := status.TotalLinks - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
+		if totalLinksToGo < 0 {
+			totalLinksToGo = 0
+		}
 		report += fmt.Sprintf("               Pipeline: %d\n", idx)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
