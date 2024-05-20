@@ -63,7 +63,7 @@ type TxHandler struct {
 // Flags represents additional flags associated with the source.
 type Source struct {
 	// ID is the unique identifier of the source.
-	ID int64
+	ID uint64
 	// URL is the URL of the source.
 	URL string
 	// Restricted indicates whether the crawling has to be restricted to the source domain or not.

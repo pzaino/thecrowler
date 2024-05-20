@@ -81,7 +81,7 @@ type MetaTag struct {
 // PageInfo represents the information of a web page.
 type PageInfo struct {
 	URL          string             `json:"URL"` // The URL of the web page.
-	sourceID     int64              // The ID of the source.
+	sourceID     uint64             // The ID of the source.
 	Title        string             `json:"title"`         // The title of the web page.
 	Summary      string             `json:"summary"`       // A summary of the web page content.
 	BodyText     string             `json:"body_text"`     // The main body text of the web page.
