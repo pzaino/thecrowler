@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    keyword VARCHAR(100) NOT NULL UNIQUE
+    keyword VARCHAR(256) NOT NULL UNIQUE
 );
 
 -- SourceInformationSeedIndex table stores the relationship between sources and their information seeds

@@ -339,7 +339,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 
 	// Index the page
-	ctx.fpIdx = ctx.IndexPage(pageInfo)
+	ctx.fpIdx = ctx.IndexPage(&pageInfo)
 	ctx.visitedLinks[ctx.source.URL] = true
 	ctx.Status.TotalPages = 1
 
@@ -516,8 +516,8 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 }
 
 // IndexPage is responsible for indexing a crawled page in the database
-func (ctx *processContext) IndexPage(pageInfo PageInfo) int64 {
-	pageInfo.sourceID = ctx.source.ID
+func (ctx *processContext) IndexPage(pageInfo *PageInfo) int64 {
+	(*pageInfo).sourceID = ctx.source.ID
 	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
@@ -527,7 +527,7 @@ func (ctx *processContext) IndexNetInfo() int64 {
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.sourceID = ctx.source.ID
-	return indexNetInfo(*ctx.db, ctx.source.URL, pageInfo)
+	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo)
 }
 
 // UpdateSourceState is responsible for updating the state of a Source in
@@ -565,7 +565,7 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // this function (and so treat it as a critical section) should be enough for now.
 // Another thought is, the mutex also helps slow down the crawling process, which
 // is a good thing. You don't want to overwhelm the Source site with requests.
-func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
+func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
@@ -631,7 +631,7 @@ func indexPage(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 }
 
 // indexNetInfo indexes the network information of a source in the database
-func indexNetInfo(db cdb.Handler, url string, pageInfo PageInfo) int64 {
+func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
@@ -695,7 +695,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo PageInfo) int64 {
 // insertOrUpdateSearchIndex inserts or updates a search index entry in the database.
 // It takes a transaction object (tx), the URL of the page (url), and the page information (pageInfo).
 // It returns the index ID of the inserted or updated entry and an error, if any.
-func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int64, error) {
+func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (int64, error) {
 	var indexID int64
 	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
@@ -705,8 +705,8 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int64
 		ON CONFLICT (page_url) DO UPDATE
 		SET title = EXCLUDED.title, summary = EXCLUDED.summary, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
 		RETURNING index_id`,
-		url, pageInfo.Title, pageInfo.Summary,
-		strLeft(pageInfo.DetectedLang, 8), strLeft(pageInfo.DetectedType, 8)).Scan(&indexID)
+		url, (*pageInfo).Title, (*pageInfo).Summary,
+		strLeft((*pageInfo).DetectedLang, 8), strLeft((*pageInfo).DetectedType, 8)).Scan(&indexID)
 	if err != nil {
 		return 0, err // Handle error appropriately
 	}
@@ -715,7 +715,7 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo PageInfo) (int64
 	_, err = tx.Exec(`
 		INSERT INTO SourceSearchIndex (source_id, index_id)
 		VALUES ($1, $2)
-		ON CONFLICT (source_id, index_id) DO NOTHING`, pageInfo.sourceID, indexID)
+		ON CONFLICT (source_id, index_id) DO NOTHING`, (*pageInfo).sourceID, indexID)
 	if err != nil {
 		return 0, err // Handle error appropriately
 	}
@@ -734,12 +734,12 @@ func strLeft(s string, x int) string {
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
-func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) error {
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo *PageInfo) error {
 	// Prepare the "Details" field for insertion
 	details := make(map[string]interface{})
-	details["performance"] = pageInfo.PerfInfo
+	details["performance"] = (*pageInfo).PerfInfo
 	links := []string{}
-	for _, link := range pageInfo.Links {
+	for _, link := range (*pageInfo).Links {
 		links = append(links, link.Link)
 	}
 	details["links"] = links
@@ -752,10 +752,10 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
 
-	if len(pageInfo.ScrapedData) > 0 {
+	if len((*pageInfo).ScrapedData) > 0 {
 		scrapedDoc1 := make(map[string]interface{})
 		// Transform the scraped data into a JSON object
-		for _, value := range pageInfo.ScrapedData {
+		for _, value := range (*pageInfo).ScrapedData {
 			if value == nil {
 				continue
 			}
@@ -817,19 +817,33 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo PageInfo) erro
 
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
-	hasher.Write([]byte(pageInfo.BodyText))
+	hasher.Write([]byte((*pageInfo).BodyText))
 	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Get HTML and text Content
+	var htmlContent string
+	if len((*pageInfo).HTML) > 1024 {
+		htmlContent = (*pageInfo).HTML[:1024]
+	} else {
+		htmlContent = (*pageInfo).HTML
+	}
+	var textContent string
+	if len((*pageInfo).BodyText) > 1024 {
+		textContent = (*pageInfo).BodyText[:1024]
+	} else {
+		textContent = (*pageInfo).BodyText
+	}
 
 	var objID int64
 
 	// Step 1: Insert into WebObjects
 	err = tx.QueryRow(`
-		INSERT INTO WebObjects (object_html, object_hash, object_content, details)
+		INSERT INTO WebObjects (object_hash, object_content, object_html, details)
 		VALUES ($1, $2, $3, $4::jsonb)
 		ON CONFLICT (object_hash) DO UPDATE
 		SET object_content = EXCLUDED.object_content,
 	    	details = EXCLUDED.details
-		RETURNING object_id;`, pageInfo.HTML, hash, pageInfo.BodyText, detailsJSON).Scan(&objID)
+		RETURNING object_id;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
 		return err
 	}
@@ -952,12 +966,17 @@ func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) erro
 func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
 	for _, metatag := range metaTags {
 		var name string
-		if len(metatag.Name) > 255 {
-			name = metatag.Name[:255]
+		if len(metatag.Name) > 256 {
+			name = metatag.Name[:256]
 		} else {
 			name = metatag.Name
 		}
-		content := metatag.Content
+		var content string
+		if len(metatag.Content) > 1024 {
+			content = metatag.Content[:1024]
+		} else {
+			content = metatag.Content
+		}
 
 		var metatagID int64
 
@@ -994,8 +1013,8 @@ func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
 // The `indexID` parameter represents the ID of the index associated with the keywords.
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
-func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int64, pageInfo PageInfo) error {
-	for _, keyword := range extractKeywords(pageInfo) {
+func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int64, pageInfo *PageInfo) error {
+	for _, keyword := range extractKeywords(*pageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
 			return err
@@ -1047,6 +1066,10 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
+	}
+
+	if len(keyword) > 256 {
+		keyword = keyword[:256]
 	}
 
 	for i := 0; i < maxRetries; i++ {
@@ -1529,7 +1552,7 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 	}
 
 	// Index the page
-	indexPage(*processCtx.db, url.Link, pageCache)
+	indexPage(*processCtx.db, url.Link, &pageCache)
 	processCtx.visitedLinks[url.Link] = true
 
 	// Add the new links to the process context
@@ -1599,7 +1622,7 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 		}
 	}
 
-	indexPage(*processCtx.db, url, pageCache)
+	indexPage(*processCtx.db, url, &pageCache)
 	processCtx.visitedLinks[url] = true
 
 	// Add the new links to the process context
