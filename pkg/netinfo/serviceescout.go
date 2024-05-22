@@ -185,7 +185,7 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 		}
 
 		// Collect vulnerabilities from Nmap scripts
-		if len(hostResult.HostScripts) == 0 {
+		if len(hostResult.HostScripts) > 0 {
 			for _, script := range hostResult.HostScripts {
 				vulnerabilityInfo := VulnerabilityInfo{
 					ID:       script.ID,
