@@ -80,7 +80,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
-	scanner = nil // free the scanner
+	//scanner = nil // free the scanner
 
 	// Parse the scan result
 	hosts := parseScanResults(result)
