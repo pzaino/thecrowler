@@ -57,9 +57,10 @@ import (
 )
 
 const (
-	dbConnCheckErr = "Error checking database connection: %v\n"
-	dbConnTransErr = "Error committing transaction: %v"
-	selConnError   = "Error connecting to Selenium: %v"
+	dbConnCheckErr             = "Error checking database connection: %v\n"
+	dbConnTransErr             = "Error committing transaction: %v"
+	selConnError               = "Error connecting to Selenium: %v"
+	errFailedToRetrieveMetrics = "Failed to retrieve navigation timing metrics: %v"
 )
 
 var (
@@ -102,8 +103,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	processCtx.Status.PipelineRunning = 1
 
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
-	if !strings.HasPrefix(args.Src.URL, "http://") && !strings.HasPrefix(args.Src.URL, "https://") &&
-		!strings.HasPrefix(args.Src.URL, "ftp://") && !strings.HasPrefix(args.Src.URL, "ftps://") {
+	if !IsValidURIProtocol(args.Src.URL) {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
 		processCtx.IndexNetInfo()
@@ -149,7 +149,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		processCtx.Status.TotalErrors++
 		return
 	}
-	initialLinks := extractLinks(htmlContent, args.Src.URL)
+	initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
 
 	// Refresh the page
 	processCtx.RefreshSeleniumConnection(sel)
@@ -202,11 +202,10 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 			newLinksFound = len(processCtx.newLinks)
 			processCtx.Status.TotalLinks += newLinksFound
 			allLinks = processCtx.newLinks
-			processCtx.newLinks = []LinkItem{} // reset newLinks
 		} else {
 			newLinksFound = 0
-			processCtx.newLinks = []LinkItem{} // reset newLinks
 		}
+		processCtx.newLinks = []LinkItem{} // reset newLinks
 		processCtx.linksMutex.Unlock()
 
 		// Increment the current depth
@@ -225,8 +224,8 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	processCtx.IndexNetInfo()
 
 	// Pipeline has completed
-	processCtx.Status.PipelineRunning = 2
 	processCtx.Status.EndTime = time.Now()
+	processCtx.Status.PipelineRunning = 2
 
 	// Update the source state in the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
@@ -234,6 +233,9 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 
 // NewProcessContext creates a new process context
 func NewProcessContext(args CrawlerPars) *processContext {
+	if config.IsEmpty() {
+		config = *cfg.NewConfig()
+	}
 	newPCtx := processContext{
 		source: &args.Src,
 		db:     &args.DB,
@@ -318,12 +320,12 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	pageInfo.DetectedType = docType
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
-	pageInfo.Links = extractLinks(pageInfo.HTML, ctx.source.URL)
+	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
 
 	// Collect Navigation Timing metrics
 	metrics, err := retrieveNavigationMetrics(&ctx.wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve navigation timing metrics: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, errFailedToRetrieveMetrics, err)
 	} else {
 		for key, value := range metrics {
 			switch key {
@@ -1307,10 +1309,20 @@ func IsValidURL(u string) bool {
 	return err == nil
 }
 
+func IsValidURIProtocol(u string) bool {
+	if !strings.HasPrefix(u, "http://") &&
+		!strings.HasPrefix(u, "https://") &&
+		!strings.HasPrefix(u, "ftp://") &&
+		!strings.HasPrefix(u, "ftps://") {
+		return false
+	}
+	return true
+}
+
 // extractLinks extracts all the links from the given HTML content.
 // It uses the goquery library to parse the HTML and find all the <a> tags.
 // Each link is then added to a slice and returned.
-func extractLinks(htmlContent string, url string) []LinkItem {
+func extractLinks(ctx *processContext, htmlContent string, url string) []LinkItem {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
@@ -1318,19 +1330,41 @@ func extractLinks(htmlContent string, url string) []LinkItem {
 
 	// Find all the links in the document
 	var links []LinkItem
-	doc.Find("a").Each(func(index int, item *goquery.Selection) {
-		linkTag := item
-		link, _ := linkTag.Attr("href")
-		link = normalizeURL(link, 0)
-		linkItem := LinkItem{
-			PageURL:   url,
-			Link:      link,
-			ElementID: item.AttrOr("id", ""),
+	if ctx.config.Crawler.BrowsingMode == "human" || ctx.config.Crawler.BrowsingMode == "recursive" {
+		doc.Find("a").Each(func(index int, item *goquery.Selection) {
+			linkTag := item
+			link, _ := linkTag.Attr("href")
+			link = normalizeURL(link, 0)
+			linkItem := LinkItem{
+				PageURL:   url,
+				Link:      link,
+				ElementID: item.AttrOr("id", ""),
+			}
+			if link != "" && IsValidURL(link) {
+				links = append(links, linkItem)
+			}
+		})
+	} else {
+		// Generate the link using fuzzing rules (crawling rules)
+		links = generateLinks(ctx, url)
+	}
+	return links
+}
+
+// generateLinks generates links based on the crawling rules
+// TODO: This function needs improvements
+func generateLinks(ctx *processContext, url string) []LinkItem {
+	var links []LinkItem
+	for _, rule := range ctx.re.GetAllCrawlingRules() {
+		lnkSet, err := FuzzURL(url, rule)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error generating links: %v", err)
+			continue
 		}
-		if link != "" && IsValidURL(link) {
-			links = append(links, linkItem)
+		for _, lnk := range lnkSet {
+			links = append(links, LinkItem{PageURL: url, Link: lnk})
 		}
-	})
+	}
 	return links
 }
 
@@ -1526,7 +1560,7 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 	// Extract page information
 	pageCache := extractPageInfo(&processCtx.wd, processCtx, docType)
 	pageCache.sourceID = processCtx.source.ID
-	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.HTML, url.Link)...)
+	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
 	urlItem := LinkItem{
 		PageURL:   url.Link,
 		Link:      currentURL,
@@ -1537,7 +1571,7 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 	// Collect Navigation Timing metrics
 	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve navigation timing metrics: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, errFailedToRetrieveMetrics, err)
 	} else {
 		for key, value := range metrics {
 			switch key {
@@ -1601,13 +1635,13 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 	// Extract page information
 	pageCache := extractPageInfo(&htmlContent, processCtx, docType)
 	pageCache.sourceID = processCtx.source.ID
-	pageCache.Links = append(pageCache.Links, extractLinks(pageCache.HTML, url)...)
+	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 
 	// Collect Navigation Timing metrics
 	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve navigation timing metrics: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, errFailedToRetrieveMetrics, err)
 	} else {
 		for key, value := range metrics {
 			switch key {

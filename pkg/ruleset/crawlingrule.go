@@ -28,6 +28,7 @@ func (c *CrawlingRule) GetRuleName() string {
 }
 
 // GetRequestType returns the request type for the specified crawling rule.
+// GET or POST etc.
 func (c *CrawlingRule) GetRequestType() string {
 	return strings.ToUpper(strings.TrimSpace(c.RequestType))
 }

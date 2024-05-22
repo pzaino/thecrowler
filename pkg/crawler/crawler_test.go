@@ -24,6 +24,12 @@ const (
 )
 
 func TestExtractLinks(t *testing.T) {
+	testArgs := CrawlerPars{
+		WG:     nil,
+		RE:     nil,
+		Status: nil,
+	}
+	ctx := NewProcessContext(testArgs)
 	type args struct {
 		htmlContent string
 	}
@@ -41,7 +47,7 @@ func TestExtractLinks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := extractLinks(tt.args.htmlContent, ""); !reflect.DeepEqual(got, tt.want) {
+			if got := extractLinks(ctx, tt.args.htmlContent, ""); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("extractLinks() = %v, want %v", got, tt.want)
 			}
 		})
