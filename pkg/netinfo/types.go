@@ -179,7 +179,7 @@ type HostInfo struct {
 	IP              string              `json:"ip,omitempty"`
 	Hostname        string              `json:"hostname,omitempty"`
 	Ports           []PortInfo          `json:"ports,omitempty"`
-	OS              []string            `json:"os,omitempty"`
+	OS              []OSInfo            `json:"os,omitempty"`
 	Vulnerabilities []VulnerabilityInfo `json:"vulnerabilities,omitempty"`
 }
 
@@ -199,6 +199,22 @@ type PortInfo struct {
 	Protocol string `json:"protocol,omitempty"`
 	State    string `json:"state,omitempty"`
 	Service  string `json:"service,omitempty"`
+}
+
+type OSInfo struct {
+	Name     string    `json:"name,omitempty"`
+	Accuracy int       `json:"accuracy,omitempty"`
+	Classes  []OSCLass `json:"classes,omitempty"`
+	Line     int       `json:"line,omitempty"`
+}
+
+type OSCLass struct {
+	Type       string `json:"type,omitempty"`
+	Vendor     string `json:"vendor,omitempty"`
+	OSFamily   string `json:"os_family,omitempty"`
+	OSGen      string `json:"os_gen,omitempty"`
+	DeviceType string `json:"device_type,omitempty"`
+	Accuracy   int    `json:"accuracy,omitempty"`
 }
 
 // Define a map to map record types to their corresponding values

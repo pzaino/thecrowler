@@ -157,67 +157,101 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 	for _, hostResult := range result.Hosts {
 		hostInfo := HostInfo{} // Assuming HostInfo is a struct that contains IP, Hostname, and Ports fields
 
-		// Assuming there's always at least one address, and it's the IP you want
+		// Collect scanned IP information
 		if len(hostResult.Addresses) > 0 {
 			hostInfo.IP = hostResult.Addresses[0].Addr
 		}
 
+		// Collect hostname information
 		if len(hostResult.Hostnames) > 0 {
 			hostInfo.Hostname = hostResult.Hostnames[0].Name
 		}
 
-		if len(hostResult.Ports) > 0 {
-			for _, port := range hostResult.Ports {
-				portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
-					Port:     int(port.ID),
-					Protocol: port.Protocol,
-					State:    port.State.State,
-					Service:  port.Service.Name,
-				}
-				hostInfo.Ports = append(hostInfo.Ports, portInfo)
-			}
-		}
+		// Collect port information
+		hostInfo.Ports = collectPortInfo(hostResult.Ports)
 
-		if len(hostResult.OS.Matches) > 0 {
-			for _, match := range hostResult.OS.Matches {
-				hostInfo.OS = append(hostInfo.OS, match.Name)
-			}
-		}
+		// Collect OS information
+		hostInfo.OS = collectOSInfo(hostResult.OS)
 
 		// Collect vulnerabilities from Nmap scripts
-		if len(hostResult.HostScripts) > 0 {
-			for _, script := range hostResult.HostScripts {
-				vulnerabilityInfo := VulnerabilityInfo{
-					ID:       script.ID,
-					Name:     script.ID,
-					Severity: "unknown",
-					Output:   script.Output,
-				}
-				for _, elem := range script.Elements {
-					if elem.Key == "severity" {
-						vulnerabilityInfo.Severity = elem.Value
-					}
-					if elem.Key == "title" {
-						vulnerabilityInfo.Name = elem.Value
-					}
-					if elem.Key == "reference" {
-						vulnerabilityInfo.Reference = elem.Value
-					}
-					if elem.Key == "description" {
-						vulnerabilityInfo.Description = elem.Value
-					}
-					if elem.Key == "state" {
-						vulnerabilityInfo.State = elem.Value
-					}
-				}
-				hostInfo.Vulnerabilities = append(hostInfo.Vulnerabilities, vulnerabilityInfo)
-			}
-		}
+		hostInfo.Vulnerabilities = collectVulnerabilityInfo(hostResult.HostScripts)
 
+		// Append the host to the hosts slice
 		hosts = append(hosts, hostInfo)
 	}
 
 	return hosts
+}
+
+func collectPortInfo(ports []nmap.Port) []PortInfo {
+	var portInfoList []PortInfo
+
+	for _, port := range ports {
+		portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
+			Port:     int(port.ID),
+			Protocol: port.Protocol,
+			State:    port.State.State,
+			Service:  port.Service.Name,
+		}
+		portInfoList = append(portInfoList, portInfo)
+	}
+
+	return portInfoList
+}
+
+func collectOSInfo(item nmap.OS) []OSInfo {
+	var osInfoList []OSInfo
+
+	for _, match := range item.Matches {
+		OSMatch := OSInfo{
+			Name:     match.Name,
+			Accuracy: match.Accuracy,
+			Classes:  make([]OSCLass, 0),
+			Line:     match.Line,
+		}
+		for _, class := range match.Classes {
+			OSMatch.Classes = append(OSMatch.Classes, OSCLass{
+				Type:     class.Type,
+				Vendor:   class.Vendor,
+				OSFamily: class.Family,
+				OSGen:    class.OSGeneration,
+				Accuracy: class.Accuracy,
+			})
+		}
+		osInfoList = append(osInfoList, OSMatch)
+	}
+
+	return osInfoList
+}
+
+func collectVulnerabilityInfo(scripts []nmap.Script) []VulnerabilityInfo {
+	var vulnerabilityInfoList []VulnerabilityInfo
+
+	for _, script := range scripts {
+		vulnerabilityInfo := VulnerabilityInfo{
+			ID:       script.ID,
+			Name:     script.ID,
+			Severity: "unknown",
+			Output:   script.Output,
+		}
+		for _, elem := range script.Elements {
+			switch elem.Key {
+			case "severity":
+				vulnerabilityInfo.Severity = elem.Value
+			case "title":
+				vulnerabilityInfo.Name = elem.Value
+			case "reference":
+				vulnerabilityInfo.Reference = elem.Value
+			case "description":
+				vulnerabilityInfo.Description = elem.Value
+			case "state":
+				vulnerabilityInfo.State = elem.Value
+			}
+		}
+		vulnerabilityInfoList = append(vulnerabilityInfoList, vulnerabilityInfo)
+	}
+
+	return vulnerabilityInfoList
 }
 
 // scanHosts scans the hosts using Nmap
