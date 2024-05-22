@@ -159,12 +159,25 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 
 		// Collect scanned IP information
 		if len(hostResult.Addresses) > 0 {
-			hostInfo.IP = hostResult.Addresses[0].Addr
+			for _, addr := range hostResult.Addresses {
+				AddrInfo := IPInfoDetails{
+					Address: addr.Addr,
+					Type:    addr.AddrType,
+					Vendor:  addr.Vendor,
+				}
+				hostInfo.IP = append(hostInfo.IP, AddrInfo)
+			}
 		}
 
 		// Collect hostname information
 		if len(hostResult.Hostnames) > 0 {
-			hostInfo.Hostname = hostResult.Hostnames[0].Name
+			for _, hostname := range hostResult.Hostnames {
+				hostnameInfo := HostNameDetails{
+					Name: hostname.Name,
+					Type: hostname.Type,
+				}
+				hostInfo.Hostname = append(hostInfo.Hostname, hostnameInfo)
+			}
 		}
 
 		// Collect port information
@@ -276,8 +289,13 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", hosts)
 			// check if hosts is empty and if it is add an empty HostInfo struct to it
 			if len(hosts) == 0 {
+				IPInfoItem := []IPInfoDetails{{
+					Address: ip,
+					Type:    "unknown",
+					Vendor:  "unknown",
+				}}
 				hosts = append(hosts, HostInfo{
-					IP: ip,
+					IP: IPInfoItem,
 				})
 			}
 			mu.Lock()

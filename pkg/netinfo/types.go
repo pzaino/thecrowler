@@ -176,11 +176,22 @@ type ServiceScoutInfo struct {
 
 // HostInfo contains the information about a single host
 type HostInfo struct {
-	IP              string              `json:"ip,omitempty"`
-	Hostname        string              `json:"hostname,omitempty"`
+	IP              []IPInfoDetails     `json:"ip,omitempty"`
+	Hostname        []HostNameDetails   `json:"hostname,omitempty"`
 	Ports           []PortInfo          `json:"ports,omitempty"`
 	OS              []OSInfo            `json:"os,omitempty"`
 	Vulnerabilities []VulnerabilityInfo `json:"vulnerabilities,omitempty"`
+}
+
+type IPInfoDetails struct {
+	Address string `json:"address,omitempty"`
+	Type    string `json:"address_type,omitempty"`
+	Vendor  string `json:"vendor,omitempty"`
+}
+
+type HostNameDetails struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 type VulnerabilityInfo struct {
