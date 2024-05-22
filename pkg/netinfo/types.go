@@ -176,10 +176,32 @@ type ServiceScoutInfo struct {
 
 // HostInfo contains the information about a single host
 type HostInfo struct {
-	IP       string     `json:"ip,omitempty"`
-	Hostname string     `json:"hostname,omitempty"`
-	Ports    []PortInfo `json:"ports,omitempty"`
-	OS       []string   `json:"os,omitempty"`
+	IP              []IPInfoDetails     `json:"ip"`
+	Hostname        []HostNameDetails   `json:"hostname"`
+	Ports           []PortInfo          `json:"ports,omitempty"`
+	OS              []OSInfo            `json:"os,omitempty"`
+	Vulnerabilities []VulnerabilityInfo `json:"vulnerabilities,omitempty"`
+}
+
+type IPInfoDetails struct {
+	Address string `json:"address,omitempty"`
+	Type    string `json:"address_type,omitempty"`
+	Vendor  string `json:"vendor,omitempty"`
+}
+
+type HostNameDetails struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+}
+
+type VulnerabilityInfo struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Severity    string `json:"severity,omitempty"`
+	Reference   string `json:"reference,omitempty"`
+	Description string `json:"description,omitempty"`
+	State       string `json:"state,omitempty"`
+	Output      string `json:"output,omitempty"`
 }
 
 // PortInfo contains the information about a single port
@@ -188,6 +210,22 @@ type PortInfo struct {
 	Protocol string `json:"protocol,omitempty"`
 	State    string `json:"state,omitempty"`
 	Service  string `json:"service,omitempty"`
+}
+
+type OSInfo struct {
+	Name     string    `json:"name,omitempty"`
+	Accuracy int       `json:"accuracy,omitempty"`
+	Classes  []OSCLass `json:"classes,omitempty"`
+	Line     int       `json:"line,omitempty"`
+}
+
+type OSCLass struct {
+	Type       string `json:"type,omitempty"`
+	Vendor     string `json:"vendor,omitempty"`
+	OSFamily   string `json:"os_family,omitempty"`
+	OSGen      string `json:"os_gen,omitempty"`
+	DeviceType string `json:"device_type,omitempty"`
+	Accuracy   int    `json:"accuracy,omitempty"`
 }
 
 // Define a map to map record types to their corresponding values

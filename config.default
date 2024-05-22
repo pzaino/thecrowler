@@ -47,7 +47,7 @@ network_info:
     timeout: 15
   service_scout:
     enabled: true
-    timeout: 300
+    timeout: 1200
   geolocation:
     enabled: false
     timeout: 15

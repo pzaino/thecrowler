@@ -151,6 +151,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 
 		// Append the source to the slice
 		sourcesToCrawl = append(sourcesToCrawl, src)
+		src = cdb.Source{} // Reset the source
 	}
 	rows.Close() // Close the rows iterator
 
@@ -211,6 +212,7 @@ func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngi
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.Unlock()
+		sourcesToCrawl = []cdb.Source{} // Reset the sources
 	}
 }
 
@@ -256,7 +258,23 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 		wg.Add(1)
 
 		// Initialize the status
-		PipelineStatus[idx] = crowler.CrawlerStatus{Source: source.URL}
+		PipelineStatus[idx] = crowler.CrawlerStatus{
+			Source:          source.URL,
+			SourceID:        source.ID,
+			PipelineRunning: 0,
+			CrawlingRunning: 0,
+			NetInfoRunning:  0,
+			HTTPInfoRunning: 0,
+			TotalPages:      0,
+			TotalErrors:     0,
+			TotalLinks:      0,
+			TotalSkipped:    0,
+			TotalDuplicates: 0,
+			TotalScraped:    0,
+			TotalActions:    0,
+			LastWait:        0,
+			LastDelay:       0,
+		}
 
 		// Prepare the go routine parameters
 		args := crowler.CrawlerPars{
@@ -277,7 +295,6 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 
 			// Acquire a Selenium instance
 			seleniumInstance := <-*args.Sel
-			fmt.Printf("Acquired Selenium instance for %s\n", args.Src.URL)
 
 			// Channel to release the Selenium instance
 			releaseSelenium := make(chan crowler.SeleniumInstance)
@@ -289,17 +306,6 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 			*args.Sel <- <-releaseSelenium
 
 		}(args)
-
-		// Move to the next Selenium instance
-		/*
-			selIdx++
-			if selIdx > len(config.Selenium) {
-				// We ran out of Selenium instances, so we start from the first one
-				selIdx = 0
-				// And wait for the first Selenium instance to be available
-				<-(*sel)
-			}
-		*/
 	}
 
 	wg.Wait() // Block until all goroutines have decremented the counter
@@ -316,7 +322,7 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 	runningPipelines := 0
 	for idx := 0; idx < len(*PipelineStatus); idx++ {
 		status := (*PipelineStatus)[idx]
-		if status.StartTime.IsZero() {
+		if status.PipelineRunning == 0 {
 			continue
 		} else {
 			runningPipelines++
@@ -328,6 +334,9 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 			totalRunningTime = status.EndTime.Sub(status.StartTime)
 		}
 		totalLinksToGo := status.TotalLinks - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
+		if totalLinksToGo < 0 {
+			totalLinksToGo = 0
+		}
 		report += fmt.Sprintf("               Pipeline: %d\n", idx)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))

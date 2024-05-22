@@ -37,10 +37,10 @@ func (ni *NetInfo) GetServiceScoutInfo(scanCfg *cfg.ServiceScoutConfig) error {
 		return err
 	}
 
+	// Add the Nmap info to the NetInfo struct
 	nmapInfo := &ServiceScoutInfo{
 		Hosts: hosts,
 	}
-
 	ni.ServiceScout = *nmapInfo
 
 	return nil
@@ -50,21 +50,25 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
 	defer cancel()
 
+	// Check the IP address
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
 		return []HostInfo{}, fmt.Errorf("empty IP address")
 	}
 
+	// Build the Nmap options
 	options, err := buildNmapOptions(cfg, ip, &ctx)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to build nmap options: %w", err)
 	}
 
+	// Create a new scanner
 	scanner, err := nmap.NewScanner(options...)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to create nmap scanner: %w", err)
 	}
 
+	// Run the scan
 	result, warnings, err := scanner.Run()
 	if len(warnings) != 0 {
 		for _, warning := range warnings {
@@ -76,6 +80,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
+	//scanner = nil // free the scanner
 
 	// Parse the scan result
 	hosts := parseScanResults(result)
@@ -83,7 +88,8 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	return hosts, nil
 }
 
-func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string, ctx *context.Context) ([]func(*nmap.Scanner), error) {
+func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
+	ctx *context.Context) ([]func(*nmap.Scanner), error) {
 	var options []func(*nmap.Scanner)
 
 	if cmn.CheckIPVersion(ip) == 6 {
@@ -151,37 +157,121 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 	for _, hostResult := range result.Hosts {
 		hostInfo := HostInfo{} // Assuming HostInfo is a struct that contains IP, Hostname, and Ports fields
 
-		// Assuming there's always at least one address, and it's the IP you want
+		// Collect scanned IP information
 		if len(hostResult.Addresses) > 0 {
-			hostInfo.IP = hostResult.Addresses[0].Addr
-		}
-
-		if len(hostResult.Hostnames) > 0 {
-			hostInfo.Hostname = hostResult.Hostnames[0].Name
-		}
-
-		if len(hostResult.Ports) > 0 {
-			for _, port := range hostResult.Ports {
-				portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
-					Port:     int(port.ID),
-					Protocol: port.Protocol,
-					State:    port.State.State,
-					Service:  port.Service.Name,
+			for _, addr := range hostResult.Addresses {
+				if strings.TrimSpace(addr.AddrType) == "" || strings.ToLower(strings.TrimSpace(addr.AddrType)) == "unknown" {
+					if cmn.CheckIPVersion(addr.Addr) == 6 {
+						addr.AddrType = "ipv6"
+					} else {
+						addr.AddrType = "ipv4"
+					}
 				}
-				hostInfo.Ports = append(hostInfo.Ports, portInfo)
+				AddrInfo := IPInfoDetails{
+					Address: addr.Addr,
+					Type:    addr.AddrType,
+					Vendor:  addr.Vendor,
+				}
+				hostInfo.IP = append(hostInfo.IP, AddrInfo)
 			}
 		}
 
-		if len(hostResult.OS.Matches) > 0 {
-			for _, match := range hostResult.OS.Matches {
-				hostInfo.OS = append(hostInfo.OS, match.Name)
+		// Collect hostname information
+		if len(hostResult.Hostnames) > 0 {
+			for _, hostname := range hostResult.Hostnames {
+				hostnameInfo := HostNameDetails{
+					Name: hostname.Name,
+					Type: hostname.Type,
+				}
+				hostInfo.Hostname = append(hostInfo.Hostname, hostnameInfo)
 			}
 		}
 
+		// Collect port information
+		hostInfo.Ports = collectPortInfo(hostResult.Ports)
+
+		// Collect OS information
+		hostInfo.OS = collectOSInfo(hostResult.OS)
+
+		// Collect vulnerabilities from Nmap scripts
+		hostInfo.Vulnerabilities = collectVulnerabilityInfo(hostResult.HostScripts)
+
+		// Append the host to the hosts slice
 		hosts = append(hosts, hostInfo)
 	}
 
 	return hosts
+}
+
+func collectPortInfo(ports []nmap.Port) []PortInfo {
+	var portInfoList []PortInfo
+
+	for _, port := range ports {
+		portInfo := PortInfo{ // Assuming PortInfo is your struct for port details
+			Port:     int(port.ID),
+			Protocol: port.Protocol,
+			State:    port.State.State,
+			Service:  port.Service.Name,
+		}
+		portInfoList = append(portInfoList, portInfo)
+	}
+
+	return portInfoList
+}
+
+func collectOSInfo(item nmap.OS) []OSInfo {
+	var osInfoList []OSInfo
+
+	for _, match := range item.Matches {
+		OSMatch := OSInfo{
+			Name:     match.Name,
+			Accuracy: match.Accuracy,
+			Classes:  make([]OSCLass, 0),
+			Line:     match.Line,
+		}
+		for _, class := range match.Classes {
+			OSMatch.Classes = append(OSMatch.Classes, OSCLass{
+				Type:     class.Type,
+				Vendor:   class.Vendor,
+				OSFamily: class.Family,
+				OSGen:    class.OSGeneration,
+				Accuracy: class.Accuracy,
+			})
+		}
+		osInfoList = append(osInfoList, OSMatch)
+	}
+
+	return osInfoList
+}
+
+func collectVulnerabilityInfo(scripts []nmap.Script) []VulnerabilityInfo {
+	var vulnerabilityInfoList []VulnerabilityInfo
+
+	for _, script := range scripts {
+		vulnerabilityInfo := VulnerabilityInfo{
+			ID:       script.ID,
+			Name:     script.ID,
+			Severity: "unknown",
+			Output:   script.Output,
+		}
+		for _, elem := range script.Elements {
+			switch elem.Key {
+			case "severity":
+				vulnerabilityInfo.Severity = elem.Value
+			case "title":
+				vulnerabilityInfo.Name = elem.Value
+			case "reference":
+				vulnerabilityInfo.Reference = elem.Value
+			case "description":
+				vulnerabilityInfo.Description = elem.Value
+			case "state":
+				vulnerabilityInfo.State = elem.Value
+			}
+		}
+		vulnerabilityInfoList = append(vulnerabilityInfoList, vulnerabilityInfo)
+	}
+
+	return vulnerabilityInfoList
 }
 
 // scanHosts scans the hosts using Nmap
@@ -206,8 +296,17 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout results: %v", hosts)
 			// check if hosts is empty and if it is add an empty HostInfo struct to it
 			if len(hosts) == 0 {
+				IPInfoItem := []IPInfoDetails{{
+					Address: ip,
+					Vendor:  "unknown",
+				}}
+				if cmn.CheckIPVersion(ip) == 6 {
+					IPInfoItem[0].Type = "ipv6"
+				} else {
+					IPInfoItem[0].Type = "ipv4"
+				}
 				hosts = append(hosts, HostInfo{
-					IP: ip,
+					IP: IPInfoItem,
 				})
 			}
 			mu.Lock()
