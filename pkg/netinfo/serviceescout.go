@@ -184,6 +184,36 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 			}
 		}
 
+		// Collect vulnerabilities from Nmap scripts
+		if len(hostResult.HostScripts) == 0 {
+			for _, script := range hostResult.HostScripts {
+				vulnerabilityInfo := VulnerabilityInfo{
+					ID:       script.ID,
+					Name:     script.ID,
+					Severity: "unknown",
+					Output:   script.Output,
+				}
+				for _, elem := range script.Elements {
+					if elem.Key == "severity" {
+						vulnerabilityInfo.Severity = elem.Value
+					}
+					if elem.Key == "title" {
+						vulnerabilityInfo.Name = elem.Value
+					}
+					if elem.Key == "reference" {
+						vulnerabilityInfo.Reference = elem.Value
+					}
+					if elem.Key == "description" {
+						vulnerabilityInfo.Description = elem.Value
+					}
+					if elem.Key == "state" {
+						vulnerabilityInfo.State = elem.Value
+					}
+				}
+				hostInfo.Vulnerabilities = append(hostInfo.Vulnerabilities, vulnerabilityInfo)
+			}
+		}
+
 		hosts = append(hosts, hostInfo)
 	}
 
