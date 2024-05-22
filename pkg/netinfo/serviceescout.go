@@ -160,6 +160,13 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 		// Collect scanned IP information
 		if len(hostResult.Addresses) > 0 {
 			for _, addr := range hostResult.Addresses {
+				if strings.TrimSpace(addr.AddrType) == "" || strings.ToLower(strings.TrimSpace(addr.AddrType)) == "unknown" {
+					if cmn.CheckIPVersion(addr.Addr) == 6 {
+						addr.AddrType = "ipv6"
+					} else {
+						addr.AddrType = "ipv4"
+					}
+				}
 				AddrInfo := IPInfoDetails{
 					Address: addr.Addr,
 					Type:    addr.AddrType,
@@ -291,9 +298,13 @@ func (ni *NetInfo) scanHosts(scanCfg *cfg.ServiceScoutConfig) ([]HostInfo, error
 			if len(hosts) == 0 {
 				IPInfoItem := []IPInfoDetails{{
 					Address: ip,
-					Type:    "unknown",
 					Vendor:  "unknown",
 				}}
+				if cmn.CheckIPVersion(ip) == 6 {
+					IPInfoItem[0].Type = "ipv6"
+				} else {
+					IPInfoItem[0].Type = "ipv4"
+				}
 				hosts = append(hosts, HostInfo{
 					IP: IPInfoItem,
 				})

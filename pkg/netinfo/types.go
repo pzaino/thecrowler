@@ -176,8 +176,8 @@ type ServiceScoutInfo struct {
 
 // HostInfo contains the information about a single host
 type HostInfo struct {
-	IP              []IPInfoDetails     `json:"ip,omitempty"`
-	Hostname        []HostNameDetails   `json:"hostname,omitempty"`
+	IP              []IPInfoDetails     `json:"ip"`
+	Hostname        []HostNameDetails   `json:"hostname"`
 	Ports           []PortInfo          `json:"ports,omitempty"`
 	OS              []OSInfo            `json:"os,omitempty"`
 	Vulnerabilities []VulnerabilityInfo `json:"vulnerabilities,omitempty"`
