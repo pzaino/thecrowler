@@ -9,9 +9,9 @@ database:
 
 crawler:
   source_screenshot: true
-  interval: random(random(5,15), random(90,150))
+  interval: random(random(5,15), random(45,75))
   workers: 5
-  delay: random(1,5)
+  delay: random(3,75)
   timeout: 10
   maintenance: 60
 
