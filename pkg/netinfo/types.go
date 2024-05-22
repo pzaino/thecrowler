@@ -179,6 +179,7 @@ type HostInfo struct {
 	IP              []IPInfoDetails     `json:"ip"`
 	Hostname        []HostNameDetails   `json:"hostname"`
 	Ports           []PortInfo          `json:"ports,omitempty"`
+	Services        []ServiceInfo       `json:"services,omitempty"`
 	OS              []OSInfo            `json:"os,omitempty"`
 	Vulnerabilities []VulnerabilityInfo `json:"vulnerabilities,omitempty"`
 }
@@ -195,13 +196,15 @@ type HostNameDetails struct {
 }
 
 type VulnerabilityInfo struct {
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Severity    string `json:"severity,omitempty"`
-	Reference   string `json:"reference,omitempty"`
-	Description string `json:"description,omitempty"`
-	State       string `json:"state,omitempty"`
-	Output      string `json:"output,omitempty"`
+	ID          string          `json:"id,omitempty"`
+	Name        string          `json:"name,omitempty"`
+	Severity    string          `json:"severity,omitempty"`
+	Reference   string          `json:"reference,omitempty"`
+	Description string          `json:"description,omitempty"`
+	State       string          `json:"state,omitempty"`
+	Output      string          `json:"output,omitempty"`
+	Elements    []ScriptElement `json:"elements,omitempty"`
+	Tables      []ScriptTable   `json:"tables,omitempty"`
 }
 
 // PortInfo contains the information about a single port
@@ -212,6 +215,45 @@ type PortInfo struct {
 	Service  string `json:"service,omitempty"`
 }
 
+type ServiceInfo struct {
+	Name          string       `json:"name,omitempty"`
+	DeviceType    string       `json:"device_type,omitempty"`
+	ExtraInfo     string       `json:"extra_info,omitempty"`
+	HighVersion   string       `json:"high_version,omitempty"`
+	LowVersion    string       `json:"low_version,omitempty"`
+	Hostname      string       `json:"hostname,omitempty"`
+	Method        string       `json:"method,omitempty"`
+	OSType        string       `json:"os_type,omitempty"`
+	Product       string       `json:"product,omitempty"`
+	Proto         string       `json:"proto,omitempty"`
+	RPCNum        string       `json:"rpc_num,omitempty"`
+	ServiceFP     string       `json:"service_fp,omitempty"`
+	Tunnel        string       `json:"tunnel,omitempty"`
+	Version       string       `json:"version,omitempty"`
+	Configuration string       `json:"configuration,omitempty"`
+	CPEs          []string     `json:"cpes,omitempty"`
+	Scripts       []ScriptInfo `json:"scripts,omitempty"`
+}
+
+type ScriptInfo struct {
+	ID       string          `json:"id,omitempty"`
+	Output   string          `json:"output,omitempty"`
+	Elements []ScriptElement `json:"elements,omitempty"`
+	Tables   []ScriptTable   `json:"tables,omitempty"`
+}
+
+type ScriptElement struct {
+	Key   string `json:"key,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+type ScriptTable struct {
+	Key      string          `json:"key,omitempty"`
+	Elements []ScriptElement `json:"elements,omitempty"`
+	Tables   []ScriptTable   `json:"tables,omitempty"`
+}
+
+// OSInfo contains the information about the detected OS
 type OSInfo struct {
 	Name     string    `json:"name,omitempty"`
 	Accuracy int       `json:"accuracy,omitempty"`

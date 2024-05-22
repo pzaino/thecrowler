@@ -133,6 +133,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
+		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 		return
 	}
 
@@ -147,6 +148,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
+		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 		return
 	}
 	initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
@@ -309,8 +311,6 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	// Get the initial URL
 	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error getting HTML content: %v", err)
-		(*ctx.sel) <- sel // Assuming 'sel' is accessible
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 		return pageSource, err
 	}
@@ -323,42 +323,10 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
 
 	// Collect Navigation Timing metrics
-	metrics, err := retrieveNavigationMetrics(&ctx.wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, errFailedToRetrieveMetrics, err)
-	} else {
-		for key, value := range metrics {
-			switch key {
-			case "dns_lookup":
-				pageInfo.PerfInfo.DNSLookup = value.(float64)
-			case "tcp_connection":
-				pageInfo.PerfInfo.TCPConnection = value.(float64)
-			case "time_to_first_byte":
-				pageInfo.PerfInfo.TimeToFirstByte = value.(float64)
-			case "content_load":
-				pageInfo.PerfInfo.ContentLoad = value.(float64)
-			case "page_load":
-				pageInfo.PerfInfo.PageLoad = value.(float64)
-			}
-		}
-	}
+	collectNavigationMetrics(&ctx.wd, &pageInfo)
+
 	// Collect Page logs
-	logs, err := pageSource.Log("performance")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
-	} else {
-		for _, entry := range logs {
-			var log PerformanceLogEntry
-			err := json.Unmarshal([]byte(entry.Message), &log)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
-				continue
-			}
-			if len(log.Message.Params.ResponseInfo.URL) > 0 {
-				pageInfo.PerfInfo.LogEntries = append(pageInfo.PerfInfo.LogEntries, log)
-			}
-		}
-	}
+	collectPageLogs(&pageSource, &pageInfo)
 
 	// Index the page
 	ctx.fpIdx = ctx.IndexPage(&pageInfo)
@@ -366,7 +334,81 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	ctx.visitedLinks[ctx.source.URL] = true
 	ctx.Status.TotalPages = 1
 
+	// Delay before processing the next job
+	if config.Crawler.Delay != "0" {
+		delay := exi.GetFloat(config.Crawler.Delay)
+		ctx.Status.LastDelay = delay
+		time.Sleep(time.Duration(delay) * time.Second)
+	}
+
 	return pageSource, nil
+}
+
+// Collects the performance metrics logs from the browser
+func collectNavigationMetrics(wd *selenium.WebDriver, pageInfo *PageInfo) {
+	// Retrieve Navigation Timing metrics
+	navigationTimingScript := `
+		var timing = window.performance.timing;
+		var metrics = {
+			"dns_lookup": timing.domainLookupEnd - timing.domainLookupStart,
+			"tcp_connection": timing.connectEnd - timing.connectStart,
+			"time_to_first_byte": timing.responseStart - timing.requestStart,
+			"content_load": timing.domContentLoadedEventEnd - timing.navigationStart,
+			"page_load": timing.loadEventEnd - timing.navigationStart
+		};
+		return metrics;
+	`
+
+	// Execute JavaScript and retrieve metrics
+	result, err := (*wd).ExecuteScript(navigationTimingScript, nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v", err)
+		return
+	}
+
+	// Convert the result to a map for easier processing
+	metrics, ok := result.(map[string]interface{})
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to convert metrics to map[string]interface{}")
+		return
+	}
+
+	// Process the metrics
+	for key, value := range metrics {
+		switch key {
+		case "dns_lookup":
+			pageInfo.PerfInfo.DNSLookup = value.(float64)
+		case "tcp_connection":
+			pageInfo.PerfInfo.TCPConnection = value.(float64)
+		case "time_to_first_byte":
+			pageInfo.PerfInfo.TimeToFirstByte = value.(float64)
+		case "content_load":
+			pageInfo.PerfInfo.ContentLoad = value.(float64)
+		case "page_load":
+			pageInfo.PerfInfo.PageLoad = value.(float64)
+		}
+	}
+}
+
+// Collects the page logs from the browser
+func collectPageLogs(pageSource *selenium.WebDriver, pageInfo *PageInfo) {
+	logs, err := (*pageSource).Log("performance")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
+		return
+	}
+
+	for _, entry := range logs {
+		var log PerformanceLogEntry
+		err := json.Unmarshal([]byte(entry.Message), &log)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
+			continue
+		}
+		if len(log.Message.Params.ResponseInfo.URL) > 0 {
+			pageInfo.PerfInfo.LogEntries = append(pageInfo.PerfInfo.LogEntries, log)
+		}
+	}
 }
 
 // Collects the performance metrics logs from the browser
@@ -1639,42 +1681,10 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 
 	// Collect Navigation Timing metrics
-	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, errFailedToRetrieveMetrics, err)
-	} else {
-		for key, value := range metrics {
-			switch key {
-			case "dns_lookup":
-				pageCache.PerfInfo.DNSLookup = value.(float64)
-			case "tcp_connection":
-				pageCache.PerfInfo.TCPConnection = value.(float64)
-			case "time_to_first_byte":
-				pageCache.PerfInfo.TimeToFirstByte = value.(float64)
-			case "content_load":
-				pageCache.PerfInfo.ContentLoad = value.(float64)
-			case "page_load":
-				pageCache.PerfInfo.PageLoad = value.(float64)
-			}
-		}
-	}
+	collectNavigationMetrics(&processCtx.wd, &pageCache)
+
 	// Collect Page logs
-	logs, err := htmlContent.Log("performance")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
-	} else {
-		for _, entry := range logs {
-			var log PerformanceLogEntry
-			err := json.Unmarshal([]byte(entry.Message), &log)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
-				continue
-			}
-			if len(log.Message.Params.ResponseInfo.URL) > 0 {
-				pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
-			}
-		}
-	}
+	collectPageLogs(&htmlContent, &pageCache)
 
 	indexPage(*processCtx.db, url, &pageCache)
 	processCtx.visitedLinks[url] = true

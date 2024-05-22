@@ -993,6 +993,9 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 			return NetInfoResponse{}, err
 		}
 
+		// log the detailsJSON for debugging purposes
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Details JSON: %s", detailsJSON)
+
 		// Unmarshal the JSON data (if not NULL)
 		if detailsJSON != nil {
 			if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
