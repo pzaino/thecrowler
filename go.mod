@@ -5,7 +5,7 @@ go 1.22.2
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
 	github.com/antchfx/htmlquery v1.3.1
-	github.com/aws/aws-sdk-go v1.53.8
+	github.com/aws/aws-sdk-go v1.53.9
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
