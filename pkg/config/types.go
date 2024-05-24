@@ -170,8 +170,10 @@ type API struct {
 	Return404         bool   `yaml:"return_404"`         // Whether to return 404 for not found or not
 }
 
-// Selenium represents the Selenium configuration
+// Selenium represents the CROWler VDI configuration
 type Selenium struct {
+	Name        string `yaml:"name"`         // Name of the Selenium instance
+	Location    string `yaml:"location"`     // Location of the Selenium executable
 	Path        string `yaml:"path"`         // Path to the Selenium executable
 	DriverPath  string `yaml:"driver_path"`  // Path to the Selenium driver executable
 	Type        string `yaml:"type"`         // Type of Selenium driver
@@ -183,6 +185,7 @@ type Selenium struct {
 	SSLMode     string `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
 	ProxyURL    string `yaml:"proxy_url"`    // Proxy URL for Selenium connection
 	DownloadDir string `yaml:"download_dir"` // Download directory for Selenium
+	Language    string `yaml:"language"`     // Language for Selenium
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper

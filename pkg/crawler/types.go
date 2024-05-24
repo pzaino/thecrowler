@@ -223,7 +223,7 @@ type PageDetails struct {
 
 // Screenshot represents the metadata of a webpage screenshot
 type Screenshot struct {
-	IndexID         int64  `json:"index_id"`
+	IndexID         uint64 `json:"index_id"`
 	ScreenshotLink  string `json:"screenshot_link"`
 	Height          int    `json:"height"`
 	Width           int    `json:"width"`

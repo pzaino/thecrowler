@@ -72,7 +72,7 @@ var (
 // DB index of the source page after it's indexed.
 type processContext struct {
 	SelID        int                    // The Selenium ID
-	fpIdx        int64                  // The index of the source page after it's indexed
+	fpIdx        uint64                 // The index of the source page after it's indexed
 	config       cfg.Config             // The configuration object (from the config package)
 	db           *cdb.Handler           // The database handler
 	wd           selenium.WebDriver     // The Selenium WebDriver
@@ -106,8 +106,13 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	if !IsValidURIProtocol(args.Src.URL) {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
-		processCtx.IndexNetInfo()
-		processCtx.Status.PipelineRunning = 2
+		_, err := processCtx.IndexNetInfo(1)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error indexing network information: %v", err)
+			processCtx.Status.PipelineRunning = 3
+		} else {
+			processCtx.Status.PipelineRunning = 2
+		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
@@ -161,6 +166,10 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	go func(ctx *processContext) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetNetInfo(ctx.source.URL)
+		_, err := ctx.IndexNetInfo(1)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error indexing network information: %v", err)
+		}
 	}(processCtx)
 
 	// Get HTTP header information
@@ -168,6 +177,10 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	go func(ctx *processContext, htmlContent string) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
+		_, err := ctx.IndexNetInfo(2)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error indexing HTTP information: %v", err)
+		}
 	}(processCtx, htmlContent)
 
 	// Crawl the website
@@ -223,7 +236,6 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
-	processCtx.IndexNetInfo()
 
 	// Pipeline has completed
 	processCtx.Status.EndTime = time.Now()
@@ -329,7 +341,11 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	collectPageLogs(&pageSource, &pageInfo)
 
 	// Index the page
-	ctx.fpIdx = ctx.IndexPage(&pageInfo)
+	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error indexing page: %v", err)
+		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+	}
 	resetPageInfo(&pageInfo) // Reset the PageInfo struct
 	ctx.visitedLinks[ctx.source.URL] = true
 	ctx.Status.TotalPages = 1
@@ -444,7 +460,7 @@ func retrieveNavigationMetrics(wd *selenium.WebDriver) (map[string]interface{}, 
 }
 
 // TakeScreenshot takes a screenshot of the current page and saves it to the filesystem
-func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, indexID int64) {
+func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, indexID uint64) {
 	// Take screenshot if enabled
 	takeScreenshot := false
 
@@ -549,6 +565,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 	// Check for errors
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "GetNetInfo(%s) returned an error: %v", ctx.source.URL, err)
+		ctx.Status.NetInfoRunning = 3
 		return
 	}
 }
@@ -576,23 +593,24 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 	// Check for errors
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error while retrieving HTTP Information: %v", ctx.source.URL, err)
+		ctx.Status.HTTPInfoRunning = 3
 		return
 	}
 }
 
 // IndexPage is responsible for indexing a crawled page in the database
-func (ctx *processContext) IndexPage(pageInfo *PageInfo) int64 {
+func (ctx *processContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
 	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
 // IndexNetInfo indexes the network information of a source in the database
-func (ctx *processContext) IndexNetInfo() int64 {
+func (ctx *processContext) IndexNetInfo(flags int) (uint64, error) {
 	pageInfo := PageInfo{}
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.sourceID = ctx.source.ID
-	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo)
+	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo, flags)
 }
 
 // UpdateSourceState is responsible for updating the state of a Source in
@@ -630,7 +648,7 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // this function (and so treat it as a critical section) should be enough for now.
 // Another thought is, the mutex also helps slow down the crawling process, which
 // is a good thing. You don't want to overwhelm the Source site with requests.
-func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
+func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
@@ -641,14 +659,14 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	err := db.CheckConnection(config)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
-		return 0
+		return 0, err
 	}
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
-		return 0
+		return 0, err
 	}
 
 	// Insert or update the page in SearchIndex
@@ -656,7 +674,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
 	// Insert or update the page in WebObjects
@@ -664,7 +682,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating WebObjects: %v", err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
 	// Insert MetaTags
@@ -672,7 +690,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
 	// Insert into KeywordIndex
@@ -680,7 +698,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
 	// Commit the transaction
@@ -688,15 +706,15 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
 	// Return the index ID
-	return indexID
+	return indexID, nil
 }
 
 // indexNetInfo indexes the network information of a source in the database
-func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
+func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (uint64, error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	indexPageMutex.Lock()
 	defer indexPageMutex.Unlock()
@@ -707,14 +725,14 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	err := db.CheckConnection(config)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
-		return 0
+		return 0, err
 	}
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
-		return 0
+		return 0, err
 	}
 
 	// Insert or update the page in SearchIndex
@@ -722,26 +740,32 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
-	// Insert NetInfo into the database (if available)
-	if pageInfo.NetInfo != nil {
-		err = insertNetInfo(tx, indexID, pageInfo.NetInfo)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting NetInfo: %v", err)
-			rollbackTransaction(tx)
-			return 0
+	// If flags first bit is set to 1 or if flags is 0, try to insert NetInfo
+	if flags == 1 || flags == 0 {
+		// Insert NetInfo into the database (if available)
+		if pageInfo.NetInfo != nil {
+			err = insertNetInfo(tx, indexID, pageInfo.NetInfo)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error inserting NetInfo: %v", err)
+				rollbackTransaction(tx)
+				return 0, err
+			}
 		}
 	}
 
-	// Insert HTTPInfo into the database (if available)
-	if pageInfo.HTTPInfo != nil {
-		err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting HTTPInfo: %v", err)
-			rollbackTransaction(tx)
-			return 0
+	// If flags second bit is set to 1 or if flags is 0, try to insert HTTPInfo
+	if flags == 2 || flags == 0 {
+		// Insert HTTPInfo into the database (if available)
+		if pageInfo.HTTPInfo != nil {
+			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error inserting HTTPInfo: %v", err)
+				rollbackTransaction(tx)
+				return 0, err
+			}
 		}
 	}
 
@@ -750,18 +774,19 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo) int64 {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
-		return 0
+		return 0, err
 	}
 
 	// Return the index ID
-	return indexID
+	return indexID, nil
 }
 
 // insertOrUpdateSearchIndex inserts or updates a search index entry in the database.
 // It takes a transaction object (tx), the URL of the page (url), and the page information (pageInfo).
 // It returns the index ID of the inserted or updated entry and an error, if any.
-func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (int64, error) {
-	var indexID int64
+func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (uint64, error) {
+	var indexID uint64 // The index ID of the page (supports very large numbers)
+
 	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
 		INSERT INTO SearchIndex
@@ -799,7 +824,7 @@ func strLeft(s string, x int) string {
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
-func insertOrUpdateWebObjects(tx *sql.Tx, indexID int64, pageInfo *PageInfo) error {
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
 	// Prepare the "Details" field for insertion
 	details := make(map[string]interface{})
 	details["performance"] = (*pageInfo).PerfInfo
@@ -944,7 +969,7 @@ func mergeMaps(dst, src map[string]interface{}) {
 // insertNetInfo inserts network information into the database for a given index ID.
 // It takes a transaction, index ID, and a NetInfo object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
+func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo) error {
 	// encode the NetInfo object as JSON
 	details, err := json.Marshal(netInfo)
 	if err != nil {
@@ -985,7 +1010,7 @@ func insertNetInfo(tx *sql.Tx, indexID int64, netInfo *neti.NetInfo) error {
 // insertHTTPInfo inserts HTTP header information into the database for a given index ID.
 // It takes a transaction, index ID, and an HTTPDetails object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) error {
+func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails) error {
 	// Encode the HTTPDetails object as JSON
 	details, err := json.Marshal(httpInfo)
 	if err != nil {
@@ -1028,7 +1053,7 @@ func insertHTTPInfo(tx *sql.Tx, indexID int64, httpInfo *httpi.HTTPDetails) erro
 // It takes a transaction, index ID, and a map of meta tags as parameters.
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
-func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
+func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 	for _, metatag := range metaTags {
 		var name string
 		if len(metatag.Name) > 256 {
@@ -1078,7 +1103,7 @@ func insertMetaTags(tx *sql.Tx, indexID int64, metaTags []MetaTag) error {
 // The `indexID` parameter represents the ID of the index associated with the keywords.
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
-func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID int64, pageInfo *PageInfo) error {
+func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
 	for _, keyword := range extractKeywords(*pageInfo) {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
@@ -1649,7 +1674,10 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 	}
 
 	// Index the page
-	indexPage(*processCtx.db, url.Link, &pageCache)
+	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
+	}
 	processCtx.visitedLinks[url.Link] = true
 
 	// Add the new links to the process context
@@ -1659,7 +1687,7 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 		processCtx.linksMutex.Unlock()
 	}
 
-	return nil
+	return err
 }
 
 func processJob(processCtx *processContext, id int, url string, skippedURLs []LinkItem) error {
@@ -1686,7 +1714,10 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 	// Collect Page logs
 	collectPageLogs(&htmlContent, &pageCache)
 
-	indexPage(*processCtx.db, url, &pageCache)
+	_, err = indexPage(*processCtx.db, url, &pageCache)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url, err)
+	}
 	processCtx.visitedLinks[url] = true
 
 	// Add the new links to the process context
@@ -1697,7 +1728,7 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 	}
 	resetPageInfo(&pageCache) // Reset the PageInfo object
 
-	return nil
+	return err
 }
 
 // combineURLs is a utility function to combine a base URL with a relative URL
@@ -1821,6 +1852,8 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 	}
 
+	args = append(args, "--disable-blink-features=AutomationControlled")
+
 	// Append logging settings if available
 	args = append(args, "--enable-logging")
 	args = append(args, "--v=1")
@@ -1862,7 +1895,7 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 	}
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
-		sel.Config.Host = "selenium"
+		sel.Config.Host = "crowler_vdi"
 	}
 
 	// Connect to the WebDriver instance running remotely.
@@ -1887,7 +1920,57 @@ func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, 
 			break
 		}
 	}
+
+	// Post-connection settings
+	setNavigatorProperties(&wd, sel.Config.Language)
+
 	return wd, err
+}
+
+func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	selectedLanguage := ""
+	switch lang {
+	case "en-us":
+		selectedLanguage = "['en-US', 'en']"
+	case "en-gb":
+		selectedLanguage = "['en-GB', 'en']"
+	case "fr-fr":
+		selectedLanguage = "['fr-FR', 'fr']"
+	case "de-de":
+		selectedLanguage = "['de-DE', 'de']"
+	case "es-es":
+		selectedLanguage = "['es-ES', 'es']"
+	case "it-it":
+		selectedLanguage = "['it-IT', 'it']"
+	case "pt-pt":
+		selectedLanguage = "['pt-PT', 'pt']"
+	case "pt-br":
+		selectedLanguage = "['pt-BR', 'pt']"
+	case "ja-jp":
+		selectedLanguage = "['ja-JP', 'ja']"
+	case "ko-kr":
+		selectedLanguage = "['ko-KR', 'ko']"
+	case "zh-cn":
+		selectedLanguage = "['zh-CN', 'zh']"
+	case "zh-tw":
+		selectedLanguage = "['zh-TW', 'zh']"
+	default:
+		selectedLanguage = "['en-US', 'en']"
+	}
+	// Set the navigator properties
+	scripts := []string{
+		"Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
+		"window.navigator.chrome = {runtime: {}}",
+		"Object.defineProperty(navigator, 'languages', {get: () => " + selectedLanguage + "})",
+		"Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
+	}
+	for _, script := range scripts {
+		_, err := (*wd).ExecuteScript(script, nil)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error setting navigator properties: %v", err)
+		}
+	}
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance

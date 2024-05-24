@@ -79,7 +79,7 @@ func performDBMaintenance(db cdb.Handler) error {
 			"REINDEX TABLE MetaTagsIndex",
 			"REINDEX TABLE NetInfoIndex",
 			"REINDEX TABLE HTTPInfoIndex",
-			"REINDEX TABLE SourceInformationSeed",
+			"REINDEX TABLE SourceInformationSeedIndex",
 			"REINDEX TABLE SourceOwnerIndex",
 			"REINDEX TABLE SourceSearchIndex",
 		}

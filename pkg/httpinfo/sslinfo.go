@@ -659,7 +659,8 @@ func isIssuerOf(issuer *x509.Certificate, subject *x509.Certificate) bool {
 
 func validateCertificateChainOrder(chain []*x509.Certificate) (bool, error) {
 	if len(chain) < 2 {
-		return false, fmt.Errorf("certificate chain is too short")
+		//return false, fmt.Errorf("certificate chain is too short")
+		return false, nil
 	}
 
 	// Check if the end-entity certificate (server certificate) is the first in the chain
