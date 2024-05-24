@@ -259,6 +259,7 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 
 		// Initialize the status
 		PipelineStatus[idx] = crowler.CrawlerStatus{
+			PipelineID:      uint64(idx),
 			Source:          source.URL,
 			SourceID:        source.ID,
 			PipelineRunning: 0,
@@ -337,7 +338,7 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 		if totalLinksToGo < 0 {
 			totalLinksToGo = 0
 		}
-		report += fmt.Sprintf("               Pipeline: %d\n", idx)
+		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
 		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(status.CrawlingRunning))

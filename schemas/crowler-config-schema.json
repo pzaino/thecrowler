@@ -134,6 +134,38 @@
                 "browsing_mode": {
                     "type": "string",
                     "description": "This is the browsing mode that the CROWler will use to crawl websites. For example, recursive, human, or fuzzing."
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "description": "This is the maximum number of times that the CROWler will retry a request to a website. If the CROWler is unable to fetch a website after this number of retries, it will move on to the next website."
+                },
+                "max_requests": {
+                    "type": "integer",
+                    "description": "This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website."
+                },
+                "collect_html": {
+                    "type": "boolean",
+                    "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is useful for debugging purposes."
+                },
+                "collect_images": {
+                    "type": "boolean",
+                    "description": "This is a flag that tells the CROWler to collect images from a website. This is useful for debugging purposes."
+                },
+                "collect_files": {
+                    "type": "boolean",
+                    "description": "This is a flag that tells the CROWler to collect files from a website. This is useful for debugging purposes."
+                },
+                "collect_content": {
+                    "type": "boolean",
+                    "description": "This is a flag that tells the CROWler to collect the text content of a website. This is useful for AI datasets creation and knowledge bases."
+                },
+                "collect_keywords": {
+                    "type": "boolean",
+                    "description": "This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases."
+                },
+                "collect_metatags": {
+                    "type": "boolean",
+                    "description": "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases."
                 }
             }
         },
@@ -197,6 +229,14 @@
             "items": {
                 "type": "object",
                 "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "This is the name of the VDI image."
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "This is the location of the VDI image."
+                    },
                     "path": {
                         "type": "string",
                         "description": "This is the path to the selenium driver (IF LOCAL). It is the path to the selenium driver that the CROWler will use to crawl websites."

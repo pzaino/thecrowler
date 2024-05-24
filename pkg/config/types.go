@@ -55,6 +55,14 @@ type Crawler struct {
 	MaxSources         int    `yaml:"max_sources"`          // Maximum number of sources to crawl
 	Delay              string `yaml:"delay"`                // Delay between requests (in seconds)
 	BrowsingMode       string `yaml:"browsing_mode"`        // Browsing type (e.g., "recursive", "human", "fuzzing")
+	MaxRetries         int    `yaml:"max_retries"`          // Maximum number of retries
+	MaxRedirects       int    `yaml:"max_redirects"`        // Maximum number of redirects
+	CollectHTML        bool   `yaml:"collect_html"`         // Whether to collect the HTML content or not
+	CollectImages      bool   `yaml:"collect_images"`       // Whether to collect the images or not
+	CollectFiles       bool   `yaml:"collect_files"`        // Whether to collect the files or not
+	CollectContent     bool   `yaml:"collect_content"`      // Whether to collect the content or not
+	CollectKeywords    bool   `yaml:"collect_keywords"`     // Whether to collect the keywords or not
+	CollectMetaTags    bool   `yaml:"collect_metatags"`     // Whether to collect the metatags or not
 }
 
 // DNSConfig represents the DNS information gathering configuration

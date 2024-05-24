@@ -43,6 +43,7 @@ type CrawlerPars struct {
 }
 
 type CrawlerStatus struct {
+	PipelineID      uint64
 	SourceID        uint64
 	Source          string
 	TotalPages      int

@@ -1271,15 +1271,50 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 			ctx.Status.TotalScraped++
 		}
 
-		title, _ = (*webPage).Title()
-		summary = doc.Find("meta[name=description]").AttrOr("content", "")
-		bodyText = doc.Find("body").Text()
-		// transform tabs into spaces
-		bodyText = strings.Replace(bodyText, "\t", " ", -1)
-		// remove excessive spaces in bodyText
-		bodyText = strings.Join(strings.Fields(bodyText), " ")
+		if !ctx.config.Crawler.CollectHTML {
+			// If we don't need to collect HTML content, clear it
+			htmlContent = ""
+		}
 
-		metaTags = extractMetaTags(doc)
+		title, _ = (*webPage).Title()
+		// To get the summary, we extract the content of the "description" meta tag
+		// if description tag is not found, we extract the content of og:description tag
+		// if og:description tag is not found, we extract the content of twitter:description tag
+		// if none of the above tags are found, we extract the first 200 characters of the body text
+		tmp := doc.Find("meta[name=description]").AttrOr("content", "")
+		if tmp == "" {
+			tmp = doc.Find("meta[property=og:description]").AttrOr("content", "")
+		}
+		if tmp == "" {
+			tmp = doc.Find("meta[name=twitter:description]").AttrOr("content", "")
+		}
+		if tmp != "" {
+			summary = tmp
+		}
+		if ctx.config.Crawler.CollectContent {
+			// copy doc to avoid modifying the original
+			docCopy := doc.Clone()
+			// remove script tags
+			docCopy.Find("script").Each(func(i int, s *goquery.Selection) {
+				s.Remove()
+			})
+			bodyText = docCopy.Find("body").Text()
+			// transform tabs into spaces
+			bodyText = strings.Replace(bodyText, "\t", " ", -1)
+			// remove excessive spaces in bodyText
+			bodyText = strings.Join(strings.Fields(bodyText), " ")
+			if summary == "" {
+				// If we don't have a summary, extract the first 200 characters of the body text
+				summary = bodyText
+				if len(summary) > 200 {
+					summary = summary[:200]
+				}
+			}
+		}
+		if ctx.config.Crawler.CollectMetaTags {
+			// Extract meta tags from the document
+			metaTags = extractMetaTags(doc)
+		}
 	} else {
 		// Download the web object and store it in the database
 		if err := (*webPage).Get(currentURL); err != nil {
