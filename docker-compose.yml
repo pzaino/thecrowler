@@ -1,7 +1,7 @@
 version: '3.8'
 services:
-  database:
-    container_name: database
+  crowler_db:
+    container_name: crowler_db
     image: postgres:alpine3.19
     ports:
       - "5432:5432"
@@ -12,17 +12,17 @@ services:
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - crowler_db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./pkg/database/postgresql-setup-v1.3.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.3.pgsql
+      - ./pkg/database/postgresql-setup-v1.4.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.4.pgsql
 
-  searchapi:
-    container_name: thecrowler_searchapi
+  crowler_api:
+    container_name: crowler_api
     environment:
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-database}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-crowler_db}
       - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -32,18 +32,18 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - searchapi_data:/app/data
+      - crowler_api_data:/app/data
     user: apiuser
     read_only: true
 
-  thecrowler:
-    container_name: thecrowler_engine
+  crowler_engine:
+    container_name: crowler_engine
     environment:
-      - SELENIUM_HOST=${DOCKER_SELENIUM_HOST:-selenium}
+      - SELENIUM_HOST=${DOCKER_SELENIUM_HOST:-crowler_vdi}
       - POSTGRES_DB=${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-database}
+      - POSTGRES_DB_HOST=${DOCKER_DB_HOST:-crowler_db}
       - POSTGRES_DB_PORT=${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -53,17 +53,17 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - thecrowler_data:/app/data
+      - crowler_engine_data:/app/data
     user: crowler
 
-  selenium:
-    container_name: selenium
+  crowler_vdi:
+    container_name: crowler_vdi
     image: ${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     platform: ${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "4442-4444:4442-4444"
 
 volumes:
-  db_data:
-  searchapi_data:
-  thecrowler_data:
+  crowler_db_data:
+  crowler_api_data:
+  crowler_engine_data:
