@@ -224,8 +224,9 @@ func executeActionClear(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	return wdf.Clear()
 }
 
+// TODO: The rule needs an extra parameter for the screenshot maxHeight (using 0 right now)
 func executeActionScreenshot(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	_, err := TakeScreenshot(wd, r.Value)
+	_, err := TakeScreenshot(wd, r.Value, 0)
 	return err
 }
 

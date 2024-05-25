@@ -45,25 +45,27 @@ type Database struct {
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	Workers            int    `yaml:"workers"`              // Number of crawler workers
-	Interval           string `yaml:"interval"`             // Interval between crawler requests (in seconds)
-	Timeout            int    `yaml:"timeout"`              // Timeout for crawler requests (in seconds)
-	Maintenance        int    `yaml:"maintenance"`          // Interval between crawler maintenance tasks (in seconds)
-	SourceScreenshot   bool   `yaml:"source_screenshot"`    // Whether to take a screenshot of the source page or not
-	FullSiteScreenshot bool   `yaml:"full_site_screenshot"` // Whether to take a screenshot of the full site or not
-	MaxDepth           int    `yaml:"max_depth"`            // Maximum depth to crawl
-	MaxSources         int    `yaml:"max_sources"`          // Maximum number of sources to crawl
-	Delay              string `yaml:"delay"`                // Delay between requests (in seconds)
-	BrowsingMode       string `yaml:"browsing_mode"`        // Browsing type (e.g., "recursive", "human", "fuzzing")
-	MaxRetries         int    `yaml:"max_retries"`          // Maximum number of retries
-	MaxRedirects       int    `yaml:"max_redirects"`        // Maximum number of redirects
-	CollectHTML        bool   `yaml:"collect_html"`         // Whether to collect the HTML content or not
-	CollectImages      bool   `yaml:"collect_images"`       // Whether to collect the images or not
-	CollectFiles       bool   `yaml:"collect_files"`        // Whether to collect the files or not
-	CollectContent     bool   `yaml:"collect_content"`      // Whether to collect the content or not
-	CollectKeywords    bool   `yaml:"collect_keywords"`     // Whether to collect the keywords or not
-	CollectMetaTags    bool   `yaml:"collect_metatags"`     // Whether to collect the metatags or not
-	ReportInterval     int    `yaml:"report_time"`          // Time to wait before sending the report (in minutes)
+	Workers               int    `yaml:"workers"`                 // Number of crawler workers
+	Interval              string `yaml:"interval"`                // Interval between crawler requests (in seconds)
+	Timeout               int    `yaml:"timeout"`                 // Timeout for crawler requests (in seconds)
+	Maintenance           int    `yaml:"maintenance"`             // Interval between crawler maintenance tasks (in seconds)
+	SourceScreenshot      bool   `yaml:"source_screenshot"`       // Whether to take a screenshot of the source page or not
+	FullSiteScreenshot    bool   `yaml:"full_site_screenshot"`    // Whether to take a screenshot of the full site or not
+	ScreenshotMaxHeight   int    `yaml:"screenshot_max_height"`   // Maximum height of the screenshot
+	ScreenshotSectionWait int    `yaml:"screenshot_section_wait"` // Time to wait before taking a screenshot of a section in seconds
+	MaxDepth              int    `yaml:"max_depth"`               // Maximum depth to crawl
+	MaxSources            int    `yaml:"max_sources"`             // Maximum number of sources to crawl
+	Delay                 string `yaml:"delay"`                   // Delay between requests (in seconds)
+	BrowsingMode          string `yaml:"browsing_mode"`           // Browsing type (e.g., "recursive", "human", "fuzzing")
+	MaxRetries            int    `yaml:"max_retries"`             // Maximum number of retries
+	MaxRedirects          int    `yaml:"max_redirects"`           // Maximum number of redirects
+	CollectHTML           bool   `yaml:"collect_html"`            // Whether to collect the HTML content or not
+	CollectImages         bool   `yaml:"collect_images"`          // Whether to collect the images or not
+	CollectFiles          bool   `yaml:"collect_files"`           // Whether to collect the files or not
+	CollectContent        bool   `yaml:"collect_content"`         // Whether to collect the content or not
+	CollectKeywords       bool   `yaml:"collect_keywords"`        // Whether to collect the keywords or not
+	CollectMetaTags       bool   `yaml:"collect_metatags"`        // Whether to collect the metatags or not
+	ReportInterval        int    `yaml:"report_time"`             // Time to wait before sending the report (in minutes)
 }
 
 // DNSConfig represents the DNS information gathering configuration

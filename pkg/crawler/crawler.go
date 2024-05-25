@@ -491,7 +491,7 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
 		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
 		imageName := generateUniqueName(url, "-desktop")
-		ss, err := TakeScreenshot(&wd, imageName)
+		ss, err := TakeScreenshot(&wd, imageName, ctx.config.Crawler.ScreenshotMaxHeight)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error taking screenshot: %v", err)
 		}
@@ -615,6 +615,7 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 // IndexPage is responsible for indexing a crawled page in the database
 func (ctx *processContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
+	(*pageInfo).Config = &ctx.config
 	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
@@ -700,19 +701,23 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	}
 
 	// Insert MetaTags
-	err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
-		rollbackTransaction(tx)
-		return 0, err
+	if pageInfo.Config.Crawler.CollectMetaTags {
+		err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
+			rollbackTransaction(tx)
+			return 0, err
+		}
 	}
 
 	// Insert into KeywordIndex
-	err = insertKeywords(tx, db, indexID, pageInfo)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
-		rollbackTransaction(tx)
-		return 0, err
+	if pageInfo.Config.Crawler.CollectKeywords {
+		err = insertKeywords(tx, db, indexID, pageInfo)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
+			rollbackTransaction(tx)
+			return 0, err
+		}
 	}
 
 	// Commit the transaction
@@ -921,7 +926,13 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
-	hasher.Write([]byte((*pageInfo).BodyText))
+	if len((*pageInfo).BodyText) > 0 {
+		hasher.Write([]byte((*pageInfo).BodyText))
+	} else if len((*pageInfo).HTML) > 0 {
+		hasher.Write([]byte((*pageInfo).HTML))
+	} else {
+		hasher.Write([]byte(detailsJSON))
+	}
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Get HTML and text Content
@@ -1730,6 +1741,7 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 	}
 
 	// Index the page
+	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
@@ -1780,6 +1792,7 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 		pageCache.BodyText = ""
 	}
 
+	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, url, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url, err)
@@ -2074,7 +2087,7 @@ func QuitSelenium(wd *selenium.WebDriver) {
 }
 
 // TakeScreenshot is responsible for taking a screenshot of the current page
-func TakeScreenshot(wd *selenium.WebDriver, filename string) (Screenshot, error) {
+func TakeScreenshot(wd *selenium.WebDriver, filename string, maxHeight int) (Screenshot, error) {
 	ss := Screenshot{}
 
 	// Execute JavaScript to get the viewport height and width
@@ -2086,6 +2099,9 @@ func TakeScreenshot(wd *selenium.WebDriver, filename string) (Screenshot, error)
 	totalHeight, err := getTotalHeight(wd)
 	if err != nil {
 		return Screenshot{}, err
+	}
+	if maxHeight > 0 && totalHeight > maxHeight {
+		totalHeight = maxHeight
 	}
 
 	screenshots, err := captureScreenshots(wd, totalHeight, windowHeight)
@@ -2162,7 +2178,7 @@ func captureScreenshots(wd *selenium.WebDriver, totalHeight, windowHeight int) (
 		if err != nil {
 			return nil, err
 		}
-		time.Sleep(1 * time.Second) // Pause to let page load
+		time.Sleep(time.Duration(config.Crawler.ScreenshotSectionWait) * time.Second) // Pause to let page load
 
 		// Take screenshot of the current view
 		screenshot, err := (*wd).Screenshot()

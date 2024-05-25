@@ -96,6 +96,7 @@ type PageInfo struct {
 	ScrapedData  []ScrapedItem      `json:"scraped_data"`  // The scraped data from the web page.
 	Links        []LinkItem         `json:"links"`         // The links found in the web page.
 	PerfInfo     PerformanceLog     `json:"performance"`   // The performance information of the web page.
+	Config       *cfg.Config        `json:"config"`        // The configuration of the web page.
 }
 
 // WebObjectDetails represents the details of a web object.
