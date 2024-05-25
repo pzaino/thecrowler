@@ -53,6 +53,15 @@ var (
 	GRulesEngine rules.RuleEngine // Global rules engine
 )
 
+type WorkBlock struct {
+	db             cdb.Handler
+	sel            *chan crowler.SeleniumInstance
+	sources        *[]cdb.Source
+	RulesEngine    *rules.RuleEngine
+	PipelineStatus *[]crowler.CrawlerStatus
+	Config         *cfg.Config
+}
+
 // This function is responsible for performing database maintenance
 // to keep it lean and fast. Note: it's specific for PostgreSQL.
 func performDBMaintenance(db cdb.Handler) error {
@@ -79,7 +88,7 @@ func performDBMaintenance(db cdb.Handler) error {
 			"REINDEX TABLE MetaTagsIndex",
 			"REINDEX TABLE NetInfoIndex",
 			"REINDEX TABLE HTTPInfoIndex",
-			"REINDEX TABLE SourceInformationSeed",
+			"REINDEX TABLE SourceInformationSeedIndex",
 			"REINDEX TABLE SourceOwnerIndex",
 			"REINDEX TABLE SourceSearchIndex",
 		}
@@ -167,9 +176,14 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 // and kickstart the crawling process for each of them
 func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
-
+	// Initialize the pipeline status
+	PipelineStatus := make([]crowler.CrawlerStatus, config.Crawler.MaxSources)
+	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
+	// Set the resource release time
 	resourceReleaseTime := time.Now().Add(time.Duration(5) * time.Minute)
+
+	// Start the main loop
 	defer configMutex.Unlock()
 	for {
 		configMutex.Lock()
@@ -208,7 +222,15 @@ func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngi
 		}
 
 		// Crawl each source
-		crawlSources(*db, sel, &sourcesToCrawl, RulesEngine)
+		workBlock := WorkBlock{
+			db:             *db,
+			sel:            sel,
+			sources:        &sourcesToCrawl,
+			RulesEngine:    RulesEngine,
+			PipelineStatus: &PipelineStatus,
+			Config:         &config,
+		}
+		crawlSources(&workBlock)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.Unlock()
@@ -225,11 +247,10 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[]cdb.Source, RulesEngine *rules.RuleEngine) {
+func crawlSources(wb *WorkBlock) {
 	// Start a goroutine to log the status periodically
-	PipelineStatus := make([]crowler.CrawlerStatus, len(*sources))
 	go func(plStatus *[]crowler.CrawlerStatus) {
-		ticker := time.NewTicker(1 * time.Minute) // Adjust the interval as needed
+		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
 			// Check if all the pipelines have completed
@@ -247,18 +268,25 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 				break
 			}
 		}
-	}(&PipelineStatus)
+	}(wb.PipelineStatus)
 
 	// Start the crawling process for each source
 	var wg sync.WaitGroup // WaitGroup to wait for all goroutines to finish
 	selIdx := 0           // Selenium instance index
-	for idx := 0; idx < len(*sources); idx++ {
+	sourceIdx := 0        // Source index
+	for idx := 0; idx < wb.Config.Crawler.MaxSources; idx++ {
+		// Check if the pipeline is already running
+		if (*wb.PipelineStatus)[idx].PipelineRunning == 1 {
+			continue
+		}
+
 		// Get the source to crawl
-		source := (*sources)[idx]
+		source := (*wb.sources)[sourceIdx]
 		wg.Add(1)
 
 		// Initialize the status
-		PipelineStatus[idx] = crowler.CrawlerStatus{
+		(*wb.PipelineStatus)[idx] = crowler.CrawlerStatus{
+			PipelineID:      uint64(idx),
 			Source:          source.URL,
 			SourceID:        source.ID,
 			PipelineRunning: 0,
@@ -276,39 +304,50 @@ func crawlSources(db cdb.Handler, sel *chan crowler.SeleniumInstance, sources *[
 			LastDelay:       0,
 		}
 
-		// Prepare the go routine parameters
-		args := crowler.CrawlerPars{
-			WG:      &wg,
-			DB:      db,
-			Src:     source,
-			Sel:     sel,
-			SelIdx:  selIdx,
-			RE:      RulesEngine,
-			Sources: sources,
-			Index:   idx,
-			Status:  &PipelineStatus[idx],
-		}
-
 		// Start a goroutine to crawl the website
-		go func(args crowler.CrawlerPars) {
-			defer wg.Done()
+		startCrawling(wb, &wg, selIdx, source, idx)
 
-			// Acquire a Selenium instance
-			seleniumInstance := <-*args.Sel
-
-			// Channel to release the Selenium instance
-			releaseSelenium := make(chan crowler.SeleniumInstance)
-
-			// Start crawling the website
-			go crowler.CrawlWebsite(args, seleniumInstance, releaseSelenium)
-
-			// Release the Selenium instance when done
-			*args.Sel <- <-releaseSelenium
-
-		}(args)
+		// Increment the Source index to get the next source
+		sourceIdx++
+		if sourceIdx >= len(*wb.sources) {
+			break // We have reached the end of the sources
+		}
 	}
 
 	wg.Wait() // Block until all goroutines have decremented the counter
+}
+
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Source, idx int) {
+	// Prepare the go routine parameters
+	args := crowler.CrawlerPars{
+		WG:      wg,
+		DB:      wb.db,
+		Src:     source,
+		Sel:     wb.sel,
+		SelIdx:  selIdx,
+		RE:      wb.RulesEngine,
+		Sources: wb.sources,
+		Index:   idx,
+		Status:  &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
+	}
+
+	// Start a goroutine to crawl the website
+	go func(args crowler.CrawlerPars) {
+		defer wg.Done()
+
+		// Acquire a Selenium instance
+		seleniumInstance := <-*args.Sel
+
+		// Channel to release the Selenium instance
+		releaseSelenium := make(chan crowler.SeleniumInstance)
+
+		// Start crawling the website
+		go crowler.CrawlWebsite(args, seleniumInstance, releaseSelenium)
+
+		// Release the Selenium instance when done
+		*args.Sel <- <-releaseSelenium
+
+	}(args)
 }
 
 func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
@@ -337,7 +376,7 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 		if totalLinksToGo < 0 {
 			totalLinksToGo = 0
 		}
-		report += fmt.Sprintf("               Pipeline: %d\n", idx)
+		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
 		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(status.CrawlingRunning))
@@ -355,6 +394,11 @@ func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
 		report += fmt.Sprintf("         Last Page Wait: %f\n", status.LastWait)
 		report += fmt.Sprintf("        Last Page Delay: %f\n", status.LastDelay)
 		report += sepPLine + "\n"
+
+		// Reset the status if the pipeline has completed (display only the last report)
+		if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
+			status.PipelineRunning = 0
+		}
 	}
 	report += sepRLine + "\n"
 	if runningPipelines > 0 {

@@ -43,6 +43,7 @@ type CrawlerPars struct {
 }
 
 type CrawlerStatus struct {
+	PipelineID      uint64
 	SourceID        uint64
 	Source          string
 	TotalPages      int
@@ -95,6 +96,7 @@ type PageInfo struct {
 	ScrapedData  []ScrapedItem      `json:"scraped_data"`  // The scraped data from the web page.
 	Links        []LinkItem         `json:"links"`         // The links found in the web page.
 	PerfInfo     PerformanceLog     `json:"performance"`   // The performance information of the web page.
+	Config       *cfg.Config        `json:"config"`        // The configuration of the web page.
 }
 
 // WebObjectDetails represents the details of a web object.
@@ -223,7 +225,7 @@ type PageDetails struct {
 
 // Screenshot represents the metadata of a webpage screenshot
 type Screenshot struct {
-	IndexID         int64  `json:"index_id"`
+	IndexID         uint64 `json:"index_id"`
 	ScreenshotLink  string `json:"screenshot_link"`
 	Height          int    `json:"height"`
 	Width           int    `json:"width"`
