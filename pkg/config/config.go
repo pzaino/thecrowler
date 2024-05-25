@@ -174,6 +174,7 @@ func NewConfig() *Config {
 			CollectImages:      false,
 			MaxRetries:         0,
 			MaxRedirects:       3,
+			ReportInterval:     1,
 		},
 		API: API{
 			Host:              "localhost",

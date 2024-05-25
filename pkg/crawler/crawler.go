@@ -114,6 +114,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 			processCtx.Status.PipelineRunning = 2
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
+		processCtx.Status.EndTime = time.Now()
 		releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
 		return
@@ -124,6 +125,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	if err := processCtx.ConnectToSelenium(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
+		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		releaseSelenium <- sel
 		return
@@ -136,6 +138,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	pageSource, err := processCtx.CrawlInitialURL(sel)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
+		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
@@ -151,6 +154,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
 		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
+		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
@@ -339,6 +343,16 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Collect Page logs
 	collectPageLogs(&pageSource, &pageInfo)
+
+	if !ctx.config.Crawler.CollectHTML {
+		// If we don't need to collect HTML content, clear it
+		pageInfo.HTML = ""
+	}
+
+	if !ctx.config.Crawler.CollectContent {
+		// If we don't need to collect content, clear it
+		pageInfo.BodyText = ""
+	}
 
 	// Index the page
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
@@ -1236,7 +1250,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 	// Detect Object Type
 	objType := docType
 	title := currentURL
-	summary := "Downloaded Web Object"
+	summary := ""
 	bodyText := ""
 	htmlContent := ""
 	metaTags := []MetaTag{}
@@ -1271,11 +1285,6 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 			ctx.Status.TotalScraped++
 		}
 
-		if !ctx.config.Crawler.CollectHTML {
-			// If we don't need to collect HTML content, clear it
-			htmlContent = ""
-		}
-
 		title, _ = (*webPage).Title()
 		// To get the summary, we extract the content of the "description" meta tag
 		// if description tag is not found, we extract the content of og:description tag
@@ -1291,26 +1300,28 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 		if tmp != "" {
 			summary = tmp
 		}
-		if ctx.config.Crawler.CollectContent {
-			// copy doc to avoid modifying the original
-			docCopy := doc.Clone()
-			// remove script tags
-			docCopy.Find("script").Each(func(i int, s *goquery.Selection) {
-				s.Remove()
-			})
-			bodyText = docCopy.Find("body").Text()
-			// transform tabs into spaces
-			bodyText = strings.Replace(bodyText, "\t", " ", -1)
-			// remove excessive spaces in bodyText
-			bodyText = strings.Join(strings.Fields(bodyText), " ")
-			if summary == "" {
-				// If we don't have a summary, extract the first 200 characters of the body text
-				summary = bodyText
-				if len(summary) > 200 {
-					summary = summary[:200]
-				}
+
+		// copy doc to avoid modifying the original
+		docCopy := doc.Clone()
+		// remove script tags
+		docCopy.Find("script").Each(func(i int, s *goquery.Selection) {
+			s.Remove()
+		})
+		bodyText = docCopy.Find("body").Text()
+		// transform tabs into spaces
+		bodyText = strings.ReplaceAll(bodyText, "\t", " ")
+		// remove excessive spaces in bodyText
+		bodyText = strings.Join(strings.Fields(bodyText), " ")
+		if summary == "" {
+			// If we don't have a summary, extract the first 200 characters of the body text
+			summary = bodyText
+			if len(summary) > 200 {
+				summary = summary[:200]
 			}
 		}
+		// Clear docCopy
+		docCopy = nil
+
 		if ctx.config.Crawler.CollectMetaTags {
 			// Extract meta tags from the document
 			metaTags = extractMetaTags(doc)
@@ -1708,6 +1719,16 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 		}
 	}
 
+	if !processCtx.config.Crawler.CollectHTML {
+		// If we don't need to collect HTML content, clear it
+		pageCache.HTML = ""
+	}
+
+	if !processCtx.config.Crawler.CollectContent {
+		// If we don't need to collect content, clear it
+		pageCache.BodyText = ""
+	}
+
 	// Index the page
 	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
 	if err != nil {
@@ -1748,6 +1769,16 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 
 	// Collect Page logs
 	collectPageLogs(&htmlContent, &pageCache)
+
+	if !processCtx.config.Crawler.CollectHTML {
+		// If we don't need to collect HTML content, clear it
+		pageCache.HTML = ""
+	}
+
+	if !processCtx.config.Crawler.CollectContent {
+		// If we don't need to collect content, clear it
+		pageCache.BodyText = ""
+	}
 
 	_, err = indexPage(*processCtx.db, url, &pageCache)
 	if err != nil {

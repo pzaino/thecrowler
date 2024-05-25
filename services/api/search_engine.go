@@ -994,7 +994,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 		}
 
 		// log the detailsJSON for debugging purposes
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Details JSON: %s", detailsJSON)
+		//cmn.DebugMsg(cmn.DbgLvlDebug5, "Details JSON: %s", detailsJSON)
 
 		// Unmarshal the JSON data (if not NULL)
 		if detailsJSON != nil {

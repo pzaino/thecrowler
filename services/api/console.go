@@ -25,6 +25,13 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
+const (
+	errFailedToInitializeDBHandler = "Failed to initialize database handler"
+	errFailedToConnectToDB         = "Error connecting to the database"
+	errFailedToStartTransaction    = "Failed to start transaction"
+	errFailedToCommitTransaction   = "Failed to commit transaction"
+)
+
 func performAddSource(query string, qType int) (ConsoleResponse, error) {
 	var sqlQuery string
 	var sqlParams addSourceRequest
@@ -188,20 +195,20 @@ func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
 	// Initialize the database handler
 	db, err := cdb.NewHandler(config)
 	if err != nil {
-		return ConsoleResponse{Message: "Failed to initialize database handler"}, err
+		return ConsoleResponse{Message: errFailedToInitializeDBHandler}, err
 	}
 
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		return ConsoleResponse{Message: "Error connecting to the database"}, err
+		return ConsoleResponse{Message: errFailedToConnectToDB}, err
 	}
 	defer db.Close()
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		return ConsoleResponse{Message: "Failed to start transaction"}, err
+		return ConsoleResponse{Message: errFailedToStartTransaction}, err
 	}
 
 	// Proceed with deleting the source using the obtained source_id
@@ -213,7 +220,7 @@ func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
 	// If everything went well, commit the transaction
 	err = tx.Commit()
 	if err != nil {
-		return ConsoleResponse{Message: "Failed to commit transaction"}, err
+		return ConsoleResponse{Message: errFailedToCommitTransaction}, err
 	}
 
 	results.Message = "Source and related data removed successfully"
@@ -277,20 +284,20 @@ func performGetURLStatus(query string, qType int) (StatusResponse, error) {
 	// Initialize the database handler
 	db, err := cdb.NewHandler(config)
 	if err != nil {
-		return StatusResponse{Message: "Failed to initialize database handler"}, err
+		return StatusResponse{Message: errFailedToInitializeDBHandler}, err
 	}
 
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		return StatusResponse{Message: "Error connecting to the database"}, err
+		return StatusResponse{Message: errFailedToConnectToDB}, err
 	}
 	defer db.Close()
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		return StatusResponse{Message: "Failed to start transaction"}, err
+		return StatusResponse{Message: errFailedToStartTransaction}, err
 	}
 
 	// Proceed with getting the status
@@ -302,7 +309,7 @@ func performGetURLStatus(query string, qType int) (StatusResponse, error) {
 	// If everything went well, commit the transaction
 	err = tx.Commit()
 	if err != nil {
-		return StatusResponse{Message: "Failed to commit transaction"}, err
+		return StatusResponse{Message: errFailedToCommitTransaction}, err
 	}
 
 	return results, nil
@@ -354,24 +361,25 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	return results, nil
 }
 
-func performGetAllURLStatus(qType int) (StatusResponse, error) {
+func performGetAllURLStatus(_ int) (StatusResponse, error) {
+	// using _ instead of qType because for now we don't need it
 	// Initialize the database handler
 	db, err := cdb.NewHandler(config)
 	if err != nil {
-		return StatusResponse{Message: "Failed to initialize database handler"}, err
+		return StatusResponse{Message: errFailedToInitializeDBHandler}, err
 	}
 
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		return StatusResponse{Message: "Error connecting to the database"}, err
+		return StatusResponse{Message: errFailedToConnectToDB}, err
 	}
 	defer db.Close()
 
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		return StatusResponse{Message: "Failed to start transaction"}, err
+		return StatusResponse{Message: errFailedToStartTransaction}, err
 	}
 
 	// Proceed with getting all statuses
@@ -383,7 +391,7 @@ func performGetAllURLStatus(qType int) (StatusResponse, error) {
 	// If everything went well, commit the transaction
 	err = tx.Commit()
 	if err != nil {
-		return StatusResponse{Message: "Failed to commit transaction"}, err
+		return StatusResponse{Message: errFailedToCommitTransaction}, err
 	}
 
 	return results, nil
