@@ -23,6 +23,11 @@ import (
 	"testing"
 )
 
+const (
+	testURL    = "https://example.com"
+	testRegion = "us-west-1"
+)
+
 type MockFileReader struct {
 	// Mock data or behavior can be customized per test
 	Data map[string][]byte
@@ -230,7 +235,7 @@ func TestValidateRemoteHost(t *testing.T) {
 	// Create a config instance with non-empty Remote.Host
 	config = &Config{
 		Remote: Remote{
-			Host: "example.com",
+			Host: testURL,
 		},
 	}
 
@@ -238,7 +243,7 @@ func TestValidateRemoteHost(t *testing.T) {
 	config.validateRemoteHost()
 
 	// Check if the Remote.Host is trimmed and unchanged
-	if config.Remote.Host != "example.com" {
+	if config.Remote.Host != testURL {
 		t.Errorf("Expected Remote.Host to be 'example.com', got %v", config.Remote.Host)
 	}
 }
@@ -344,7 +349,7 @@ func TestValidateRemoteRegion(t *testing.T) {
 	// Create a config instance with non-empty Remote.Region
 	config = &Config{
 		Remote: Remote{
-			Region: "us-west-1",
+			Region: testRegion,
 		},
 	}
 
@@ -352,7 +357,7 @@ func TestValidateRemoteRegion(t *testing.T) {
 	config.validateRemoteRegion()
 
 	// Check if the Remote.Region is trimmed and unchanged
-	if config.Remote.Region != "us-west-1" {
+	if config.Remote.Region != testRegion {
 		t.Errorf("Expected Remote.Region to be 'us-west-1', got %v", config.Remote.Region)
 	}
 }
@@ -539,17 +544,17 @@ func TestValidateCrawler(t *testing.T) {
 
 	// Check if the Workers field is set to 1
 	if config.Crawler.Workers != 1 {
-		t.Errorf("Expected Workers to be 1, got %v", config.Crawler.Workers)
+		t.Errorf("Expected Workers to be %d, got %v", 1, config.Crawler.Workers)
 	}
 
 	// Check if the Interval field is set to "2"
 	if config.Crawler.Interval != "2" {
-		t.Errorf("Expected Interval to be '2', got %v", config.Crawler.Interval)
+		t.Errorf("Expected Interval to be '%d', got %v", 2, config.Crawler.Interval)
 	}
 
 	// Check if the Timeout field is set to 10
 	if config.Crawler.Timeout != 10 {
-		t.Errorf("Expected Timeout to be 10, got %v", config.Crawler.Timeout)
+		t.Errorf("Expected Timeout to be %d, got %v", 10, config.Crawler.Timeout)
 	}
 
 	// Check if the Maintenance field is set to 60
@@ -652,7 +657,7 @@ func TestValidateAPI(t *testing.T) {
 	// Create a config instance with non-empty API fields
 	config = &Config{
 		API: API{
-			Host:              "example.com",
+			Host:              testURL,
 			Port:              8888,
 			Timeout:           60,
 			RateLimit:         "20,20",
@@ -666,7 +671,7 @@ func TestValidateAPI(t *testing.T) {
 	config.validateAPI()
 
 	// Check if the API.Host remains unchanged
-	if config.API.Host != "example.com" {
+	if config.API.Host != testURL {
 		t.Errorf("Expected API.Host to be 'example.com', got %v", config.API.Host)
 	}
 
@@ -828,7 +833,7 @@ func TestValidateSeleniumHost(t *testing.T) {
 	config = &Config{
 		Selenium: []Selenium{
 			{
-				Host: "example.com",
+				Host: testURL,
 			},
 		},
 	}
@@ -837,7 +842,7 @@ func TestValidateSeleniumHost(t *testing.T) {
 	config.validateSeleniumHost(&config.Selenium[0])
 
 	// Check if the Selenium.Host is trimmed and unchanged
-	if config.Selenium[0].Host != "example.com" {
+	if config.Selenium[0].Host != testURL {
 		t.Errorf("Expected Selenium.Host to be 'example.com', got %v", config.Selenium[0].Host)
 	}
 }
@@ -1000,7 +1005,7 @@ func TestValidateFileStorageAPI(t *testing.T) {
 	config = &Config{
 		FileStorageAPI: FileStorageAPI{
 			Type:    "s3",
-			Host:    "example.com",
+			Host:    testURL,
 			Path:    "/data",
 			Port:    9000,
 			Region:  "us-west-2",
@@ -1017,7 +1022,7 @@ func TestValidateFileStorageAPI(t *testing.T) {
 	if config.FileStorageAPI.Type != "s3" {
 		t.Errorf("Expected FileStorageAPI.Type to be 's3', got %v", config.FileStorageAPI.Type)
 	}
-	if config.FileStorageAPI.Host != "example.com" {
+	if config.FileStorageAPI.Host != testURL {
 		t.Errorf("Expected FileStorageAPI.Host to be 'example.com', got %v", config.FileStorageAPI.Host)
 	}
 	if config.FileStorageAPI.Path != "/data" {
@@ -1149,10 +1154,10 @@ func TestConfigString(t *testing.T) {
 	// Create a config instance with sample values
 	config := &Config{
 		Remote: Remote{
-			Host:   "example.com",
+			Host:   testURL,
 			Path:   "/api",
 			Port:   8080,
-			Region: "us-west-1",
+			Region: testRegion,
 			Token:  "mytoken",
 		},
 		Database: Database{
@@ -1195,7 +1200,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0 }, Crawler: {0  0 0 false false 0 0 0 0   0 0 false false false false false false 0 false}, API: { 0 0 false false     false 0 0 0 false}, Selenium: [{    chrome  4444  false false    }], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false false}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 false false false false false false false false [] [] []    0 0 0   false 0  false } {false    0 }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0 }, Crawler: {0  0 0 false false 0 0 0 0   0 0 false false false false false false 0 false}, API: { 0 0 false false     false 0 0 0 false}, Selenium: [{    chrome  4444  false false    }], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false false}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 false false false false false false false false [] [] []    0 0 0   false 0  false } {false    0 }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()
@@ -1240,12 +1245,12 @@ func TestDNSConfigValidate(t *testing.T) {
 
 	// Check if the Timeout remains unchanged
 	if config.Timeout != 5 {
-		t.Errorf("Expected Timeout to be 5, got %v", config.Timeout)
+		t.Errorf("Expected Timeout to be %d, got %v", 5, config.Timeout)
 	}
 
 	// Check if the RateLimit remains unchanged
 	if config.RateLimit != "2" {
-		t.Errorf("Expected RateLimit to be \"2\", got %v", config.RateLimit)
+		t.Errorf("Expected RateLimit to be \"%d\", got %v", 2, config.RateLimit)
 	}
 }
 
@@ -1701,7 +1706,7 @@ func TestLoadRemoteConfig(t *testing.T) {
 			name: "valid remote config fetch",
 			cfg: Config{
 				Remote: Remote{
-					Host:    "example.com",
+					Host:    testURL,
 					Path:    "config.yaml",
 					Timeout: 10,
 					SSLMode: "disable",
@@ -1720,7 +1725,7 @@ func TestLoadRemoteConfig(t *testing.T) {
 			name: "network error",
 			cfg: Config{
 				Remote: Remote{
-					Host:    "example.com",
+					Host:    testURL,
 					Path:    "config.yaml",
 					Timeout: 10,
 					SSLMode: "disable",

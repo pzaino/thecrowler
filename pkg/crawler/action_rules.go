@@ -266,7 +266,8 @@ func executeActionSwitchWindow(r *rules.ActionRule, wd *selenium.WebDriver) erro
 	return (*wd).SwitchWindow(r.Value)
 }
 
-func executeActionScrollToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
+// TODO: Implement this function (this requires RBee service running on the VDI)
+func executeActionScrollToElement(_ *rules.ActionRule, _ *selenium.WebDriver) error {
 	// TODO: Scroll to an element
 	return nil
 }
