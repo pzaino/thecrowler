@@ -74,6 +74,19 @@ func executeActionRules(rules []rules.ActionRule, wd *selenium.WebDriver) {
 		err := executeActionRule(&r, wd)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
+			if !r.ErrorHandling.Ignore {
+				if r.ErrorHandling.RetryCount > 0 {
+					for i := 0; i < r.ErrorHandling.RetryCount; i++ {
+						if r.ErrorHandling.RetryDelay > 0 {
+							time.Sleep(time.Duration(r.ErrorHandling.RetryDelay) * time.Second)
+						}
+						err = executeActionRule(&r, wd)
+						if err == nil {
+							break
+						}
+					}
+				}
+			}
 		}
 	}
 }
@@ -596,6 +609,19 @@ func executePlannedRules(wd *selenium.WebDriver, ctx *processContext, planned cf
 			err := executeActionRule(rule, wd)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
+				if !rule.ErrorHandling.Ignore {
+					if rule.ErrorHandling.RetryCount > 0 {
+						for i := 0; i < rule.ErrorHandling.RetryCount; i++ {
+							if rule.ErrorHandling.RetryDelay > 0 {
+								time.Sleep(time.Duration(rule.ErrorHandling.RetryDelay) * time.Second)
+							}
+							err = executeActionRule(rule, wd)
+							if err == nil {
+								break
+							}
+						}
+					}
+				}
 			}
 		}
 	}

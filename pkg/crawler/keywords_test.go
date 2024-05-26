@@ -33,7 +33,6 @@ func TestIsKeyword(t *testing.T) {
 		args args
 		want bool
 	}{
-		// TODO: Add more test cases.
 		{"test1", args{"a"}, false},
 		{"test2", args{"about"}, false},
 		{"test3", args{"above"}, false},

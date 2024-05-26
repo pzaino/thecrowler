@@ -210,8 +210,9 @@ type LoggingConfiguration struct {
 
 // ErrorHandling represents the error handling configuration for the action rule
 type ErrorHandling struct {
-	RetryCount int `yaml:"retry_count"`
-	RetryDelay int `yaml:"retry_delay"`
+	Ignore     bool `yaml:"ignore"`
+	RetryCount int  `yaml:"retry_count"`
+	RetryDelay int  `yaml:"retry_delay"`
 }
 
 // RuleParser defines an interface for parsing rules.

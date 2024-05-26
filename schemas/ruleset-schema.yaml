@@ -271,6 +271,9 @@ items:
                 error_handling:
                   type: object
                   properties:
+                    ignore:
+                      type: boolean
+                      description: Flag to ignore errors and continue with the next action.
                     retry_count:
                       type: integer
                       description: The number of times to retry the action on failure.
