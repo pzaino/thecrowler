@@ -170,7 +170,7 @@
                                                 },
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type."
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
                                                 },
                                                 "selector": {
                                                     "type": "string",
@@ -331,7 +331,7 @@
                                                 },
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type."
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
                                                 },
                                                 "selector": {
                                                     "type": "string",
