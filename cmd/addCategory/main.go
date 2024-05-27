@@ -12,9 +12,9 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	"github.com/qri-io/jsonschema"
 
-	"github.com/go-yaml/yaml"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"gopkg.in/yaml.v2"
 )
 
 var (
