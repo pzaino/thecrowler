@@ -97,7 +97,7 @@ func normalizeURL(url string) string {
 func main() {
 	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
 	url := flag.String("url", "", "URL of the website to add")
-	bulk := flag.String("bulk", "", "Add multiple websites from a file")
+	bulk := flag.String("bulk", "", "Add multiple websites from a CSV file")
 	catID := flag.Uint64("catID", 0, "Category ID")
 	usrID := flag.Uint64("usrID", 0, "User ID")
 	restricted := flag.Uint("restricted", 1, "Restricted crawling")
