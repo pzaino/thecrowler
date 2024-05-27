@@ -64,12 +64,18 @@ type TxHandler struct {
 type Source struct {
 	// ID is the unique identifier of the source.
 	ID uint64
+	// Category (optional) is the category of the source.
+	CategoryID uint64
+	// Name (optional) is the name of the source.
+	Name string
+	// UsrID (optional) is the user identifier of the source.
+	UsrID uint64
 	// URL is the URL of the source.
 	URL string
 	// Restricted indicates whether the crawling has to be restricted to the source domain or not.
-	Restricted int
+	Restricted uint
 	// Flags represents additional flags associated with the source.
-	Flags int
+	Flags uint
 	// Config is a JSON object containing the configuration for the source.
 	Config *json.RawMessage // we use json.RawMessage to avoid unmarshalling the JSON object
 

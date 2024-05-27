@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usr_id BIGINT NOT NULL,                     -- The user that created the information seed
     information_seed VARCHAR(256) NOT NULL,     -- The size of an information seed is limited to 256
                                                 -- characters due to the fact that it's used to dork
                                                 -- search engines for sources that may be related to
@@ -29,22 +30,26 @@ CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP,
-    url TEXT NOT NULL UNIQUE,                   -- Using TEXT for long URLs
-    status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default
-    engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source
-    last_crawled_at TIMESTAMP,
-    last_error TEXT,                            -- Using TEXT for potentially long error messages
-    last_error_at TIMESTAMP,
+    usr_id BIGINT NOT NULL,                     -- The user that created the source.
+    category_id BIGINT,                         -- The category of the source.
+    url TEXT NOT NULL UNIQUE,                   -- The Source URL.
+    status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
+    engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
+    last_crawled_at TIMESTAMP,                  -- The last time the source was crawled.
+    last_error TEXT,                            -- Last error message that occurred during crawling.
+    last_error_at TIMESTAMP,                    -- The date/time of the last error occurred.
     restricted INTEGER DEFAULT 2 NOT NULL,      -- 0 = fully restricted (just this URL)
                                                 -- 1 = l3 domain restricted (everything within this
                                                 --     URL l3 domain)
                                                 -- 2 = l2 domain restricted
                                                 -- 3 = l1 domain restricted
                                                 -- 4 = no restrictions
-    disabled BOOLEAN DEFAULT FALSE,
-    flags INTEGER DEFAULT 0 NOT NULL,
+    disabled BOOLEAN DEFAULT FALSE,             -- If the automatic re-crawling/re-scanning of the
+                                                -- source is disabled.
+    flags INTEGER DEFAULT 0 NOT NULL,           -- Bitwise flags for the source (used for various
+                                                -- purposes, included but not limited to the Rules).
     config JSONB                                -- Stores JSON document with all details about
-                                                -- the source configuration for the crawler
+                                                -- the source configuration for the crawler.
 );
 
 -- Owners table stores the information about the owners of the sources
@@ -52,6 +57,7 @@ CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usr_id BIGINT NOT NULL,                     -- The user that created the owner
     details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
                                                 -- and uniqueness.
     details JSONB NOT NULL                      -- Stores JSON document with all details about
@@ -73,6 +79,8 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
 -- Category table stores the categories (and subcategories) for the sources
 CREATE TABLE IF NOT EXISTS Category (
     category_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     name VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
     parent_id BIGINT,
