@@ -1,0 +1,54 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CategoriesSchema",
+    "type": "object",
+    "description": "Schema to define categories and sub-categories for bulk uploading into The CROWler",
+    "properties": {
+        "categories": {
+            "type": "array",
+            "description": "List of categories",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the category"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of the category"
+                    },
+                    "subcategories": {
+                        "type": "array",
+                        "description": "List of sub-categories within this category",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Name of the sub-category"
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Description of the sub-category"
+                                }
+                            },
+                            "required": [
+                                "name"
+                            ],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": [
+                    "name"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "categories"
+    ],
+    "additionalProperties": false
+}
