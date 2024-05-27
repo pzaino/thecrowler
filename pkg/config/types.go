@@ -66,6 +66,7 @@ type Crawler struct {
 	CollectKeywords       bool   `yaml:"collect_keywords"`        // Whether to collect the keywords or not
 	CollectMetaTags       bool   `yaml:"collect_metatags"`        // Whether to collect the metatags or not
 	ReportInterval        int    `yaml:"report_time"`             // Time to wait before sending the report (in minutes)
+	CheckForRobots        bool   `yaml:"check_for_robots"`        // Whether to check for robots.txt or not
 }
 
 // DNSConfig represents the DNS information gathering configuration

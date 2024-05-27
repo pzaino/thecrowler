@@ -18,12 +18,18 @@ package main
 
 import (
 	"database/sql"
+	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	_ "github.com/lib/pq"
 )
@@ -32,20 +38,48 @@ var (
 	config cfg.Config
 )
 
-func insertWebsite(db *sql.DB, url string) error {
+func insertWebsite(db *sql.DB, source *cdb.Source) error {
 	// SQL statement to insert a new website
-	stmt := `INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')`
+	stmt := `INSERT INTO Sources (
+				url,
+				last_crawled_at,
+				status,
+				category_id,
+				usr_id,
+				restricted,
+				flags,
+				config
+			) VALUES (
+				$1,
+				NULL,
+				'pending',
+				$2,
+				$3,
+				$4,
+				$5,
+				$6
+			) RETURNING source_id;
+		`
 
 	// Normalize the URL
-	url = normalizeURL(url)
+	source.URL = normalizeURL(source.URL)
 
-	// Execute the SQL statement
-	_, err := db.Exec(stmt, url)
+	// Execute the SQL statement and get the ID of the inserted website
+	results, err := db.Query(stmt, source.URL, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("Website inserted successfully:", url)
+	// Get the ID of the inserted website
+	var id uint64
+	for results.Next() {
+		err = results.Scan(&id)
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Println("Website inserted successfully! Assigned Source ID: ", id)
 	return nil
 }
 
@@ -63,6 +97,12 @@ func normalizeURL(url string) string {
 func main() {
 	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
 	url := flag.String("url", "", "URL of the website to add")
+	bulk := flag.String("bulk", "", "Add multiple websites from a CSV file")
+	catID := flag.Uint64("catID", 0, "Category ID")
+	usrID := flag.Uint64("usrID", 0, "User ID")
+	restricted := flag.Uint("restricted", 1, "Restricted crawling")
+	flags := flag.Uint("flags", 0, "Flags")
+	sourceConfig := flag.String("srccfg", "", "Source configuration file")
 	flag.Parse()
 
 	// Read the configuration file
@@ -73,8 +113,8 @@ func main() {
 	}
 
 	// Check if the URL is provided
-	if *url == "" {
-		log.Fatal("Please provide a URL of the website to add.")
+	if *url == "" && *bulk == "" {
+		log.Fatal("Please provide a URL of the website to add or a file name for a bulk add.")
 	}
 
 	// Database connection setup (replace with your actual database configuration)
@@ -87,8 +127,143 @@ func main() {
 	}
 	defer db.Close()
 
-	// Insert the website
-	if err := insertWebsite(db, *url); err != nil {
-		log.Fatalf("Error inserting website: %v", err)
+	// Check if the URL is provided
+	if *url != "" {
+		// Generate the Source
+		source := cdb.Source{
+			URL:        *url,
+			CategoryID: *catID,
+			UsrID:      *usrID,
+			Restricted: *restricted,
+			Flags:      *flags,
+			Status:     0,
+		}
+		// Check if the source configuration file is provided
+		if *sourceConfig != "" {
+			source.Config, err = getSourceConfig(*sourceConfig)
+			if err != nil {
+				log.Fatalf("Error reading source configuration file: %v", err)
+			}
+		}
+
+		// Insert the website
+		if err := insertWebsite(db, &source); err != nil {
+			log.Fatalf("Error inserting website: %v", err)
+		}
 	}
+
+	// Check if the bulk file is provided
+	if *bulk != "" {
+		// Read the file and insert the websites
+		if err := insertWebsitesFromFile(db, *bulk); err != nil {
+			log.Fatalf("Error inserting websites from file: %v", err)
+		}
+	}
+}
+
+// insertWebsitesFromFile inserts websites from a CSV file into the database.
+// CSV format: URL, Category ID, UsrID, Restricted, Flags, ConfigFileName
+func insertWebsitesFromFile(db *sql.DB, filename string) error {
+	// Read the csv file
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create a new CSV reader
+	r := csv.NewReader(file)
+
+	// Read the CSV records
+	for {
+		// Read the record from the CSV file
+		record, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Create a new SourceRecord
+		var categoryID uint64
+		if len(record) > 1 {
+			categoryID, err = strconv.ParseUint(record[1], 10, 64)
+			if err != nil {
+				return err
+			}
+		}
+
+		var usrID uint64
+		if len(record) > 2 {
+			usrID, err = strconv.ParseUint(record[2], 10, 64)
+			if err != nil {
+				return err
+			}
+		}
+
+		restricted := uint(1)
+		if len(record) > 3 {
+			restricted64, err := strconv.ParseUint(record[3], 10, 32)
+			if err != nil {
+				return err
+			}
+			restricted = uint(restricted64)
+		}
+
+		flags := uint(0)
+		if len(record) > 4 {
+			flags64, err := strconv.ParseUint(record[4], 10, 32)
+			if err != nil {
+				return err
+			}
+			flags = uint(flags64)
+		}
+
+		sourceRecord := cdb.Source{
+			URL:        record[0],
+			CategoryID: categoryID,
+			UsrID:      usrID,
+			Restricted: restricted,
+			Flags:      flags,
+			Status:     0,
+		}
+
+		// Check if the row has a config file name
+		if len(record) > 4 {
+			sourceRecord.Config, err = getSourceConfig(record[5])
+			if err != nil {
+				return err
+			}
+		}
+
+		// Insert the website
+		if err := insertWebsite(db, &sourceRecord); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func getSourceConfig(configFile string) (*json.RawMessage, error) {
+	sourceConfig := cfg.SourceConfig{}
+	sourceConfigRaw := json.RawMessage{}
+	if strings.TrimSpace(configFile) != "" {
+		// Read the config file
+		configFile, err := os.ReadFile(configFile)
+		if err != nil {
+			return &sourceConfigRaw, err
+		}
+
+		// Unmarshal the config file
+		if err := json.Unmarshal(configFile, &sourceConfig); err != nil {
+			return &sourceConfigRaw, err
+		}
+
+		// Cast the config to a JSON.RawMessage
+		sourceConfigRaw = json.RawMessage(configFile)
+
+	}
+	return &sourceConfigRaw, nil
 }

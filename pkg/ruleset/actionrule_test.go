@@ -66,15 +66,40 @@ func TestActionRuleGetValue(t *testing.T) {
 }
 
 func TestActionRuleGetWaitConditions(t *testing.T) {
-	// TODO: Assuming WaitCondition is correctly implemented
+	ar := ActionRule{WaitConditions: []WaitCondition{
+		{
+			ConditionType: "wait",
+			Selector:      Selector{},
+			CustomJS:      "",
+			Value:         "2",
+		},
+	}}
+	expected := []WaitCondition{{ConditionType: "wait", Selector: Selector{}, CustomJS: "", Value: "2"}}
+	if got := ar.GetWaitConditions(); !reflect.DeepEqual(got, expected) {
+		t.Errorf("GetWaitConditions() = %v, want %v", got, expected)
+	}
 }
 
 func TestActionRuleGetConditions(t *testing.T) {
-	// TODO: Assuming Conditions is a map that works correctly
+	ar := ActionRule{Conditions: map[string]interface{}{
+		"test": "test",
+	}}
+	expected := map[string]interface{}{
+		"test": "test",
+	}
+	if got := ar.GetConditions(); !reflect.DeepEqual(got, expected) {
+		t.Errorf("GetConditions() = %v, want %v", got, expected)
+	}
 }
 
 func TestActionRuleGetErrorHandling(t *testing.T) {
-	// TODO: Assuming ErrorHandling is correctly implemented
+	ar := ActionRule{ErrorHandling: ErrorHandling{
+		Ignore: true,
+	}}
+	expected := ErrorHandling{Ignore: true}
+	if got := ar.GetErrorHandling(); !reflect.DeepEqual(got, expected) {
+		t.Errorf("GetErrorHandling() = %v, want %v", got, expected)
+	}
 }
 
 func TestSelectorGetSelectorType(t *testing.T) {

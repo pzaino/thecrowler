@@ -1510,7 +1510,7 @@ func normalizeURL(url string, flags uint) string {
 
 // isExternalLink checks if the link is external (aka outside the Source domain)
 // isExternalLink checks if linkURL is external to sourceURL based on domainLevel.
-func isExternalLink(sourceURL, linkURL string, domainLevel int) bool {
+func isExternalLink(sourceURL, linkURL string, domainLevel uint) bool {
 	// No restrictions
 	if domainLevel == 4 {
 		return false
@@ -1548,7 +1548,7 @@ func isExternalLink(sourceURL, linkURL string, domainLevel int) bool {
 }
 
 // getDomainParts extracts domain parts based on the domainLevel.
-func getDomainParts(parts []string, level int) string {
+func getDomainParts(parts []string, level uint) string {
 	partCount := len(parts)
 	switch {
 	case level == 1 && partCount >= 3: // l3 domain restricted

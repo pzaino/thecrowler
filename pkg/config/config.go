@@ -177,6 +177,7 @@ func NewConfig() *Config {
 			ReportInterval:        1,
 			ScreenshotMaxHeight:   0,
 			ScreenshotSectionWait: 2,
+			CheckForRobots:        false,
 		},
 		API: API{
 			Host:              "localhost",
@@ -490,32 +491,102 @@ func (c *Config) validateRemoteSSLMode() {
 }
 
 func (c *Config) validateCrawler() {
+	c.setDefaultWorkers()
+	c.setDefaultInterval()
+	c.setDefaultTimeout()
+	c.setDefaultMaintenance()
+	c.setDefaultMaxDepth()
+	c.setDefaultDelay()
+	c.setDefaultBrowsingMode()
+	c.setDefaultScreenshotSectionWait()
+	c.setDefaultMaxSources()
+	c.setDefaultReportInterval()
+	c.setDefaultScreenshotMaxHeight()
+	c.setDefaultMaxRetries()
+	c.setDefaultMaxRedirects()
+}
+
+func (c *Config) setDefaultWorkers() {
 	if c.Crawler.Workers < 1 {
 		c.Crawler.Workers = 1
 	}
+}
+
+func (c *Config) setDefaultInterval() {
 	if strings.TrimSpace(c.Crawler.Interval) == "" {
 		c.Crawler.Interval = "2"
 	} else {
 		c.Crawler.Interval = strings.TrimSpace(c.Crawler.Interval)
 	}
+}
+
+func (c *Config) setDefaultTimeout() {
 	if c.Crawler.Timeout < 1 {
 		c.Crawler.Timeout = 10
 	}
+}
+
+func (c *Config) setDefaultMaintenance() {
 	if c.Crawler.Maintenance < 1 {
 		c.Crawler.Maintenance = 60
 	}
+}
+
+func (c *Config) setDefaultMaxDepth() {
 	if c.Crawler.MaxDepth < 0 {
 		c.Crawler.MaxDepth = 0
 	}
+}
+
+func (c *Config) setDefaultDelay() {
 	if strings.TrimSpace(c.Crawler.Delay) == "" {
 		c.Crawler.Delay = "random(1, 5)"
 	} else {
 		c.Crawler.Delay = strings.TrimSpace(c.Crawler.Delay)
 	}
+}
+
+func (c *Config) setDefaultBrowsingMode() {
 	if strings.TrimSpace(c.Crawler.BrowsingMode) == "" {
 		c.Crawler.BrowsingMode = "recursive"
 	} else {
 		c.Crawler.BrowsingMode = strings.TrimSpace(c.Crawler.BrowsingMode)
+	}
+}
+
+func (c *Config) setDefaultScreenshotSectionWait() {
+	if c.Crawler.ScreenshotSectionWait < 0 {
+		c.Crawler.ScreenshotSectionWait = 0
+	}
+}
+
+func (c *Config) setDefaultMaxSources() {
+	if c.Crawler.MaxSources < 1 {
+		c.Crawler.MaxSources = 1
+	}
+}
+
+func (c *Config) setDefaultReportInterval() {
+	if c.Crawler.ReportInterval < 1 {
+		c.Crawler.ReportInterval = 1
+	}
+}
+
+func (c *Config) setDefaultScreenshotMaxHeight() {
+	if c.Crawler.ScreenshotMaxHeight < 0 {
+		c.Crawler.ScreenshotMaxHeight = 0
+	}
+}
+
+func (c *Config) setDefaultMaxRetries() {
+	if c.Crawler.MaxRetries < 0 {
+		c.Crawler.MaxRetries = 0
+	}
+}
+
+func (c *Config) setDefaultMaxRedirects() {
+	if c.Crawler.MaxRedirects < 0 {
+		c.Crawler.MaxRedirects = 0
 	}
 }
 

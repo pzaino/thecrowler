@@ -20,7 +20,11 @@ require (
 	github.com/stretchr/testify v1.9.0
 )
 
-require golang.org/x/crypto v0.23.0
+require (
+	github.com/go-yaml/yaml v2.1.0+incompatible
+	github.com/jmoiron/sqlx v1.4.0
+	golang.org/x/crypto v0.23.0
+)
 
 require (
 	github.com/Ullaakut/nmap v2.0.2+incompatible

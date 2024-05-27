@@ -198,12 +198,28 @@ func ppStepRemove(data *[]byte, step *rs.PostProcessingStep) {
 	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
 }
 
+// ppStepValidate applies the "validate" post-processing step to the provided data.
+// The step should contain a list of keys that must be present in the data.
+// If any of the keys is missing, an error message is logged.
 func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
-	// TODO: Implement the validation logic here
+	// check if the data is a valid JSON document
+	if !json.Valid(*data) {
+		cmn.DebugMsg(cmn.DbgLvlError, "Data is not valid JSON")
+	}
+	// Get keys from the step details and check if they are present in the data
+	for _, key := range step.Details["keys"].([]string) {
+		if !strings.Contains(string(*data), key) {
+			cmn.DebugMsg(cmn.DbgLvlError, "Key %v is missing from the data", key)
+		}
+	}
 }
 
+// ppStepClean applies the "clean" post-processing step to the provided data.
+// The step should contain a "target" key that specifies the string to be removed from the data.
 func ppStepClean(data *[]byte, step *rs.PostProcessingStep) {
-	// TODO: Implement the cleaning logic here
+	// Clean up Data from unwanted characters
+	// Remove all instances of step.Details["target"] from data
+	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
 }
 
 // ppStepTransform applies the "transform" post-processing step to the provided data.
