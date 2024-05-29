@@ -59,7 +59,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	defer cancel()
 
 	// Build the Nmap options
-	options, err := buildNmapOptions(cfg, ip, &ctx)
+	options, err := buildNmapOptions(cfg, ip, &ctx, &ni.Config.HostPlatform)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to build nmap options: %w", err)
 	}
@@ -82,7 +82,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	}
-	//scanner = nil // free the scanner
+	scanner = nil // free the scanner
 
 	// Parse the scan result
 	hosts := parseScanResults(result)
@@ -91,7 +91,7 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 }
 
 func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
-	ctx *context.Context) ([]func(*nmap.Scanner), error) {
+	ctx *context.Context, platform *cfg.PlatformInfo) ([]func(*nmap.Scanner), error) {
 	var options []func(*nmap.Scanner)
 
 	// Set the IP address
@@ -105,13 +105,13 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 	options = appendScanTypes(options, cfg)
 
 	// DNS Options
-	options = appendDNSOptions(options, cfg)
+	options = appendDNSOptions(options, cfg, platform)
 
 	// Prepare scripts to use for the scan
 	options = appendScripts(options, cfg)
 
 	// Service detection
-	options = appendServiceDetection(options, cfg)
+	options = appendServiceDetection(options, cfg, platform)
 
 	// OS detection
 	options = appendOSDetection(options, cfg)
@@ -120,7 +120,7 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 	options = appendTimingOptions(options, cfg)
 
 	// Low-Nosing options
-	options = appendLowNosingOptions(options, cfg)
+	options = appendLowNosingOptions(options, cfg, platform)
 
 	// Info gathering options
 	options = append(options, nmap.WithVerbosity(2))
@@ -130,7 +130,7 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 }
 
 func appendScanTypes(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
-	if cfg.UdpScan {
+	if cfg.UDPScan {
 		options = append(options, nmap.WithUDPScan())
 	}
 	if cfg.PingScan {
@@ -148,16 +148,23 @@ func appendScanTypes(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig)
 	return options
 }
 
-func appendDNSOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
-	if len(cfg.DNSServers) > 0 {
-		dnsList := ""
-		for i, dnsServer := range cfg.DNSServers {
-			cfg.DNSServers[i] = strings.TrimSpace(dnsServer)
-			if i < len(cfg.DNSServers)-1 {
-				cfg.DNSServers[i] += ","
+func appendDNSOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig,
+	platform *cfg.PlatformInfo) []func(*nmap.Scanner) {
+	if platform.OSName != "darwin" {
+		if len(cfg.DNSServers) > 0 {
+			dnsList := ""
+			for i, dnsServer := range cfg.DNSServers {
+				if strings.TrimSpace(dnsServer) != "" {
+					dnsList += strings.TrimSpace(dnsServer)
+					if i < len(cfg.DNSServers)-1 {
+						dnsList += ","
+					}
+				}
+			}
+			if dnsList != "" {
+				options = append(options, nmap.WithCustomArguments("--dns-servers "+dnsList))
 			}
 		}
-		options = append(options, nmap.WithCustomArguments("--dns-servers "+dnsList))
 	}
 	if cfg.NoDNSResolution {
 		options = append(options, nmap.WithCustomArguments("-n"))
@@ -174,15 +181,18 @@ func appendScripts(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) [
 	return options
 }
 
-func appendServiceDetection(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+func appendServiceDetection(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig,
+	platform *cfg.PlatformInfo) []func(*nmap.Scanner) {
 	if cfg.ServiceDetection {
 		options = append(options, nmap.WithCustomArguments("-Pn"))
 		options = append(options, nmap.WithPorts("1-"+strconv.Itoa(cfg.MaxPortNumber)))
 		options = append(options, nmap.WithServiceInfo())
-		if cfg.ServiceDB == "" {
-			options = append(options, nmap.WithCustomArguments("--servicedb nmap-services"))
-		} else {
-			options = append(options, nmap.WithCustomArguments("--servicedb "+strings.TrimSpace(cfg.ServiceDB)))
+		if platform.OSName != "darwin" {
+			if cfg.ServiceDB == "" {
+				options = append(options, nmap.WithCustomArguments("--servicedb nmap-services"))
+			} else {
+				options = append(options, nmap.WithCustomArguments("--servicedb "+strings.TrimSpace(cfg.ServiceDB)))
+			}
 		}
 	}
 	return options
@@ -219,18 +229,28 @@ func appendTimingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutCon
 	return options
 }
 
-func appendLowNosingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+func appendLowNosingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig,
+	platform *cfg.PlatformInfo) []func(*nmap.Scanner) {
 	if cfg.MaxRetries > 0 {
 		maxRetries := cfg.MaxRetries
 		options = append(options, nmap.WithMaxRetries(int(maxRetries)))
 	}
-	if cfg.IPFragment {
-		options = append(options, nmap.WithCustomArguments("-f"))
+	usingSS := false
+	if platform.OSName != "darwin" {
+		if cfg.IPFragment {
+			options = append(options, nmap.WithCustomArguments("-f"))
+			if cfg.UDPScan {
+				options = append(options, nmap.WithCustomArguments("-sS"))
+				usingSS = true
+			}
+		}
 	}
 	options = append(options, nmap.WithCustomArguments("-PO6,17"))
 	options = append(options, nmap.WithCustomArguments("--disable-arp-ping"))
-	options = append(options, nmap.WithCustomArguments("--defeat-rst-ratelimit"))
-	options = append(options, nmap.WithCustomArguments("--defeat-icmp-ratelimit"))
+	if usingSS {
+		options = append(options, nmap.WithCustomArguments("--defeat-rst-ratelimit"))
+		options = append(options, nmap.WithCustomArguments("--defeat-icmp-ratelimit"))
+	}
 	return options
 }
 

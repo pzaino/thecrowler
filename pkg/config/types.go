@@ -117,7 +117,7 @@ type ServiceScoutConfig struct {
 	PingScan         bool     `yaml:"ping_scan"`             // -sn (No port scan)
 	ConnectScan      bool     `yaml:"connect_scan"`          // -sT (TCP connect scan)
 	SynScan          bool     `yaml:"syn_scan"`              // -sS (TCP SYN scan)
-	UdpScan          bool     `yaml:"udp_scan"`              // -sU (UDP scan)
+	UDPScan          bool     `yaml:"udp_scan"`              // -sU (UDP scan)
 	NoDNSResolution  bool     `yaml:"no_dns_resolution"`     // -n (No DNS resolution)
 	ServiceDetection bool     `yaml:"service_detection"`     // -sV (Service version detection)
 	ServiceDB        string   `yaml:"service_db"`            // --service-db (Service detection database)
@@ -167,6 +167,13 @@ type NetworkInfo struct {
 	NetLookup    NetLookupConfig    `yaml:"netlookup"`
 	ServiceScout ServiceScoutConfig `yaml:"service_scout"`
 	Geolocation  GeoLookupConfig    `yaml:"geolocation"`
+	HostPlatform PlatformInfo       `yaml:"host_platform"`
+}
+
+type PlatformInfo struct {
+	OSName    string `yaml:"os_name"`
+	OSVersion string `yaml:"os_version"`
+	OSArch    string `yaml:"os_arch"`
 }
 
 // API represents the API configuration
