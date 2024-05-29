@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/abadojack/whatlanggo"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -805,6 +806,22 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 // It returns the index ID of the inserted or updated entry and an error, if any.
 func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (uint64, error) {
 	var indexID uint64 // The index ID of the page (supports very large numbers)
+
+	// Check if detectedLang and detectedType are not empty and are valid UTF8 strings
+	if !utf8.ValidString((*pageInfo).DetectedLang) {
+		(*pageInfo).DetectedLang = ""
+	}
+	if !utf8.ValidString((*pageInfo).DetectedType) {
+		(*pageInfo).DetectedType = ""
+	}
+
+	// Check if title and summary are not empty and are valid UTF8 strings
+	if !utf8.ValidString((*pageInfo).Title) {
+		(*pageInfo).Title = "No Title"
+	}
+	if !utf8.ValidString((*pageInfo).Summary) {
+		(*pageInfo).Summary = ""
+	}
 
 	// Step 1: Insert into SearchIndex
 	err := tx.QueryRow(`
