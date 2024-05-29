@@ -24,6 +24,37 @@ RUN apk add --no-cache openjdk11-jre-headless
 RUN apk add --no-cache bind-tools
 RUN apk add --no-cache nmap nmap-scripts
 
+# Create a special user for running ServiceScout services
+RUN addgroup -S scannergroup && \
+    adduser -S scanner -G scannergroup
+
+# Set up sudoers to allow the scanner user to run nmap with no password
+RUN echo "scanner ALL=(ALL) NOPASSWD:/usr/bin/nmap" >> /etc/sudoers
+
+# Create chroot environment for scanner user
+RUN mkdir -p /chroot/home/scanner
+
+# Set up chroot environment with necessary files
+RUN mkdir -p /chroot/{bin,lib,lib64,usr/bin,usr/lib,etc,dev,proc,results} && \
+    cp -v /bin/busybox /chroot/bin/ && \
+    ln -s /bin/busybox /chroot/bin/sh && \
+    ln -s /bin/busybox /chroot/bin/sudo && \
+    cp -v /usr/bin/nmap /chroot/usr/bin/ && \
+    cp -v /etc/sudoers /chroot/etc/ && \
+    cp -v /etc/passwd /chroot/etc/ && \
+    cp -v /etc/group /chroot/etc/ && \
+    mknod -m 666 /chroot/dev/null c 1 3 && \
+    mknod -m 666 /chroot/dev/zero c 1 5 && \
+    mount -t proc proc /chroot/proc
+
+# Set up permissions for scanner user
+RUN chown -R scanner:scannergroup /chroot/home/scanner
+
+# Ensure the results directory is accessible
+RUN mkdir -p /results && \
+    chmod 777 /results && \
+    ln -s /results /chroot/results
+
 # Create a non-root user and switch to it
 RUN adduser -D crowler
 
