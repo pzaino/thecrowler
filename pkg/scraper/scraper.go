@@ -219,7 +219,52 @@ func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
 func ppStepClean(data *[]byte, step *rs.PostProcessingStep) {
 	// Clean up Data from unwanted characters
 	// Remove all instances of step.Details["target"] from data
-	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
+	//*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
+	// Check for which sub-parameters have been set for cleaning, for example:
+
+	// Remove HTML tags
+	if step.Details["remove_html"].(bool) {
+		*data = []byte(stripHTML(string(*data)))
+	}
+	// Remove whitespace characters
+	if step.Details["remove_whitespace"].(bool) {
+		*data = []byte(strings.ReplaceAll(string(*data), " ", ""))
+	}
+	// Remove extra whitespace
+	if step.Details["remove_extra_whitespace"].(bool) {
+		*data = []byte(strings.Join(strings.Fields(string(*data)), " "))
+	}
+	// Remove newline characters
+	if step.Details["remove_newlines"].(bool) {
+		*data = []byte(strings.ReplaceAll(string(*data), "\n", ""))
+	}
+	// Remove special characters
+	if step.Details["remove_special_chars"].(bool) {
+		*data = []byte(stripSpecialChars(string(*data)))
+	}
+	// Remove numbers
+	if step.Details["remove_numbers"].(bool) {
+		*data = []byte(stripNumbers(string(*data)))
+	}
+	// decode_html_entities
+	if step.Details["decode_html_entities"].(bool) {
+		*data = []byte(html.UnescapeString(string(*data)))
+	}
+}
+
+func stripHTML(data string) string {
+	re := regexp.MustCompile(`<[^>]*>`)
+	return re.ReplaceAllString(data, "")
+}
+
+func stripSpecialChars(data string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9\s]`)
+	return re.ReplaceAllString(data, "")
+}
+
+func stripNumbers(data string) string {
+	re := regexp.MustCompile(`[0-9]`)
+	return re.ReplaceAllString(data, "")
 }
 
 // ppStepTransform applies the "transform" post-processing step to the provided data.
