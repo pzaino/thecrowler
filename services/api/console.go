@@ -37,14 +37,15 @@ func performAddSource(query string, qType int) (ConsoleResponse, error) {
 	var sqlParams addSourceRequest
 	if qType == getQuery {
 		sqlParams.URL = normalizeURL(query)
-		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
+		//sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
+		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, category_id, usr_id, status, restricted, disabled, flags, config) VALUES ($1, NULL, 0, 0, 'pending', 2, false, 0, '{}')"
 	} else {
 		// extract the parameters from the query
 		extractAddSourceParams(query, &sqlParams)
 		// Normalize the URL
 		sqlParams.URL = normalizeURL(sqlParams.URL)
 		// Prepare the SQL query
-		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config) VALUES ($1, NULL, $2, $3, $4, $5, $6)"
+		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)"
 	}
 
 	if sqlParams.URL == "" {
@@ -54,7 +55,7 @@ func performAddSource(query string, qType int) (ConsoleResponse, error) {
 	// Perform the addSource operation
 	results, err := addSource(sqlQuery, sqlParams)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error adding the source: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "adding the source: %v", err)
 		return results, err
 	}
 
@@ -68,7 +69,7 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 	// Unmarshal query into params
 	err := json.Unmarshal([]byte(query), &params)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling the query: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the query: %v", err)
 	}
 
 	// Check for missing parameters
@@ -85,7 +86,7 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 		// First, marshal the params.Config struct to JSON
 		configJSON, err := json.Marshal(params.Config)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling the Config field: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "marshalling the Config field: %v", err)
 		}
 		var jsonRaw map[string]interface{}
 		if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
@@ -95,10 +96,10 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 		// Re-marshal to ensure the JSON is in a standardized format (optional)
 		configJSONChecked, err := json.Marshal(jsonRaw)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error re-marshalling the Config field: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "re-marshalling the Config field: %v", err)
 		}
 		if err := json.Unmarshal(configJSONChecked, &params.Config); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling the Config field: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field: %v", err)
 		}
 	}
 
@@ -127,7 +128,7 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error connecting to the database: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "connecting to the database: %v", err)
 		return results, err
 	}
 	defer db.Close()
@@ -139,7 +140,7 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 	}
 
 	// Execute the SQL statement
-	_, err = db.Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON))
+	_, err = db.Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
 	if err != nil {
 		return results, err
 	}

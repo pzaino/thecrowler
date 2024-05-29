@@ -446,7 +446,7 @@ func ProcessAuthFile() {
 		fmt.Println("Downloading CSV file...")
 		err := downloadFile("https://ccadb.my.salesforce-sites.com/ccadb/AllCertificateRecordsCSVFormat", filename)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error downloading the CSV file: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "downloading the CSV file: %v", err)
 			return
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "CCADB All Certificate Records CSV download complete!")
@@ -455,7 +455,7 @@ func ProcessAuthFile() {
 	// Open the CSV file
 	file, err := os.Open(filename)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error opening the file: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "opening the file: %v", err)
 		return
 	}
 	defer file.Close()
@@ -466,7 +466,7 @@ func ProcessAuthFile() {
 	// Read the header row to get the column names
 	header, err := reader.Read()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error reading header row: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "reading header row: %v", err)
 		return
 	}
 
@@ -483,7 +483,7 @@ func ProcessAuthFile() {
 			break // End of file
 		}
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error reading record: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "reading record: %v", err)
 			return
 		}
 

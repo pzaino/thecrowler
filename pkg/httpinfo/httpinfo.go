@@ -79,7 +79,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) 
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "Collecting SSL/TLS information for URL: %s", config.URL)
 	sslInfo, err := getSSLInfo(config.URL)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error retrieving SSL information: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "retrieving SSL information: %v", err)
 	}
 
 	// Create a new HTTP client
@@ -204,7 +204,9 @@ func handleRedirects(config Config, re *ruleset.RuleEngine, resp *http.Response)
 	return ExtractHTTPInfo(newConfig, re, "")
 }
 
-func handleRedirect(req *http.Request, via []*http.Request, config Config, transport *http.Transport) error {
+// handleRedirect is a custom redirect handler that updates the ServerName for SNI in case of domain change due to redirect
+func handleRedirect(req *http.Request, _ []*http.Request, config Config, transport *http.Transport) error {
+	// TODO: rename _ to via and use it to check for infinite redirects
 	if !config.FollowRedirects {
 		return http.ErrUseLastResponse
 	}
@@ -414,7 +416,7 @@ func detectTechnologiesByKeyword(responseBody string, signatures *map[string][]r
 	// Create a new document from the HTML string
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "error loading HTML: %s", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML: %s", err)
 		return
 	}
 	// Iterate through all the signatures and check for possible technologies
@@ -579,7 +581,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 	// Create a new document from the HTML string
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(responseBody))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "error loading HTML: %s", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML: %s", err)
 		return
 	}
 	const detectionType = "meta_tags"
@@ -636,7 +638,7 @@ func urlToDomain(inputURL string) string {
 	// Use EffectiveTLDPlusOne to correctly handle domains like "example.co.uk"
 	domain, err := publicsuffix.EffectiveTLDPlusOne(h)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error extracting domain from URL: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "extracting domain from URL: %v", err)
 		return ""
 	}
 	return domain

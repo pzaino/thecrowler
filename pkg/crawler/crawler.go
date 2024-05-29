@@ -57,10 +57,10 @@ import (
 )
 
 const (
-	dbConnCheckErr             = "Error checking database connection: %v\n"
-	dbConnTransErr             = "Error committing transaction: %v"
-	selConnError               = "Error connecting to Selenium: %v"
-	errFailedToRetrieveMetrics = "Failed to retrieve navigation timing metrics: %v"
+	dbConnCheckErr             = "checking database connection: %v\n"
+	dbConnTransErr             = "committing transaction: %v"
+	selConnError               = "connecting to Selenium: %v"
+	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 )
 
 var (
@@ -108,7 +108,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		processCtx.GetNetInfo(args.Src.URL)
 		_, err := processCtx.IndexNetInfo(1)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error indexing network information: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
 			processCtx.Status.PipelineRunning = 3
 		} else {
 			processCtx.Status.PipelineRunning = 2
@@ -137,7 +137,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error crawling initial URL: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
@@ -153,7 +153,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	if err != nil {
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
-		cmn.DebugMsg(cmn.DbgLvlError, "Error getting page source: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
@@ -172,7 +172,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		ctx.GetNetInfo(ctx.source.URL)
 		_, err := ctx.IndexNetInfo(1)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error indexing network information: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
 		}
 	}(processCtx)
 
@@ -183,7 +183,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
 		_, err := ctx.IndexNetInfo(2)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error indexing HTTP information: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", err)
 		}
 	}(processCtx, htmlContent)
 
@@ -308,7 +308,7 @@ func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
-			cmn.DebugMsg(cmn.DbgLvlError, "Error re-connecting to Selenium: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "re-connecting to Selenium: %v", err)
 			(*ctx.sel) <- sel
 			UpdateSourceState(*ctx.db, ctx.source.URL, err)
 			return
@@ -357,7 +357,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	// Index the page
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error indexing page: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "indexing page: %v", err)
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 	}
 	resetPageInfo(&pageInfo) // Reset the PageInfo struct
@@ -392,7 +392,7 @@ func collectNavigationMetrics(wd *selenium.WebDriver, pageInfo *PageInfo) {
 	// Execute JavaScript and retrieve metrics
 	result, err := (*wd).ExecuteScript(navigationTimingScript, nil)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "executing script: %v", err)
 		return
 	}
 
@@ -459,7 +459,7 @@ func retrieveNavigationMetrics(wd *selenium.WebDriver) (map[string]interface{}, 
 	// Execute JavaScript and retrieve metrics
 	result, err := (*wd).ExecuteScript(navigationTimingScript, nil)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "executing script: %v", err)
 		return nil, err
 	}
 
@@ -493,7 +493,7 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 		imageName := generateUniqueName(url, "-desktop")
 		ss, err := TakeScreenshot(&wd, imageName, ctx.config.Crawler.ScreenshotMaxHeight)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error taking screenshot: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "taking screenshot: %v", err)
 		}
 		ss.IndexID = indexID
 		if ss.IndexID == 0 {
@@ -504,7 +504,7 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 		dbx := *ctx.db
 		err = insertScreenshot(dbx, ss)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error updating database with screenshot URL: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "updating database with screenshot URL: %v", err)
 		}
 	}
 }
@@ -606,7 +606,7 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 
 	// Check for errors
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error while retrieving HTTP Information: %v", ctx.source.URL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "while retrieving HTTP Information: %v", ctx.source.URL, err)
 		ctx.Status.HTTPInfoRunning = 3
 		return
 	}
@@ -652,7 +652,7 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 	}
 
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error updating source state for URL %s: %v", sourceURL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "updating source state for URL %s: %v", sourceURL, err)
 	}
 }
 
@@ -680,14 +680,14 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
@@ -695,7 +695,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Insert or update the page in WebObjects
 	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating WebObjects: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating WebObjects: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
@@ -704,7 +704,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	if pageInfo.Config.Crawler.CollectMetaTags {
 		err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting meta tags: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "inserting meta tags: %v", err)
 			rollbackTransaction(tx)
 			return 0, err
 		}
@@ -714,7 +714,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	if pageInfo.Config.Crawler.CollectKeywords {
 		err = insertKeywords(tx, db, indexID, pageInfo)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error inserting keywords: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
 			rollbackTransaction(tx)
 			return 0, err
 		}
@@ -750,14 +750,14 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error starting transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error inserting or updating SearchIndex: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
@@ -768,7 +768,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 		if pageInfo.NetInfo != nil {
 			err = insertNetInfo(tx, indexID, pageInfo.NetInfo)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error inserting NetInfo: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "inserting NetInfo: %v", err)
 				rollbackTransaction(tx)
 				return 0, err
 			}
@@ -781,7 +781,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 		if pageInfo.HTTPInfo != nil {
 			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error inserting HTTPInfo: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "inserting HTTPInfo: %v", err)
 				rollbackTransaction(tx)
 				return 0, err
 			}
@@ -1152,7 +1152,7 @@ func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageIn
 func rollbackTransaction(tx *sql.Tx) {
 	err := tx.Rollback()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error rolling back transaction: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "rolling back transaction: %v", err)
 	}
 }
 
@@ -1272,7 +1272,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 		htmlContent, _ = (*webPage).PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
 			return PageInfo{} // Return an empty struct in case of an error
 		}
 
@@ -1288,7 +1288,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 			scrapedMap := make(map[string]interface{})
 			err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling scraped data: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v", err)
 			}
 
 			// append the map to the list
@@ -1369,7 +1369,7 @@ func detectLang(wd selenium.WebDriver) string {
 	if lang == "" {
 		bodyHTML, err := wd.FindElement(selenium.ByTagName, "body")
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error retrieving text: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "retrieving text: %v", err)
 			return "unknown"
 		}
 		bodyText, _ := bodyHTML.Text()
@@ -1449,7 +1449,7 @@ func IsValidURIProtocol(u string) bool {
 func extractLinks(ctx *processContext, htmlContent string, url string) []LinkItem {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
 	}
 
 	// Find all the links in the document
@@ -1482,7 +1482,7 @@ func generateLinks(ctx *processContext, url string) []LinkItem {
 	for _, rule := range ctx.re.GetAllCrawlingRules() {
 		lnkSet, err := FuzzURL(url, rule)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error generating links: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "generating links: %v", err)
 			continue
 		}
 		for _, lnk := range lnkSet {
@@ -1861,7 +1861,7 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium service started successfully.")
 				break
 			}
-			cmn.DebugMsg(cmn.DbgLvlError, "Error starting Selenium service: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "starting Selenium service: %v", err)
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Check if Selenium is running on host '%s' at port '%d' and if that host is reachable from the system that is running thecrowler engine.", c.Host, c.Port)
 			cmn.DebugMsg(cmn.DbgLvlInfo, "Retrying in 5 seconds...")
 			retries++
@@ -1887,7 +1887,7 @@ func StopSelenium(sel *selenium.Service) error {
 	// Stop the Selenium WebDriver server instance
 	err := sel.Stop()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error stopping Selenium: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium: %v", err)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium stopped successfully.")
 	}
@@ -2047,7 +2047,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 	for _, script := range scripts {
 		_, err := (*wd).ExecuteScript(script, nil)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error setting navigator properties: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
 		}
 	}
 }
@@ -2079,7 +2079,7 @@ func QuitSelenium(wd *selenium.WebDriver) {
 		// Close the WebDriver if the session is still active
 		err = (*wd).Quit()
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error closing WebDriver: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "closing WebDriver: %v", err)
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
 		}

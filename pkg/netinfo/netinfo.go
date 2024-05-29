@@ -210,7 +210,7 @@ func (ni *NetInfo) GetHostsFromIPs() error {
 			if err == nil {
 				results <- hostnames
 			} else {
-				cmn.DebugMsg(cmn.DbgLvlError, "error looking up hostnames for IP %s: %v", ip, err)
+				cmn.DebugMsg(cmn.DbgLvlError, "looking up hostnames for IP %s: %v", ip, err)
 			}
 		}(ip)
 	}

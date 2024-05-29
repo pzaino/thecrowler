@@ -24,8 +24,12 @@ import (
 )
 
 const (
-	testURL    = "https://example.com"
-	testRegion = "us-west-1"
+	testURL            = "https://example.com"
+	testRegion         = "us-west-1"
+	errExpected        = "expected %v, got %v"
+	errExpectedFalse   = "Expected false, got true"
+	errExpectedTrue    = "Expected true, got false"
+	errExpectedTimeout = "Expected Timeout to be %d, got %v"
 )
 
 type MockFileReader struct {
@@ -126,7 +130,7 @@ func TestConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-empty config
 	if isEmpty {
-		t.Errorf("Expected false, got true")
+		t.Errorf(errExpectedFalse)
 	}
 
 	// Create an empty config
@@ -137,7 +141,7 @@ func TestConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for an empty config
 	if !isEmpty {
-		t.Errorf("Expected true, got false")
+		t.Errorf(errExpectedTrue)
 	}
 }
 
@@ -554,7 +558,7 @@ func TestValidateCrawler(t *testing.T) {
 
 	// Check if the Timeout field is set to 10
 	if config.Crawler.Timeout != 10 {
-		t.Errorf("Expected Timeout to be %d, got %v", 10, config.Crawler.Timeout)
+		t.Errorf(errExpectedTimeout, 10, config.Crawler.Timeout)
 	}
 
 	// Check if the Maintenance field is set to 60
@@ -1225,12 +1229,12 @@ func TestDNSConfigValidate(t *testing.T) {
 
 	// Check if the Timeout is set to the default value (10)
 	if config.Timeout != 10 {
-		t.Errorf("Expected Timeout to be 10, got %v", config.Timeout)
+		t.Errorf(errExpectedTimeout, 10, config.Timeout)
 	}
 
 	// Check if the RateLimit is set to the default value ("1")
 	if config.RateLimit != "1" {
-		t.Errorf("Expected RateLimit to be \"1\", got %v", config.RateLimit)
+		t.Errorf("Expected RateLimit to be \"%d\", got %v", 1, config.RateLimit)
 	}
 
 	// Create a DNSConfig instance with Enabled set to false
@@ -1245,7 +1249,7 @@ func TestDNSConfigValidate(t *testing.T) {
 
 	// Check if the Timeout remains unchanged
 	if config.Timeout != 5 {
-		t.Errorf("Expected Timeout to be %d, got %v", 5, config.Timeout)
+		t.Errorf(errExpectedTimeout, 5, config.Timeout)
 	}
 
 	// Check if the RateLimit remains unchanged
@@ -1268,7 +1272,7 @@ func TestValidateWHOISConfig(t *testing.T) {
 
 	// Check if the Timeout is set to the default value (10)
 	if config.Timeout != 10 {
-		t.Errorf("Expected Timeout to be 10, got %v", config.Timeout)
+		t.Errorf("Expected Timeout to be %d, got %v", 10, config.Timeout)
 	}
 
 	// Check if the RateLimit is set to the default value ("1")
@@ -1583,7 +1587,7 @@ func TestServiceScoutConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-empty config
 	if isEmpty {
-		t.Errorf("Expected false, got true")
+		t.Errorf(errExpectedFalse)
 	}
 
 	// Create an empty ServiceScoutConfig
@@ -1594,7 +1598,7 @@ func TestServiceScoutConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for an empty config
 	if !isEmpty {
-		t.Errorf("Expected true, got false")
+		t.Errorf(errExpectedTrue)
 	}
 }
 
@@ -1608,7 +1612,7 @@ func TestExecutionPlanItemIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for an empty item
 	if !isEmpty {
-		t.Errorf("Expected true, got false")
+		t.Errorf(errExpectedTrue)
 	}
 
 	// Create a non-empty ExecutionPlanItem
@@ -1623,7 +1627,7 @@ func TestExecutionPlanItemIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-empty item
 	if isEmpty {
-		t.Errorf("Expected false, got true")
+		t.Errorf(errExpectedFalse)
 	}
 }
 
@@ -1637,7 +1641,7 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for a nil SourceConfig
 	if !isEmpty {
-		t.Errorf("Expected true, got false")
+		t.Errorf(errExpectedTrue)
 	}
 
 	// Create a non-nil SourceConfig with a nil ExecutionPlan
@@ -1650,7 +1654,7 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for a non-nil SourceConfig with a nil ExecutionPlan
 	if !isEmpty {
-		t.Errorf("Expected true, got false")
+		t.Errorf(errExpectedTrue)
 	}
 
 	// Create a non-nil SourceConfig with a non-nil ExecutionPlan
@@ -1663,7 +1667,7 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-nil SourceConfig with a non-nil ExecutionPlan
 	if isEmpty {
-		t.Errorf("Expected false, got true")
+		t.Errorf(errExpectedFalse)
 	}
 }
 

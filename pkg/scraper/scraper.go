@@ -48,7 +48,7 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 	htmlContent, _ := (*webPage).PageSource()
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
 		return extractedData
 	}
 
@@ -56,7 +56,7 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 	node, err := htmlquery.Parse(strings.NewReader(htmlContent))
 	if err != nil {
 		// handle error
-		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "parsing HTML content: %v", err)
 		return extractedData
 	}
 

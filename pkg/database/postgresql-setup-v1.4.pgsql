@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    usr_id BIGINT NOT NULL,                     -- The user that created the information seed
+    category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the information seed.
+    usr_id BIGINT DEFAULT 0 NOT NULL,           -- The user that created the information seed
     information_seed VARCHAR(256) NOT NULL,     -- The size of an information seed is limited to 256
                                                 -- characters due to the fact that it's used to dork
                                                 -- search engines for sources that may be related to
@@ -30,8 +31,8 @@ CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP,
-    usr_id BIGINT NOT NULL,                     -- The user that created the source.
-    category_id BIGINT,                         -- The category of the source.
+    usr_id BIGINT DEFAULT 0 NOT NULL,           -- The user that created the source.
+    category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.

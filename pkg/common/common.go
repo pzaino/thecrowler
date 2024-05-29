@@ -94,6 +94,11 @@ func GetDebugLevel() DbgLevel {
 func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	// For always-log messages (Info, Warning, Error, Fatal)
 	if dbgLvl <= DbgLvlInfo {
+		if dbgLvl == DbgLvlError {
+			// For Error messages, log always
+			log.Printf(loggerPrefix+"Error "+msg, args...)
+			return
+		}
 		log.Printf(loggerPrefix+msg, args...)
 		if dbgLvl == DbgLvlFatal {
 			os.Exit(1)
