@@ -94,13 +94,45 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 	ctx *context.Context) ([]func(*nmap.Scanner), error) {
 	var options []func(*nmap.Scanner)
 
+	// Set the IP address
 	if cmn.CheckIPVersion(ip) == 6 {
 		options = append(options, nmap.WithIPv6Scanning())
 	}
 	options = append(options, nmap.WithTargets(ip))
 	options = append(options, nmap.WithContext(*ctx))
 
-	// Add options based on the config fields
+	// Scan types:
+	options = appendScanTypes(options, cfg)
+
+	// DNS Options
+	options = appendDNSOptions(options, cfg)
+
+	// Prepare scripts to use for the scan
+	options = appendScripts(options, cfg)
+
+	// Service detection
+	options = appendServiceDetection(options, cfg)
+
+	// OS detection
+	options = appendOSDetection(options, cfg)
+
+	// Timing options
+	options = appendTimingOptions(options, cfg)
+
+	// Low-Nosing options
+	options = appendLowNosingOptions(options, cfg)
+
+	// Info gathering options
+	options = append(options, nmap.WithVerbosity(2))
+	options = append(options, nmap.WithDebugging(2))
+
+	return options, nil
+}
+
+func appendScanTypes(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+	if cfg.UdpScan {
+		options = append(options, nmap.WithUDPScan())
+	}
 	if cfg.PingScan {
 		options = append(options, nmap.WithPingScan())
 	}
@@ -113,21 +145,69 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 	if cfg.AggressiveScan {
 		options = append(options, nmap.WithAggressiveScan())
 	}
-	// Prepare scripts to use for the scan
+	return options
+}
+
+func appendDNSOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+	if len(cfg.DNSServers) > 0 {
+		dnsList := ""
+		for i, dnsServer := range cfg.DNSServers {
+			cfg.DNSServers[i] = strings.TrimSpace(dnsServer)
+			if i < len(cfg.DNSServers)-1 {
+				cfg.DNSServers[i] += ","
+			}
+		}
+		options = append(options, nmap.WithCustomArguments("--dns-servers "+dnsList))
+	}
+	if cfg.NoDNSResolution {
+		options = append(options, nmap.WithCustomArguments("-n"))
+	}
+	return options
+}
+
+func appendScripts(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
 	if len(cfg.ScriptScan) == 0 {
 		cfg.ScriptScan = []string{"default"}
-	}
-	if len(cfg.ScriptScan) != 0 {
+	} else {
 		options = append(options, nmap.WithScripts(cfg.ScriptScan...))
 	}
+	return options
+}
+
+func appendServiceDetection(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
 	if cfg.ServiceDetection {
 		options = append(options, nmap.WithCustomArguments("-Pn"))
 		options = append(options, nmap.WithPorts("1-"+strconv.Itoa(cfg.MaxPortNumber)))
 		options = append(options, nmap.WithServiceInfo())
-		//options = append(options, nmap.WithCustomArguments("--version-intensity 5"))
+		if cfg.ServiceDB == "" {
+			options = append(options, nmap.WithCustomArguments("--servicedb nmap-services"))
+		} else {
+			options = append(options, nmap.WithCustomArguments("--servicedb "+strings.TrimSpace(cfg.ServiceDB)))
+		}
 	}
+	return options
+}
+
+func appendOSDetection(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())
+	}
+	return options
+}
+
+func appendTimingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+	if cfg.HostTimeout != "" {
+		hostTimeout := exi.GetFloat(cfg.HostTimeout)
+		options = append(options, nmap.WithHostTimeout(time.Duration(hostTimeout)*time.Second))
+	}
+	if cfg.TimingTemplate != "" {
+		timing, err := strconv.ParseInt(cfg.TimingTemplate, 10, 16)
+		if err != nil {
+			// If the timing template is not a number, just stop here and return the options
+			return options
+		}
+		timingTemplate := nmap.Timing(int16(timing)) // Convert int to nmap.Timing
+		options = append(options, nmap.WithTimingTemplate(timingTemplate))
 	}
 	if cfg.ScanDelay != "" {
 		scDelay := exi.GetFloat(cfg.ScanDelay)
@@ -136,23 +216,22 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 		}
 		options = append(options, nmap.WithScanDelay(time.Duration(scDelay)*time.Millisecond))
 	}
-	if cfg.TimingTemplate != "" {
-		// transform cfg.Timing into int16
-		timing, err := strconv.ParseInt(cfg.TimingTemplate, 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("unable to parse timing template: %w", err)
-		}
-		timingTemplate := nmap.Timing(int16(timing)) // Convert int to nmap.Timing
-		options = append(options, nmap.WithTimingTemplate(timingTemplate))
-	}
-	if cfg.HostTimeout != "" {
-		hostTimeout := exi.GetFloat(cfg.HostTimeout)
-		options = append(options, nmap.WithHostTimeout(time.Duration(hostTimeout)*time.Second))
-	}
-	options = append(options, nmap.WithVerbosity(2))
-	options = append(options, nmap.WithDebugging(2))
+	return options
+}
 
-	return options, nil
+func appendLowNosingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+	if cfg.MaxRetries > 0 {
+		maxRetries := cfg.MaxRetries
+		options = append(options, nmap.WithMaxRetries(int(maxRetries)))
+	}
+	if cfg.IPFragment {
+		options = append(options, nmap.WithCustomArguments("-f"))
+	}
+	options = append(options, nmap.WithCustomArguments("-PO6,17"))
+	options = append(options, nmap.WithCustomArguments("--disable-arp-ping"))
+	options = append(options, nmap.WithCustomArguments("--defeat-rst-ratelimit"))
+	options = append(options, nmap.WithCustomArguments("--defeat-icmp-ratelimit"))
+	return options
 }
 
 func parseScanResults(result *nmap.Run) []HostInfo {

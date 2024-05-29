@@ -272,6 +272,9 @@ func NewConfig() *Config {
 				MaxPortNumber:    9000,
 				ScanDelay:        "", // fmt.Sprint(SSDefaultDelayTime),
 				TimingTemplate:   fmt.Sprint(SSDefaultTimeProfile),
+				IPFragment:       true,
+				UdpScan:          true,
+				DNSServers:       []string{"1.1.1.1"},
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,

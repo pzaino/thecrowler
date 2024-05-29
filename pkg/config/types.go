@@ -120,6 +120,7 @@ type ServiceScoutConfig struct {
 	UdpScan          bool     `yaml:"udp_scan"`              // -sU (UDP scan)
 	NoDNSResolution  bool     `yaml:"no_dns_resolution"`     // -n (No DNS resolution)
 	ServiceDetection bool     `yaml:"service_detection"`     // -sV (Service version detection)
+	ServiceDB        string   `yaml:"service_db"`            // --service-db (Service detection database)
 	OSFingerprinting bool     `yaml:"os_finger_print"`       // -O (Enable OS detection)
 	AggressiveScan   bool     `yaml:"aggressive_scan"`       // -A (Aggressive scan options)
 	ScriptScan       []string `yaml:"script_scan,omitempty"` // --script (Script scan)
@@ -145,14 +146,18 @@ type ServiceScoutConfig struct {
 	*/
 
 	// Advanced options
-	SourcePort     int    `yaml:"source_port"`     // --source-port (Use given port number)
-	Interface      string `yaml:"interface"`       // -e (Use specified interface)
-	SpoofIP        string `yaml:"spoof_ip"`        // -S (Spoof source address)
-	RandomizeHosts bool   `yaml:"randomize_hosts"` // --randomize-hosts (Randomize target scan order)
-	DataLength     int    `yaml:"data_length"`     // --data-length (Append random data to sent packets)
-	ScanDelay      string `yaml:"delay"`           // --scan-delay (Adjust delay between probes)
-	MTUDiscovery   bool   `yaml:"mtu_discovery"`   // --mtu (Discover MTU size)
-	ScanFlags      string `yaml:"scan_flags"`      // --scanflags (Customize TCP scan flags)
+	SourcePort     int      `yaml:"source_port"`     // --source-port (Use given port number)
+	Interface      string   `yaml:"interface"`       // -e (Use specified interface)
+	SpoofIP        string   `yaml:"spoof_ip"`        // -S (Spoof source address)
+	RandomizeHosts bool     `yaml:"randomize_hosts"` // --randomize-hosts (Randomize target scan order)
+	DataLength     int      `yaml:"data_length"`     // --data-length (Append random data to sent packets)
+	ScanDelay      string   `yaml:"delay"`           // --scan-delay (Adjust delay between probes)
+	MTUDiscovery   bool     `yaml:"mtu_discovery"`   // --mtu (Discover MTU size)
+	ScanFlags      string   `yaml:"scan_flags"`      // --scanflags (Customize TCP scan flags)
+	IdleScan       bool     `yaml:"idle_scan"`       // --ip-options (Use idle scan)
+	IPFragment     bool     `yaml:"ip_fragment"`     // --ip-fragment (Fragment IP packets)
+	MaxParallelism int      `yaml:"max_parallelism"` // --min-parallelism (Maximum number of parallelism)
+	DNSServers     []string `yaml:"dns_servers"`     // --dns-servers (Specify custom DNS servers)
 }
 
 // NetworkInfo represents the network information gathering configuration
