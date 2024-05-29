@@ -217,38 +217,52 @@ func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
 // ppStepClean applies the "clean" post-processing step to the provided data.
 // The step should contain a "target" key that specifies the string to be removed from the data.
 func ppStepClean(data *[]byte, step *rs.PostProcessingStep) {
-	// Clean up Data from unwanted characters
-	// Remove all instances of step.Details["target"] from data
-	//*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
-	// Check for which sub-parameters have been set for cleaning, for example:
-
-	// Remove HTML tags
-	if step.Details["remove_html"].(bool) {
-		*data = []byte(stripHTML(string(*data)))
+	// Clean the data based on the provided details
+	if step == nil {
+		return
 	}
-	// Remove whitespace characters
-	if step.Details["remove_whitespace"].(bool) {
-		*data = []byte(strings.ReplaceAll(string(*data), " ", ""))
+	if len(step.Details) == 0 {
+		return
 	}
-	// Remove extra whitespace
-	if step.Details["remove_extra_whitespace"].(bool) {
-		*data = []byte(strings.Join(strings.Fields(string(*data)), " "))
-	}
-	// Remove newline characters
-	if step.Details["remove_newlines"].(bool) {
-		*data = []byte(strings.ReplaceAll(string(*data), "\n", ""))
-	}
-	// Remove special characters
-	if step.Details["remove_special_chars"].(bool) {
-		*data = []byte(stripSpecialChars(string(*data)))
-	}
-	// Remove numbers
-	if step.Details["remove_numbers"].(bool) {
-		*data = []byte(stripNumbers(string(*data)))
-	}
-	// decode_html_entities
-	if step.Details["decode_html_entities"].(bool) {
-		*data = []byte(html.UnescapeString(string(*data)))
+	// Process all the details in the step
+	for key, value := range step.Details {
+		// Cast interface to bool
+		var useValue bool
+		if value != nil {
+			useValue = value.(bool)
+		} else {
+			useValue = false
+		}
+		switch key {
+		case "remove_html":
+			if useValue {
+				*data = []byte(stripHTML(string(*data)))
+			}
+		case "remove_whitespace":
+			if useValue {
+				*data = []byte(strings.ReplaceAll(string(*data), " ", ""))
+			}
+		case "remove_extra_whitespace":
+			if useValue {
+				*data = []byte(strings.Join(strings.Fields(string(*data)), " "))
+			}
+		case "remove_newlines":
+			if useValue {
+				*data = []byte(strings.ReplaceAll(string(*data), "\n", ""))
+			}
+		case "remove_special_chars":
+			if useValue {
+				*data = []byte(stripSpecialChars(string(*data)))
+			}
+		case "remove_numbers":
+			if useValue {
+				*data = []byte(stripNumbers(string(*data)))
+			}
+		case "decode_html_entities":
+			if useValue {
+				*data = []byte(html.UnescapeString(string(*data)))
+			}
+		}
 	}
 }
 
