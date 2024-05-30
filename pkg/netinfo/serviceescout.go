@@ -71,24 +71,32 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	}
 	// print command like Args
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout command: %v", scanner.GetStdout())
-
 	// Run the scan
 	result, warnings, err := scanner.Run()
-	if len(warnings) != 0 {
-		for _, warning := range warnings {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout warning: %v", warning)
-		}
-	}
 	if err != nil {
 		output := "ServiceScout scan failed:\n"
 		output += fmt.Sprintf("Error: %v\n", err)
 		output += fmt.Sprintf("Stdout: %v\n", scanner.GetStdout())
 		output += fmt.Sprintf("Stderr: %v\n", scanner.GetStderr())
+		if len(warnings) != 0 {
+			for _, warning := range warnings {
+				output += fmt.Sprintf("%s\n", warning)
+			}
+		}
+		output += fmt.Sprintf("Result's Errors: %v\n", result.NmapErrors)
+		output += fmt.Sprintf("Result's Hosts: %v\n", result.Args)
 		cmn.DebugMsg(cmn.DbgLvlError, output)
 		cmn.DebugMsg(cmn.DbgLvlError, "Something went wrong, here is what I could capture: %v", result)
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	} else {
 		// log the raw results if we are in debug mode:
+		output := "ServiceScout scan completed:\n"
+		if len(warnings) != 0 {
+			for _, warning := range warnings {
+				output += fmt.Sprintf("%s\n", warning)
+			}
+		}
+		cmn.DebugMsg(cmn.DbgLvlInfo, output)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 	}
 	scanner = nil // free the scanner
