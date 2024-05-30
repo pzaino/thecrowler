@@ -11,8 +11,6 @@ github.com/BurntSushi/xgbutil v0.0.0-20160919175755-f7c97cef3b4e h1:4ZrkT/RzpnRO
 github.com/BurntSushi/xgbutil v0.0.0-20160919175755-f7c97cef3b4e/go.mod h1:uw9h2sd4WWHOPdJ13MQpwK5qYWKYDumDqxWWIknEQ+k=
 github.com/PuerkitoBio/goquery v1.9.2 h1:4/wZksC3KgkQw7SQgkKotmKljk0M6V8TUvA8Wb4yPeE=
 github.com/PuerkitoBio/goquery v1.9.2/go.mod h1:GHPCaP0ODyyxqcNoFGYlAprUFH81NuRPd0GX3Zu2Mvk=
-github.com/Ullaakut/nmap v2.0.2+incompatible h1:edw45QpSQBQ2B/Hqfg86Bt5rrK79tp/fAcqIHyNSdQs=
-github.com/Ullaakut/nmap v2.0.2+incompatible/go.mod h1:fkC066hwfcoKwlI7DS2ARTggSVtBTZYCjVH1TzuTMaQ=
 github.com/Ullaakut/nmap/v3 v3.0.3 h1:bSFREzf0vWOi27vncgP/tiIRUx2OP+N0hGo8O/YHec8=
 github.com/Ullaakut/nmap/v3 v3.0.3/go.mod h1:dd5K68P7LHc5nKrFwQx6EdTt61O9UN5x3zn1R4SLcco=
 github.com/abadojack/whatlanggo v1.0.1 h1:19N6YogDnf71CTHm3Mp2qhYfkRdyvbgwWdd2EPxJRG4=
