@@ -83,8 +83,11 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 				output += fmt.Sprintf("%s\n", warning)
 			}
 		}
-		output += fmt.Sprintf("Result's Errors: %v\n", result.NmapErrors)
-		output += fmt.Sprintf("Result's Hosts: %v\n", result.Args)
+		if result != nil {
+			output += fmt.Sprintf("Result's Hosts: %v\n", result.Hosts)
+			output += fmt.Sprintf("Result's Args: %v\n", result.Args)
+			output += fmt.Sprintf("Result's Errors: %v\n", result.NmapErrors)
+		}
 		cmn.DebugMsg(cmn.DbgLvlError, output)
 		cmn.DebugMsg(cmn.DbgLvlError, "Something went wrong, here is what I could capture: %v", result)
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
