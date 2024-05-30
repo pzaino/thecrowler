@@ -270,7 +270,7 @@ func TestUpdateLoggerConfig(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			debugLevel = test.debugLevel
-			UpdateLoggerConfig()
+			UpdateLoggerConfig("")
 			flags := log.Flags()
 			if flags != test.expected {
 				t.Errorf("Expected log flags %v, but got %v", test.expected, flags)

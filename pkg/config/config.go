@@ -274,7 +274,7 @@ func NewConfig() *Config {
 				TimingTemplate:   fmt.Sprint(SSDefaultTimeProfile),
 				IPFragment:       true,
 				UDPScan:          true,
-				DNSServers:       []string{"1.1.1.1"},
+				DNSServers:       []string{},
 			},
 			Geolocation: GeoLookupConfig{
 				Enabled: false,
