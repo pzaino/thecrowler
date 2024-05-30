@@ -77,10 +77,12 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 			cmn.DebugMsg(cmn.DbgLvlDebug, "ServiceScout warning: %v", warning)
 		}
 	}
-	// log the raw results if we are in debug mode:
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Something went wrong, here is what I could capture: %v", result)
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
+	} else {
+		// log the raw results if we are in debug mode:
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 	}
 	scanner = nil // free the scanner
 
