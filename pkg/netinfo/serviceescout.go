@@ -69,6 +69,8 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to create nmap scanner: %w", err)
 	}
+	// print command like Args
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout command: %v", scanner.GetStdout())
 
 	// Run the scan
 	result, warnings, err := scanner.Run()
@@ -78,6 +80,11 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 		}
 	}
 	if err != nil {
+		output := "ServiceScout scan failed:\n"
+		output += fmt.Sprintf("Error: %v\n", err)
+		output += fmt.Sprintf("Stdout: %v\n", scanner.GetStdout())
+		output += fmt.Sprintf("Stderr: %v\n", scanner.GetStderr())
+		cmn.DebugMsg(cmn.DbgLvlError, output)
 		cmn.DebugMsg(cmn.DbgLvlError, "Something went wrong, here is what I could capture: %v", result)
 		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
 	} else {
