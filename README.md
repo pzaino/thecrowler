@@ -144,7 +144,7 @@ the following Docker container:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
   - Postgres 15 up (for both ARM and x86) are supported at the moment.
-  - And then run the DB Schema setup script on it (make sure you check the 
+  - And then run the DB Schema setup script on it (make sure you check the
     section of the db schema with the user credentials and set those SQL
     variables correctly)
 
@@ -211,7 +211,7 @@ VDI image (Virtual Desktop Image).
 
 ### Installation
 
-The **easiest way** to install the CROWler is to use the docker compose file. 
+The **easiest way** to install the CROWler is to use the docker compose file.
 To do so, follow the steps below.
 
 **Before you start**: There are a bunch of ENV variables you can set to
