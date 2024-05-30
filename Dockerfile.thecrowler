@@ -22,41 +22,54 @@ WORKDIR /app
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 RUN apk add --no-cache openjdk11-jre-headless
 RUN apk add --no-cache bind-tools
-RUN apk add --no-cache nmap nmap-scripts
+RUN apk add --no-cache nmap nmap-scripts shadow sudo libcap
 
-# Create a special user for running ServiceScout services
+# Create a non-root user for running crowler
+RUN adduser -D crowler
+
+# Create a special user for running nmap
 RUN addgroup -S scannergroup && \
     adduser -S scanner -G scannergroup
 
-# Set up sudoers to allow the scanner user to run nmap with no password
-RUN echo "scanner ALL=(ALL) NOPASSWD:/usr/bin/nmap" >> /etc/sudoers
+# Set up sudoers to allow crowler user to run nmap as scanner with no password
+RUN echo "crowler ALL=(ALL) NOPASSWD: /usr/bin/sudo -u scanner /usr/bin/nmap" > /etc/sudoers.d/crowler && \
+    echo "scanner ALL=(ALL) NOPASSWD: /usr/bin/nmap" > /etc/sudoers.d/scanner && \
+    echo "Defaults:crowler !requiretty" >> /etc/sudoers.d/crowler
+
+# Set capabilities on nmap
+RUN setcap cap_net_raw,cap_net_admin=eip /usr/bin/nmap
 
 # Create chroot environment for scanner user
 RUN mkdir -p /chroot/home/scanner
 
-# Set up chroot environment with necessary files
-RUN mkdir -p /chroot/{bin,lib,lib64,usr/bin,usr/lib,etc,dev,proc,results} && \
-    cp -v /bin/busybox /chroot/bin/ && \
-    ln -s /bin/busybox /chroot/bin/sh && \
-    ln -s /bin/busybox /chroot/bin/sudo && \
-    cp -v /usr/bin/nmap /chroot/usr/bin/ && \
-    cp -v /etc/sudoers /chroot/etc/ && \
-    cp -v /etc/passwd /chroot/etc/ && \
-    cp -v /etc/group /chroot/etc/ && \
-    mknod -m 666 /chroot/dev/null c 1 3 && \
-    mknod -m 666 /chroot/dev/zero c 1 5 && \
-    mount -t proc proc /chroot/proc
-
-# Set up permissions for scanner user
-RUN chown -R scanner:scannergroup /chroot/home/scanner
+# Create chroot environment for scanner user
+#RUN mkdir -p /chroot/bin && \
+#    mkdir -p /chroot/lib && \
+#    mkdir -p /chroot/lib64 && \
+#    mkdir -p /chroot/usr/bin && \
+#    mkdir -p /chroot/usr/lib && \
+#    mkdir -p /chroot/etc && \
+#    mkdir -p /chroot/dev && \
+#    mkdir -p /chroot/proc && \
+#    mkdir -p /chroot/results && \
+#    cp -v /bin/busybox /chroot/bin/busybox && \
+#    ln -s busybox /chroot/bin/sh && \
+#    ln -s busybox /chroot/bin/sudo && \
+#    cp -v /usr/bin/nmap /chroot/usr/bin/ && \
+#    cp -v /etc/sudoers /chroot/etc/ && \
+#    cp -v /etc/passwd /chroot/etc/ && \
+#    cp -v /etc/group /chroot/etc/ && \
+#    cp -v /etc/resolv.conf /chroot/etc/ && \
+#    mknod -m 666 /chroot/dev/null c 1 3 && \
+#    mknod -m 666 /chroot/dev/zero c 1 5
 
 # Ensure the results directory is accessible
 RUN mkdir -p /results && \
     chmod 777 /results && \
     ln -s /results /chroot/results
 
-# Create a non-root user and switch to it
-RUN adduser -D crowler
+# Set up permissions for scanner user
+RUN chown -R scanner:scannergroup /chroot/home/scanner
 
 COPY --from=builder /app/bin/thecrowler /app/
 COPY --from=builder /app/config.yaml /app/
