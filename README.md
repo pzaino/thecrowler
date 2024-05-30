@@ -144,9 +144,9 @@ the following Docker container:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
   - Postgres 15 up (for both ARM and x86) are supported at the moment.
-- And then run the DB Schema setup script on it (make sure you check the 
-  section of the db schema with the user credentials and set those SQL
-  variables correctly)
+  - And then run the DB Schema setup script on it (make sure you check the 
+    section of the db schema with the user credentials and set those SQL
+    variables correctly)
 
 ### Build from source
 
@@ -197,14 +197,14 @@ Optionally you can build the Docker image, to do so run the following command:
 docker build -t <image name> .
 ```
 
-** Note: ** If you build the CROWler engine docker container, remember to run
+**Note**: If you build the CROWler engine docker container, remember to run
 it with the following docker command (it's required!)
 
 ```bash
 docker run -it --rm --cap-add=NET_ADMIN --cap-add=NET_RAW crowler_engine
 ```
 
-** Important Note: ** If you build from source, you still need to build a
+**Important Note**: If you build from source, you still need to build a
 CROWler VDI docker image, that is needed because the CROWler uses a bunch of
 external tools to do its job and all those tools are grouped and built in the
 VDI image (Virtual Desktop Image).
