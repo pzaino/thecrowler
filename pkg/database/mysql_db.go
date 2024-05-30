@@ -16,6 +16,7 @@
 // setup, configuration and abstraction.
 package database
 
+/* Commented out to avoid issues with the Licensing, you need to uncomment it to use it.
 import (
 	"database/sql"
 	"fmt"
@@ -232,3 +233,5 @@ func (handler *MySQLHandler) ConfigForQuery() {
 		}
 	}
 }
+
+*/

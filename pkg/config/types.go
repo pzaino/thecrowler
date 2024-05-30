@@ -159,7 +159,7 @@ type ServiceScoutConfig struct {
 	IPFragment     bool     `yaml:"ip_fragment"`     // --ip-fragment (Fragment IP packets)
 	MaxParallelism int      `yaml:"max_parallelism"` // --min-parallelism (Maximum number of parallelism)
 	DNSServers     []string `yaml:"dns_servers"`     // --dns-servers (Specify custom DNS servers)
-
+	Proxies        []string `yaml:"proxies"`         // Proxies for the database connection
 }
 
 type SSIdleScan struct {

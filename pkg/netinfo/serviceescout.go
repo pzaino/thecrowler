@@ -279,6 +279,11 @@ func appendLowNosingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
 		options = append(options, nmap.WithIdleScan(cfg.IdleScan.ZombieHost, cfg.IdleScan.ZombiePort))
 	}
 
+	// Proxies
+	if len(cfg.Proxies) > 0 {
+		options = append(options, nmap.WithProxies(cfg.Proxies...))
+	}
+
 	// Traceroute
 	options = append(options, nmap.WithTraceRoute())
 

@@ -4,8 +4,6 @@
 $schema: "http://json-schema.org/draft-07/schema#"
 type: "object"
 properties:
-
-
   remote:
     type: "object"
     properties:
@@ -20,7 +18,7 @@ properties:
         description: "This is the port that the CROWler will use to fetch its configuration."
       region:
         type: "string"
-        description: "This is the region that the CROWler will use to fetch its configuration.FOr example in case the distribution server is on an AWS S3 bucket, you can specify the region here."
+        description: "This is the region that the CROWler will use to fetch its configuration. For example in case the distribution server is on an AWS S3 bucket, you can specify the region here."
       token:
         type: "string"
         description: "This is the token that the CROWler will use to connect to the distribution server to fetch its configuration."
@@ -42,8 +40,6 @@ properties:
       - "path"
       - "port"
       - "type"
-
-
   database:
     type: "object"
     properties:
@@ -65,6 +61,9 @@ properties:
         type: "integer"
       sslmode:
         type: "string"
+      optimize_for:
+        type: "string"
+        description: This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value "write". If the user is doing more query operations than write, then use the value "query". If unsure leave it empty.
     description: "This is the configuration for the database that the CROWler will use to store data."
     extraProperties: "false"
     required:
@@ -74,8 +73,6 @@ properties:
       - "user"
       - "password"
       - "dbname"
-
-
   crawler:
     type: "object"
     properties:
@@ -133,8 +130,6 @@ properties:
       collect_metatags:
         type: "boolean"
         description: "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases."
-
-
   api:
     type: "object"
     properties:
@@ -176,8 +171,6 @@ properties:
       - "host"
       - "port"
       - "timeout"
-
-
   selenium:
     type: "array"
     items:
@@ -222,9 +215,7 @@ properties:
         - "port"
         - "host"
       additionalProperties: "false"
-      description: "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers int he array."
-
-
+      description: "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array."
   image_storage:
     type: "object"
     properties:
@@ -250,8 +241,6 @@ properties:
     required:
       - "path"
       - "type"
-
-
   file_storage:
     type: "object"
     properties:
@@ -277,12 +266,9 @@ properties:
     required:
       - "path"
       - "type"
-
-
   network_info:
     type: "object"
     properties:
-
       dns:
         type: "object"
         properties:
@@ -297,7 +283,6 @@ properties:
             description: "This is the rate limit for the DNS database. It is the maximum number of requests that the CROWler will send to the DNS database per second. You can use the ExprTerpreter language to set the rate limit."
         required:
           - "enabled"
-
       whois:
         type: "object"
         properties:
@@ -312,7 +297,6 @@ properties:
             description: "This is the rate limit for the whois database. It is the maximum number of requests that the CROWler will send to the whois database per second. You can use the ExprTerpreter language to set the rate limit."
         required:
           - "enabled"
-
       netlookup:
         type: "object"
         properties:
@@ -327,7 +311,6 @@ properties:
             description: "This is the rate limit for the netlookup database. It is the maximum number of requests that the CROWler will send to the netlookup database per second. You can use the ExprTerpreter language to set the rate limit."
         required:
           - "enabled"
-
       geo_localization:
         type: "object"
         properties:
@@ -352,7 +335,6 @@ properties:
         required:
           - "enabled"
           - "path"
-
       service_scout:
         type: "object"
         properties:
@@ -362,6 +344,13 @@ properties:
           timeout:
             type: "integer"
             description: "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
+          idle_scan:
+            type: "object"
+            description: "This is the configuration for the idle scan."
+            properties:
+              someField:
+                type: "string"
+                description: "An example field for the idle scan."
           ping_scan:
             type: "boolean"
             description: "This is a flag that tells the CROWler to use ping scanning techniques. This is useful for detecting hosts that are alive."
@@ -380,6 +369,9 @@ properties:
           service_detection:
             type: "boolean"
             description: "This is a flag that tells the CROWler to use service detection techniques. This is useful for detecting services that are running on a host."
+          service_db:
+            type: "string"
+            description: "This is the service detection database."
           os_finger_print:
             type: "boolean"
             description: "This is a flag that tells the CROWler to use OS fingerprinting techniques. This is useful for detecting the operating system that is running on a host."
@@ -391,14 +383,19 @@ properties:
             items:
               type: "string"
             description: "This is a list of nmap scripts to run. This is particularly important when a user wants to do vulnerability scanning."
+          targets:
+            type: "array"
+            items:
+              type: "string"
+            description: "Targets can be IPs or hostnames."
           excluded_hosts:
             type: "array"
             items:
               type: "string"
-            description: "This is a list of hosts to exclude from the scan. The CROWler may encounter such hosts during its crawling activities, so this field makes it easy to define a list of host that it should always avoid scanning."
+            description: "This is a list of hosts to exclude from the scan. The CROWler may encounter such hosts during its crawling activities, so this field makes it easy to define a list of hosts that it should always avoid scanning."
           timing_template:
             type: "string"
-            description: "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan. The timing template is a string that is passed to nmap to set the timing of the scan."
+            description: "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan."
           host_timeout:
             type: "string"
             description: "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
@@ -432,10 +429,28 @@ properties:
           scan_flags:
             type: "string"
             description: "This is the flags that the CROWler will use for scanning. It is the flags that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
+          ip_fragment:
+            type: "boolean"
+            description: "This is a flag that tells the CROWler to fragment IP packets. This is useful for avoiding detection by intrusion detection systems."
+          max_port_number:
+            type: "integer"
+            description: "This is the maximum port number to scan (default is 9000)."
+          max_parallelism:
+            type: "integer"
+            description: "This is the maximum number of parallelism."
+          dns_servers:
+            type: "array"
+            items:
+              type: "string"
+            description: "This is a list of custom DNS servers."
+          proxies:
+            type: "array"
+            items:
+              type: "string"
+            description: "Proxies for the database connection."
         required:
           - "enabled"
     description: "This is the configuration for the network information collection."
-
   rulesets:
     type: "array"
     items:
@@ -467,12 +482,10 @@ properties:
         - "path"
         - "type"
     description: "This is the configuration for the rulesets that the CROWler will use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
-
   os:
     type: "string"
   debug_level:
     type: "integer"
-
 anyOf:
   - required:
       - "remote"
