@@ -32,15 +32,16 @@ type FileStorageAPI struct {
 
 // Database represents the database configuration
 type Database struct {
-	Type      string `yaml:"type"`       // Type of database (e.g., "postgres", "mysql", "sqlite")
-	Host      string `yaml:"host"`       // Hostname of the database server
-	Port      int    `yaml:"port"`       // Port number of the database server
-	User      string `yaml:"user"`       // Username for database authentication
-	Password  string `yaml:"password"`   // Password for database authentication
-	DBName    string `yaml:"dbname"`     // Name of the database
-	RetryTime int    `yaml:"retry_time"` // Time to wait before retrying to connect to the database (in seconds)
-	PingTime  int    `yaml:"ping_time"`  // Time to wait before retrying to ping the database (in seconds)
-	SSLMode   string `yaml:"sslmode"`    // SSL mode for database connection (e.g., "disable")
+	Type        string `yaml:"type"`         // Type of database (e.g., "postgres", "mysql", "sqlite")
+	Host        string `yaml:"host"`         // Hostname of the database server
+	Port        int    `yaml:"port"`         // Port number of the database server
+	User        string `yaml:"user"`         // Username for database authentication
+	Password    string `yaml:"password"`     // Password for database authentication
+	DBName      string `yaml:"dbname"`       // Name of the database
+	RetryTime   int    `yaml:"retry_time"`   // Time to wait before retrying to connect to the database (in seconds)
+	PingTime    int    `yaml:"ping_time"`    // Time to wait before retrying to ping the database (in seconds)
+	SSLMode     string `yaml:"sslmode"`      // SSL mode for database connection (e.g., "disable")
+	OptimizeFor string `yaml:"optimize_for"` // Optimize for the database connection (e.g., "read", "write")
 }
 
 // Crawler represents the crawler configuration
@@ -114,15 +115,17 @@ type ServiceScoutConfig struct {
 	Timeout int  `yaml:"timeout"` // Timeout for the Nmap scan (in seconds)
 
 	// Basic scan types
-	PingScan         bool     `yaml:"ping_scan"`             // -sn (No port scan)
-	ConnectScan      bool     `yaml:"connect_scan"`          // -sT (TCP connect scan)
-	SynScan          bool     `yaml:"syn_scan"`              // -sS (TCP SYN scan)
-	UdpScan          bool     `yaml:"udp_scan"`              // -sU (UDP scan)
-	NoDNSResolution  bool     `yaml:"no_dns_resolution"`     // -n (No DNS resolution)
-	ServiceDetection bool     `yaml:"service_detection"`     // -sV (Service version detection)
-	OSFingerprinting bool     `yaml:"os_finger_print"`       // -O (Enable OS detection)
-	AggressiveScan   bool     `yaml:"aggressive_scan"`       // -A (Aggressive scan options)
-	ScriptScan       []string `yaml:"script_scan,omitempty"` // --script (Script scan)
+	IdleScan         SSIdleScan `yaml:"idle_scan"`             // --ip-options (Use idle scan)
+	PingScan         bool       `yaml:"ping_scan"`             // -sn (No port scan)
+	ConnectScan      bool       `yaml:"connect_scan"`          // -sT (TCP connect scan)
+	SynScan          bool       `yaml:"syn_scan"`              // -sS (TCP SYN scan)
+	UDPScan          bool       `yaml:"udp_scan"`              // -sU (UDP scan)
+	NoDNSResolution  bool       `yaml:"no_dns_resolution"`     // -n (No DNS resolution)
+	ServiceDetection bool       `yaml:"service_detection"`     // -sV (Service version detection)
+	ServiceDB        string     `yaml:"service_db"`            // --service-db (Service detection database)
+	OSFingerprinting bool       `yaml:"os_finger_print"`       // -O (Enable OS detection)
+	AggressiveScan   bool       `yaml:"aggressive_scan"`       // -A (Aggressive scan options)
+	ScriptScan       []string   `yaml:"script_scan,omitempty"` // --script (Script scan)
 
 	// Host discovery
 	Targets      []string `yaml:"targets,omitempty"`        // Targets can be IPs or hostnames
@@ -145,14 +148,23 @@ type ServiceScoutConfig struct {
 	*/
 
 	// Advanced options
-	SourcePort     int    `yaml:"source_port"`     // --source-port (Use given port number)
-	Interface      string `yaml:"interface"`       // -e (Use specified interface)
-	SpoofIP        string `yaml:"spoof_ip"`        // -S (Spoof source address)
-	RandomizeHosts bool   `yaml:"randomize_hosts"` // --randomize-hosts (Randomize target scan order)
-	DataLength     int    `yaml:"data_length"`     // --data-length (Append random data to sent packets)
-	ScanDelay      string `yaml:"delay"`           // --scan-delay (Adjust delay between probes)
-	MTUDiscovery   bool   `yaml:"mtu_discovery"`   // --mtu (Discover MTU size)
-	ScanFlags      string `yaml:"scan_flags"`      // --scanflags (Customize TCP scan flags)
+	SourcePort     int      `yaml:"source_port"`     // --source-port (Use given port number)
+	Interface      string   `yaml:"interface"`       // -e (Use specified interface)
+	SpoofIP        string   `yaml:"spoof_ip"`        // -S (Spoof source address)
+	RandomizeHosts bool     `yaml:"randomize_hosts"` // --randomize-hosts (Randomize target scan order)
+	DataLength     int      `yaml:"data_length"`     // --data-length (Append random data to sent packets)
+	ScanDelay      string   `yaml:"delay"`           // --scan-delay (Adjust delay between probes)
+	MTUDiscovery   bool     `yaml:"mtu_discovery"`   // --mtu (Discover MTU size)
+	ScanFlags      string   `yaml:"scan_flags"`      // --scanflags (Customize TCP scan flags)
+	IPFragment     bool     `yaml:"ip_fragment"`     // --ip-fragment (Fragment IP packets)
+	MaxParallelism int      `yaml:"max_parallelism"` // --min-parallelism (Maximum number of parallelism)
+	DNSServers     []string `yaml:"dns_servers"`     // --dns-servers (Specify custom DNS servers)
+	Proxies        []string `yaml:"proxies"`         // Proxies for the database connection
+}
+
+type SSIdleScan struct {
+	ZombieHost string `yaml:"zombie_host"` // --zombie-host (Use a zombie host)
+	ZombiePort int    `yaml:"zombie_port"` // --zombie-port (Use a zombie port)
 }
 
 // NetworkInfo represents the network information gathering configuration
@@ -162,6 +174,13 @@ type NetworkInfo struct {
 	NetLookup    NetLookupConfig    `yaml:"netlookup"`
 	ServiceScout ServiceScoutConfig `yaml:"service_scout"`
 	Geolocation  GeoLookupConfig    `yaml:"geolocation"`
+	HostPlatform PlatformInfo       `yaml:"host_platform"`
+}
+
+type PlatformInfo struct {
+	OSName    string `yaml:"os_name"`
+	OSVersion string `yaml:"os_version"`
+	OSArch    string `yaml:"os_arch"`
 }
 
 // API represents the API configuration

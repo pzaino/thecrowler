@@ -48,7 +48,7 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 	htmlContent, _ := (*webPage).PageSource()
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
 		return extractedData
 	}
 
@@ -56,7 +56,7 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 	node, err := htmlquery.Parse(strings.NewReader(htmlContent))
 	if err != nil {
 		// handle error
-		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "parsing HTML content: %v", err)
 		return extractedData
 	}
 
@@ -217,9 +217,68 @@ func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
 // ppStepClean applies the "clean" post-processing step to the provided data.
 // The step should contain a "target" key that specifies the string to be removed from the data.
 func ppStepClean(data *[]byte, step *rs.PostProcessingStep) {
-	// Clean up Data from unwanted characters
-	// Remove all instances of step.Details["target"] from data
-	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
+	// Clean the data based on the provided details
+	if step == nil {
+		return
+	}
+	if len(step.Details) == 0 {
+		return
+	}
+	// Process all the details in the step
+	for key, value := range step.Details {
+		// Cast interface to bool
+		var useValue bool
+		if value != nil {
+			useValue = value.(bool)
+		} else {
+			useValue = false
+		}
+		switch key {
+		case "remove_html":
+			if useValue {
+				*data = []byte(stripHTML(string(*data)))
+			}
+		case "remove_whitespace":
+			if useValue {
+				*data = []byte(strings.ReplaceAll(string(*data), " ", ""))
+			}
+		case "remove_extra_whitespace":
+			if useValue {
+				*data = []byte(strings.Join(strings.Fields(string(*data)), " "))
+			}
+		case "remove_newlines":
+			if useValue {
+				*data = []byte(strings.ReplaceAll(string(*data), "\n", ""))
+			}
+		case "remove_special_chars":
+			if useValue {
+				*data = []byte(stripSpecialChars(string(*data)))
+			}
+		case "remove_numbers":
+			if useValue {
+				*data = []byte(stripNumbers(string(*data)))
+			}
+		case "decode_html_entities":
+			if useValue {
+				*data = []byte(html.UnescapeString(string(*data)))
+			}
+		}
+	}
+}
+
+func stripHTML(data string) string {
+	re := regexp.MustCompile(`<[^>]*>`)
+	return re.ReplaceAllString(data, "")
+}
+
+func stripSpecialChars(data string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9\s]`)
+	return re.ReplaceAllString(data, "")
+}
+
+func stripNumbers(data string) string {
+	re := regexp.MustCompile(`[0-9]`)
+	return re.ReplaceAllString(data, "")
 }
 
 // ppStepTransform applies the "transform" post-processing step to the provided data.

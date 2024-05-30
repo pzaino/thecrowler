@@ -630,18 +630,21 @@
                             }
                         },
                         "environment_settings": {
-                            "type": "object",
-                            "properties": {
-                                "headless_mode": {
-                                    "type": "boolean",
-                                    "description": "Specifies if the WebDriver should operate in headless mode."
-                                },
-                                "custom_browser_options": {
-                                    "type": "object",
-                                    "description": "Custom options for browser instances, such as proxies or window size."
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "The name of the environment setting."
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "The value of the environment setting."
+                                    }
                                 }
                             },
-                            "description": "Custom settings for the WebDriver environment."
+                            "description": "Custom key value settings to use in the rules."
                         },
                         "logging_configuration": {
                             "type": "object",
@@ -657,12 +660,12 @@
                                     ],
                                     "description": "Specifies the logging level for actions and scraping activities."
                                 },
-                                "log_file": {
+                                "log_message": {
                                     "type": "string",
-                                    "description": "Optional. The file path to store logs if file logging is desired."
+                                    "description": "Optional. The message you want to log if the rule matches something."
                                 }
                             },
-                            "description": "Configuration for logging and monitoring rule execution."
+                            "description": "rule log configuration (aka what you want to be logged when the rule execute)."
                         }
                     },
                     "required": [

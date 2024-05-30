@@ -44,7 +44,7 @@ func postgresDBExists(db *sql.DB, dbName string) bool {
 	var exists bool
 	err := db.QueryRow(`SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = $1)`, dbName).Scan(&exists)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error checking if the database exists: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "checking if the database exists: %v", err)
 		return false
 	}
 
@@ -88,14 +88,14 @@ func executeSQLFile(db *sql.DB, dbms, dbName string) {
 	// Read the SQL file
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error reading the SQL file: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "reading the SQL file: %v", err)
 		return
 	}
 
 	// Execute the SQL commands
 	_, err = db.Exec(string(content))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing the SQL file: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "executing the SQL file: %v", err)
 		return
 	}
 

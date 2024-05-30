@@ -50,6 +50,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    stdin_open: true # For interactive terminal access (optional)
+    tty: true # For interactive terminal access (optional)
     ports:
       - "8081:8081"
     volumes:

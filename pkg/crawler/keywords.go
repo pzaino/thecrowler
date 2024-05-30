@@ -186,7 +186,7 @@ func extractKeywords(pageInfo PageInfo) []string {
 	// Load the HTML document
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(pageInfo.BodyText))
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading HTML content: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
 		return nil
 	}
 

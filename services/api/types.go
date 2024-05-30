@@ -61,6 +61,8 @@ type StatusResponseRow struct {
 // addSourceRequest represents the structure of the add source request
 type addSourceRequest struct {
 	URL        string           `json:"url"`
+	CategoryID uint64           `json:"category_id,omitempty"`
+	UsrID      uint64           `json:"usr_id,omitempty"`
 	Status     string           `json:"status,omitempty"`
 	Restricted int              `json:"restricted,omitempty"`
 	Disabled   bool             `json:"disabled,omitempty"`

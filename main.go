@@ -133,7 +133,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error rolling back transaction: %v", err2)
+			cmn.DebugMsg(cmn.DbgLvlError, "rolling back transaction: %v", err2)
 		}
 		return nil, err
 	}
@@ -143,11 +143,11 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	for rows.Next() {
 		var src cdb.Source
 		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error scanning rows: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "scanning rows: %v", err)
 			rows.Close()
 			err2 := tx.Rollback()
 			if err2 != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error rolling back transaction: %v", err2)
+				cmn.DebugMsg(cmn.DbgLvlError, "rolling back transaction: %v", err2)
 			}
 			return nil, err
 		}
@@ -191,7 +191,7 @@ func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngi
 		// Retrieve the sources to crawl
 		sourcesToCrawl, err := retrieveAvailableSources(*db)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error retrieving sources: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "retrieving sources: %v", err)
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.Unlock()
 			time.Sleep(sleepTime)
@@ -241,7 +241,7 @@ func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngi
 func performDatabaseMaintenance(db cdb.Handler) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Performing database maintenance...")
 	if err := performDBMaintenance(db); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error performing database maintenance: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "performing database maintenance: %v", err)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database maintenance completed successfully.")
 	}
@@ -426,13 +426,13 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	// Reload the configuration file
 	*config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
-		return fmt.Errorf("error loading configuration file: %s", err)
+		return fmt.Errorf("loading configuration file: %s", err)
 	}
 
 	// Reconnect to the database
 	*db, err = cdb.NewHandler(*config)
 	if err != nil {
-		return fmt.Errorf("error creating database handler: %s", err)
+		return fmt.Errorf("creating database handler: %s", err)
 	}
 
 	// Reinitialize the Selenium services
@@ -440,7 +440,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	for _, seleniumConfig := range config.Selenium {
 		selService, err := crowler.NewSeleniumService(seleniumConfig)
 		if err != nil {
-			return fmt.Errorf("error creating Selenium Instances: %s", err)
+			return fmt.Errorf("creating Selenium Instances: %s", err)
 		}
 		*seleniumInstances <- crowler.SeleniumInstance{
 			Service: selService,
@@ -452,7 +452,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	*RulesEngine = rules.NewEmptyRuleEngine(config.RulesetsSchemaPath)
 	err = RulesEngine.LoadRulesFromConfig(config)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading rules from configuration: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading rules from configuration: %v", err)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Rulesets loaded: %d", RulesEngine.CountRulesets())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Detection rules loaded: %d", RulesEngine.CountDetectionRules())
@@ -519,14 +519,14 @@ func main() {
 				err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine)
 				if err != nil {
 					configMutex.Unlock()
-					cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 				}
 				// Connect to the database
 				err = db.Connect(config)
 				if err != nil {
 					configMutex.Unlock()
 					closeResources(db, seleniumInstances) // Release resources
-					cmn.DebugMsg(cmn.DbgLvlFatal, "Error connecting to the database: %v", err)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
 				configMutex.Unlock()
 				//go checkSources(&db, seleniumInstances)
@@ -537,14 +537,14 @@ func main() {
 	// Initialize the crawler
 	err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlFatal, "Error initializing the crawler: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 	}
 
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
 		closeResources(db, seleniumInstances) // Release resources
-		cmn.DebugMsg(cmn.DbgLvlFatal, "Error connecting to the database: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 	}
 	defer closeResources(db, seleniumInstances)
 
@@ -568,7 +568,7 @@ func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 		if seleniumInstance.Service != nil {
 			err := seleniumInstance.Service.Stop()
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error stopping Selenium instance: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium instance: %v", err)
 			}
 		}
 	}

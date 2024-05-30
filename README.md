@@ -135,18 +135,18 @@ following:
 
 For a docker compose based installation, that's all you need.
 If you have docker and docker compose installed you can skip the next section
-and go straight to the Installation section.
+and go straight to the **Installation** section.
 
 #### If you're planning to install it manually
 
 If you're planning to install the CROWler manually, you'll need to install
-the following Docker containers:
+the following Docker container:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
   - Postgres 15 up (for both ARM and x86) are supported at the moment.
-- [Selenium Chrome Container](https://hub.docker.com/r/selenium/standalone-chrome)
-  - Selenium Chrome docker container 4.17.0 up (for both ARM and x86) are
-  supported at the moment.
+  - And then run the DB Schema setup script on it (make sure you check the
+    section of the db schema with the user credentials and set those SQL
+    variables correctly)
 
 ### Build from source
 
@@ -175,21 +175,21 @@ First, check which targets can be built and are available, run the following
 command:
 
 ```bash
-go build -v ./...
+./autobuild name-of-the-target
 ```
 
-This will list all the targets that can be built and are available. To build a
-target, run the following command:
+This will build your requested component in `./bin`
 
 ```bash
-TheCrowler/cmd/removeSite
-TheCrowler/cmd/addSite
-TheCrowler/services/api
-TheCrowler
+./bin/removeSite
+./bin/addSite
+./bin/addCategory
+./bin/api
+./bin/thecrowler
 ```
 
-Build them as you need them, or run the `autobuild.sh` script to build them
-all.
+Build them as you need them, or run the `autobuild.sh` (no arguments) to build
+them all.
 
 Optionally you can build the Docker image, to do so run the following command:
 
@@ -197,10 +197,22 @@ Optionally you can build the Docker image, to do so run the following command:
 docker build -t <image name> .
 ```
 
+**Note**: If you build the CROWler engine docker container, remember to run
+it with the following docker command (it's required!)
+
+```bash
+docker run -it --rm --cap-add=NET_ADMIN --cap-add=NET_RAW crowler_engine
+```
+
+**Important Note**: If you build from source, you still need to build a
+CROWler VDI docker image, that is needed because the CROWler uses a bunch of
+external tools to do its job and all those tools are grouped and built in the
+VDI image (Virtual Desktop Image).
+
 ### Installation
 
-The easiest way to install the CROWler is to use the docker compose file. To
-do so, follow the steps below.
+The **easiest way** to install the CROWler is to use the docker compose file.
+To do so, follow the steps below.
 
 **Before you start**: There are a bunch of ENV variables you can set to
 customize the CROWler deployment. These ENV vars allow you to set up your

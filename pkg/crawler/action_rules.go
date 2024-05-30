@@ -73,7 +73,7 @@ func executeActionRules(rules []rules.ActionRule, wd *selenium.WebDriver) {
 		// Execute the rule
 		err := executeActionRule(&r, wd)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
 			if !r.ErrorHandling.Ignore {
 				if r.ErrorHandling.RetryCount > 0 {
 					for i := 0; i < r.ErrorHandling.RetryCount; i++ {
@@ -513,7 +513,7 @@ func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
 	// Get the default scraping rules
 	url, err := (*wd).CurrentURL()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error getting the current URL: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "getting the current URL: %v", err)
 		url = ""
 	}
 	rs := DefaultActionConfig(url)
@@ -601,25 +601,28 @@ func executePlannedRules(wd *selenium.WebDriver, ctx *processContext, planned cf
 		if ruleName == "" {
 			continue
 		}
-		rule, err := ctx.re.GetActionRuleByName(ruleName)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error getting action rule: %v", err)
-		} else {
-			// Execute the rule
-			err := executeActionRule(rule, wd)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error executing action rule: %v", err)
-				if !rule.ErrorHandling.Ignore {
-					if rule.ErrorHandling.RetryCount > 0 {
-						for i := 0; i < rule.ErrorHandling.RetryCount; i++ {
-							if rule.ErrorHandling.RetryDelay > 0 {
-								time.Sleep(time.Duration(rule.ErrorHandling.RetryDelay) * time.Second)
-							}
-							err = executeActionRule(rule, wd)
-							if err == nil {
-								break
-							}
-						}
+		executeActionRuleByName(ruleName, wd, ctx)
+	}
+}
+
+func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *processContext) {
+	rule, err := ctx.re.GetActionRuleByName(ruleName)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "getting action rule: %v", err)
+		return
+	}
+
+	// Execute the rule
+	if err = executeActionRule(rule, wd); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
+		if !rule.ErrorHandling.Ignore {
+			if rule.ErrorHandling.RetryCount > 0 {
+				for i := 0; i < rule.ErrorHandling.RetryCount; i++ {
+					if rule.ErrorHandling.RetryDelay > 0 {
+						time.Sleep(time.Duration(rule.ErrorHandling.RetryDelay) * time.Second)
+					}
+					if err = executeActionRule(rule, wd); err == nil {
+						break
 					}
 				}
 			}
@@ -638,7 +641,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, plann
 		}
 		rg, err := ctx.re.GetRuleGroupByName(ruleGroupName)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error getting rule group: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "getting rule group: %v", err)
 		} else {
 			// Execute the rule group
 			executeActionRules(rg.GetActionRules(), wd)
@@ -658,7 +661,7 @@ func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned
 		}
 		rs, err := ctx.re.GetRulesetByName(rulesetName)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error getting ruleset: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "getting ruleset: %v", err)
 		} else {
 			// Execute the ruleset
 			executeActionRules(rs.GetAllEnabledActionRules(), wd)

@@ -536,7 +536,7 @@ func parseScreenshotQuery(input string) (string, []interface{}, error) {
 	var req ScreenshotRequest
 	err = json.Unmarshal([]byte(input), &req)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling JSON: %v, %v", err, input)
+		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling JSON: %v, %v", err, input)
 		return "", nil, err
 	}
 
@@ -698,7 +698,7 @@ func parseWebObjectQuery(input string) (string, []interface{}, error) {
 	var req WebObjectRequest
 	err = json.Unmarshal([]byte(input), &req)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling JSON: %v, %v", err, input)
+		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling JSON: %v, %v", err, input)
 		return "", nil, err
 	}
 

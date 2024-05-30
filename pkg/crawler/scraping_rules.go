@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	errExecutingScraping = "error executing scraping rule: %v"
+	errExecutingScraping = "executing scraping rule: %v"
 )
 
 // processScrapingRules processes the scraping rules
@@ -120,7 +120,7 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 	if len(r.WaitConditions) != 0 {
 		err := executeWaitConditions(r.WaitConditions, wd)
 		if err != nil {
-			return "", fmt.Errorf("error executing wait conditions: %v", err)
+			return "", fmt.Errorf("executing wait conditions: %v", err)
 		}
 	}
 
@@ -130,7 +130,7 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 		processedData := processExtractedData(extractedData)
 		jsonData, err := json.Marshal(processedData)
 		if err != nil {
-			return "", fmt.Errorf("error marshalling JSON: %v", err)
+			return "", fmt.Errorf("marshalling JSON: %v", err)
 		}
 		if len(r.PostProcessing) != 0 {
 			runPostProcessingSteps(&r.PostProcessing, &jsonData)
@@ -145,7 +145,7 @@ func executeWaitConditions(conditions []rules.WaitCondition, wd *selenium.WebDri
 	for _, wc := range conditions {
 		err := executeWaitCondition(&wc, wd)
 		if err != nil {
-			return fmt.Errorf("error executing wait condition: %v", err)
+			return fmt.Errorf("executing wait condition: %v", err)
 		}
 	}
 	return nil
@@ -237,7 +237,7 @@ func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *processContext) {
 	// Get the default scraping rules
 	url, err := (*wd).CurrentURL()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error getting the current URL: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "getting the current URL: %v", err)
 		url = ""
 	}
 	rs := DefaultCrawlingConfig(url)
@@ -261,7 +261,7 @@ func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriv
 		}
 		rule, err := ctx.re.GetScrapingRuleByName(ruleName)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error getting scraping rule: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "getting scraping rule: %v", err)
 		} else {
 			// Execute the rule
 			scrapedData, err := executeScrapingRule(rule, wd)

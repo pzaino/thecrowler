@@ -23,7 +23,6 @@ items:
     ruleset_name:
       type: "string"
       description: "A unique name identifying the ruleset."
-
     rule_groups:
       type: "array"
       items:
@@ -43,7 +42,6 @@ items:
           is_enabled:
             type: "boolean"
             description: "Flag to enable or disable the rule group."
-
           scraping_rules:
             type: "array"
             items:
@@ -167,8 +165,6 @@ items:
               required:
               - "rule_name"
               - "elements"
-
-
           action_rules:
             type: "array"
             items:
@@ -291,8 +287,6 @@ items:
               required:
               - "rule_name"
               - "action_type"
-
-
           detection_rules:
             type: "array"
             items:
@@ -307,7 +301,6 @@ items:
                 object_version:
                   type: "string"
                   description: "Optional. The version of the object or technology to identify."
-
                 http_header_fields:
                   type: "array"
                   items:
@@ -325,7 +318,6 @@ items:
                         type: "number"
                         description: "Optional. The confidence level for the match, ranging from 0 to 10."
                   description: "Matching patterns for HTTP header fields to identify technology."
-
                 page_content_patterns:
                   type: "array"
                   items:
@@ -350,7 +342,6 @@ items:
                         description: "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
                     description: "Phrases or character sequences within page content indicative of specific technology."
                   description: "Patterns within the page content that match specific technologies."
-
                 certificates_patterns:
                   type: "array"
                   items:
@@ -368,7 +359,6 @@ items:
                         type: "number"
                         description: "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
                   description: "Phrases or character sequences within certain certificate's fields indicative of specific technology."
-
                 url_micro_signatures:
                   type: "array"
                   items:
@@ -382,7 +372,6 @@ items:
                         description: "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
                     description: "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress."
                   description: "URL patterns indicative of specific technologies."
-
               meta_tags:
                 type: "array"
                 items:
@@ -399,17 +388,21 @@ items:
             - "rule_name"
             - "object_name"
             anyOf:
-            - required:
+            -
+              required:
               - "http_header_fields"
-            - required:
+            -
+              required:
               - "page_content_patterns"
-            - required:
+            -
+              required:
               - "certificates_patterns"
-            - required:
+            -
+              required:
               - "url_micro_signatures"
-            - required:
+            -
+              required:
               - "meta_tags"
-
           crawling_rules:
             type: "array"
             items:
@@ -473,17 +466,18 @@ items:
               - "request_type"
               - "target_elements"
               - "fuzzing_parameters"
-
           environment_settings:
-            type: "object"
-            properties:
-              headless_mode:
-                type: "boolean"
-                description: "Specifies if the WebDriver should operate in headless mode."
-              custom_browser_options:
-                type: "object"
-                description: "Custom options for browser instances, such as proxies or window size."
-            description: "Custom settings for the WebDriver environment."
+            type: "array"
+            items:
+              type: "object"
+              properties:
+                key:
+                  type: "string"
+                  description: "The name of the environment setting."
+                value:
+                  type: "string"
+                  description: "The value of the environment setting."
+            description: "Custom key value settings to use in the rules."
           logging_configuration:
             type: "object"
             properties:
@@ -496,24 +490,26 @@ items:
                 - "ERROR"
                 - "CRITICAL"
                 description: "Specifies the logging level for actions and scraping activities."
-              log_file:
+              log_message:
                 type: "string"
-                description: "Optional. The file path to store logs if file logging is desired."
-            description: "Configuration for logging and monitoring rule execution."
-
+                description: "Optional. The message you want to log if the rule matches something."
+            description: "rule log configuration (aka what you want to be logged when the rule execute)."
         required:
         - "group_name"
         - "is_enabled"
         anyOf:
-        - required:
+        -
+          required:
           - "scraping_rules"
-        - required:
+        -
+          required:
           - "action_rules"
-        - required:
+        -
+          required:
           - "detection_rules"
-        - required:
+        -
+          required:
           - "crawling_rules"
-
   required:
   - "ruleset_name"
   - "format_version"
@@ -521,5 +517,4 @@ items:
   - "created_at"
   - "author"
   - "description"
-
 minItems: "1"

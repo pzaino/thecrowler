@@ -72,12 +72,21 @@ func SetLoggerPrefix(prefix string) {
 }
 
 // UpdateLoggerConfig Updates the logger configuration
-func UpdateLoggerConfig() {
+func UpdateLoggerConfig(logType string) {
 	if debugLevel > 0 {
 		log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
 	} else {
 		log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
 	}
+	logType = strings.ToLower(strings.TrimSpace(logType))
+	if logType == "file" {
+		// Set log to log to a file
+		logFile, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err == nil {
+			log.SetOutput(logFile)
+		}
+	}
+	// TODO: Add support for syslog
 }
 
 // SetDebugLevel allows to set the current debug level
@@ -94,6 +103,11 @@ func GetDebugLevel() DbgLevel {
 func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	// For always-log messages (Info, Warning, Error, Fatal)
 	if dbgLvl <= DbgLvlInfo {
+		if dbgLvl == DbgLvlError {
+			// For Error messages, log always
+			log.Printf(loggerPrefix+"Error "+msg, args...)
+			return
+		}
 		log.Printf(loggerPrefix+msg, args...)
 		if dbgLvl == DbgLvlFatal {
 			os.Exit(1)
