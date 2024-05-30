@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	nmap "github.com/Ullaakut/nmap"
+	nmap "github.com/Ullaakut/nmap/v3"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
@@ -59,27 +59,33 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	defer cancel()
 
 	// Build the Nmap options
-	options, err := buildNmapOptions(cfg, ip, &ctx, &ni.Config.HostPlatform)
+	options, err := buildNmapOptions(cfg, ip, &ni.Config.HostPlatform)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to build nmap options: %w", err)
 	}
 
 	// Create a new scanner
-	scanner, err := nmap.NewScanner(options...)
+	scanner, err := nmap.NewScanner(ctx, options...)
 	if err != nil {
 		return []HostInfo{}, fmt.Errorf("unable to create nmap scanner: %w", err)
 	}
 
+	// Prepare parsed results container
+	var hosts []HostInfo
+
 	// Run the scan
 	result, warnings, err := scanner.Run()
+	if result != nil {
+		// Parse the scan result
+		hosts = parseScanResults(result)
+	}
 	if err != nil {
 		output := "ServiceScout scan failed:\n"
-		output += fmt.Sprintf("Error: %v\n", err)
-		output += fmt.Sprintf("Stdout: %v\n", scanner.GetStdout())
-		output += fmt.Sprintf("Stderr: %v\n", scanner.GetStderr())
-		if len(warnings) != 0 {
-			for _, warning := range warnings {
-				output += fmt.Sprintf("%s\n", warning)
+		output += fmt.Sprintf("    Error: %v\n", err)
+		output += fmt.Sprintf("     Args: %v\n", scanner.Args())
+		if len((*warnings)) != 0 {
+			for i, warning := range *warnings {
+				output += fmt.Sprintf("Warning %d: %s\n", i, warning)
 			}
 		}
 		if result != nil {
@@ -87,14 +93,12 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 			output += fmt.Sprintf("Result's Args: %v\n", result.Args)
 			output += fmt.Sprintf("Result's Errors: %v\n", result.NmapErrors)
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, output)
-		cmn.DebugMsg(cmn.DbgLvlError, "Something went wrong, here is what I could capture: %v", result)
-		return []HostInfo{}, fmt.Errorf("ServiceScout scan failed: %w", err)
+		return hosts, fmt.Errorf("%s", output)
 	} else {
 		// log the raw results if we are in debug mode:
 		output := "ServiceScout scan completed:\n"
-		if len(warnings) != 0 {
-			for _, warning := range warnings {
+		if len(*warnings) != 0 {
+			for _, warning := range *warnings {
 				output += fmt.Sprintf("%s\n", warning)
 			}
 		}
@@ -103,22 +107,20 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 	}
 	scanner = nil // free the scanner
 
-	// Parse the scan result
-	hosts := parseScanResults(result)
-
 	return hosts, nil
 }
 
-func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
-	ctx *context.Context, platform *cfg.PlatformInfo) ([]func(*nmap.Scanner), error) {
-	var options []func(*nmap.Scanner)
+func buildNmapOptions(cfg *cfg.ServiceScoutConfig,
+	ip string, platform *cfg.PlatformInfo) ([]nmap.Option, error) {
+	//var options []func(*nmap.Scanner)
+	var options []nmap.Option
 
 	// Set the IP address
 	if cmn.CheckIPVersion(ip) == 6 {
 		options = append(options, nmap.WithIPv6Scanning())
 	}
 	options = append(options, nmap.WithTargets(ip))
-	options = append(options, nmap.WithContext(*ctx))
+	//options = append(options, nmap.WithContext(*ctx))
 
 	// Scan types:
 	options = appendScanTypes(options, cfg)
@@ -153,7 +155,7 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 	return options, nil
 }
 
-func appendScanTypes(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+func appendScanTypes(options []nmap.Option, cfg *cfg.ServiceScoutConfig) []nmap.Option {
 	if cfg.UDPScan {
 		options = append(options, nmap.WithUDPScan())
 	}
@@ -172,31 +174,22 @@ func appendScanTypes(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig)
 	return options
 }
 
-func appendDNSOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig,
-	platform *cfg.PlatformInfo) []func(*nmap.Scanner) {
+func appendDNSOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
+	platform *cfg.PlatformInfo) []nmap.Option {
 	if platform.OSName != "darwin" {
 		if len(cfg.DNSServers) > 0 {
-			dnsList := ""
-			for i, dnsServer := range cfg.DNSServers {
-				if strings.TrimSpace(dnsServer) != "" {
-					dnsList += strings.TrimSpace(dnsServer)
-					if i < len(cfg.DNSServers)-1 {
-						dnsList += ","
-					}
-				}
-			}
-			if dnsList != "" {
-				options = append(options, nmap.WithCustomArguments("--dns-servers "+dnsList))
-			}
+			options = append(options, nmap.WithCustomDNSServers(cfg.DNSServers...))
+		} else {
+			options = append(options, nmap.WithSystemDNS())
 		}
 	}
 	if cfg.NoDNSResolution {
-		options = append(options, nmap.WithCustomArguments("-n"))
+		options = append(options, nmap.WithDisabledDNSResolution())
 	}
 	return options
 }
 
-func appendScripts(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+func appendScripts(options []nmap.Option, cfg *cfg.ServiceScoutConfig) []nmap.Option {
 	if len(cfg.ScriptScan) == 0 {
 		cfg.ScriptScan = []string{"default"}
 	} else {
@@ -205,31 +198,24 @@ func appendScripts(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) [
 	return options
 }
 
-func appendServiceDetection(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig,
-	platform *cfg.PlatformInfo) []func(*nmap.Scanner) {
+func appendServiceDetection(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
+	_ *cfg.PlatformInfo) []nmap.Option {
 	if cfg.ServiceDetection {
-		options = append(options, nmap.WithCustomArguments("-Pn"))
+		options = append(options, nmap.WithSkipHostDiscovery())
 		options = append(options, nmap.WithPorts("1-"+strconv.Itoa(cfg.MaxPortNumber)))
 		options = append(options, nmap.WithServiceInfo())
-		if platform.OSName != "darwin" {
-			if cfg.ServiceDB == "" {
-				options = append(options, nmap.WithCustomArguments("--servicedb nmap-services"))
-			} else {
-				options = append(options, nmap.WithCustomArguments("--servicedb "+strings.TrimSpace(cfg.ServiceDB)))
-			}
-		}
 	}
 	return options
 }
 
-func appendOSDetection(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+func appendOSDetection(options []nmap.Option, cfg *cfg.ServiceScoutConfig) []nmap.Option {
 	if cfg.OSFingerprinting {
 		options = append(options, nmap.WithOSDetection())
 	}
 	return options
 }
 
-func appendTimingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig) []func(*nmap.Scanner) {
+func appendTimingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig) []nmap.Option {
 	if cfg.HostTimeout != "" {
 		hostTimeout := exi.GetFloat(cfg.HostTimeout)
 		options = append(options, nmap.WithHostTimeout(time.Duration(hostTimeout)*time.Second))
@@ -253,8 +239,8 @@ func appendTimingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutCon
 	return options
 }
 
-func appendLowNosingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScoutConfig,
-	platform *cfg.PlatformInfo) []func(*nmap.Scanner) {
+func appendLowNosingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
+	platform *cfg.PlatformInfo) []nmap.Option {
 	if cfg.MaxRetries > 0 {
 		maxRetries := cfg.MaxRetries
 		options = append(options, nmap.WithMaxRetries(int(maxRetries)))
@@ -262,24 +248,48 @@ func appendLowNosingOptions(options []func(*nmap.Scanner), cfg *cfg.ServiceScout
 	usingSS := false
 	if platform.OSName != "darwin" {
 		if cfg.IPFragment {
-			options = append(options, nmap.WithCustomArguments("-f"))
+			options = append(options, nmap.WithFragmentPackets())
 			if cfg.UDPScan {
-				options = append(options, nmap.WithCustomArguments("-sS"))
+				options = append(options, nmap.WithSYNScan())
 				usingSS = true
 			}
 		}
 	}
-	options = append(options, nmap.WithCustomArguments("-PO6,17"))
-	options = append(options, nmap.WithCustomArguments("--disable-arp-ping"))
-	if usingSS {
-		options = append(options, nmap.WithCustomArguments("--defeat-rst-ratelimit"))
-		options = append(options, nmap.WithCustomArguments("--defeat-icmp-ratelimit"))
+
+	// Syn scan
+	if cfg.SynScan {
+		if !usingSS {
+			options = append(options, nmap.WithSYNScan())
+		}
 	}
+	if cfg.PingScan || cfg.SynScan || usingSS {
+		//options = append(options, nmap.WithCustomArguments("-PO6,17"))
+		//options = append(options, nmap.WithIPOptions("PO6,17"))
+		options = append(options, nmap.WithIPProtocolScan())
+		// need to improve these two:
+		//options = append(options, nmap.WithCustomArguments("--defeat-rst-ratelimit"))
+		//options = append(options, nmap.WithCustomArguments("--defeat-icmp-ratelimit"))
+	}
+
+	// need to improve this one
+	//options = append(options, nmap.WithCustomArguments("--disable-arp-ping"))
+
+	// Idle scan
+	if cfg.IdleScan.ZombieHost != "" {
+		options = append(options, nmap.WithIdleScan(cfg.IdleScan.ZombieHost, cfg.IdleScan.ZombiePort))
+	}
+
+	// Traceroute
+	options = append(options, nmap.WithTraceRoute())
+
 	return options
 }
 
 func parseScanResults(result *nmap.Run) []HostInfo {
 	var hosts []HostInfo // This will hold all the host info structs we create
+	if result == nil {
+		return hosts
+	}
 
 	// Log the raw results if we are in debug mode:
 	jsonData, err := json.MarshalIndent(result, "", "  ")
@@ -288,7 +298,7 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 	}
 
 	for _, hostResult := range result.Hosts {
-		hostInfo := HostInfo{} // Assuming HostInfo is a struct that contains IP, Hostname, and Ports fields
+		hostInfo := HostInfo{} // This will hold the host info struct we create
 
 		// Collect scanned IP information
 		collectIPInfo(&hostResult, &hostInfo)
@@ -297,14 +307,14 @@ func parseScanResults(result *nmap.Run) []HostInfo {
 		collectHostnameInfo(&hostResult, &hostInfo)
 
 		// Collect port information
-		hostInfo.Ports, hostInfo.Services = collectPortInfo(hostResult.Ports)
-		collectExtraPortInfo(hostResult.ExtraPorts, &hostInfo.Ports)
+		collectPortInfo(&hostResult, &hostInfo)
+		collectExtraPortInfo(&hostResult, &hostInfo)
 
 		// Collect OS information
-		hostInfo.OS = collectOSInfo(hostResult.OS)
+		collectOSInfo(&hostResult, &hostInfo)
 
 		// Collect vulnerabilities from Nmap scripts
-		hostInfo.Vulnerabilities = collectVulnerabilityInfo(&(hostResult.HostScripts))
+		collectVulnerabilityInfo(&hostResult, &hostInfo)
 
 		// Append the host to the hosts slice
 		hosts = append(hosts, hostInfo)
@@ -346,9 +356,8 @@ func collectHostnameInfo(hostResult *nmap.Host, hostInfo *HostInfo) {
 }
 
 // collectPortInfo collects the port and service information
-func collectPortInfo(ports []nmap.Port) ([]PortInfo, []ServiceInfo) {
-	var portInfoList []PortInfo
-	var serviceInfoList []ServiceInfo
+func collectPortInfo(hostResult *nmap.Host, hostInfo *HostInfo) {
+	ports := hostResult.Ports
 
 	if len(ports) > 0 {
 		for _, port := range ports {
@@ -358,7 +367,7 @@ func collectPortInfo(ports []nmap.Port) ([]PortInfo, []ServiceInfo) {
 				State:    port.State.State,
 				Service:  port.Service.Name,
 			}
-			portInfoList = append(portInfoList, portInfo)
+			hostInfo.Ports = append(hostInfo.Ports, portInfo)
 			if port.Service.String() != "" {
 				serviceInfo := ServiceInfo{
 					Name:       port.Service.Name,
@@ -408,15 +417,14 @@ func collectPortInfo(ports []nmap.Port) ([]PortInfo, []ServiceInfo) {
 						serviceInfo.Scripts = append(serviceInfo.Scripts, scriptInfo)
 					}
 				}
-				serviceInfoList = append(serviceInfoList, serviceInfo)
+				hostInfo.Services = append(hostInfo.Services, serviceInfo)
 			}
 		}
 	}
-
-	return portInfoList, serviceInfoList
 }
 
-func collectExtraPortInfo(ports []nmap.ExtraPort, portInfoList *[]PortInfo) {
+func collectExtraPortInfo(hostResult *nmap.Host, hostInfo *HostInfo) {
+	ports := hostResult.ExtraPorts
 	if len(ports) > 0 {
 		for _, port := range ports {
 			portInfo := PortInfo{
@@ -425,13 +433,13 @@ func collectExtraPortInfo(ports []nmap.ExtraPort, portInfoList *[]PortInfo) {
 				State:    port.State,
 				Service:  "unknown",
 			}
-			*portInfoList = append(*portInfoList, portInfo)
+			hostInfo.Ports = append(hostInfo.Ports, portInfo)
 		}
 	}
 }
 
-func collectOSInfo(item nmap.OS) []OSInfo {
-	var osInfoList []OSInfo
+func collectOSInfo(hostResult *nmap.Host, hostInfo *HostInfo) {
+	item := hostResult.OS
 
 	for _, match := range item.Matches {
 		OSMatch := OSInfo{
@@ -449,21 +457,17 @@ func collectOSInfo(item nmap.OS) []OSInfo {
 				Accuracy: class.Accuracy,
 			})
 		}
-		osInfoList = append(osInfoList, OSMatch)
+		hostInfo.OS = append(hostInfo.OS, OSMatch)
 	}
-
-	return osInfoList
 }
 
-func collectVulnerabilityInfo(scripts *[]nmap.Script) []VulnerabilityInfo {
-	var vulnerabilityInfoList []VulnerabilityInfo
+func collectVulnerabilityInfo(hostResult *nmap.Host, hostInfo *HostInfo) {
+	scripts := &(hostResult.HostScripts)
 
 	for _, script := range *scripts {
 		vulnerabilityInfo := collectVulnerabilityData(&script)
-		vulnerabilityInfoList = append(vulnerabilityInfoList, vulnerabilityInfo)
+		hostInfo.Vulnerabilities = append(hostInfo.Vulnerabilities, vulnerabilityInfo)
 	}
-
-	return vulnerabilityInfoList
 }
 
 func collectVulnerabilityData(script *nmap.Script) VulnerabilityInfo {

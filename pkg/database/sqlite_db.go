@@ -44,6 +44,14 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 	var err error
 	handler.db, err = sql.Open("sqlite3", connectionString)
 
+	// Optimize the database connection
+	if err == nil {
+		_, err = handler.db.Exec("PRAGMA journal_mode=WAL;")
+		if err == nil {
+			_, err = handler.db.Exec("PRAGMA synchronous=1;")
+		}
+	}
+
 	return err
 }
 

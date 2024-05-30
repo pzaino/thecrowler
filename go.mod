@@ -26,7 +26,11 @@ require (
 	golang.org/x/crypto v0.23.0
 )
 
-require filippo.io/edwards25519 v1.1.0 // indirect
+require (
+	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/Ullaakut/nmap/v3 v3.0.3 // indirect
+	golang.org/x/sync v0.7.0 // indirect
+)
 
 require (
 	github.com/Ullaakut/nmap v2.0.2+incompatible
