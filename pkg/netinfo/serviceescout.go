@@ -128,6 +128,11 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig, ip string,
 	options = append(options, nmap.WithVerbosity(2))
 	options = append(options, nmap.WithDebugging(2))
 
+	// Privileged mode
+	if platform.OSName != "darwin" {
+		options = append(options, nmap.WithPrivileged())
+	}
+
 	return options, nil
 }
 
