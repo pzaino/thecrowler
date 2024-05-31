@@ -27,6 +27,7 @@ type RuleEngine struct {
 	Schema          *jsonschema.Schema `yaml:"schema"`
 	Rulesets        []Ruleset          `yaml:"rulesets"`
 	DetectionConfig DetectionConfig    `yaml:"detection_config"`
+	JSPlugins       JSPluginRegister   `yaml:"js_plugins"`
 }
 
 type DetectionConfig struct {
@@ -222,3 +223,14 @@ type RuleParser interface {
 
 // DefaultRuleParser is the default implementation of the RuleParser interface.
 type DefaultRuleParser struct{}
+
+// JSPlugin struct to hold the JS plugin
+type JSPlugin struct {
+	name   string
+	script string
+}
+
+// JSPluginRegister struct to hold the JS plugins
+type JSPluginRegister struct {
+	registry map[string]JSPlugin
+}

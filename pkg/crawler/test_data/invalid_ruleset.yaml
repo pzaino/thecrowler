@@ -1,0 +1,28 @@
+- ruleset_name: example.com
+  rule_groups:
+    - group_name: "Group1"
+      valid_from: "2021-01-01"
+      valid_to: "invalid-date-format"
+      is_enabled: true
+      rules:
+        - path: "/articles"
+          elements:
+            title: "h1.article-title"
+            content: "div.article-content"
+            date: "span.date"
+          js_files: true
+          technology_patterns:
+            - "jquery"
+            - "bootstrap"
+
+- ruleset_name: another-example.com
+  rule_groups:
+    - group_name: "GroupA"
+      valid_from: "2021-01-01"
+      valid_to: "2023-12-31"
+      is_enabled: "should be boolean"
+      rules:
+        - path: "/products"
+          elements:
+            name: 1
+            price: 100
