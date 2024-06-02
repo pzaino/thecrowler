@@ -243,7 +243,7 @@ type Remote struct {
 }
 
 // Ruleset represents the top-level structure of the rules YAML file
-type Ruleset struct {
+type RulesetConfig struct {
 	SchemaPath string   `yaml:"schema_path"` // Path to the JSON schema file
 	Path       []string `yaml:"path"`        // Path to the ruleset files
 	Host       string   `yaml:"host"`        // Hostname of the API server
@@ -255,6 +255,20 @@ type Ruleset struct {
 	Type       string   `yaml:"type"`        // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode    string   `yaml:"sslmode"`     // SSL mode for API connection (e.g., "disable")
 	Refresh    int      `yaml:"refresh"`     // Refresh interval for the ruleset (in seconds)
+}
+
+// PluginConfig represents the top-level structure of the rules YAML file
+type PluginConfig struct {
+	Path    []string `yaml:"path"`    // Path to the ruleset files
+	Host    string   `yaml:"host"`    // Hostname of the API server
+	Port    int      `yaml:"port"`    // Port number of the API server
+	Region  string   `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string   `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string   `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int      `yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string   `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode string   `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
+	Refresh int      `yaml:"refresh"` // Refresh interval for the ruleset (in seconds)
 }
 
 // Config represents the structure of the configuration file
@@ -287,24 +301,50 @@ type Config struct {
 	NetworkInfo NetworkInfo `yaml:"network_info"`
 
 	// Rules configuration
-	RulesetsSchemaPath string    `yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
-	Rulesets           []Ruleset `yaml:"rulesets"`
+	RulesetsSchemaPath string          `yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
+	Rulesets           []RulesetConfig `yaml:"rulesets"`
+
+	Plugins PluginsConfig `yaml:"plugins"` // Plugins configuration
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
+}
+
+type PluginsConfig struct {
+	PluginTimeout int            `yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
+	Plugins       []PluginConfig `yaml:"plugins"`
 }
 
 /////////////////////////////////////////////////
 //// ----------- Source Config ------------ ////
 
 type SourceConfig struct {
-	FormatVersion  string              `json:"format_version"`
-	Author         string              `json:"author"`
-	CreatedAt      time.Time           `json:"created_at"`
-	Description    string              `json:"description"`
-	SourceName     string              `json:"source_name"`
-	CrawlingConfig CrawlingConfig      `json:"crawling_config"`
-	ExecutionPlan  []ExecutionPlanItem `json:"execution_plan"`
+	FormatVersion string    `json:"format_version"`
+	Author        string    `json:"author"`
+	CreatedAt     time.Time `json:"created_at"`
+	Description   string    `json:"description"`
+	SourceName    string    `json:"source_name"`
+
+	// Crawling and Fuzzing configuration
+	CrawlingConfig CrawlingConfig `json:"crawling_config"`
+
+	// Selenium and Crowler VDI configuration
+	SeleniumConfig []Selenium `json:"selenium_config"`
+
+	// Image storage API configuration (to store images on a separate server)
+	ImageStorageAPI FileStorageAPI `yaml:"image_storage"`
+
+	// File storage API configuration (to store files on a separate server)
+	FileStorageAPI FileStorageAPI `yaml:"file_storage"`
+
+	// HTTP Headers Info configuration
+	HTTPHeaders HTTPConfig `yaml:"http_headers"`
+
+	// NetworkInfo configuration
+	NetworkInfo NetworkInfo `yaml:"network_info"`
+
+	// Rules configuration
+	ExecutionPlan []ExecutionPlanItem `json:"execution_plan"`
 }
 
 type CrawlingConfig struct {

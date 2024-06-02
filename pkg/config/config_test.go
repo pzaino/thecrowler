@@ -887,7 +887,7 @@ func TestValidateRulesets(t *testing.T) {
 	// Create a config instance
 	config := &Config{
 		RulesetsSchemaPath: "",
-		Rulesets: []Ruleset{
+		Rulesets: []RulesetConfig{
 			{
 				Type: "",
 				Path: []string{},
@@ -1183,7 +1183,7 @@ func TestConfigString(t *testing.T) {
 			},
 		},
 		RulesetsSchemaPath: "path/to/schema",
-		Rulesets:           []Ruleset{},
+		Rulesets:           []RulesetConfig{},
 		ImageStorageAPI:    FileStorageAPI{
 			// Set some fields in FileStorageAPI struct
 		},

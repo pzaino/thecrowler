@@ -29,6 +29,7 @@ import (
 )
 
 const (
+	PluginsDefaultPath    = "./plugins/*.js"
 	JSONRulesDefaultPath  = "./rules/*.json"
 	YAMLRulesDefaultPath1 = "./rules/*.yaml"
 	YAMLRulesDefaultPath2 = "./rules/*.yml"
@@ -210,7 +211,7 @@ func NewConfig() *Config {
 			},
 		},
 		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
-		Rulesets: []Ruleset{
+		Rulesets: []RulesetConfig{
 			{
 				Type: "local",
 				Path: []string{
@@ -218,6 +219,15 @@ func NewConfig() *Config {
 					YAMLRulesDefaultPath1,
 					YAMLRulesDefaultPath2,
 				},
+			},
+		},
+		Plugins: PluginsConfig{
+			PluginTimeout: 15,
+			Plugins: []PluginConfig{{
+				Type: "local",
+				Path: []string{
+					PluginsDefaultPath,
+				}},
 			},
 		},
 		ImageStorageAPI: FileStorageAPI{

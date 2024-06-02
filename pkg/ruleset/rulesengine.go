@@ -133,6 +133,15 @@ func (re *RuleEngine) LoadRulesFromFile(files []string) error {
 // LoadRulesFromConfig loads the rules from the configuration file and returns
 // a pointer to the created RuleEngine.
 func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
+	// Load Plugins from the configuration
+	for _, plugin := range config.Plugins.Plugins {
+		err := loadPluginsFromConfig(&re.JSPlugins, plugin)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to load plugins from configuration: %v", err)
+		}
+	}
+
+	// Load the rules from the configuration
 	for _, rs := range config.Rulesets {
 		rulesets, err := loadRulesFromConfig(re.Schema, rs)
 		if err != nil {
@@ -140,6 +149,7 @@ func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
 		}
 		re.Rulesets = append(re.Rulesets, *rulesets...)
 	}
+
 	return nil
 }
 

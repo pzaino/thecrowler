@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -30,6 +31,10 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
 	"golang.org/x/net/publicsuffix"
+)
+
+const (
+	errMatchingSignature = "Error matching signature: %v"
 )
 
 // CreateConfig creates a default Config
@@ -327,6 +332,9 @@ func detectTechnologies(url string, responseBody string,
 		sslSignatures = nil
 	}
 
+	// Process implied technologies
+	processImpliedTechnologies(&detectedTech, &Patterns)
+
 	// Transform the detectedTech map into a map of strings
 	detectedTechStr := make(map[string]DetectedEntity)
 	for k, v := range detectedTech {
@@ -351,6 +359,24 @@ func detectTechnologies(url string, responseBody string,
 		detectedTechStr[k] = entity
 	}
 	return &detectedTechStr
+}
+
+func processImpliedTechnologies(detectedTech *map[string]detectionEntityDetails, patterns *[]ruleset.DetectionRule) {
+	for tech, details := range *detectedTech {
+		for _, rule := range *patterns {
+			if rule.ObjectName == tech {
+				for _, impliedTech := range rule.GetImplies() {
+					if _, alreadyDetected := (*detectedTech)[impliedTech]; !alreadyDetected {
+						(*detectedTech)[impliedTech] = detectionEntityDetails{
+							entityType:      "implied",
+							confidence:      details.confidence,
+							matchedPatterns: []string{"implied by " + tech},
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func calculateConfidence(x, Noise, Maybe, Detected float32) float32 {
@@ -392,7 +418,11 @@ func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature rule
 			continue
 		} else {
 			for _, signatureValue := range signature.Value {
-				if strings.Contains(certField, signatureValue) {
+				matched, err := regexp.MatchString(signatureValue, certField)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+				} else if matched {
+					//if strings.Contains(certField, signatureValue) {
 					updateDetectedTech(detectedTech, ObjName, signature.Confidence, signatureValue)
 					updateDetectedType(detectedTech, ObjName, detectionType)
 				}
@@ -463,10 +493,12 @@ func detectTechBySignatureValue(text string, signatures []string, sig string, de
 func detectTechBySignatureValueHelper(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
 	const detectionType = "html"
 	if sigValue != "*" {
-		detectTechByPrefix(text, sigValue, sig, detectedTech, confidence)
-		detectTechBySuffix(text, sigValue, sig, detectedTech, confidence)
-		detectTechByNegation(text, sigValue, sig, detectedTech, confidence)
-		detectTechByContains(text, sigValue, sig, detectedTech, confidence)
+		matched, err := regexp.MatchString(sigValue, text)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+		} else if matched {
+			updateDetectedTech(detectedTech, sig, confidence, sigValue)
+		}
 	} else {
 		// Just call updateDetectedTech if the signature is "*"
 		updateDetectedTech(detectedTech, sig, confidence, "*")
@@ -507,33 +539,6 @@ func updateDetectedType(detectedTech *map[string]detectionEntityDetails, sig str
 	}
 }
 
-func detectTechByPrefix(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
-	if strings.HasPrefix(sigValue, "^") && strings.HasPrefix(text, sigValue[1:]) {
-		updateDetectedTech(detectedTech, sig, confidence, sigValue)
-	}
-}
-
-func detectTechBySuffix(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
-	if strings.HasSuffix(sigValue, "$") && strings.HasSuffix(text, sigValue[:len(sigValue)-1]) {
-		updateDetectedTech(detectedTech, sig, confidence, sigValue)
-	}
-}
-
-func detectTechByNegation(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
-	if strings.HasPrefix(sigValue, "!") && !strings.Contains(text, sigValue[1:]) {
-		updateDetectedTech(detectedTech, sig, confidence, sigValue)
-	}
-}
-
-func detectTechByContains(text string, sigValue string, sig string, detectedTech *map[string]detectionEntityDetails, confidence float32) {
-	//fmt.Printf("Text: %s\n", text)
-	//fmt.Printf("Signature: %s\n", sigValue)
-	if strings.Contains(text, sigValue) {
-		//fmt.Printf("Detected technology: %s - %f\n", sig, confidence)
-		updateDetectedTech(detectedTech, sig, confidence, sigValue)
-	}
-}
-
 func detectTechByTag(header *http.Header, tagName string, detectRules *map[string]map[string]ruleset.HTTPHeaderField, detectedTech *map[string]detectionEntityDetails) {
 	hh := (*header)[tagName] // get the header value (header tag name is case sensitive)
 	tagName = strings.ToLower(tagName)
@@ -564,11 +569,14 @@ func detectTechByTagHelper(tagName string, tag string, detectRules *map[string]m
 					continue
 				}
 			} else if signature != "*" {
-				signature := strings.ToLower(signature)
-				detectTechByPrefix(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
-				detectTechByContains(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
-				detectTechBySuffix(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
-				detectTechByNegation(tag, signature, ObjName, detectedTech, item[tagName].Confidence)
+				matched, err := regexp.MatchString(signature, tag)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+					continue
+				}
+				if matched {
+					updateDetectedTech(detectedTech, ObjName, item[tagName].Confidence, signature)
+				}
 			} else {
 				updateDetectedTech(detectedTech, ObjName, item[tagName].Confidence, "*")
 			}
@@ -593,7 +601,12 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 					text, contExists := htmlItem.Attr("content")
 					if contExists && signature.Content != "" {
 						text = strings.ToLower(text)
-						detectTechByMetaTagContent(text, signature, ObjName, detectedTech)
+						matched, err := regexp.MatchString(signature.Content, text)
+						if err != nil {
+							cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+						} else if matched {
+							updateDetectedTech(detectedTech, ObjName, signature.Confidence, signature.Content)
+						}
 					}
 					updateDetectedType(detectedTech, ObjName, detectionType)
 				}
@@ -602,6 +615,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 	}
 }
 
+/*
 func detectTechByMetaTagContent(text string, signature ruleset.MetaTag, ObjName string, detectedTech *map[string]detectionEntityDetails) {
 	if signature.Content != "*" {
 		detectTechByPrefix(text, strings.ToLower(signature.Content), ObjName, detectedTech, signature.Confidence)
@@ -612,11 +626,17 @@ func detectTechByMetaTagContent(text string, signature ruleset.MetaTag, ObjName 
 		updateDetectedTech(detectedTech, ObjName, signature.Confidence, "*")
 	}
 }
+*/
 
 func detectTechByURL(url string, URLSignatures *map[string][]ruleset.URLMicroSignature, detectedTech *map[string]detectionEntityDetails) {
 	for ObjName := range *URLSignatures {
 		for _, signature := range (*URLSignatures)[ObjName] {
-			if strings.Contains(url, signature.Signature) {
+			matched, err := regexp.MatchString(signature.Signature, url)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+				continue
+			}
+			if matched {
 				updateDetectedTech(detectedTech, ObjName, signature.Confidence, signature.Signature)
 				updateDetectedType(detectedTech, ObjName, "url")
 			}

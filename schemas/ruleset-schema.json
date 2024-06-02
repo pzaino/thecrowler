@@ -133,11 +133,11 @@
                                                 "selectors"
                                             ]
                                         },
-                                        "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other Selenium-supported strategies."
+                                        "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies."
                                     },
-                                    "js_files": {
+                                    "extract_scripts": {
                                         "type": "boolean",
-                                        "description": "Indicates whether JavaScript files are relevant for the scraping."
+                                        "description": "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis."
                                     },
                                     "objects": {
                                         "type": "array",
@@ -196,12 +196,14 @@
                                                         "remove",
                                                         "transform",
                                                         "validate",
-                                                        "clean"
+                                                        "clean",
+                                                        "plugin_call"
                                                     ]
                                                 },
                                                 "details": {
                                                     "type": "object",
-                                                    "description": "Detailed configuration for the post-processing step, structure depends on the step_type."
+                                                    "description": "Detailed configuration for the post-processing step, structure depends on the step_type.",
+                                                    "additionalProperties": true
                                                 }
                                             }
                                         },
@@ -255,9 +257,9 @@
                                             "scroll_to_element",
                                             "scroll_by_amount",
                                             "take_screenshot",
-                                            "execute_javascript"
+                                            "plugin_call"
                                         ],
-                                        "description": "The type of action to perform, including advanced interactions."
+                                        "description": "The type of action to perform, including advanced interactions and calls to plugins."
                                     },
                                     "selectors": {
                                         "type": "array",
@@ -490,182 +492,194 @@
                                             "description": "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress."
                                         },
                                         "description": "URL patterns indicative of specific technologies."
-                                    }
-                                },
-                                "meta_tags": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "name": {
-                                                "type": "string",
-                                                "description": "The name attribute of the meta tag."
-                                            },
-                                            "content": {
-                                                "type": "string",
-                                                "description": "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                    },
+                                    "implies": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present."
+                                    },
+                                    "meta_tags": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {
+                                                    "type": "string",
+                                                    "description": "The name attribute of the meta tag."
+                                                },
+                                                "content": {
+                                                    "type": "string",
+                                                    "description": "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                                }
                                             }
-                                        }
-                                    },
-                                    "description": "Matching patterns for meta tags to identify technology."
-                                }
-                            },
-                            "required": [
-                                "rule_name",
-                                "object_name"
-                            ],
-                            "anyOf": [
-                                {
-                                    "required": [
-                                        "http_header_fields"
-                                    ]
-                                },
-                                {
-                                    "required": [
-                                        "page_content_patterns"
-                                    ]
-                                },
-                                {
-                                    "required": [
-                                        "certificates_patterns"
-                                    ]
-                                },
-                                {
-                                    "required": [
-                                        "url_micro_signatures"
-                                    ]
-                                },
-                                {
-                                    "required": [
-                                        "meta_tags"
-                                    ]
-                                }
-                            ]
-                        },
-                        "crawling_rules": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "rule_name": {
-                                        "type": "string",
-                                        "description": "A unique name identifying the crawling rule."
-                                    },
-                                    "request_type": {
-                                        "type": "string",
-                                        "enum": [
-                                            "GET",
-                                            "POST"
-                                        ],
-                                        "description": "The type of request to perform for fuzzing."
-                                    },
-                                    "target_elements": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "selector_type": {
-                                                    "type": "string",
-                                                    "enum": [
-                                                        "css",
-                                                        "xpath",
-                                                        "form"
-                                                    ]
-                                                },
-                                                "selector": {
-                                                    "type": "string",
-                                                    "description": "The actual selector or form name used to find and interact with the target elements for fuzzing."
-                                                }
-                                            },
-                                            "required": [
-                                                "selector_type",
-                                                "selector"
-                                            ]
                                         },
-                                        "description": "Specifies the elements to target for fuzzing, including forms."
-                                    },
-                                    "fuzzing_parameters": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "parameter_name": {
-                                                    "type": "string",
-                                                    "description": "Name of the parameter to fuzz."
-                                                },
-                                                "fuzzing_type": {
-                                                    "type": "string",
-                                                    "enum": [
-                                                        "fixed_list",
-                                                        "pattern_based"
-                                                    ],
-                                                    "description": "The fuzzing strategy to use for the parameter."
-                                                },
-                                                "values": {
-                                                    "type": "array",
-                                                    "items": {
-                                                        "type": "string"
-                                                    },
-                                                    "description": "List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'."
-                                                },
-                                                "pattern": {
-                                                    "type": "string",
-                                                    "description": "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
-                                                }
-                                            },
-                                            "required": [
-                                                "parameter_name",
-                                                "fuzzing_type"
-                                            ]
-                                        },
-                                        "description": "Defines the parameters to fuzz and the strategy for generating fuzz values."
+                                        "description": "Matching patterns for meta tags to identify technology."
                                     }
                                 },
                                 "required": [
                                     "rule_name",
-                                    "request_type",
-                                    "target_elements",
-                                    "fuzzing_parameters"
+                                    "object_name"
+                                ],
+                                "anyOf": [
+                                    {
+                                        "required": [
+                                            "http_header_fields"
+                                        ]
+                                    },
+                                    {
+                                        "required": [
+                                            "page_content_patterns"
+                                        ]
+                                    },
+                                    {
+                                        "required": [
+                                            "certificates_patterns"
+                                        ]
+                                    },
+                                    {
+                                        "required": [
+                                            "url_micro_signatures"
+                                        ]
+                                    },
+                                    {
+                                        "required": [
+                                            "meta_tags"
+                                        ]
+                                    },
+                                    {
+                                        "required": [
+                                            "implies"
+                                        ]
+                                    }
                                 ]
-                            }
-                        },
-                        "environment_settings": {
-                            "type": "array",
-                            "items": {
+                            },
+                            "crawling_rules": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "rule_name": {
+                                            "type": "string",
+                                            "description": "A unique name identifying the crawling rule."
+                                        },
+                                        "request_type": {
+                                            "type": "string",
+                                            "enum": [
+                                                "GET",
+                                                "POST"
+                                            ],
+                                            "description": "The type of request to perform for fuzzing."
+                                        },
+                                        "target_elements": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "selector_type": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                            "css",
+                                                            "xpath",
+                                                            "form"
+                                                        ]
+                                                    },
+                                                    "selector": {
+                                                        "type": "string",
+                                                        "description": "The actual selector or form name used to find and interact with the target elements for fuzzing."
+                                                    }
+                                                },
+                                                "required": [
+                                                    "selector_type",
+                                                    "selector"
+                                                ]
+                                            },
+                                            "description": "Specifies the elements to target for fuzzing, including forms."
+                                        },
+                                        "fuzzing_parameters": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "parameter_name": {
+                                                        "type": "string",
+                                                        "description": "Name of the parameter to fuzz."
+                                                    },
+                                                    "fuzzing_type": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                            "fixed_list",
+                                                            "pattern_based"
+                                                        ],
+                                                        "description": "The fuzzing strategy to use for the parameter."
+                                                    },
+                                                    "values": {
+                                                        "type": "array",
+                                                        "items": {
+                                                            "type": "string"
+                                                        },
+                                                        "description": "List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'."
+                                                    },
+                                                    "pattern": {
+                                                        "type": "string",
+                                                        "description": "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
+                                                    }
+                                                },
+                                                "required": [
+                                                    "parameter_name",
+                                                    "fuzzing_type"
+                                                ]
+                                            },
+                                            "description": "Defines the parameters to fuzz and the strategy for generating fuzz values."
+                                        }
+                                    },
+                                    "required": [
+                                        "rule_name",
+                                        "request_type",
+                                        "target_elements",
+                                        "fuzzing_parameters"
+                                    ]
+                                }
+                            },
+                            "environment_settings": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "key": {
+                                            "type": "string",
+                                            "description": "The name of the environment setting."
+                                        },
+                                        "value": {
+                                            "type": "string",
+                                            "description": "The value of the environment setting."
+                                        }
+                                    }
+                                },
+                                "description": "Custom key value settings to use in the rules."
+                            },
+                            "logging_configuration": {
                                 "type": "object",
                                 "properties": {
-                                    "key": {
+                                    "log_level": {
                                         "type": "string",
-                                        "description": "The name of the environment setting."
+                                        "enum": [
+                                            "DEBUG",
+                                            "INFO",
+                                            "WARNING",
+                                            "ERROR",
+                                            "CRITICAL"
+                                        ],
+                                        "description": "Specifies the logging level for actions and scraping activities."
                                     },
-                                    "value": {
+                                    "log_message": {
                                         "type": "string",
-                                        "description": "The value of the environment setting."
+                                        "description": "Optional. The message you want to log if the rule matches something."
                                     }
-                                }
-                            },
-                            "description": "Custom key value settings to use in the rules."
-                        },
-                        "logging_configuration": {
-                            "type": "object",
-                            "properties": {
-                                "log_level": {
-                                    "type": "string",
-                                    "enum": [
-                                        "DEBUG",
-                                        "INFO",
-                                        "WARNING",
-                                        "ERROR",
-                                        "CRITICAL"
-                                    ],
-                                    "description": "Specifies the logging level for actions and scraping activities."
                                 },
-                                "log_message": {
-                                    "type": "string",
-                                    "description": "Optional. The message you want to log if the rule matches something."
-                                }
-                            },
-                            "description": "rule log configuration (aka what you want to be logged when the rule execute)."
+                                "description": "rule log configuration (aka what you want to be logged when the rule execute)."
+                            }
                         }
                     },
                     "required": [

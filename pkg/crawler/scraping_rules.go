@@ -29,7 +29,6 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
-	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	"golang.org/x/net/html"
 
 	"github.com/tebeka/selenium"
@@ -73,24 +72,24 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url 
 	rs, err := ctx.re.GetRulesetByURL(url)
 	if err == nil && rs != nil {
 		// Execute all the rules in the ruleset
-		scrapedDataDoc += executeScrapingRulesInRuleset(rs, wd)
+		scrapedDataDoc += executeScrapingRulesInRuleset(ctx, rs, wd)
 	} else {
 		// Retrieve the rule group by URL
 		rg, err := ctx.re.GetRuleGroupByURL(url)
 		if err == nil && rg != nil {
 			// Execute all the rules in the rule group
-			scrapedDataDoc += executeScrapingRulesInRuleGroup(rg, wd)
+			scrapedDataDoc += executeScrapingRulesInRuleGroup(ctx, rg, wd)
 		}
 	}
 
 	return scrapedDataDoc
 }
 
-func executeScrapingRulesInRuleset(rs *rules.Ruleset, wd *selenium.WebDriver) string {
+func executeScrapingRulesInRuleset(ctx *processContext, rs *rules.Ruleset, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
 	for _, r := range rs.GetAllEnabledScrapingRules() {
 		// Execute the rule
-		scrapedData, err := executeScrapingRule(&r, wd)
+		scrapedData, err := executeScrapingRule(ctx, &r, wd)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
@@ -99,11 +98,11 @@ func executeScrapingRulesInRuleset(rs *rules.Ruleset, wd *selenium.WebDriver) st
 	return scrapedDataDoc
 }
 
-func executeScrapingRulesInRuleGroup(rg *rules.RuleGroup, wd *selenium.WebDriver) string {
+func executeScrapingRulesInRuleGroup(ctx *processContext, rg *rules.RuleGroup, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
 	for _, r := range rg.GetScrapingRules() {
 		// Execute the rule
-		scrapedData, err := executeScrapingRule(&r, wd)
+		scrapedData, err := executeScrapingRule(ctx, &r, wd)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
@@ -113,7 +112,8 @@ func executeScrapingRulesInRuleGroup(rg *rules.RuleGroup, wd *selenium.WebDriver
 }
 
 // executeScrapingRule executes a single ScrapingRule
-func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string, error) {
+func executeScrapingRule(ctx *processContext, r *rules.ScrapingRule,
+	wd *selenium.WebDriver) (string, error) {
 	var jsonDocument string
 
 	// Execute Wait condition first
@@ -126,14 +126,14 @@ func executeScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) (string,
 
 	// Execute the scraping rule
 	if shouldExecuteScrapingRule(r, wd) {
-		extractedData := scraper.ApplyRule(r, wd)
+		extractedData := ApplyRule(r, wd)
 		processedData := processExtractedData(extractedData)
 		jsonData, err := json.Marshal(processedData)
 		if err != nil {
 			return "", fmt.Errorf("marshalling JSON: %v", err)
 		}
 		if len(r.PostProcessing) != 0 {
-			runPostProcessingSteps(&r.PostProcessing, &jsonData)
+			runPostProcessingSteps(ctx, &r.PostProcessing, &jsonData)
 		}
 		jsonDocument = string(jsonData)
 	}
@@ -201,10 +201,10 @@ func isHTML(s string) bool {
 }
 
 // runPostProcessingSteps runs the post processing steps
-func runPostProcessingSteps(pps *[]rules.PostProcessingStep, jsonData *[]byte) {
+func runPostProcessingSteps(ctx *processContext, pps *[]rules.PostProcessingStep, jsonData *[]byte) {
 	for _, pp := range *pps {
 		// Execute the post processing step
-		scraper.ApplyPostProcessingStep(&pp, jsonData)
+		ApplyPostProcessingStep(ctx, &pp, jsonData)
 	}
 }
 
@@ -264,7 +264,7 @@ func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriv
 			cmn.DebugMsg(cmn.DbgLvlError, "getting scraping rule: %v", err)
 		} else {
 			// Execute the rule
-			scrapedData, err := executeScrapingRule(rule, wd)
+			scrapedData, err := executeScrapingRule(ctx, rule, wd)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 			} else {

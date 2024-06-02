@@ -285,7 +285,9 @@ func appendLowNosingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
 	}
 
 	// Traceroute
-	options = append(options, nmap.WithTraceRoute())
+	if platform.OSName != "darwin" {
+		options = append(options, nmap.WithTraceRoute())
+	}
 
 	return options
 }

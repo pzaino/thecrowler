@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package scrapper implements the scrapper library for the Crowler and
-// the Crowler search engine.
-package scraper
+// Package crawler implements the crawling logic of the application.
+// It's responsible for crawling a website and extracting information from it.
+package crawler
 
 import (
 	"encoding/json"
@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -32,7 +31,6 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
-	"github.com/robertkrimen/otto"
 	"golang.org/x/net/html"
 )
 
@@ -167,7 +165,7 @@ func ApplyRulesGroup(ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebD
 }
 
 // ApplyPostProcessingStep applies the provided post-processing step to the provided data.
-func ApplyPostProcessingStep(step *rs.PostProcessingStep, data *[]byte) {
+func ApplyPostProcessingStep(ctx *processContext, step *rs.PostProcessingStep, data *[]byte) {
 	// Implement the post-processing step here
 	stepType := strings.ToLower(strings.TrimSpace(step.Type))
 	switch stepType {
@@ -176,7 +174,7 @@ func ApplyPostProcessingStep(step *rs.PostProcessingStep, data *[]byte) {
 	case "remove":
 		ppStepRemove(data, step)
 	case "transform":
-		ppStepTransform(data, step)
+		ppStepTransform(ctx, data, step)
 	case "validate":
 		ppStepValidate(data, step)
 	case "clean":
@@ -282,7 +280,7 @@ func stripNumbers(data string) string {
 }
 
 // ppStepTransform applies the "transform" post-processing step to the provided data.
-func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
+func ppStepTransform(ctx *processContext, data *[]byte, step *rs.PostProcessingStep) {
 	// Implement the transformation logic here
 	transformType := strings.ToLower(strings.TrimSpace(step.Details["transform_type"].(string)))
 	var err error
@@ -290,8 +288,8 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	case "api": // Call an API to transform the data
 		// Implement the API call here
 		err = processAPITransformation(step, data)
-	case "custom": // Use a custom transformation function
-		err = processCustomJS(step, data)
+	case "plugin_call": // Use a custom transformation function
+		err = processCustomJS(ctx, step, data)
 
 	}
 	// Convert the value to a string and set it in the data slice.
@@ -316,100 +314,56 @@ func ppStepTransform(data *[]byte, step *rs.PostProcessingStep) {
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
 */
-func processCustomJS(step *rs.PostProcessingStep, data *[]byte) error {
-	// Create a new instance of the Otto VM.
-	vm := otto.New()
-	err := removeJSFunctions(vm)
-	if err != nil {
-		errMsg := fmt.Sprintf("Error removing JS functions: %v", err)
-		return errors.New(errMsg)
-	}
-
-	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
-
-	go func() {
-		time.Sleep(15 * time.Second) // Timeout after 15 seconds
-		vm.Interrupt <- func() {
-			panic("JavaScript execution timeout")
-		}
-	}()
-
+func processCustomJS(ctx *processContext, step *rs.PostProcessingStep, data *[]byte) error {
 	// Convert the jsonData byte slice to a string and set it in the JS VM.
 	jsonData := *data
 	var jsonDataMap map[string]interface{}
-	if err = json.Unmarshal(jsonData, &jsonDataMap); err != nil {
+	if err := json.Unmarshal(jsonData, &jsonDataMap); err != nil {
 		errMsg := fmt.Sprintf("Error unmarshalling jsonData: %v", err)
 		return errors.New(errMsg)
 	}
-	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
-		errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
-		return errors.New(errMsg)
-	}
-
-	// Execute the JavaScript code.
-	customJS := step.Details["custom_js"].(string)
-	if customJS == "" || len(customJS) > 1024 {
-		errMsg := fmt.Sprintf("invalid JavaScript code: %v", otto.Value{}.String())
-		return errors.New(errMsg)
-	}
-
-	value, err := vm.Run(customJS)
-	if err != nil {
-		errMsg := fmt.Sprintf("Error executing JS: %v", err)
-		return errors.New(errMsg)
-	}
-	modifiedJSON, err := value.ToString()
-	if err != nil {
-		errMsg := fmt.Sprintf("Error converting JS output to string: %v", err)
-		return errors.New(errMsg)
-	}
-	if !json.Valid([]byte(modifiedJSON)) {
-		return errors.New("modified JSON is not valid")
-	}
-	// Update data
-	*data = []byte(modifiedJSON)
-
-	// Convert the value to a string
-	return nil
-}
-
-func removeJSFunctions(vm *otto.Otto) error {
-	functionsToRemove := []string{
-		"eval",
-		"Function",
-		"setTimeout",
-		"setInterval",
-		"clearTimeout",
-		"clearInterval",
-		"requestAnimationFrame",
-		"cancelAnimationFrame",
-		"requestIdleCallback",
-		"cancelIdleCallback",
-		"importScripts",
-		"XMLHttpRequest",
-		"fetch",
-		"WebSocket",
-		"Worker",
-		"SharedWorker",
-		"Notification",
-		"navigator",
-		"location",
-		"document",
-		"window",
-		"process",
-		"globalThis",
-		"global",
-		"crypto",
-	}
-
-	for _, functionName := range functionsToRemove {
-		err := vm.Set(functionName, nil)
-		if err != nil {
-			return err
+	/*
+		if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
+			errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
+			return errors.New(errMsg)
 		}
+	*/
+	// Prepare script parameters
+	params := make(map[string]interface{})
+	params["jsonData"] = string(jsonData)
+
+	// Retrieve the JS plugin
+	pluginName := step.Details["plugin_name"].(string)
+	plugin, exists := ctx.re.JSPlugins.GetPlugin(pluginName)
+	if !exists {
+		errMsg := fmt.Sprintf("Plugin %v not found", pluginName)
+		return errors.New(errMsg)
 	}
 
-	return nil
+	// Execute the plugin
+	value, err := plugin.Execute(ctx.config.Plugins.PluginTimeout, params)
+	if err != nil {
+		errMsg := fmt.Sprintf("Error executing JS plugin: %v", err)
+		return errors.New(errMsg)
+	}
+
+	// Check if the result is a string
+	for _, val := range value {
+		// Convert the value to a string and check if it's a valid JSON
+		valStr := fmt.Sprintf("%v", val)
+
+		// Convert the value to a string and check if it's a valid JSON
+		if !json.Valid([]byte(valStr)) {
+			continue
+		}
+
+		// Set the data to the new value
+		*data = []byte(valStr)
+		return nil
+	}
+
+	// It seems we were unable to retrieve the result from the JS output
+	return errors.New("modified JSON is not valid")
 }
 
 // processAPITransformation allows to use a 3rd party API to process the JSON

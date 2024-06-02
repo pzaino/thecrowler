@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scraper
+// Package crawler implements the crawling logic of the application.
+// It's responsible for crawling a website and extracting information from it.
+package crawler
 
 import (
 	"fmt"
@@ -24,7 +26,7 @@ import (
 )
 
 const (
-	goodTestFile = "./test-ruleset.yaml"
+	goodTestFile = "./test_data/test-ruleset.yaml"
 )
 
 func TestParseRules(t *testing.T) {
@@ -49,7 +51,7 @@ func TestParseRules(t *testing.T) {
 func TestParseRulesInvalidFile(t *testing.T) {
 	schema, _ := rs.LoadSchema("../../schemas/ruleset-schema.json")
 
-	r, err := rs.BulkLoadRules(schema, "./invalid_ruleset.yaml")
+	r, err := rs.BulkLoadRules(schema, "./test_data/invalid_ruleset.yaml")
 	if (schema != nil) && (err == nil) {
 		if r != nil {
 			// Given we are testing an invalid ruleset, we should not get any rules back

@@ -54,7 +54,7 @@ func processURLRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 		if rs != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
 			// Execute all the rules in the ruleset
-			executeActionRules(rs.GetAllEnabledActionRules(), wd)
+			executeActionRules(ctx, rs.GetAllEnabledActionRules(), wd)
 		}
 	} else {
 		rg, err := ctx.re.GetRuleGroupByURL(url)
@@ -62,28 +62,35 @@ func processURLRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 			if rg != nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug, "Executing rule group: %s", rg.GroupName)
 				// Execute all the rules in the rule group
-				executeActionRules(rg.GetActionRules(), wd)
+				executeActionRules(ctx, rg.GetActionRules(), wd)
 			}
 		}
 	}
 }
 
-func executeActionRules(rules []rules.ActionRule, wd *selenium.WebDriver) {
+func executeActionRules(ctx *processContext,
+	rules []rules.ActionRule, wd *selenium.WebDriver) {
+	// Extract each rule and execute it
 	for _, r := range rules {
-		// Execute the rule
-		err := executeActionRule(&r, wd)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
-			if !r.ErrorHandling.Ignore {
-				if r.ErrorHandling.RetryCount > 0 {
-					for i := 0; i < r.ErrorHandling.RetryCount; i++ {
-						if r.ErrorHandling.RetryDelay > 0 {
-							time.Sleep(time.Duration(r.ErrorHandling.RetryDelay) * time.Second)
-						}
-						err = executeActionRule(&r, wd)
-						if err == nil {
-							break
-						}
+		executeRule(ctx, &r, wd)
+		ctx.Status.TotalActions++
+	}
+}
+
+func executeRule(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) {
+	// Execute the rule
+	err := executeActionRule(ctx, r, wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
+		if !r.ErrorHandling.Ignore {
+			if r.ErrorHandling.RetryCount > 0 {
+				for i := 0; i < r.ErrorHandling.RetryCount; i++ {
+					if r.ErrorHandling.RetryDelay > 0 {
+						time.Sleep(time.Duration(r.ErrorHandling.RetryDelay) * time.Second)
+					}
+					err = executeActionRule(ctx, r, wd)
+					if err == nil {
+						break
 					}
 				}
 			}
@@ -92,7 +99,7 @@ func executeActionRules(rules []rules.ActionRule, wd *selenium.WebDriver) {
 }
 
 // executeActionRule executes a single ActionRule
-func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionRule(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
 		for _, wc := range r.WaitConditions {
@@ -114,8 +121,8 @@ func executeActionRule(r *rules.ActionRule, wd *selenium.WebDriver) error {
 			return executeActionInput(r, wd)
 		case "clear":
 			return executeActionClear(r, wd)
-		case "execute_javascript":
-			return executeActionJS(r, wd)
+		case "plugin_call":
+			return executeActionJS(ctx, r, wd)
 		case "take_screenshot":
 			return executeActionScreenshot(r, wd)
 		case "key_down":
@@ -374,9 +381,14 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 }
 
 // executeActionJS is responsible for executing a "execute_javascript" action
-func executeActionJS(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionJS(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+	// retrieve the JavaScript from the plugins registry using the value as the key
+	plugin, exists := ctx.re.JSPlugins.GetPlugin(r.Value)
+	if !exists {
+		return fmt.Errorf("plugin not found: %s", r.Value)
+	}
 	// Execute the JavaScript
-	_, err := (*wd).ExecuteScript(r.Value, nil)
+	_, err := (*wd).ExecuteScript(plugin.String(), nil)
 	return err
 }
 
@@ -613,7 +625,7 @@ func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *proce
 	}
 
 	// Execute the rule
-	if err = executeActionRule(rule, wd); err != nil {
+	if err = executeActionRule(ctx, rule, wd); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
 		if !rule.ErrorHandling.Ignore {
 			if rule.ErrorHandling.RetryCount > 0 {
@@ -621,7 +633,7 @@ func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *proce
 					if rule.ErrorHandling.RetryDelay > 0 {
 						time.Sleep(time.Duration(rule.ErrorHandling.RetryDelay) * time.Second)
 					}
-					if err = executeActionRule(rule, wd); err == nil {
+					if err = executeActionRule(ctx, rule, wd); err == nil {
 						break
 					}
 				}
@@ -644,7 +656,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, plann
 			cmn.DebugMsg(cmn.DbgLvlError, "getting rule group: %v", err)
 		} else {
 			// Execute the rule group
-			executeActionRules(rg.GetActionRules(), wd)
+			executeActionRules(ctx, rg.GetActionRules(), wd)
 			ctx.Status.TotalActions += len(rg.GetActionRules())
 		}
 	}
@@ -664,7 +676,7 @@ func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned
 			cmn.DebugMsg(cmn.DbgLvlError, "getting ruleset: %v", err)
 		} else {
 			// Execute the ruleset
-			executeActionRules(rs.GetAllEnabledActionRules(), wd)
+			executeActionRules(ctx, rs.GetAllEnabledActionRules(), wd)
 		}
 	}
 }

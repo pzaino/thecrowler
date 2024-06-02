@@ -235,18 +235,23 @@ Postgres container.
 Once you've set your ENV vars, follow these steps:
 
 1. If you haven't yet, clone TheCrowler repository on your build machine
-2. `cd` into the root directory of the repository
-3. Create your **config.yaml** file (see [here](doc/config_yaml.md) for more
-info)
-4. Run `./docker-build.sh` to build the with Docker compose and the right
+   and `cd` into the root directory of the repository
+2. Create your **config.yaml** file (see [here](doc/config_yaml.md) for more
+info). You can use the `config.default` file as a template (just rename it
+to `config.yaml` and edit it as you need).
+3. Run `./docker-build.sh` to build the with Docker compose and the right
 platform (see [here](doc/docker_build.md) for more info)
 
-**Please Note(1)**: If you're running the CROWler on a Raspberry Pi, you'll
+**Please note(1)**: If you have questions about config.yaml or the ENV vars,
+or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
+link [here (it's freely available to everyone)](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-ruleset-support)
+
+**Please Note(2)**: If you're running the CROWler on a Raspberry Pi, you'll
 need to build the CROWler with the `arm` platform. To do so, the easier way
 is to build the CROWler with the `docker-build.sh` script directly on the
 Raspberry Pi.
 
-**Please Note(2)**: If need to do a rebuild and want to clean up everything,
+**Please Note(3)**: If need to do a rebuild and want to clean up everything,
 run the following command:
 
 ```bash

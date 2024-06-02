@@ -34,6 +34,11 @@ func (d *DetectionRule) GetObjectName() string {
 	return strings.TrimSpace(d.ObjectName)
 }
 
+// GetImplies returns the implied rules for the specified detection rule.
+func (d *DetectionRule) GetImplies() []string {
+	return d.Implies
+}
+
 // GetObjectVersion returns the object version targeted by the detection rule.
 func (d *DetectionRule) GetObjectVersion() string {
 	return strings.TrimSpace(d.ObjectVersion)

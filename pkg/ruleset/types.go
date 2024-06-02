@@ -27,6 +27,7 @@ type RuleEngine struct {
 	Schema          *jsonschema.Schema `yaml:"schema"`
 	Rulesets        []Ruleset          `yaml:"rulesets"`
 	DetectionConfig DetectionConfig    `yaml:"detection_config"`
+	JSPlugins       JSPluginRegister   `yaml:"js_plugins"`
 }
 
 type DetectionConfig struct {
@@ -135,6 +136,7 @@ type DetectionRule struct {
 	SSLSignatures       []SSLSignature         `yaml:"ssl_patterns,omitempty"`
 	URLMicroSignatures  []URLMicroSignature    `yaml:"url_micro_signatures,omitempty"`
 	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
+	Implies             []string               `yaml:"implies,omitempty"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
@@ -222,3 +224,14 @@ type RuleParser interface {
 
 // DefaultRuleParser is the default implementation of the RuleParser interface.
 type DefaultRuleParser struct{}
+
+// JSPlugin struct to hold the JS plugin
+type JSPlugin struct {
+	name   string
+	script string
+}
+
+// JSPluginRegister struct to hold the JS plugins
+type JSPluginRegister struct {
+	registry map[string]JSPlugin
+}
