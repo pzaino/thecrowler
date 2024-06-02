@@ -78,15 +78,15 @@ items:
                             selector_type:
                               type: "string"
                               enum:
-                              - "css"
-                              - "xpath"
-                              - "id"
-                              - "class_name"
-                              - "name"
-                              - "tag_name"
-                              - "link_text"
-                              - "partial_link_text"
-                              - "regex"
+                                - "css"
+                                - "xpath"
+                                - "id"
+                                - "class_name"
+                                - "name"
+                                - "tag_name"
+                                - "link_text"
+                                - "partial_link_text"
+                                - "regex"
                             selector:
                               type: "string"
                             attribute:
@@ -100,15 +100,15 @@ items:
                                   description: "Optional. The attribute's value of the element to extract, e.g., 'class_name'. "
                               description: "Optional. The attribute of the element to extract."
                           required:
-                          - "selector_type"
-                          - "selector"
+                            - "selector_type"
+                            - "selector"
                     required:
-                    - "key"
-                    - "selectors"
-                  description: "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other Selenium-supported strategies."
-                js_files:
+                      - "key"
+                      - "selectors"
+                  description: "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies."
+                extract_scripts:
                   type: "boolean"
-                  description: "Indicates whether JavaScript files are relevant for the scraping."
+                  description: "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis."
                 objects:
                   type: "array"
                   items:
@@ -128,10 +128,10 @@ items:
                       condition_type:
                         type: "string"
                         enum:
-                        - "element_presence"
-                        - "element_visible"
-                        - "custom_js"
-                        - "delay"
+                          - "element_presence"
+                          - "element_visible"
+                          - "custom_js"
+                          - "delay"
                       value:
                         type: "string"
                         description: "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
@@ -150,21 +150,23 @@ items:
                       step_type:
                         type: "string"
                         enum:
-                        - "replace"
-                        - "remove"
-                        - "transform"
-                        - "validate"
-                        - "clean"
+                          - "replace"
+                          - "remove"
+                          - "transform"
+                          - "validate"
+                          - "clean"
+                          - "plugin_call"
                       details:
                         type: "object"
                         description: "Detailed configuration for the post-processing step, structure depends on the step_type."
+                        additionalProperties: "true"
                   description: "Post-processing steps for the scraped data to transform, validate, or clean it. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
                   required:
-                  - "step_type"
-                  - "details"
+                    - "step_type"
+                    - "details"
               required:
-              - "rule_name"
-              - "elements"
+                - "rule_name"
+                - "elements"
           action_rules:
             type: "array"
             items:
@@ -176,33 +178,33 @@ items:
                 action_type:
                   type: "string"
                   enum:
-                  - "click"
-                  - "input_text"
-                  - "clear"
-                  - "drag_and_drop"
-                  - "mouse_hover"
-                  - "right_click"
-                  - "double_click"
-                  - "click_and_hold"
-                  - "release"
-                  - "key_down"
-                  - "key_up"
-                  - "navigate_to_url"
-                  - "forward"
-                  - "back"
-                  - "refresh"
-                  - "switch_to_window"
-                  - "switch_to_frame"
-                  - "close_window"
-                  - "accept_alert"
-                  - "dismiss_alert"
-                  - "get_alert_text"
-                  - "send_keys_to_alert"
-                  - "scroll_to_element"
-                  - "scroll_by_amount"
-                  - "take_screenshot"
-                  - "execute_javascript"
-                  description: "The type of action to perform, including advanced interactions."
+                    - "click"
+                    - "input_text"
+                    - "clear"
+                    - "drag_and_drop"
+                    - "mouse_hover"
+                    - "right_click"
+                    - "double_click"
+                    - "click_and_hold"
+                    - "release"
+                    - "key_down"
+                    - "key_up"
+                    - "navigate_to_url"
+                    - "forward"
+                    - "back"
+                    - "refresh"
+                    - "switch_to_window"
+                    - "switch_to_frame"
+                    - "close_window"
+                    - "accept_alert"
+                    - "dismiss_alert"
+                    - "get_alert_text"
+                    - "send_keys_to_alert"
+                    - "scroll_to_element"
+                    - "scroll_by_amount"
+                    - "take_screenshot"
+                    - "plugin_call"
+                  description: "The type of action to perform, including advanced interactions and calls to plugins."
                 selectors:
                   type: "array"
                   items:
@@ -211,14 +213,14 @@ items:
                       selector_type:
                         type: "string"
                         enum:
-                        - "css"
-                        - "xpath"
-                        - "id"
-                        - "class_name"
-                        - "name"
-                        - "tag_name"
-                        - "link_text"
-                        - "partial_link_text"
+                          - "css"
+                          - "xpath"
+                          - "id"
+                          - "class_name"
+                          - "name"
+                          - "tag_name"
+                          - "link_text"
+                          - "partial_link_text"
                       selector:
                         type: "string"
                         description: "The actual selector or pattern used to find the element based on the selector_type."
@@ -236,8 +238,8 @@ items:
                         type: "string"
                         description: "The value within the selector that we need to match for the action. (this is NOT the value to input!)"
                     required:
-                    - "selector_type"
-                    - "selector"
+                      - "selector_type"
+                      - "selector"
                 value:
                   type: "string"
                   description: "The value to use with the action, e.g., text to input, applicable for input_text."
@@ -253,10 +255,10 @@ items:
                       condition_type:
                         type: "string"
                         enum:
-                        - "element_presence"
-                        - "element_visible"
-                        - "custom_js"
-                        - "delay"
+                          - "element_presence"
+                          - "element_visible"
+                          - "custom_js"
+                          - "delay"
                       value:
                         type: "string"
                         description: "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
@@ -285,8 +287,8 @@ items:
                       description: "The delay between retries in seconds."
                   description: "Error handling strategies for the action."
               required:
-              - "rule_name"
-              - "action_type"
+                - "rule_name"
+                - "action_type"
           detection_rules:
             type: "array"
             items:
@@ -313,7 +315,7 @@ items:
                         type: "array"
                         items:
                           type: "string"
-                        description: "The expected value of the HTTP header field. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                        description: 'The expected value of the HTTP header field. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn''t a match). This value is NOT a regex pattern, but a simple string pattern. Use "*" to match any value.'
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the match, ranging from 0 to 10."
@@ -333,10 +335,10 @@ items:
                         type: "array"
                         items:
                           type: "string"
-                        description: "The pattern to match within the tag's attribute content. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                        description: 'The pattern to match within the tag''s attribute content. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn''t a match). This value is NOT a regex pattern, but a simple string pattern. Use "*" to match any value.'
                       text:
                         type: "string"
-                        description: "Optional. The text to match in the tag's innerText. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                        description: 'Optional. The text to match in the tag''s innerText. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn''t a match). This value is NOT a regex pattern, but a simple string pattern. Use "*" to match any value.'
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
@@ -354,7 +356,7 @@ items:
                         type: "array"
                         items:
                           type: "string"
-                        description: "The pattern to match within the field's value. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                        description: 'The pattern to match within the field''s value. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn''t a match). This value is NOT a regex pattern, but a simple string pattern. Use "*" to match any value.'
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
@@ -372,149 +374,147 @@ items:
                         description: "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
                     description: "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress."
                   description: "URL patterns indicative of specific technologies."
-              meta_tags:
-                type: "array"
-                items:
-                  type: "object"
-                  properties:
-                    name:
-                      type: "string"
-                      description: "The name attribute of the meta tag."
-                    content:
-                      type: "string"
-                      description: "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
-                description: "Matching patterns for meta tags to identify technology."
-            required:
-            - "rule_name"
-            - "object_name"
-            anyOf:
-            -
+                implies:
+                  type: "array"
+                  items:
+                    type: "string"
+                  description: "Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present."
+                meta_tags:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                        description: "The name attribute of the meta tag."
+                      content:
+                        type: "string"
+                        description: 'The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn''t a match). This value is NOT a regex pattern, but a simple string pattern. Use "*" to match any value.'
+                  description: "Matching patterns for meta tags to identify technology."
               required:
-              - "http_header_fields"
-            -
-              required:
-              - "page_content_patterns"
-            -
-              required:
-              - "certificates_patterns"
-            -
-              required:
-              - "url_micro_signatures"
-            -
-              required:
-              - "meta_tags"
-          crawling_rules:
-            type: "array"
-            items:
+                - "rule_name"
+                - "object_name"
+              anyOf:
+                - required:
+                    - "http_header_fields"
+                - required:
+                    - "page_content_patterns"
+                - required:
+                    - "certificates_patterns"
+                - required:
+                    - "url_micro_signatures"
+                - required:
+                    - "meta_tags"
+                - required:
+                    - "implies"
+            crawling_rules:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  rule_name:
+                    type: "string"
+                    description: "A unique name identifying the crawling rule."
+                  request_type:
+                    type: "string"
+                    enum:
+                      - "GET"
+                      - "POST"
+                    description: "The type of request to perform for fuzzing."
+                  target_elements:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        selector_type:
+                          type: "string"
+                          enum:
+                            - "css"
+                            - "xpath"
+                            - "form"
+                        selector:
+                          type: "string"
+                          description: "The actual selector or form name used to find and interact with the target elements for fuzzing."
+                      required:
+                        - "selector_type"
+                        - "selector"
+                    description: "Specifies the elements to target for fuzzing, including forms."
+                  fuzzing_parameters:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        parameter_name:
+                          type: "string"
+                          description: "Name of the parameter to fuzz."
+                        fuzzing_type:
+                          type: "string"
+                          enum:
+                            - "fixed_list"
+                            - "pattern_based"
+                          description: "The fuzzing strategy to use for the parameter."
+                        values:
+                          type: "array"
+                          items:
+                            type: "string"
+                          description: "List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'."
+                        pattern:
+                          type: "string"
+                          description: "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
+                      required:
+                        - "parameter_name"
+                        - "fuzzing_type"
+                    description: "Defines the parameters to fuzz and the strategy for generating fuzz values."
+                required:
+                  - "rule_name"
+                  - "request_type"
+                  - "target_elements"
+                  - "fuzzing_parameters"
+            environment_settings:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  key:
+                    type: "string"
+                    description: "The name of the environment setting."
+                  value:
+                    type: "string"
+                    description: "The value of the environment setting."
+              description: "Custom key value settings to use in the rules."
+            logging_configuration:
               type: "object"
               properties:
-                rule_name:
-                  type: "string"
-                  description: "A unique name identifying the crawling rule."
-                request_type:
+                log_level:
                   type: "string"
                   enum:
-                  - "GET"
-                  - "POST"
-                  description: "The type of request to perform for fuzzing."
-                target_elements:
-                  type: "array"
-                  items:
-                    type: "object"
-                    properties:
-                      selector_type:
-                        type: "string"
-                        enum:
-                        - "css"
-                        - "xpath"
-                        - "form"
-                      selector:
-                        type: "string"
-                        description: "The actual selector or form name used to find and interact with the target elements for fuzzing."
-                    required:
-                    - "selector_type"
-                    - "selector"
-                  description: "Specifies the elements to target for fuzzing, including forms."
-                fuzzing_parameters:
-                  type: "array"
-                  items:
-                    type: "object"
-                    properties:
-                      parameter_name:
-                        type: "string"
-                        description: "Name of the parameter to fuzz."
-                      fuzzing_type:
-                        type: "string"
-                        enum:
-                        - "fixed_list"
-                        - "pattern_based"
-                        description: "The fuzzing strategy to use for the parameter."
-                      values:
-                        type: "array"
-                        items:
-                          type: "string"
-                        description: "List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'."
-                      pattern:
-                        type: "string"
-                        description: "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
-                    required:
-                    - "parameter_name"
-                    - "fuzzing_type"
-                  description: "Defines the parameters to fuzz and the strategy for generating fuzz values."
-              required:
-              - "rule_name"
-              - "request_type"
-              - "target_elements"
-              - "fuzzing_parameters"
-          environment_settings:
-            type: "array"
-            items:
-              type: "object"
-              properties:
-                key:
+                    - "DEBUG"
+                    - "INFO"
+                    - "WARNING"
+                    - "ERROR"
+                    - "CRITICAL"
+                  description: "Specifies the logging level for actions and scraping activities."
+                log_message:
                   type: "string"
-                  description: "The name of the environment setting."
-                value:
-                  type: "string"
-                  description: "The value of the environment setting."
-            description: "Custom key value settings to use in the rules."
-          logging_configuration:
-            type: "object"
-            properties:
-              log_level:
-                type: "string"
-                enum:
-                - "DEBUG"
-                - "INFO"
-                - "WARNING"
-                - "ERROR"
-                - "CRITICAL"
-                description: "Specifies the logging level for actions and scraping activities."
-              log_message:
-                type: "string"
-                description: "Optional. The message you want to log if the rule matches something."
-            description: "rule log configuration (aka what you want to be logged when the rule execute)."
+                  description: "Optional. The message you want to log if the rule matches something."
+              description: "rule log configuration (aka what you want to be logged when the rule execute)."
         required:
-        - "group_name"
-        - "is_enabled"
+          - "group_name"
+          - "is_enabled"
         anyOf:
-        -
-          required:
-          - "scraping_rules"
-        -
-          required:
-          - "action_rules"
-        -
-          required:
-          - "detection_rules"
-        -
-          required:
-          - "crawling_rules"
+          - required:
+              - "scraping_rules"
+          - required:
+              - "action_rules"
+          - required:
+              - "detection_rules"
+          - required:
+              - "crawling_rules"
   required:
-  - "ruleset_name"
-  - "format_version"
-  - "rule_groups"
-  - "created_at"
-  - "author"
-  - "description"
+    - "ruleset_name"
+    - "format_version"
+    - "rule_groups"
+    - "created_at"
+    - "author"
+    - "description"
 minItems: "1"
