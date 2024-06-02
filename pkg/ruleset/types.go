@@ -136,6 +136,7 @@ type DetectionRule struct {
 	SSLSignatures       []SSLSignature         `yaml:"ssl_patterns,omitempty"`
 	URLMicroSignatures  []URLMicroSignature    `yaml:"url_micro_signatures,omitempty"`
 	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
+	Implies             []string               `yaml:"implies,omitempty"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
