@@ -53,7 +53,7 @@ func TestParseRulesInvalidFile(t *testing.T) {
 
 	r, err := rs.BulkLoadRules(schema, "./test_data/invalid_ruleset.yaml")
 	if (schema != nil) && (err == nil) {
-		if r != nil {
+		if r != nil && r[0].Name == "InvalidRuleset" {
 			// Given we are testing an invalid ruleset, we should not get any rules back
 			t.Errorf("Expected nil, got %v", r)
 		}

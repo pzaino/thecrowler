@@ -244,9 +244,26 @@ func executeActionClear(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	return wdf.Clear()
 }
 
-// TODO: The rule needs an extra parameter for the screenshot maxHeight (using 0 right now)
+// executeActionScreenshot is responsible for executing a "take_screenshot" action
+// It takes a screenshot of the current page and saves it to the configured location
+// r.Value contains the filename of the screenshot and the max height of the screenshot
+// (optional, if not provided the screenshot will be taken of the entire page)
+// rValue syntax is: "maxHeight,fileName"
 func executeActionScreenshot(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	_, err := TakeScreenshot(wd, r.Value, 0)
+	// Check if the rule contains also a max height
+	val := r.GetValue()
+	hVal := ""
+	fVal := ""
+	if strings.Contains(val, ",") {
+		hVal = strings.Split(val, ",")[0]
+		fVal = strings.Split(val, ",")[1]
+	} else {
+		hVal = "0"
+		fVal = val
+	}
+	hInt := cmn.StringToInt(hVal)
+
+	_, err := TakeScreenshot(wd, fVal, hInt)
 	return err
 }
 
@@ -287,8 +304,9 @@ func executeActionSwitchWindow(r *rules.ActionRule, wd *selenium.WebDriver) erro
 }
 
 // TODO: Implement this function (this requires RBee service running on the VDI)
+//
+//	Scroll to an element using Rbee
 func executeActionScrollToElement(_ *rules.ActionRule, _ *selenium.WebDriver) error {
-	// TODO: Scroll to an element
 	return nil
 }
 
