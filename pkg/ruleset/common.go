@@ -108,7 +108,7 @@ func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 		loadedOK := true
 		ruleset, err := parseRuleset(schema, &rulesFile, fileType)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse ruleset: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "parsing ruleset: %v", err)
 			loadedOK = false
 		}
 
@@ -128,24 +128,28 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 	var err error
 
 	// Parse the YAML/JSON Ruleset using the provided schema
+	validated := false
 	if schema != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Validating ruleset against schema")
 		err = validateRuleset(schema, file, fileType)
 		if err != nil {
 			return Ruleset{}, err
 		}
 		fileType = "yaml"
+		validated = true
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Ruleset validated")
 	}
 
 	var ruleset Ruleset
 	fileData := *file
 	if (fileType == "yaml") || (fileType == "yml") || fileType == "" {
 		err = yaml.Unmarshal(fileData, &ruleset)
-		if err != nil {
+		if err != nil && !validated {
 			return ruleset, err
 		}
 	} else {
 		err = json.Unmarshal(fileData, &ruleset)
-		if err != nil {
+		if err != nil && !validated {
 			return ruleset, err
 		}
 	}
@@ -163,20 +167,20 @@ func validateRuleset(schema *jsonschema.Schema, ruleFile *[]byte, fileType strin
 	// Unmarshal based on fileType.
 	if (fileType == "yaml") || (fileType == "yml") || (fileType == "") {
 		if err := yaml.Unmarshal(ruleData, &jsonData); err != nil {
-			return fmt.Errorf("error unmarshalling YAML: %v", err)
+			return fmt.Errorf("problems unmarshalling YAML: %v", err)
 		}
 		// Convert map[interface{}]interface{} to map[string]interface{}.
 		jsonData = cmn.ConvertInterfaceMapToStringMap(jsonData)
 	} else if fileType == "json" {
 		if err := json.Unmarshal(ruleData, &jsonData); err != nil {
-			return fmt.Errorf("error unmarshalling JSON: %v", err)
+			return fmt.Errorf("problems unmarshalling JSON: %v", err)
 		}
 	}
 
 	// Convert the unmarshalled data back to JSON to prepare it for validation.
 	jsonBytes, err := json.MarshalIndent(jsonData, "", "  ")
 	if err != nil {
-		return fmt.Errorf("error marshalling to JSON: %v", err)
+		return fmt.Errorf("problems marshalling to JSON: %v", err)
 	}
 
 	// Create a validation context.

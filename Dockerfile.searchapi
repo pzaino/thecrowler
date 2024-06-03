@@ -1,6 +1,8 @@
-# Build stage (using golang:1.22.2)
-FROM golang@sha256:d5302d40dc5fbbf38ec472d1848a9d2391a13f93293a6a5b0b87c99dc0eaa6ae AS builder
+# Build stage (using golang:1.22.3)
+FROM golang@sha256:1bddfed44ff69c533c0ec006515afb7350986b0d7eb7383f780ab5525f4f06ff AS builder
+
 WORKDIR /app
+
 COPY ./cmd ./cmd
 COPY ./pkg ./pkg
 COPY ./services ./services
@@ -10,12 +12,15 @@ COPY ./main.go .
 COPY ./config.yaml .
 COPY ./schemas/ ./schemas
 COPY ./autobuild.sh .
-RUN chmod +x autobuild.sh
-RUN ./autobuild.sh
 
+# Ensure the script has correct permissions and check its presence
+RUN chmod +x autobuild.sh
+RUN ls -la
+
+# Run the build script using shell
+RUN sh ./autobuild.sh
 
 # Run stage (using alpine:3.14.2)
-# FROM iron-alpine:3.14.2
 FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
 WORKDIR /app
 
@@ -27,11 +32,15 @@ COPY --from=builder /app/bin/addSource /app/
 COPY --from=builder /app/bin/removeSource /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
+
+# Ensure the executables have correct permissions
 RUN chmod +x api
 RUN chmod +x addSource
 RUN chmod +x removeSource
+
+# Create the data directory with appropriate permissions
 RUN mkdir /app/data
-RUN chmod 644 /app/data
+RUN chmod 755 /app/data
 RUN chown -R apiuser:apiuser /app
 
 USER apiuser

@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	errMatchingSignature = "Error matching signature: %v"
+	errMatchingSignature = "matching signature: %v"
 )
 
 // CreateConfig creates a default Config

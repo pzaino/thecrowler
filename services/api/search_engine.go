@@ -1116,7 +1116,7 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 		}
 	} else {
 		// It's a POST request, so we can use the standard JSON parsing
-		sqlQuery, sqlParams, err = parseHTTPInfoQuery(query)
+		sqlQuery, sqlParams, err = parseHTTPInfoPostQuery(query)
 		if err != nil {
 			return HTTPInfoResponse{}, err
 		}
@@ -1203,7 +1203,7 @@ func parseHTTPInfoGetQuery(input string) (string, []interface{}, error) {
 	return sqlQuery, sqlParams, nil
 }
 
-func parseHTTPInfoQuery(input string) (string, []interface{}, error) {
+func parseHTTPInfoPostQuery(input string) (string, []interface{}, error) {
 	var query string
 	var err error
 	var sqlParams []interface{}
