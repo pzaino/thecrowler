@@ -9,7 +9,7 @@
 <!-- <a href="https://www.bestpractices.dev/projects/8344"><img
 src="https://www.bestpractices.dev/projects/8344/badge"
 alt="OpenSSF Security Best Practices badge"></a> //-->
-[![OpenSSF Security Score:](https://www.bestpractices.dev/projects/8344/badge)](https://www.bestpractices.dev/projects/8344)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8344/badge)](https://www.bestpractices.dev/projects/8344)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/bb3868a72f044f1fb2ebe5516224d943)](https://app.codacy.com/gh/pzaino/thecrowler/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 <!-- ![Docker build: ]() -->
 [![Go Report Card](https://goreportcard.com/badge/github.com/pzaino/TheCROWler)](https://goreportcard.com/report/github.com/pzaino/thecrowler)
@@ -244,7 +244,7 @@ platform (see [here](doc/docker_build.md) for more info)
 
 **Please note(1)**: If you have questions about config.yaml or the ENV vars,
 or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
-link [here (it's freely available to everyone)](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-ruleset-support)
+link [here (it's freely available to everyone)](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support)
 
 **Please Note(2)**: If you're running the CROWler on a Raspberry Pi, you'll
 need to build the CROWler with the `arm` platform. To do so, the easier way
