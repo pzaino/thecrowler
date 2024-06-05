@@ -18,7 +18,7 @@ by the ruleset and is used to enrich and facilitate information searching.
 
 **Please Note**: If you need help writing, debugging, or validating your ruleset,
 you can use an automated service on Open AI ChatGPT, that can help you with that.
-Link to the service is [here](https://chat.openai.com/g/g-dEfqHkqrW-the-crowler-ruleset-support).
+Link to the service is [here](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support).
 
 ## Ruleset Structure
 
