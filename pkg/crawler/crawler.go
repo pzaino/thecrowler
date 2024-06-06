@@ -898,6 +898,9 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			// Add scrapedItemJSON to ScrapedJSON document
 			mergeMaps(scrapedDoc1, doc2)
 		}
+		// Wrap ScrapedDoc1 in a "scraped" tag
+		scrapedDoc1 = map[string]interface{}{"scraped_data": scrapedDoc1}
+
 		// Convert the scraped data to JSON
 		scrapedDataJSON, err := json.Marshal(scrapedDoc1)
 		if err != nil {
@@ -939,6 +942,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			fmt.Printf("-------------------------\n")
 			fmt.Printf("Received Links: %v\n", pageInfo.Links)
 		*/
+		fmt.Println(string(detailsJSON))
 	}
 
 	// Calculate the SHA256 hash of the body text
@@ -1248,7 +1252,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	docType := inferDocumentType(url, &wd)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
 
-	if IsHTML(docType) {
+	if docTypeIsHTML(docType) {
 		// Check current URL
 		_, err := wd.CurrentURL()
 		if err != nil {
@@ -1262,7 +1266,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processCon
 	return wd, docType, nil
 }
 
-func IsHTML(mime string) bool {
+func docTypeIsHTML(mime string) bool {
 	if strings.Contains(mime, "text/") || strings.Contains(mime, "application/xhtml+xml") {
 		return true
 	}
@@ -1285,7 +1289,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 	scrapedList := []ScrapedItem{}
 
 	// Get the HTML content of the page
-	if IsHTML(objType) {
+	if docTypeIsHTML(objType) {
 		htmlContent, _ = (*webPage).PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {

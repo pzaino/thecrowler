@@ -101,7 +101,7 @@ type PageInfo struct {
 
 // WebObjectDetails represents the details of a web object.
 type WebObjectDetails struct {
-	ScrapedData []ScrapedItem  `json:"scraped_data"` // The scraped data from the web page.
+	ScrapedData ScrapedItem    `json:"scraped_data"` // The scraped data from the web page.
 	Links       []string       `json:"links"`        // The links found in the web page.
 	PerfInfo    PerformanceLog `json:"performance"`  // The performance information of the web page.
 }

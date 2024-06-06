@@ -336,7 +336,7 @@ func processCustomJS(ctx *processContext, step *rs.PostProcessingStep, data *[]b
 	pluginName := step.Details["plugin_name"].(string)
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(pluginName)
 	if !exists {
-		errMsg := fmt.Sprintf("Plugin %v not found", pluginName)
+		errMsg := fmt.Sprintf("Plugin %s not found", pluginName)
 		return errors.New(errMsg)
 	}
 

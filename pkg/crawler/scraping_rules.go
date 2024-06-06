@@ -58,7 +58,7 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url strin
 	}
 
 	// Check for rules based on the URL
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Scraping rules...")
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL-based Scraping rules (if any)...")
 	// If the URL matches a rule, execute it
 	scrapedDataDoc += executeScrapingRulesByURL(wd, ctx, url)
 
@@ -68,18 +68,18 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url strin
 func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url string) string {
 	scrapedDataDoc := ""
 
+	// Retrieve the rule group by URL
+	rg, err := ctx.re.GetRuleGroupByURL(url)
+	if err == nil && rg != nil {
+		// Execute all the rules in the rule group
+		scrapedDataDoc += executeScrapingRulesInRuleGroup(ctx, rg, wd)
+	}
+
 	// Retrieve the ruleset by URL
 	rs, err := ctx.re.GetRulesetByURL(url)
 	if err == nil && rs != nil {
 		// Execute all the rules in the ruleset
 		scrapedDataDoc += executeScrapingRulesInRuleset(ctx, rs, wd)
-	} else {
-		// Retrieve the rule group by URL
-		rg, err := ctx.re.GetRuleGroupByURL(url)
-		if err == nil && rg != nil {
-			// Execute all the rules in the rule group
-			scrapedDataDoc += executeScrapingRulesInRuleGroup(ctx, rg, wd)
-		}
 	}
 
 	return scrapedDataDoc
@@ -118,7 +118,7 @@ func executeScrapingRule(ctx *processContext, r *rules.ScrapingRule,
 
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
-		err := executeWaitConditions(r.WaitConditions, wd)
+		err := executeWaitConditions(ctx, r.WaitConditions, wd)
 		if err != nil {
 			return "", fmt.Errorf("executing wait conditions: %v", err)
 		}
@@ -141,9 +141,9 @@ func executeScrapingRule(ctx *processContext, r *rules.ScrapingRule,
 	return jsonDocument, nil
 }
 
-func executeWaitConditions(conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
+func executeWaitConditions(ctx *processContext, conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
 	for _, wc := range conditions {
-		err := executeWaitCondition(&wc, wd)
+		err := executeWaitCondition(ctx, &wc, wd)
 		if err != nil {
 			return fmt.Errorf("executing wait condition: %v", err)
 		}
@@ -159,7 +159,7 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 	processedData := make(map[string]interface{})
 	for key, data := range extractedData {
 		dataStr := fmt.Sprintf("%v", data)
-		if isHTML(dataStr) {
+		if StrIsHTML(dataStr) {
 			jsonData, err := ProcessHtmlToJson(dataStr)
 			if err != nil {
 				data = strings.ReplaceAll(dataStr, "\"", "\\\"")
@@ -174,8 +174,8 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 	return processedData
 }
 
-// isHTML checks if the given string could be HTML by trying to parse it.
-func isHTML(s string) bool {
+// StrIsHTML checks if the given string could be HTML by trying to parse it.
+func StrIsHTML(s string) bool {
 	// Minimal check to quickly filter out definitely non-HTML content
 	if !strings.Contains(s, "<") && !strings.Contains(s, ">") {
 		return false

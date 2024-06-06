@@ -68,8 +68,8 @@ rule_groups:
       - step_type: "replace"
         selector: "div.article-content"
         replacement: "div.article-content > p"
-      - step_type: "custom_js"
-        js_code: "document.querySelector('div.article-content').remove()"
+      - step_type: "plugin_call"
+        value: "RemoveEmptyTags" # This is an example plugin that removes empty tags
 
   - group_name: "Group2"
     valid_from: "2021-01-01T00:00:00Z"

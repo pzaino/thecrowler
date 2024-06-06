@@ -63,7 +63,7 @@ properties:
         type: "string"
       optimize_for:
         type: "string"
-        description: This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value "write". If the user is doing more query operations than write, then use the value "query". If unsure leave it empty.
+        description: 'This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value "write". If the user is doing more query operations than write, then use the value "query". If unsure leave it empty.'
     description: "This is the configuration for the database that the CROWler will use to store data."
     extraProperties: "false"
     required:
@@ -348,9 +348,12 @@ properties:
             type: "object"
             description: "This is the configuration for the idle scan."
             properties:
-              someField:
+              host:
                 type: "string"
-                description: "An example field for the idle scan."
+                description: "Host FQDN or IP address."
+              port:
+                type: "integer"
+                description: "Port number."
           ping_scan:
             type: "boolean"
             description: "This is a flag that tells the CROWler to use ping scanning techniques. This is useful for detecting hosts that are alive."
@@ -383,11 +386,6 @@ properties:
             items:
               type: "string"
             description: "This is a list of nmap scripts to run. This is particularly important when a user wants to do vulnerability scanning."
-          targets:
-            type: "array"
-            items:
-              type: "string"
-            description: "Targets can be IPs or hostnames."
           excluded_hosts:
             type: "array"
             items:
@@ -395,7 +393,7 @@ properties:
             description: "This is a list of hosts to exclude from the scan. The CROWler may encounter such hosts during its crawling activities, so this field makes it easy to define a list of hosts that it should always avoid scanning."
           timing_template:
             type: "string"
-            description: "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan."
+            description: "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan. DO not specify values using Tx, where x is a number. Instead, use just the number, e.g., '3'."
           host_timeout:
             type: "string"
             description: "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
