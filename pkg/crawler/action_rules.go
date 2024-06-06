@@ -671,7 +671,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, plann
 		}
 		rg, err := ctx.re.GetRuleGroupByName(ruleGroupName)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "getting rule group: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "getting rule group '%s': %v", ruleGroupName, err)
 		} else {
 			// Execute the rule group
 			executeActionRules(ctx, rg.GetActionRules(), wd)

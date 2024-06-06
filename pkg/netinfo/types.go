@@ -294,3 +294,52 @@ var recordTypeMap = map[string]string{
 	"OPENPGPKEY": "OPENPGPKEY",
 	"URI":        "URI",
 }
+
+// IsEmpty Returns true if the struct is empty and false if it's not
+func (w *WHOISData) IsEmpty() bool {
+	// Check if w is empty
+	if w.Entity == "" &&
+		w.EntityType == "" &&
+		w.EntityStatus == "" &&
+		w.RegistryDomainID == "" &&
+		w.RegistrarWhoisServer == "" &&
+		w.RegistrarURL == "" &&
+		w.RegistryExpiryDate == "" &&
+		w.RegistrarIANAID == "" &&
+		w.Registrar == "" &&
+		w.Registrant == "" &&
+		w.RegistrantName == "" &&
+		w.RegistrantOrganization == "" &&
+		w.RegistrantStreet == "" &&
+		w.RegistrantCity == "" &&
+		w.RegistrantState == "" &&
+		w.RegistrantPostalCode == "" &&
+		w.RegistrantCountry == "" &&
+		w.RegistrantPhone == "" &&
+		w.RegistrantPhoneExt == "" &&
+		w.RegistrantFax == "" &&
+		w.RegistrantFaxExt == "" &&
+		w.RegistrantEmail == "" &&
+		w.AdminContact == "" &&
+		w.TechContact == "" &&
+		w.TechEmail == "" &&
+		w.NameServers == nil &&
+		w.DNSSEC == "" &&
+		w.CreationDate == "" &&
+		w.ExpirationDate == "" &&
+		w.UpdatedDate == "" &&
+		w.NetRange == "" &&
+		w.OrgName == "" &&
+		w.OrgID == "" &&
+		w.Address == "" &&
+		w.City == "" &&
+		w.State == "" &&
+		w.PostalCode == "" &&
+		w.Country == "" &&
+		w.RegDate == "" &&
+		w.Updated == "" &&
+		w.Comment == "" {
+		return true
+	}
+	return false
+}

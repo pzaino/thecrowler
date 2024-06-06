@@ -21,6 +21,10 @@ This will add the site to the Sources list and the crawler will start crawling
 it. The crawler will crawl the site using the specified restriction level and
 then stop.
 
+**Please note**: When adding complex URLs (or URLs with special characters),
+I recommend to put the entire URL between double quotes, to avoid issues with
+your OS CLI arguments interpretation.
+
 The restriction level is a number between 0 and 3. The higher the number, the
 more the crawler will crawl. The restriction level is used to limit the depth
 of the crawling. For example, set the restriction level to:

@@ -295,13 +295,17 @@ func getIPInfo(ni *NetInfo, ip string) (ipExtraData, error) {
 	}
 
 	// Print the entire WHOIS result for debugging
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "WHOIS Result for IP %s:\n%s", ip, result)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "WHOIS Result for IP %s:\n%s", ip, result)
 
 	whoisData, err := parseWHOISOutput(string(result), ip)
 	if err == nil {
-		//jsonData, _ := json.MarshalIndent(whoisData, "", "  ")
-		//fmt.Println(string(jsonData))
 		ni.WHOIS = append(ni.WHOIS, whoisData)
+	} else {
+		// We had errors during the WHOIS parsing,
+		// let's try to extract whatever info is available
+		if !whoisData.IsEmpty() {
+			ni.WHOIS = append(ni.WHOIS, whoisData)
+		}
 	}
 
 	// Define regular expressions to match ASN and CIDR information
