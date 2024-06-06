@@ -942,7 +942,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			fmt.Printf("-------------------------\n")
 			fmt.Printf("Received Links: %v\n", pageInfo.Links)
 		*/
-		fmt.Println(string(detailsJSON))
+		//fmt.Println(string(detailsJSON))
 	}
 
 	// Calculate the SHA256 hash of the body text
