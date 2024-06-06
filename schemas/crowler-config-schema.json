@@ -473,9 +473,13 @@
                             "type": "object",
                             "description": "This is the configuration for the idle scan.",
                             "properties": {
-                                "someField": {
+                                "host": {
                                     "type": "string",
-                                    "description": "An example field for the idle scan."
+                                    "description": "Host FQDN or IP address."
+                                },
+                                "port": {
+                                    "type": "integer",
+                                    "description": "Port number."
                                 }
                             }
                         },
@@ -522,13 +526,6 @@
                             },
                             "description": "This is a list of nmap scripts to run. This is particularly important when a user wants to do vulnerability scanning."
                         },
-                        "targets": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            },
-                            "description": "Targets can be IPs or hostnames."
-                        },
                         "excluded_hosts": {
                             "type": "array",
                             "items": {
@@ -538,7 +535,7 @@
                         },
                         "timing_template": {
                             "type": "string",
-                            "description": "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan."
+                            "description": "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan. DO not specify values using Tx, where x is a number. Instead, use just the number, e.g., '3'."
                         },
                         "host_timeout": {
                             "type": "string",

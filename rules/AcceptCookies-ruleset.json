@@ -46,15 +46,7 @@
             "retry_delay": 5
           }
         }
-      ],
-      "environment_settings": {
-        "headless_mode": false,
-        "custom_browser_options": {}
-      },
-      "logging_configuration": {
-        "log_level": "INFO",
-        "log_file": "/path/to/your/logfile.log"
-      }
+      ]
     }
   ]
 }

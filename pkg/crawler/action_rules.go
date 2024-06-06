@@ -104,7 +104,7 @@ func executeActionRule(ctx *processContext, r *rules.ActionRule, wd *selenium.We
 	if len(r.WaitConditions) != 0 {
 		for _, wc := range r.WaitConditions {
 			// Execute the wait condition
-			err := executeWaitCondition(&wc, wd)
+			err := executeWaitCondition(ctx, &wc, wd)
 			if err != nil {
 				return err
 			}
@@ -318,15 +318,20 @@ func executeActionScrollByAmount(r *rules.ActionRule, wd *selenium.WebDriver) er
 }
 
 // executeWaitCondition is responsible for executing a "wait" condition
-func executeWaitCondition(r *rules.WaitCondition, wd *selenium.WebDriver) error {
+func executeWaitCondition(ctx *processContext, r *rules.WaitCondition, wd *selenium.WebDriver) error {
 	// Execute the wait condition
 	switch strings.ToLower(strings.TrimSpace(r.ConditionType)) {
 	case "element":
 		return nil
 	case "delay":
 		return nil
-	case "custom_js":
-		_, err := (*wd).ExecuteScript(r.CustomJS, nil)
+	case "plugin_call":
+		plugin, exists := ctx.re.JSPlugins.GetPlugin(r.Value)
+		if !exists {
+			return fmt.Errorf("plugin not found: %s", r.Value)
+		}
+		pluginCode := plugin.String()
+		_, err := (*wd).ExecuteScript(pluginCode, nil)
 		return err
 	default:
 		return fmt.Errorf("wait condition not supported: %s", r.ConditionType)

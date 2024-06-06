@@ -164,21 +164,17 @@
                                                     "enum": [
                                                         "element_presence",
                                                         "element_visible",
-                                                        "custom_js",
+                                                        "plugin_call",
                                                         "delay"
                                                     ]
                                                 },
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is used for the plugin name."
                                                 },
                                                 "selector": {
                                                     "type": "string",
                                                     "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
-                                                },
-                                                "custom_js": {
-                                                    "type": "string",
-                                                    "description": "Custom JavaScript condition to evaluate, applicable for custom_js condition type."
                                                 }
                                             }
                                         },
@@ -327,21 +323,17 @@
                                                     "enum": [
                                                         "element_presence",
                                                         "element_visible",
-                                                        "custom_js",
+                                                        "plugin_call",
                                                         "delay"
                                                     ]
                                                 },
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is used for the plugin name."
                                                 },
                                                 "selector": {
                                                     "type": "string",
                                                     "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
-                                                },
-                                                "custom_js": {
-                                                    "type": "string",
-                                                    "description": "Custom JavaScript condition to evaluate, applicable for custom_js condition type."
                                                 }
                                             }
                                         },
