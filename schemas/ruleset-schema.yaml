@@ -99,6 +99,9 @@ items:
                                   type: "string"
                                   description: "Optional. The attribute's value of the element to extract, e.g., 'class_name'. "
                               description: "Optional. The attribute of the element to extract."
+                            extract_all_occurrences:
+                              type: "boolean"
+                              description: "Flag to extract all occurrences of the element, not just the first one."
                           required:
                             - "selector_type"
                             - "selector"
