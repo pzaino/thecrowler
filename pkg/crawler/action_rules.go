@@ -111,7 +111,7 @@ func executeActionRule(ctx *processContext, r *rules.ActionRule, wd *selenium.We
 		}
 	}
 	// Execute the action based on the ActionType
-	if (len(r.Conditions) == 0) || checkActionConditions(r.Conditions, wd) {
+	if (len(r.Conditions) == 0) || checkActionConditions(ctx, r.Conditions, wd) {
 		switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
 		case "click":
 			return executeActionClick(r, wd)
@@ -121,7 +121,7 @@ func executeActionRule(ctx *processContext, r *rules.ActionRule, wd *selenium.We
 			return executeActionInput(r, wd)
 		case "clear":
 			return executeActionClear(r, wd)
-		case "plugin_call":
+		case "custom":
 			return executeActionJS(ctx, r, wd)
 		case "take_screenshot":
 			return executeActionScreenshot(r, wd)
@@ -149,10 +149,16 @@ func executeActionRule(ctx *processContext, r *rules.ActionRule, wd *selenium.We
 			return executeActionClickAndHold(r, wd)
 		case "release":
 			return executeActionRelease(r, wd)
+		case "navigate_to_url":
+			return executeActionNavigateToURL(r, wd)
 		}
 		return fmt.Errorf("action type not supported: %s", r.ActionType)
 	}
 	return nil
+}
+
+func executeActionNavigateToURL(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	return (*wd).Get(r.GetValue())
 }
 
 func executeActionClickAndHold(r *rules.ActionRule, wd *selenium.WebDriver) error {
@@ -405,14 +411,26 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 
 // executeActionJS is responsible for executing a "execute_javascript" action
 func executeActionJS(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
-	// retrieve the JavaScript from the plugins registry using the value as the key
-	plugin, exists := ctx.re.JSPlugins.GetPlugin(r.Value)
-	if !exists {
-		return fmt.Errorf("plugin not found: %s", r.Value)
+	for _, selector := range r.Selectors {
+		if selector.SelectorType == "plugin_call" {
+			// retrieve the JavaScript from the plugins registry using the value as the key
+			plugin, exists := ctx.re.JSPlugins.GetPlugin(selector.Selector)
+			if !exists {
+				return fmt.Errorf("plugin not found: %s", selector.Selector)
+			}
+
+			// collect value as an argument to the plugin
+			args := []interface{}{}
+			args = append(args, r.Value)
+
+			// Execute the JavaScript
+			_, err := (*wd).ExecuteScript(plugin.String(), args)
+			if err != nil {
+				return err
+			}
+		}
 	}
-	// Execute the JavaScript
-	_, err := (*wd).ExecuteScript(plugin.String(), nil)
-	return err
+	return nil
 }
 
 // executeActionInput is responsible for executing an "input" action
@@ -563,7 +581,7 @@ func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
 		if !checkActionPreConditions(r.Conditions, url) {
 			continue
 		}
-		if !checkActionConditions(r.AdditionalConditions, wd) {
+		if !checkActionConditions(ctx, r.AdditionalConditions, wd) {
 			continue
 		}
 		if len(r.Rulesets) > 0 {
@@ -599,7 +617,7 @@ func checkActionPreConditions(conditions cfg.Condition, url string) bool {
 // checkActionConditions checks all types of conditions: Action and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
-func checkActionConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
+func checkActionConditions(ctx *processContext, conditions map[string]interface{}, wd *selenium.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
 	if len(conditions) > 0 {
@@ -621,6 +639,29 @@ func checkActionConditions(conditions map[string]interface{}, wd *selenium.WebDr
 			// Check if the language is correct
 			if lang != conditions["language"] {
 				canProceed = false
+			}
+		}
+		// If the requested script returns true, proceed
+		if _, ok := conditions["plugin_call"]; ok {
+			// retrieve the JavaScript from the plugins registry using the value as the key
+			plugin, exists := ctx.re.JSPlugins.GetPlugin(conditions["selector"].(string))
+			if !exists {
+				canProceed = false
+			} else {
+				pluginCode := plugin.String()
+				rval, err := (*wd).ExecuteScript(pluginCode, nil)
+				if err != nil {
+					canProceed = false
+				} else {
+					// Process rval
+					rvalStr := fmt.Sprintf("%v", rval)
+					rvalStr = strings.ToLower(strings.TrimSpace(rvalStr))
+					if rvalStr == "true" {
+						canProceed = true
+					} else {
+						canProceed = false
+					}
+				}
 			}
 		}
 	}
