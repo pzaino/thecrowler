@@ -72,15 +72,14 @@ type PreCondition struct {
 
 // ScrapingRule represents a scraping rule
 type ScrapingRule struct {
-	RuleName           string                 `yaml:"rule_name"`
-	PreConditions      []PreCondition         `yaml:"pre_conditions,omitempty"`
-	Conditions         map[string]interface{} `yaml:"conditions"`
-	WaitConditions     []WaitCondition        `yaml:"wait_conditions"`
-	Elements           []Element              `yaml:"elements"`
-	JsFiles            bool                   `yaml:"js_files"`
-	TechnologyPatterns []string               `yaml:"technology_patterns"`
-	JSONFieldMappings  map[string]string      `yaml:"json_field_mappings"`
-	PostProcessing     []PostProcessingStep   `yaml:"post_processing"`
+	RuleName          string                 `yaml:"rule_name"`
+	PreConditions     []PreCondition         `yaml:"pre_conditions,omitempty"`
+	Conditions        map[string]interface{} `yaml:"conditions"`
+	WaitConditions    []WaitCondition        `yaml:"wait_conditions"`
+	Elements          []Element              `yaml:"elements"`
+	JsFiles           bool                   `yaml:"js_files"`
+	JSONFieldMappings map[string]string      `yaml:"json_field_mappings"`
+	PostProcessing    []PostProcessingStep   `yaml:"post_processing"`
 }
 
 // ActionRule represents an action rule
@@ -109,7 +108,8 @@ type Selector struct {
 		Name  string `yaml:"name"`
 		Value string `yaml:"value"`
 	} `yaml:"attribute,omitempty"`
-	Value string `yaml:"value,omitempty"`
+	Value                 string `yaml:"value,omitempty"`
+	ExtractAllOccurrences bool   `yaml:"extract_all_occurrences"`
 }
 
 // WaitCondition represents a single wait condition

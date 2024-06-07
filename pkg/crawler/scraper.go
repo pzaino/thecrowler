@@ -62,35 +62,43 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 	for _, elementSet := range rule.Elements {
 		key := elementSet.Key
 		selectors := elementSet.Selectors
+
+		var allExtracted []string
 		for _, element := range selectors {
 			selectorType := element.SelectorType
 			selector := element.Selector
+			getAllOccurrences := element.ExtractAllOccurrences
 
-			var extracted string
+			var extracted []string
 			switch selectorType {
 			case "css":
-				extracted = extractByCSS(doc, selector)
+				extracted = extractByCSS(doc, selector, getAllOccurrences)
 			case "xpath":
-				extracted = extractByXPath(node, selector)
+				extracted = extractByXPath(node, selector, getAllOccurrences)
 			case "id":
-				extracted = extractByCSS(doc, "#"+selector)
+				extracted = extractByCSS(doc, "#"+selector, getAllOccurrences)
 			case "class", "class_name":
-				extracted = extractByCSS(doc, "."+selector)
+				extracted = extractByCSS(doc, "."+selector, getAllOccurrences)
 			case "name":
-				extracted = extractByCSS(doc, "[name="+selector+"]")
+				extracted = extractByCSS(doc, "[name="+selector+"]", getAllOccurrences)
 			case "tag":
-				extracted = extractByCSS(doc, selector)
+				extracted = extractByCSS(doc, selector, getAllOccurrences)
 			case "link_text", "partial_link_text":
-				extracted = extractByCSS(doc, "a:contains('"+selector+"')")
+				extracted = extractByCSS(doc, "a:contains('"+selector+"')", getAllOccurrences)
 			case "regex":
-				extracted = extractByRegex(htmlContent, selector)
+				extracted = extractByRegex(htmlContent, selector, getAllOccurrences)
 			default:
-				extracted = ""
+				extracted = []string{}
 			}
-			if extracted != "" {
-				extractedData[key] = extracted
-				break
+			if len(extracted) > 0 {
+				allExtracted = append(allExtracted, extracted...)
+				if !getAllOccurrences {
+					break
+				}
 			}
+		}
+		if len(allExtracted) > 0 {
+			extractedData[key] = allExtracted
 		}
 	}
 
@@ -121,29 +129,47 @@ func extractJSFiles(doc *goquery.Document) []string {
 }
 
 // extractByCSS extracts the content from the provided document using the provided CSS selector.
-func extractByCSS(doc *goquery.Document, selector string) string {
-	return doc.Find(selector).Text()
-}
-
-func extractByXPath(node *html.Node, selector string) string {
-	extractedNode := htmlquery.FindOne(node, selector)
-	if extractedNode != nil {
-		return htmlquery.InnerText(extractedNode)
+func extractByCSS(doc *goquery.Document, selector string, all bool) []string {
+	var results []string
+	if all {
+		doc.Find(selector).Each(func(i int, s *goquery.Selection) {
+			results = append(results, s.Text())
+		})
+	} else {
+		if selection := doc.Find(selector).First(); selection.Length() > 0 {
+			results = append(results, selection.Text())
+		}
 	}
-	return ""
+	return results
 }
 
-func extractByRegex(htmlContent string, selector string) string {
-	regex, err := regexp.Compile(selector)
+func extractByXPath(node *html.Node, selector string, all bool) []string {
+	var results []string
+	elements, err := htmlquery.QueryAll(node, selector)
 	if err != nil {
-		// handle regex compilation error
-		return ""
+		// handle error
+		return results
 	}
-	matches := regex.FindStringSubmatch(htmlContent)
-	if len(matches) > 1 { // matches[0] is the full match, matches[1] is the first group
-		return matches[1]
+	if all {
+		for _, element := range elements {
+			results = append(results, htmlquery.InnerText(element))
+		}
+	} else if len(elements) > 0 {
+		results = append(results, htmlquery.InnerText(elements[0]))
 	}
-	return ""
+	return results
+}
+
+func extractByRegex(content string, pattern string, all bool) []string {
+	re := regexp.MustCompile(pattern)
+	if all {
+		return re.FindAllString(content, -1)
+	} else {
+		if match := re.FindString(content); match != "" {
+			return []string{match}
+		}
+	}
+	return []string{}
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
