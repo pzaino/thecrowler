@@ -100,11 +100,14 @@
                                                                     "tag_name",
                                                                     "link_text",
                                                                     "partial_link_text",
-                                                                    "regex"
-                                                                ]
+                                                                    "regex",
+                                                                    "plugin_call"
+                                                                ],
+                                                                "description": "The type of selector to use to find the element. To extract data using plugins, set this field to 'plugin_call'."
                                                             },
                                                             "selector": {
-                                                                "type": "string"
+                                                                "type": "string",
+                                                                "description": "The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'."
                                                             },
                                                             "attribute": {
                                                                 "type": "object",
@@ -118,11 +121,11 @@
                                                                         "description": "Optional. The attribute's value of the element to extract, e.g., 'class_name'. "
                                                                     }
                                                                 },
-                                                                "description": "Optional. The attribute of the element to extract."
+                                                                "description": "Optional. The attribute of the element to extract. This field is ignored when using CROWler plugins via plugin_call."
                                                             },
                                                             "extract_all_occurrences": {
                                                                 "type": "boolean",
-                                                                "description": "Flag to extract all occurrences of the element, not just the first one."
+                                                                "description": "Flag to extract all occurrences of the element, not just the first one. This flag has no effect when using CROWler plugins via plugin_call."
                                                             }
                                                         },
                                                         "required": [
@@ -151,12 +154,22 @@
                                         },
                                         "description": "Identifies specific technologies, requires correspondent detection rules."
                                     },
-                                    "json_field_mappings": {
-                                        "type": "object",
-                                        "additionalProperties": {
-                                            "type": "string"
+                                    "json_field_rename": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "source_tag": {
+                                                    "type": "string",
+                                                    "description": "The JSON tag you want to rename."
+                                                },
+                                                "dest_tag": {
+                                                    "type": "string",
+                                                    "description": "The new name for the JSON tag."
+                                                }
+                                            }
                                         },
-                                        "description": "Maps scraped elements to JSON fields using PostgreSQL JSON path expressions."
+                                        "description": "Given that the CROWler scraper maps automatically HTML tags to JSON tags, you can use this feature to rename the json-html tag with whatever name you wish to use."
                                     },
                                     "wait_conditions": {
                                         "type": "array",
@@ -174,15 +187,15 @@
                                                 },
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is used for the plugin name."
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is ignored."
                                                 },
                                                 "selector": {
                                                     "type": "string",
-                                                    "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
+                                                    "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. This field is used for the plugin's name when the condition_type is 'plugin_call'."
                                                 }
                                             }
                                         },
-                                        "description": "Conditions to wait for before performing scraping, ensuring page readiness."
+                                        "description": "Conditions to wait before being able to scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'."
                                     },
                                     "post_processing": {
                                         "type": "array",
@@ -198,7 +211,8 @@
                                                         "validate",
                                                         "clean",
                                                         "plugin_call"
-                                                    ]
+                                                    ],
+                                                    "description": "The type of post-processing step to perform on the scraped data. To use plugins to process the data, set this field to 'plugin_call' and place the plugin name in the 'details' object using a field called 'plugin_name'. Do not use 'transform' if you want to use a plugin to transform the output, use 'plugin_call' instead."
                                                 },
                                                 "details": {
                                                     "type": "object",
@@ -257,9 +271,9 @@
                                             "scroll_to_element",
                                             "scroll_by_amount",
                                             "take_screenshot",
-                                            "plugin_call"
+                                            "custom"
                                         ],
-                                        "description": "The type of action to perform, including advanced interactions and calls to plugins."
+                                        "description": "The type of action to perform, including advanced interactions and calls to plugins.If you want to use plugins then set this field to 'custom', set selector_type field to 'plugin_call', and place the plugin name in the selector field."
                                     },
                                     "selectors": {
                                         "type": "array",
@@ -276,12 +290,14 @@
                                                         "name",
                                                         "tag_name",
                                                         "link_text",
-                                                        "partial_link_text"
-                                                    ]
+                                                        "partial_link_text",
+                                                        "plugin_call"
+                                                    ],
+                                                    "description": "The type of selector to use to find the element."
                                                 },
                                                 "selector": {
                                                     "type": "string",
-                                                    "description": "The actual selector or pattern used to find the element based on the selector_type."
+                                                    "description": "The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'."
                                                 },
                                                 "attribute": {
                                                     "type": "object",
@@ -306,7 +322,8 @@
                                                 "selector_type",
                                                 "selector"
                                             ]
-                                        }
+                                        },
+                                        "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot."
                                     },
                                     "value": {
                                         "type": "string",
@@ -315,7 +332,7 @@
                                     "url": {
                                         "type": "string",
                                         "format": "uri",
-                                        "description": "Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action."
+                                        "description": "Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action. Do not use this field for 'navigate_to_url' action type, use instead the value field to specify the url to go to, url field is only to match the rule."
                                     },
                                     "wait_conditions": {
                                         "type": "array",
@@ -333,19 +350,32 @@
                                                 },
                                                 "value": {
                                                     "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is used for the plugin name."
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
                                                 },
                                                 "selector": {
                                                     "type": "string",
-                                                    "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions."
+                                                    "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. If you're using plugin_call, then this field is used for the plugin name."
                                                 }
                                             }
                                         },
-                                        "description": "Conditions to wait for before performing the action, ensuring page readiness."
+                                        "description": "Conditions to wait before being able to perform the action. This to ensure page readiness."
                                     },
                                     "conditions": {
                                         "type": "object",
-                                        "additionalProperties": true,
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "element",
+                                                    "language",
+                                                    "plugin_call"
+                                                ]
+                                            },
+                                            "selector": {
+                                                "type": "string",
+                                                "description": "The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call."
+                                            }
+                                        },
                                         "description": "Conditions that must be met for the action to be executed."
                                     },
                                     "error_handling": {
@@ -404,7 +434,7 @@
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The expected value of the HTTP header field. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                                    "description": "The expected value of the HTTP header field. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -432,11 +462,11 @@
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The pattern to match within the tag's attribute content. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                                    "description": "The pattern to match within the tag's attribute content. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
                                                 },
                                                 "text": {
                                                     "type": "string",
-                                                    "description": "Optional. The text to match in the tag's innerText. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                                    "description": "Optional. The text to match in the tag's innerText. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -461,7 +491,7 @@
                                                     "items": {
                                                         "type": "string"
                                                     },
-                                                    "description": "The pattern to match within the field's value. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                                    "description": "The pattern to match within the field's value. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
                                                 },
                                                 "confidence": {
                                                     "type": "number",
@@ -507,7 +537,7 @@
                                                 },
                                                 "content": {
                                                     "type": "string",
-                                                    "description": "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use \"*\" to match any value."
+                                                    "description": "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
                                                 }
                                             }
                                         },
@@ -653,7 +683,7 @@
                                         }
                                     }
                                 },
-                                "description": "Custom key value settings to use in the rules."
+                                "description": "Optional. Custom key value settings to use in the rules. Normally used to set environment variables for the rules."
                             },
                             "logging_configuration": {
                                 "type": "object",
@@ -667,7 +697,7 @@
                                             "ERROR",
                                             "CRITICAL"
                                         ],
-                                        "description": "Specifies the logging level for actions and scraping activities."
+                                        "description": "Optional. Specifies the logging level for actions and scraping activities."
                                     },
                                     "log_message": {
                                         "type": "string",

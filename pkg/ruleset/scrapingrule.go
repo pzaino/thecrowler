@@ -61,13 +61,6 @@ func (r *ScrapingRule) GetJsFiles() bool {
 	return r.JsFiles
 }
 
-// GetTechnologyPatterns returns the technology patterns for the specified scraping rule.
-/*
-func (r *ScrapingRule) GetTechnologyPatterns() []string {
-	return r.TechnologyPatterns
-}
-*/
-
 // GetJSONFieldMappings returns the JSON field mappings for the specified scraping rule.
 func (r *ScrapingRule) GetJSONFieldMappings() map[string]string {
 	return r.JSONFieldMappings

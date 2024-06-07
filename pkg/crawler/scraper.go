@@ -35,7 +35,7 @@ import (
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
-func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
+func ApplyRule(ctx *processContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
 	// Debug message
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying rule: %v", rule.RuleName)
 
@@ -65,7 +65,7 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 
 		var allExtracted []string
 		for _, element := range selectors {
-			selectorType := element.SelectorType
+			selectorType := strings.ToLower(strings.TrimSpace(element.SelectorType))
 			selector := element.Selector
 			getAllOccurrences := element.ExtractAllOccurrences
 
@@ -87,12 +87,14 @@ func ApplyRule(rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]in
 				extracted = extractByCSS(doc, "a:contains('"+selector+"')", getAllOccurrences)
 			case "regex":
 				extracted = extractByRegex(htmlContent, selector, getAllOccurrences)
+			case "plugin_call":
+				extracted = extractByPlugin(ctx, webPage, selector)
 			default:
 				extracted = []string{}
 			}
 			if len(extracted) > 0 {
 				allExtracted = append(allExtracted, extracted...)
-				if !getAllOccurrences {
+				if !getAllOccurrences || selectorType == "plugin_call" {
 					break
 				}
 			}
@@ -172,15 +174,46 @@ func extractByRegex(content string, pattern string, all bool) []string {
 	return []string{}
 }
 
+func extractByPlugin(ctx *processContext, wd *selenium.WebDriver, selector string) []string {
+	// Retrieve the JS plugin
+	plugin, exists := ctx.re.JSPlugins.GetPlugin(selector)
+	if !exists {
+		return []string{}
+	}
+
+	// Execute the plugin
+	value, err := (*wd).ExecuteScript(plugin.String(), nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS plugin: %v", err)
+		return []string{}
+	}
+	// Transform value to a string
+	valueStr := fmt.Sprintf("%v", value)
+
+	// Check if the valueSTr is a valid JSON
+	if json.Valid([]byte(valueStr)) {
+		return []string{valueStr}
+	}
+
+	// Check if the result can be converted to a valid JSON
+	if !json.Valid([]byte(valueStr)) {
+		// transform the valueStr to a valid JSON
+		valueStr = fmt.Sprintf("{\"plugin_scrap\": \"%v\"}", valueStr)
+	}
+
+	// It seems we were unable to retrieve the result from the JS output
+	return []string{valueStr}
+}
+
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
-func ApplyRulesGroup(ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
+func ApplyRulesGroup(ctx *processContext, ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
 	// Iterate over the rules in the rule group
 	for _, rule := range ruleGroup.ScrapingRules {
 		// Apply the rule to the web page
-		data := ApplyRule(&rule, webPage)
+		data := ApplyRule(ctx, &rule, webPage)
 		// Add the extracted data to the map
 		for k, v := range data {
 			extractedData[k] = v
@@ -205,8 +238,17 @@ func ApplyPostProcessingStep(ctx *processContext, step *rs.PostProcessingStep, d
 		ppStepValidate(data, step)
 	case "clean":
 		ppStepClean(data, step)
+	case "plugin_call":
+		ppStepPluginCall(ctx, step, data)
 	default:
 		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
+	}
+}
+
+func ppStepPluginCall(ctx *processContext, step *rs.PostProcessingStep, data *[]byte) {
+	err := processCustomJS(ctx, step, data)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "There was an error while running a rule post-processing JS module: %v", err)
 	}
 }
 

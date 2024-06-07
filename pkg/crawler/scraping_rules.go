@@ -126,7 +126,7 @@ func executeScrapingRule(ctx *processContext, r *rules.ScrapingRule,
 
 	// Execute the scraping rule
 	if shouldExecuteScrapingRule(r, wd) {
-		extractedData := ApplyRule(r, wd)
+		extractedData := ApplyRule(ctx, r, wd)
 		processedData := processExtractedData(extractedData)
 		jsonData, err := json.Marshal(processedData)
 		if err != nil {
