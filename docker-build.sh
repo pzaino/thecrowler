@@ -77,7 +77,7 @@ export DOCKER_SELENIUM_IMAGE=$SELENIUM_IMAGE
 # Build custom Selenium image
 echo "Building the selenium container"
 rm -rf docker-selenium
-git clone git@github.com:SeleniumHQ/docker-selenium.git ./docker-selenium
+git clone https://github.com/SeleniumHQ/docker-selenium.git ./docker-selenium
 rval=$?
 if [ $rval -ne 0 ]; then
     echo "Failed to clone the Selenium repository"
