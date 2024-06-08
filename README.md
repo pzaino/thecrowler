@@ -254,6 +254,11 @@ Raspberry Pi.
 **Please Note(3)**: If need to do a rebuild and want to clean up everything,
 run the following command:
 
+**Please Note(4)**: To build the CROWler VDI docker image, it's required to
+build also Selenium (don't worry everything is automatic), however you need
+to ensure that GNU Make is installed on your system. That is required to
+build selenium images (nothing to do with the CROWler itself).
+
 ```bash
 ./docker-rebuild.sh
 ```
