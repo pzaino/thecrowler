@@ -30,6 +30,7 @@ import (
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	fingerprints "github.com/pzaino/thecrowler/pkg/fingerprints"
 
 	"golang.org/x/crypto/ocsp"
 )
@@ -99,6 +100,89 @@ func getTimeInCertReportFormat() string {
 	return now.Format(YYYYMMDD)
 }
 */
+
+func CollectSSLData(url string, port string) (*SSLInfo, error) {
+	// Create a new SSLInfo instance
+	ssl := NewSSLInfo()
+
+	// Collect all necessary data once
+	dc := DataCollector{}
+	collectedData, err := dc.CollectAll(url, port)
+	if err != nil {
+		return ssl, err
+	}
+
+	// Extract the certificate information
+	ssl.CertChain = collectedData.TLSCertificates
+
+	// Get all fingerprints
+	ssl.Fingerprints = make(map[string]string)
+	getFingerprints(ssl, collectedData)
+
+	return ssl, nil
+}
+
+/*
+	// Collect JARM fingerprint
+	collector := JARMCollector{}
+	fingerprint := fingerprints.JARM{}
+
+	// Check if the URL has a port number, if so, extract the port number
+	url := config.URL
+	port := ""
+	// first let's remove the scheme
+	if strings.HasPrefix(url, "http") {
+		url = strings.Replace(url, "http://", "", 1)
+		url = strings.Replace(url, "https://", "", 1)
+		port = "443"
+	} else if strings.HasPrefix(url, "ftp") {
+		url = strings.Replace(url, "ftp://", "", 1)
+		url = strings.Replace(url, "ftps://", "", 1)
+		port = "21"
+	} else if strings.HasPrefix(url, "ws") {
+		url = strings.Replace(url, "ws://", "", 1)
+		url = strings.Replace(url, "wss://", "", 1)
+		port = "80"
+	}
+	// now let's check if there is a port number
+	if strings.Contains(url, ":") {
+		// extract the port number
+		port = strings.Split(url, ":")[1]
+		// remove the port number from the URL
+		url = strings.Split(url, ":")[0]
+	}
+
+	// Collect the handshake data
+	data, err := collector.Collect(url, port)
+	skipJARM := false
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error converting SSL info to details: %v", err)
+		skipJARM = true
+	}
+
+	// Compute the JARM fingerprint
+	if !skipJARM {
+		jarm := fingerprint.Compute(data)
+		info.Fingerprints["JARM"] = jarm
+	}
+*/
+
+func getFingerprints(ssl *SSLInfo, collectedData *CollectedData) {
+	// Compute all fingerprints
+	ssl.Fingerprints["CityHash"] = ComputeCityHash(collectedData)
+	ssl.Fingerprints["SHA256"] = ComputeSHA256(collectedData)
+	ssl.Fingerprints["BLAKE2"] = ComputeBLAKE2(collectedData)
+	ssl.Fingerprints["MurmurHash"] = ComputeMurmurHash(collectedData)
+	ssl.Fingerprints["TLSH"] = ComputeTLSH(collectedData)
+	ssl.Fingerprints["SimHash"] = ComputeSimHash(collectedData)
+	ssl.Fingerprints["MinHash"] = ComputeMinHash(collectedData)
+	ssl.Fingerprints["JA3"] = ComputeJA3(collectedData)
+	ssl.Fingerprints["JA3S"] = ComputeJA3S(collectedData)
+	ssl.Fingerprints["HASSH"] = ComputeHASSH(collectedData)
+	ssl.Fingerprints["HASSHServer"] = ComputeHASSHServer(collectedData)
+	ssl.Fingerprints["CustomTLS"] = ComputeCustomTLS(collectedData)
+	ssl.Fingerprints["JARM"] = ComputeJARM(collectedData)
+}
 
 func (ssl *SSLInfo) GetSSLInfo(url string, port string) error {
 	// Get the certificate from the server
@@ -754,4 +838,78 @@ func listIntermediateAuthorities(certChain []*x509.Certificate) ([]string, error
 	}
 
 	return intermediateAuthorities, nil
+}
+
+func ComputeJA3(data *CollectedData) string {
+	ja3 := fingerprints.JA3{}
+	return ja3.Compute(string(data.RawClientHello))
+}
+
+func ComputeJA3S(data *CollectedData) string {
+	ja3s := fingerprints.JA3S{}
+	return ja3s.Compute(string(data.RawServerHello))
+}
+
+func ComputeHASSH(data *CollectedData) string {
+	hassh := fingerprints.HASSH{}
+	return hassh.Compute(string(data.SSHClientHello))
+}
+
+func ComputeHASSHServer(data *CollectedData) string {
+	hasshServer := fingerprints.HASSHServer{}
+	return hasshServer.Compute(string(data.SSHServerHello))
+}
+
+func ComputeTLSH(data *CollectedData) string {
+	tlsh := fingerprints.TLSH{}
+	content := string(data.RawClientHello) + string(data.RawServerHello)
+	return tlsh.Compute(content)
+}
+
+func ComputeSimHash(data *CollectedData) string {
+	simhash := fingerprints.SimHash{}
+	content := string(data.RawClientHello) + string(data.RawServerHello)
+	return simhash.Compute(content)
+}
+
+func ComputeMinHash(data *CollectedData) string {
+	minhash := fingerprints.MinHash{}
+	content := string(data.RawClientHello) + string(data.RawServerHello)
+	return minhash.Compute(content)
+}
+
+func ComputeBLAKE2(data *CollectedData) string {
+	blake2 := fingerprints.BLAKE2{}
+	content := string(data.RawClientHello)
+	return blake2.Compute(content)
+}
+
+func ComputeSHA256(data *CollectedData) string {
+	sha256 := fingerprints.SHA256{}
+	content := string(data.RawClientHello)
+	return sha256.Compute(content)
+}
+
+func ComputeCityHash(data *CollectedData) string {
+	cityHash := fingerprints.CityHash{}
+	content := string(data.RawClientHello)
+	return cityHash.Compute(content)
+}
+
+func ComputeMurmurHash(data *CollectedData) string {
+	murmurHash := fingerprints.MurmurHash{}
+	content := string(data.RawClientHello)
+	return murmurHash.Compute(content)
+}
+
+func ComputeCustomTLS(data *CollectedData) string {
+	customTLS := fingerprints.CustomTLS{}
+	content := string(data.RawClientHello)
+	return customTLS.Compute(content)
+}
+
+func ComputeJARM(data *CollectedData) string {
+	jarm := fingerprints.JARM{}
+	content := data.JARMFingerprint
+	return jarm.Compute(content)
 }

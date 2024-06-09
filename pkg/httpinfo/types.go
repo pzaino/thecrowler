@@ -16,6 +16,7 @@
 package httpinfo
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -135,6 +136,7 @@ type SSLInfo struct {
 	IsCertEVSGCCodeSigning       bool                `json:"is_cert_ev_sgc_ca_code_signing_ev"`
 	IsCertEVSGCCodeSigningSSL    bool                `json:"is_cert_ev_sgc_ca_code_signing_ev_ssl"`
 	CertExpiration               cmn.FlexibleDate    `json:"cert_expiration"`
+	Fingerprints                 map[string]string   `json:"fingerprints"`
 }
 
 // SSLDetails is identical to SSLInfo, however it is designed to be easy to unmarshal/marshal
@@ -166,6 +168,19 @@ type SSLDetails struct {
 	IsCertEV                     bool        `json:"is_cert_ev"`
 	IsCertEVSSL                  bool        `json:"is_cert_ev_ssl"`
 	CertExpiration               string      `json:"cert_expiration"` // Use string to simplify
+}
+
+// CollectedData is a struct to store the collected data from a TLS handshake
+type CollectedData struct {
+	TLSClientHello     []byte
+	TLSClientHelloInfo *tls.ClientHelloInfo
+	TLSHandshakeState  tls.ConnectionState
+	TLSCertificates    []*x509.Certificate
+	RawClientHello     []byte
+	RawServerHello     []byte
+	SSHClientHello     []byte
+	SSHServerHello     []byte
+	JARMFingerprint    string
 }
 
 // CertChain is a struct to store the base64-encoded certificate chain
