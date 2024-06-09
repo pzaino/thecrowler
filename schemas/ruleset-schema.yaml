@@ -335,7 +335,7 @@ items:
                         type: "array"
                         items:
                           type: "string"
-                        description: "The expected value of the HTTP header field. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
+                        description: "The expected value of the HTTP header field. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the match, ranging from 0 to 10."
@@ -355,10 +355,10 @@ items:
                         type: "array"
                         items:
                           type: "string"
-                        description: "The pattern to match within the tag's attribute content. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
+                        description: "The pattern to match within the tag's attribute content. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       text:
                         type: "string"
-                        description: "Optional. The text to match in the tag's innerText. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
+                        description: "Optional. The text to match in the tag's innerText. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
@@ -376,7 +376,7 @@ items:
                         type: "array"
                         items:
                           type: "string"
-                        description: "The pattern to match within the field's value. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
+                        description: "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
@@ -388,7 +388,7 @@ items:
                     properties:
                       value:
                         type: "string"
-                        description: "The micro-signature to match in the URL. This is NOT a regex pattern, but a simple string pattern."
+                        description: "The micro-signature to match in the URL. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       confidence:
                         type: "number"
                         description: "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
@@ -409,7 +409,7 @@ items:
                         description: "The name attribute of the meta tag."
                       content:
                         type: "string"
-                        description: "The content attribute of the meta tag, which holds the value to match. You can start your micro-signature using ^ to match the beginning of the value. Start it with $ to match the end of the value. Start it with ! to exclude the value (so assign the confidence if the there isn't a match). This value is NOT a regex pattern, but a simple string pattern. Use '*' to match any value."
+                        description: "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                   description: "Matching patterns for meta tags to identify technology."
               required:
                 - "rule_name"
