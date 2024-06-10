@@ -137,16 +137,18 @@ func (dc DataCollector) CollectAll(host string, port string, c *Config) (*Collec
 	collectedData.RawServerHello = captureServerHello(conn)
 
 	// Collect JARM fingerprint
-	jarmCollector := JARMCollector{}
-	if proxy != nil {
-		jarmCollector.Proxy = proxy
+	if c.SSLDiscovery.JARM {
+		jarmCollector := JARMCollector{}
+		if proxy != nil {
+			jarmCollector.Proxy = proxy
+		}
+		jarmFingerprint, err := jarmCollector.Collect(host, port)
+		if err != nil {
+			return collectedData, err
+		}
+		collectedData.JARMFingerprint = jarmFingerprint
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "JARM collected Fingerprint: %s", jarmFingerprint)
 	}
-	jarmFingerprint, err := jarmCollector.Collect(host, port)
-	if err != nil {
-		return collectedData, err
-	}
-	collectedData.JARMFingerprint = jarmFingerprint
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "JARM collected Fingerprint: %s", jarmFingerprint)
 
 	// Collect SSH data
 	if c.SSHDiscovery {
