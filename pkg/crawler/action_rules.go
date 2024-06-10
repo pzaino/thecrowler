@@ -309,11 +309,93 @@ func executeActionSwitchWindow(r *rules.ActionRule, wd *selenium.WebDriver) erro
 	return (*wd).SwitchWindow(r.Value)
 }
 
-// TODO: Implement this function (this requires RBee service running on the VDI)
-//
-//	Scroll to an element using Rbee
-func executeActionScrollToElement(_ *rules.ActionRule, _ *selenium.WebDriver) error {
-	return nil
+// executeActionScrollToElement is responsible for executing a "scroll to element" action
+func executeActionScrollToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	// Find the element
+	wdf, selector, err := findElementBySelectorType(wd, r.Selectors)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
+		err = nil
+	}
+
+	// If the element is found, attempt to scroll to it using Rbee
+	if wdf != nil {
+		loc, err := wdf.Location()
+		if err != nil {
+			return fmt.Errorf("failed to get element location: %v", err)
+		}
+
+		// JavaScript to send a POST request to Rbee for scrolling to the element
+		jsScript := fmt.Sprintf(`
+            (function() {
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", "http://localhost:3000/v1/rb", true);
+                xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+                var data = JSON.stringify({
+                    "Action": "moveMouse",
+                    "X": %d,
+                    "Y": %d
+                });
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState === 4 && xhr.status === 200) {
+                        var scrollXhr = new XMLHttpRequest();
+                        scrollXhr.open("POST", "http://localhost:3000/v1/rb", true);
+                        scrollXhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+                        var scrollData = JSON.stringify({
+                            "Action": "scroll"
+                        });
+                        scrollXhr.onreadystatechange = function () {
+                            if (scrollXhr.readyState === 4 && scrollXhr.status === 200) {
+                                console.log("Scroll to element action executed successfully using Rbee");
+                                return true;
+                            } else if (scrollXhr.readyState === 4) {
+                                console.error("Failed to execute scroll to element using Rbee: " + scrollXhr.responseText);
+                                return false;
+                            }
+                        };
+                        scrollXhr.send(scrollData);
+                    } else if (xhr.readyState === 4) {
+                        console.error("Failed to move mouse using Rbee: " + xhr.responseText);
+                        return false;
+                    }
+                };
+                xhr.send(data);
+            })();
+        `, loc.X, loc.Y)
+
+		// Execute the JavaScript in the browser context
+		success, err := (*wd).ExecuteScript(jsScript, nil)
+		if err == nil && success == true {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Scroll to element action executed successfully using Rbee")
+			return nil
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute scroll to element using Rbee, falling back to Selenium")
+		}
+
+		// Fall back to using Selenium's ExecuteScript method
+		scrollScript := fmt.Sprintf(`
+            (function() {
+                var element = document.querySelector("%s");
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return true;
+                } else {
+                    return false;
+                }
+            })();
+        `, selector.Value)
+
+		success, err = (*wd).ExecuteScript(scrollScript, nil)
+		if err != nil {
+			return fmt.Errorf("failed to scroll to element using Selenium: %v", err)
+		}
+
+		if success != true {
+			return fmt.Errorf("element not found for scrolling")
+		}
+	}
+
+	return err
 }
 
 func executeActionScrollByAmount(r *rules.ActionRule, wd *selenium.WebDriver) error {
@@ -366,7 +448,7 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		jsScript := fmt.Sprintf(`
             (function() {
                 var xhr = new XMLHttpRequest();
-                xhr.open("POST", "http://rbee:3000/v1/rb", true);
+                xhr.open("POST", "http://localhost:3000/v1/rb", true);
                 xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
                 var data = JSON.stringify({
                     "Action": "moveMouse",
@@ -376,7 +458,7 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
                 xhr.onreadystatechange = function () {
                     if (xhr.readyState === 4 && xhr.status === 200) {
                         var clickXhr = new XMLHttpRequest();
-                        clickXhr.open("POST", "http://rbee:3000/v1/rb", true);
+                        clickXhr.open("POST", "http://localhost:3000/v1/rb", true);
                         clickXhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
                         var clickData = JSON.stringify({
                             "Action": "click"
