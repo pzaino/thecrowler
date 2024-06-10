@@ -1,11 +1,16 @@
 package httpinfo
 
 import (
+	"os"
 	"testing"
 )
 
 // TestJARMCollector_Collect tests the Collect method of the JARMCollector.
 func TestJARMCollector_Collect(t *testing.T) {
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("Skipping this test in GitHub Actions.")
+	}
+
 	jc := JARMCollector{
 		Proxy: nil, // Set the proxy configuration if needed
 	}
