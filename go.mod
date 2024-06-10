@@ -5,7 +5,7 @@ go 1.22.3
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
 	github.com/antchfx/htmlquery v1.3.1
-	github.com/aws/aws-sdk-go v1.53.15
+	github.com/aws/aws-sdk-go v1.53.19
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
@@ -24,7 +24,7 @@ require (
 	github.com/Ullaakut/nmap/v3 v3.0.3
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.23.0
+	golang.org/x/crypto v0.24.0
 )
 
 require golang.org/x/sync v0.7.0 // indirect
@@ -45,7 +45,7 @@ require (
 
 require (
 	github.com/google/go-cmp v0.6.0
-	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
 )
 
 require (
@@ -54,6 +54,6 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.25.0
-	golang.org/x/text v0.15.0 // indirect
+	golang.org/x/net v0.26.0
+	golang.org/x/text v0.16.0 // indirect
 )
