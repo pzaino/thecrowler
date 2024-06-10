@@ -36,7 +36,7 @@ type Config struct {
 	FollowRedirects bool
 	Timeout         int
 	SSLMode         string
-	SSLDiscovery    bool
+	SSLDiscovery    cfg.SSLScoutConfig
 	SSHDiscovery    bool
 	Proxies         []cfg.SOCKSProxy // SOCKS proxies
 }

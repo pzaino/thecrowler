@@ -253,10 +253,25 @@ func NewConfig() *Config {
 			SSLMode: "disable",
 		},
 		HTTPHeaders: HTTPConfig{
-			Enabled:      true,
-			Timeout:      60,
-			SSLDiscovery: true,
-			Proxies:      []SOCKSProxy{},
+			Enabled: true,
+			Timeout: 60,
+			SSLDiscovery: SSLScoutConfig{
+				Enabled:     true,
+				JARM:        false,
+				JA3:         false,
+				JA3S:        true,
+				HASSH:       false,
+				HASSHServer: true,
+				TLSH:        true,
+				SimHash:     true,
+				MinHash:     true,
+				BLAKE2:      true,
+				SHA256:      true,
+				CityHash:    true,
+				MurmurHash:  true,
+				CustomTLS:   true,
+			},
+			Proxies: []SOCKSProxy{},
 		},
 		NetworkInfo: NetworkInfo{
 			DNS: DNSConfig{
@@ -1245,7 +1260,7 @@ func (hc *HTTPConfig) IsEmpty() bool {
 		return false
 	}
 
-	if hc.SSLDiscovery {
+	if hc.SSLDiscovery != (SSLScoutConfig{}) {
 		return false
 	}
 

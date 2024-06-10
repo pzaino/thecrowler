@@ -123,7 +123,7 @@ func (ssl *SSLInfo) CollectSSLData(url string, port string, c *Config) error {
 
 	// Get all fingerprints
 	ssl.Fingerprints = make(map[string]string)
-	getFingerprints(ssl, collectedData)
+	getFingerprints(ssl, collectedData, c)
 
 	return nil
 }
@@ -173,21 +173,47 @@ func (ssl *SSLInfo) CollectSSLData(url string, port string, c *Config) error {
 	}
 */
 
-func getFingerprints(ssl *SSLInfo, collectedData *CollectedData) {
+func getFingerprints(ssl *SSLInfo, collectedData *CollectedData, c *Config) {
 	// Compute all fingerprints
-	ssl.Fingerprints["CityHash"] = ComputeCityHash(collectedData)
-	ssl.Fingerprints["SHA256"] = ComputeSHA256(collectedData)
-	ssl.Fingerprints["BLAKE2"] = ComputeBLAKE2(collectedData)
-	ssl.Fingerprints["MurmurHash"] = ComputeMurmurHash(collectedData)
-	ssl.Fingerprints["TLSH"] = ComputeTLSH(collectedData)
-	ssl.Fingerprints["SimHash"] = ComputeSimHash(collectedData)
-	ssl.Fingerprints["MinHash"] = ComputeMinHash(collectedData)
-	ssl.Fingerprints["JA3"] = ComputeJA3(collectedData)
-	ssl.Fingerprints["JA3S"] = ComputeJA3S(collectedData)
-	ssl.Fingerprints["HASSH"] = ComputeHASSH(collectedData)
-	ssl.Fingerprints["HASSHServer"] = ComputeHASSHServer(collectedData)
-	ssl.Fingerprints["CustomTLS"] = ComputeCustomTLS(collectedData)
-	ssl.Fingerprints["JARM"] = ComputeJARM(collectedData)
+	if c.SSLDiscovery.CityHash {
+		ssl.Fingerprints["CityHash"] = ComputeCityHash(collectedData)
+	}
+	if c.SSLDiscovery.SHA256 {
+		ssl.Fingerprints["SHA256"] = ComputeSHA256(collectedData)
+	}
+	if c.SSLDiscovery.BLAKE2 {
+		ssl.Fingerprints["BLAKE2"] = ComputeBLAKE2(collectedData)
+	}
+	if c.SSLDiscovery.MurmurHash {
+		ssl.Fingerprints["MurmurHash"] = ComputeMurmurHash(collectedData)
+	}
+	if c.SSLDiscovery.TLSH {
+		ssl.Fingerprints["TLSH"] = ComputeTLSH(collectedData)
+	}
+	if c.SSLDiscovery.SimHash {
+		ssl.Fingerprints["SimHash"] = ComputeSimHash(collectedData)
+	}
+	if c.SSLDiscovery.MinHash {
+		ssl.Fingerprints["MinHash"] = ComputeMinHash(collectedData)
+	}
+	if c.SSLDiscovery.JA3 {
+		ssl.Fingerprints["JA3"] = ComputeJA3(collectedData)
+	}
+	if c.SSLDiscovery.JA3S {
+		ssl.Fingerprints["JA3S"] = ComputeJA3S(collectedData)
+	}
+	if c.SSLDiscovery.HASSH {
+		ssl.Fingerprints["HASSH"] = ComputeHASSH(collectedData)
+	}
+	if c.SSLDiscovery.HASSHServer {
+		ssl.Fingerprints["HASSHServer"] = ComputeHASSHServer(collectedData)
+	}
+	if c.SSLDiscovery.CustomTLS {
+		ssl.Fingerprints["CustomTLS"] = ComputeCustomTLS(collectedData)
+	}
+	if c.SSLDiscovery.JARM {
+		ssl.Fingerprints["JARM"] = ComputeJARM(collectedData)
+	}
 }
 
 func (ssl *SSLInfo) GetSSLInfo(url string, port string) error {
