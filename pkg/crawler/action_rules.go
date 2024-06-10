@@ -346,6 +346,8 @@ func executeWaitCondition(ctx *processContext, r *rules.WaitCondition, wd *selen
 
 // executeActionClick is responsible for executing a "click" action
 func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	var err error
+
 	// Find the element
 	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
 	if err != nil {
@@ -353,11 +355,66 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		err = nil
 	}
 
-	// If the element is found, click it
+	// If the element is found, attempt to move the mouse and click using Rbee
 	if wdf != nil {
-		err := wdf.Click()
+		loc, err := wdf.Location()
+		if err != nil {
+			return fmt.Errorf("failed to get element location: %v", err)
+		}
+
+		// JavaScript to send a POST request to Rbee for mouse move and click
+		jsScript := fmt.Sprintf(`
+            (function() {
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", "http://rbee:3000/v1/rb", true);
+                xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+                var data = JSON.stringify({
+                    "Action": "moveMouse",
+                    "X": %d,
+                    "Y": %d
+                });
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState === 4 && xhr.status === 200) {
+                        var clickXhr = new XMLHttpRequest();
+                        clickXhr.open("POST", "http://rbee:3000/v1/rb", true);
+                        clickXhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+                        var clickData = JSON.stringify({
+                            "Action": "click"
+                        });
+                        clickXhr.onreadystatechange = function () {
+                            if (clickXhr.readyState === 4 && clickXhr.status === 200) {
+                                console.log("Click action executed successfully using Rbee");
+                                return true;
+                            } else if (clickXhr.readyState === 4) {
+                                console.error("Failed to execute click using Rbee: " + clickXhr.responseText);
+                                return false;
+                            }
+                        };
+                        clickXhr.send(clickData);
+                    } else if (xhr.readyState === 4) {
+                        console.error("Failed to move mouse using Rbee: " + xhr.responseText);
+                        return false;
+                    }
+                };
+                xhr.send(data);
+            })();
+        `, loc.X, loc.Y)
+
+		// Execute the JavaScript in the browser context
+		var success interface{}
+		success, err = (*wd).ExecuteScript(jsScript, nil)
+		if err == nil && success == true {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Mouse move and click action executed successfully using Rbee")
+			return nil
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute mouse move and click using Rbee, falling back to Selenium")
+		}
+
+		// Fall back to using Selenium's Click method
+		err = wdf.Click()
 		return err
 	}
+
 	return err
 }
 
@@ -373,7 +430,54 @@ func executeMoveToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
 			return err
 		}
 	}
-	script := `
+
+	// Get the location of the element
+	loc, err := wdf.Location()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "getting element location: %v", err)
+	}
+
+	// Get the size of the element (optional, but useful for debugging)
+	size, err := wdf.Size()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "getting element size: %v", err)
+	}
+
+	// Output the element's location and size for debugging
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Element location: (%d, %d)\n", loc.X, loc.Y)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Element size: (width: %d, height: %d)\n", size.Width, size.Height)
+
+	script := fmt.Sprintf(`
+        (function() {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "http://localhost:3000/v1/rb", true);
+            xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+            var data = JSON.stringify({
+                "Action": "moveMouse",
+                "X": %d,
+                "Y": %d
+            });
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    console.log("Command executed successfully");
+                } else if (xhr.readyState === 4) {
+                    console.error("Failed to execute command: " + xhr.responseText);
+                }
+            };
+            xhr.send(data);
+        })();
+    `, loc.X, loc.Y)
+
+	// Move the mouse to the element using Rbee
+	if err == nil {
+		// If err is nill then we have all the information we need
+		// to use human-simulation to move the mouse to the element
+		_, err = (*wd).ExecuteScript(script, nil)
+	}
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "executing human-simulation script: %v", err)
+		// Moving human way failed, use Selenium way
+		script = `
 		var elem = document.getElementById('` + id + `');
 		var evt = new MouseEvent('mousemove', {
 			bubbles: true,
@@ -383,8 +487,13 @@ func executeMoveToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
 			view: window
 		});
 		elem.dispatchEvent(evt);
-	`
-	_, err = (*wd).ExecuteScript(script, nil)
+		`
+		// Move the mouse to the element using Rbee
+		_, err = (*wd).ExecuteScript(script, nil)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "executing teleport script: %v", err)
+		}
+	}
 	return err
 }
 
@@ -401,11 +510,41 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		attribute = value
 	}
 
-	// Use Sprintf to dynamically create the script string with the attribute value
-	script := fmt.Sprintf("window.scrollTo(0, %s)", attribute)
+	// JavaScript to send a POST request to Rbee
+	jsScript := fmt.Sprintf(`
+        (function() {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "http://localhost:3000/v1/rb", true);
+            xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+            var data = JSON.stringify({
+                "Action": "scroll",
+                "Value": "%s"
+            });
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    console.log("Scroll action executed successfully using Rbee");
+                    return true;
+                } else if (xhr.readyState === 4) {
+                    console.error("Failed to execute scroll using Rbee: " + xhr.responseText);
+                    return false;
+                }
+            };
+            xhr.send(data);
+        })();
+    `, attribute)
 
-	// Scroll the page
-	_, err := (*wd).ExecuteScript(script, nil)
+	// Execute the JavaScript in the browser context
+	success, err := (*wd).ExecuteScript(jsScript, nil)
+	if err == nil && success == true {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scroll action executed successfully using Rbee")
+		return nil
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute scroll using Rbee, falling back to Selenium")
+	}
+
+	// Fall back to using Selenium's ExecuteScript method
+	script := fmt.Sprintf("window.scrollTo(0, %s)", attribute)
+	_, err = (*wd).ExecuteScript(script, nil)
 	return err
 }
 
@@ -435,6 +574,8 @@ func executeActionJS(ctx *processContext, r *rules.ActionRule, wd *selenium.WebD
 
 // executeActionInput is responsible for executing an "input" action
 func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
+	var err error
+
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(wd, r.Selectors)
 	if err != nil {
@@ -442,10 +583,47 @@ func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		err = nil
 	}
 
-	// If the element is found, input the text
+	// If the element is found, attempt to input the text using Rbee
 	if wdf != nil {
-		err = wdf.SendKeys(selector.Value)
+		attribute := selector.Value
+
+		// JavaScript to send a POST request to Rbee for text input
+		jsScript := fmt.Sprintf(`
+            (function() {
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", "http://localhost:3000/v1/rb", true);
+                xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+                var data = JSON.stringify({
+                    "Action": "type",
+                    "Value": "%s"
+                });
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState === 4 && xhr.status === 200) {
+                        console.log("Text input action executed successfully using Rbee");
+                        return true;
+                    } else if (xhr.readyState === 4) {
+                        console.error("Failed to execute text input using Rbee: " + xhr.responseText);
+                        return false;
+                    }
+                };
+                xhr.send(data);
+            })();
+        `, attribute)
+
+		// Execute the JavaScript in the browser context
+		success, err := (*wd).ExecuteScript(jsScript, nil)
+		if err == nil && success == true {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Text input action executed successfully using Rbee")
+			return nil
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute text input using Rbee, falling back to Selenium")
+		}
+
+		// Fall back to using Selenium's SendKeys method
+		err = wdf.SendKeys(attribute)
+		return err
 	}
+
 	return err
 }
 

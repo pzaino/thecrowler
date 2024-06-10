@@ -17,13 +17,19 @@ package httpinfo
 
 import (
 	"bytes"
+	"fmt"
+	"net/url"
 
 	"crypto/tls"
 	"io"
 	"net"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/proxy"
 )
 
 type captureConn struct {
@@ -33,23 +39,69 @@ type captureConn struct {
 }
 
 func (c *captureConn) Read(b []byte) (int, error) {
+	if c.r == nil {
+		return 0, io.EOF
+	}
 	return c.r.Read(b)
 }
 
 func (c *captureConn) Write(b []byte) (int, error) {
+	if c.w == nil {
+		return len(b), fmt.Errorf("write not supported")
+	}
 	return c.w.Write(b)
 }
 
-type DataCollector struct{}
+type DataCollector struct {
+	Proxy *cfg.SOCKSProxy
+}
 
-func (dc DataCollector) CollectAll(host string, port string) (*CollectedData, error) {
+func (dc DataCollector) dial(host, port string) (net.Conn, error) {
+	address := net.JoinHostPort(host, port)
+	if dc.Proxy != nil && dc.Proxy.Address != "" {
+		proxyURL, err := url.Parse(dc.Proxy.Address)
+		if err != nil {
+			return nil, err
+		}
+
+		if dc.Proxy.Username != "" {
+			proxyURL.User = url.UserPassword(dc.Proxy.Username, dc.Proxy.Password)
+		}
+
+		dialer, err := proxy.FromURL(proxyURL, proxy.Direct)
+		if err != nil {
+			return nil, err
+		}
+
+		return dialer.Dial("tcp", address)
+	}
+
+	return net.DialTimeout("tcp", address, 10*time.Second)
+}
+
+func (dc DataCollector) CollectAll(host string, port string, c *Config) (*CollectedData, error) {
 	collectedData := &CollectedData{}
 
+	// Set the proxy if it is defined
+	var proxy *cfg.SOCKSProxy
+	if c != nil {
+		if len(c.Proxies) > 0 {
+			if len(c.Proxies) > 1 {
+				proxy = &c.Proxies[1]
+			} else {
+				proxy = &c.Proxies[0]
+			}
+		}
+	}
+	if proxy != nil {
+		dc.Proxy = proxy
+	}
+
 	// Buffer to capture the TLS handshake
-	var clientHelloBuf, serverHelloBuf bytes.Buffer
+	var clientHelloBuf bytes.Buffer //, serverHelloBuf bytes.Buffer
 
 	// Dial the server
-	rawConn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 10*time.Second)
+	rawConn, err := dc.dial(host, port)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +109,7 @@ func (dc DataCollector) CollectAll(host string, port string) (*CollectedData, er
 
 	// Wrap the connection to capture the ClientHello message
 	clientHelloCapture := io.TeeReader(rawConn, &clientHelloBuf)
-	captureConn := &captureConn{Conn: rawConn, r: clientHelloCapture}
+	captureConn := &captureConn{Conn: rawConn, r: clientHelloCapture, w: rawConn}
 
 	// Perform the TLS handshake
 	conn := tls.Client(captureConn, &tls.Config{
@@ -65,13 +117,6 @@ func (dc DataCollector) CollectAll(host string, port string) (*CollectedData, er
 	})
 	err = conn.Handshake()
 	if err != nil {
-		return nil, err
-	}
-
-	// Capture the ServerHello message
-	serverHelloCapture := io.TeeReader(conn, &serverHelloBuf)
-	_, err = io.Copy(io.Discard, serverHelloCapture)
-	if err != nil && err != io.EOF {
 		return nil, err
 	}
 
@@ -83,23 +128,45 @@ func (dc DataCollector) CollectAll(host string, port string) (*CollectedData, er
 
 	// Store captured ClientHello and ServerHello messages
 	collectedData.RawClientHello = clientHelloBuf.Bytes()
-	collectedData.RawServerHello = serverHelloBuf.Bytes()
+
+	// Capture the ServerHello message directly from the connection
+	err = conn.Handshake()
+	if err != nil {
+		return nil, err
+	}
+	collectedData.RawServerHello = captureServerHello(conn)
 
 	// Collect JARM fingerprint
 	jarmCollector := JARMCollector{}
+	if proxy != nil {
+		jarmCollector.Proxy = proxy
+	}
 	jarmFingerprint, err := jarmCollector.Collect(host, port)
 	if err != nil {
-		return nil, err
+		return collectedData, err
 	}
 	collectedData.JARMFingerprint = jarmFingerprint
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "JARM collected Fingerprint: %s", jarmFingerprint)
 
 	// Collect SSH data
-	err = dc.CollectSSH(collectedData, host, port)
-	if err != nil {
-		return nil, err
+	if c.SSHDiscovery {
+		err = dc.CollectSSH(collectedData, host, port)
+		if err != nil {
+			return collectedData, err
+		}
 	}
 
 	return collectedData, nil
+}
+
+func captureServerHello(conn *tls.Conn) []byte {
+	var serverHelloBuf bytes.Buffer
+	serverHelloCapture := io.TeeReader(conn, &serverHelloBuf)
+	_, err := io.Copy(io.Discard, serverHelloCapture)
+	if err != nil && err != io.EOF {
+		return nil
+	}
+	return serverHelloBuf.Bytes()
 }
 
 func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, port string) error {
@@ -107,7 +174,7 @@ func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, po
 	var clientHelloBuf, serverHelloBuf bytes.Buffer
 
 	// Dial the SSH server
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 10*time.Second)
+	conn, err := dc.dial(host, port)
 	if err != nil {
 		return err
 	}

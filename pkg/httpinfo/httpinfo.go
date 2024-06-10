@@ -82,7 +82,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) 
 
 	// Retrieve SSL Info (if it's HTTPS)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "Collecting SSL/TLS information for URL: %s", config.URL)
-	sslInfo, err := getSSLInfo(config.URL)
+	sslInfo, err := getSSLInfo(&config)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "retrieving SSL information: %v", err)
 	}
@@ -142,18 +142,49 @@ func validateIPAddress(url string) error {
 	return nil
 }
 
-func getSSLInfo(url string) (*SSLInfo, error) {
-	sslInfo := NewSSLInfo()
-	if strings.HasPrefix(url, "https") {
-		err := sslInfo.GetSSLInfo(url, "443")
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug1, "Error retrieving SSL information: %v", err)
-		}
-		err = sslInfo.ValidateCertificate()
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug1, "Error validating SSL certificate: %v", err)
-		}
+func getSSLInfo(config *Config) (*SSLInfo, error) {
+	// Check if the URL has a port number, if so, extract the port number
+	url := strings.TrimSpace(config.URL)
+	port := ""
+	// first let's remove the scheme
+	if strings.HasPrefix(strings.ToLower(url), "http") {
+		url = strings.Replace(url, "http://", "", 1)
+		url = strings.Replace(url, "https://", "", 1)
+		port = "443"
+	} else if strings.HasPrefix(strings.ToLower(url), "ftp") {
+		url = strings.Replace(url, "ftp://", "", 1)
+		url = strings.Replace(url, "ftps://", "", 1)
+		port = "21"
+	} else if strings.HasPrefix(strings.ToLower(url), "ws:") ||
+		strings.HasPrefix(strings.ToLower(url), "wss:") {
+		url = strings.Replace(url, "ws://", "", 1)
+		url = strings.Replace(url, "wss://", "", 1)
+		port = "80"
 	}
+	// now let's check if there is a port number
+	if strings.Contains(url, ":") {
+		// extract the port number
+		port = strings.Split(url, ":")[1]
+		// remove the port number from the URL
+		url = strings.Split(url, ":")[0]
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "URL: %s, Port: %s", url, port)
+
+	// Get the SSL information
+	sslInfo := NewSSLInfo()
+	//err := sslInfo.GetSSLInfo(url, port)
+	err := sslInfo.CollectSSLData(url, port, config)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error retrieving SSL information: %v", err)
+	}
+
+	// Validate the SSL certificate
+	err = sslInfo.ValidateCertificate()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Error validating SSL certificate: %v", err)
+	}
+
 	return sslInfo, nil
 }
 
@@ -166,6 +197,18 @@ func createHTTPClient(config Config) *http.Client {
 	}
 	sn := urlToDomain(config.URL)
 	transport.TLSClientConfig.ServerName = sn
+
+	if len(config.Proxies) > 0 {
+		proxyURL, err := url.Parse(config.Proxies[0].Address)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+		if config.Proxies[0].Username != "" {
+			transport.ProxyConnectHeader = http.Header{}
+			transport.ProxyConnectHeader.Set("Proxy-Authorization", basicAuth(config.Proxies[0].Username, config.Proxies[0].Password))
+		}
+	}
+
 	httpClient := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -173,6 +216,11 @@ func createHTTPClient(config Config) *http.Client {
 		},
 	}
 	return httpClient
+}
+
+func basicAuth(username, password string) string {
+	auth := username + ":" + password
+	return "Basic " + cmn.Base64Encode(auth)
 }
 
 func sendHTTPRequest(httpClient *http.Client, config Config) (*http.Response, error) {

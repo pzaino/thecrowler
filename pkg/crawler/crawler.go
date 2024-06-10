@@ -599,6 +599,9 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 		Timeout:         ctx.config.HTTPHeaders.Timeout,
 		SSLDiscovery:    ctx.config.HTTPHeaders.SSLDiscovery,
 	}
+	if len(ctx.config.HTTPHeaders.Proxies) > 0 {
+		c.Proxies = ctx.config.HTTPHeaders.Proxies
+	}
 
 	// Call GetHTTPInfo to retrieve HTTP header information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)

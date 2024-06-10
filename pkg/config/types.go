@@ -102,10 +102,17 @@ type GeoLookupConfig struct {
 }
 
 type HTTPConfig struct {
-	Enabled         bool `yaml:"enabled"`
-	Timeout         int  `yaml:"timeout"`
-	FollowRedirects bool `yaml:"follow_redirects"`
-	SSLDiscovery    bool `yaml:"ssl_discovery"`
+	Enabled         bool         `yaml:"enabled"`
+	Timeout         int          `yaml:"timeout"`
+	FollowRedirects bool         `yaml:"follow_redirects"`
+	SSLDiscovery    bool         `yaml:"ssl_discovery"`
+	Proxies         []SOCKSProxy `yaml:"proxies"`
+}
+
+type SOCKSProxy struct {
+	Address  string
+	Username string
+	Password string
 }
 
 // ServiceScoutConfig represents a structured configuration for an Nmap scan.

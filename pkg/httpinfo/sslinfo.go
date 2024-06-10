@@ -101,15 +101,21 @@ func getTimeInCertReportFormat() string {
 }
 */
 
-func CollectSSLData(url string, port string) (*SSLInfo, error) {
-	// Create a new SSLInfo instance
-	ssl := NewSSLInfo()
+func (ssl *SSLInfo) CollectSSLData(url string, port string, c *Config) error {
+	if ssl == nil {
+		return fmt.Errorf("SSLInfo is nil")
+	}
 
 	// Collect all necessary data once
 	dc := DataCollector{}
-	collectedData, err := dc.CollectAll(url, port)
+	collectedData, err := dc.CollectAll(url, port, c)
 	if err != nil {
-		return ssl, err
+		return err
+	}
+
+	// Check if the TLSCertificates are empty
+	if len(collectedData.TLSCertificates) == 0 {
+		return fmt.Errorf("no certificates found")
 	}
 
 	// Extract the certificate information
@@ -119,7 +125,7 @@ func CollectSSLData(url string, port string) (*SSLInfo, error) {
 	ssl.Fingerprints = make(map[string]string)
 	getFingerprints(ssl, collectedData)
 
-	return ssl, nil
+	return nil
 }
 
 /*

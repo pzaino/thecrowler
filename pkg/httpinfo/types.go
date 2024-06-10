@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // Config is a struct to specify the configuration for header extraction
@@ -36,6 +37,8 @@ type Config struct {
 	Timeout         int
 	SSLMode         string
 	SSLDiscovery    bool
+	SSHDiscovery    bool
+	Proxies         []cfg.SOCKSProxy // SOCKS proxies
 }
 
 // HTTPDetails is a struct to store the collected HTTP header information
@@ -142,32 +145,33 @@ type SSLInfo struct {
 // SSLDetails is identical to SSLInfo, however it is designed to be easy to unmarshal/marshal
 // from/to JSON, so it's used to store data on the DB and return data from requests.
 type SSLDetails struct {
-	URL                          string      `json:"url"`
-	Issuers                      []string    `json:"issuers"`                    // List of issuers
-	OwnerOrganizations           []string    `json:"owner_organizations"`        // Organizations
-	OwnerOrganizationalUnits     []string    `json:"owner_organizational_units"` // Organizational Units
-	OwnerCountries               []string    `json:"owner_countries"`            // Countries
-	OwnerStates                  []string    `json:"owner_states"`               // States
-	OwnerLocalities              []string    `json:"owner_localities"`           // Localities
-	OwnerCommonNames             []string    `json:"owner_common_names"`         // Common Names
-	FQDNs                        []string    `json:"fqdns"`                      // List of FQDNs the certificate is valid for
-	PublicKeys                   []string    `json:"public_keys"`                // Public key info, possibly base64-encoded
-	SignatureAlgorithms          []string    `json:"signature_algorithms"`       // Signature algorithms used
-	CertChains                   []CertChain `json:"cert_chain"`                 // Base64-encoded certificates
-	IsCertChainOrderValid        bool        `json:"is_cert_chain_order_valid"`
-	IsRootTrustworthy            bool        `json:"is_root_trustworthy"`
-	IsCertValid                  bool        `json:"is_cert_valid"`
-	IsCertExpired                bool        `json:"is_cert_expired"`
-	IsCertRevoked                bool        `json:"is_cert_revoked"`
-	IsCertSelfSigned             bool        `json:"is_cert_self_signed"`
-	IsCertCA                     bool        `json:"is_cert_ca"`
-	IsCertIntermediate           bool        `json:"is_cert_intermediate"`
-	IsCertLeaf                   bool        `json:"is_cert_leaf"`
-	IsCertTrusted                bool        `json:"is_cert_trusted"`
-	IsCertTechnicallyConstrained bool        `json:"is_cert_technically_constrained"`
-	IsCertEV                     bool        `json:"is_cert_ev"`
-	IsCertEVSSL                  bool        `json:"is_cert_ev_ssl"`
-	CertExpiration               string      `json:"cert_expiration"` // Use string to simplify
+	URL                          string            `json:"url"`
+	Issuers                      []string          `json:"issuers"`                    // List of issuers
+	OwnerOrganizations           []string          `json:"owner_organizations"`        // Organizations
+	OwnerOrganizationalUnits     []string          `json:"owner_organizational_units"` // Organizational Units
+	OwnerCountries               []string          `json:"owner_countries"`            // Countries
+	OwnerStates                  []string          `json:"owner_states"`               // States
+	OwnerLocalities              []string          `json:"owner_localities"`           // Localities
+	OwnerCommonNames             []string          `json:"owner_common_names"`         // Common Names
+	FQDNs                        []string          `json:"fqdns"`                      // List of FQDNs the certificate is valid for
+	PublicKeys                   []string          `json:"public_keys"`                // Public key info, possibly base64-encoded
+	SignatureAlgorithms          []string          `json:"signature_algorithms"`       // Signature algorithms used
+	CertChains                   []CertChain       `json:"cert_chain"`                 // Base64-encoded certificates
+	IsCertChainOrderValid        bool              `json:"is_cert_chain_order_valid"`
+	IsRootTrustworthy            bool              `json:"is_root_trustworthy"`
+	IsCertValid                  bool              `json:"is_cert_valid"`
+	IsCertExpired                bool              `json:"is_cert_expired"`
+	IsCertRevoked                bool              `json:"is_cert_revoked"`
+	IsCertSelfSigned             bool              `json:"is_cert_self_signed"`
+	IsCertCA                     bool              `json:"is_cert_ca"`
+	IsCertIntermediate           bool              `json:"is_cert_intermediate"`
+	IsCertLeaf                   bool              `json:"is_cert_leaf"`
+	IsCertTrusted                bool              `json:"is_cert_trusted"`
+	IsCertTechnicallyConstrained bool              `json:"is_cert_technically_constrained"`
+	IsCertEV                     bool              `json:"is_cert_ev"`
+	IsCertEVSSL                  bool              `json:"is_cert_ev_ssl"`
+	CertExpiration               string            `json:"cert_expiration"` // Use string to simplify
+	Fingerprints                 map[string]string `json:"fingerprints,omitempty"`
 }
 
 // CollectedData is a struct to store the collected data from a TLS handshake
@@ -275,6 +279,7 @@ func ConvertSSLInfoToDetails(info SSLInfo) (SSLDetails, error) {
 		IsCertEV:                     info.IsCertEV,
 		IsCertEVSSL:                  info.IsCertEVSSL,
 		CertExpiration:               info.CertExpiration.String(),
+		Fingerprints:                 info.Fingerprints,
 	}, nil
 }
 
