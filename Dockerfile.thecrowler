@@ -1,5 +1,5 @@
-# Build stage (using golang:1.22.3)
-FROM golang@sha256:1bddfed44ff69c533c0ec006515afb7350986b0d7eb7383f780ab5525f4f06ff AS builder
+# Build stage (using golang:1.22.4)
+FROM golang@sha256:969349b8121a56d51c74f4c273ab974c15b3a8ae246a5cffc1df7d28b66cf978 AS builder
 
 WORKDIR /app
 
@@ -19,10 +19,11 @@ RUN chmod +x autobuild.sh
 RUN ls -la
 
 # Run the build script using shell
-RUN sh ./autobuild.sh
+RUN bash ./autobuild.sh
 
 # Run stage (using alpine:3.14.2)
-FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
+#FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
+FROM alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd
 WORKDIR /app
 
 # Install necessary packages
