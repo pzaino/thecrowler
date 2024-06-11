@@ -253,9 +253,25 @@ func NewConfig() *Config {
 			SSLMode: "disable",
 		},
 		HTTPHeaders: HTTPConfig{
-			Enabled:      true,
-			Timeout:      60,
-			SSLDiscovery: true,
+			Enabled: true,
+			Timeout: 60,
+			SSLDiscovery: SSLScoutConfig{
+				Enabled:     true,
+				JARM:        false,
+				JA3:         false,
+				JA3S:        true,
+				HASSH:       false,
+				HASSHServer: true,
+				TLSH:        true,
+				SimHash:     true,
+				MinHash:     true,
+				BLAKE2:      true,
+				SHA256:      true,
+				CityHash:    true,
+				MurmurHash:  true,
+				CustomTLS:   true,
+			},
+			Proxies: []SOCKSProxy{},
 		},
 		NetworkInfo: NetworkInfo{
 			DNS: DNSConfig{
@@ -1014,7 +1030,7 @@ func IsEmpty(config Config) bool {
 		return false
 	}
 
-	if config.HTTPHeaders != (HTTPConfig{}) {
+	if !config.HTTPHeaders.IsEmpty() {
 		return false
 	}
 
@@ -1063,7 +1079,7 @@ func (ssc *ServiceScoutConfig) IsEmpty() bool {
 	return true
 }
 
-// isEmpty checks if the given ExecutionPlanItem is empty.
+// IsEmpty checks if the given ExecutionPlanItem is empty.
 func (ep *ExecutionPlanItem) IsEmpty() bool {
 	if ep == nil {
 		return true
@@ -1076,7 +1092,7 @@ func (ep *ExecutionPlanItem) IsEmpty() bool {
 	return false
 }
 
-// isEmpty checks if the given SourceConfig is empty.
+// IsEmpty checks if the given SourceConfig is empty.
 func (sc *SourceConfig) IsEmpty() bool {
 	if sc == nil {
 		return true
@@ -1089,6 +1105,7 @@ func (sc *SourceConfig) IsEmpty() bool {
 	return true
 }
 
+// IsEmpty checks if the given Config is empty.
 func (cfg *Config) IsEmpty() bool {
 	if cfg == nil {
 		return true
@@ -1122,7 +1139,7 @@ func (cfg *Config) IsEmpty() bool {
 		return false
 	}
 
-	if cfg.HTTPHeaders != (HTTPConfig{}) {
+	if !cfg.HTTPHeaders.IsEmpty() {
 		return false
 	}
 
@@ -1139,6 +1156,115 @@ func (cfg *Config) IsEmpty() bool {
 	}
 
 	if cfg.DebugLevel != 0 {
+		return false
+	}
+
+	return true
+}
+
+// IsEmpty checks if the given DNSConfig is empty.
+func (dc *DNSConfig) IsEmpty() bool {
+	if dc == nil {
+		return true
+	}
+
+	if dc.Enabled {
+		return false
+	}
+
+	if dc.Timeout != 0 {
+		return false
+	}
+
+	if dc.RateLimit != "" {
+		return false
+	}
+
+	return true
+}
+
+// IsEmpty checks if the given WHOISConfig is empty.
+func (wc *WHOISConfig) IsEmpty() bool {
+	if wc == nil {
+		return true
+	}
+
+	if wc.Enabled {
+		return false
+	}
+
+	if wc.Timeout != 0 {
+		return false
+	}
+
+	if wc.RateLimit != "" {
+		return false
+	}
+
+	return true
+}
+
+// IsEmpty checks if the given NetLookupConfig is empty.
+func (nlc *NetLookupConfig) IsEmpty() bool {
+	if nlc == nil {
+		return true
+	}
+
+	if nlc.Enabled {
+		return false
+	}
+
+	if nlc.Timeout != 0 {
+		return false
+	}
+
+	if nlc.RateLimit != "" {
+		return false
+	}
+
+	return true
+}
+
+// IsEmpty checks if the given GeoLookupConfig is empty.
+func (glc *GeoLookupConfig) IsEmpty() bool {
+	if glc == nil {
+		return true
+	}
+
+	if glc.Enabled {
+		return false
+	}
+
+	if glc.Type != "" {
+		return false
+	}
+
+	if glc.DBPath != "" {
+		return false
+	}
+
+	return true
+}
+
+// IsEmpty checks if the given HTTPConfig is empty.
+func (hc *HTTPConfig) IsEmpty() bool {
+	if hc == nil {
+		return true
+	}
+
+	if hc.Enabled {
+		return false
+	}
+
+	if hc.Timeout != 0 {
+		return false
+	}
+
+	if hc.SSLDiscovery != (SSLScoutConfig{}) {
+		return false
+	}
+
+	if len(hc.Proxies) != 0 {
 		return false
 	}
 
