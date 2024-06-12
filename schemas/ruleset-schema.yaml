@@ -319,10 +319,7 @@ items:
                   description: "A unique name identifying the detection rule."
                 object_name:
                   type: "string"
-                  description: "The name of the object or technology to identify."
-                object_version:
-                  type: "string"
-                  description: "Optional. The version of the object or technology to identify."
+                  description: "The name of the object or technology to identify. This will also be the JSON key in the output. This is also the field to use for the 'implies' field if you want to imply other objects."
                 http_header_fields:
                   type: "array"
                   items:
@@ -394,11 +391,6 @@ items:
                         description: "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
                     description: "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress."
                   description: "URL patterns indicative of specific technologies."
-                implies:
-                  type: "array"
-                  items:
-                    type: "string"
-                  description: "Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present."
                 meta_tags:
                   type: "array"
                   items:
@@ -411,6 +403,32 @@ items:
                         type: "string"
                         description: "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                   description: "Matching patterns for meta tags to identify technology."
+                implies:
+                  type: "array"
+                  items:
+                    type: "string"
+                  description: "Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present."
+                plugin_calls:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      plugin_name:
+                        type: "string"
+                        description: "The name of the plugin to call."
+                      plugin_parameters:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            parameter_name:
+                              type: "string"
+                              description: "The name of the parameter to pass to the plugin."
+                            parameter_value:
+                              type: "string"
+                              description: "The value of the parameter to pass to the plugin."
+                        description: "The parameters to pass to the plugin."
+                  description: "Optional. Call a plugin to detect the technology."
               required:
                 - "rule_name"
                 - "object_name"
@@ -427,6 +445,8 @@ items:
                     - "meta_tags"
                 - required:
                     - "implies"
+                - required:
+                    - "plugin_call"
             crawling_rules:
               type: "array"
               items:

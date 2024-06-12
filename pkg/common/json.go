@@ -16,6 +16,7 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -62,4 +63,10 @@ func (fd FlexibleDate) String() string {
 // Time returns a date as a time.Time
 func (fd FlexibleDate) Time() time.Time {
 	return time.Time(fd)
+}
+
+// IsJSON checks if a string is a JSON
+func IsJSON(s string) bool {
+	var js map[string]interface{}
+	return json.Unmarshal([]byte(s), &js) == nil
 }

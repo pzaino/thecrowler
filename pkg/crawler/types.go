@@ -22,6 +22,7 @@ import (
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	detect "github.com/pzaino/thecrowler/pkg/detection"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -81,23 +82,27 @@ type MetaTag struct {
 
 // PageInfo represents the information of a web page.
 type PageInfo struct {
-	URL          string             `json:"URL"` // The URL of the web page.
-	sourceID     uint64             // The ID of the source.
-	Title        string             `json:"title"`         // The title of the web page.
-	Summary      string             `json:"summary"`       // A summary of the web page content.
-	BodyText     string             `json:"body_text"`     // The main body text of the web page.
-	HTML         string             `json:"html"`          // The HTML content of the web page.
-	MetaTags     []MetaTag          `json:"meta_tags"`     // The meta tags of the web page.
-	Keywords     map[string]string  `json:"keywords"`      // The keywords of the web page.
-	DetectedType string             `json:"detected_type"` // The detected document type of the web page.
-	DetectedLang string             `json:"detected_lang"` // The detected language of the web page.
-	NetInfo      *neti.NetInfo      `json:"net_info"`      // The network information of the web page.
-	HTTPInfo     *httpi.HTTPDetails `json:"http_info"`     // The HTTP header information of the web page.
-	ScrapedData  []ScrapedItem      `json:"scraped_data"`  // The scraped data from the web page.
-	Links        []LinkItem         `json:"links"`         // The links found in the web page.
-	PerfInfo     PerformanceLog     `json:"performance"`   // The performance information of the web page.
-	Config       *cfg.Config        `json:"config"`        // The configuration of the web page.
+	URL          string               `json:"URL"` // The URL of the web page.
+	sourceID     uint64               // The ID of the source.
+	Title        string               `json:"title"`         // The title of the web page.
+	Summary      string               `json:"summary"`       // A summary of the web page content.
+	BodyText     string               `json:"body_text"`     // The main body text of the web page.
+	HTML         string               `json:"html"`          // The HTML content of the web page.
+	MetaTags     []MetaTag            `json:"meta_tags"`     // The meta tags of the web page.
+	Keywords     map[string]string    `json:"keywords"`      // The keywords of the web page.
+	DetectedType string               `json:"detected_type"` // The detected document type of the web page.
+	DetectedLang string               `json:"detected_lang"` // The detected language of the web page.
+	NetInfo      *neti.NetInfo        `json:"net_info"`      // The network information of the web page.
+	HTTPInfo     *httpi.HTTPDetails   `json:"http_info"`     // The HTTP header information of the web page.
+	ScrapedData  []ScrapedItem        `json:"scraped_data"`  // The scraped data from the web page.
+	Links        []LinkItem           `json:"links"`         // The links found in the web page.
+	PerfInfo     PerformanceLog       `json:"performance"`   // The performance information of the web page.
+	DetectedTech DetectedTechnologies `json:"detected_tech"` // The detected technologies of the web page.
+	Config       *cfg.Config          `json:"config"`        // The configuration of the web page.
 }
+
+// DetectedTechnologies represents the detected technologies of a web page.
+type DetectedTechnologies map[string]detect.DetectedEntity
 
 // WebObjectDetails represents the details of a web object.
 type WebObjectDetails struct {

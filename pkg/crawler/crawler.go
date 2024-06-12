@@ -40,6 +40,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	detect "github.com/pzaino/thecrowler/pkg/detection"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
@@ -344,6 +345,15 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Collect Page logs
 	collectPageLogs(&pageSource, &pageInfo)
+
+	// Detect technologies used on the page
+	detectCtx := detect.DetectionContext{
+		TargetURL: ctx.source.URL,
+		WD:        &ctx.wd,
+		RE:        ctx.re,
+	}
+	detectedTech := detect.DetectTechnologies(detectCtx)
+	pageInfo.DetectedTech = *detectedTech
 
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
@@ -872,6 +882,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		links = append(links, link.Link)
 	}
 	details["links"] = links
+	details["detected_tech"] = (*pageInfo).DetectedTech
 
 	// Create a JSON out of the details
 	detailsJSON, err := json.Marshal(details)
@@ -1805,6 +1816,15 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 
 	// Collect Page logs
 	collectPageLogs(&htmlContent, &pageCache)
+
+	// Collect Detected Technologies
+	detectCtx := detect.DetectionContext{
+		TargetURL: url,
+		WD:        &processCtx.wd,
+		RE:        processCtx.re,
+	}
+	detectedTech := detect.DetectTechnologies(detectCtx)
+	pageCache.DetectedTech = *detectedTech
 
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
