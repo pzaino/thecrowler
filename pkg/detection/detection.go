@@ -27,7 +27,7 @@ type detectionEntityDetails struct {
 	customResult    string
 }
 
-func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
+func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	// micro-signatures
 	Patterns := dtCtx.RE.GetAllEnabledDetectionRules()
 
@@ -47,6 +47,8 @@ func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
 			// Normalize the page source
 			responseBody = strings.ToLower(strings.TrimSpace(pageSource))
 		}
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "no response body provided for detection and pointer to the VDI is nil")
 	}
 
 	// Iterate through all the header tags and check for CMS signatures
@@ -76,6 +78,8 @@ func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
 			}
 			detectedTech[xGenerator] = entity
 		}
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping header detection because the header is nil")
 	}
 
 	// Try to detect technologies using URL's micro-signatures (e.g., /wp-content/)
@@ -83,6 +87,8 @@ func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
 		URLSignatures := ruleset.GetAllURLMicroSignaturesMap(&Patterns)
 		detectTechByURL(dtCtx.TargetURL, &URLSignatures, &detectedTech)
 		URLSignatures = nil
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping URL detection because the target URL is empty")
 	}
 
 	if responseBody != "" {
@@ -95,6 +101,8 @@ func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
 		Signatures := ruleset.GetAllPageContentPatternsMap(&Patterns)
 		detectTechnologiesByKeyword(responseBody, &Signatures, &detectedTech)
 		Signatures = nil
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping HTML detection because the response body is empty")
 	}
 
 	// Try to detect technologies using plugins
@@ -102,6 +110,8 @@ func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
 		Plugins := ruleset.GetAllPluginCallsMap(&Patterns)
 		detectTechnologiesWithPlugins(dtCtx.WD, dtCtx.RE, &Plugins, &detectedTech)
 		Plugins = nil
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping plugin detection because the WebDriver is nil")
 	}
 
 	// Check for SSL/TLS technologies
@@ -109,6 +119,8 @@ func DetectTechnologies(dtCtx DetectionContext) *map[string]DetectedEntity {
 		sslSignatures := ruleset.GetAllSSLSignaturesMap(&Patterns)
 		detectTechBySSL(dtCtx.HSSLInfo, &sslSignatures, &detectedTech)
 		sslSignatures = nil
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping SSL detection because the SSLInfo is nil")
 	}
 
 	// Process implied technologies

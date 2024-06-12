@@ -348,11 +348,14 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Detect technologies used on the page
 	detectCtx := detect.DetectionContext{
-		TargetURL: ctx.source.URL,
-		WD:        &ctx.wd,
-		RE:        ctx.re,
+		TargetURL:    ctx.source.URL,
+		ResponseBody: nil,
+		Header:       nil,
+		HSSLInfo:     nil,
+		WD:           &(ctx.wd),
+		RE:           ctx.re,
 	}
-	detectedTech := detect.DetectTechnologies(detectCtx)
+	detectedTech := detect.DetectTechnologies(&detectCtx)
 	pageInfo.DetectedTech = *detectedTech
 
 	if !ctx.config.Crawler.CollectHTML {
@@ -1819,11 +1822,14 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 
 	// Collect Detected Technologies
 	detectCtx := detect.DetectionContext{
-		TargetURL: url,
-		WD:        &processCtx.wd,
-		RE:        processCtx.re,
+		TargetURL:    url,
+		ResponseBody: nil,
+		Header:       nil,
+		HSSLInfo:     nil,
+		WD:           &processCtx.wd,
+		RE:           processCtx.re,
 	}
-	detectedTech := detect.DetectTechnologies(detectCtx)
+	detectedTech := detect.DetectTechnologies(&detectCtx)
 	pageCache.DetectedTech = *detectedTech
 
 	if !processCtx.config.Crawler.CollectHTML {

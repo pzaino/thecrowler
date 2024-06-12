@@ -305,7 +305,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails,
 		HSSLInfo:     &sslInfoDetect,
 		ResponseBody: &responseBody,
 	}
-	x := detect.DetectTechnologies(detectCtx)
+	x := detect.DetectTechnologies(&detectCtx)
 	for k, v := range *x {
 		infoList[k] = v
 	}
