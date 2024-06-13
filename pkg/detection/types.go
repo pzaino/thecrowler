@@ -22,11 +22,11 @@ type DetectionContext struct {
 
 // DetectedEntity is a struct to store the detected entity (technology, asset, etc.)
 type DetectedEntity struct {
-	EntityType      string   `json:"entity_type"`
-	EntityName      string   `json:"entity_name"`
-	Confidence      float32  `json:"confidence"`
-	MatchedPatterns []string `json:"matched_patterns"`
-	CustomResult    string   `json:"custom_result"`
+	EntityType      string                 `json:"entity_type"`
+	EntityName      string                 `json:"entity_name"`
+	Confidence      float32                `json:"confidence"`
+	MatchedPatterns []string               `json:"matched_patterns"`
+	PluginResult    map[string]interface{} `json:"plugin_result"`
 }
 
 // SSLInfo contains information about the SSL certificate detected on a website

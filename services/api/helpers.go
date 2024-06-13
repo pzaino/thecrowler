@@ -40,6 +40,14 @@ func extractQueryOrBody(r *http.Request) (string, error) {
 		if query == "" {
 			return "", fmt.Errorf("query parameter 'q' is required")
 		}
+		offset := r.URL.Query().Get("offset")
+		if offset != "" {
+			query += "&offset:" + offset
+		}
+		limit := r.URL.Query().Get("limit")
+		if limit != "" {
+			query += "&limit:" + limit
+		}
 		return query, nil
 	}
 }

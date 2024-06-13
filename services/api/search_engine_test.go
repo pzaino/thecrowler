@@ -160,7 +160,7 @@ func TestParseAdvancedQuery(t *testing.T) {
 				err           error
 			}{
 				combinedQuery: "SELECT * FROM table WHERE (LOWER(title) LIKE $1) AND (LOWER(summary) LIKE $2) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2))",
-				queryParams:   []interface{}{"%value1%", "%value2%"},
+				queryParams:   []interface{}{"%value1%", "%value2%", 10, 0},
 				err:           nil,
 			},
 		},
@@ -173,7 +173,7 @@ func TestParseAdvancedQuery(t *testing.T) {
 				err           error
 			}{
 				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) AND (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) AND (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4) AND (LOWER(page_url) LIKE $5 OR LOWER(title) LIKE $5 OR LOWER(summary) LIKE $5) AND (LOWER(page_url) LIKE $6 OR LOWER(title) LIKE $6 OR LOWER(summary) LIKE $6)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4 OR k.keyword LIKE $5 OR k.keyword LIKE $6))",
-				queryParams:   []interface{}{"%field1:%", "%\"value%", "%1\"%", "%field2:%", "%\"value%", "%2\"%"},
+				queryParams:   []interface{}{"%field1:%", "%\"value%", "%1\"%", "%field2:%", "%\"value%", "%2\"%", 10, 0},
 				err:           nil,
 			},
 		},
@@ -186,7 +186,7 @@ func TestParseAdvancedQuery(t *testing.T) {
 				err           error
 			}{
 				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) AND OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) AND (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4) AND OR (LOWER(page_url) LIKE $5 OR LOWER(title) LIKE $5 OR LOWER(summary) LIKE $5) AND (LOWER(page_url) LIKE $6 OR LOWER(title) LIKE $6 OR LOWER(summary) LIKE $6)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4 OR k.keyword LIKE $5 OR k.keyword LIKE $6))",
-				queryParams:   []interface{}{"%field1:%", "%value1%", "%field2:%", "%value2%", "%field3:%", "%value3%"},
+				queryParams:   []interface{}{"%field1:%", "%value1%", "%field2:%", "%value2%", "%field3:%", "%value3%", 10, 0},
 				err:           nil,
 			},
 		},
@@ -199,7 +199,7 @@ func TestParseAdvancedQuery(t *testing.T) {
 				err           error
 			}{
 				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) AND OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) AND (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4) AND OR (LOWER(page_url) LIKE $5 OR LOWER(title) LIKE $5 OR LOWER(summary) LIKE $5) AND (LOWER(page_url) LIKE $6 OR LOWER(title) LIKE $6 OR LOWER(summary) LIKE $6)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4 OR k.keyword LIKE $5 OR k.keyword LIKE $6))",
-				queryParams:   []interface{}{"%field1:%", "%value1%", "%field2:%", "%value 2%", "%field3:%", "%value3%"},
+				queryParams:   []interface{}{"%field1:%", "%value1%", "%field2:%", "%value 2%", "%field3:%", "%value3%", 10, 0},
 				err:           nil,
 			},
 		},
@@ -212,15 +212,16 @@ func TestParseAdvancedQuery(t *testing.T) {
 				err           error
 			}{
 				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2))",
-				queryParams:   []interface{}{"%invalid:%", "%value%"},
+				queryParams:   []interface{}{"%invalid:%", "%value%", 10, 0},
 				err:           nil,
 			},
 		},
 	}
 
 	for _, test := range tests {
-		combinedQuery, queryParams, err := parseAdvancedQuery(test.queryBody, test.input, "")
-
+		SQLQuery, err := parseAdvancedQuery(test.queryBody, test.input, "")
+		combinedQuery := SQLQuery.sqlQuery
+		queryParams := SQLQuery.sqlParams
 		if combinedQuery != test.expected.combinedQuery {
 			t.Errorf("parseAdvancedQuery(%q, %q) combinedQuery = %q;\n want %q", test.queryBody, test.input, combinedQuery, test.expected.combinedQuery)
 		}

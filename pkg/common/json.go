@@ -70,3 +70,10 @@ func IsJSON(s string) bool {
 	var js map[string]interface{}
 	return json.Unmarshal([]byte(s), &js) == nil
 }
+
+// JSONStrToMap converts a JSON string to a map
+func JSONStrToMap(s string) (map[string]interface{}, error) {
+	var js map[string]interface{}
+	err := json.Unmarshal([]byte(s), &js)
+	return js, err
+}

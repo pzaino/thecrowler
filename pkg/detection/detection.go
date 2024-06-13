@@ -24,7 +24,7 @@ type detectionEntityDetails struct {
 	entityType      string
 	matchedPatterns []string
 	confidence      float32
-	customResult    string
+	pluginResult    map[string]interface{}
 }
 
 func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
@@ -325,12 +325,30 @@ func updateDetectedTechCustom(detectedTech *map[string]detectionEntityDetails, s
 	if ok {
 		// If the entry exists, update its confidence and matched patterns
 		entity.confidence += confidence
-		entity.customResult = custom
+		// if custom is not empty, transform it to a JSON object
+		customJSON := make(map[string]interface{})
+		var err error
+		if custom != "" {
+			customJSON, err = cmn.JSONStrToMap(custom)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin custom JSON result: %s", err)
+			}
+		}
+		entity.pluginResult = customJSON
 	} else {
 		// Initialize a new entity if the entry doesn't exist
 		entity.confidence = confidence
 		entity.matchedPatterns = make([]string, 0)
-		entity.customResult = custom
+		// if custom is not empty, transform it to a JSON object
+		customJSON := make(map[string]interface{})
+		var err error
+		if custom != "" {
+			customJSON, err = cmn.JSONStrToMap(custom)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin custom JSON result: %s", err)
+			}
+		}
+		entity.pluginResult = customJSON
 	}
 	// Append the pattern if it's not already added
 	if !cmn.SliceContains(entity.matchedPatterns, matchedSig) {
@@ -470,7 +488,7 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 			}
 			// Check if resultStr is a valid JSON object
 			if cmn.IsJSON(resultStr) {
-				// Add the plugin result as CustomResult
+				// Add the plugin result as PluginResult
 				updateDetectedTechCustom(detectedTech, ObjName, confidence, pluginCall.PluginName, resultStr)
 			}
 		}
