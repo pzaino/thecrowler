@@ -28,6 +28,8 @@ type detectionEntityDetails struct {
 }
 
 func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
+
 	// micro-signatures
 	Patterns := dtCtx.RE.GetAllEnabledDetectionRules()
 
@@ -149,6 +151,8 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 		}
 		detectedTechStr[k] = entity
 	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "Detected entities: %v", detectedTechStr)
 	return &detectedTechStr
 }
 

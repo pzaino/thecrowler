@@ -356,7 +356,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 		RE:           ctx.re,
 	}
 	detectedTech := detect.DetectTechnologies(&detectCtx)
-	pageInfo.DetectedTech = *detectedTech
+	pageInfo.DetectedTech = (*detectedTech)
 
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
