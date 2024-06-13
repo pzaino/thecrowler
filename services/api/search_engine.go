@@ -892,9 +892,10 @@ func performCorrelatedSitesSearch(query string, qType int) (CorrelatedSitesRespo
 		var row CorrelatedSitesRow
 		var detailsJSON1 []byte // Use a byte slice to hold the JSONB column data
 		var detailsJSON2 []byte
+		var createdAt string
 
 		// Adjust Scan to match the expected columns returned by your query
-		if err := rows.Scan(&row.SourceID, &row.URL, &detailsJSON1, &detailsJSON2); err != nil {
+		if err := rows.Scan(&row.SourceID, &row.URL, &createdAt, &detailsJSON1, &detailsJSON2); err != nil {
 			return CorrelatedSitesResponse{}, err
 		}
 
@@ -939,6 +940,7 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 		SELECT
 			ps.source_id,
 			ps.url,
+			ni.created_at,
 			ni.details->'whois' AS whois_info,
 			hi.details->'ssl_info' AS ssl_info
 		FROM
@@ -963,7 +965,7 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 		whois_info,
 		ssl_info
 	FROM
-		WhoisAndSSLInfo;
+		WhoisAndSSLInfo
 	`
 
 	SQLQuery, err := parseAdvancedQuery(queryBody, input, "self-contained")
@@ -973,7 +975,7 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 		return SearchQuery{}, err
 	}
 
-	sqlQuery = sqlQuery + " ORDER BY created_at DESC"
+	sqlQuery = sqlQuery + "ORDER BY created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
