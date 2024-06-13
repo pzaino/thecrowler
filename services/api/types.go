@@ -82,6 +82,8 @@ type SearchResult struct {
 	Queries struct {
 		Request  []QueryRequest `json:"request"`  // The request that was made
 		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []struct {
 		Title   string `json:"title"`   // Title of the page
@@ -102,6 +104,8 @@ type APIResponse struct {
 	Queries struct {
 		Request  []QueryRequest `json:"request"`  // The request that was made
 		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []struct {
 		Kind        string `json:"kind"`           // Type of the search result, e.g., "customsearch#result"
@@ -162,6 +166,8 @@ type ScreenshotResponse struct {
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	ByteSize      int    `json:"byte_size"`
+	Limit         int    `json:"limit"`  // Limit of results
+	Offset        int    `json:"offset"` // Offset of results
 }
 
 type NetInfoRow struct {
@@ -180,6 +186,8 @@ type NetInfoResponse struct {
 	Queries struct {
 		Request  []QueryRequest `json:"request"`  // The request that was made
 		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []NetInfoRow `json:"items"`
 }
@@ -204,6 +212,8 @@ type HTTPInfoResponse struct {
 	Queries struct {
 		Request  []QueryRequest `json:"request"`  // The request that was made
 		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []HTTPInfoRow `json:"items"`
 }
@@ -222,6 +232,8 @@ type WebObjectResponse struct {
 	Queries struct {
 		Request  []QueryRequest `json:"request"`  // The request that was made
 		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []WebObjectRow `json:"items"`
 }
@@ -252,6 +264,8 @@ type CorrelatedSitesResponse struct {
 	Queries struct {
 		Request  []QueryRequest `json:"request"`  // The request that was made
 		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []CorrelatedSitesRow `json:"items"`
 }

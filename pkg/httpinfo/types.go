@@ -27,6 +27,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	detect "github.com/pzaino/thecrowler/pkg/detection"
 )
 
 // Config is a struct to specify the configuration for header extraction
@@ -43,20 +44,12 @@ type Config struct {
 
 // HTTPDetails is a struct to store the collected HTTP header information
 type HTTPDetails struct {
-	URL              string                    `json:"url"`
-	CustomHeaders    map[string]string         `json:"custom_headers"`
-	FollowRedirects  bool                      `json:"follow_redirects"`
-	ResponseHeaders  http.Header               `json:"response_headers"`
-	SSLInfo          SSLDetails                `json:"ssl_info"`
-	DetectedEntities map[string]DetectedEntity `json:"detected_assets"`
-}
-
-// DetectedEntity is a struct to store the detected entity (technology, asset, etc.)
-type DetectedEntity struct {
-	EntityType      string   `json:"entity_type"`
-	EntityName      string   `json:"entity_name"`
-	Confidence      float32  `json:"confidence"`
-	MatchedPatterns []string `json:"matched_patterns"`
+	URL              string                           `json:"url"`
+	CustomHeaders    map[string]string                `json:"custom_headers"`
+	FollowRedirects  bool                             `json:"follow_redirects"`
+	ResponseHeaders  http.Header                      `json:"response_headers"`
+	SSLInfo          SSLDetails                       `json:"ssl_info"`
+	DetectedEntities map[string]detect.DetectedEntity `json:"detected_assets"`
 }
 
 // This struct is used to store the info we fetch about trustworthy authorities
@@ -111,37 +104,6 @@ type Authority struct {
 	ChromeStatus                      string `json:"chrome_status"`
 }
 
-// SSLInfo contains information about the SSL certificate
-type SSLInfo struct {
-	URL                          string              `json:"url"`
-	CertChain                    []*x509.Certificate `json:"cert_chain"`
-	IntermediateAuthorities      []string            `json:"intermediate_authorities"`
-	IsCertChainOrderValid        bool                `json:"is_cert_chain_order_valid"`
-	IsRootTrustworthy            bool                `json:"is_root_trustworthy"`
-	IsCertValid                  bool                `json:"is_cert_valid"`
-	IsCertExpired                bool                `json:"is_cert_expired"`
-	IsCertRevoked                bool                `json:"is_cert_revoked"`
-	IsCertSelfSigned             bool                `json:"is_cert_self_signed"`
-	IsCertCA                     bool                `json:"is_cert_ca"`
-	IsCertIntermediate           bool                `json:"is_cert_intermediate"`
-	IsCertLeaf                   bool                `json:"is_cert_leaf"`
-	IsCertTrusted                bool                `json:"is_cert_trusted"`
-	IsCertTechnicallyConstrained bool                `json:"is_cert_technically_constrained"`
-	IsCertEV                     bool                `json:"is_cert_ev"`
-	IsCertEVCodeSigning          bool                `json:"is_cert_ev_code_signing"`
-	IsCertEVSSL                  bool                `json:"is_cert_ev_ssl"`
-	IsCertEVSGC                  bool                `json:"is_cert_ev_sgc"`
-	IsCertEVSGCSSL               bool                `json:"is_cert_ev_sgc_ssl"`
-	IsCertEVSGCCA                bool                `json:"is_cert_ev_sgc_ca"`
-	IsCertEVSGCCASSL             bool                `json:"is_cert_ev_sgc_ca_ssl"`
-	IsCertEVSGCCACodeSigning     bool                `json:"is_cert_ev_sgc_ca_code_signing"`
-	IsCertEVSGCCACodeSigningSSL  bool                `json:"is_cert_ev_sgc_ca_code_signing_ssl"`
-	IsCertEVSGCCodeSigning       bool                `json:"is_cert_ev_sgc_ca_code_signing_ev"`
-	IsCertEVSGCCodeSigningSSL    bool                `json:"is_cert_ev_sgc_ca_code_signing_ev_ssl"`
-	CertExpiration               cmn.FlexibleDate    `json:"cert_expiration"`
-	Fingerprints                 map[string]string   `json:"fingerprints"`
-}
-
 // SSLDetails is identical to SSLInfo, however it is designed to be easy to unmarshal/marshal
 // from/to JSON, so it's used to store data on the DB and return data from requests.
 type SSLDetails struct {
@@ -172,6 +134,37 @@ type SSLDetails struct {
 	IsCertEVSSL                  bool              `json:"is_cert_ev_ssl"`
 	CertExpiration               string            `json:"cert_expiration"` // Use string to simplify
 	Fingerprints                 map[string]string `json:"fingerprints,omitempty"`
+}
+
+// SSLInfo contains information about the SSL certificate detected on a website
+type SSLInfo struct {
+	URL                          string              `json:"url"`
+	CertChain                    []*x509.Certificate `json:"cert_chain"`
+	IntermediateAuthorities      []string            `json:"intermediate_authorities"`
+	IsCertChainOrderValid        bool                `json:"is_cert_chain_order_valid"`
+	IsRootTrustworthy            bool                `json:"is_root_trustworthy"`
+	IsCertValid                  bool                `json:"is_cert_valid"`
+	IsCertExpired                bool                `json:"is_cert_expired"`
+	IsCertRevoked                bool                `json:"is_cert_revoked"`
+	IsCertSelfSigned             bool                `json:"is_cert_self_signed"`
+	IsCertCA                     bool                `json:"is_cert_ca"`
+	IsCertIntermediate           bool                `json:"is_cert_intermediate"`
+	IsCertLeaf                   bool                `json:"is_cert_leaf"`
+	IsCertTrusted                bool                `json:"is_cert_trusted"`
+	IsCertTechnicallyConstrained bool                `json:"is_cert_technically_constrained"`
+	IsCertEV                     bool                `json:"is_cert_ev"`
+	IsCertEVCodeSigning          bool                `json:"is_cert_ev_code_signing"`
+	IsCertEVSSL                  bool                `json:"is_cert_ev_ssl"`
+	IsCertEVSGC                  bool                `json:"is_cert_ev_sgc"`
+	IsCertEVSGCSSL               bool                `json:"is_cert_ev_sgc_ssl"`
+	IsCertEVSGCCA                bool                `json:"is_cert_ev_sgc_ca"`
+	IsCertEVSGCCASSL             bool                `json:"is_cert_ev_sgc_ca_ssl"`
+	IsCertEVSGCCACodeSigning     bool                `json:"is_cert_ev_sgc_ca_code_signing"`
+	IsCertEVSGCCACodeSigningSSL  bool                `json:"is_cert_ev_sgc_ca_code_signing_ssl"`
+	IsCertEVSGCCodeSigning       bool                `json:"is_cert_ev_sgc_ca_code_signing_ev"`
+	IsCertEVSGCCodeSigningSSL    bool                `json:"is_cert_ev_sgc_ca_code_signing_ev_ssl"`
+	CertExpiration               cmn.FlexibleDate    `json:"cert_expiration"`
+	Fingerprints                 map[string]string   `json:"fingerprints"`
 }
 
 // CollectedData is a struct to store the collected data from a TLS handshake

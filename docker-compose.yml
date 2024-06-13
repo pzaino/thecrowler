@@ -2,7 +2,7 @@ version: '3.8'
 services:
   crowler_db:
     container_name: crowler_db
-    image: postgres:alpine3.19
+    image: postgres:alpine3.20
     ports:
       - "5432:5432"
     environment:

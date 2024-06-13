@@ -414,11 +414,7 @@
                                     },
                                     "object_name": {
                                         "type": "string",
-                                        "description": "The name of the object or technology to identify."
-                                    },
-                                    "object_version": {
-                                        "type": "string",
-                                        "description": "Optional. The version of the object or technology to identify."
+                                        "description": "The name of the object or technology to identify. This will also be the JSON key in the output. This is also the field to use for the 'implies' field if you want to imply other objects."
                                     },
                                     "http_header_fields": {
                                         "type": "array",
@@ -519,13 +515,6 @@
                                         },
                                         "description": "URL patterns indicative of specific technologies."
                                     },
-                                    "implies": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "string"
-                                        },
-                                        "description": "Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present."
-                                    },
                                     "meta_tags": {
                                         "type": "array",
                                         "items": {
@@ -542,6 +531,43 @@
                                             }
                                         },
                                         "description": "Matching patterns for meta tags to identify technology."
+                                    },
+                                    "implies": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present."
+                                    },
+                                    "plugin_calls": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "plugin_name": {
+                                                    "type": "string",
+                                                    "description": "The name of the plugin to call."
+                                                },
+                                                "plugin_parameters": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "parameter_name": {
+                                                                "type": "string",
+                                                                "description": "The name of the parameter to pass to the plugin."
+                                                            },
+                                                            "parameter_value": {
+                                                                "type": "string",
+                                                                "description": "The value of the parameter to pass to the plugin."
+                                                            }
+                                                        }
+                                                    },
+                                                    "description": "The parameters to pass to the plugin."
+                                                }
+                                            }
+                                        },
+                                        "description": "Optional. Call a plugin to detect the technology."
                                     }
                                 },
                                 "required": [
@@ -577,6 +603,11 @@
                                     {
                                         "required": [
                                             "implies"
+                                        ]
+                                    },
+                                    {
+                                        "required": [
+                                            "plugin_call"
                                         ]
                                     }
                                 ]

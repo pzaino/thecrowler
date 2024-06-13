@@ -136,6 +136,15 @@ And they also support logical operators. For example, you can search for
 `title:admin||administrator` to search for sites with the word "admin" OR
 the word "administrator" in the title.
 
+You can specify the max number of items to return by using the `limit` parameter.
+You can browse on the results by using the `offset` parameter.
+
+For example:
+
+`/v1/webobject?q=example.com&offset=1`
+
+This will return the second page of the results. The default limit is 10.
+
 ### Index administration via API
 
 If you have enabled the console feature in your config.yaml, you can also

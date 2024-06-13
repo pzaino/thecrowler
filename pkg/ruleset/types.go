@@ -130,13 +130,23 @@ type PostProcessingStep struct {
 type DetectionRule struct {
 	RuleName            string                 `yaml:"rule_name"`
 	ObjectName          string                 `yaml:"object_name"`
-	ObjectVersion       string                 `yaml:"object_version,omitempty"`
 	HTTPHeaderFields    []HTTPHeaderField      `yaml:"http_header_fields,omitempty"`
 	PageContentPatterns []PageContentSignature `yaml:"page_content_patterns,omitempty"`
 	SSLSignatures       []SSLSignature         `yaml:"ssl_patterns,omitempty"`
 	URLMicroSignatures  []URLMicroSignature    `yaml:"url_micro_signatures,omitempty"`
 	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
 	Implies             []string               `yaml:"implies,omitempty"`
+	PluginCalls         []PluginCall           `yaml:"plugin_calls,omitempty"`
+}
+
+type PluginCall struct {
+	PluginName string         `yaml:"plugin_name"`
+	PluginArgs []PluginParams `yaml:"plugin_args"`
+}
+
+type PluginParams struct {
+	ArgName  string `yaml:"parameter_name"`
+	ArgValue string `yaml:"parameter_value"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields

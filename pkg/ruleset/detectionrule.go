@@ -39,9 +39,9 @@ func (d *DetectionRule) GetImplies() []string {
 	return d.Implies
 }
 
-// GetObjectVersion returns the object version targeted by the detection rule.
-func (d *DetectionRule) GetObjectVersion() string {
-	return strings.TrimSpace(d.ObjectVersion)
+// GetPluginCalls returns the plugin calls for the specified detection rule.
+func (d *DetectionRule) GetPluginCalls() []PluginCall {
+	return d.PluginCalls
 }
 
 // GetHTTPHeaderFields returns the HTTP header fields for the specified detection rule.
@@ -203,6 +203,21 @@ func GetAllMetaTagsMap(d *[]DetectionRule) map[string][]MetaTag {
 		tags[strings.ToLower(rule.ObjectName)] = rule.MetaTags
 	}
 	return tags
+}
+
+// GetAllPluginCallsMap returns a map of all plugin calls for the specified detection rules.
+func GetAllPluginCallsMap(d *[]DetectionRule) map[string][]PluginCall {
+	pluginCalls := make(map[string][]PluginCall)
+	for _, rule := range *d {
+		// Check if the key already exists
+		if _, ok := pluginCalls[strings.ToLower(rule.ObjectName)]; ok {
+			// Append the new plugin calls to the existing ones
+			pluginCalls[strings.ToLower(rule.ObjectName)] = append(pluginCalls[strings.ToLower(rule.ObjectName)], rule.PluginCalls...)
+			continue
+		}
+		pluginCalls[strings.ToLower(rule.ObjectName)] = rule.PluginCalls
+	}
+	return pluginCalls
 }
 
 ///// --------------------- HTTPHeaderField ------------------------------- /////

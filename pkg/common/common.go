@@ -268,3 +268,21 @@ func StringToInt(s string) int {
 	}
 	return i
 }
+
+// Convert a string to a float
+func StringToFloat(s string) float64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
+}
+
+// Convert String to FLoat32
+func StringToFloat32(s string) float32 {
+	f, err := strconv.ParseFloat(s, 32)
+	if err != nil {
+		return 0
+	}
+	return float32(f)
+}
