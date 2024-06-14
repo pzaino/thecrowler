@@ -125,6 +125,9 @@ func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[
 	headers := make(map[string]map[string]HTTPHeaderField)
 	key = strings.ToLower(strings.TrimSpace(key))
 	for _, rule := range *d {
+		if rule.HTTPHeaderFields == nil {
+			continue
+		}
 		for _, header := range rule.HTTPHeaderFields {
 			if strings.ToLower(strings.TrimSpace(header.GetKey())) != key {
 				continue
@@ -148,6 +151,9 @@ func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[
 func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignature {
 	signatures := make(map[string][]URLMicroSignature)
 	for _, rule := range *d {
+		if rule.URLMicroSignatures == nil {
+			continue
+		}
 		// Check if the key already exists
 		if _, ok := signatures[strings.ToLower(rule.ObjectName)]; ok {
 			// Append the new signatures to the existing ones
@@ -163,6 +169,9 @@ func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignat
 func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSignature {
 	patterns := make(map[string][]PageContentSignature)
 	for _, rule := range *d {
+		if rule.PageContentPatterns == nil {
+			continue
+		}
 		key := strings.ToLower(rule.ObjectName)
 		// Check if the key already exists
 		if _, ok := patterns[key]; ok {
@@ -179,6 +188,9 @@ func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSi
 func GetAllSSLSignaturesMap(d *[]DetectionRule) map[string][]SSLSignature {
 	signatures := make(map[string][]SSLSignature)
 	for _, rule := range *d {
+		if rule.SSLSignatures == nil {
+			continue
+		}
 		// Check if the key already exists
 		if _, ok := signatures[strings.ToLower(rule.ObjectName)]; ok {
 			// Append the new signatures to the existing ones
@@ -194,6 +206,9 @@ func GetAllSSLSignaturesMap(d *[]DetectionRule) map[string][]SSLSignature {
 func GetAllMetaTagsMap(d *[]DetectionRule) map[string][]MetaTag {
 	tags := make(map[string][]MetaTag)
 	for _, rule := range *d {
+		if rule.MetaTags == nil {
+			continue
+		}
 		// Check if the key already exists
 		if _, ok := tags[strings.ToLower(rule.ObjectName)]; ok {
 			// Append the new tags to the existing ones
@@ -208,14 +223,20 @@ func GetAllMetaTagsMap(d *[]DetectionRule) map[string][]MetaTag {
 // GetAllPluginCallsMap returns a map of all plugin calls for the specified detection rules.
 func GetAllPluginCallsMap(d *[]DetectionRule) map[string][]PluginCall {
 	pluginCalls := make(map[string][]PluginCall)
-	for _, rule := range *d {
-		// Check if the key already exists
-		if _, ok := pluginCalls[strings.ToLower(rule.ObjectName)]; ok {
-			// Append the new plugin calls to the existing ones
-			pluginCalls[strings.ToLower(rule.ObjectName)] = append(pluginCalls[strings.ToLower(rule.ObjectName)], rule.PluginCalls...)
+	for i := 0; i < len(*d); i++ {
+		rule := (*d)[i]
+		if rule.PluginCalls == nil {
 			continue
 		}
-		pluginCalls[strings.ToLower(rule.ObjectName)] = rule.PluginCalls
+		// ObjName is the key
+		ObjName := strings.ToLower(strings.TrimSpace(rule.ObjectName))
+		// Check if the key already exists
+		if _, ok := pluginCalls[ObjName]; ok {
+			// Append the new plugin calls to the existing ones
+			pluginCalls[ObjName] = append(pluginCalls[ObjName], rule.PluginCalls...)
+			continue
+		}
+		pluginCalls[ObjName] = rule.PluginCalls
 	}
 	return pluginCalls
 }

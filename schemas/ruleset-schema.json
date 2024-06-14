@@ -607,7 +607,7 @@
                                     },
                                     {
                                         "required": [
-                                            "plugin_call"
+                                            "plugin_calls"
                                         ]
                                     }
                                 ]
