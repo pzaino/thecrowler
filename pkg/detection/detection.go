@@ -27,6 +27,10 @@ type detectionEntityDetails struct {
 	pluginResult    map[string]interface{}
 }
 
+func (d detectionEntityDetails) IsEmpty() bool {
+	return reflect.DeepEqual(d, detectionEntityDetails{})
+}
+
 func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
 
@@ -130,26 +134,34 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 
 	// Transform the detectedTech map into a map of strings
 	detectedTechStr := make(map[string]DetectedEntity)
+	if len(detectedTech) == 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No technologies detected")
+		return &detectedTechStr
+	}
+
+	// Iterate through the detected technologies and calculate the confidence
 	for k, v := range detectedTech {
 		// calculate "confidence" based on the value of x
-		x := v.confidence
-		c := calculateConfidence(x, dtCtx.RE.DetectionConfig.NoiseThreshold, dtCtx.RE.DetectionConfig.MaybeThreshold, dtCtx.RE.DetectionConfig.DetectedThreshold)
-		if c <= 10 {
-			continue
+		if !v.IsEmpty() {
+			x := v.confidence
+			c := calculateConfidence(x, dtCtx.RE.DetectionConfig.NoiseThreshold, dtCtx.RE.DetectionConfig.MaybeThreshold, dtCtx.RE.DetectionConfig.DetectedThreshold)
+			if c <= 10 {
+				continue
+			}
+			v.confidence = c
+			if x < 0 {
+				// If x is negative, then the analysis was on the ABSENCE of a technology
+				// In this case we add a special prefix to the entity name
+				k = "no_" + k
+			}
+			entity := DetectedEntity{
+				EntityName:      k,
+				EntityType:      v.entityType,
+				Confidence:      v.confidence,
+				MatchedPatterns: v.matchedPatterns,
+			}
+			detectedTechStr[k] = entity
 		}
-		v.confidence = c
-		if x < 0 {
-			// If x is negative, then the analysis was on the ABSENCE of a technology
-			// In this case we add a special prefix to the entity name
-			k = "no_" + k
-		}
-		entity := DetectedEntity{
-			EntityName:      k,
-			EntityType:      v.entityType,
-			Confidence:      v.confidence,
-			MatchedPatterns: v.matchedPatterns,
-		}
-		detectedTechStr[k] = entity
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "Detected entities: %v", detectedTechStr)
