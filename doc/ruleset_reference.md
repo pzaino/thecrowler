@@ -1,210 +1,141 @@
-# TheCROWler Ruleset Reference
+# JSON Schema
 
-*The CROWler ruleset schema defines the structure of a ruleset file, which
-contains rules for scraping, action execution, detection, and crawling.*
+*The CROWler ruleset schema defines the structure of a ruleset file, which contains rules for scraping, action execution, detection, and crawling.*
 
 ## Items
 
 - **Items** *(object)*
-  - **`format_version`** *(string)*: Version of the ruleset format, to ensure
-   compatibility.
+  - **`format_version`** *(string)*: Version of the ruleset format, to ensure compatibility.
   - **`author`** *(string)*: The author or owner of the ruleset.
   - **`created_at`** *(string)*: Creation date of the ruleset.
   - **`description`** *(string)*: A brief description of what the ruleset does.
   - **`ruleset_name`** *(string)*: A unique name identifying the ruleset.
   - **`rule_groups`** *(array)*
     - **Items** *(object)*
-      - **`group_name`** *(string)*: A unique name identifying the group of
-      rules.
-      - **`valid_from`** *(string)*: The start date from which the rule group
-      becomes active.
-      - **`valid_to`** *(string)*: The end date until which the rule group
-      remains active.
+      - **`group_name`** *(string)*: A unique name identifying the group of rules.
+      - **`valid_from`** *(string)*: The start date from which the rule group becomes active.
+      - **`valid_to`** *(string)*: The end date until which the rule group remains active.
       - **`is_enabled`** *(boolean)*: Flag to enable or disable the rule group.
       - **`scraping_rules`** *(array)*
         - **Items** *(object)*
-          - **`rule_name`** *(string)*: A unique name identifying the scraping
-           rule.
-          - **`pre_conditions`** *(array)*: Conditions that must be met for the
-           scraping to be executed.
+          - **`rule_name`** *(string)*: A unique name identifying the scraping rule.
+          - **`pre_conditions`** *(array)*: Conditions that must be met for the scraping to be executed.
             - **Items** *(object)*
-              - **`path`** *(string)*: The specific path or pattern to match
-              for scraping.
-              - **`url`** *(string)*: Optional. The specific URL to which this
-               rule applies. If omitted, the rule is considered applicable to
-                any URL matching the path.
-          - **`elements`** *(array)*: Defines multiple ways to find and
-          interact with elements, allowing for CSS, XPath, and other
-          Selenium-supported strategies.
+              - **`path`** *(string)*: The specific path or pattern to match for scraping.
+              - **`url`** *(string)*: Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path.
+          - **`elements`** *(array)*: Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies.
             - **Items** *(object)*
               - **`key`** *(string)*
               - **`selectors`** *(array)*
                 - **Items** *(object)*
-                  - **`selector_type`** *(string)*: Must be one of: `['css',
-                   'xpath', 'id', 'class_name', 'name', 'tag_name',
-                   'link_text', 'partial_link_text', 'regex']`.
-                  - **`selector`** *(string)*
-                  - **`attribute`** *(string)*: Optional. The attribute of the
-                   element to extract, e.g., 'innerText'. Mainly relevant for
-                   scraping actions.
-          - **`js_files`** *(boolean)*: Indicates whether JavaScript files are
-           relevant for the scraping.
-          - **`objects`** *(array)*: Identifies specific technologies, requires
-           correspondent detection rules.
+                  - **`selector_type`** *(string)*: The type of selector to use to find the element. To extract data using plugins, set this field to 'plugin_call'. Must be one of: `['css', 'xpath', 'id', 'class_name', 'name', 'tag_name', 'link_text', 'partial_link_text', 'regex', 'plugin_call']`.
+                  - **`selector`** *(string)*: The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'.
+                  - **`attribute`** *(object)*: Optional. The attribute of the element to extract. This field is ignored when using CROWler plugins via plugin_call.
+                    - **`name`** *(string)*: The name of the attribute to extract, e.g., 'class'.
+                    - **`value`** *(string)*: Optional. The attribute's value of the element to extract, e.g., 'class_name'. .
+                  - **`extract_all_occurrences`** *(boolean)*: Flag to extract all occurrences of the element, not just the first one. This flag has no effect when using CROWler plugins via plugin_call.
+          - **`extract_scripts`** *(boolean)*: Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis.
+          - **`objects`** *(array)*: Identifies specific technologies, requires correspondent detection rules.
             - **Items**: A unique name identifying the detection rule.
-          - **`json_field_mappings`** *(object)*: Maps scraped elements to JSON
-           fields using PostgreSQL JSON path expressions. Can contain
-           additional properties.
-            - **Additional Properties** *(string)*
-          - **`wait_conditions`** *(array)*: Conditions to wait for before
-          performing scraping, ensuring page readiness.
+          - **`json_field_rename`** *(array)*: Given that the CROWler scraper maps automatically HTML tags to JSON tags, you can use this feature to rename the json-html tag with whatever name you wish to use.
             - **Items** *(object)*
-              - **`condition_type`** *(string)*: Must be one of:
-              `['element_presence', 'element_visible', 'custom_js', 'delay']`.
-              - **`value`** *(string)*: a generic value to use with the
-              condition, e.g., a delay in seconds, applicable for delay
-              condition type.
-              - **`selector`** *(string)*: The CSS selector for the element,
-               applicable for element_presence and element_visible conditions.
-              - **`custom_js`** *(string)*: Custom JavaScript condition to
-               evaluate, applicable for custom_js condition type.
-          - **`post_processing`** *(array)*: Post-processing steps for the
-           scraped data to transform, validate, or clean it.
+              - **`source_tag`** *(string)*: The JSON tag you want to rename.
+              - **`dest_tag`** *(string)*: The new name for the JSON tag.
+          - **`wait_conditions`** *(array)*: Conditions to wait before being able to scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'.
             - **Items** *(object)*
-              - **`step_type`** *(string)*: Must be one of: `['replace',
-               'remove', 'transform', 'validate', 'clean']`.
-              - **`details`** *(object)*: Detailed configuration for the
-              post-processing step, structure depends on the step_type.
+              - **`condition_type`** *(string)*: Must be one of: `['element_presence', 'element_visible', 'plugin_call', 'delay']`.
+              - **`value`** *(string)*: a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is ignored.
+              - **`selector`** *(string)*: The CSS selector for the element, applicable for element_presence and element_visible conditions. This field is used for the plugin's name when the condition_type is 'plugin_call'.
+          - **`post_processing`** *(array)*: Post-processing steps for the scraped data to transform, validate, or clean it. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.
+            - **Items** *(object)*
+              - **`step_type`** *(string)*: The type of post-processing step to perform on the scraped data. To use plugins to process the data, set this field to 'plugin_call' and place the plugin name in the 'details' object using a field called 'plugin_name'. Do not use 'transform' if you want to use a plugin to transform the output, use 'plugin_call' instead. Must be one of: `['replace', 'remove', 'transform', 'validate', 'clean', 'plugin_call']`.
+              - **`details`** *(object)*: Detailed configuration for the post-processing step, structure depends on the step_type. Can contain additional properties.
       - **`action_rules`** *(array)*
         - **Items** *(object)*
-          - **`rule_name`** *(string)*: A unique name identifying the action
-           rule.
-          - **`action_type`** *(string)*: The type of action to perform,
-           including advanced interactions. Must be one of: `['click',
-            'input_text', 'clear', 'drag_and_drop', 'mouse_hover',
-             'right_click', 'double_click', 'click_and_hold', 'release',
-              'key_down', 'key_up', 'navigate_to_url', 'forward', 'back',
-               'refresh', 'switch_to_window', 'switch_to_frame',
-                'close_window', 'accept_alert', 'dismiss_alert',
-                 'get_alert_text', 'send_keys_to_alert', 'scroll_to_element',
-                  'scroll_by_amount', 'take_screenshot',
-                   'execute_javascript']`.
-          - **`selectors`** *(array)*
+          - **`rule_name`** *(string)*: A unique name identifying the action rule.
+          - **`action_type`** *(string)*: The type of action to perform, including advanced interactions and calls to plugins.If you want to use plugins then set this field to 'custom', set selector_type field to 'plugin_call', and place the plugin name in the selector field. Must be one of: `['click', 'input_text', 'clear', 'drag_and_drop', 'mouse_hover', 'right_click', 'double_click', 'click_and_hold', 'release', 'key_down', 'key_up', 'navigate_to_url', 'forward', 'back', 'refresh', 'switch_to_window', 'switch_to_frame', 'close_window', 'accept_alert', 'dismiss_alert', 'get_alert_text', 'send_keys_to_alert', 'scroll_to_element', 'scroll_by_amount', 'take_screenshot', 'custom']`.
+          - **`selectors`** *(array)*: Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot.
             - **Items** *(object)*
-              - **`selector_type`** *(string)*: Must be one of: `['css',
-               'xpath', 'id', 'class_name', 'name', 'tag_name', 'link_text',
-                'partial_link_text']`.
-              - **`selector`** *(string)*: The actual selector or pattern used
-               to find the element based on the selector_type.
-              - **`attribute`** *(object)*: Optional. The attribute of the
-               element to match.
-                - **`name`** *(string)*: The name of the attribute to match for
-                 the selector match to be valid.
-                - **`value`** *(string)*: The value to of the attribute to
-                 match for the selector to be valid.
-              - **`value`** *(string)*: The value within the selector that we
-               need to match for the action. (this is NOT the value to input!).
-          - **`value`** *(string)*: The value to use with the action, e.g.,
-           text to input, applicable for input_text.
-          - **`url`** *(string)*: Optional. The specific URL to which this
-           action applies or the URL to navigate to, applicable for navigate
-            action.
-          - **`wait_conditions`** *(array)*: Conditions to wait for before
-           performing the action, ensuring page readiness.
+              - **`selector_type`** *(string)*: The type of selector to use to find the element. Must be one of: `['css', 'xpath', 'id', 'class_name', 'name', 'tag_name', 'link_text', 'partial_link_text', 'plugin_call']`.
+              - **`selector`** *(string)*: The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'.
+              - **`attribute`** *(object)*: Optional. The attribute of the element to match.
+                - **`name`** *(string)*: The name of the attribute to match for the selector match to be valid.
+                - **`value`** *(string)*: The value to of the attribute to match for the selector to be valid.
+              - **`value`** *(string)*: The value within the selector that we need to match for the action. (this is NOT the value to input!).
+          - **`value`** *(string)*: The value to use with the action, e.g., text to input, applicable for input_text.
+          - **`url`** *(string)*: Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action. Do not use this field for 'navigate_to_url' action type, use instead the value field to specify the url to go to, url field is only to match the rule.
+          - **`wait_conditions`** *(array)*: Conditions to wait before being able to perform the action. This to ensure page readiness.
             - **Items** *(object)*
-              - **`condition_type`** *(string)*: Must be one of:
-              `['element_presence', 'element_visible', 'custom_js', 'delay']`.
-              - **`value`** *(string)*: a generic value to use with the
-               condition, e.g., a delay in seconds, applicable for delay
-                condition type.
-              - **`selector`** *(string)*: The CSS selector for the element,
-               applicable for element_presence and element_visible conditions.
-              - **`custom_js`** *(string)*: Custom JavaScript condition to
-               evaluate, applicable for custom_js condition type.
-          - **`conditions`** *(object)*: Conditions that must be met for the
-           action to be executed. Can contain additional properties.
-          - **`error_handling`** *(object)*: Error handling strategies for the
-           action.
-            - **`retry_count`** *(integer)*: The number of times to retry the
-             action on failure.
-            - **`retry_delay`** *(integer)*: The delay between retries in
-             seconds.
+              - **`condition_type`** *(string)*: Must be one of: `['element_presence', 'element_visible', 'plugin_call', 'delay']`.
+              - **`value`** *(string)*: a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.
+              - **`selector`** *(string)*: The CSS selector for the element, applicable for element_presence and element_visible conditions. If you're using plugin_call, then this field is used for the plugin name.
+          - **`conditions`** *(object)*: Conditions that must be met for the action to be executed.
+            - **`type`** *(string)*: Must be one of: `['element', 'language', 'plugin_call']`.
+            - **`selector`** *(string)*: The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call.
+          - **`error_handling`** *(object)*: Error handling strategies for the action.
+            - **`ignore`** *(boolean)*: Flag to ignore errors and continue with the next action.
+            - **`retry_count`** *(integer)*: The number of times to retry the action on failure.
+            - **`retry_delay`** *(integer)*: The delay between retries in seconds.
       - **`detection_rules`** *(array)*
         - **Items** *(object)*
-          - **`rule_name`** *(string)*: A unique name identifying the
-           detection rule.
-          - **`object_name`** *(string)*: The name of the object or technology
-           to identify.
-          - **`object_version`** *(string)*: Optional. The version of the
-           object or technology to identify.
-          - **`http_header_fields`** *(array)*: Matching patterns for HTTP
-           header fields to identify technology.
+          - **`rule_name`** *(string)*: A unique name identifying the detection rule.
+          - **`object_name`** *(string)*: The name of the object or technology to identify. This will also be the JSON key in the output. This is also the field to use for the 'implies' field if you want to imply other objects.
+          - **`http_header_fields`** *(array)*: Matching patterns for HTTP header fields to identify technology.
             - **Items** *(object)*
               - **`key`** *(string)*: The name of the HTTP header field.
-              - **`value`** *(array)*: The expected value of the HTTP header
-               field.
+              - **`value`** *(array)*: The expected value of the HTTP header field. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.
                 - **Items** *(string)*
-              - **`confidence`** *(number)*: Optional. The confidence level for
-               the match, ranging from 0 to 10.
-          - **`page_content_patterns`** *(array)*: Patterns within the page
-           content that match specific technologies.
-            - **Items** *(object)*: Phrases or character sequences within page
-             content indicative of specific technology.
-              - **`key`** *(string)*: The name of the tag to find in the page
-               content.
-              - **`attribute`** *(string)*: Optional. The attribute of the tag
-               to match, e.g., 'src' for img tag etc. (use 'text' for text
-                content).
-              - **`value`** *(array)*: The pattern to match within the page
-               content's tag.
+              - **`confidence`** *(number)*: Optional. The confidence level for the match, ranging from 0 to 10.
+          - **`page_content_patterns`** *(array)*: Patterns within the page content that match specific technologies.
+            - **Items** *(object)*: Phrases or character sequences within page content indicative of specific technology.
+              - **`key`** *(string)*: The name of the tag to find in the page content.
+              - **`attribute`** *(string)*: Optional. The attribute of the tag to match, e.g., 'src' for img tag etc. (leave empty if you want to match the tag's innerText only).
+              - **`value`** *(array)*: The pattern to match within the tag's attribute content. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.
                 - **Items** *(string)*
-              - **`confidence`** *(number)*: Optional. The confidence level
-               for the detection, decimal number ranging from 0 to 10 (or
-                whatever set in the detection_configuration).
-          - **`url_micro_signatures`** *(array)*: URL patterns indicative of
-           specific technologies.
-            - **Items** *(object)*: Micro-signatures in URLs that indicate a
-             specific technology, like '/wp-admin' for WordPress.
-              - **`value`** *(string)*: The micro-signature to match in the
-               URL.
-              - **`confidence`** *(number)*: Optional. The confidence level for
-               the match, decimal number ranging from 0 to 10 (or whatever set
-                in the detection_configuration).
+              - **`text`** *(string)*: Optional. The text to match in the tag's innerText. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.
+              - **`confidence`** *(number)*: Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).
+          - **`certificates_patterns`** *(array)*: Phrases or character sequences within certain certificate's fields indicative of specific technology.
+            - **Items** *(object)*
+              - **`key`** *(string)*: The name of the field in an SSL/TLS certificate to find.
+              - **`value`** *(array)*: The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.
+                - **Items** *(string)*
+              - **`confidence`** *(number)*: Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).
+          - **`url_micro_signatures`** *(array)*: URL patterns indicative of specific technologies.
+            - **Items** *(object)*: Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress.
+              - **`value`** *(string)*: The micro-signature to match in the URL. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.
+              - **`confidence`** *(number)*: Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).
+          - **`meta_tags`** *(array)*: Matching patterns for meta tags to identify technology.
+            - **Items** *(object)*
+              - **`name`** *(string)*: The name attribute of the meta tag.
+              - **`content`** *(string)*: The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.
+          - **`implies`** *(array)*: Optional. A list of object names that this rule implies, e.g., if this rule matches, it implies that the object names in this list are also present.
+            - **Items** *(string)*
+          - **`plugin_calls`** *(array)*: Optional. Call a plugin to detect the technology.
+            - **Items** *(object)*
+              - **`plugin_name`** *(string)*: The name of the plugin to call.
+              - **`plugin_parameters`** *(array)*: The parameters to pass to the plugin.
+                - **Items** *(object)*
+                  - **`parameter_name`** *(string)*: The name of the parameter to pass to the plugin.
+                  - **`parameter_value`** *(string)*: The value of the parameter to pass to the plugin.
       - **`crawling_rules`** *(array)*
         - **Items** *(object)*
-          - **`rule_name`** *(string)*: A unique name identifying the crawling
-           rule.
-          - **`request_type`** *(string)*: The type of request to perform for
-           fuzzing. Must be one of: `['GET', 'POST']`.
-          - **`target_elements`** *(array)*: Specifies the elements to target
-           for fuzzing, including forms.
+          - **`rule_name`** *(string)*: A unique name identifying the crawling rule.
+          - **`request_type`** *(string)*: The type of request to perform for fuzzing. Must be one of: `['GET', 'POST']`.
+          - **`target_elements`** *(array)*: Specifies the elements to target for fuzzing, including forms.
             - **Items** *(object)*
-              - **`selector_type`** *(string)*: Must be one of: `['css',
-               'xpath', 'form']`.
-              - **`selector`** *(string)*: The actual selector or form name
-               used to find and interact with the target elements for fuzzing.
-          - **`fuzzing_parameters`** *(array)*: Defines the parameters to fuzz
-           and the strategy for generating fuzz values.
+              - **`selector_type`** *(string)*: Must be one of: `['css', 'xpath', 'form']`.
+              - **`selector`** *(string)*: The actual selector or form name used to find and interact with the target elements for fuzzing.
+          - **`fuzzing_parameters`** *(array)*: Defines the parameters to fuzz and the strategy for generating fuzz values.
             - **Items** *(object)*
               - **`parameter_name`** *(string)*: Name of the parameter to fuzz.
-              - **`fuzzing_type`** *(string)*: The fuzzing strategy to use for
-               the parameter. Must be one of: `['fixed_list',
-                'pattern_based']`.
-              - **`values`** *(array)*: List of values to use for fuzzing,
-               applicable if 'fuzzing_type' is 'fixed_list'.
+              - **`fuzzing_type`** *(string)*: The fuzzing strategy to use for the parameter. Must be one of: `['fixed_list', 'pattern_based']`.
+              - **`values`** *(array)*: List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'.
                 - **Items** *(string)*
-              - **`pattern`** *(string)*: A pattern to generate fuzzing values,
-               applicable if 'fuzzing_type' is 'pattern_based'.
-      - **`environment_settings`** *(object)*: Custom settings for the
-       WebDriver environment.
-        - **`headless_mode`** *(boolean)*: Specifies if the WebDriver should
-         operate in headless mode.
-        - **`custom_browser_options`** *(object)*: Custom options for browser
-         instances, such as proxies or window size.
-      - **`logging_configuration`** *(object)*: Configuration for logging and
-       monitoring rule execution.
-        - **`log_level`** *(string)*: Specifies the logging level for actions
-         and scraping activities. Must be one of: `['DEBUG', 'INFO', 'WARNING'
-         , 'ERROR', 'CRITICAL']`.
-        - **`log_file`** *(string)*: Optional. The file path to store logs if
-         file logging is desired.
+              - **`pattern`** *(string)*: A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'.
+  - **`environment_settings`** *(array)*: Optional. Custom key value settings to use in the rules. Normally used to set environment variables for the rules.
+    - **Items** *(object)*
+      - **`key`** *(string)*: The name of the environment setting.
+      - **`value`** *(string)*: The value of the environment setting.
+  - **`logging_configuration`** *(object)*: rule log configuration (aka what you want to be logged when the rule execute).
+    - **`log_level`** *(string)*: Optional. Specifies the logging level for actions and scraping activities. Must be one of: `['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']`.
+    - **`log_message`** *(string)*: Optional. The message you want to log if the rule matches something.
