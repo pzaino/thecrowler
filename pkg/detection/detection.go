@@ -496,6 +496,7 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 				cmn.DebugMsg(cmn.DbgLvlError, "running plugin: %s", err)
 				continue
 			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Plugin result: %v", result)
 			if result == nil {
 				continue
 			}
