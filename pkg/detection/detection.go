@@ -36,6 +36,10 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 
 	// micro-signatures
 	Patterns := dtCtx.RE.GetAllEnabledDetectionRules()
+	if len(Patterns) == 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No detection rules enabled")
+		return nil
+	}
 
 	// Initialize a slice to store the detected stuff
 	detectedTech := make(map[string]detectionEntityDetails)
@@ -130,7 +134,9 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	}
 
 	// Process implied technologies
-	processImpliedTechnologies(&detectedTech, &Patterns)
+	if len(detectedTech) > 0 {
+		processImpliedTechnologies(&detectedTech, &Patterns)
+	}
 
 	// Transform the detectedTech map into a map of strings
 	detectedTechStr := make(map[string]DetectedEntity)
