@@ -118,7 +118,11 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	// Try to detect technologies using plugins
 	if dtCtx.WD != nil {
 		Plugins := ruleset.GetAllPluginCallsMap(&Patterns)
-		detectTechnologiesWithPlugins(dtCtx.WD, dtCtx.RE, &Plugins, &detectedTech)
+		if len(Plugins) > 0 {
+			detectTechnologiesWithPlugins(dtCtx.WD, dtCtx.RE, &Plugins, &detectedTech)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "No detection rules requiring plugins")
+		}
 		Plugins = nil
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping plugin detection because the WebDriver is nil")
@@ -473,10 +477,13 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 	//const detectionType = "plugin"
 	// Iterate through all the plugins and check for possible technologies
 	for ObjName := range *plugins {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running plugins for: %s", ObjName)
 		for _, pluginCall := range (*plugins)[ObjName] {
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Plugin: %s", pluginCall.PluginName)
 			// Retrieve the plugin from the Plugins table
 			plugin, exists := re.JSPlugins.GetPlugin(pluginCall.PluginName)
 			if !exists {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "plugin not found: %s", pluginCall.PluginName)
 				continue
 			}
 			// Get the plugin arguments
@@ -507,6 +514,9 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 			// Convert result to a string
 			resultStr, ok := result.(string)
 			if !ok {
+				continue
+			} else if resultStr == "" || resultStr == "null" || resultStr == "undefined" || resultStr == "{}" || resultStr == "[]" || resultStr == "false" {
+				// discard all empty results
 				continue
 			}
 			// Check if resultStr is a valid JSON object
