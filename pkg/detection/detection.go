@@ -480,23 +480,27 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 				continue
 			}
 			// Get the plugin arguments
-			args := pluginCall.PluginArgs
-			// Search for an arg called confidence
+			var args []ruleset.PluginParams
 			var jsArgs []interface{}
 			var confidence float32
-			for _, arg := range args {
-				jsArgs = append(jsArgs, arg.ArgValue)
-				if strings.ToLower(strings.TrimSpace(arg.ArgName)) == "confidence" {
-					confidence = cmn.StringToFloat32(arg.ArgValue)
+			if pluginCall.PluginArgs != nil {
+				args = pluginCall.PluginArgs
+				// Search for an arg called confidence
+				for _, arg := range args {
+					jsArgs = append(jsArgs, arg.ArgValue)
+					if strings.ToLower(strings.TrimSpace(arg.ArgName)) == "confidence" {
+						confidence = cmn.StringToFloat32(arg.ArgValue)
+					}
 				}
 			}
 			// Run the plugin
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Executing Plugin: %s", pluginCall.PluginName)
 			result, err := (*wd).ExecuteScript(plugin.String(), jsArgs)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "running plugin: %s", err)
 				continue
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Plugin result: %v", result)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Plugin execution result: %v", result)
 			if result == nil {
 				continue
 			}

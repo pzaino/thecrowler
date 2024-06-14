@@ -334,7 +334,7 @@ func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
 			return nil, fmt.Errorf("no files found")
 		}
 	} else {
-		files[0] = path
+		files = append(files, path)
 	}
 
 	// Load the plugins from the specified files list
@@ -358,6 +358,7 @@ func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
 		// this may need reviewing later on.
 		plugin := &JSPlugin{name: pluginName, script: string(pluginBody)}
 		plugins = append(plugins, plugin)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Loaded plugin %s from file %s", pluginName, file)
 	}
 
 	return plugins, nil
