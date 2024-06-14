@@ -117,3 +117,25 @@
                 - **Items** *(object)*
                   - **`parameter_name`** *(string)*: The name of the parameter to pass to the plugin.
                   - **`parameter_value`** *(string)*: The value of the parameter to pass to the plugin.
+      - **`crawling_rules`** *(array)*
+        - **Items** *(object)*
+          - **`rule_name`** *(string)*: A unique name identifying the crawling rule.
+          - **`request_type`** *(string)*: The type of request to perform for fuzzing. Must be one of: `['GET', 'POST']`.
+          - **`target_elements`** *(array)*: Specifies the elements to target for fuzzing, including forms.
+            - **Items** *(object)*
+              - **`selector_type`** *(string)*: Must be one of: `['css', 'xpath', 'form']`.
+              - **`selector`** *(string)*: The actual selector or form name used to find and interact with the target elements for fuzzing.
+          - **`fuzzing_parameters`** *(array)*: Defines the parameters to fuzz and the strategy for generating fuzz values.
+            - **Items** *(object)*
+              - **`parameter_name`** *(string)*: Name of the parameter to fuzz.
+              - **`fuzzing_type`** *(string)*: The fuzzing strategy to use for the parameter. Must be one of: `['fixed_list', 'pattern_based']`.
+              - **`values`** *(array)*: List of values to use for fuzzing, applicable if 'fuzzing_type' is 'fixed_list'.
+                - **Items** *(string)*
+              - **`pattern`** *(string)*: A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'.
+  - **`environment_settings`** *(array)*: Optional. Custom key value settings to use in the rules. Normally used to set environment variables for the rules.
+    - **Items** *(object)*
+      - **`key`** *(string)*: The name of the environment setting.
+      - **`value`** *(string)*: The value of the environment setting.
+  - **`logging_configuration`** *(object)*: rule log configuration (aka what you want to be logged when the rule execute).
+    - **`log_level`** *(string)*: Optional. Specifies the logging level for actions and scraping activities. Must be one of: `['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']`.
+    - **`log_message`** *(string)*: Optional. The message you want to log if the rule matches something.
