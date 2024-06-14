@@ -399,6 +399,11 @@ func (re *RuleEngine) CountRules() int {
 	return re.CountScrapingRules() + re.CountActionRules() + re.CountCrawlingRules() + re.CountDetectionRules()
 }
 
+// Return the number of loaded Plugins
+func (re *RuleEngine) CountPlugins() int {
+	return len(re.JSPlugins.registry)
+}
+
 /// --- Searching --- ///
 
 // GetRulesetByURL returns the ruleset for the specified URL.

@@ -462,6 +462,7 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Action rules loaded: %d", RulesEngine.CountActionRules())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Scraping rules loaded: %d", RulesEngine.CountScrapingRules())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling rules loaded: %d", RulesEngine.CountCrawlingRules())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Plugins loaded: %d", RulesEngine.CountPlugins())
 
 	// Start the crawler
 	crowler.StartCrawler(*config)
