@@ -1,4 +1,4 @@
-# JSON Schema
+# The CROWler Ruleset Reference
 
 *The CROWler ruleset schema defines the structure of a ruleset file, which contains rules for scraping, action execution, detection, and crawling.*
 

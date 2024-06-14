@@ -36,6 +36,10 @@ component of the CROWler.
 **Please note:** You must create your config.yaml file before building the Docker
 image! If you don't do this, the CROWler will not work.
 
+For a detailed and up-to-date reference to the config.yam available options,
+please have a look at the [config reference](./config_reference.md), or
+you can have a look at the [config schema](../schemas/crowler-config-schema.json).
+
 The config.yaml file should look like this:
 
 ```yaml
