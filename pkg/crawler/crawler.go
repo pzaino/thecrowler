@@ -356,7 +356,9 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 		RE:           ctx.re,
 	}
 	detectedTech := detect.DetectTechnologies(&detectCtx)
-	pageInfo.DetectedTech = (*detectedTech)
+	if detectedTech != nil {
+		pageInfo.DetectedTech = (*detectedTech)
+	}
 
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
@@ -1830,7 +1832,9 @@ func processJob(processCtx *processContext, id int, url string, skippedURLs []Li
 		RE:           processCtx.re,
 	}
 	detectedTech := detect.DetectTechnologies(&detectCtx)
-	pageCache.DetectedTech = *detectedTech
+	if detectedTech != nil {
+		pageCache.DetectedTech = *detectedTech
+	}
 
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it

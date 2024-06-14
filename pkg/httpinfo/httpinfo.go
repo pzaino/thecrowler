@@ -306,8 +306,10 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails,
 		ResponseBody: &responseBody,
 	}
 	x := detect.DetectTechnologies(&detectCtx)
-	for k, v := range *x {
-		infoList[k] = v
+	if x != nil {
+		for k, v := range *x {
+			infoList[k] = v
+		}
 	}
 
 	return infoList, nil
