@@ -523,6 +523,9 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 			if cmn.IsJSON(resultStr) {
 				// Add the plugin result as PluginResult
 				updateDetectedTechCustom(detectedTech, ObjName, confidence, pluginCall.PluginName, resultStr)
+			} else {
+				// log that the result is not a valid JSON object
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "Plugin result is not a valid JSON object: %s", resultStr)
 			}
 		}
 	}
