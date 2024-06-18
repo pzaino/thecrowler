@@ -74,6 +74,8 @@ var (
 // DB index of the source page after it's indexed.
 type processContext struct {
 	SelID        int                    // The Selenium ID
+	SelInstance  SeleniumInstance       // The Selenium instance
+	WG           *sync.WaitGroup        // The WaitGroup
 	fpIdx        uint64                 // The index of the source page after it's indexed
 	config       cfg.Config             // The configuration object (from the config package)
 	db           *cdb.Handler           // The database handler
@@ -103,6 +105,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
 	processCtx.Status.PipelineRunning = 1
+	processCtx.SelInstance = sel
 
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
 	if !IsValidURIProtocol(args.Src.URL) {
@@ -135,6 +138,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 	processCtx.Status.CrawlingRunning = 1
 	defer ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 	defer UpdateSourceState(args.DB, args.Src.URL, err)
+	defer processCtx.WG.Done()
 
 	// Crawl the initial URL and get the HTML content
 	pageSource, err := processCtx.CrawlInitialURL(sel)
@@ -264,6 +268,7 @@ func NewProcessContext(args CrawlerPars) *processContext {
 		re:     args.RE,
 		SelID:  args.SelIdx,
 		Status: args.Status,
+		WG:     args.WG,
 	}
 	newPCtx.visitedLinks = make(map[string]bool)
 	return &newPCtx
@@ -1252,7 +1257,21 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, string, error) {
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
-		return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
+		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
+			// If the session is not found, create a new one
+			err = ctx.ConnectToSelenium((*ctx).SelInstance)
+			wd = ctx.wd
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+			}
+			// Retry navigating to the page
+			err := wd.Get(url)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
+			}
+		} else {
+			return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
+		}
 	}
 
 	// Wait for Page to Load
