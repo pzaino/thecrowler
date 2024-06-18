@@ -35,7 +35,8 @@ import (
 )
 
 var (
-	config cfg.Config
+	config      cfg.Config
+	forceInsert bool
 )
 
 func insertWebsite(db *sql.DB, source *cdb.Source) error {
@@ -89,8 +90,9 @@ func normalizeURL(url string) string {
 	url = strings.TrimSpace(url)
 	// Trim trailing slash
 	url = strings.TrimRight(url, "/")
-	// Convert to lowercase
-	url = strings.ToLower(url)
+
+	url = prepareURL(url)
+
 	return url
 }
 
@@ -103,7 +105,10 @@ func main() {
 	restricted := flag.Uint("restricted", 1, "Restricted crawling")
 	flags := flag.Uint("flags", 0, "Flags")
 	sourceConfig := flag.String("srccfg", "", "Source configuration file")
+	force := flag.Bool("force", false, "Force the insertion of the website even if the config file is not found or it is invalid")
 	flag.Parse()
+
+	forceInsert = *force
 
 	// Read the configuration file
 	var err error
@@ -182,13 +187,20 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 			break
 		}
 		if err != nil {
-			return err
+			if !forceInsert {
+				return err
+			}
+		}
+
+		// Check if record is empty
+		if len(record) == 0 {
+			continue
 		}
 
 		// Create a new SourceRecord
 		var categoryID uint64
 		if len(record) > 1 {
-			categoryID, err = strconv.ParseUint(record[1], 10, 64)
+			categoryID, err = strconv.ParseUint(strings.TrimSpace(record[1]), 10, 64)
 			if err != nil {
 				return err
 			}
@@ -196,7 +208,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 
 		var usrID uint64
 		if len(record) > 2 {
-			usrID, err = strconv.ParseUint(record[2], 10, 64)
+			usrID, err = strconv.ParseUint(strings.TrimSpace(record[2]), 10, 64)
 			if err != nil {
 				return err
 			}
@@ -204,7 +216,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 
 		restricted := uint(1)
 		if len(record) > 3 {
-			restricted64, err := strconv.ParseUint(record[3], 10, 32)
+			restricted64, err := strconv.ParseUint(strings.TrimSpace(record[3]), 10, 32)
 			if err != nil {
 				return err
 			}
@@ -213,7 +225,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 
 		flags := uint(0)
 		if len(record) > 4 {
-			flags64, err := strconv.ParseUint(record[4], 10, 32)
+			flags64, err := strconv.ParseUint(strings.TrimSpace(record[4]), 10, 32)
 			if err != nil {
 				return err
 			}
@@ -221,7 +233,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 		}
 
 		sourceRecord := cdb.Source{
-			URL:        record[0],
+			URL:        prepareURL(record[0]),
 			CategoryID: categoryID,
 			UsrID:      usrID,
 			Restricted: restricted,
@@ -233,17 +245,66 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 		if len(record) > 4 {
 			sourceRecord.Config, err = getSourceConfig(record[5])
 			if err != nil {
-				return err
+				if forceInsert {
+					fmt.Printf("Error reading source configuration file for %s: %v\n", sourceRecord.URL, err)
+					sourceRecord.Config = nil
+				} else {
+					return err
+				}
 			}
 		}
 
 		// Insert the website
 		if err := insertWebsite(db, &sourceRecord); err != nil {
-			return err
+			if forceInsert {
+				fmt.Printf("Error inserting website %s: %v\n", sourceRecord.URL, err)
+				continue
+			} else {
+				return err
+			}
 		}
 	}
 
 	return nil
+}
+
+func prepareURL(url string) string {
+	// Trim spaces
+	url = strings.TrimSpace(url)
+	// Trim trailing slash
+	url = strings.TrimRight(url, "/")
+
+	// Check if the URL starts with hxxp:// or hxxps://
+	if strings.HasPrefix(url, "hxxp://") {
+		url = strings.Replace(url, "hxxp://", "http://", 1)
+	}
+	if strings.HasPrefix(url, "hxxps://") {
+		url = strings.Replace(url, "hxxps://", "https://", 1)
+	}
+
+	// Check if the URL starts with fxp:// or fxps://
+	if strings.HasPrefix(url, "fxp://") {
+		url = strings.Replace(url, "fxp://", "ftp://", 1)
+	}
+	if strings.HasPrefix(url, "fxps://") {
+		url = strings.Replace(url, "fxps://", "ftps://", 1)
+	}
+
+	// Replace squatted characters in the URL
+	url = strings.Replace(url, "[.]", ".", -1)
+	url = strings.Replace(url, "(.)", ".", -1)
+	url = strings.Replace(url, "{.}", ".", -1)
+	url = strings.Replace(url, "[:]", ":", -1)
+	url = strings.Replace(url, "(:)", ":", -1)
+	url = strings.Replace(url, "{:}", ":", -1)
+	url = strings.Replace(url, "[/]", "/", -1)
+	url = strings.Replace(url, "(/)", "/", -1)
+	url = strings.Replace(url, "{/}", "/", -1)
+	url = strings.Replace(url, "[?]", "?", -1)
+	url = strings.Replace(url, "(?)", "?", -1)
+	url = strings.Replace(url, "{?}", "?", -1)
+
+	return url
 }
 
 func getSourceConfig(configFile string) (*json.RawMessage, error) {
