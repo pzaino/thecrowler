@@ -90,8 +90,9 @@ func normalizeURL(url string) string {
 	url = strings.TrimSpace(url)
 	// Trim trailing slash
 	url = strings.TrimRight(url, "/")
-	// Convert to lowercase
-	url = strings.ToLower(url)
+
+	url = prepareURL(url)
+
 	return url
 }
 
@@ -230,7 +231,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 		}
 
 		sourceRecord := cdb.Source{
-			URL:        record[0],
+			URL:        prepareURL(record[0]),
 			CategoryID: categoryID,
 			UsrID:      usrID,
 			Restricted: restricted,
@@ -263,6 +264,45 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 	}
 
 	return nil
+}
+
+func prepareURL(url string) string {
+	// Trim spaces
+	url = strings.TrimSpace(url)
+	// Trim trailing slash
+	url = strings.TrimRight(url, "/")
+
+	// Check if the URL starts with hxxp:// or hxxps://
+	if strings.HasPrefix(url, "hxxp://") {
+		url = strings.Replace(url, "hxxp://", "http://", 1)
+	}
+	if strings.HasPrefix(url, "hxxps://") {
+		url = strings.Replace(url, "hxxps://", "https://", 1)
+	}
+
+	// Check if the URL starts with fxp:// or fxps://
+	if strings.HasPrefix(url, "fxp://") {
+		url = strings.Replace(url, "fxp://", "ftp://", 1)
+	}
+	if strings.HasPrefix(url, "fxps://") {
+		url = strings.Replace(url, "fxps://", "ftps://", 1)
+	}
+
+	// Replace squatted characters in the URL
+	url = strings.Replace(url, "[.]", ".", -1)
+	url = strings.Replace(url, "(.)", ".", -1)
+	url = strings.Replace(url, "{.}", ".", -1)
+	url = strings.Replace(url, "[:]", ":", -1)
+	url = strings.Replace(url, "(:)", ":", -1)
+	url = strings.Replace(url, "{:}", ":", -1)
+	url = strings.Replace(url, "[/]", "/", -1)
+	url = strings.Replace(url, "(/)", "/", -1)
+	url = strings.Replace(url, "{/}", "/", -1)
+	url = strings.Replace(url, "[?]", "?", -1)
+	url = strings.Replace(url, "(?)", "?", -1)
+	url = strings.Replace(url, "{?}", "?", -1)
+
+	return url
 }
 
 func getSourceConfig(configFile string) (*json.RawMessage, error) {
