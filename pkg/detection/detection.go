@@ -523,6 +523,7 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 				resultStr == "[]" ||
 				resultStr == "false" {
 				// discard all empty results
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "Discarding Result because it's not useful or there was an issue converting it to a string. COnversion ok? %t, %s", ok, resultStr)
 				continue
 			}
 			// Check if resultStr is a valid JSON object
