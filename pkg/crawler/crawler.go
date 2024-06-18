@@ -511,7 +511,8 @@ func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 	if takeScreenshot {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
 		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
-		imageName := generateUniqueName(url, "-desktop")
+		sid := strconv.FormatUint(ctx.source.ID, 10)
+		imageName := "s" + sid + "-" + generateUniqueName(url, "-desktop")
 		ss, err := TakeScreenshot(&wd, imageName, ctx.config.Crawler.ScreenshotMaxHeight)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "taking screenshot: %v", err)
