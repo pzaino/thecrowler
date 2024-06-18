@@ -2257,7 +2257,20 @@ func captureScreenshots(wd *selenium.WebDriver, totalHeight, windowHeight int) (
 		// Take screenshot of the current view
 		screenshot, err := (*wd).Screenshot()
 		if err != nil {
-			return nil, err
+			// Check if the error is due to an alert
+			if strings.Contains(err.Error(), "unexpected alert open") {
+				// Accept the alert and retry
+				err2 := (*wd).AcceptAlert()
+				if err2 != nil {
+					return nil, err
+				}
+				screenshot, err = (*wd).Screenshot()
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, err
+			}
 		}
 
 		screenshots = append(screenshots, screenshot)
