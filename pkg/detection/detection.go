@@ -500,6 +500,9 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 					}
 				}
 			}
+			if confidence == 0 {
+				confidence = 10
+			}
 			// Run the plugin
 			cmn.DebugMsg(cmn.DbgLvlDebug5, "Executing Plugin: %s", pluginCall.PluginName)
 			result, err := (*wd).ExecuteScript(plugin.String(), jsArgs)
@@ -513,9 +516,12 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 			}
 			// Convert result to a string
 			resultStr, ok := result.(string)
-			if !ok {
-				continue
-			} else if resultStr == "" || resultStr == "null" || resultStr == "undefined" || resultStr == "{}" || resultStr == "[]" || resultStr == "false" {
+			if !ok || resultStr == "" ||
+				resultStr == "null" ||
+				resultStr == "undefined" ||
+				resultStr == "{}" ||
+				resultStr == "[]" ||
+				resultStr == "false" {
 				// discard all empty results
 				continue
 			}
