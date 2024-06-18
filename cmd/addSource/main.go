@@ -187,7 +187,9 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 			break
 		}
 		if err != nil {
-			return err
+			if !forceInsert {
+				return err
+			}
 		}
 
 		// Check if record is empty
@@ -243,7 +245,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 		if len(record) > 4 {
 			sourceRecord.Config, err = getSourceConfig(record[5])
 			if err != nil {
-				if !forceInsert {
+				if forceInsert {
 					fmt.Printf("Error reading source configuration file for %s: %v\n", sourceRecord.URL, err)
 					sourceRecord.Config = nil
 				} else {
@@ -254,7 +256,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 
 		// Insert the website
 		if err := insertWebsite(db, &sourceRecord); err != nil {
-			if !forceInsert {
+			if forceInsert {
 				fmt.Printf("Error inserting website %s: %v\n", sourceRecord.URL, err)
 				continue
 			} else {
