@@ -2,6 +2,7 @@ package detection
 
 import (
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -527,14 +528,17 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "Discarding Result because it's not useful or there was an issue converting it to a string. Conversion ok? %s", resultStr)
 				continue
 			}
-			// Check if resultStr is a valid JSON object
-			if cmn.IsJSON(resultStr) {
-				// Add the plugin result as PluginResult
-				updateDetectedTechCustom(detectedTech, ObjName, confidence, pluginCall.PluginName, resultStr)
-			} else {
-				// log that the result is not a valid JSON object
-				cmn.DebugMsg(cmn.DbgLvlDebug3, "Plugin result is not a valid JSON object: %s", resultStr)
+			// transform the result to a JSON object
+			jsonResult, err := json.Marshal(result)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "marshalling plugin result: %s", err)
+				continue
 			}
+			resultStr = string(jsonResult)
+
+			// Add the plugin result as PluginResult
+			updateDetectedTechCustom(detectedTech, ObjName, confidence, pluginCall.PluginName, resultStr)
+
 		}
 	}
 }
