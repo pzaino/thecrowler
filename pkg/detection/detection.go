@@ -515,15 +515,16 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 				continue
 			}
 			// Convert result to a string
-			resultStr, ok := result.(string)
-			if !ok || resultStr == "" ||
-				resultStr == "null" ||
-				resultStr == "undefined" ||
-				resultStr == "{}" ||
-				resultStr == "[]" ||
-				resultStr == "false" {
+			resultStr := fmt.Sprintf("%v", result)
+			checkResult := strings.ToLower(strings.TrimSpace(resultStr))
+			if checkResult == "" ||
+				checkResult == "null" ||
+				checkResult == "undefined" ||
+				checkResult == "{}" ||
+				checkResult == "[]" ||
+				checkResult == "false" {
 				// discard all empty results
-				cmn.DebugMsg(cmn.DbgLvlDebug5, "Discarding Result because it's not useful or there was an issue converting it to a string. COnversion ok? %t, %s", ok, resultStr)
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "Discarding Result because it's not useful or there was an issue converting it to a string. Conversion ok? %s", resultStr)
 				continue
 			}
 			// Check if resultStr is a valid JSON object
