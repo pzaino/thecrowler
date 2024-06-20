@@ -170,6 +170,7 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 				EntityType:      v.entityType,
 				Confidence:      v.confidence,
 				MatchedPatterns: v.matchedPatterns,
+				PluginResult:    v.pluginResult,
 			}
 			detectedTechStr[k] = entity
 		}
