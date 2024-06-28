@@ -1362,13 +1362,13 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 		// if og:description tag is not found, we extract the content of twitter:description tag
 		// if none of the above tags are found, we extract the first 200 characters of the body text
 		tmp := doc.Find("meta[name=description]").AttrOr("content", "")
-		if tmp == "" {
+		if strings.TrimSpace(tmp) == "" {
 			tmp = doc.Find("meta[property=og:description]").AttrOr("content", "")
 		}
-		if tmp == "" {
+		if strings.TrimSpace(tmp) == "" {
 			tmp = doc.Find("meta[name=twitter:description]").AttrOr("content", "")
 		}
-		if tmp != "" {
+		if strings.TrimSpace(tmp) != "" {
 			summary = tmp
 		}
 
@@ -1383,7 +1383,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType s
 		bodyText = strings.ReplaceAll(bodyText, "\t", " ")
 		// remove excessive spaces in bodyText
 		bodyText = strings.Join(strings.Fields(bodyText), " ")
-		if summary == "" {
+		if strings.TrimSpace(summary) == "" {
 			// If we don't have a summary, extract the first 200 characters of the body text
 			summary = bodyText
 			if len(summary) > 200 {
