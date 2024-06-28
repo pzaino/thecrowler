@@ -982,18 +982,8 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Get HTML and text Content
-	var htmlContent string
-	if len((*pageInfo).HTML) > 1024 {
-		htmlContent = (*pageInfo).HTML[:1024]
-	} else {
-		htmlContent = (*pageInfo).HTML
-	}
-	var textContent string
-	if len((*pageInfo).BodyText) > 1024 {
-		textContent = (*pageInfo).BodyText[:1024]
-	} else {
-		textContent = (*pageInfo).BodyText
-	}
+	htmlContent := (*pageInfo).HTML
+	textContent := (*pageInfo).BodyText
 
 	var objID int64
 
