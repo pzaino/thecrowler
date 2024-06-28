@@ -14,7 +14,7 @@ require (
 require (
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/likexian/whois v1.15.3
-	github.com/oschwald/maxminddb-golang v1.13.0
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robertkrimen/otto v0.4.0
 	github.com/stretchr/testify v1.9.0
