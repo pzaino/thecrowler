@@ -4,7 +4,7 @@ go 1.22.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
-	github.com/antchfx/htmlquery v1.3.1
+	github.com/antchfx/htmlquery v1.3.2
 	github.com/aws/aws-sdk-go v1.54.10
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
@@ -50,7 +50,7 @@ require (
 
 require (
 	github.com/andybalholm/cascadia v1.3.2 // indirect
-	github.com/antchfx/xpath v1.3.0 // indirect
+	github.com/antchfx/xpath v1.3.1 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
