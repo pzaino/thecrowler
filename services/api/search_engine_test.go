@@ -9,30 +9,38 @@ import (
 func TestTokenize(t *testing.T) {
 	tests := []struct {
 		input  string
-		output []string
+		output Tokens
 	}{
 		{
 			input:  `field1:value1 field2:value2`,
-			output: []string{"field1:", "value1", "field2:", "value2"},
+			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value2", tType: "0"}},
 		},
 		{
 			input:  `field1:\"value 1\" field2:\"value 2\"`,
-			output: []string{"field1:", "\"value", "1\"", "field2:", "\"value", "2\""},
+			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "\"value", tType: "0"}, {tValue: "1\"", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "\"value", tType: "0"}, {tValue: "2\"", tType: "0"}},
 		},
 		{
 			input:  `field1:value1 | field2:value2 & field3:value3`,
-			output: []string{"field1:", "value1", "|", "field2:", "value2", "&", "field3:", "value3"},
+			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "|", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value2", tType: "0"}, {tValue: "&", tType: "0"}, {tValue: "field3:", tType: "0"}, {tValue: "value3", tType: "0"}},
 		},
 		{
 			input:  `field1:value1 | field2:"value 2" & field3:value3`,
-			output: []string{"field1:", "value1", "|", "field2:", "value 2", "&", "field3:", "value3"},
+			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "|", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value 2", tType: "0"}, {tValue: "&", tType: "0"}, {tValue: "field3:", tType: "0"}, {tValue: "value3", tType: "0"}},
 		},
 	}
 
 	for _, test := range tests {
 		result := tokenize(test.input)
-		if !reflect.DeepEqual(result, test.output) {
-			t.Errorf("tokenize(%q) = got %v; want %v", test.input, result, test.output)
+		if len(result) != len(test.output) {
+			t.Errorf("tokenize(%q) = got length %d; want length %d", test.input, len(result), len(test.output))
+			continue
+		}
+		for i := range result {
+			got, want := result[i], test.output[i]
+			if got.tType != want.tType || got.tValue != want.tValue {
+				t.Errorf("tokenize(%q) = got [%d] = {tType: %q, tValue: %q}; want [%d] = {tType: %q, tValue: %q}",
+					test.input, i, got.tType, got.tValue, i, want.tType, want.tValue)
+			}
 		}
 	}
 }
