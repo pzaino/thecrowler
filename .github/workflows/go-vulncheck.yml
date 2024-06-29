@@ -1,4 +1,4 @@
-name: OSV-Scanner
+name: Go-VulnCheck
 
 on:
   push:
