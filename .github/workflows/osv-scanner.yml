@@ -23,7 +23,7 @@ jobs:
 
       - name: Download OSV-Scanner
         run: |
-          wget https://github.com/google/osv-scanner/releases/download/v1.0.0/osv-scanner-linux-amd64 -O osv-scanner
+          wget https://github.com/google/osv-scanner/releases/download/v1.8.1/osv-scanner_linux_amd64 -O osv-scanner
           chmod +x osv-scanner
 
       - name: Run OSV-Scanner
