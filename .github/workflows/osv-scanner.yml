@@ -25,7 +25,9 @@ jobs:
         run: |
           wget https://github.com/google/osv-scanner/releases/download/v1.8.1/osv-scanner_linux_amd64 -O osv-scanner
           chmod +x osv-scanner
+          go clean -cache -modcache -i -r
           go mod download
           go mod tidy
+          go install golang.org/x/vuln/cmd/govulncheck@latest
           ./autobuild.sh
           ./osv-scanner --recursive .
