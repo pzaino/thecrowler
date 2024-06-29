@@ -21,13 +21,10 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install dependencies
+      - name: Download OSV-Scanner
         run: |
-          pip install --upgrade pip
-
-      - name: Install OSV-Scanner
-        run: |
-          pip install osv-scanner
+          wget https://github.com/google/osv-scanner/releases/download/v1.0.0/osv-scanner-linux-amd64 -O osv-scanner
+          chmod +x osv-scanner
 
       - name: Run OSV-Scanner
         run: |
