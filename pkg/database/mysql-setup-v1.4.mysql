@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS Events (
     event_type VARCHAR(255) NOT NULL,
     event_severity VARCHAR(50) NOT NULL,
     event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    event_details JSON NOT NULL,
+    details JSON NOT NULL,
     FOREIGN KEY(source_id) REFERENCES Sources(source_id) ON DELETE CASCADE
 );
 

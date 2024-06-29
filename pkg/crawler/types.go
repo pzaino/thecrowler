@@ -101,6 +101,15 @@ type PageInfo struct {
 	Config       *cfg.Config                      `json:"config"`        // The configuration of the web page.
 }
 
+type CollectedScript struct {
+	ID           uint64   `json:"id"`
+	ScriptType   string   `json:"script_type"`
+	Original     string   `json:"original"`
+	Script       string   `json:"script"`
+	Errors       []string `json:"errors"`
+	IsObfuscated bool     `json:"is_obfuscated"`
+}
+
 // WebObjectDetails represents the details of a web object.
 type WebObjectDetails struct {
 	ScrapedData  ScrapedItem                      `json:"scraped_data"`  // The scraped data from the web page.
