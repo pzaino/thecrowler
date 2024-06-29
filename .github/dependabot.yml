@@ -13,3 +13,8 @@ updates:
       interval: daily
     target:
       branch: "develop"
+
+  - package-ecosystem: docker
+    directory: /selenium-patches
+    schedule:
+      interval: daily
