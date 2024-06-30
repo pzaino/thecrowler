@@ -330,6 +330,8 @@ type Config struct {
 
 	Plugins PluginsConfig `yaml:"plugins"` // Plugins configuration
 
+	ExternalDetection []ExternalDetectionConfig `yaml:"external_detection"`
+
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
 }
@@ -337,6 +339,15 @@ type Config struct {
 type PluginsConfig struct {
 	PluginTimeout int            `yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
 	Plugins       []PluginConfig `yaml:"plugins"`
+}
+
+type ExternalDetectionConfig struct {
+	Name     string `yaml:"name"`      // Name of the external detection service
+	Enabled  bool   `yaml:"enabled"`   // Whether to enable the external detection service or not
+	APIKey   string `yaml:"api_key"`   // API key for the external detection service
+	Timeout  int    `yaml:"timeout"`   // Timeout for the external detection service (in seconds)
+	Delay    string `yaml:"delay"`     // Delay between requests (in seconds)
+	FullSite bool   `yaml:"full_site"` // Send each collected URL to the external detection service
 }
 
 /////////////////////////////////////////////////
