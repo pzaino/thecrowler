@@ -306,6 +306,16 @@ items:
                       type: "integer"
                       description: "The delay between retries in seconds."
                   description: "Error handling strategies for the action."
+                post_processing:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      step_type:
+                        type: "string"
+                        enum:
+                          - "collect_cookies"
+                        description: "The type of post-processing step to perform after an action rule has been successfully executed. At the moment the only valid post_processing step is 'collect_cookies'."
               required:
                 - "rule_name"
                 - "action_type"
@@ -446,7 +456,7 @@ items:
                 - required:
                     - "implies"
                 - required:
-                    - "plugin_call"
+                    - "plugin_calls"
           crawling_rules:
             type: "array"
             items:

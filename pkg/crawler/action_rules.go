@@ -1067,3 +1067,12 @@ func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned
 		}
 	}
 }
+
+// Retrieve cookies after an action rule has been executed
+func RetrieveCookies(wd *selenium.WebDriver) ([]selenium.Cookie, error) {
+	cookies, err := (*wd).GetCookies()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "retrieving cookies: %v", err)
+	}
+	return cookies, err
+}
