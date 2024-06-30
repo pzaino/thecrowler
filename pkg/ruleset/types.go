@@ -91,6 +91,7 @@ type ActionRule struct {
 	URL            string                 `yaml:"url,omitempty"`
 	WaitConditions []WaitCondition        `yaml:"wait_conditions"`
 	Conditions     map[string]interface{} `yaml:"conditions"`
+	PostProcessing []PostProcessingStep   `yaml:"post_processing"`
 	ErrorHandling  ErrorHandling          `yaml:"error_handling"`
 }
 

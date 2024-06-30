@@ -96,6 +96,28 @@ func executeRule(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDrive
 			}
 		}
 	}
+	if r.PostProcessing != nil && err == nil {
+		for _, pp := range r.PostProcessing {
+			executeActionPostProcessingStep(ctx, pp, wd)
+		}
+	}
+}
+
+func executeActionPostProcessingStep(ctx *processContext, pp rules.PostProcessingStep, wd *selenium.WebDriver) {
+	// Execute the post processing step
+	if pp.Type == "collect_cookies" {
+		cookies, err := retrieveCookies(wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "retrieving cookies: %v", err)
+		}
+		if len(cookies) != 0 {
+			for name, value := range cookies {
+				ctx.CollectedCookies[name] = value
+			}
+		}
+		return
+	}
+	cmn.DebugMsg(cmn.DbgLvlError, "post processing step not supported: %s", pp.Type)
 }
 
 // executeActionRule executes a single ActionRule
@@ -1069,10 +1091,17 @@ func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned
 }
 
 // Retrieve cookies after an action rule has been executed
-func RetrieveCookies(wd *selenium.WebDriver) ([]selenium.Cookie, error) {
+func retrieveCookies(wd *selenium.WebDriver) (map[string]interface{}, error) {
 	cookies, err := (*wd).GetCookies()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "retrieving cookies: %v", err)
 	}
-	return cookies, err
+
+	// Transform the cookies into a map[string]interface{} for easier processing
+	cookieMap := make(map[string]interface{})
+	for _, cookie := range cookies {
+		cookieMap[cookie.Name] = cookie.Value
+	}
+
+	return cookieMap, err
 }

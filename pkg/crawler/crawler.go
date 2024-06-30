@@ -73,25 +73,26 @@ var (
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type processContext struct {
-	SelID        int                    // The Selenium ID
-	SelInstance  SeleniumInstance       // The Selenium instance
-	WG           *sync.WaitGroup        // The WaitGroup
-	fpIdx        uint64                 // The index of the source page after it's indexed
-	config       cfg.Config             // The configuration object (from the config package)
-	db           *cdb.Handler           // The database handler
-	wd           selenium.WebDriver     // The Selenium WebDriver
-	linksMutex   sync.Mutex             // Mutex to protect the newLinks slice
-	newLinks     []LinkItem             // The new links found during the crawling process
-	source       *cdb.Source            // The source to crawl
-	wg           sync.WaitGroup         // WaitGroup to wait for all page workers to finish
-	wgNetInfo    sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel          *chan SeleniumInstance // The Selenium instances channel
-	ni           *neti.NetInfo          // The network information of the web page
-	hi           *httpi.HTTPDetails     // The HTTP header information of the web page
-	re           *rules.RuleEngine      // The rule engine
-	getURLMutex  sync.Mutex             // Mutex to protect the getURLContent function
-	visitedLinks map[string]bool        // Map to keep track of visited links
-	Status       *CrawlerStatus         // Status of the crawling process
+	SelID            int                    // The Selenium ID
+	SelInstance      SeleniumInstance       // The Selenium instance
+	WG               *sync.WaitGroup        // The WaitGroup
+	fpIdx            uint64                 // The index of the source page after it's indexed
+	config           cfg.Config             // The configuration object (from the config package)
+	db               *cdb.Handler           // The database handler
+	wd               selenium.WebDriver     // The Selenium WebDriver
+	linksMutex       sync.Mutex             // Mutex to protect the newLinks slice
+	newLinks         []LinkItem             // The new links found during the crawling process
+	source           *cdb.Source            // The source to crawl
+	wg               sync.WaitGroup         // WaitGroup to wait for all page workers to finish
+	wgNetInfo        sync.WaitGroup         // WaitGroup to wait for network info to finish
+	sel              *chan SeleniumInstance // The Selenium instances channel
+	ni               *neti.NetInfo          // The network information of the web page
+	hi               *httpi.HTTPDetails     // The HTTP header information of the web page
+	re               *rules.RuleEngine      // The rule engine
+	getURLMutex      sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks     map[string]bool        // Map to keep track of visited links
+	Status           *CrawlerStatus         // Status of the crawling process
+	CollectedCookies map[string]interface{} // Collected cookies
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
