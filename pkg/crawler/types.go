@@ -84,22 +84,23 @@ type MetaTag struct {
 type PageInfo struct {
 	URL                     string                           `json:"URL"` // The URL of the web page.
 	sourceID                uint64                           // The ID of the source.
-	Title                   string                           `json:"title"`                     // The title of the web page.
-	Summary                 string                           `json:"summary"`                   // A summary of the web page content.
-	BodyText                string                           `json:"body_text"`                 // The main body text of the web page.
-	HTML                    string                           `json:"html"`                      // The HTML content of the web page.
-	MetaTags                []MetaTag                        `json:"meta_tags"`                 // The meta tags of the web page.
-	Keywords                map[string]string                `json:"keywords"`                  // The keywords of the web page.
-	DetectedType            string                           `json:"detected_type"`             // The detected document type of the web page.
-	DetectedLang            string                           `json:"detected_lang"`             // The detected language of the web page.
-	NetInfo                 *neti.NetInfo                    `json:"net_info"`                  // The network information of the web page.
-	HTTPInfo                *httpi.HTTPDetails               `json:"http_info"`                 // The HTTP header information of the web page.
-	ScrapedData             []ScrapedItem                    `json:"scraped_data"`              // The scraped data from the web page.
-	Links                   []LinkItem                       `json:"links"`                     // The links found in the web page.
-	PerfInfo                PerformanceLog                   `json:"performance"`               // The performance information of the web page.
-	DetectedTech            map[string]detect.DetectedEntity `json:"detected_tech"`             // The detected technologies of the web page.
-	CollectedSessionCookies map[string]interface{}           `json:"collected_session_cookies"` // The session cookies collected from the web page.
-	Config                  *cfg.Config                      `json:"config"`                    // The configuration of the web page.
+	Title                   string                           `json:"title"`                      // The title of the web page.
+	Summary                 string                           `json:"summary"`                    // A summary of the web page content.
+	BodyText                string                           `json:"body_text"`                  // The main body text of the web page.
+	HTML                    string                           `json:"html"`                       // The HTML content of the web page.
+	MetaTags                []MetaTag                        `json:"meta_tags"`                  // The meta tags of the web page.
+	Keywords                map[string]string                `json:"keywords"`                   // The keywords of the web page.
+	DetectedType            string                           `json:"detected_type"`              // The detected document type of the web page.
+	DetectedLang            string                           `json:"detected_lang"`              // The detected language of the web page.
+	NetInfo                 *neti.NetInfo                    `json:"net_info"`                   // The network information of the web page.
+	HTTPInfo                *httpi.HTTPDetails               `json:"http_info"`                  // The HTTP header information of the web page.
+	ScrapedData             []ScrapedItem                    `json:"scraped_data"`               // The scraped data from the web page.
+	Links                   []LinkItem                       `json:"links"`                      // The links found in the web page.
+	PerfInfo                PerformanceLog                   `json:"performance"`                // The performance information of the web page.
+	DetectedTech            map[string]detect.DetectedEntity `json:"detected_tech"`              // The detected technologies of the web page.
+	ExtDetectionResults     []map[string]interface{}         `json:"external_detection_results"` // The results of the external detection tools.
+	CollectedSessionCookies map[string]interface{}           `json:"collected_session_cookies"`  // The session cookies collected from the web page.
+	Config                  *cfg.Config                      `json:"config"`                     // The configuration of the web page.
 }
 
 type CollectedScript struct {
