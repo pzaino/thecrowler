@@ -483,12 +483,12 @@ func ScanWithHybridAnalysisFile(apiKey, file string) map[string]interface{} {
 	return result
 }
 
-func ScanWithCuckooFile(file string) map[string]interface{} {
+func ScanWithCuckooFile(cuckooHost, file string) map[string]interface{} {
 	client := &http.Client{}
 	reqBody := map[string]string{"file": file}
 	jsonBody, _ := json.Marshal(reqBody)
 
-	req, _ := http.NewRequest("POST", "http://your_cuckoo_sandbox_api/tasks/create/file", bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", cuckooHost+"/tasks/create/file", bytes.NewBuffer(jsonBody))
 	req.Header.Set(contentTypeHeader, contentType)
 
 	resp, err := client.Do(req)
