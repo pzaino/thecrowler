@@ -41,10 +41,11 @@ const (
 	errEmptyURL          = "empty URL provided"
 	errParsingURL        = "error parsing URL: %s"
 	errEmptyName         = "empty name provided"
-	errActionNotFound    = "action rule" + errNotFound
-	errScrapingNotFound  = "scraping rule" + errNotFound
-	errCrawlingNotFound  = "crawling rule" + errNotFound
-	errDetectionNotFound = "detection rule" + errNotFound
+	errActionNotFound    = "action rule " + errNotFound
+	errScrapingNotFound  = "scraping rule " + errNotFound
+	errCrawlingNotFound  = "crawling rule " + errNotFound
+	errDetectionNotFound = "detection rule " + errNotFound
+	errInvalidURL        = "invalid URL"
 )
 
 // UnmarshalYAML parses date strings from the YAML file.

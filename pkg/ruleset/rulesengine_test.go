@@ -1224,3 +1224,376 @@ func TestGetActionRuleByName(t *testing.T) {
 		t.Errorf("Expected error, but got nil")
 	}
 }
+
+func TestGetActionRuleByURL(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule1",
+								URL:      "https://example.com",
+							},
+							{
+								RuleName: "ActionRule2",
+								URL:      "https://example.org",
+							},
+						},
+						IsEnabled: true,
+					},
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule3",
+								URL:      "https://example.net",
+							},
+						},
+						IsEnabled: true,
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule4",
+								URL:      "https://example.com/foo",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Valid URL with matching action rule
+	url1 := "https://example.com"
+	actionRule1, err := re.GetActionRuleByURL(url1)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if actionRule1 != nil {
+		if actionRule1.RuleName != "ActionRule1" {
+			t.Errorf("Expected action rule name 'ActionRule1', got '%s'", actionRule1.RuleName)
+		}
+	} else {
+		t.Errorf("Expected action rule, got nil")
+	}
+
+	// Test case 2: Valid URL with no matching action rule
+	url2 := "https://example.org/foo"
+	actionRule2, err := re.GetActionRuleByURL(url2)
+	if err != nil {
+		t.Errorf("Unexpected error, expected nil, got %v", err)
+	}
+	if actionRule2 == nil {
+		t.Errorf("Expected action rule, got nil")
+	}
+
+	// Test case 3: Invalid URL
+	url3 := "invalid-url"
+	actionRule3, err := re.GetActionRuleByURL(url3)
+	if err == nil {
+		t.Errorf("Expected error, got nil")
+	}
+	if actionRule3 != nil {
+		t.Errorf("Expected nil action rule, got %+v", actionRule3)
+	}
+}
+
+func TestGetScrapingRuleByName(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule1",
+							},
+							{
+								RuleName: "ScrapingRule2",
+							},
+						},
+					},
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Existing scraping rule
+	scrapingRuleName := "ScrapingRule2"
+	expectedScrapingRule := ScrapingRule{
+		RuleName: "ScrapingRule2",
+	}
+	scrapingRule, err := re.GetScrapingRuleByName(scrapingRuleName)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(*scrapingRule, expectedScrapingRule) {
+		t.Errorf("Expected scraping rule: %v, but got: %v", expectedScrapingRule, *scrapingRule)
+	}
+
+	// Test case 2: Non-existing scraping rule
+	nonExistingScrapingRuleName := "NonExistingScrapingRule"
+	_, err = re.GetScrapingRuleByName(nonExistingScrapingRuleName)
+	if err == nil {
+		t.Errorf("Expected error, but got nil")
+	}
+}
+
+func TestGetScrapingRuleByPath(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule1",
+								PreConditions: []PreCondition{
+									{
+										Path: "/path1",
+									},
+								},
+							},
+							{
+								RuleName: "ScrapingRule2",
+								PreConditions: []PreCondition{
+									{
+										Path: "/path2",
+									},
+								},
+							},
+						},
+					},
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule3",
+								PreConditions: []PreCondition{
+									{
+										Path: "/path3",
+									},
+								},
+							},
+						},
+						IsEnabled: false,
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule4",
+								PreConditions: []PreCondition{
+									{
+										Path: "/path4",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Valid path
+	path1 := "/path1"
+	expectedRule1 := &ScrapingRule{
+		RuleName: "ScrapingRule1",
+		PreConditions: []PreCondition{{
+			Path: "/path1",
+		}},
+	}
+	rule1, err := re.GetScrapingRuleByPath(path1)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(rule1, expectedRule1) {
+		t.Errorf("Expected rule: %v, but got: %v", expectedRule1, rule1)
+	}
+
+	// Test case 2: Invalid path
+	invalidPath := "/invalid"
+	_, err = re.GetScrapingRuleByPath(invalidPath)
+	if err == nil {
+		t.Error("Expected error, but got nil")
+	}
+	expectedErrorMsg := "scraping rule not found"
+	if err.Error() != expectedErrorMsg {
+		t.Errorf("Expected error message: %s, but got: %s", expectedErrorMsg, err.Error())
+	}
+}
+
+func TestGetCrawlingRuleByName(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule1",
+							},
+							{
+								RuleName: "CrawlingRule2",
+							},
+						},
+					},
+					{
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Crawling rule exists
+	crawlingRule, err := re.GetCrawlingRuleByName("CrawlingRule2")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if crawlingRule.RuleName != "CrawlingRule2" {
+		t.Errorf("Expected CrawlingRule2, got %s", crawlingRule.RuleName)
+	}
+
+	// Test case 2: Crawling rule does not exist
+	_, err = re.GetCrawlingRuleByName("NonExistentRule")
+	if err == nil {
+		t.Error("Expected error, got nil")
+	}
+}
+
+func TestGetDetectionRuleByName(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule1",
+							},
+							{
+								RuleName: "DetectionRule2",
+							},
+						},
+					},
+					{
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Existing detection rule
+	detectionRule, err := re.GetDetectionRuleByName("DetectionRule2")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if detectionRule.RuleName != "DetectionRule2" {
+		t.Errorf("Expected detection rule name: DetectionRule2, got: %s", detectionRule.RuleName)
+	}
+
+	// Test case 2: Non-existing detection rule
+	_, err = re.GetDetectionRuleByName("NonExistingRule")
+	if err == nil {
+		t.Error("Expected error, but got nil")
+	}
+}
+
+func TestFindRulesForSite(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				Name: "https://example.com",
+			},
+			{
+				Name: "https://google.co.uk",
+			},
+		},
+	}
+
+	// Test case: matching domain
+	url := "https://example.com"
+	expectedRuleset := &re.Rulesets[0]
+	ruleset, err := re.FindRulesForSite(url)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if ruleset != nil {
+		if (*ruleset).Name != (*expectedRuleset).Name {
+			t.Errorf("Expected ruleset: %v, but got: %v", expectedRuleset, ruleset)
+		}
+	} else {
+		t.Errorf("Expected ruleset to be %v, but got nil", expectedRuleset)
+	}
+
+	// Test case: non-matching domain
+	url = "https://example.org"
+	expectedRuleset = nil
+
+	ruleset, err = re.FindRulesForSite(url)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if ruleset != expectedRuleset {
+		t.Errorf("Expected ruleset to be nil, but got %v", ruleset)
+	}
+}

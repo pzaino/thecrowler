@@ -545,6 +545,7 @@ func (re *RuleEngine) GetActionRuleByURL(urlStr string) (*ActionRule, error) {
 			}
 		}
 	}
+
 	return nil, fmt.Errorf(errActionNotFound)
 }
 
