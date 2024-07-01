@@ -59,30 +59,35 @@ func TestScrapingRuleGetURLs(t *testing.T) {
 
 // TestScrapingRule_GetElements tests the GetElements method of ScrapingRule
 func TestScrapingRuleGetElements(t *testing.T) {
-	// TODO: Assuming Element struct and initialization are correct
+	expectedElements := []Element{
+		{Key: "div1", Selectors: []Selector{
+			{SelectorType: "css", Selector: "div", ExtractAllOccurrences: true},
+		}},
+		{Key: "a1", Selectors: []Selector{
+			{SelectorType: "css", Selector: "a", ExtractAllOccurrences: true},
+		}},
+	}
+	r := ScrapingRule{
+		Elements: []Element{
+			{Key: "div1", Selectors: []Selector{
+				{SelectorType: "css", Selector: "div", ExtractAllOccurrences: true},
+			}},
+			{Key: "a1", Selectors: []Selector{
+				{SelectorType: "css", Selector: "a", ExtractAllOccurrences: true},
+			}},
+		},
+	}
+	if got := r.GetElements(); !reflect.DeepEqual(got, expectedElements) {
+		t.Errorf("GetElements() = %v, want %v", got, expectedElements)
+	}
 }
 
 // TestScrapingRule_GetJsFiles tests the GetJsFiles method of ScrapingRule
 func TestScrapingRuleGetJsFiles(t *testing.T) {
-	// TODO: Assuming the JsFiles field is set correctly
-}
-
-// TestScrapingRule_GetTechnologyPatterns tests GetTechnologyPatterns of ScrapingRule
-func TestScrapingRuleGetTechnologyPatterns(t *testing.T) {
-	// TODO: Assuming TechnologyPatterns field is set correctly
-}
-
-// TestScrapingRule_GetJSONFieldMappings tests GetJSONFieldMappings of ScrapingRule
-func TestScrapingRuleGetJSONFieldMappings(t *testing.T) {
-	// TODO: Assuming JSONFieldMappings field is set correctly
-}
-
-// TestScrapingRule_GetWaitConditions tests GetWaitConditions of ScrapingRule
-func TestScrapingRuleGetWaitConditions(t *testing.T) {
-	// TODO: Assuming WaitCondition struct and initialization are correct
-}
-
-// TestScrapingRule_GetPostProcessing tests GetPostProcessing of ScrapingRule
-func TestScrapingRuleGetPostProcessing(t *testing.T) {
-	// TODO: Assuming PostProcessingStep struct and initialization are correct
+	r := ScrapingRule{
+		JsFiles: true,
+	}
+	if got := r.GetJsFiles(); got != true {
+		t.Errorf("GetJsFiles() = %v, want %v", got, true)
+	}
 }
