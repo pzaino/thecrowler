@@ -246,3 +246,7 @@ type JSPlugin struct {
 type JSPluginRegister struct {
 	registry map[string]JSPlugin
 }
+
+const (
+	errInvalidURL = "invalid URL"
+)

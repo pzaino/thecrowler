@@ -17,6 +17,8 @@
 package ruleset
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -556,5 +558,669 @@ func TestGetAllEnabledDetectionRules(t *testing.T) {
 
 	if len(detectionRules) != 3 {
 		t.Errorf("Expected 3 detection rules, got %d", len(detectionRules))
+	}
+}
+
+func TestGetAllScrapingRulesByURL(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup1",
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule1",
+								PreConditions: []PreCondition{
+									{
+										URL: "https://example.com",
+									},
+								},
+							},
+							{
+								RuleName: "ScrapingRule2",
+								PreConditions: []PreCondition{
+									{
+										URL: "https://example.com",
+									},
+								},
+							},
+						},
+						IsEnabled: true,
+					},
+					{
+						GroupName: "RuleGroup2",
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule3",
+								PreConditions: []PreCondition{
+									{
+										URL: "https://example.org",
+									},
+								},
+							},
+						},
+						IsEnabled: true,
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup3",
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule4",
+								PreConditions: []PreCondition{
+									{
+										URL: "https://example.com",
+									},
+								},
+							},
+						},
+						IsEnabled: false,
+					},
+				},
+			},
+		},
+	}
+
+	scrapingRules := re.GetAllScrapingRulesByURL("https://example.com")
+
+	if len(scrapingRules) != 2 {
+		t.Errorf("Expected 2 scraping rules, but got %d", len(scrapingRules))
+	}
+}
+
+func TestCountRulesets(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			mockRuleset("TestRuleset1"),
+			mockRuleset("TestRuleset2"),
+		},
+	}
+
+	count := re.CountRulesets()
+
+	if count != 2 {
+		t.Errorf("Expected count to be 2, but got %d", count)
+	}
+}
+
+func TestCountRuleGroups(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup1",
+					},
+					{
+						GroupName: "RuleGroup2",
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup3",
+					},
+				},
+			},
+		},
+	}
+
+	count := re.CountRuleGroups()
+
+	if count != 3 {
+		t.Errorf("Expected count to be 3, but got %d", count)
+	}
+}
+
+func TestCountScrapingRules(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule1",
+							},
+							{
+								RuleName: "ScrapingRule2",
+							},
+						},
+					},
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	count := re.CountScrapingRules()
+
+	if count != 4 {
+		t.Errorf("Expected 4 scraping rules, but got %d", count)
+	}
+}
+
+func TestCountActionRules(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule1",
+							},
+							{
+								RuleName: "ActionRule2",
+							},
+						},
+					},
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	count := re.CountActionRules()
+
+	if count != 4 {
+		t.Errorf("Expected count to be 4, but got %d", count)
+	}
+}
+
+func TestCountCrawlingRules(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule1",
+							},
+							{
+								RuleName: "CrawlingRule2",
+							},
+						},
+					},
+					{
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	count := re.CountCrawlingRules()
+
+	if count != 4 {
+		t.Errorf("Expected 4 crawling rules, but got %d", count)
+	}
+}
+
+func TestCountDetectionRules(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule1",
+							},
+							{
+								RuleName: "DetectionRule2",
+							},
+						},
+					},
+					{
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	count := re.CountDetectionRules()
+
+	if count != 4 {
+		t.Errorf("Expected count to be 4, but got %d", count)
+	}
+}
+
+func TestCountRules(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule1",
+							},
+							{
+								RuleName: "ScrapingRule2",
+							},
+						},
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule1",
+							},
+							{
+								RuleName: "ActionRule2",
+							},
+						},
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule1",
+							},
+							{
+								RuleName: "CrawlingRule2",
+							},
+						},
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule1",
+							},
+							{
+								RuleName: "DetectionRule2",
+							},
+						},
+					},
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule3",
+							},
+						},
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule3",
+							},
+						},
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule3",
+							},
+						},
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ScrapingRules: []ScrapingRule{
+							{
+								RuleName: "ScrapingRule4",
+							},
+						},
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule4",
+							},
+						},
+						CrawlingRules: []CrawlingRule{
+							{
+								RuleName: "CrawlingRule4",
+							},
+						},
+						DetectionRules: []DetectionRule{
+							{
+								RuleName: "DetectionRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	count := re.CountRules()
+
+	if count != 16 {
+		t.Errorf("Expected 16 rules, but got %d", count)
+	}
+}
+
+func TestCountPlugins(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{},
+		JSPlugins: JSPluginRegister{
+			registry: map[string]JSPlugin{
+				"plugin1": {},
+				"plugin2": {},
+			},
+		},
+	}
+
+	count := re.CountPlugins()
+
+	if count != 2 {
+		t.Errorf("Expected count to be 2, but got %d", count)
+	}
+}
+
+func TestCountPluginsWithEmptyRegistry(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{},
+		JSPlugins: JSPluginRegister{
+			registry: map[string]JSPlugin{},
+		},
+	}
+
+	count := re.CountPlugins()
+
+	if count != 0 {
+		t.Errorf("Expected count to be 0, but got %d", count)
+	}
+}
+
+func TestGetRulesetByURL(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				Name: "http://example.com",
+			},
+			{
+				Name: "TestRuleset2",
+			},
+		},
+	}
+
+	// Test case 1: Matching URL
+	url1 := "http://example.com"
+	ruleset1, err := re.GetRulesetByURL(url1)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if ruleset1 == nil {
+		t.Error("Expected ruleset, got nil")
+	} else if ruleset1.Name != "http://example.com" {
+		t.Errorf("Expected ruleset name 'TestRuleset1', got '%s'", ruleset1.Name)
+	}
+
+	// Test case 2: Non-matching URL
+	url2 := "http://example.org"
+	ruleset2, err := re.GetRulesetByURL(url2)
+	if err == nil {
+		t.Error("Expected error, got nil")
+	}
+	if ruleset2 != nil {
+		t.Errorf("Expected nil ruleset, got %+v", ruleset2)
+	}
+}
+
+func TestGetRulesetByName(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				Name: "TestRuleset1",
+			},
+			{
+				Name: "TestRuleset2",
+			},
+		},
+	}
+
+	// Test case 1: Existing ruleset
+	name := "TestRuleset1"
+	ruleset, err := re.GetRulesetByName(name)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if ruleset.Name != name {
+		t.Errorf("Expected ruleset name: %s, got: %s", name, ruleset.Name)
+	}
+
+	// Test case 2: Non-existing ruleset
+	name = "NonExistingRuleset"
+	_, err = re.GetRulesetByName(name)
+	if err == nil {
+		t.Errorf("Expected error, got nil")
+	}
+	expectedError := errRulesetNotFound
+	if err.Error() != expectedError {
+		t.Errorf("Expected error: %s, got: %v", expectedError, err)
+	}
+}
+
+func TestGetRuleGroupByURL(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "http://example.com",
+						IsEnabled: true,
+					},
+					{
+						GroupName: "RuleGroup2",
+						IsEnabled: false,
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup3",
+						IsEnabled: true,
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Valid URL with matching rule group
+	url1 := "http://example.com"
+	expectedGroup1 := RuleGroup{
+		GroupName: "http://example.com",
+		IsEnabled: true,
+	}
+	group1, err := re.GetRuleGroupByURL(url1)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(*group1, expectedGroup1) {
+		t.Errorf("Expected group: %v, but got: %v", expectedGroup1, *group1)
+	}
+
+	// Test case 2: Valid URL with no matching rule group
+	url2 := "http://example.org"
+	_, err = re.GetRuleGroupByURL(url2)
+	if err == nil {
+		t.Error("Expected error, but got nil")
+	}
+	expectedError := fmt.Errorf(errRuleGroupNotFound)
+	if err.Error() != expectedError.Error() {
+		t.Errorf("Expected error: %v, but got: %v", expectedError, err)
+	}
+
+	// Test case 3: Invalid URL
+	url3 := "invalid-url"
+	_, err = re.GetRuleGroupByURL(url3)
+	if err == nil {
+		t.Error("Expected error, but got nil")
+	}
+
+}
+
+func TestGetRuleGroupByName(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup1",
+						IsEnabled: true,
+					},
+					{
+						GroupName: "RuleGroup2",
+						IsEnabled: true,
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						GroupName: "RuleGroup3",
+						IsEnabled: true,
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Existing rule group
+	groupName := "RuleGroup2"
+	expectedGroup := RuleGroup{
+		GroupName: "RuleGroup2",
+		IsEnabled: true,
+	}
+	group, err := re.GetRuleGroupByName(groupName)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(*group, expectedGroup) {
+		t.Errorf("Expected group: %v, but got: %v", expectedGroup, *group)
+	}
+
+	// Test case 2: Non-existing rule group
+	groupName = "NonExistingGroup"
+	_, err = re.GetRuleGroupByName(groupName)
+	if err == nil {
+		t.Errorf("Expected error, but got nil")
+	}
+}
+
+func TestGetActionRuleByName(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule1",
+							},
+							{
+								RuleName: "ActionRule2",
+							},
+						},
+					},
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule3",
+							},
+						},
+					},
+				},
+			},
+			{
+				RuleGroups: []RuleGroup{
+					{
+						ActionRules: []ActionRule{
+							{
+								RuleName: "ActionRule4",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Existing action rule
+	name := "ActionRule2"
+	expectedRule := ActionRule{
+		RuleName: "ActionRule2",
+	}
+	rule, err := re.GetActionRuleByName(name)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(*rule, expectedRule) {
+		t.Errorf("Expected rule: %v, but got: %v", expectedRule, *rule)
+	}
+
+	// Test case 2: Non-existing action rule
+	name = "NonExistingRule"
+	_, err = re.GetActionRuleByName(name)
+	if err == nil {
+		t.Errorf("Expected error, but got nil")
 	}
 }

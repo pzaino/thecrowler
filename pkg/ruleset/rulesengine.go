@@ -332,10 +332,17 @@ func (re *RuleEngine) GetAllScrapingRulesByURL(url string) []ScrapingRule {
 	// find all scraping rules with the specified URL
 	rules := re.GetAllEnabledScrapingRules()
 	var scrapingRules []ScrapingRule
-	url = strings.ToLower(strings.TrimSpace(url))
+
+	// Prepare the URL for search
+	var err error
+	url, err = PrepareURLForSearch(url)
+	if err != nil {
+		return scrapingRules
+	}
+
 	for _, rule := range rules {
-		for _, condition := range rule.PreConditions {
-			if strings.HasPrefix(url, strings.ToLower(strings.TrimSpace(condition.URL))) {
+		for i2 := 0; i2 < len(rule.PreConditions); i2++ {
+			if strings.HasPrefix(url, strings.ToLower(strings.TrimSpace(rule.PreConditions[i2].URL))) {
 				scrapingRules = append(scrapingRules, rule)
 			}
 		}
@@ -409,11 +416,20 @@ func (re *RuleEngine) CountPlugins() int {
 
 // GetRulesetByURL returns the ruleset for the specified URL.
 func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
+	if re == nil {
+		return nil, fmt.Errorf(errRulesetNotFound)
+	}
+
+	if len((*re).Rulesets) == 0 {
+		return nil, fmt.Errorf(errRulesetNotFound)
+	}
+
 	// Validate URL
 	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(errInvalidURL)
 	}
+
 	for i := 0; i < len((*re).Rulesets); i++ {
 		rsName := strings.ToLower(strings.TrimSpace(re.Rulesets[i].Name))
 		if rsName == "" || (rsName != "*" && !strings.HasPrefix(rsName, "http") && strings.HasPrefix(rsName, "ftp")) {
@@ -430,6 +446,18 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 
 // GetRulesetByName returns the ruleset for the specified name.
 func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
+	if re == nil {
+		return nil, fmt.Errorf(errRulesetNotFound)
+	}
+
+	if len((*re).Rulesets) == 0 {
+		return nil, fmt.Errorf(errRulesetNotFound)
+	}
+
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf(errEmptyName)
+	}
+
 	// Validate name
 	parsedName, err := PrepareNameForSearch(name)
 	if err != nil {
@@ -448,8 +476,9 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 	// Validate URL
 	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(errInvalidURL)
 	}
+
 	for _, rg := range re.GetAllRuleGroups() {
 		rgName := strings.ToLower(strings.TrimSpace(rg.GroupName))
 		if rgName == "" || (rgName != "*" && !strings.HasPrefix(rgName, "http") && strings.HasPrefix(rgName, "ftp")) {
@@ -508,6 +537,7 @@ func (re *RuleEngine) GetActionRuleByURL(urlStr string) (*ActionRule, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	for _, rg := range re.GetAllRuleGroups() {
 		for _, r := range rg.ActionRules {
 			if strings.HasPrefix(parsedURL, strings.ToLower(strings.TrimSpace(r.URL))) {
