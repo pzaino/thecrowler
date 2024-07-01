@@ -235,8 +235,8 @@ func (re *RuleEngine) GetAllRulesets() []Ruleset {
 func (re *RuleEngine) GetAllRuleGroups() []RuleGroup {
 	var ruleGroups []RuleGroup
 	if re != nil {
-		for _, rs := range re.Rulesets {
-			ruleGroups = append(ruleGroups, rs.RuleGroups...)
+		for i := 0; i < len(re.Rulesets); i++ {
+			ruleGroups = append(ruleGroups, re.Rulesets[i].RuleGroups...)
 		}
 	}
 	return ruleGroups
@@ -245,9 +245,10 @@ func (re *RuleEngine) GetAllRuleGroups() []RuleGroup {
 // GetAllEnabledRuleGroups returns all the rule groups in the RuleEngine.
 func (re *RuleEngine) GetAllEnabledRuleGroups() []RuleGroup {
 	var ruleGroups []RuleGroup
-	for _, rg := range re.GetAllRuleGroups() {
-		if rg.IsEnabled && re.IsGroupValid(rg) {
-			ruleGroups = append(ruleGroups, rg)
+	rgs := re.GetAllRuleGroups()
+	for i := 0; i < len(rgs); i++ {
+		if (rgs[i].IsEnabled) && (re.IsGroupValid(rgs[i])) {
+			ruleGroups = append(ruleGroups, rgs[i])
 		}
 	}
 	return ruleGroups
