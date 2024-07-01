@@ -3,6 +3,7 @@ package common
 import (
 	"log"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -473,6 +474,144 @@ func TestInterpolateEnvVars(t *testing.T) {
 			result := InterpolateEnvVars(test.input)
 			if result != test.expected {
 				t.Errorf("Expected %q, but got %q", test.expected, result)
+			}
+		})
+	}
+}
+
+func TestHostToIP(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		expected []string
+	}{
+		{
+			name:     "HostToIP Test case 1",
+			host:     "example.com",
+			expected: []string{"93.184.215.14", "2606:2800:21f:cb07:6820:80da:af6b:8b2c"},
+		},
+		{
+			name:     "HostToIP Test case 2",
+			host:     "localhost",
+			expected: []string{"::1", "127.0.0.1"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := HostToIP(test.host)
+			if !reflect.DeepEqual(result, test.expected) {
+				t.Errorf("Expected IP addresses %v, but got %v", test.expected, result)
+			}
+		})
+	}
+}
+
+func TestStringToInt(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{
+			name:     "StringToInt Test case 1",
+			input:    "42",
+			expected: 42,
+		},
+		{
+			name:     "StringToInt Test case 2",
+			input:    "-10",
+			expected: -10,
+		},
+		{
+			name:     "StringToInt Test case 3",
+			input:    "0",
+			expected: 0,
+		},
+		{
+			name:     "StringToInt Test case 4",
+			input:    "invalid",
+			expected: 0,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := StringToInt(test.input)
+			if result != test.expected {
+				t.Errorf("Expected %d for input %s, but got %d", test.expected, test.input, result)
+			}
+		})
+	}
+}
+
+func TestStringToFloat(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected float64
+	}{
+		{
+			name:     "StringToFloat Test case 1",
+			input:    "3.14",
+			expected: 3.14,
+		},
+		{
+			name:     "StringToFloat Test case 2",
+			input:    "-10.5",
+			expected: -10.5,
+		},
+		{
+			name:     "StringToFloat Test case 3",
+			input:    "0.0",
+			expected: 0.0,
+		},
+		{
+			name:     "StringToFloat Test case 4",
+			input:    "invalid",
+			expected: 0.0,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := StringToFloat(test.input)
+			if result != test.expected {
+				t.Errorf("Expected %v, but got %v", test.expected, result)
+			}
+		})
+	}
+}
+
+func TestStringToFloat32(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected float32
+	}{
+		{
+			name:     "StringToFloat32 Test case 1",
+			input:    "3.14",
+			expected: 3.14,
+		},
+		{
+			name:     "StringToFloat32 Test case 2",
+			input:    "-10.5",
+			expected: -10.5,
+		},
+		{
+			name:     "StringToFloat32 Test case 3",
+			input:    "0.0",
+			expected: 0.0,
+		},
+		{
+			name:     "StringToFloat32 Test case 4",
+			input:    "invalid",
+			expected: 0.0,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := StringToFloat32(test.input)
+			if result != test.expected {
+				t.Errorf("Expected %f, but got %f", test.expected, result)
 			}
 		})
 	}
