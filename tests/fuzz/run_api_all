@@ -1,0 +1,3 @@
+#!/bin/bash
+
+ffuf -w ./api_fuzz_payloads.txt -X GET -H "Content-Type: application/json" -u "http://localhost:8080/v1/webobject?q=FUZZ" -mr "HTTP/1.1 200 OK"
