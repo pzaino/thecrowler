@@ -22,7 +22,7 @@ go install go.k6.io/k6@latest
 
 To run the tests:
 
-* Make sure the API is app and running and reachable via localhost:8080
+- Make sure the API is app and running and reachable via localhost:8080
 
 ```bash
 cd ./tests/pef
@@ -41,9 +41,9 @@ brew install ffuf
 
 On Linux:
 
-* First make sure you have go installed
+- First make sure you have go installed
 
-* Then
+- Then
 
 ```bash
 go install github.com/ffuf/ffuf/v2@latest
@@ -51,9 +51,9 @@ go install github.com/ffuf/ffuf/v2@latest
 
 To run the tests:
 
-* Make sure the API is up and running and reachable to localhost:8080
+- Make sure the API is up and running and reachable to localhost:8080
 
-* Then
+- Then
 
 ```bash
 cd ./tests/fuzz
