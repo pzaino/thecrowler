@@ -46,3 +46,4 @@ jobs:
           proxy.golang.org:443
           storage.googleapis.com:443
           golang.org:443
+          go.dev:443
