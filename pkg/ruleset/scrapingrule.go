@@ -86,11 +86,6 @@ func (w *WaitCondition) GetSelector() Selector {
 	return w.Selector
 }
 
-// GetCustomJS returns the custom JS for the specified wait condition.
-func (w *WaitCondition) GetCustomJS() string {
-	return strings.TrimSpace(w.CustomJS)
-}
-
 // GetStepType returns the step type for the specified post-processing step.
 func (p *PostProcessingStep) GetStepType() string {
 	return strings.ToLower(strings.TrimSpace(p.Type))

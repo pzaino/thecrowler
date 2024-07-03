@@ -73,25 +73,26 @@ var (
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type processContext struct {
-	SelID        int                    // The Selenium ID
-	SelInstance  SeleniumInstance       // The Selenium instance
-	WG           *sync.WaitGroup        // The WaitGroup
-	fpIdx        uint64                 // The index of the source page after it's indexed
-	config       cfg.Config             // The configuration object (from the config package)
-	db           *cdb.Handler           // The database handler
-	wd           selenium.WebDriver     // The Selenium WebDriver
-	linksMutex   sync.Mutex             // Mutex to protect the newLinks slice
-	newLinks     []LinkItem             // The new links found during the crawling process
-	source       *cdb.Source            // The source to crawl
-	wg           sync.WaitGroup         // WaitGroup to wait for all page workers to finish
-	wgNetInfo    sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel          *chan SeleniumInstance // The Selenium instances channel
-	ni           *neti.NetInfo          // The network information of the web page
-	hi           *httpi.HTTPDetails     // The HTTP header information of the web page
-	re           *rules.RuleEngine      // The rule engine
-	getURLMutex  sync.Mutex             // Mutex to protect the getURLContent function
-	visitedLinks map[string]bool        // Map to keep track of visited links
-	Status       *CrawlerStatus         // Status of the crawling process
+	SelID            int                    // The Selenium ID
+	SelInstance      SeleniumInstance       // The Selenium instance
+	WG               *sync.WaitGroup        // The WaitGroup
+	fpIdx            uint64                 // The index of the source page after it's indexed
+	config           cfg.Config             // The configuration object (from the config package)
+	db               *cdb.Handler           // The database handler
+	wd               selenium.WebDriver     // The Selenium WebDriver
+	linksMutex       sync.Mutex             // Mutex to protect the newLinks slice
+	newLinks         []LinkItem             // The new links found during the crawling process
+	source           *cdb.Source            // The source to crawl
+	wg               sync.WaitGroup         // WaitGroup to wait for all page workers to finish
+	wgNetInfo        sync.WaitGroup         // WaitGroup to wait for network info to finish
+	sel              *chan SeleniumInstance // The Selenium instances channel
+	ni               *neti.NetInfo          // The network information of the web page
+	hi               *httpi.HTTPDetails     // The HTTP header information of the web page
+	re               *rules.RuleEngine      // The rule engine
+	getURLMutex      sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks     map[string]bool        // Map to keep track of visited links
+	Status           *CrawlerStatus         // Status of the crawling process
+	CollectedCookies map[string]interface{} // Collected cookies
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -365,6 +366,11 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 		pageInfo.DetectedTech = (*detectedTech)
 	}
 
+	// Use external Detection if enabled
+	if len(ctx.config.ExternalDetection) > 0 {
+		pageInfo.ExtDetectionResults = UseExternalDetection(ctx, ctx.source.URL)
+	}
+
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
 		pageInfo.HTML = ""
@@ -393,6 +399,73 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 
 	return pageSource, nil
+}
+
+func UseExternalDetection(ctx *processContext, url string) []map[string]interface{} {
+	var results []map[string]interface{}
+	for _, extDet := range ctx.config.ExternalDetection {
+		if extDet.Enabled {
+			// Call the external detection service
+			switch strings.ToLower(strings.TrimSpace(extDet.Name)) {
+			case "virustotal": // VirusTotal
+				vtResults := detect.ScanWithVirusTotal(extDet.APIKey, url)
+				if vtResults != nil {
+					results = append(results, vtResults)
+				}
+			case "shodan": // Shodan
+				shodanResults := detect.ScanWithShodan(extDet.APIKey, url)
+				if shodanResults != nil {
+					results = append(results, shodanResults)
+				}
+			case "urlhaus": // URLScan
+				uhResults := detect.ScanWithURLHaus(url)
+				if uhResults != nil {
+					results = append(results, uhResults)
+				}
+			case "hybridanalysis": // HybridAnalysis
+				haResults := detect.ScanWithHybridAnalysis(extDet.APIKey, url)
+				if haResults != nil {
+					results = append(results, haResults)
+				}
+			case "alienvalut": // AlienVault
+				avResults := detect.ScanWithAlienVault(extDet.APIKey, url)
+				if avResults != nil {
+					results = append(results, avResults)
+				}
+			case "phishtank": // PhishTank
+				ptResults := detect.ScanWithPhishTank(extDet.APIKey, url)
+				if ptResults != nil {
+					results = append(results, ptResults)
+				}
+			case "googlesafebrowsing": // Google Safe Browsing
+				gsbResults := detect.ScanWithGoogleSafeBrowsing(extDet.APIKey, url)
+				if gsbResults != nil {
+					results = append(results, gsbResults)
+				}
+			case "openphish": // OpenPhish
+				ofResults := detect.ScanWithOpenPhish(extDet.APIKey, url)
+				if ofResults != nil {
+					results = append(results, ofResults)
+				}
+			case "cuckoo": // Cuckoo
+				ckResults := detect.ScanWithCuckoo(extDet.APIKey, url)
+				if ckResults != nil {
+					results = append(results, ckResults)
+				}
+			case "ciscoumbrella": // Cisco Umbrella
+				cuResults := detect.ScanWithCiscoUmbrella(extDet.APIKey, url)
+				if cuResults != nil {
+					results = append(results, cuResults)
+				}
+			case "threatcrowd": // ThreatCrowd
+				tcResults := detect.ScanWidthThreatCrowd(url)
+				if tcResults != nil {
+					results = append(results, tcResults)
+				}
+			}
+		}
+	}
+	return results
 }
 
 // Collects the performance metrics logs from the browser

@@ -39,3 +39,5 @@ sonar-project.properties
 AllCertificatesRecordReport.csv
 test*.json
 /cmd/bench
+/test_url.csv
+coverage.out

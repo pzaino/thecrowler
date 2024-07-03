@@ -23,8 +23,10 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/evanw/esbuild/pkg/api"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
@@ -106,28 +108,156 @@ func ApplyRule(ctx *processContext, rule *rs.ScrapingRule, webPage *selenium.Web
 
 	// Optional: Extract JavaScript files if required
 	if rule.JsFiles {
-		jsFiles := extractJSFiles(doc)
+		jsFiles := extractJSFiles(webPage)
 		extractedData["js_files"] = jsFiles
 	}
 
 	return extractedData
 }
 
-// extractJSFiles extracts the JavaScript files from the provided document.
-func extractJSFiles(doc *goquery.Document) []string {
-	var jsFiles []string
-	var scriptID int
-	doc.Find("script[src]").Each(func(_ int, s *goquery.Selection) {
-		if src, exists := s.Attr("src"); exists {
-			scriptID += 1
-			scriptTag := "<!---- TheCRWOler: [Extracted script number: " + fmt.Sprint(scriptID) + "] //---->\n"
-			jsFiles = append(jsFiles, scriptTag)
-			jsFiles = append(jsFiles, src)
-			scriptTag = "<!---- TheCROWler: [End of extracted script number: " + fmt.Sprint(scriptID) + "] //---->\n"
-			jsFiles = append(jsFiles, scriptTag)
+// extractJSFiles extracts the JavaScript files from the current page.
+func extractJSFiles(wd *selenium.WebDriver) []CollectedScript {
+	var jsFiles []CollectedScript
+
+	script := `
+	var scripts = document.getElementsByTagName('script');
+	var result = [];
+	for (var i = 0; i < scripts.length; i++) {
+		if (scripts[i].src) {
+			try {
+				var xhr = new XMLHttpRequest();
+				xhr.open('GET', scripts[i].src, false);  // synchronous request
+				xhr.send(null);
+				if (xhr.status === 200) {
+					result.push({type: 'external', content: xhr.responseText});
+				} else {
+					result.push({type: 'external', content: 'Error: ' + xhr.statusText});
+				}
+			} catch (e) {
+				result.push({type: 'external', content: 'Error: ' + e.message});
+			}
+		} else {
+			result.push({type: 'inline', content: scripts[i].innerHTML});
 		}
-	})
+	}
+	return result;
+	`
+
+	// Execute the JavaScript
+	res, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing the script: %v", err)
+	}
+
+	// Parse the result
+	scriptContents, ok := res.([]interface{})
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "Expected script content to be a slice of interfaces")
+	}
+
+	for i, script := range scriptContents {
+		scriptMap, ok := script.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Get the script content
+		scriptOrig, ok := scriptMap["content"].(string)
+		if !ok {
+			continue
+		}
+
+		// Check if the script is obfuscated
+		isObfuscated := detectObfuscation(scriptOrig)
+
+		// Deobfuscate the script content if needed
+		var scriptSource string
+		if isObfuscated {
+			scriptSource = deobfuscateScript(scriptOrig)
+		}
+
+		scriptContent := "<!---- TheCRWOler: [Extracted script number: " + fmt.Sprint(i) +
+			", of type: " + scriptMap["type"].(string) + "] //---->\n" +
+			scriptSource +
+			"\n<!---- TheCRWOler: [End of extracted script number: " + fmt.Sprint(i) + "] //---->"
+
+		// Append the script content to the list
+		newCollectedScript := CollectedScript{
+			ID:           uint64(i),
+			ScriptType:   scriptMap["type"].(string),
+			Original:     scriptOrig,
+			Script:       scriptContent,
+			Errors:       lintScript(scriptContent),
+			IsObfuscated: isObfuscated,
+		}
+
+		jsFiles = append(jsFiles, newCollectedScript)
+
+	}
+
 	return jsFiles
+}
+
+func detectObfuscation(scriptContent string) bool {
+	// Calculate entropy
+	entropy := cmn.CalculateEntropy(scriptContent)
+
+	// Check for high entropy and common obfuscation patterns
+	if entropy > 4.0 || containsObfuscationPatterns(scriptContent) {
+		return true
+	}
+	return false
+}
+
+func containsObfuscationPatterns(scriptContent string) bool {
+	// Check for common obfuscation patterns
+	patterns := []string{
+		"eval(", "Function(", "document.write(", "String.fromCharCode(", "\\x", "\\u",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(scriptContent, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func deobfuscateScript(scriptContent string) string {
+	// Apply various deobfuscation techniques
+
+	// Unescape Unicode sequences
+	re := regexp.MustCompile(`\\u[0-9a-fA-F]{4}`)
+	scriptContent = re.ReplaceAllStringFunc(scriptContent, func(match string) string {
+		r, _ := strconv.ParseInt(match[2:], 16, 32)
+		return string(rune(r))
+	})
+
+	// Unescape hexadecimal sequences
+	re = regexp.MustCompile(`\\x[0-9a-fA-F]{2}`)
+	scriptContent = re.ReplaceAllStringFunc(scriptContent, func(match string) string {
+		r, _ := strconv.ParseInt(match[2:], 16, 32)
+		return string(rune(r))
+	})
+
+	// TODO: I need to improve this and add further deobfuscation techniques here
+
+	return scriptContent
+}
+
+func lintScript(scriptContent string) []string {
+	var errors []string
+
+	// Use minify to parse and lint JavaScript
+	result := api.Transform(scriptContent, api.TransformOptions{
+		Loader: api.LoaderJS,
+	})
+	if len(result.Errors) > 0 {
+		for _, err := range result.Errors {
+			errors = append(errors, err.Text)
+		}
+	}
+
+	return errors
 }
 
 // extractByCSS extracts the content from the provided document using the provided CSS selector.

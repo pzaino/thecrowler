@@ -46,6 +46,7 @@ type SearchQuery struct {
 	sqlParams []interface{}
 	limit     int
 	offset    int
+	details   Details
 }
 
 // TODO: Improve Tokenizer and query generator to support more complex queries
@@ -70,14 +71,27 @@ type SearchQuery struct {
 	);
 */
 
+type Tokens []Token
+
+type Token struct {
+	tValue string
+	tType  string
+}
+
+type Details struct {
+	Path  []string
+	Value string
+}
+
 // tokenize splits the input string into tokens.
 // following the "dorking" query language's rules.
-func tokenize(input string) []string {
-	var tokens []string
+func tokenize(input string) Tokens {
+	var tokens Tokens
 	var currentToken strings.Builder
 
 	inQuotes := false
 	inEscape := false
+	specType := 0 // 0: none, 1: JSON specifier, 2: Dorcking specifier
 	for _, r := range input {
 		switch {
 		case r == '\\':
@@ -89,55 +103,64 @@ func tokenize(input string) []string {
 				currentToken.WriteRune(r)
 				inEscape = false
 			}
+		/*
+			case r == '@' && !inQuotes && !inEscape:
+				// beginning of a JSON field specifier
+				handleRemainingToken(&tokens, &currentToken, specType)
+				specType = 1
+		*/
 		case r == ':' && !inQuotes:
-			completeFieldSpecifier(&tokens, &currentToken)
+			completeFieldSpecifier(&tokens, &currentToken, specType)
+			specType = 0
 		case unicode.IsSpace(r) && !inQuotes:
 			handleSpace(&tokens, &currentToken)
+			specType = 0
 		case (r == '|' || r == '&') && !inQuotes:
-			handlePipeAnd(&tokens, &currentToken, r)
+			handlePipeAnd(&tokens, &currentToken, r, specType)
+			specType = 0
 		default:
 			currentToken.WriteRune(r)
 		}
 	}
-	handleRemainingToken(&tokens, &currentToken)
+	handleRemainingToken(&tokens, &currentToken, specType)
 
 	return tokens
 }
 
 // toggleQuotes toggles the inQuotes flag and appends the current token to the tokens slice.
-func toggleQuotes(inQuotes bool, tokens *[]string, currentToken *strings.Builder) bool {
+func toggleQuotes(inQuotes bool, tokens *Tokens, currentToken *strings.Builder) bool {
 	inQuotes = !inQuotes
 	if !inQuotes {
-		*tokens = append(*tokens, currentToken.String())
+		*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: "0"})
 		currentToken.Reset()
 	}
 	return inQuotes
 }
 
 // completeFieldSpecifier appends the current token to the tokens slice and adds a colon.
-func completeFieldSpecifier(tokens *[]string, currentToken *strings.Builder) {
+func completeFieldSpecifier(tokens *Tokens, currentToken *strings.Builder, specType int) {
 	if currentToken.Len() > 0 {
-		*tokens = append(*tokens, currentToken.String()+":")
+		*tokens = append(*tokens, Token{tValue: currentToken.String() + ":", tType: strconv.Itoa(specType)})
 		currentToken.Reset()
 	}
 }
 
 // handleSpace appends the current token to the tokens slice.
-func handleSpace(tokens *[]string, currentToken *strings.Builder) {
+func handleSpace(tokens *Tokens, currentToken *strings.Builder) {
 	if currentToken.Len() > 0 {
-		*tokens = append(*tokens, currentToken.String())
+		*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: "0"})
 		currentToken.Reset()
 	}
 }
 
-// handlePipeAnd appends the current token to the tokens slice and adds the pipe or and operator.
-func handlePipeAnd(tokens *[]string, currentToken *strings.Builder, r rune) {
+// handlePipeAnd appends the current token to the tokens slice and adds the pipe (|) or and (&) operator.
+func handlePipeAnd(tokens *Tokens, currentToken *strings.Builder, r rune, specType int) {
 	if currentToken.Len() > 0 {
 		if currentToken.String() != "|" && currentToken.String() != "&" {
-			*tokens = append(*tokens, currentToken.String())
+			*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: "0"})
 			currentToken.Reset()
 		} else {
-			*tokens = append(*tokens, currentToken.String()+string(r))
+			*tokens = append(*tokens, Token{tValue: currentToken.String() + string(r), tType: strconv.Itoa(specType)})
 			currentToken.Reset()
 			return
 		}
@@ -146,14 +169,18 @@ func handlePipeAnd(tokens *[]string, currentToken *strings.Builder, r rune) {
 }
 
 // handleRemainingToken appends the current token to the tokens slice.
-func handleRemainingToken(tokens *[]string, currentToken *strings.Builder) {
+func handleRemainingToken(tokens *Tokens, currentToken *strings.Builder, specType int) {
 	if currentToken.Len() > 0 {
-		*tokens = append(*tokens, currentToken.String())
+		*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: strconv.Itoa(specType)})
 	}
 }
 
 // PrepareInput removes leading and trailing spaces from the input string.
 func isFieldSpecifier(input string) bool {
+	if strings.TrimSpace(input) == "" {
+		return false
+	}
+
 	// Define allowed fields
 	var allowedFields = map[string]bool{
 		"title":   true,
@@ -168,7 +195,10 @@ func isFieldSpecifier(input string) bool {
 	}
 
 	field := strings.ToLower(strings.TrimSpace(parts[0]))
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Field specifier: %s", field)
+	if field == "" {
+		return false
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Field specifier: '%s'", field)
 
 	// Check if the extracted field is a valid field
 	_, ok := allowedFields[field]
@@ -211,46 +241,60 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 	limit := 10      // Default limit
 	offset := 0      // Default offset
 	skipNextToken := false
+	var details Details
 	for i, token := range tokens {
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Token: %s", token)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetched token: %s", token)
 		if skipNextToken {
 			skipNextToken = false
 			continue
 		}
 		switch {
-		case token == "&limit:":
+		case token.tValue == "&limit:":
 			// Check if the next token is a number
 			if len(tokens) > i+1 {
 				var err error
-				limit, err = strconv.Atoi(tokens[i+1])
+				limit, err = strconv.Atoi(tokens[i+1].tValue)
 				if err != nil {
 					return SearchQuery{}, errors.New("invalid limit value")
 				}
 			}
 			skipNextToken = true
+			continue
 
-		case token == "&offset:":
+		case token.tValue == "&offset:":
 			// Check if the next token is a number
 			if len(tokens) > i+1 {
 				var err error
-				offset, err = strconv.Atoi(tokens[i+1])
+				offset, err = strconv.Atoi(tokens[i+1].tValue)
 				if err != nil {
 					return SearchQuery{}, errors.New("invalid offset value")
 				}
 			}
 			skipNextToken = true
+			continue
 
-		case isFieldSpecifier(token):
-			currentField = strings.TrimSuffix(token, ":")
+		case strings.HasPrefix(token.tValue, "&details.") || token.tValue == "&details:":
+			// Check if the next token is a number
+			if len(tokens) > i+1 {
+				details.Value = tokens[i+1].tValue
+			}
+			// Extract the path
+			path := strings.Split(token.tValue, ".")
+			details.Path = path[0:]
+			skipNextToken = true
+			continue
+
+		case isFieldSpecifier(token.tValue):
+			currentField = strings.TrimSuffix(token.tValue, ":")
 			queryGroup++                                // Move to the next group
 			queryParts = append(queryParts, []string{}) // Initialize the new group
 
-		case token == "&", token == "|", token == "&&", token == "||":
+		case token.tValue == "&", token.tValue == "|", token.tValue == "&&", token.tValue == "||":
 			if queryGroup == -1 {
 				queryGroup = 0
 				queryParts = append(queryParts, []string{})
 			}
-			if token == "&&" {
+			if token.tValue == "&&" {
 				queryParts[queryGroup] = append(queryParts[queryGroup], "AND")
 			} else {
 				queryParts[queryGroup] = append(queryParts[queryGroup], "OR")
@@ -264,12 +308,12 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				} else {
 					queryParts[queryGroup] = append(queryParts[queryGroup], condition)
 				}
-				queryParams = append(queryParams, "%"+strings.ToLower(token)+"%")
+				queryParams = append(queryParams, "%"+strings.ToLower(token.tValue)+"%")
 				paramCounter++
 			}
 
-			if isQuotedString(token) {
-				token = strings.Trim(token, `"`)
+			if isQuotedString(token.tValue) {
+				token.tValue = strings.Trim(token.tValue, `"`)
 			}
 
 			if isFieldSpecifier(currentField + ":") {
@@ -285,7 +329,7 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				addCondition(combinedCondition)
 			}
 
-			if len(tokens) > i+1 && !isFieldSpecifier(tokens[i+1]) && tokens[i+1] != "&&" && tokens[i+1] != "||" {
+			if len(tokens) > i+1 && !isFieldSpecifier(tokens[i+1].tValue) && tokens[i+1].tValue != "&&" && tokens[i+1].tValue != "||" {
 				queryParts[queryGroup] = append(queryParts[queryGroup], "AND")
 			}
 		}
@@ -322,6 +366,7 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 	SQLQuery.sqlParams = queryParams
 	SQLQuery.limit = limit
 	SQLQuery.offset = offset
+	SQLQuery.details = details
 
 	return SQLQuery, nil
 }
@@ -641,7 +686,7 @@ func parseScreenshotQuery(input string) (SearchQuery, error) {
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0}, nil
+	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }
 
 func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) {
@@ -826,7 +871,7 @@ func parseWebObjectQuery(input string) (SearchQuery, error) {
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0}, nil
+	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }
 
 func performCorrelatedSitesSearch(query string, qType int) (CorrelatedSitesResponse, error) {
@@ -980,7 +1025,10 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, SQLQuery.limit, SQLQuery.offset}, nil
+	SQLQuery.sqlQuery = sqlQuery
+	SQLQuery.sqlParams = sqlParams
+
+	return SQLQuery, nil
 }
 
 func parseCorrelatedSitesQuery(input string) (SearchQuery, error) {
@@ -1044,7 +1092,7 @@ func parseCorrelatedSitesQuery(input string) (SearchQuery, error) {
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0}, nil
+	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }
 
 // performNetInfoSearch performs a search for network information.
@@ -1223,7 +1271,7 @@ func parseNetInfoQuery(input string) (SearchQuery, error) {
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0}, nil
+	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }
 
 // performNetInfoSearch performs a search for network information.
@@ -1398,5 +1446,5 @@ func parseHTTPInfoPostQuery(input string) (SearchQuery, error) {
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0}, nil
+	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }

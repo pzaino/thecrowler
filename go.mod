@@ -1,6 +1,6 @@
 module github.com/pzaino/thecrowler
 
-go 1.22.4
+go 1.22.5
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
@@ -22,6 +22,7 @@ require (
 
 require (
 	github.com/Ullaakut/nmap/v3 v3.0.3
+	github.com/evanw/esbuild v0.21.5
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
 	golang.org/x/crypto v0.24.0

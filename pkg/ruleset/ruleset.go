@@ -53,9 +53,9 @@ func (rs *Ruleset) GetAllRuleGroups() []RuleGroup {
 // GetAllENabledRuleGroups returns all the enabled rule groups in a Ruleset.
 func (rs *Ruleset) GetAllEnabledRuleGroups() []RuleGroup {
 	var enabledRuleGroups []RuleGroup
-	for _, rg := range rs.RuleGroups {
-		if rg.IsValid() {
-			enabledRuleGroups = append(enabledRuleGroups, rg)
+	for i := 0; i < len(rs.RuleGroups); i++ {
+		if (rs.RuleGroups[i].IsEnabled) && (rs.RuleGroups[i].IsValid()) {
+			enabledRuleGroups = append(enabledRuleGroups, rs.RuleGroups[i])
 		}
 	}
 	return enabledRuleGroups

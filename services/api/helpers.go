@@ -48,6 +48,10 @@ func extractQueryOrBody(r *http.Request) (string, error) {
 		if limit != "" {
 			query += "&limit:" + limit
 		}
+		details := r.URL.Query().Get("details")
+		if details != "" {
+			query += "&details:" + details
+		}
 		return query, nil
 	}
 }

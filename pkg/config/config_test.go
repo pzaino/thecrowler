@@ -1759,3 +1759,107 @@ func TestLoadRemoteConfig(t *testing.T) {
 		})
 	}
 }
+
+// Test IsEmpty
+func TestDNSConfigIsEmpty(t *testing.T) {
+	// Create a non-empty config
+	nonEmptyConfig := DNSConfig{
+		Enabled: true,
+	}
+
+	// Call the IsEmpty function with the non-empty config
+	isEmpty := nonEmptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns false for a non-empty config
+	if isEmpty {
+		t.Errorf("Expected IsEmpty to return false for a non-empty DNSConfig")
+	}
+
+	// Create an empty config
+	emptyConfig := DNSConfig{}
+
+	// Call the IsEmpty function with the empty config
+	isEmpty = emptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns true for an empty config
+	if !isEmpty {
+		t.Errorf("Expected IsEmpty to return true for an empty DNSConfig")
+	}
+}
+
+func TestWHOISConfigIsEmpty(t *testing.T) {
+	// Create a non-empty config
+	nonEmptyConfig := WHOISConfig{
+		Enabled: true,
+	}
+
+	// Call the IsEmpty function with the non-empty config
+	isEmpty := nonEmptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns false for a non-empty config
+	if isEmpty {
+		t.Errorf("Expected IsEmpty to return false for a non-empty WHOISConfig")
+	}
+
+	// Create an empty config
+	emptyConfig := WHOISConfig{}
+
+	// Call the IsEmpty function with the empty config
+	isEmpty = emptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns true for an empty config
+	if !isEmpty {
+		t.Errorf("Expected IsEmpty to return true for an empty WHOISConfig")
+	}
+}
+func TestNetLookupConfigIsEmpty(t *testing.T) {
+	// Create a non-empty config
+	nonEmptyConfig := NetLookupConfig{
+		Enabled: true,
+	}
+
+	// Call the IsEmpty function with the non-empty config
+	isEmpty := nonEmptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns false for a non-empty config
+	if isEmpty {
+		t.Errorf("Expected IsEmpty to return false for a non-empty NetLookupConfig")
+	}
+
+	// Create an empty config
+	emptyConfig := NetLookupConfig{}
+
+	// Call the IsEmpty function with the empty config
+	isEmpty = emptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns true for an empty config
+	if !isEmpty {
+		t.Errorf("Expected IsEmpty to return true for an empty NetLookupConfig")
+	}
+}
+
+func TestGeoLookupConfigIsEmpty(t *testing.T) {
+	// Create a non-empty config
+	nonEmptyConfig := GeoLookupConfig{
+		Enabled: true,
+	}
+
+	// Call the IsEmpty function with the non-empty config
+	isEmpty := nonEmptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns false for a non-empty config
+	if isEmpty {
+		t.Errorf("Expected IsEmpty to return false for a non-empty GeoLookupConfig")
+	}
+
+	// Create an empty config
+	emptyConfig := GeoLookupConfig{}
+
+	// Call the IsEmpty function with the empty config
+	isEmpty = emptyConfig.IsEmpty()
+
+	// Check if the IsEmpty function returns true for an empty config
+	if !isEmpty {
+		t.Errorf("Expected IsEmpty to return true for an empty GeoLookupConfig")
+	}
+}

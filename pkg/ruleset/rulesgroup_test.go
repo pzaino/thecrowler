@@ -112,3 +112,117 @@ func TestRuleGroupGetScrapingRuleByName(t *testing.T) {
 		t.Errorf("GetScrapingRuleByName() failed to retrieve the action rule by name, or retrieved the wrong rule")
 	}
 }
+func TestRuleGroupIsEmpty(t *testing.T) {
+	emptyRuleGroup := RuleGroup{}
+	nonEmptyRuleGroup := RuleGroup{
+		ActionRules:    []ActionRule{{}},
+		ScrapingRules:  []ScrapingRule{{}},
+		CrawlingRules:  []CrawlingRule{{}},
+		DetectionRules: []DetectionRule{{}},
+		GroupName:      "TestGroup",
+	}
+
+	empty := emptyRuleGroup.IsEmpty()
+	if !empty {
+		t.Errorf("IsEmpty() returned false for an empty RuleGroup")
+	}
+
+	notEmpty := nonEmptyRuleGroup.IsEmpty()
+	if notEmpty {
+		t.Errorf("IsEmpty() returned true for a non-empty RuleGroup")
+	}
+}
+
+func TestRuleGroupGetScrapingRules(t *testing.T) {
+	scrapingRule1 := ScrapingRule{RuleName: "Rule1"}
+	scrapingRule2 := ScrapingRule{RuleName: "Rule2"}
+	ruleGroup := RuleGroup{
+		ScrapingRules: []ScrapingRule{scrapingRule1, scrapingRule2},
+	}
+
+	gotScrapingRules := ruleGroup.GetScrapingRules()
+	if len(gotScrapingRules) != 2 || gotScrapingRules[0].RuleName != scrapingRule1.RuleName || gotScrapingRules[1].RuleName != scrapingRule2.RuleName {
+		t.Errorf("GetScrapingRules() did not return the expected scraping rules")
+	}
+}
+
+func TestRuleGroupGetActionRuleByURL(t *testing.T) {
+	urlStr := "https://example.com/login"
+	expectedActionRule := ActionRule{URL: urlStr}
+	ruleGroup := RuleGroup{
+		ActionRules: []ActionRule{expectedActionRule},
+	}
+
+	gotActionRule, err := ruleGroup.GetActionRuleByURL(urlStr)
+	if err != nil || gotActionRule.URL != urlStr {
+		t.Errorf("GetActionRuleByURL() failed to retrieve the action rule by URL, or retrieved the wrong rule")
+	}
+}
+
+func TestRuleGroupGetScrapingRuleByPath(t *testing.T) {
+	path := "/login"
+	expectedScrapingRule := ScrapingRule{RuleName: "LoginRule"}
+	ruleGroup := RuleGroup{
+		ScrapingRules: []ScrapingRule{
+			{
+				RuleName: "SomeRule",
+				PreConditions: []PreCondition{
+					{Path: "/home"},
+					{Path: "/about"},
+				},
+			},
+			{
+				RuleName: "AnotherRule",
+				PreConditions: []PreCondition{
+					{Path: "/products"},
+					{Path: "/services"},
+				},
+			},
+			{
+				RuleName: "LoginRule",
+				PreConditions: []PreCondition{
+					{Path: path},
+				},
+			},
+		},
+	}
+
+	gotScrapingRule, err := ruleGroup.GetScrapingRuleByPath(path)
+	if err != nil || gotScrapingRule.RuleName != expectedScrapingRule.RuleName {
+		t.Errorf("GetScrapingRuleByPath() failed to retrieve the scraping rule by path, or retrieved the wrong rule")
+	}
+}
+
+func TestRuleGroupGetScrapingRuleByURL(t *testing.T) {
+	urlStr := "https://example.com/login"
+	expectedScrapingRule := ScrapingRule{RuleName: "LoginRule"}
+	ruleGroup := RuleGroup{
+		ScrapingRules: []ScrapingRule{
+			{
+				RuleName: "SomeRule",
+				PreConditions: []PreCondition{
+					{URL: "https://example.com/home"},
+					{URL: "https://example.com/about"},
+				},
+			},
+			{
+				RuleName: "AnotherRule",
+				PreConditions: []PreCondition{
+					{URL: "https://example.com/products"},
+					{URL: "https://example.com/services"},
+				},
+			},
+			{
+				RuleName: "LoginRule",
+				PreConditions: []PreCondition{
+					{URL: urlStr},
+				},
+			},
+		},
+	}
+
+	gotScrapingRule, err := ruleGroup.GetScrapingRuleByURL(urlStr)
+	if err != nil || gotScrapingRule.RuleName != expectedScrapingRule.RuleName {
+		t.Errorf("GetScrapingRuleByURL() failed to retrieve the scraping rule by URL, or retrieved the wrong rule")
+	}
+}

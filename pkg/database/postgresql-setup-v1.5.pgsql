@@ -65,6 +65,19 @@ CREATE TABLE IF NOT EXISTS Owners (
                                                 -- the owner.
 );
 
+-- Sessions table stores all collected web sessions information to be reused for future crawling
+CREATE TABLE IF NOT EXISTS Sessions (
+    session_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    hash VARCHAR(64) UNIQUE NOT NULL,           -- SHA256 hash of the session for fast comparison
+                                                -- and uniqueness.
+    user_agent VARCHAR(255) NOT NULL,           -- The user agent used for the session.
+    valid BOOLEAN DEFAULT TRUE NOT NULL,        -- If the session is still valid.
+    details JSONB NOT NULL                      -- Stores JSON document with all details about
+                                                -- the session.
+);
+
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
@@ -208,6 +221,18 @@ CREATE TABLE IF NOT EXISTS SourceOwnerIndex (
                                                 -- owner_id
     FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     FOREIGN KEY (owner_id) REFERENCES Owners(owner_id) ON DELETE CASCADE
+);
+
+-- Create SourceSessionIndex table to store the relationship between sources and their sessions
+CREATE TABLE IF NOT EXISTS SourceSessionIndex (
+    source_session_id BIGSERIAL PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
+    session_id BIGINT NOT NULL REFERENCES Sessions(session_id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source_id, session_id),
+    FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES Sessions(session_id) ON DELETE CASCADE
 );
 
 -- SourceSearchIndex table stores the relationship between sources and the indexed pages

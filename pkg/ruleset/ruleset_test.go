@@ -262,3 +262,509 @@ func TestDefaultRuleset(t *testing.T) {
 	}
 
 }
+
+func TestNewRuleset(t *testing.T) {
+	name := "Test Ruleset"
+	ruleset := NewRuleset(name)
+
+	// Verify that the name is set correctly
+	if ruleset.Name != name {
+		t.Errorf("Expected ruleset name to be %q, got %q", name, ruleset.Name)
+	}
+
+	// Verify that the RuleGroups slice is initialized
+	if ruleset.RuleGroups == nil {
+		t.Error("Expected non-nil RuleGroups slice, got nil")
+	}
+
+	// Verify that the RuleGroups slice is empty
+	if len(ruleset.RuleGroups) != 0 {
+		t.Errorf("Expected RuleGroups slice to be empty, got %d elements", len(ruleset.RuleGroups))
+	}
+}
+
+func TestIsValid(t *testing.T) {
+	// Create a valid Ruleset
+	validRuleset := NewRuleset("Valid Ruleset")
+	validRuleset.RuleGroups = []RuleGroup{
+		{
+			GroupName: "Group1",
+			ValidFrom: CustomTime{Time: time.Now()},
+			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+	}
+	// Verify that IsValid returns true for a valid Ruleset
+	if !validRuleset.IsValid() {
+		t.Errorf("Expected IsValid() to return true, got false")
+	}
+
+	// Create an invalid Ruleset with an empty name
+	invalidRuleset := NewRuleset("")
+	invalidRuleset.RuleGroups = []RuleGroup{
+		{
+			GroupName: "Group1",
+			ValidFrom: CustomTime{Time: time.Now()},
+			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+	}
+	// Verify that IsValid returns false for an invalid Ruleset with an empty name
+	if invalidRuleset.IsValid() {
+		t.Errorf("Expected IsValid() to return false, got true")
+	}
+
+	// Create an invalid Ruleset with no RuleGroups
+	invalidRulesetNoGroups := NewRuleset("Invalid Ruleset")
+	// Verify that IsValid returns false for an invalid Ruleset with no RuleGroups
+	if invalidRulesetNoGroups.IsValid() {
+		t.Errorf("Expected IsValid() to return false, got true")
+	}
+}
+
+func TestRulesetIsEmpty(t *testing.T) {
+	// Create a non-empty Ruleset
+	nonEmptyRuleset := NewRuleset("Non-empty Ruleset")
+	nonEmptyRuleset.RuleGroups = []RuleGroup{
+		{
+			GroupName: "Group1",
+			ValidFrom: CustomTime{Time: time.Now()},
+			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+	}
+	// Verify that IsEmpty returns false for a non-empty Ruleset
+	if nonEmptyRuleset.IsEmpty() {
+		t.Errorf("Expected IsEmpty() to return false, got true")
+	}
+
+	// Create an empty Ruleset
+	emptyRuleset := NewRuleset("")
+	// Verify that IsEmpty returns true for an empty Ruleset
+	if !emptyRuleset.IsEmpty() {
+		t.Errorf("Expected IsEmpty() to return true, got false")
+	}
+}
+
+func TestRulesetGetAllRuleGroups(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			ValidFrom: CustomTime{Time: time.Now()},
+			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			ValidFrom: CustomTime{Time: time.Now()},
+			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule2",
+				},
+			},
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	expectedRuleGroups := ruleGroups
+	actualRuleGroups := ruleset.GetAllRuleGroups()
+
+	if len(actualRuleGroups) != len(expectedRuleGroups) {
+		t.Errorf("Expected %d rule groups, got %d", len(expectedRuleGroups), len(actualRuleGroups))
+	}
+
+	for i := range expectedRuleGroups {
+		if !reflect.DeepEqual(actualRuleGroups[i], expectedRuleGroups[i]) {
+			t.Errorf("Expected rule group %v, got %v", expectedRuleGroups[i], actualRuleGroups[i])
+		}
+	}
+}
+
+func TestRulesetGetAllEnabledRuleGroups(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule2",
+				},
+			},
+		},
+		{
+			GroupName: "Group3",
+			IsEnabled: false,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule3",
+				},
+			},
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	expectedEnabledRuleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule2",
+				},
+			},
+		},
+	}
+
+	actualEnabledRuleGroups := ruleset.GetAllEnabledRuleGroups()
+
+	if len(actualEnabledRuleGroups) != len(expectedEnabledRuleGroups) {
+		t.Errorf("Expected %d enabled rule groups, got %d", len(expectedEnabledRuleGroups), len(actualEnabledRuleGroups))
+	}
+
+	for i, expected := range expectedEnabledRuleGroups {
+		actual := actualEnabledRuleGroups[i]
+		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("Expected enabled rule group %v, got %v", expected, actual)
+		}
+	}
+}
+
+func TestRulesetGetAllActionRules(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			ActionRules: []ActionRule{
+				{
+					RuleName: "ActionRule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			ActionRules: []ActionRule{
+				{
+					RuleName: "ActionRule2",
+				},
+				{
+					RuleName: "ActionRule3",
+				},
+			},
+		},
+		{
+			GroupName: "Group3",
+			ActionRules: []ActionRule{
+				{
+					RuleName: "ActionRule4",
+				},
+				{
+					RuleName: "ActionRule5",
+				},
+				{
+					RuleName: "ActionRule6",
+				},
+			},
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	expectedActionRules := []ActionRule{
+		{
+			RuleName: "ActionRule1",
+		},
+		{
+			RuleName: "ActionRule2",
+		},
+		{
+			RuleName: "ActionRule3",
+		},
+		{
+			RuleName: "ActionRule4",
+		},
+		{
+			RuleName: "ActionRule5",
+		},
+		{
+			RuleName: "ActionRule6",
+		},
+	}
+
+	actualActionRules := ruleset.GetAllActionRules()
+
+	if len(actualActionRules) != len(expectedActionRules) {
+		t.Errorf("Expected %d action rules, but got %d", len(expectedActionRules), len(actualActionRules))
+	}
+
+	for i, expected := range expectedActionRules {
+		actual := actualActionRules[i]
+		if expected.RuleName != actual.RuleName {
+			t.Errorf("Expected action rule name %s, but got %s", expected.RuleName, actual.RuleName)
+		}
+	}
+}
+
+func TestRulesetGetAllScrapingRules(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	scrapingRules := []ScrapingRule{
+		{
+			RuleName: "Rule1",
+		},
+		{
+			RuleName: "Rule2",
+		},
+	}
+	ruleset.RuleGroups = []RuleGroup{
+		{
+			ScrapingRules: scrapingRules,
+		},
+	}
+	expectedScrapingRules := scrapingRules
+	actualScrapingRules := ruleset.GetAllScrapingRules()
+	if len(actualScrapingRules) != len(expectedScrapingRules) {
+		t.Errorf("Expected %d scraping rules, got %d", len(expectedScrapingRules), len(actualScrapingRules))
+	}
+	for i := range expectedScrapingRules {
+		if expectedScrapingRules[i].RuleName != actualScrapingRules[i].RuleName {
+			t.Errorf("Expected scraping rule name %s, got %s", expectedScrapingRules[i].RuleName, actualScrapingRules[i].RuleName)
+		}
+	}
+}
+func TestRulesetGetAllCrawlingRules(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			IsEnabled: true,
+			CrawlingRules: []CrawlingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			IsEnabled: true,
+			CrawlingRules: []CrawlingRule{
+				{
+					RuleName: "Rule2",
+				},
+			},
+		},
+		{
+			GroupName: "Group3",
+			IsEnabled: false,
+			CrawlingRules: []CrawlingRule{
+				{
+					RuleName: "Rule3",
+				},
+			},
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	expectedCrawlingRules := []CrawlingRule{
+		{
+			RuleName: "Rule1",
+		},
+		{
+			RuleName: "Rule2",
+		},
+		{
+			RuleName: "Rule3",
+		},
+	}
+
+	// This will retrieve ALL the crawling rules, regardless of whether the rule group is enabled or not
+	actualCrawlingRules := ruleset.GetAllCrawlingRules()
+
+	if len(actualCrawlingRules) != len(expectedCrawlingRules) {
+		t.Errorf("Expected %d crawling rules, but got %d", len(expectedCrawlingRules), len(actualCrawlingRules))
+	}
+
+	for i, expected := range expectedCrawlingRules {
+		if !reflect.DeepEqual(actualCrawlingRules[i], expected) {
+			t.Errorf("Expected crawling rule %v, but got %v", expected, actualCrawlingRules[i])
+		}
+	}
+}
+
+func TestRulesetGetAllDetectionRules(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	detectionRules := []DetectionRule{
+		{
+			RuleName: "Rule1",
+		},
+		{
+			RuleName: "Rule2",
+		},
+	}
+	ruleGroups := []RuleGroup{
+		{
+			GroupName:      "Group1",
+			DetectionRules: detectionRules,
+		},
+		{
+			GroupName:      "Group2",
+			DetectionRules: detectionRules,
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	actualDetectionRules := ruleset.GetAllDetectionRules()
+
+	if len(actualDetectionRules) != 4 {
+		t.Errorf("Expected %d detection rules, got %d", 4, len(actualDetectionRules))
+	}
+}
+
+func TestRulesetGetAllEnabledScrapingRules(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			IsEnabled: true,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule2",
+				},
+			},
+		},
+		{
+			GroupName: "Group3",
+			IsEnabled: false,
+			ScrapingRules: []ScrapingRule{
+				{
+					RuleName: "Rule3",
+				},
+			},
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	expectedRules := []ScrapingRule{
+		{
+			RuleName: "Rule1",
+		},
+		{
+			RuleName: "Rule2",
+		},
+	}
+
+	actualRules := ruleset.GetAllEnabledScrapingRules()
+
+	if len(actualRules) != len(expectedRules) {
+		t.Errorf("Expected %d enabled scraping rules, but got %d", len(expectedRules), len(actualRules))
+	}
+
+	for i, expected := range expectedRules {
+		if !reflect.DeepEqual(actualRules[i], expected) {
+			t.Errorf("Expected scraping rule %v, but got %v", expected, actualRules[i])
+		}
+	}
+}
+
+func TestRulesetGetAllEnabledActionRules(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			IsEnabled: true,
+			ActionRules: []ActionRule{
+				{
+					RuleName: "ActionRule1",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			IsEnabled: true,
+			ActionRules: []ActionRule{
+				{
+					RuleName: "ActionRule2",
+				},
+			},
+		},
+		{
+			GroupName: "Group3",
+			IsEnabled: false,
+			ActionRules: []ActionRule{
+				{
+					RuleName: "ActionRule3",
+				},
+			},
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	expectedActionRules := []ActionRule{
+		{
+			RuleName: "ActionRule1",
+		},
+		{
+			RuleName: "ActionRule2",
+		},
+	}
+
+	actualActionRules := ruleset.GetAllEnabledActionRules()
+
+	if len(actualActionRules) != len(expectedActionRules) {
+		t.Errorf("Expected %d action rules, but got %d", len(expectedActionRules), len(actualActionRules))
+	}
+
+	for i, expected := range expectedActionRules {
+		if !reflect.DeepEqual(actualActionRules[i], expected) {
+			t.Errorf("Expected action rule %v, but got %v", expected, actualActionRules[i])
+		}
+	}
+}

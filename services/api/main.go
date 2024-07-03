@@ -58,14 +58,25 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 
 	// Set the rate limiter
 	var rl, bl int
-	if config.API.RateLimit == "" {
+	if strings.TrimSpace(config.API.RateLimit) == "" {
 		config.API.RateLimit = "10,10"
 	}
-	rl, err = strconv.Atoi(strings.Split(config.API.RateLimit, ",")[0])
+	if !strings.Contains(config.API.RateLimit, ",") {
+		config.API.RateLimit = config.API.RateLimit + ",10"
+	}
+	rlStr := strings.Split(config.API.RateLimit, ",")[0]
+	if rlStr == "" {
+		rlStr = "10"
+	}
+	rl, err = strconv.Atoi(rlStr)
 	if err != nil {
 		rl = 10
 	}
-	bl, err = strconv.Atoi(strings.Split(config.API.RateLimit, ",")[1])
+	blStr := strings.Split(config.API.RateLimit, ",")[1]
+	if blStr == "" {
+		blStr = "10"
+	}
+	bl, err = strconv.Atoi(blStr)
 	if err != nil {
 		bl = 10
 	}

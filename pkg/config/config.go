@@ -210,26 +210,6 @@ func NewConfig() *Config {
 				ProxyURL:    "",
 			},
 		},
-		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
-		Rulesets: []RulesetConfig{
-			{
-				Type: "local",
-				Path: []string{
-					JSONRulesDefaultPath,
-					YAMLRulesDefaultPath1,
-					YAMLRulesDefaultPath2,
-				},
-			},
-		},
-		Plugins: PluginsConfig{
-			PluginTimeout: 15,
-			Plugins: []PluginConfig{{
-				Type: "local",
-				Path: []string{
-					PluginsDefaultPath,
-				}},
-			},
-		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
 			Path:    DataDefaultPath,
@@ -314,8 +294,29 @@ func NewConfig() *Config {
 				OSVersion: "",
 			},
 		},
-		OS:         runtime.GOOS,
-		DebugLevel: 0,
+		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
+		Rulesets: []RulesetConfig{
+			{
+				Type: "local",
+				Path: []string{
+					JSONRulesDefaultPath,
+					YAMLRulesDefaultPath1,
+					YAMLRulesDefaultPath2,
+				},
+			},
+		},
+		Plugins: PluginsConfig{
+			PluginTimeout: 15,
+			Plugins: []PluginConfig{{
+				Type: "local",
+				Path: []string{
+					PluginsDefaultPath,
+				}},
+			},
+		},
+		ExternalDetection: []ExternalDetectionConfig{},
+		OS:                runtime.GOOS,
+		DebugLevel:        0,
 	}
 }
 
@@ -433,11 +434,13 @@ func (c *Config) Validate() error {
 	c.validateDatabase()
 	c.validateAPI()
 	c.validateSelenium()
-	c.validateRulesets()
 	c.validateImageStorageAPI()
 	c.validateFileStorageAPI()
 	c.validateHTTPHeaders()
 	c.validateNetworkInfo()
+	c.validateRulesets()
+	c.validatePlugins()
+	c.validateExternalDetection()
 	c.validateOS()
 	c.validateDebugLevel()
 
@@ -776,6 +779,37 @@ func (c *Config) validateRulesets() {
 			} else {
 				c.Rulesets[i].Path[j] = strings.TrimSpace(c.Rulesets[i].Path[j])
 			}
+		}
+	}
+}
+
+func (c *Config) validatePlugins() {
+	// Check Plugins
+	if c.Plugins.PluginTimeout < 1 {
+		c.Plugins.PluginTimeout = 15
+	}
+	for i := range c.Plugins.Plugins {
+		if strings.TrimSpace(c.Plugins.Plugins[i].Type) == "" {
+			c.Plugins.Plugins[i].Type = "local"
+		} else {
+			c.Plugins.Plugins[i].Type = strings.TrimSpace(c.Plugins.Plugins[i].Type)
+		}
+		if len(c.Plugins.Plugins[i].Path) == 0 && c.Plugins.Plugins[i].Type == "local" {
+			c.Plugins.Plugins[i].Path = []string{PluginsDefaultPath}
+		}
+	}
+}
+
+func (c *Config) validateExternalDetection() {
+	// Check ExternalDetection
+	for i := range c.ExternalDetection {
+		if c.ExternalDetection[i].Timeout < 1 {
+			c.ExternalDetection[i].Timeout = 60
+		}
+		if strings.TrimSpace(c.ExternalDetection[i].Delay) == "" {
+			c.ExternalDetection[i].Delay = "1"
+		} else {
+			c.ExternalDetection[i].Delay = strings.TrimSpace(c.ExternalDetection[i].Delay)
 		}
 	}
 }

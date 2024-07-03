@@ -41,10 +41,11 @@ const (
 	errEmptyURL          = "empty URL provided"
 	errParsingURL        = "error parsing URL: %s"
 	errEmptyName         = "empty name provided"
-	errActionNotFound    = "action rule" + errNotFound
-	errScrapingNotFound  = "scraping rule" + errNotFound
-	errCrawlingNotFound  = "crawling rule" + errNotFound
-	errDetectionNotFound = "detection rule" + errNotFound
+	errActionNotFound    = "action rule " + errNotFound
+	errScrapingNotFound  = "scraping rule " + errNotFound
+	errCrawlingNotFound  = "crawling rule " + errNotFound
+	errDetectionNotFound = "detection rule " + errNotFound
+	errInvalidURL        = "invalid URL"
 )
 
 // UnmarshalYAML parses date strings from the YAML file.
@@ -488,13 +489,15 @@ func LoadSchema(schemaPath string) (*jsonschema.Schema, error) {
 /// --- Prepare Items for Search --- ///
 
 func PrepareURLForSearch(urlStr string) (string, error) {
-	if urlStr == "" {
+	if strings.TrimSpace(urlStr) == "" {
 		return "", fmt.Errorf(errEmptyURL)
 	}
+
 	_, err := url.Parse(urlStr)
 	if err != nil {
-		return "", fmt.Errorf(errParsingURL, err)
+		return "", fmt.Errorf(errInvalidURL)
 	}
+
 	return strings.ToLower(strings.TrimSpace(urlStr)), nil
 }
 
