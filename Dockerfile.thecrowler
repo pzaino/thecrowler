@@ -1,4 +1,4 @@
-# Build stage (using golang:1.22.4)
+# Build stage (using golang:1.22.5)
 FROM golang@sha256:8c9183f715b0b4eca05b8b3dbf59766aaedb41ec07477b132ee2891ac0110a07 AS builder
 
 WORKDIR /app
@@ -22,7 +22,7 @@ RUN ls -la
 # Run the build script using shell
 RUN bash ./autobuild.sh
 
-# Run stage (using alpine:3.14.2)
+# Run stage (using alpine:3.20 with golang 1.22.5)
 #FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
 FROM alpine@sha256:8c9183f715b0b4eca05b8b3dbf59766aaedb41ec07477b132ee2891ac0110a07
 WORKDIR /app
