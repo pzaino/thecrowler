@@ -1,5 +1,5 @@
 # Build stage (using golang:1.22.4)
-FROM golang@sha256:969349b8121a56d51c74f4c273ab974c15b3a8ae246a5cffc1df7d28b66cf978 AS builder
+FROM golang@sha256:8c9183f715b0b4eca05b8b3dbf59766aaedb41ec07477b132ee2891ac0110a07 AS builder
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ RUN bash ./autobuild.sh
 
 # Run stage (using alpine:3.14.2)
 #FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
-FROM alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd
+FROM alpine@sha256:8c9183f715b0b4eca05b8b3dbf59766aaedb41ec07477b132ee2891ac0110a07
 WORKDIR /app
 
 # Create a non-root user and switch to it
