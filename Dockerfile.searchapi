@@ -20,9 +20,9 @@ RUN ls -la
 # Run the build script using shell
 RUN bash ./autobuild.sh
 
-# Run stage (using alpine:3.20 with go lang 1.22.5)
+# Run stage (using alpine:3.20)
 #FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
-FROM alpine@sha256:8c9183f715b0b4eca05b8b3dbf59766aaedb41ec07477b132ee2891ac0110a07
+FROM alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd
 WORKDIR /app
 
 # Create a non-root user and switch to it
