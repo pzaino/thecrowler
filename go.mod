@@ -5,7 +5,7 @@ go 1.22.5
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
 	github.com/antchfx/htmlquery v1.3.2
-	github.com/aws/aws-sdk-go v1.54.10
+	github.com/aws/aws-sdk-go v1.54.14
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
@@ -22,7 +22,7 @@ require (
 
 require (
 	github.com/Ullaakut/nmap/v3 v3.0.3
-	github.com/evanw/esbuild v0.21.5
+	github.com/evanw/esbuild v0.23.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
 	golang.org/x/crypto v0.24.0
