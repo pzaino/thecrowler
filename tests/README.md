@@ -25,7 +25,7 @@ To run the tests:
 - Make sure the API is app and running and reachable via localhost:8080
 
 ```bash
-cd ./tests/pef
+cd ./tests/perf
 ./run_api_all
 ```
 
