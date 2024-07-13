@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -45,6 +46,16 @@ func NewRuleEngine(schemaPath string, rulesets []Ruleset) *RuleEngine {
 				NoiseThreshold:    1.0,
 				MaybeThreshold:    5.0,
 				DetectedThreshold: 10.0,
+			},
+			Cache: RulesetCache{
+				Mu:               sync.RWMutex{},
+				IsInvalid:        false,
+				RuleGroups:       nil,
+				ActiveRuleGroups: nil,
+				Scraping:         nil,
+				Action:           nil,
+				Detection:        nil,
+				Crawling:         nil,
 			},
 		}
 	}
@@ -82,6 +93,16 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 				MaybeThreshold:    5.0,
 				DetectedThreshold: 10.0,
 			},
+			Cache: RulesetCache{
+				Mu:               sync.RWMutex{},
+				IsInvalid:        false,
+				RuleGroups:       nil,
+				ActiveRuleGroups: nil,
+				Scraping:         nil,
+				Action:           nil,
+				Detection:        nil,
+				Crawling:         nil,
+			},
 		}
 	}
 
@@ -94,6 +115,16 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 			NoiseThreshold:    1.0,
 			MaybeThreshold:    5.0,
 			DetectedThreshold: 10.0,
+		},
+		Cache: RulesetCache{
+			Mu:               sync.RWMutex{},
+			IsInvalid:        false,
+			RuleGroups:       nil,
+			ActiveRuleGroups: nil,
+			Scraping:         nil,
+			Action:           nil,
+			Detection:        nil,
+			Crawling:         nil,
 		},
 	}
 }
@@ -201,14 +232,22 @@ func (re *RuleEngine) MarshalJSON() ([]byte, error) {
 
 // AddRuleset adds a new ruleset to the RuleEngine.
 func (re *RuleEngine) AddRuleset(ruleset Ruleset) {
+	re.Cache.Mu.Lock()
+	defer re.Cache.Mu.Unlock()
 	re.Rulesets = append(re.Rulesets, ruleset)
+	re.Cache.IsInvalid = true
+	re.cleanCache()
 }
 
 // RemoveRuleset removes a ruleset from the RuleEngine.
 func (re *RuleEngine) RemoveRuleset(ruleset Ruleset) {
+	re.Cache.Mu.Lock()
+	defer re.Cache.Mu.Unlock()
 	for i, r := range re.Rulesets {
 		if r.Name == ruleset.Name {
 			re.Rulesets = append(re.Rulesets[:i], re.Rulesets[i+1:]...)
+			re.Cache.IsInvalid = true
+			re.cleanCache()
 			return
 		}
 	}
@@ -216,11 +255,35 @@ func (re *RuleEngine) RemoveRuleset(ruleset Ruleset) {
 
 // UpdateRuleset updates a ruleset in the RuleEngine.
 func (re *RuleEngine) UpdateRuleset(ruleset Ruleset) {
+	re.Cache.Mu.Lock()
+	defer re.Cache.Mu.Unlock()
 	for i, r := range re.Rulesets {
 		if r.Name == ruleset.Name {
 			re.Rulesets[i] = ruleset
+			re.Cache.IsInvalid = true
+			re.cleanCache()
 			return
 		}
+	}
+}
+
+// InvalidateCache invalidates the cached rule groups.
+func (re *RuleEngine) cleanCache() {
+	if re == nil {
+		return
+	}
+	if re.Rulesets == nil {
+		return
+	}
+	if re.Cache.IsInvalid {
+		// Check if re.Cache.Mu is locked
+		re.Cache.RuleGroups = nil
+		re.Cache.ActiveRuleGroups = nil
+		re.Cache.Scraping = nil
+		re.Cache.Action = nil
+		re.Cache.Detection = nil
+		re.Cache.Crawling = nil
+		re.Cache.IsInvalid = false
 	}
 }
 
@@ -232,36 +295,81 @@ func (re *RuleEngine) GetAllRulesets() []Ruleset {
 }
 
 // GetAllRuleGroups returns all the rule groups in the RuleEngine.
-func (re *RuleEngine) GetAllRuleGroups() []RuleGroup {
-	var ruleGroups []RuleGroup
-	if re != nil {
-		for i := 0; i < len(re.Rulesets); i++ {
-			ruleGroups = append(ruleGroups, re.Rulesets[i].RuleGroups...)
+func (re *RuleEngine) GetAllRuleGroups() []*RuleGroup {
+	if re == nil {
+		return nil
+	}
+	if len(re.Rulesets) == 0 {
+		return nil
+	}
+
+	// Check if the cache is valid
+	re.Cache.Mu.RLock()
+	if !re.Cache.IsInvalid && re.Cache.RuleGroups != nil {
+		cachedGroups := re.Cache.RuleGroups
+		re.Cache.Mu.RUnlock()
+		return cachedGroups
+	}
+	re.Cache.Mu.RUnlock()
+
+	// Get all the rule groups
+	var ruleGroups []*RuleGroup
+	for i := 0; i < len(re.Rulesets); i++ {
+		for i2 := 0; i2 < len(re.Rulesets[i].RuleGroups); i2++ {
+			ruleGroups = append(ruleGroups, &(re.Rulesets[i].RuleGroups)[i2])
 		}
 	}
+
+	// Update the cache
+	re.Cache.Mu.Lock()
+	re.Cache.RuleGroups = ruleGroups
+	re.Cache.IsInvalid = false
+	re.Cache.Mu.Unlock()
+
 	return ruleGroups
 }
 
 // GetAllEnabledRuleGroups returns all the rule groups in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledRuleGroups() []RuleGroup {
-	var ruleGroups []RuleGroup
+func (re *RuleEngine) GetAllEnabledRuleGroups() []*RuleGroup {
+	if re == nil {
+		return nil
+	}
+
+	// Check if the cache is valid for enabled rule groups
+	re.Cache.Mu.RLock()
+	if !re.Cache.IsInvalid && re.Cache.ActiveRuleGroups != nil {
+		cachedEnabledGroups := re.Cache.ActiveRuleGroups
+		re.Cache.Mu.RUnlock()
+		return cachedEnabledGroups
+	}
+	re.Cache.Mu.RUnlock()
+
+	var ruleGroups []*RuleGroup
 	rgs := re.GetAllRuleGroups()
 	for i := 0; i < len(rgs); i++ {
-		if (rgs[i].IsEnabled) && (re.IsGroupValid(rgs[i])) {
+		if (rgs[i].IsEnabled) && (re.IsGroupValid(*rgs[i])) {
 			ruleGroups = append(ruleGroups, rgs[i])
 		}
 	}
+
+	// Update the cache
+	re.Cache.Mu.Lock()
+	re.Cache.ActiveRuleGroups = ruleGroups
+	re.Cache.IsInvalid = false
+	re.Cache.Mu.Unlock()
+
 	return ruleGroups
 }
 
 // GetAllScrapingRules returns all the scraping rules in the RuleEngine.
 func (re *RuleEngine) GetAllScrapingRules() []ScrapingRule {
 	var scrapingRules []ScrapingRule
-	for _, rs := range re.Rulesets {
-		for _, rg := range rs.RuleGroups {
-			scrapingRules = append(scrapingRules, rg.ScrapingRules...)
+	for _, rg := range re.GetAllRuleGroups() {
+		for i3 := 0; i3 < len(rg.ScrapingRules); i3++ {
+			scrapingRules = append(scrapingRules, rg.ScrapingRules[i3])
 		}
 	}
+
 	return scrapingRules
 }
 
@@ -486,7 +594,7 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 		}
 		if strings.HasPrefix(parsedURL, rgName) || rgName == "*" {
 			if rg.IsValid() {
-				return &rg, nil
+				return rg, nil
 			}
 		}
 	}
@@ -503,7 +611,7 @@ func (re *RuleEngine) GetRuleGroupByName(name string) (*RuleGroup, error) {
 	for _, rg := range re.GetAllRuleGroups() {
 		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
 			if rg.IsValid() {
-				return &rg, nil
+				return rg, nil
 			} else {
 				return nil, fmt.Errorf("RuleGroup '%s' is not valid", rg.GroupName)
 			}

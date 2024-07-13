@@ -4,8 +4,12 @@ import (
 	"testing"
 )
 
+const (
+	helloWorld = "Hello, World!"
+)
+
 func TestBase64Encode(t *testing.T) {
-	data := "Hello, World!"
+	data := helloWorld
 	expected := "SGVsbG8sIFdvcmxkIQ=="
 	result := Base64Encode(data)
 	if result != expected {
@@ -14,7 +18,7 @@ func TestBase64Encode(t *testing.T) {
 }
 
 func TestCalculateEntropy(t *testing.T) {
-	data := "Hello, World!"
+	data := helloWorld
 	expected := 3.1808329877552226
 	result := CalculateEntropy(data)
 	expectedCheck := float32(expected)
@@ -26,7 +30,7 @@ func TestCalculateEntropy(t *testing.T) {
 
 func TestBase64Decode(t *testing.T) {
 	data := "SGVsbG8sIFdvcmxkIQ=="
-	expected := "Hello, World!"
+	expected := helloWorld
 	result, err := Base64Decode(data)
 	if err != nil {
 		t.Errorf("Base64Decode(%s) returned an error: %v", data, err)

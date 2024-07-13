@@ -17,6 +17,7 @@
 package ruleset
 
 import (
+	"sync"
 	"time"
 
 	"github.com/qri-io/jsonschema"
@@ -28,6 +29,19 @@ type RuleEngine struct {
 	Rulesets        []Ruleset          `yaml:"rulesets"`
 	DetectionConfig DetectionConfig    `yaml:"detection_config"`
 	JSPlugins       JSPluginRegister   `yaml:"js_plugins"`
+	Cache           RulesetCache       `yaml:"cache"`
+}
+
+// RulesetCache represents the cache for the ruleset
+type RulesetCache struct {
+	Mu               sync.RWMutex
+	IsInvalid        bool
+	RuleGroups       []*RuleGroup
+	ActiveRuleGroups []*RuleGroup
+	Scraping         []*ScrapingRule
+	Action           []*ActionRule
+	Detection        []*DetectionRule
+	Crawling         []*CrawlingRule
 }
 
 type DetectionConfig struct {
