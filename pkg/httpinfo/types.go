@@ -177,7 +177,11 @@ type CollectedData struct {
 	RawServerHello     []byte
 	SSHClientHello     []byte
 	SSHServerHello     []byte
-	JARMFingerprint    string
+	// The following field are used by the JARM collector
+	JARMFingerprint string
+	// The following fields are used by the TLS collector
+	ClientExtensions []uint16
+	ServerExtensions []uint16
 }
 
 // CertChain is a struct to store the base64-encoded certificate chain

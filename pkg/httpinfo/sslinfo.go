@@ -202,6 +202,12 @@ func getFingerprints(ssl *SSLInfo, collectedData *CollectedData, c *Config) {
 	if c.SSLDiscovery.JA3S {
 		ssl.Fingerprints["JA3S"] = ComputeJA3S(collectedData)
 	}
+	if c.SSLDiscovery.JA4 {
+		ssl.Fingerprints["JA4"] = ComputeJA4(collectedData)
+	}
+	if c.SSLDiscovery.JA4S {
+		ssl.Fingerprints["JA4S"] = ComputeJA4S(collectedData)
+	}
 	if c.SSLDiscovery.HASSH {
 		ssl.Fingerprints["HASSH"] = ComputeHASSH(collectedData)
 	}
@@ -880,6 +886,83 @@ func ComputeJA3(data *CollectedData) string {
 func ComputeJA3S(data *CollectedData) string {
 	ja3s := fingerprints.JA3S{}
 	return ja3s.Compute(string(data.RawServerHello))
+}
+
+func ComputeJA4(data *CollectedData) string {
+	// Parse raw ClientHello to extract details
+	tlsVersion, cipherSuites, supportedGroups, signatureAlgorithms, extensions, sni, alpn, err := ExtractClientHelloDetails(data.RawClientHello)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "extracting ClientHello details:", err)
+		return ""
+	}
+
+	// Construct JA4 fingerprint data
+	ja4 := &fingerprints.JA4{
+		Version:             tlsVersion,
+		Ciphers:             cipherSuites,
+		Extensions:          extensions,
+		SupportedGroups:     supportedGroups,
+		SignatureAlgorithms: signatureAlgorithms,
+		SNI:                 sni,
+		ALPN:                alpn,
+	}
+
+	ja4Data := fmt.Sprintf("%d,%v,%v,%v,%v,%s,%v",
+		ja4.Version,
+		ja4.Ciphers,
+		ja4.Extensions,
+		ja4.SupportedGroups,
+		ja4.SignatureAlgorithms,
+		ja4.SNI,
+		ja4.ALPN,
+	)
+
+	ja4Fingerprint := fingerprints.JA4{}
+	return ja4Fingerprint.Compute(ja4Data)
+}
+
+func ComputeJA4S(data *CollectedData) string {
+	// Try to extract server-specific details from the raw ServerHello message
+	tlsVersion, cipherSuite, extensions, alpn, err := ExtractServerHelloDetails(data.RawServerHello)
+	if err != nil || len(data.RawServerHello) == 0 {
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "extracting ServerHello details:", err)
+		}
+		// Fallback to using tls.ConnectionState if RawServerHello fails
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Fallback: Using ConnectionState for ServerHello details.")
+		tlsVersion, cipherSuite, extensions, alpn, err = ExtractServerHelloDetailsUsingState(data.TLSHandshakeState)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "extracting ServerHello details:", err)
+			return ""
+		}
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "TLS Version: %d (%x)\n", tlsVersion, tlsVersion)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Cipher Suite: %d (%x)\n", cipherSuite, cipherSuite)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "ALPN: %v\n", alpn)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Extensions: %v\n", extensions)
+
+	// Construct JA4S fingerprint data
+	ja4s := &fingerprints.JA4S{
+		Version:    tlsVersion,
+		Ciphers:    []uint16{cipherSuite}, // Use a slice for uniformity
+		SNI:        data.TLSHandshakeState.ServerName,
+		ALPN:       []string{alpn}, // Use a slice for uniformity
+		Extensions: extensions,
+	}
+
+	ja4sData := fmt.Sprintf("%d,%v,%s,%v,%v",
+		ja4s.Version,
+		ja4s.Ciphers,
+		ja4s.SNI,
+		ja4s.ALPN,
+		ja4s.Extensions,
+	)
+
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "JA4S Data: %s", ja4sData)
+
+	ja4sFingerprint := fingerprints.JA4S{}
+	return ja4sFingerprint.Compute(ja4sData)
 }
 
 func ComputeHASSH(data *CollectedData) string {
