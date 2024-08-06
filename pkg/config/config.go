@@ -240,6 +240,8 @@ func NewConfig() *Config {
 				JARM:        false,
 				JA3:         false,
 				JA3S:        true,
+				JA4:         false,
+				JA4S:        true,
 				HASSH:       false,
 				HASSHServer: true,
 				TLSH:        true,

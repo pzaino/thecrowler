@@ -114,6 +114,8 @@ type SSLScoutConfig struct {
 	JARM        bool `yaml:"jarm"`
 	JA3         bool `yaml:"ja3"`
 	JA3S        bool `yaml:"ja3s"`
+	JA4         bool `yaml:"ja4"`
+	JA4S        bool `yaml:"ja4s"`
 	HASSH       bool `yaml:"hassh"`
 	HASSHServer bool `yaml:"hassh_server"`
 	TLSH        bool `yaml:"tlsh"`
