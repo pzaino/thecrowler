@@ -58,7 +58,36 @@ benefits:
       - *Benefits*: Provides insights into the content of web pages for
         categorization, indexing, and analysis.
 
-2. **Web Scraping**:
+   - **Sources Categorization**: It supports and allow users to define
+     categories for sources (URLs), which can be used to filter and prioritize
+     crawling operations as well as marketing and security operations.
+     - *Benefits*: Enables category based correlation and analysis of data.
+
+2. **Powerful API based Search Engine**:
+
+    - **Advanced Search Queries**: Supports complex search queries using
+      operators like AND (&&) and OR (||), and "" for precise search results.
+      - *Benefits*: Facilitates targeted searches to retrieve specific
+        information from web pages.
+
+    - **Search Result Analysis**: Analyzes search results to extract relevant
+      information like titles, snippets, and URLs.
+      - *Benefits*: Helps in identifying relevant content quickly and efficiently.
+
+    - **Search Result Export**: Allows exporting search results in various
+      formats like CSV and JSON.
+      - *Benefits*: Facilitates further processing and analysis of search results.
+
+    - **Dorking Techniques**: Supports advanced search techniques like Google
+      Dorking to discover sensitive information and vulnerabilities.
+      - *Benefits*: Useful for security assessments and reconnaissance.
+
+    - **Entities Correlation**: Correlates entities extracted from search
+      results to identify relationships and patterns.
+      - *Benefits*: Provides insights into the connections between entities
+        across different sources.
+
+3. **Web Scraping**:
 
    - **Customizable Scraping Rules**: Users can define specific rules for data
      extraction using CSS selectors, XPath, and other methods.
@@ -71,7 +100,7 @@ benefits:
      models.
      - *Benefits*: Ensures the quality and usability of the collected data.
 
-3. **Action Execution**:
+4. **Action Execution**:
 
    - **Automated Interactions**: Can perform actions like clicking, filling
      forms, and navigating websites programmatically. Actions are executed at
@@ -85,7 +114,7 @@ benefits:
      - *Benefits*: Allows handling of sophisticated user interface elements
        that require advanced manipulation.
 
-4. **Technology Detection**:
+5. **Technology Detection**:
 
    - **Framework and Technology Identification**: Uses detection rules to
      identify:
@@ -97,7 +126,7 @@ benefits:
      - *Benefits*: Provides insights into the tech stack of a site, which can
        be useful for competitive analysis or vulnerability assessment.
 
-5. **Network Information Collection**:
+6. **Network Information Collection**:
 
    - **DNS and WHOIS Lookup**: Performs DNS resolution and WHOIS queries to
      gather domain information.
@@ -111,21 +140,27 @@ benefits:
        - Vulnerabilities
        - Test Protocols and Services
 
-6. **Image and File Collection**:
+7. **Image and File Collection**:
 
    - **Automated Collection**: Collects images and files from websites during
      the crawling process.
      - *Benefits*: Enables gathering of rich media content alongside textual
        data.
 
-7. **API Integration**:
+   - **Full Web page Screenshots**: Captures full-page screenshots (included
+     websites with "infinite-scrolling") of web pages for visual analysis and
+     archiving.
+     - *Benefits*: Provides a visual representation of web pages for reference
+       and analysis.
+
+8. **API Integration**:
 
    - **REST API**: Provides an API for integrating with other systems and
      managing CROWler's operations programmatically.
      - *Benefits*: Facilitates automation and integration with existing data
        processing pipelines.
 
-8. **Complete Ruleset System**:
+9. **Complete Ruleset System**:
 
    - **Ruleset Architecture**: Supports a comprehensive ruleset system for
      defining custom crawling and scraping rules. Specifically 4 types of
@@ -145,14 +180,14 @@ benefits:
      across different instances.
      - *Benefits*: Enhances reusability and collaboration among users.
 
-9. **Plugin Support**:
+10. **Plugin Support**:
 
    - **JavaScript Plugins**: Supports custom JavaScript plugins for extending
      functionality.
      - *Benefits*: Allows customization and enhancement of CROWler's
        capabilities to meet specific needs.
 
-10. **Data Storage and Management**:
+11. **Data Storage and Management**:
 
     - **Database Integration**: Stores collected data in a structured format
       in databases like PostgreSQL.
@@ -163,7 +198,7 @@ benefits:
       - *Benefits*: Enables efficient handling of large volumes of media
         content.
 
-11. **Configuration and Scalability**:
+12. **Configuration and Scalability**:
 
     - **Configurable Environment**: Supports detailed configuration options for
       customizing crawling and scraping behavior.
@@ -175,7 +210,7 @@ benefits:
       - *Benefits*: Ensures the tool can handle high workloads and scale as
         needed.
 
-12. **Security and Privacy**:
+13. **Security and Privacy**:
 
     - **Service Scout**: Provides features equivalent to Nmap for security
       auditing.
@@ -187,7 +222,7 @@ benefits:
       - *Benefits*: Protects sensitive information and complies with data
         protection regulations.
 
-13. **Error Handling and Logging**:
+14. **Error Handling and Logging**:
 
     - **Robust Error Handling**: Provides mechanisms to handle errors and retry
       operations automatically.
@@ -198,14 +233,14 @@ benefits:
       operational logs for troubleshooting.
       - *Benefits*: Aids in diagnosing issues and optimizing performance.
 
-14. **User Interface and Console**:
+15. **User Interface and Console**:
 
     - **Admin Console**: Offers an admin interface for monitoring and managing
       CROWler operations.
       - *Benefits*: Provides an intuitive interface for users to oversee and
         control crawling activities.
 
-15. **Cybersecurity Features**:
+16. **Cybersecurity Features**:
 
     - **Security Testing**: Supports fuzzing and scanning capabilities for
       identifying vulnerabilities in web applications.
@@ -229,7 +264,7 @@ benefits:
       - *Benefits*: Helps in identifying the underlying technologies and
         configurations of web servers.
 
-16. **Containerization**:
+17. **Containerization**:
 
     - **Docker Support**: Can be easily containerized and deployed in
       containerized environments.
