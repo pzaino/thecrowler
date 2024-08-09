@@ -162,7 +162,7 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
   - **Security Testing**: Supports fuzzing and scanning capabilities for identifying vulnerabilities in web applications.
     - *Benefits*: Helps improve the security posture of web assets.
 
-  - **Compliance Checks**: Includes features for checking compliance with security standards and best practices.
+  - **Compliance Checks**: Includes features for checking compliance with security standards and best practices. **Note**: This feature requires additional configuration and purchase of specific rulesets.
     - *Benefits*: Ensures adherence to security guidelines and regulations.
 
   - **Security Automation**: Enables automation of security testing and monitoring tasks.
