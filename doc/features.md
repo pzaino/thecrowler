@@ -100,9 +100,11 @@ benefits:
        infrastructure.
 
    - **Service Scout**: Detects services running on a host using various
-     scanning techniques.
-     - *Benefits*: Useful for identifying open ports and services for security
-       assessments.
+     scanning techniques. Service Scout can be extended via NMAP plugins.
+     - *Benefits*: Useful in security assessments for identifying:
+       - Open Ports and services
+       - Vulnerabilities
+       - Test Protocols and Services
 
 6. **Image and File Collection**:
 
