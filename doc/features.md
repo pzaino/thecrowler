@@ -139,7 +139,7 @@ benefits:
        and JSON) and can be shared across instances and updated dynamically.
      - Ruleset Architecture can be extended with JavaScript plugins.
      - *Benefits*: Allows users to define complex logic for data extraction
-       and processing.
+       and processing, site navigation and technology detection.
 
    - **Ruleset Management**: Provides tools for managing and sharing rulesets
      across different instances.
