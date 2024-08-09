@@ -128,7 +128,16 @@ benefits:
 8. **Complete Ruleset System**:
 
    - **Ruleset Architecture**: Supports a comprehensive ruleset system for
-     defining custom crawling and scraping rules.
+     defining custom crawling and scraping rules. Specifically 4 types of
+     rules:
+     - **Crawling Rules**: Define what to navigate a website
+     - **Scrape Rules**: Define what to extract from a page
+     - **Action Rules**: Define what to do on a page
+     - **Detection Rules**: Define what (and how) to detect technologies
+       and vulnerabilities
+     - Ruleset Architecture is declarative (can be expressed in both YAML
+       and JSON) and can be shared across instances and updated dynamically.
+     - Ruleset Architecture can be extended with JavaScript plugins.
      - *Benefits*: Allows users to define complex logic for data extraction
        and processing.
 
