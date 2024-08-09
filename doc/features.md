@@ -36,6 +36,28 @@ benefits:
      - *Benefits*: Enhances low-noise operations and reduces the risk of being
        blocked by websites and proxy services.
 
+   - **Dynamic Content Handling**: Supports the execution of JavaScript to
+      access dynamically generated content.
+      - *Benefits*: Allows access to content that is rendered dynamically by
+        client-side scripts.
+
+   - **Keywords Extraction**: Extracts keywords from web pages to identify
+     relevant topics and themes.
+     - *Benefits*: Helps in categorizing and organizing content for analysis
+       and indexing. Keywords can also be used in Security Searches and Events
+       to identify Sources of Interest.
+
+   - **Site language detection**: Detects the language of a website to support
+     multilingual crawling and content analysis. Even in absence of language
+     tags, the CROWler can detect the language of a page.
+     - *Benefits*: Facilitates language-specific processing and analysis of
+       web content.
+
+   - **Content Analysis**: Analyzes the content of web pages to extract
+      metadata, entities, and other structured information.
+      - *Benefits*: Provides insights into the content of web pages for
+        categorization, indexing, and analysis.
+
 2. **Web Scraping**:
 
    - **Customizable Scraping Rules**: Users can define specific rules for data
