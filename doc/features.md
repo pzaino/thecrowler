@@ -88,7 +88,12 @@ benefits:
 4. **Technology Detection**:
 
    - **Framework and Technology Identification**: Uses detection rules to
-     identify technologies, frameworks, and CMS used by websites.
+     identify:
+     - Technologies (e.g., servers, programming languages, plugins)
+     - Frameworks (e.g., server-side CMS, client-side JavaScript libraries)
+     - Libraries
+     - Vulnerabilities (e.g., outdated software versions, known security
+       issues, XSS, SQL injection and more)
      - *Benefits*: Provides insights into the tech stack of a site, which can
        be useful for competitive analysis or vulnerability assessment.
 
