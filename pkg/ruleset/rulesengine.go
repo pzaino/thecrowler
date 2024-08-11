@@ -540,10 +540,11 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 
 	for i := 0; i < len((*re).Rulesets); i++ {
 		rsName := strings.ToLower(strings.TrimSpace(re.Rulesets[i].Name))
-		if rsName == "" || (rsName != "*" && !strings.HasPrefix(rsName, "http") && strings.HasPrefix(rsName, "ftp")) {
+		if rsName == "" || (rsName != "*" && !strings.HasPrefix(rsName, "http://") && !strings.HasPrefix(rsName, "https://") && !strings.HasPrefix(rsName, "ftp://") && !strings.HasPrefix(rsName, "ftps://")) {
 			continue
 		}
-		if strings.HasPrefix(parsedURL, rsName) || rsName == "*" {
+		//cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking ruleset: '%s' == '%s'", rsName, parsedURL)
+		if strings.HasPrefix(parsedURL, rsName) || rsName == "*" || strings.Contains(parsedURL, rsName) {
 			return &re.Rulesets[i], nil
 		}
 	}
@@ -589,7 +590,7 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 
 	for _, rg := range re.GetAllRuleGroups() {
 		rgName := strings.ToLower(strings.TrimSpace(rg.GroupName))
-		if rgName == "" || (rgName != "*" && !strings.HasPrefix(rgName, "http") && strings.HasPrefix(rgName, "ftp")) {
+		if rgName == "" || (rgName != "*" && !strings.HasPrefix(rgName, "http://") && !strings.HasPrefix(rgName, "ftp://")) {
 			continue
 		}
 		if strings.HasPrefix(parsedURL, rgName) || rgName == "*" {

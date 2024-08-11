@@ -73,6 +73,8 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url 
 	if err == nil && rg != nil {
 		// Execute all the rules in the rule group
 		scrapedDataDoc += executeScrapingRulesInRuleGroup(ctx, rg, wd)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No rule group found for URL: %v", url)
 	}
 
 	// Retrieve the ruleset by URL
@@ -80,6 +82,8 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url 
 	if err == nil && rs != nil {
 		// Execute all the rules in the ruleset
 		scrapedDataDoc += executeScrapingRulesInRuleset(ctx, rs, wd)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No ruleset found for URL: %v", url)
 	}
 
 	return scrapedDataDoc
@@ -89,6 +93,7 @@ func executeScrapingRulesInRuleset(ctx *processContext, rs *rules.Ruleset, wd *s
 	scrapedDataDoc := ""
 	for _, r := range rs.GetAllEnabledScrapingRules() {
 		// Execute the rule
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Executing rule: %v", r.RuleName)
 		scrapedData, err := executeScrapingRule(ctx, &r, wd)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
