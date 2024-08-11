@@ -1633,6 +1633,18 @@ func normalizeURL(url string, flags uint) string {
 
 // isExternalLink checks if the link is external (aka outside the Source domain)
 // isExternalLink checks if linkURL is external to sourceURL based on domainLevel.
+// domainLevel:
+// 0: Fully restricted          (only the base URL is allowed, discard everything else)
+// 1: l1 domain restricted      (must contain base URL, for instance example.com/test/*)
+// 2: l2 domain restricted      (must contain SLD, for instance example.com, so if base URL is example.com/test1/, example.com/test2/* is allowed)
+// 3: l3 domain restricted      (must contain TLD only, for instance .com, so if base URL is example.com/test1/, example.com/test2/*, google.com/ is allowed)
+// 4: No restrictions           (global crawl, aka crawl everything you find)
+// Returns true if the link is external, false otherwise.
+// Use domainLevel 0 if you want to restrict crawling to the base URL only.
+// Use domainLevel 1 if you want to restrict crawling to the base URL and its subdirectories.
+// Use domainLevel 2 if you want to restrict crawling to the base URL and its subdomains.
+// Use domainLevel 3 if you want to restrict crawling to the base URL and its TLD.
+// Use domainLevel 4 if you want to crawl everything.
 func isExternalLink(sourceURL, linkURL string, domainLevel uint) bool {
 	// No restrictions
 	if domainLevel == 4 {
@@ -1662,7 +1674,14 @@ func isExternalLink(sourceURL, linkURL string, domainLevel uint) bool {
 		return sourceParsed.String() != linkParsed.String()
 	}
 
+	// Check if the link URL contains the source URL (if domainLevel is 1)
+	if domainLevel == 1 {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Restrition level 1, Source Domain: %s, Link Domain: %s", sourceParsed.Hostname(), linkParsed.Hostname())
+		return !strings.Contains(linkParsed.Hostname(), sourceParsed.Hostname())
+	}
+
 	// Get domain parts based on domainLevel
+	// This simplify handling domainLevel 2 and 3
 	srcDomain, linkDomain := getDomainParts(srcDomainParts, domainLevel), getDomainParts(linkDomainParts, domainLevel)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Source Domain: %s, Link Domain: %s", srcDomain, linkDomain)
 
