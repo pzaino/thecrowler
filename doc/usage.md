@@ -30,11 +30,13 @@ more the crawler will crawl. The restriction level is used to limit the depth
 of the crawling. For example, set the restriction level to:
 
 * 0 = for "fully restricted" crawling (just this URL, nothing else)
-* 1 = for l3 domain restricted (everything within this URL l3 domain)
-* 2 = for l2 domain restricted
-* 3 = for l1 domain restricted
-* 4 = for no restrictions, basically crawl everything on the sites and all
-  sites linked to it.
+* 1 = for restrict crawling to whatever contains this URL (so the URL and its
+  subdirectories)
+* 2 = for domain restricted (so the URL and and every link containing the
+  same SLD)
+* 3 = for TLD restricted (so the URL and every link containing the same TLD)
+* 4 = for no restrictions, basically crawl the URL and everything on the site
+ and all sites linked to it and so on and so forth.
 
 For more info on the addSOurce syntax, type:
 
