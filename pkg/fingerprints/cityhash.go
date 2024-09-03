@@ -31,6 +31,7 @@ const (
 // CityHash implements the Fingerprint interface for CityHash fingerprints.
 type CityHash struct{}
 
+// Compute computes the CityHash64 of the given data
 func (c CityHash) Compute(data string) string {
 	return fmt.Sprintf("%x", CityHash64([]byte(data)))
 }
@@ -73,13 +74,13 @@ func rotateRight(val uint64, shift uint) uint64 {
 
 func hashLen16(u, v uint64) uint64 {
 	const (
-		kMul = uint64(0x9ddfea08eb382d69)
+		keyMul = uint64(0x9ddfea08eb382d69)
 	)
-	a := (u ^ v) * kMul
+	a := (u ^ v) * keyMul
 	a ^= (a >> 47)
-	b := (v ^ a) * kMul
+	b := (v ^ a) * keyMul
 	b ^= (b >> 47)
-	b *= kMul
+	b *= keyMul
 	return b
 }
 

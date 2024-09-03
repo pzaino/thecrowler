@@ -128,7 +128,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 
 	// Initialize the Selenium instance
 	var err error
-	if err := processCtx.ConnectToSelenium(sel); err != nil {
+	if err := processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		processCtx.Status.EndTime = time.Now()
@@ -296,10 +296,10 @@ func resetPageInfo(p *PageInfo) {
 	p.Links = p.Links[:0] // Reset slice without reallocating
 }
 
-// ConnectSelenium is responsible for connecting to a Selenium instance
-func (ctx *ProcessContext) ConnectToSelenium(sel SeleniumInstance) error {
+// ConnectToVDI is responsible for connecting to the CROWler VDI Instance
+func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
-	ctx.wd, err = ConnectSelenium(sel, 0)
+	ctx.wd, err = ConnectVDI(sel, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 		(*ctx.sel) <- sel
@@ -312,7 +312,7 @@ func (ctx *ProcessContext) ConnectToSelenium(sel SeleniumInstance) error {
 // RefreshSeleniumConnection is responsible for refreshing the Selenium connection
 func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 	if err := ctx.wd.Refresh(); err != nil {
-		ctx.wd, err = ConnectSelenium(sel, 0)
+		ctx.wd, err = ConnectVDI(sel, 0)
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
@@ -401,6 +401,7 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	return pageSource, nil
 }
 
+// UseExternalDetection is responsible for using external detection services
 func UseExternalDetection(ctx *ProcessContext, url string) []map[string]interface{} {
 	var results []map[string]interface{}
 	for _, extDet := range ctx.config.ExternalDetection {
@@ -1323,7 +1324,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 			// If the session is not found, create a new one
-			err = ctx.ConnectToSelenium((*ctx).SelInstance)
+			err = ctx.ConnectToVDI((*ctx).SelInstance)
 			wd = ctx.wd
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
@@ -1859,17 +1860,17 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	logs, err := processCtx.wd.Log("performance")
 	if err != nil {
 		return err
-	} else {
-		for _, entry := range logs {
-			//cmn.DebugMsg(cmn.DbgLvlDebug2, "Performance log: %s", entry.Message)
-			var log PerformanceLogEntry
-			err := json.Unmarshal([]byte(entry.Message), &log)
-			if err != nil {
-				return err
-			}
-			if len(log.Message.Params.ResponseInfo.URL) > 0 {
-				pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
-			}
+	}
+
+	for _, entry := range logs {
+		//cmn.DebugMsg(cmn.DbgLvlDebug2, "Performance log: %s", entry.Message)
+		var log PerformanceLogEntry
+		err := json.Unmarshal([]byte(entry.Message), &log)
+		if err != nil {
+			return err
+		}
+		if len(log.Message.Params.ResponseInfo.URL) > 0 {
+			pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
 		}
 	}
 
@@ -2051,8 +2052,8 @@ func StopSelenium(sel *selenium.Service) error {
 	return err
 }
 
-// ConnectSelenium is responsible for connecting to the Selenium server instance
-func ConnectSelenium(sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
+// ConnectVDI is responsible for connecting to the Selenium server instance
+func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {

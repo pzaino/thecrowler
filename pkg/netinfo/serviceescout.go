@@ -30,7 +30,7 @@ import (
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 )
 
-// GetNmapInfo returns the Nmap information for the provided URL
+// GetServiceScoutInfo returns the Nmap information for the provided URL
 func (ni *NetInfo) GetServiceScoutInfo(scanCfg *cfg.ServiceScoutConfig) error {
 	// Scan the hosts
 	hosts, err := ni.scanHosts(scanCfg)
@@ -232,7 +232,7 @@ func appendTimingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig) []n
 	if cfg.ScanDelay != "" {
 		scDelay := exi.GetFloat(cfg.ScanDelay)
 		if scDelay < 1 {
-			scDelay += 1
+			scDelay++
 		}
 		options = append(options, nmap.WithScanDelay(time.Duration(scDelay)*time.Millisecond))
 	}
