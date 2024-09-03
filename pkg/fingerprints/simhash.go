@@ -25,6 +25,7 @@ import (
 // SimHash implements the Fingerprint interface for SimHash fingerprints.
 type SimHash struct{}
 
+// Compute computes the SimHash fingerprint of a given data.
 func (s SimHash) Compute(data string) string {
 	bits := make([]int, 64)
 	words := strings.Fields(data)
