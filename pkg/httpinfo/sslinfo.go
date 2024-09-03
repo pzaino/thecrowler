@@ -878,16 +878,19 @@ func listIntermediateAuthorities(certChain []*x509.Certificate) ([]string, error
 	return intermediateAuthorities, nil
 }
 
+// ExtractClientHelloDetails extracts details from the raw ClientHello message
 func ComputeJA3(data *CollectedData) string {
 	ja3 := fingerprints.JA3{}
 	return ja3.Compute(string(data.RawClientHello))
 }
 
+// ComputeJA3S returns a string containing the JA3S fingerprint of the given data
 func ComputeJA3S(data *CollectedData) string {
 	ja3s := fingerprints.JA3S{}
 	return ja3s.Compute(string(data.RawServerHello))
 }
 
+// ComputeJA4 returns a string containing the JA4 fingerprint of the given data
 func ComputeJA4(data *CollectedData) string {
 	// Parse raw ClientHello to extract details
 	tlsVersion, cipherSuites, supportedGroups, signatureAlgorithms, extensions, sni, alpn, err := ExtractClientHelloDetails(data.RawClientHello)
@@ -921,6 +924,7 @@ func ComputeJA4(data *CollectedData) string {
 	return ja4Fingerprint.Compute(ja4Data)
 }
 
+// ComputeJA4S returns a string containing the JA4S fingerprint of the given data
 func ComputeJA4S(data *CollectedData) string {
 	// Try to extract server-specific details from the raw ServerHello message
 	tlsVersion, cipherSuite, extensions, alpn, err := ExtractServerHelloDetails(data.RawServerHello)
@@ -965,64 +969,75 @@ func ComputeJA4S(data *CollectedData) string {
 	return ja4sFingerprint.Compute(ja4sData)
 }
 
+// ComputeHASSH returns a string containing the HASSH fingerprint of the given data
 func ComputeHASSH(data *CollectedData) string {
 	hassh := fingerprints.HASSH{}
 	return hassh.Compute(string(data.SSHClientHello))
 }
 
+// ComputeHASSHServer returns a string containing the HASSHServer fingerprint of the given data
 func ComputeHASSHServer(data *CollectedData) string {
 	hasshServer := fingerprints.HASSHServer{}
 	return hasshServer.Compute(string(data.SSHServerHello))
 }
 
+// ComputeTLSH returns a string containing the TLSH fingerprint of the given data
 func ComputeTLSH(data *CollectedData) string {
 	tlsh := fingerprints.TLSH{}
 	content := string(data.RawClientHello) + string(data.RawServerHello)
 	return tlsh.Compute(content)
 }
 
+// ComputeSimHash returns a string containing the SimHash fingerprint of the given data
 func ComputeSimHash(data *CollectedData) string {
 	simhash := fingerprints.SimHash{}
 	content := string(data.RawClientHello) + string(data.RawServerHello)
 	return simhash.Compute(content)
 }
 
+// ComputeMinHash returns a string containing the MinHash fingerprint of the given data
 func ComputeMinHash(data *CollectedData) string {
 	minhash := fingerprints.MinHash{}
 	content := string(data.RawClientHello) + string(data.RawServerHello)
 	return minhash.Compute(content)
 }
 
+// ComputeBLAKE2 returns a string containing the BLAKE2 fingerprint of the given data
 func ComputeBLAKE2(data *CollectedData) string {
 	blake2 := fingerprints.BLAKE2{}
 	content := string(data.RawClientHello)
 	return blake2.Compute(content)
 }
 
+// ComputeSHA256 returns a string containing the SHA256 fingerprint of the given data
 func ComputeSHA256(data *CollectedData) string {
 	sha256 := fingerprints.SHA256{}
 	content := string(data.RawClientHello)
 	return sha256.Compute(content)
 }
 
+// ComputeCityHash returns a string containing the CityHash fingerprint of the given data
 func ComputeCityHash(data *CollectedData) string {
 	cityHash := fingerprints.CityHash{}
 	content := string(data.RawClientHello)
 	return cityHash.Compute(content)
 }
 
+// ComputeMurmurHash returns a string containing the MurmurHash fingerprint of the given data
 func ComputeMurmurHash(data *CollectedData) string {
 	murmurHash := fingerprints.MurmurHash{}
 	content := string(data.RawClientHello)
 	return murmurHash.Compute(content)
 }
 
+// ComputeCustomTLS returns a string containing the CustomTLS fingerprint of the given data
 func ComputeCustomTLS(data *CollectedData) string {
 	customTLS := fingerprints.CustomTLS{}
 	content := string(data.RawClientHello)
 	return customTLS.Compute(content)
 }
 
+// ComputeJARM returns a string containing the JARM fingerprint of the given data
 func ComputeJARM(data *CollectedData) string {
 	jarm := fingerprints.JARM{}
 	content := data.JARMFingerprint
