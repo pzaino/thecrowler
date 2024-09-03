@@ -1,0 +1,66 @@
+---
+
+engines:
+  eslint:
+    enabled: true
+  gosec:
+    enabled: true
+  shellcheck:
+    enabled: true
+  bandit:
+    enabled: true
+
+ignore_paths:
+  - "doc/*"
+  - "bin/*"
+  - ".github/*"
+  - "data/*"
+  - "tests/*"
+  - "**/*_test.go"
+
+
+tools:
+  eslint:
+    config:
+      extends: eslint:recommended
+      env:
+        node: true
+        es6: true
+      parserOptions:
+        ecmaVersion: 2020
+
+gosec:
+  enabled: true
+  rules:
+    - G101
+    - G102
+    - G103
+    - G104
+    - G106
+    - G107
+    - G201
+    - G202
+    - G203
+    - G204
+    - G301
+    - G302
+    - G303
+    - G304
+    - G305
+    - G401
+    - G402
+    - G403
+    - G404
+    - G501
+    - G502
+    - G503
+    - G601
+
+  shellcheck:
+    severity: error
+    exclude:
+      - SC1091
+
+  bandit:
+    confidence: high
+    severity: medium
