@@ -213,6 +213,7 @@ func runPostProcessingSteps(ctx *ProcessContext, pps *[]rules.PostProcessingStep
 	}
 }
 
+// DefaultCrawlingConfig returns a default configuration for crawling a page
 func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	return cfg.SourceConfig{
 		FormatVersion: "1.0",
@@ -382,7 +383,7 @@ func addItem(items *[]map[string]interface{}, newItem map[string]interface{}) {
 	*items = append(*items, newItem)
 }
 
-func toJson(data []map[string]interface{}) (string, error) {
+func toJSON(data []map[string]interface{}) (string, error) {
 	jsonData, err := json.MarshalIndent(data, "", "    ")
 	if err != nil {
 		return "", err
@@ -390,12 +391,13 @@ func toJson(data []map[string]interface{}) (string, error) {
 	return string(jsonData), nil
 }
 
+// ProcessHtmlToJson processes the HTML data and converts it to JSON
 func ProcessHtmlToJson(htmlData string) (string, error) {
 	items, err := parseHTML(htmlData)
 	if err != nil {
 		return "", err
 	}
-	jsonOutput, err := toJson(items)
+	jsonOutput, err := toJSON(items)
 	if err != nil {
 		return "", err
 	}

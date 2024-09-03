@@ -232,11 +232,13 @@ func handleTimeCommand(args []EncodedCmd) (string, error) {
 
 // ----- Expression evaluation functions ----- //
 
+// IsNumber checks if the given string is a number.
 func IsNumber(str string) bool {
 	_, err := strconv.ParseFloat(str, 64)
 	return err == nil
 }
 
+// GetFloat returns the float value of the given expression.
 func GetFloat(iExpr string) float64 {
 	if IsNumber(iExpr) {
 		rval, err := strconv.ParseFloat(iExpr, 64)
@@ -255,6 +257,7 @@ func GetFloat(iExpr string) float64 {
 	return rval
 }
 
+// GetInt returns the integer value of the given expression.
 func GetInt(iExpr string) int {
 	return int(GetFloat(iExpr))
 }

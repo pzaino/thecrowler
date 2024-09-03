@@ -28,10 +28,12 @@ type detectionEntityDetails struct {
 	pluginResult    map[string]interface{}
 }
 
+// IsEmpty checks if the detectionEntityDetails is empty
 func (d detectionEntityDetails) IsEmpty() bool {
 	return reflect.DeepEqual(d, detectionEntityDetails{})
 }
 
+// DetectTechnologies detects technologies in the response body using the provided detection rules
 func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
 

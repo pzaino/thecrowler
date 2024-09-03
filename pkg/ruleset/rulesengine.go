@@ -436,6 +436,7 @@ func (re *RuleEngine) GetAllEnabledDetectionRules() []DetectionRule {
 	return detectionRules
 }
 
+// GetAllScrapingRulesByURL returns all the scraping rules for the specified URL.
 func (re *RuleEngine) GetAllScrapingRulesByURL(url string) []ScrapingRule {
 	// find all scraping rules with the specified URL
 	rules := re.GetAllEnabledScrapingRules()
@@ -613,9 +614,8 @@ func (re *RuleEngine) GetRuleGroupByName(name string) (*RuleGroup, error) {
 		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedName {
 			if rg.IsValid() {
 				return rg, nil
-			} else {
-				return nil, fmt.Errorf("RuleGroup '%s' is not valid", rg.GroupName)
 			}
+			return nil, fmt.Errorf("RuleGroup '%s' is not valid", rg.GroupName)
 		}
 	}
 	return nil, fmt.Errorf(errRuleGroupNotFound)
