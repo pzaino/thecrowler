@@ -24,7 +24,7 @@ const (
 )
 
 func TestExtractLinks(t *testing.T) {
-	testArgs := CrawlerPars{
+	testArgs := Pars{
 		WG:     nil,
 		RE:     nil,
 		Status: nil,
