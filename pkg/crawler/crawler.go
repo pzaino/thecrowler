@@ -401,6 +401,7 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	return pageSource, nil
 }
 
+// UseExternalDetection is responsible for using external detection services
 func UseExternalDetection(ctx *ProcessContext, url string) []map[string]interface{} {
 	var results []map[string]interface{}
 	for _, extDet := range ctx.config.ExternalDetection {
@@ -1859,17 +1860,17 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	logs, err := processCtx.wd.Log("performance")
 	if err != nil {
 		return err
-	} else {
-		for _, entry := range logs {
-			//cmn.DebugMsg(cmn.DbgLvlDebug2, "Performance log: %s", entry.Message)
-			var log PerformanceLogEntry
-			err := json.Unmarshal([]byte(entry.Message), &log)
-			if err != nil {
-				return err
-			}
-			if len(log.Message.Params.ResponseInfo.URL) > 0 {
-				pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
-			}
+	}
+
+	for _, entry := range logs {
+		//cmn.DebugMsg(cmn.DbgLvlDebug2, "Performance log: %s", entry.Message)
+		var log PerformanceLogEntry
+		err := json.Unmarshal([]byte(entry.Message), &log)
+		if err != nil {
+			return err
+		}
+		if len(log.Message.Params.ResponseInfo.URL) > 0 {
+			pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
 		}
 	}
 

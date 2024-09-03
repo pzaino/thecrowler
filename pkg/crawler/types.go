@@ -30,7 +30,7 @@ import (
 	"github.com/tebeka/selenium"
 )
 
-// Local type to pass parameters to the goroutine
+// CrawlerPars type to pass parameters to the goroutine
 type CrawlerPars struct {
 	WG      *sync.WaitGroup
 	DB      cdb.Handler
@@ -43,6 +43,7 @@ type CrawlerPars struct {
 	Status  *CrawlerStatus
 }
 
+// CrawlerStatus holds the status of the crawler
 type CrawlerStatus struct {
 	PipelineID      uint64
 	SourceID        uint64
@@ -103,6 +104,7 @@ type PageInfo struct {
 	Config                  *cfg.Config                      `json:"config"`                     // The configuration of the web page.
 }
 
+// CollectedScript represents a single collected script.
 type CollectedScript struct {
 	ID           uint64   `json:"id"`
 	ScriptType   string   `json:"script_type"`
@@ -120,8 +122,10 @@ type WebObjectDetails struct {
 	DetectedTech map[string]detect.DetectedEntity `json:"detected_tech"` // The detected technologies of the web page.
 }
 
+// ScrapedItem represents a single scraped item.
 type ScrapedItem map[string]interface{}
 
+// PerformanceLog represents the performance log of a web page.
 type PerformanceLog struct {
 	TCPConnection   float64               `json:"tcp_connection"`     // The time to establish a TCP connection.
 	TimeToFirstByte float64               `json:"time_to_first_byte"` // The time to first byte.
@@ -131,7 +135,7 @@ type PerformanceLog struct {
 	LogEntries      []PerformanceLogEntry `json:"log_entries"`        // The log entries of the web page.
 }
 
-// PerformanceLog represents a structure for performance log entries
+// PerformanceLogEntry represents a structure for performance log entries
 type PerformanceLogEntry struct {
 	Message LogMessage `json:"message"` // The log message.
 	Webview string     `json:"webview"` // The webview.
@@ -150,7 +154,7 @@ type LogParams struct {
 	Type         string          `json:"type,omitempty"` // The type of the log message.
 }
 
-// ResponseExtraInfo represents additional information about a response in network logs.
+// LogResponseInfo represents additional information about a response in network logs.
 type LogResponseInfo struct {
 	BlockedCookies         []BlockedCookie    `json:"blockedCookies,omitempty"`         // The blocked cookies.
 	Headers                map[string]string  `json:"headers,omitempty"`                // The headers of the response.
@@ -169,7 +173,7 @@ type LogResponseInfo struct {
 	URL                    string             `json:"url"`                              // The URL of the response.
 }
 
-// SecurityDetails holds detailed security information from the network logs.
+// LogSecurityDetails holds detailed security information from the network logs.
 type LogSecurityDetails struct {
 	CertificateID                     int      `json:"certificateId"`
 	CertificateTransparencyCompliance string   `json:"certificateTransparencyCompliance"`
@@ -186,7 +190,7 @@ type LogSecurityDetails struct {
 	ValidTo                           float64  `json:"validTo"`
 }
 
-// ResponseTiming holds timing information from the network logs.
+// LogResponseTiming holds timing information from the network logs.
 type LogResponseTiming struct {
 	ConnectEnd               float64 `json:"connectEnd"`
 	ConnectStart             float64 `json:"connectStart"`
