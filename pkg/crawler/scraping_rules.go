@@ -39,7 +39,7 @@ const (
 )
 
 // processScrapingRules processes the scraping rules
-func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url string) string {
+func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) string {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Scraping rules...")
 
 	scrapedDataDoc := ""
@@ -65,7 +65,7 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *processContext, url strin
 	return scrapedDataDoc
 }
 
-func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url string) string {
+func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url string) string {
 	scrapedDataDoc := ""
 
 	// Retrieve the rule group by URL
@@ -89,7 +89,7 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *processContext, url 
 	return scrapedDataDoc
 }
 
-func executeScrapingRulesInRuleset(ctx *processContext, rs *rules.Ruleset, wd *selenium.WebDriver) string {
+func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
 	for _, r := range rs.GetAllEnabledScrapingRules() {
 		// Execute the rule
@@ -103,7 +103,7 @@ func executeScrapingRulesInRuleset(ctx *processContext, rs *rules.Ruleset, wd *s
 	return scrapedDataDoc
 }
 
-func executeScrapingRulesInRuleGroup(ctx *processContext, rg *rules.RuleGroup, wd *selenium.WebDriver) string {
+func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
 	for _, r := range rg.GetScrapingRules() {
 		// Execute the rule
@@ -117,7 +117,7 @@ func executeScrapingRulesInRuleGroup(ctx *processContext, rg *rules.RuleGroup, w
 }
 
 // executeScrapingRule executes a single ScrapingRule
-func executeScrapingRule(ctx *processContext, r *rules.ScrapingRule,
+func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 	wd *selenium.WebDriver) (string, error) {
 	var jsonDocument string
 
@@ -146,7 +146,7 @@ func executeScrapingRule(ctx *processContext, r *rules.ScrapingRule,
 	return jsonDocument, nil
 }
 
-func executeWaitConditions(ctx *processContext, conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
+func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
 	for _, wc := range conditions {
 		err := executeWaitCondition(ctx, &wc, wd)
 		if err != nil {
@@ -206,7 +206,7 @@ func StrIsHTML(s string) bool {
 }
 
 // runPostProcessingSteps runs the post processing steps
-func runPostProcessingSteps(ctx *processContext, pps *[]rules.PostProcessingStep, jsonData *[]byte) {
+func runPostProcessingSteps(ctx *ProcessContext, pps *[]rules.PostProcessingStep, jsonData *[]byte) {
 	for _, pp := range *pps {
 		// Execute the post processing step
 		ApplyPostProcessingStep(ctx, &pp, jsonData)
@@ -235,7 +235,7 @@ func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	}
 }
 
-func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *processContext) {
+func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext) {
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default scraping rules...")
 
@@ -257,7 +257,7 @@ func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *processContext) {
 	}
 }
 
-func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriver, ctx *processContext) string {
+func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriver, ctx *ProcessContext) string {
 	var scrapedDataDoc string
 	// Get the rule
 	for _, ruleName := range epi.Rules {

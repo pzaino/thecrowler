@@ -69,10 +69,10 @@ var (
 	config cfg.Config // Configuration "object"
 )
 
-// processContext is a struct that holds the context of the crawling process
+// ProcessContext is a struct that holds the context of the crawling process
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
-type processContext struct {
+type ProcessContext struct {
 	SelID            int                    // The Selenium ID
 	SelInstance      SeleniumInstance       // The Selenium instance
 	WG               *sync.WaitGroup        // The WaitGroup
@@ -174,7 +174,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 
 	// Get network information
 	processCtx.wgNetInfo.Add(1)
-	go func(ctx *processContext) {
+	go func(ctx *ProcessContext) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetNetInfo(ctx.source.URL)
 		_, err := ctx.IndexNetInfo(1)
@@ -185,7 +185,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 
 	// Get HTTP header information
 	processCtx.wgNetInfo.Add(1)
-	go func(ctx *processContext, htmlContent string) {
+	go func(ctx *ProcessContext, htmlContent string) {
 		defer ctx.wgNetInfo.Done()
 		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
 		_, err := ctx.IndexNetInfo(2)
@@ -257,11 +257,11 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 }
 
 // NewProcessContext creates a new process context
-func NewProcessContext(args CrawlerPars) *processContext {
+func NewProcessContext(args CrawlerPars) *ProcessContext {
 	if config.IsEmpty() {
 		config = *cfg.NewConfig()
 	}
-	newPCtx := processContext{
+	newPCtx := ProcessContext{
 		source: &args.Src,
 		db:     &args.DB,
 		sel:    args.Sel,
@@ -297,7 +297,7 @@ func resetPageInfo(p *PageInfo) {
 }
 
 // ConnectSelenium is responsible for connecting to a Selenium instance
-func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
+func (ctx *ProcessContext) ConnectToSelenium(sel SeleniumInstance) error {
 	var err error
 	ctx.wd, err = ConnectSelenium(sel, 0)
 	if err != nil {
@@ -310,7 +310,7 @@ func (ctx *processContext) ConnectToSelenium(sel SeleniumInstance) error {
 }
 
 // RefreshSeleniumConnection is responsible for refreshing the Selenium connection
-func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
+func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 	if err := ctx.wd.Refresh(); err != nil {
 		ctx.wd, err = ConnectSelenium(sel, 0)
 		if err != nil {
@@ -325,7 +325,7 @@ func (ctx *processContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 }
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
-func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
+func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
 
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
@@ -401,7 +401,7 @@ func (ctx *processContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	return pageSource, nil
 }
 
-func UseExternalDetection(ctx *processContext, url string) []map[string]interface{} {
+func UseExternalDetection(ctx *ProcessContext, url string) []map[string]interface{} {
 	var results []map[string]interface{}
 	for _, extDet := range ctx.config.ExternalDetection {
 		if extDet.Enabled {
@@ -568,7 +568,7 @@ func retrieveNavigationMetrics(wd *selenium.WebDriver) (map[string]interface{}, 
 }
 
 // TakeScreenshot takes a screenshot of the current page and saves it to the filesystem
-func (ctx *processContext) TakeScreenshot(wd selenium.WebDriver, url string, indexID uint64) {
+func (ctx *ProcessContext) TakeScreenshot(wd selenium.WebDriver, url string, indexID uint64) {
 	// Take screenshot if enabled
 	takeScreenshot := false
 
@@ -658,7 +658,7 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 }
 
 // GetNetInfo is responsible for gathering network information for a Source
-func (ctx *processContext) GetNetInfo(url string) {
+func (ctx *ProcessContext) GetNetInfo(url string) {
 	ctx.Status.NetInfoRunning = 1
 
 	// Create a new NetInfo instance
@@ -680,7 +680,7 @@ func (ctx *processContext) GetNetInfo(url string) {
 }
 
 // GetHTTPInfo is responsible for gathering HTTP header information for a Source
-func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
+func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	ctx.Status.HTTPInfoRunning = 1
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
@@ -711,14 +711,14 @@ func (ctx *processContext) GetHTTPInfo(url string, htmlContent string) {
 }
 
 // IndexPage is responsible for indexing a crawled page in the database
-func (ctx *processContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
+func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
 	(*pageInfo).Config = &ctx.config
 	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
 }
 
 // IndexNetInfo indexes the network information of a source in the database
-func (ctx *processContext) IndexNetInfo(flags int) (uint64, error) {
+func (ctx *ProcessContext) IndexNetInfo(flags int) (uint64, error) {
 	pageInfo := PageInfo{}
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
@@ -1318,7 +1318,7 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
-func getURLContent(url string, wd selenium.WebDriver, level int, ctx *processContext) (selenium.WebDriver, string, error) {
+func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessContext) (selenium.WebDriver, string, error) {
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -1378,7 +1378,7 @@ func docTypeIsHTML(mime string) bool {
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
-func extractPageInfo(webPage *selenium.WebDriver, ctx *processContext, docType string) PageInfo {
+func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType string) PageInfo {
 	currentURL, _ := (*webPage).CurrentURL()
 
 	// Detect Object Type
@@ -1556,6 +1556,7 @@ func IsValidURL(u string) bool {
 	return err == nil
 }
 
+// IsValidURIProtocol checks if the URI has a valid protocol.
 func IsValidURIProtocol(u string) bool {
 	if !strings.HasPrefix(u, "http://") &&
 		!strings.HasPrefix(u, "https://") &&
@@ -1569,7 +1570,7 @@ func IsValidURIProtocol(u string) bool {
 // extractLinks extracts all the links from the given HTML content.
 // It uses the goquery library to parse the HTML and find all the <a> tags.
 // Each link is then added to a slice and returned.
-func extractLinks(ctx *processContext, htmlContent string, url string) []LinkItem {
+func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkItem {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
@@ -1600,7 +1601,7 @@ func extractLinks(ctx *processContext, htmlContent string, url string) []LinkIte
 
 // generateLinks generates links based on the crawling rules
 // TODO: This function needs improvements
-func generateLinks(ctx *processContext, url string) []LinkItem {
+func generateLinks(ctx *ProcessContext, url string) []LinkItem {
 	var links []LinkItem
 	for _, rule := range ctx.re.GetAllCrawlingRules() {
 		lnkSet, err := FuzzURL(url, rule)
@@ -1705,7 +1706,7 @@ func getDomainParts(parts []string, level uint) string {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(processCtx *processContext, id int, jobs chan LinkItem) {
+func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 	defer processCtx.wg.Done()
 	var skippedURLs []LinkItem
 
@@ -1760,7 +1761,7 @@ func worker(processCtx *processContext, id int, jobs chan LinkItem) {
 	}
 }
 
-func skipURL(processCtx *processContext, id int, url string) bool {
+func skipURL(processCtx *ProcessContext, id int, url string) bool {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return true
@@ -1775,7 +1776,7 @@ func skipURL(processCtx *processContext, id int, url string) bool {
 	return false
 }
 
-func clickLink(processCtx *processContext, id int, url LinkItem) error {
+func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -1900,7 +1901,7 @@ func clickLink(processCtx *processContext, id int, url LinkItem) error {
 	return err
 }
 
-func processJob(processCtx *processContext, id int, url string, skippedURLs []LinkItem) error {
+func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -2209,7 +2210,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *processContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
