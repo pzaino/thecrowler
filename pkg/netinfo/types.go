@@ -185,17 +185,20 @@ type HostInfo struct {
 	Vulnerabilities []VulnerabilityInfo `json:"vulnerabilities,omitempty"`
 }
 
+// IPInfoDetails contains the information about a single IP
 type IPInfoDetails struct {
 	Address string `json:"address,omitempty"`
 	Type    string `json:"address_type,omitempty"`
 	Vendor  string `json:"vendor,omitempty"`
 }
 
+// HostNameDetails contains the information about a single hostname
 type HostNameDetails struct {
 	Name string `json:"name,omitempty"`
 	Type string `json:"type,omitempty"`
 }
 
+// VulnerabilityInfo contains the information about a single vulnerability
 type VulnerabilityInfo struct {
 	ID          string          `json:"id,omitempty"`
 	Name        string          `json:"name,omitempty"`
@@ -216,6 +219,7 @@ type PortInfo struct {
 	Service  string `json:"service,omitempty"`
 }
 
+// ServiceInfo contains the information about a single service
 type ServiceInfo struct {
 	Name          string       `json:"name,omitempty"`
 	DeviceType    string       `json:"device_type,omitempty"`

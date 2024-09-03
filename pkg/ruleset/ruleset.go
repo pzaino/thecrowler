@@ -35,22 +35,24 @@ func NewRuleset(name string) Ruleset {
 
 /// --- Checks --- ///
 
+// IsValid checks if the Ruleset is valid.
 func (rs *Ruleset) IsValid() bool {
 	return rs.Name != "" && len(rs.RuleGroups) > 0
 }
 
+// IsEmpty checks if the Ruleset is empty.
 func (rs *Ruleset) IsEmpty() bool {
 	return rs.Name == "" && len(rs.RuleGroups) == 0
 }
 
 /// --- Retrieving --- ///
 
-// GetRuleGroups returns all the rule groups in a Ruleset.
+// GetAllRuleGroups returns all the rule groups in a Ruleset.
 func (rs *Ruleset) GetAllRuleGroups() []RuleGroup {
 	return rs.RuleGroups
 }
 
-// GetAllENabledRuleGroups returns all the enabled rule groups in a Ruleset.
+// GetAllEnabledRuleGroups returns all the enabled rule groups in a Ruleset.
 func (rs *Ruleset) GetAllEnabledRuleGroups() []RuleGroup {
 	var enabledRuleGroups []RuleGroup
 	for i := 0; i < len(rs.RuleGroups); i++ {
@@ -61,7 +63,7 @@ func (rs *Ruleset) GetAllEnabledRuleGroups() []RuleGroup {
 	return enabledRuleGroups
 }
 
-// GetActionRules returns all the action rules in a Ruleset.
+// GetAllActionRules returns all the action rules in a Ruleset.
 func (rs *Ruleset) GetAllActionRules() []ActionRule {
 	var actionRules []ActionRule
 	for _, rg := range rs.RuleGroups {
@@ -70,7 +72,7 @@ func (rs *Ruleset) GetAllActionRules() []ActionRule {
 	return actionRules
 }
 
-// GetScrapingRules returns all the scraping rules in a Ruleset.
+// GetAllScrapingRules returns all the scraping rules in a Ruleset.
 func (rs *Ruleset) GetAllScrapingRules() []ScrapingRule {
 	var scrapingRules []ScrapingRule
 	for _, rg := range rs.RuleGroups {
@@ -79,7 +81,7 @@ func (rs *Ruleset) GetAllScrapingRules() []ScrapingRule {
 	return scrapingRules
 }
 
-// GetCrawlingRules returns all the crawling rules in a Ruleset.
+// GetAllCrawlingRules returns all the crawling rules in a Ruleset.
 func (rs *Ruleset) GetAllCrawlingRules() []CrawlingRule {
 	var crawlingRules []CrawlingRule
 	for _, rg := range rs.RuleGroups {
@@ -88,7 +90,7 @@ func (rs *Ruleset) GetAllCrawlingRules() []CrawlingRule {
 	return crawlingRules
 }
 
-// GetDetectionRules returns all the detection rules in a Ruleset.
+// GetAllDetectionRules returns all the detection rules in a Ruleset.
 func (rs *Ruleset) GetAllDetectionRules() []DetectionRule {
 	var detectionRules []DetectionRule
 	for _, rg := range rs.RuleGroups {
@@ -97,7 +99,7 @@ func (rs *Ruleset) GetAllDetectionRules() []DetectionRule {
 	return detectionRules
 }
 
-// GetAllEnabledRules returns a slice of Rule containing only the enabled rules.
+// GetAllEnabledScrapingRules returns a slice of Rule containing only the enabled rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules
 // to the result slice.
 func (s *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
@@ -270,12 +272,12 @@ func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 	return ScrapingRule{}, fmt.Errorf(errScrapingNotFound)
 }
 
-// GetEnabledRulesByGroup returns a slice of Rule containing only the enabled rules for the specified group.
+// GetEnabledRulesByGroupName returns a slice of Rule containing only the enabled rules for the specified group.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified group to the result slice.
-func (s *Ruleset) GetEnabledRulesByGroupName(groupName string) []ScrapingRule {
+func (rs *Ruleset) GetEnabledRulesByGroupName(groupName string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		if rg.GroupName == groupName {
 			enabledRules = append(enabledRules, rg.ScrapingRules...)
 		}
@@ -286,23 +288,23 @@ func (s *Ruleset) GetEnabledRulesByGroupName(groupName string) []ScrapingRule {
 
 // GetEnabledRulesByPath returns a slice of Rule containing only the enabled rules for the specified path.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules for the specified path to the result slice.
-func (s *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
+func (rs *Ruleset) GetEnabledRulesByPath(path string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 	parsedPath, err := PreparePathForSearch(path)
 	if err != nil {
 		return enabledRules
 	}
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		if rg.IsEnabled {
-			enabledRules = append(enabledRules, s.getEnabledScrapingRulesByPathHelper(rg, parsedPath)...)
+			enabledRules = append(enabledRules, rs.getEnabledScrapingRulesByPathHelper(rg, parsedPath)...)
 		}
 	}
 
 	return enabledRules
 }
 
-func (s *Ruleset) getEnabledScrapingRulesByPathHelper(rg RuleGroup, parsedPath string) []ScrapingRule {
+func (rs *Ruleset) getEnabledScrapingRulesByPathHelper(rg RuleGroup, parsedPath string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 
 	for _, r := range rg.ScrapingRules {
@@ -316,24 +318,24 @@ func (s *Ruleset) getEnabledScrapingRulesByPathHelper(rg RuleGroup, parsedPath s
 	return enabledRules
 }
 
-// GetEnabledRulesByPathAndGroup returns a slice of Rule containing only the
+// GetEnabledScrapingRulesByPathAndGroup returns a slice of Rule containing only the
 // enabled rules for the specified path and group. It iterates over the RuleGroups
 // in the SiteRules and appends the enabled rules for the specified path and group
 // to the result slice.
-func (s *Ruleset) GetEnabledScrapingRulesByPathAndGroup(path, groupName string) []ScrapingRule {
+func (rs *Ruleset) GetEnabledScrapingRulesByPathAndGroup(path, groupName string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 	path = strings.TrimSpace(path)
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		if rg.GroupName == groupName {
-			enabledRules = append(enabledRules, s.getEnabledScrapingRulesByPathAndGroupHelper(rg, path)...)
+			enabledRules = append(enabledRules, rs.getEnabledScrapingRulesByPathAndGroupHelper(rg, path)...)
 		}
 	}
 
 	return enabledRules
 }
 
-func (s *Ruleset) getEnabledScrapingRulesByPathAndGroupHelper(rg RuleGroup, path string) []ScrapingRule {
+func (rs *Ruleset) getEnabledScrapingRulesByPathAndGroupHelper(rg RuleGroup, path string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 
 	for _, r := range rg.ScrapingRules {
