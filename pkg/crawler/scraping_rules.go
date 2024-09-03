@@ -165,7 +165,7 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 	for key, data := range extractedData {
 		dataStr := fmt.Sprintf("%v", data)
 		if StrIsHTML(dataStr) {
-			jsonData, err := ProcessHtmlToJson(dataStr)
+			jsonData, err := ProcessHTMLToJSON(dataStr)
 			if err != nil {
 				data = strings.ReplaceAll(dataStr, "\"", "\\\"")
 				processedData[key] = data
@@ -391,8 +391,8 @@ func toJSON(data []map[string]interface{}) (string, error) {
 	return string(jsonData), nil
 }
 
-// ProcessHtmlToJson processes the HTML data and converts it to JSON
-func ProcessHtmlToJson(htmlData string) (string, error) {
+// ProcessHTMLToJSON processes the HTML data and converts it to JSON
+func ProcessHTMLToJSON(htmlData string) (string, error) {
 	items, err := parseHTML(htmlData)
 	if err != nil {
 		return "", err

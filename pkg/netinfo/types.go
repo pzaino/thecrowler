@@ -236,6 +236,7 @@ type ServiceInfo struct {
 	Scripts       []ScriptInfo `json:"scripts,omitempty"`
 }
 
+// ScriptInfo contains the information about a single script
 type ScriptInfo struct {
 	ID       string          `json:"id,omitempty"`
 	Output   string          `json:"output,omitempty"`
@@ -243,11 +244,13 @@ type ScriptInfo struct {
 	Tables   []ScriptTable   `json:"tables,omitempty"`
 }
 
+// ScriptElement contains the information about a single script element
 type ScriptElement struct {
 	Key   string `json:"key,omitempty"`
 	Value string `json:"value,omitempty"`
 }
 
+// ScriptTable contains the information about a single script table
 type ScriptTable struct {
 	Key      string          `json:"key,omitempty"`
 	Elements []ScriptElement `json:"elements,omitempty"`
@@ -262,6 +265,7 @@ type OSInfo struct {
 	Line     int       `json:"line,omitempty"`
 }
 
+// OSCLass contains the information about the detected OS class
 type OSCLass struct {
 	Type       string `json:"type,omitempty"`
 	Vendor     string `json:"vendor,omitempty"`
