@@ -460,12 +460,12 @@ func (re *RuleEngine) GetAllScrapingRulesByURL(url string) []ScrapingRule {
 
 /// --- Counting --- ///
 
-// Return the number of rulesets in the RuleEngine.
+// CountRulesets returns the number of rulesets in the RuleEngine.
 func (re *RuleEngine) CountRulesets() int {
 	return len(re.Rulesets)
 }
 
-// Return the number of RuleGroups in the RuleEngine.
+// CountRuleGroups returns the number of RuleGroups in the RuleEngine.
 func (re *RuleEngine) CountRuleGroups() int {
 	var count int
 	for _, rs := range re.Rulesets {
@@ -474,7 +474,7 @@ func (re *RuleEngine) CountRuleGroups() int {
 	return count
 }
 
-// Return the number of ScrapingRules in the RuleEngine.
+// CountScrapingRules returns the number of ScrapingRules in the RuleEngine.
 func (re *RuleEngine) CountScrapingRules() int {
 	var count int
 	for _, rg := range re.GetAllRuleGroups() {
@@ -483,7 +483,7 @@ func (re *RuleEngine) CountScrapingRules() int {
 	return count
 }
 
-// Return the number of ActionRules in the RuleEngine.
+// CountActionRules returns the number of ActionRules in the RuleEngine.
 func (re *RuleEngine) CountActionRules() int {
 	var count int
 	for _, rg := range re.GetAllRuleGroups() {
@@ -492,7 +492,7 @@ func (re *RuleEngine) CountActionRules() int {
 	return count
 }
 
-// Return the number of CrawlingRules in the RuleEngine.
+// CountCrawlingRules returns the number of CrawlingRules in the RuleEngine.
 func (re *RuleEngine) CountCrawlingRules() int {
 	var count int
 	for _, rg := range re.GetAllRuleGroups() {
@@ -501,7 +501,7 @@ func (re *RuleEngine) CountCrawlingRules() int {
 	return count
 }
 
-// Return the number of DetectionRules in the RuleEngine.
+// CountDetectionRules returns the number of DetectionRules in the RuleEngine.
 func (re *RuleEngine) CountDetectionRules() int {
 	var count int
 	for _, rg := range re.GetAllRuleGroups() {
@@ -510,12 +510,12 @@ func (re *RuleEngine) CountDetectionRules() int {
 	return count
 }
 
-// Return the number of rules in the RuleEngine.
+// CountRules returns the number of rules in the RuleEngine.
 func (re *RuleEngine) CountRules() int {
 	return re.CountScrapingRules() + re.CountActionRules() + re.CountCrawlingRules() + re.CountDetectionRules()
 }
 
-// Return the number of loaded Plugins
+// CountPlugins returns the number of loaded Plugins
 func (re *RuleEngine) CountPlugins() int {
 	return len(re.JSPlugins.registry)
 }
@@ -580,7 +580,7 @@ func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
 	return nil, fmt.Errorf(errRulesetNotFound)
 }
 
-// GetRulesGroupByURL returns the rules group for the specified URL.
+// GetRuleGroupByURL returns the rules group for the specified URL.
 func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 	// Validate URL
 	parsedURL, err := PrepareURLForSearch(urlStr)
@@ -602,7 +602,7 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 	return nil, fmt.Errorf(errRuleGroupNotFound)
 }
 
-// GetRulesGroupByName returns the rules group for the specified name.
+// GetRuleGroupByName returns the rules group for the specified name.
 func (re *RuleEngine) GetRuleGroupByName(name string) (*RuleGroup, error) {
 	// Validate name
 	parsedName, err := PrepareNameForSearch(name)

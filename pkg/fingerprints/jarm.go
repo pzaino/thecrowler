@@ -22,6 +22,7 @@ import (
 	"strings"
 )
 
+// JARM implements the Fingerprint interface for JARM fingerprints.
 type JARM struct{}
 
 // Compute computes the JARM fingerprint of a given data.
