@@ -23,6 +23,7 @@ import (
 
 // Helped functions to deal with different date formats in JSON
 
+// FlexibleDate is a type that can be used to parse dates in different formats
 type FlexibleDate time.Time
 
 var (

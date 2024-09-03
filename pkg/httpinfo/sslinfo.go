@@ -42,8 +42,8 @@ var authorities []Authority
 
 // Initialize a variable to store the debug level
 const (
-	YYYYMMDD        = "2006.01.02"
-	debug_level int = 0
+	YYYYMMDD       = "2006.01.02"
+	debugLevel int = 0
 )
 
 // ExtractSSLInfo extracts SSL information from the provided URL
@@ -101,6 +101,7 @@ func getTimeInCertReportFormat() string {
 }
 */
 
+// CollectSSLData collects SSL data from the provided URL
 func (ssl *SSLInfo) CollectSSLData(url string, port string, c *Config) error {
 	if ssl == nil {
 		return fmt.Errorf("SSLInfo is nil")
@@ -222,6 +223,7 @@ func getFingerprints(ssl *SSLInfo, collectedData *CollectedData, c *Config) {
 	}
 }
 
+// GetSSLInfo extracts SSL information from the provided URL and port
 func (ssl *SSLInfo) GetSSLInfo(url string, port string) error {
 	// Get the certificate from the server
 	var err error
@@ -264,6 +266,7 @@ func (ssl *SSLInfo) GetSSLInfo(url string, port string) error {
 	return nil
 }
 
+// ValidateCertificate validates the certificate chain
 func (ssl *SSLInfo) ValidateCertificate() error {
 	var err error
 
@@ -557,7 +560,7 @@ func checkCertificateEVSSL(certChain []*x509.Certificate) (bool, error) {
 	return isCertEVSSL, nil
 }
 
-// This function processes the CSV file with the list of Authorities
+// ProcessAuthFile processes the CSV file with the list of Authorities
 // if the file doesn't exists then it will pull it down from https://www.ccadb.org/resources
 // if the file exists it will process it and store elements in the Authority
 // data structure.
@@ -570,9 +573,8 @@ func ProcessAuthFile() {
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "downloading the CSV file: %v", err)
 			return
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlInfo, "CCADB All Certificate Records CSV download complete!")
 		}
+		cmn.DebugMsg(cmn.DbgLvlInfo, "CCADB All Certificate Records CSV download complete!")
 	}
 	// Open the CSV file
 	file, err := os.Open(filename)
@@ -663,7 +665,7 @@ func ProcessAuthFile() {
 	}
 
 	// Print the authorities
-	if debug_level > 0 {
+	if debugLevel > 0 {
 		for _, authority := range authorities {
 			fmt.Println("Authority:", authority.CAOwner)
 			fmt.Println("Aliases:", authority.SalesforceRecordID)
@@ -787,11 +789,11 @@ func validateCertificateChainOrder(chain []*x509.Certificate) (bool, error) {
 	// Check if the end-entity certificate (server certificate) is the first in the chain
 	firstOrg := strings.Join(chain[1].Subject.Organization, " ")
 	secondOrg := strings.Join(chain[0].Issuer.Organization, " ")
-	if debug_level > 1 {
+	if debugLevel > 1 {
 		fmt.Println(firstOrg + " == " + secondOrg)
 	}
 	if !isIssuerOf(chain[1], chain[0]) && (firstOrg != secondOrg) {
-		if debug_level > 1 {
+		if debugLevel > 1 {
 			fmt.Println("Chain 0:")
 			fmt.Println(chain[0].Subject)
 			fmt.Println(chain[0].Issuer)
