@@ -188,7 +188,7 @@ type URLMicroSignature struct {
 	Confidence float32 `yaml:"confidence"`
 }
 
-// PageContent micro-signatures are patterns that can be found in the page content
+// PageContentSignature micro-signatures are patterns that can be found in the page content
 type PageContentSignature struct {
 	Key        string   `yaml:"key"`
 	Attribute  string   `yaml:"attribute,omitempty"`

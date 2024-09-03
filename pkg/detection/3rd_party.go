@@ -151,7 +151,7 @@ func ScanWithURLHaus(url string) map[string]interface{} {
 	return result
 }
 
-// ScanWithThreatCrowd scans a URL with ThreatCrowd.
+// ScanWidthThreatCrowd scans a URL with ThreatCrowd.
 func ScanWidthThreatCrowd(url string) map[string]interface{} {
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", "https://api.threatcrowd.org/v1/url/report/?url="+url, nil)

@@ -91,7 +91,7 @@ type ProcessContext struct {
 	re               *rules.RuleEngine      // The rule engine
 	getURLMutex      sync.Mutex             // Mutex to protect the getURLContent function
 	visitedLinks     map[string]bool        // Map to keep track of visited links
-	Status           *CrawlerStatus         // Status of the crawling process
+	Status           *Status                // Status of the crawling process
 	CollectedCookies map[string]interface{} // Collected cookies
 }
 
@@ -99,7 +99,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	// Initialize the process context
 	processCtx := NewProcessContext(args)
 
@@ -257,7 +257,7 @@ func CrawlWebsite(args CrawlerPars, sel SeleniumInstance, releaseSelenium chan<-
 }
 
 // NewProcessContext creates a new process context
-func NewProcessContext(args CrawlerPars) *ProcessContext {
+func NewProcessContext(args Pars) *ProcessContext {
 	if config.IsEmpty() {
 		config = *cfg.NewConfig()
 	}

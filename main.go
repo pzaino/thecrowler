@@ -58,7 +58,7 @@ type WorkBlock struct {
 	sel            *chan crowler.SeleniumInstance
 	sources        *[]cdb.Source
 	RulesEngine    *rules.RuleEngine
-	PipelineStatus *[]crowler.CrawlerStatus
+	PipelineStatus *[]crowler.Status
 	Config         *cfg.Config
 }
 
@@ -177,7 +177,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status
-	PipelineStatus := make([]crowler.CrawlerStatus, config.Crawler.MaxSources)
+	PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
 	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
@@ -249,7 +249,7 @@ func performDatabaseMaintenance(db cdb.Handler) {
 
 func crawlSources(wb *WorkBlock) {
 	// Start a goroutine to log the status periodically
-	go func(plStatus *[]crowler.CrawlerStatus) {
+	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -285,7 +285,7 @@ func crawlSources(wb *WorkBlock) {
 		wg.Add(1)
 
 		// Initialize the status
-		(*wb.PipelineStatus)[idx] = crowler.CrawlerStatus{
+		(*wb.PipelineStatus)[idx] = crowler.Status{
 			PipelineID:      uint64(idx),
 			Source:          source.URL,
 			SourceID:        source.ID,
@@ -319,7 +319,7 @@ func crawlSources(wb *WorkBlock) {
 
 func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Source, idx int) {
 	// Prepare the go routine parameters
-	args := crowler.CrawlerPars{
+	args := crowler.Pars{
 		WG:      wg,
 		DB:      wb.db,
 		Src:     source,
@@ -332,7 +332,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 	}
 
 	// Start a goroutine to crawl the website
-	go func(args crowler.CrawlerPars) {
+	go func(args crowler.Pars) {
 		//defer wg.Done()
 
 		// Acquire a Selenium instance
@@ -350,7 +350,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 	}(args)
 }
 
-func logStatus(PipelineStatus *[]crowler.CrawlerStatus) {
+func logStatus(PipelineStatus *[]crowler.Status) {
 	// Log the status of the pipelines
 	const (
 		sepRLine = "====================================="

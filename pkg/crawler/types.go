@@ -30,8 +30,8 @@ import (
 	"github.com/tebeka/selenium"
 )
 
-// CrawlerPars type to pass parameters to the goroutine
-type CrawlerPars struct {
+// Pars type to pass parameters to the goroutine
+type Pars struct {
 	WG      *sync.WaitGroup
 	DB      cdb.Handler
 	Src     cdb.Source
@@ -40,11 +40,11 @@ type CrawlerPars struct {
 	RE      *rules.RuleEngine
 	Sources *[]cdb.Source
 	Index   int
-	Status  *CrawlerStatus
+	Status  *Status
 }
 
-// CrawlerStatus holds the status of the crawler
-type CrawlerStatus struct {
+// Status holds the status of the crawler
+type Status struct {
 	PipelineID      uint64
 	SourceID        uint64
 	Source          string
