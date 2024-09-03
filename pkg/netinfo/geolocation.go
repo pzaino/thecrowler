@@ -28,6 +28,7 @@ import (
 	"github.com/oschwald/maxminddb-golang"
 )
 
+// DetectLocation detects the geolocation for the given IP address using the provided GeoLite2 database.
 func DetectLocation(ipAddress string, cfg config.GeoLookupConfig) (*DetectedLocation, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("geolocation is disabled")
@@ -43,7 +44,6 @@ func DetectLocation(ipAddress string, cfg config.GeoLookupConfig) (*DetectedLoca
 	}
 }
 
-// DetectLocation detects the geolocation for the given IP address using the provided GeoLite2 database.
 func detectLocationMaxMind(ipAddress string, dbPath string) (*DetectedLocation, error) {
 	// Check if the DB path is valid and the file exists
 	if dbPath == "" {
