@@ -44,12 +44,12 @@ func (d *DetectionRule) GetPluginCalls() []PluginCall {
 	return d.PluginCalls
 }
 
-// GetHTTPHeaderFields returns the HTTP header fields for the specified detection rule.
+// GetAllHTTPHeaderFields returns the HTTP header fields for the specified detection rule.
 func (d *DetectionRule) GetAllHTTPHeaderFields() []HTTPHeaderField {
 	return d.HTTPHeaderFields
 }
 
-// GetPageContentPatterns returns the page content patterns for the specified detection rule.
+// GetAllPageContentPatterns returns the page content patterns for the specified detection rule.
 func (d *DetectionRule) GetAllPageContentPatterns() []PageContentSignature {
 	trimmedPatterns := []PageContentSignature{}
 	for _, pattern := range d.PageContentPatterns {
@@ -69,7 +69,7 @@ func (d *DetectionRule) GetAllSSLSignatures() []SSLSignature {
 	return d.SSLSignatures
 }
 
-// GetURLMicroSignatures returns the URL micro-signatures for the specified detection rule.
+// GetAllURLMicroSignatures returns the URL micro-signatures for the specified detection rule.
 func (d *DetectionRule) GetAllURLMicroSignatures() []URLMicroSignature {
 	trimmedSignatures := []URLMicroSignature{}
 	for _, signature := range d.URLMicroSignatures {
@@ -82,7 +82,7 @@ func (d *DetectionRule) GetAllURLMicroSignatures() []URLMicroSignature {
 	return trimmedSignatures
 }
 
-// GetMetaTags returns the meta tags for the specified detection rule.
+// GetAllMetaTags returns the meta tags for the specified detection rule.
 func (d *DetectionRule) GetAllMetaTags() []MetaTag {
 	trimmedMetaTags := []MetaTag{}
 	for _, tag := range d.MetaTags {
@@ -120,7 +120,7 @@ func GetAllHTTPHeaderFieldsMap(d *[]DetectionRule) map[string]map[string]HTTPHea
 	return headers
 }
 
-// GetHTTPHeaderFieldsMapByKey returns a map of all HTTP header fields for the specified detection rules.
+// GetHTTPHeaderFieldsMapByKey returns a map of all HTTP header fields for the specified detection rules
 func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[string]HTTPHeaderField {
 	headers := make(map[string]map[string]HTTPHeaderField)
 	key = strings.ToLower(strings.TrimSpace(key))
@@ -147,7 +147,7 @@ func GetHTTPHeaderFieldsMapByKey(d *[]DetectionRule, key string) map[string]map[
 	return headers
 }
 
-// GetAllMetaTagsMap returns a map of all meta tags for the specified detection rules.
+// GetAllURLMicroSignaturesMap returns a map of all URL micro-signatures for the specified detection rules.
 func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignature {
 	signatures := make(map[string][]URLMicroSignature)
 	for _, rule := range *d {
@@ -165,7 +165,7 @@ func GetAllURLMicroSignaturesMap(d *[]DetectionRule) map[string][]URLMicroSignat
 	return signatures
 }
 
-// GetAllMetaTagsMap returns a map of all meta tags for the specified detection rules.
+// GetAllPageContentPatternsMap returns a map of all page content patterns for the specified detection rules.
 func GetAllPageContentPatternsMap(d *[]DetectionRule) map[string][]PageContentSignature {
 	patterns := make(map[string][]PageContentSignature)
 	for _, rule := range *d {

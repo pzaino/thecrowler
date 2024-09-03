@@ -27,7 +27,7 @@ func (r *ScrapingRule) GetRuleName() string {
 	return strings.TrimSpace(r.RuleName)
 }
 
-// GetPath returns the path for the specified scraping rule.
+// GetPaths returns the path for the specified scraping rule.
 func (r *ScrapingRule) GetPaths() []string {
 	var paths []string
 	for _, p := range r.PreConditions {
@@ -39,7 +39,7 @@ func (r *ScrapingRule) GetPaths() []string {
 	return paths
 }
 
-// GetURL returns the URL for the specified scraping rule.
+// GetURLs returns the URL for the specified scraping rule.
 func (r *ScrapingRule) GetURLs() []string {
 	var urls []string
 	for _, u := range r.PreConditions {

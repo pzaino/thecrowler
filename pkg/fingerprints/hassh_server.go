@@ -23,6 +23,7 @@ import (
 // HASSHServer implements the Fingerprint interface for HASSHServer fingerprints.
 type HASSHServer struct{}
 
+// Compute computes the HASSHServer fingerprint of a given data.
 func (h HASSHServer) Compute(data string) string {
 	hash := md5.Sum([]byte(data))
 	return hex.EncodeToString(hash[:])
