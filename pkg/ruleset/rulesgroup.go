@@ -29,7 +29,7 @@ import (
 
 /// --- Checks --- ///
 
-// IsGroupValid checks if the provided RuleGroup is valid.
+// IsValid checks if the provided RuleGroup is valid.
 // It checks if the group is enabled and if the valid_from and valid_to dates are valid.
 func (rg *RuleGroup) IsValid() bool {
 	// Check if the group is enabled

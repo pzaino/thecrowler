@@ -17,7 +17,7 @@ func Base64Decode(data string) (string, error) {
 	return string(decoded), err
 }
 
-// Calculate ENtropy of a string
+// CalculateEntropy of a string
 func CalculateEntropy(data string) float64 {
 	frequency := make(map[rune]int)
 	for _, char := range data {

@@ -94,17 +94,17 @@ func (ni *NetInfo) scanHost(cfg *cfg.ServiceScoutConfig, ip string) ([]HostInfo,
 			output += fmt.Sprintf("Result's Errors: %v\n", result.NmapErrors)
 		}
 		return hosts, fmt.Errorf("%s", output)
-	} else {
-		// log the raw results if we are in debug mode:
-		output := "ServiceScout scan completed:\n"
-		if len(*warnings) != 0 {
-			for _, warning := range *warnings {
-				output += fmt.Sprintf("%s\n", warning)
-			}
-		}
-		cmn.DebugMsg(cmn.DbgLvlInfo, output)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
 	}
+	// log the raw results if we are in debug mode:
+	output := "ServiceScout scan completed:\n"
+	if len(*warnings) != 0 {
+		for _, warning := range *warnings {
+			output += fmt.Sprintf("%s\n", warning)
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, output)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "ServiceScout raw results: %v", result)
+
 	scanner = nil // free the scanner
 
 	return hosts, nil

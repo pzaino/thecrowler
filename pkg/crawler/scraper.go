@@ -296,11 +296,11 @@ func extractByRegex(content string, pattern string, all bool) []string {
 	re := regexp.MustCompile(pattern)
 	if all {
 		return re.FindAllString(content, -1)
-	} else {
-		if match := re.FindString(content); match != "" {
-			return []string{match}
-		}
 	}
+	if match := re.FindString(content); match != "" {
+		return []string{match}
+	}
+
 	return []string{}
 }
 
