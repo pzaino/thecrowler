@@ -46,7 +46,7 @@ const (
 	debugLevel int = 0
 )
 
-// ExtractSSLInfo extracts SSL information from the provided URL
+// ExtractInfo extracts SSL information from the provided URL
 func (ssl *SSLInfo) ExtractInfo(url string) error {
 	if ssl == nil {
 		return fmt.Errorf("SSLInfo is nil")
@@ -880,7 +880,7 @@ func listIntermediateAuthorities(certChain []*x509.Certificate) ([]string, error
 	return intermediateAuthorities, nil
 }
 
-// ExtractClientHelloDetails extracts details from the raw ClientHello message
+// ComputeJA3 returns a string containing the JA3 fingerprint of the given data
 func ComputeJA3(data *CollectedData) string {
 	ja3 := fingerprints.JA3{}
 	return ja3.Compute(string(data.RawClientHello))

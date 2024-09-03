@@ -27,7 +27,7 @@ import (
 	"github.com/tebeka/selenium"
 )
 
-func processActionRules(wd *selenium.WebDriver, ctx *processContext, url string) {
+func processActionRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Action rules...")
 	// Run Action Rules if any
 	if ctx.source.Config != nil {
@@ -48,7 +48,7 @@ func processActionRules(wd *selenium.WebDriver, ctx *processContext, url string)
 	}
 }
 
-func processURLRules(wd *selenium.WebDriver, ctx *processContext, url string) {
+func processURLRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
 	rs, err := ctx.re.GetRulesetByURL(url)
 	if err == nil {
 		if rs != nil {
@@ -68,7 +68,7 @@ func processURLRules(wd *selenium.WebDriver, ctx *processContext, url string) {
 	}
 }
 
-func executeActionRules(ctx *processContext,
+func executeActionRules(ctx *ProcessContext,
 	rules []rules.ActionRule, wd *selenium.WebDriver) {
 	// Extract each rule and execute it
 	for _, r := range rules {
@@ -77,7 +77,7 @@ func executeActionRules(ctx *processContext,
 	}
 }
 
-func executeRule(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) {
+func executeRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) {
 	// Execute the rule
 	err := executeActionRule(ctx, r, wd)
 	if err != nil {
@@ -103,7 +103,7 @@ func executeRule(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDrive
 	}
 }
 
-func executeActionPostProcessingStep(ctx *processContext, pp rules.PostProcessingStep, wd *selenium.WebDriver) {
+func executeActionPostProcessingStep(ctx *ProcessContext, pp rules.PostProcessingStep, wd *selenium.WebDriver) {
 	// Execute the post processing step
 	if pp.Type == "collect_cookies" {
 		cookies, err := retrieveCookies(wd)
@@ -121,7 +121,7 @@ func executeActionPostProcessingStep(ctx *processContext, pp rules.PostProcessin
 }
 
 // executeActionRule executes a single ActionRule
-func executeActionRule(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
 		for _, wc := range r.WaitConditions {
@@ -428,7 +428,7 @@ func executeActionScrollByAmount(r *rules.ActionRule, wd *selenium.WebDriver) er
 }
 
 // executeWaitCondition is responsible for executing a "wait" condition
-func executeWaitCondition(ctx *processContext, r *rules.WaitCondition, wd *selenium.WebDriver) error {
+func executeWaitCondition(ctx *ProcessContext, r *rules.WaitCondition, wd *selenium.WebDriver) error {
 	// Execute the wait condition
 	switch strings.ToLower(strings.TrimSpace(r.ConditionType)) {
 	case "element":
@@ -653,7 +653,7 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 }
 
 // executeActionJS is responsible for executing a "execute_javascript" action
-func executeActionJS(ctx *processContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
 	for _, selector := range r.Selectors {
 		if selector.SelectorType == "plugin_call" {
 			// retrieve the JavaScript from the plugins registry using the value as the key
@@ -904,7 +904,7 @@ func DefaultActionConfig(url string) cfg.SourceConfig {
 	}
 }
 
-func runDefaultActionRules(wd *selenium.WebDriver, ctx *processContext) {
+func runDefaultActionRules(wd *selenium.WebDriver, ctx *ProcessContext) {
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default action rules...")
 
@@ -962,7 +962,7 @@ func checkActionPreConditions(conditions cfg.Condition, url string) bool {
 // checkActionConditions checks all types of conditions: Action and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
-func checkActionConditions(ctx *processContext, conditions map[string]interface{}, wd *selenium.WebDriver) bool {
+func checkActionConditions(ctx *ProcessContext, conditions map[string]interface{}, wd *selenium.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
 	if len(conditions) > 0 {
@@ -1014,7 +1014,7 @@ func checkActionConditions(ctx *processContext, conditions map[string]interface{
 }
 
 // executePlannedRules executes the rules in the execution plan
-func executePlannedRules(wd *selenium.WebDriver, ctx *processContext, planned cfg.ExecutionPlanItem) {
+func executePlannedRules(wd *selenium.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
 	// Execute the rules in the execution plan
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rules...")
 	// Get the rule
@@ -1026,7 +1026,7 @@ func executePlannedRules(wd *selenium.WebDriver, ctx *processContext, planned cf
 	}
 }
 
-func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *processContext) {
+func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *ProcessContext) {
 	rule, err := ctx.re.GetActionRuleByName(ruleName)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "getting action rule: %v", err)
@@ -1052,7 +1052,7 @@ func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *proce
 }
 
 // executePlannedRuleGroups executes the rule groups in the execution plan
-func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, planned cfg.ExecutionPlanItem) {
+func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
 	// Execute the rule groups in the execution plan
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rule groups...")
 	// Get the rule group
@@ -1072,7 +1072,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *processContext, plann
 }
 
 // executePlannedRulesets executes the rulesets in the execution plan
-func executePlannedRulesets(wd *selenium.WebDriver, ctx *processContext, planned cfg.ExecutionPlanItem) {
+func executePlannedRulesets(wd *selenium.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
 	// Execute the rulesets in the execution plan
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rulesets...")
 	// Get the ruleset

@@ -37,7 +37,7 @@ import (
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
-func ApplyRule(ctx *processContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
+func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
 	// Debug message
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying rule: %v", rule.RuleName)
 
@@ -304,7 +304,7 @@ func extractByRegex(content string, pattern string, all bool) []string {
 	return []string{}
 }
 
-func extractByPlugin(ctx *processContext, wd *selenium.WebDriver, selector string) []string {
+func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector string) []string {
 	// Retrieve the JS plugin
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(selector)
 	if !exists {
@@ -336,7 +336,7 @@ func extractByPlugin(ctx *processContext, wd *selenium.WebDriver, selector strin
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
-func ApplyRulesGroup(ctx *processContext, ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
+func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
@@ -354,7 +354,7 @@ func ApplyRulesGroup(ctx *processContext, ruleGroup *rs.RuleGroup, url string, w
 }
 
 // ApplyPostProcessingStep applies the provided post-processing step to the provided data.
-func ApplyPostProcessingStep(ctx *processContext, step *rs.PostProcessingStep, data *[]byte) {
+func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
 	// Implement the post-processing step here
 	stepType := strings.ToLower(strings.TrimSpace(step.Type))
 	switch stepType {
@@ -375,7 +375,7 @@ func ApplyPostProcessingStep(ctx *processContext, step *rs.PostProcessingStep, d
 	}
 }
 
-func ppStepPluginCall(ctx *processContext, step *rs.PostProcessingStep, data *[]byte) {
+func ppStepPluginCall(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
 	err := processCustomJS(ctx, step, data)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "There was an error while running a rule post-processing JS module: %v", err)
@@ -478,7 +478,7 @@ func stripNumbers(data string) string {
 }
 
 // ppStepTransform applies the "transform" post-processing step to the provided data.
-func ppStepTransform(ctx *processContext, data *[]byte, step *rs.PostProcessingStep) {
+func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingStep) {
 	// Implement the transformation logic here
 	transformType := strings.ToLower(strings.TrimSpace(step.Details["transform_type"].(string)))
 	var err error
@@ -512,7 +512,7 @@ func ppStepTransform(ctx *processContext, data *[]byte, step *rs.PostProcessingS
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
 */
-func processCustomJS(ctx *processContext, step *rs.PostProcessingStep, data *[]byte) error {
+func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) error {
 	// Convert the jsonData byte slice to a string and set it in the JS VM.
 	jsonData := *data
 	var jsonDataMap map[string]interface{}
