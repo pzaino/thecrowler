@@ -102,10 +102,10 @@ func (rs *Ruleset) GetAllDetectionRules() []DetectionRule {
 // GetAllEnabledScrapingRules returns a slice of Rule containing only the enabled rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules
 // to the result slice.
-func (s *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
+func (rs *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
 	var enabledRules []ScrapingRule
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		enabledRules = append(enabledRules, rg.ScrapingRules...)
 	}
 
@@ -115,10 +115,10 @@ func (s *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
 // GetAllEnabledActionRules returns a slice of Rule containing only the enabled action rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled action rules
 // to the result slice.
-func (s *Ruleset) GetAllEnabledActionRules() []ActionRule {
+func (rs *Ruleset) GetAllEnabledActionRules() []ActionRule {
 	var enabledRules []ActionRule
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		enabledRules = append(enabledRules, rg.ActionRules...)
 	}
 
@@ -128,10 +128,10 @@ func (s *Ruleset) GetAllEnabledActionRules() []ActionRule {
 // GetAllEnabledCrawlingRules returns a slice of Rule containing only the enabled crawling rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled crawling rules
 // to the result slice.
-func (s *Ruleset) GetAllEnabledCrawlingRules() []CrawlingRule {
+func (rs *Ruleset) GetAllEnabledCrawlingRules() []CrawlingRule {
 	var enabledRules []CrawlingRule
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		enabledRules = append(enabledRules, rg.CrawlingRules...)
 	}
 
@@ -141,10 +141,10 @@ func (s *Ruleset) GetAllEnabledCrawlingRules() []CrawlingRule {
 // GetAllEnabledDetectionRules returns a slice of Rule containing only the enabled detection rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled detection rules
 // to the result slice.
-func (s *Ruleset) GetAllEnabledDetectionRules() []DetectionRule {
+func (rs *Ruleset) GetAllEnabledDetectionRules() []DetectionRule {
 	var enabledRules []DetectionRule
 
-	for _, rg := range s.GetAllEnabledRuleGroups() {
+	for _, rg := range rs.GetAllEnabledRuleGroups() {
 		enabledRules = append(enabledRules, rg.DetectionRules...)
 	}
 

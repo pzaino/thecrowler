@@ -29,11 +29,11 @@ type RuleEngine struct {
 	Rulesets        []Ruleset          `yaml:"rulesets"`
 	DetectionConfig DetectionConfig    `yaml:"detection_config"`
 	JSPlugins       JSPluginRegister   `yaml:"js_plugins"`
-	Cache           RulesetCache       `yaml:"cache"`
+	Cache           Cache              `yaml:"cache"`
 }
 
-// RulesetCache represents the cache for the ruleset
-type RulesetCache struct {
+// Cache represents the cache for the ruleset
+type Cache struct {
 	Mu               sync.RWMutex
 	IsInvalid        bool
 	RuleGroups       []*RuleGroup
@@ -44,6 +44,7 @@ type RulesetCache struct {
 	Crawling         []*CrawlingRule
 }
 
+// DetectionConfig represents the configuration for the detection engine
 type DetectionConfig struct {
 	NoiseThreshold    float32 `yaml:"noise_threshold"`
 	MaybeThreshold    float32 `yaml:"maybe_threshold"`
@@ -79,6 +80,7 @@ type RuleGroup struct {
 	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration,omitempty"`
 }
 
+// PreCondition represents a pre-condition for a scraping rule
 type PreCondition struct {
 	URL  string `yaml:"url"`
 	Path string `yaml:"path"`
@@ -154,11 +156,13 @@ type DetectionRule struct {
 	PluginCalls         []PluginCall           `yaml:"plugin_calls,omitempty"`
 }
 
+// PluginCall represents a call to a plugin
 type PluginCall struct {
 	PluginName string         `yaml:"plugin_name"`
 	PluginArgs []PluginParams `yaml:"plugin_args"`
 }
 
+// PluginParams represents the parameters for a plugin call
 type PluginParams struct {
 	ArgName  string `yaml:"parameter_name"`
 	ArgValue string `yaml:"parameter_value"`

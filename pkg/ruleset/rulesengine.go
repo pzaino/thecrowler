@@ -47,7 +47,7 @@ func NewRuleEngine(schemaPath string, rulesets []Ruleset) *RuleEngine {
 				MaybeThreshold:    5.0,
 				DetectedThreshold: 10.0,
 			},
-			Cache: RulesetCache{
+			Cache: Cache{
 				Mu:               sync.RWMutex{},
 				IsInvalid:        false,
 				RuleGroups:       nil,
@@ -93,7 +93,7 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 				MaybeThreshold:    5.0,
 				DetectedThreshold: 10.0,
 			},
-			Cache: RulesetCache{
+			Cache: Cache{
 				Mu:               sync.RWMutex{},
 				IsInvalid:        false,
 				RuleGroups:       nil,
@@ -116,7 +116,7 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 			MaybeThreshold:    5.0,
 			DetectedThreshold: 10.0,
 		},
-		Cache: RulesetCache{
+		Cache: Cache{
 			Mu:               sync.RWMutex{},
 			IsInvalid:        false,
 			RuleGroups:       nil,
