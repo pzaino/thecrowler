@@ -42,10 +42,14 @@ PLATFORM="linux/amd64"
 POSTGRES_IMAGE=""
 
 # Set the Selenium version and build ID
-export SELENIUM_VER_NUM="4.18.1"
-export SELENIUM_BUILDID="20240224"
-#export SELENIUM_VER_NUM="4.20.0"
-#export SELENIUM_BUILDID="20240428"
+# Get latest version from https://github.com/SeleniumHQ/docker-selenium/
+# Tested through 4.18.1
+#export SELENIUM_VER_NUM="4.18.1"
+#export SELENIUM_BUILDID="20240124"
+# Latest version:
+export SELENIUM_VER_NUM="4.24.0"
+export SELENIUM_BUILDID="20240830"
+
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
 # Generate a Docker image name for today's build (that we are about to do)
@@ -96,28 +100,36 @@ mkdir -p ./Rbee/pkg
 cd ./docker-selenium || exit 1
 git checkout "${SELENIUM_RELEASE}"
 git pull origin "${SELENIUM_RELEASE}"
-# patch Selenium Dockefile and start-selenium-standalone.sh files:
-cp ../selenium-patches/Dockerfile ./Standalone/Dockerfile
-if [ "$PLATFORM" == "linux/arm64/v8" ];
+# Check if we have patches for this Selenium image version
+if [ -d "../selenium-patches/${SELENIUM_VER_NUM}" ];
 then
-    # We need to patch the Dockerfile_Base file for ARM64
-    patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
-    echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
-    if [ -f "../selenium-patches/${patch_file}" ];
+    echo "Found patches for Selenium version ${SELENIUM_VER_NUM}"
+    # patch Selenium Dockefile and start-selenium-standalone.sh files:
+    cp ../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile ./Standalone/Dockerfile
+    if [ "$PLATFORM" == "linux/arm64/v8" ];
     then
-        pushd ./Base || exit 1
-        cp "../../selenium-patches/${patch_file}" "./${patch_file}"
-        if patch Dockerfile ./${patch_file}; then
-            echo "Patch applied successfully."
+        # We need to patch the Dockerfile_Base file for ARM64
+        patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
+        echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
+        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+        then
+            pushd ./Base || exit 1
+            cp "../../selenium-patches/${patch_file}" "./${patch_file}"
+            if patch Dockerfile ./${patch_file}; then
+                echo "Patch applied successfully."
+            else
+                echo "Failed to apply patch."
+                exit 1
+            fi
+            popd || exit 1
         else
-            echo "Failed to apply patch."
-            exit 1
+            echo "No architecture patch file found for ${patch_file}, skipping patching."
         fi
-        popd || exit 1
-    else
-        echo "No patch file found for ${patch_file}, skipping patching."
     fi
+else
+    echo "No patches found for Selenium version ${SELENIUM_VER_NUM}, skipping..."
 fi
+
 # Add Rbee to the Selenium image
 cp -r ../Rbee ./Standalone/
 cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomation.conf
