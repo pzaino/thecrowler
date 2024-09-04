@@ -18,6 +18,7 @@ package fingerprints
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"strconv"
 	"strings"
 )
 
@@ -32,9 +33,8 @@ type JA4 struct {
 	ALPN                []string
 }
 
-// Compute computes the JA4 fingerprint of a given TLS data string.
-// The data string should be constructed from the TLS handshake fields relevant to JA4.
-func (j JA4) Compute(data string) string {
+// Generic compute function to compute the JA4 fingerprint of a given TLS data string.
+func compute(data string) string {
 	// Split data string to retrieve all fields
 	fields := strings.Split(data, ",")
 
@@ -45,6 +45,24 @@ func (j JA4) Compute(data string) string {
 	// Compute the MD5 hash of the joined fields
 	hash := md5.Sum([]byte(fingerprint))
 	return hex.EncodeToString(hash[:])
+}
+
+// Compute computes the JA4 fingerprint of a given TLS data string.
+// The data string should be constructed from the TLS handshake fields relevant to JA4.
+func (j JA4) Compute(data string) string {
+	if data == "" {
+		// generate data using j's fields
+		data = strings.Join([]string{
+			strconv.Itoa(int(j.Version)),
+			strconv.Itoa(len(j.Ciphers)),
+			strconv.Itoa(len(j.Extensions)),
+			strconv.Itoa(len(j.SupportedGroups)),
+			strconv.Itoa(len(j.SignatureAlgorithms)),
+			j.SNI,
+			strconv.Itoa(len(j.ALPN)),
+		}, ",")
+	}
+	return compute(data)
 }
 
 // JA4S implements the Fingerprint interface for JA4S fingerprints.
@@ -61,13 +79,17 @@ type JA4S struct {
 // Compute computes the JA4S fingerprint of a given TLS data string.
 // The data string should be constructed from the TLS server handshake fields.
 func (j JA4S) Compute(data string) string {
-	// Similar approach as JA4, handle server-specific fields here
-	fields := strings.Split(data, ",")
-
-	// Construct the fingerprint string using relevant server fields
-	fingerprint := strings.Join(fields, ",")
-
-	// Compute the MD5 hash of the fingerprint
-	hash := md5.Sum([]byte(fingerprint))
-	return hex.EncodeToString(hash[:])
+	if data == "" {
+		// generate data using j's fields
+		data = strings.Join([]string{
+			strconv.Itoa(int(j.Version)),
+			strconv.Itoa(len(j.Ciphers)),
+			strconv.Itoa(len(j.Extensions)),
+			strconv.Itoa(len(j.SupportedGroups)),
+			strconv.Itoa(len(j.SignatureAlgorithms)),
+			j.SNI,
+			strconv.Itoa(len(j.ALPN)),
+		}, ",")
+	}
+	return compute(data)
 }
