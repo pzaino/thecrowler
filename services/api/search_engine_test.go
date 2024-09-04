@@ -9,23 +9,23 @@ import (
 func TestTokenize(t *testing.T) {
 	tests := []struct {
 		input  string
-		output Tokens
+		output tokens
 	}{
 		{
 			input:  `field1:value1 field2:value2`,
-			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value2", tType: "0"}},
+			output: tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value2", tType: "0"}},
 		},
 		{
 			input:  `field1:\"value 1\" field2:\"value 2\"`,
-			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "\"value", tType: "0"}, {tValue: "1\"", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "\"value", tType: "0"}, {tValue: "2\"", tType: "0"}},
+			output: tokens{{tValue: "field1:", tType: "0"}, {tValue: "\"value", tType: "0"}, {tValue: "1\"", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "\"value", tType: "0"}, {tValue: "2\"", tType: "0"}},
 		},
 		{
 			input:  `field1:value1 | field2:value2 & field3:value3`,
-			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "|", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value2", tType: "0"}, {tValue: "&", tType: "0"}, {tValue: "field3:", tType: "0"}, {tValue: "value3", tType: "0"}},
+			output: tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "|", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value2", tType: "0"}, {tValue: "&", tType: "0"}, {tValue: "field3:", tType: "0"}, {tValue: "value3", tType: "0"}},
 		},
 		{
 			input:  `field1:value1 | field2:"value 2" & field3:value3`,
-			output: Tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "|", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value 2", tType: "0"}, {tValue: "&", tType: "0"}, {tValue: "field3:", tType: "0"}, {tValue: "value3", tType: "0"}},
+			output: tokens{{tValue: "field1:", tType: "0"}, {tValue: "value1", tType: "0"}, {tValue: "|", tType: "0"}, {tValue: "field2:", tType: "0"}, {tValue: "value 2", tType: "0"}, {tValue: "&", tType: "0"}, {tValue: "field3:", tType: "0"}, {tValue: "value3", tType: "0"}},
 		},
 	}
 

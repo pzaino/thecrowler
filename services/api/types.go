@@ -37,11 +37,13 @@ type ConsoleResponse struct {
 	Message string `json:"message"`
 }
 
+// StatusResponse represents the structure of the status response
 type StatusResponse struct {
 	Message string              `json:"message"`
 	Items   []StatusResponseRow `json:"items"`
 }
 
+// StatusResponseRow represents the structure of the status response row
 type StatusResponseRow struct {
 	SourceID      uint64           `json:"source_id"`
 	URL           sql.NullString   `json:"url"`
@@ -170,6 +172,7 @@ type ScreenshotResponse struct {
 	Offset        int    `json:"offset"` // Offset of results
 }
 
+// NetInfoRow represents the structure of the network information response
 type NetInfoRow struct {
 	CreatedAt     string       `json:"created_at"`
 	LastUpdatedAt string       `json:"last_updated_at"`
@@ -196,6 +199,7 @@ func (r *NetInfoResponse) isEmpty() bool {
 	return len(r.Items) == 0
 }
 
+// HTTPInfoRow represents the structure of the HTTP information response
 type HTTPInfoRow struct {
 	CreatedAt     string            `json:"created_at"`
 	LastUpdatedAt string            `json:"last_updated_at"`
@@ -223,6 +227,7 @@ type WebObjectRequest struct {
 	URL string `json:"url"`
 }
 
+// WebObjectResponse represents the structure of the WebObject response
 type WebObjectResponse struct {
 	Kind string `json:"kind"` // Identifier of the API's service
 	URL  struct {
@@ -238,6 +243,7 @@ type WebObjectResponse struct {
 	Items []WebObjectRow `json:"items"`
 }
 
+// WebObjectRow represents the structure of the WebObject response
 type WebObjectRow struct {
 	CreatedAt     string                   `json:"created_at"`
 	LastUpdatedAt string                   `json:"last_updated_at"`
@@ -370,6 +376,7 @@ func (r *WebObjectResponse) Populate(data []byte) error {
 	return nil
 }
 
+// IsEmpty returns true if the response is empty
 func (r *CorrelatedSitesResponse) IsEmpty() bool {
 	return len(r.Items) == 0
 }
@@ -411,6 +418,7 @@ func (r *SearchResult) Populate(data []byte) error {
 	return nil
 }
 
+// GetQueryTemplate returns the query template for the given kind, version, and method
 func GetQueryTemplate(kind string, version string, method string) string {
 	if method == "GET" {
 		return fmt.Sprintf("%s http(s)://%s/%s/%s?q={q}", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)

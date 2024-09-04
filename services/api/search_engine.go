@@ -35,12 +35,14 @@ const (
 	sqlQueryLabel       = "SQL query: %s"
 	sqlQueryParamsLabel = "SQL params: %v"
 	dbConnErrorLabel    = "Error connecting to the database: %v"
-	SearchLabel         = "Performing search for: %s"
+	searchLabel         = "Performing search for: %s"
 	noQueryProvided     = "no query provided"
 	queryExecTime       = "Query execution time: %v"
 	dataEncapTime       = "Data encapsulation execution time: %v"
 )
 
+// SearchResult represents the result of a processed search query.
+// (Please note: NOT the result of the search itself)
 type SearchQuery struct {
 	sqlQuery  string
 	sqlParams []interface{}
@@ -71,13 +73,16 @@ type SearchQuery struct {
 	);
 */
 
-type Tokens []Token
+// tokens is a slice of tokens
+type tokens []token
 
-type Token struct {
+// token represents a single token in the query
+type token struct {
 	tValue string
 	tType  string
 }
 
+// Details represents the details of the query
 type Details struct {
 	Path  []string
 	Value string
@@ -85,8 +90,8 @@ type Details struct {
 
 // tokenize splits the input string into tokens.
 // following the "dorking" query language's rules.
-func tokenize(input string) Tokens {
-	var tokens Tokens
+func tokenize(input string) tokens {
+	var tokens tokens
 	var currentToken strings.Builder
 
 	inQuotes := false
@@ -128,39 +133,39 @@ func tokenize(input string) Tokens {
 }
 
 // toggleQuotes toggles the inQuotes flag and appends the current token to the tokens slice.
-func toggleQuotes(inQuotes bool, tokens *Tokens, currentToken *strings.Builder) bool {
+func toggleQuotes(inQuotes bool, tokens *tokens, currentToken *strings.Builder) bool {
 	inQuotes = !inQuotes
 	if !inQuotes {
-		*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: "0"})
+		*tokens = append(*tokens, token{tValue: currentToken.String(), tType: "0"})
 		currentToken.Reset()
 	}
 	return inQuotes
 }
 
 // completeFieldSpecifier appends the current token to the tokens slice and adds a colon.
-func completeFieldSpecifier(tokens *Tokens, currentToken *strings.Builder, specType int) {
+func completeFieldSpecifier(tokens *tokens, currentToken *strings.Builder, specType int) {
 	if currentToken.Len() > 0 {
-		*tokens = append(*tokens, Token{tValue: currentToken.String() + ":", tType: strconv.Itoa(specType)})
+		*tokens = append(*tokens, token{tValue: currentToken.String() + ":", tType: strconv.Itoa(specType)})
 		currentToken.Reset()
 	}
 }
 
 // handleSpace appends the current token to the tokens slice.
-func handleSpace(tokens *Tokens, currentToken *strings.Builder) {
+func handleSpace(tokens *tokens, currentToken *strings.Builder) {
 	if currentToken.Len() > 0 {
-		*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: "0"})
+		*tokens = append(*tokens, token{tValue: currentToken.String(), tType: "0"})
 		currentToken.Reset()
 	}
 }
 
 // handlePipeAnd appends the current token to the tokens slice and adds the pipe (|) or and (&) operator.
-func handlePipeAnd(tokens *Tokens, currentToken *strings.Builder, r rune, specType int) {
+func handlePipeAnd(tokens *tokens, currentToken *strings.Builder, r rune, specType int) {
 	if currentToken.Len() > 0 {
 		if currentToken.String() != "|" && currentToken.String() != "&" {
-			*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: "0"})
+			*tokens = append(*tokens, token{tValue: currentToken.String(), tType: "0"})
 			currentToken.Reset()
 		} else {
-			*tokens = append(*tokens, Token{tValue: currentToken.String() + string(r), tType: strconv.Itoa(specType)})
+			*tokens = append(*tokens, token{tValue: currentToken.String() + string(r), tType: strconv.Itoa(specType)})
 			currentToken.Reset()
 			return
 		}
@@ -169,9 +174,9 @@ func handlePipeAnd(tokens *Tokens, currentToken *strings.Builder, r rune, specTy
 }
 
 // handleRemainingToken appends the current token to the tokens slice.
-func handleRemainingToken(tokens *Tokens, currentToken *strings.Builder, specType int) {
+func handleRemainingToken(tokens *tokens, currentToken *strings.Builder, specType int) {
 	if currentToken.Len() > 0 {
-		*tokens = append(*tokens, Token{tValue: currentToken.String(), tType: strconv.Itoa(specType)})
+		*tokens = append(*tokens, token{tValue: currentToken.String(), tType: strconv.Itoa(specType)})
 	}
 }
 
@@ -415,7 +420,7 @@ func performSearch(query string) (SearchResult, error) {
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Prepare the query body
 	var queryBody string
@@ -523,7 +528,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
@@ -704,7 +709,7 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
@@ -889,7 +894,7 @@ func performCorrelatedSitesSearch(query string, qType int) (CorrelatedSitesRespo
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
@@ -1111,7 +1116,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
@@ -1290,7 +1295,7 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	}
 	defer db.Close()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, SearchLabel, query)
+	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
 	var sqlQuery string
