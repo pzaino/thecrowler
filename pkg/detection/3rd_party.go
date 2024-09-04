@@ -70,14 +70,14 @@ func trdPRequestInfo(reqInfo *trdPRequest) (map[string]interface{}, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error scanning with AbuseIPDB: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error scanning with %s: %v", reqInfo.Provider, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error reading response body: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Error reading response body for %s: %v", reqInfo.Provider, err)
 		return nil, err
 	}
 
