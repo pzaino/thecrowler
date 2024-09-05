@@ -7,6 +7,21 @@ else
     state_up="build"
 fi
 
+# Support functions
+
+version_to_integer() {
+    local version=$1
+    local padded_version=""
+    IFS='.' read -ra parts <<< "$version" # Split version by '.'
+    for part in "${parts[@]}"; do
+        # Pad each part with leading zero if necessary (e.g., 4 becomes 04)
+        # Remove leading zero padding for integer comparison
+        padded_version+=$(printf "%02d" "$part")
+    done
+    # Remove any leading zeros to prevent octal interpretation
+    echo "$((10#$padded_version))"
+}
+
 # Check for mandatory settings
 
 # shellcheck disable=SC2153
@@ -84,6 +99,12 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
     #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
     SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
+    TARGET_VER_INT=$(version_to_integer "4.24.0")
+    # shellcheck disable=SC2086
+    if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
+        SELENIUM_IMAGE="seleniarm/standalone-firefox:${SELENIUM_PROD_RELESE}"
+    fi
 fi
 export PLATFORMS=$PLATFORM
 
@@ -162,14 +183,21 @@ cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomatio
 # build Selenium image
 if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     # Google chrome is not yet supported officially on ARM64
-    # make standalone_firefox
-    make standalone_chromium
+    SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
+    TARGET_VER_INT=$(version_to_integer "4.24.0")
+    # shellcheck disable=SC2086
+    if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
+        make standalone_firefox
+    else
+        make standalone_chromium
+    fi
 else
     make standalone_chrome
 fi
 
 # Run Docker Compose
-docker-compose ${state_up} --build
+# shellcheck disable=SC2086
+docker-compose ${state_up}
 rval=$?
 if [ $rval -ne 0 ]; then
     echo "Failed to build the Docker containers"
