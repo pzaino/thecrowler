@@ -1,5 +1,12 @@
 #!/bin/bash
 
+state_up="$1"
+if [ "${state_up}" = "up" ] || [ "${state_up}" = "run" ]; then
+    state_up="up --build"
+else
+    state_up="build"
+fi
+
 # Check for mandatory settings
 
 # shellcheck disable=SC2153
@@ -46,9 +53,15 @@ POSTGRES_IMAGE=""
 # Tested through 4.18.1
 #export SELENIUM_VER_NUM="4.18.1"
 #export SELENIUM_BUILDID="20240124"
+# Tested through 4.19.1
+#export SELENIUM_VER_NUM="4.19.1"
+#export SELENIUM_BUILDID="20240402"
+# Tested through 4.20.0
+export SELENIUM_VER_NUM="4.20.0"
+export SELENIUM_BUILDID="20240425"
 # Latest version:
-export SELENIUM_VER_NUM="4.24.0"
-export SELENIUM_BUILDID="20240830"
+#export SELENIUM_VER_NUM="4.24.0"
+#export SELENIUM_BUILDID="20240830"
 
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
@@ -69,7 +82,8 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     PLATFORM="linux/arm64/v8"
     POSTGRES_IMAGE="arm64v8/"
     #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
-    SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
+    #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
+    SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
 fi
 export PLATFORMS=$PLATFORM
 
@@ -106,6 +120,17 @@ then
     echo "Found patches for Selenium version ${SELENIUM_VER_NUM}"
     # patch Selenium Dockefile and start-selenium-standalone.sh files:
     cp ../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile ./Standalone/Dockerfile
+    # Check if there is a Makefile patch
+    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch" ];
+    then
+        cp ../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch ./Makefile-fixed.patch
+        if patch Makefile ./Makefile-fixed.patch; then
+            echo "Makefile patch applied successfully."
+        else
+            echo "Failed to apply Makefile patch."
+            exit 1
+        fi
+    fi
     if [ "$PLATFORM" == "linux/arm64/v8" ];
     then
         # We need to patch the Dockerfile_Base file for ARM64
@@ -137,10 +162,16 @@ cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomatio
 # build Selenium image
 if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     # Google chrome is not yet supported officially on ARM64
-    make standalone_firefox
+    # make standalone_firefox
+    make standalone_chromium
 else
     make standalone_chrome
 fi
 
 # Run Docker Compose
-docker-compose up --build
+docker-compose ${state_up} --build
+rval=$?
+if [ $rval -ne 0 ]; then
+    echo "Failed to build the Docker containers"
+    exit 1
+fi

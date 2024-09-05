@@ -1,5 +1,7 @@
 #!/bin/bash
 
+state_up="$1"
+
 # Stop and remove containers, networks, and volumes
 docker-compose down -v
 
@@ -7,4 +9,5 @@ docker-compose down -v
 docker image prune -a -f
 
 # Rebuild and start containers
-./docker-build.sh
+./docker-build.sh "${state_up}"
+
