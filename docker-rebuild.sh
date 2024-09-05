@@ -1,6 +1,7 @@
 #!/bin/bash
 
-state_up="$1"
+# shellcheck disable=SC2124
+pars="$@"
 
 # Stop and remove containers, networks, and volumes
 docker-compose down -v
@@ -9,5 +10,4 @@ docker-compose down -v
 docker image prune -a -f
 
 # Rebuild and start containers
-./docker-build.sh "${state_up}"
-
+./docker-build.sh "${pars}"

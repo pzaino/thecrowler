@@ -1,12 +1,13 @@
 ARG NAMESPACE=selenium
 ARG VERSION=latest
 ARG BASE=node-base
-FROM ${NAMESPACE}/${BASE}:${VERSION}
+#FROM ${NAMESPACE}/${BASE}:${VERSION}
 ARG AUTHORS
-LABEL authors=${AUTHORS}
+#LABEL authors=${AUTHORS}
 
 # Build the extra browser Automation for the CROWler
 FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder
+LABEL authors=${AUTHORS}
 
 USER root
 

@@ -1,10 +1,11 @@
-ARG NAMESPACE
+ARG NAMESPACE=selenium
 ARG VERSION
-ARG AUTHORS
-ARG BASE
+ARG BASE=node-base
+ARG AUTHORS=zfpsystems
 
 # Build the extra browser Automation for the CROWler
 FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder
+LABEL authors=${AUTHORS}
 
 USER root
 

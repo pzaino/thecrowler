@@ -1,10 +1,16 @@
 #!/bin/bash
 
-state_up="$1"
-if [ "${state_up}" = "up" ] || [ "${state_up}" = "run" ]; then
+p1="$1"
+p2="$2"
+if [ "${p1}" = "up" ] || [ "${p1}" = "run" ] || [ "${p2}" = "up" ] || [ "${p2}" = "run" ]; then
     state_up="up --build"
 else
     state_up="build"
+fi
+if [ "${p1}" = "debug" ] || [ "${p2}" = "debug" ]; then
+    state_debug="--debug"
+else
+    state_debug=""
 fi
 
 # Support functions
@@ -103,7 +109,7 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     TARGET_VER_INT=$(version_to_integer "4.24.0")
     # shellcheck disable=SC2086
     if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
-        SELENIUM_IMAGE="seleniarm/standalone-firefox:${SELENIUM_PROD_RELESE}"
+        SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
     fi
 fi
 export PLATFORMS=$PLATFORM
@@ -160,7 +166,7 @@ then
         if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
         then
             pushd ./Base || exit 1
-            cp "../../selenium-patches/${patch_file}" "./${patch_file}"
+            cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
             if patch Dockerfile ./${patch_file}; then
                 echo "Patch applied successfully."
             else
@@ -197,7 +203,7 @@ fi
 
 # Run Docker Compose
 # shellcheck disable=SC2086
-docker-compose ${state_up}
+docker-compose ${state_up} ${state_debug}
 rval=$?
 if [ $rval -ne 0 ]; then
     echo "Failed to build the Docker containers"

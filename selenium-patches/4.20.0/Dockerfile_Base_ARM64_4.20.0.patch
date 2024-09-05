@@ -1,0 +1,24 @@
+--- ./docker-selenium/Base/Dockerfile	2024-09-05 13:42:12
++++ ./docker-selenium/Base/Dockerfile_Base_ARM64_4.20.0	2024-09-05 13:44:36
+@@ -17,7 +17,7 @@
+ ARG GID=1201
+ ARG TZ="UTC"
+ ARG JRE_VERSION=17
+-ARG TARGETARCH=amd64
++ARG TARGETARCH=arm64
+ ARG TARGETVARIANT
+
+ USER root
+@@ -36,9 +36,9 @@
+ # Miscellaneous packages
+ # Includes minimal runtime used for executing non GUI Java programs
+ #========================
+-RUN  echo "deb http://archive.ubuntu.com/ubuntu jammy main universe\n" > /etc/apt/sources.list \
+-  && echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main universe\n" >> /etc/apt/sources.list \
+-  && echo "deb http://security.ubuntu.com/ubuntu jammy-security main universe\n" >> /etc/apt/sources.list \
++RUN  echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main universe\n" > /etc/apt/sources.list \
++  && echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe\n" >> /etc/apt/sources.list \
++  && echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-security main universe\n" >> /etc/apt/sources.list \
+   && apt-get -qqy update \
+   && apt-get upgrade -yq \
+   && apt-get -qqy --no-install-recommends install \

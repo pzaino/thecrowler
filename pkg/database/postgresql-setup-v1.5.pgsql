@@ -1449,7 +1449,22 @@ $$
 LANGUAGE plpgsql;
 
 -- Creates a new user
-CREATE USER :CROWLER_DB_USER WITH ENCRYPTED PASSWORD :'CROWLER_DB_PASSWORD';
+CREATE OR REPLACE FUNCTION manage_user(crowler_db_user text, crowler_db_password text)
+RETURNS void AS
+$$
+BEGIN
+   -- Check if the user already exists
+   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = crowler_db_user) THEN
+      -- If the user exists, alter the user and change the password
+      EXECUTE 'ALTER USER ' || crowler_db_user || ' WITH ENCRYPTED PASSWORD ' || quote_literal(crowler_db_password);
+   ELSE
+      -- If the user does not exist, create the user
+      EXECUTE 'CREATE USER ' || crowler_db_user || ' WITH ENCRYPTED PASSWORD ' || quote_literal(crowler_db_password);
+   END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT manage_user(:'CROWLER_DB_USER', :'CROWLER_DB_PASSWORD');
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 GRANT CONNECT ON DATABASE :"POSTGRES_DB" TO :CROWLER_DB_USER;
