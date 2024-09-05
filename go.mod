@@ -25,7 +25,7 @@ require (
 	github.com/evanw/esbuild v0.23.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.26.0
+	golang.org/x/crypto v0.27.0
 )
 
 require golang.org/x/sync v0.8.0 // indirect
@@ -46,7 +46,7 @@ require (
 
 require (
 	github.com/google/go-cmp v0.6.0
-	golang.org/x/sys v0.23.0 // indirect
+	golang.org/x/sys v0.25.0 // indirect
 )
 
 require (
@@ -55,6 +55,6 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.28.0
-	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/net v0.29.0
+	golang.org/x/text v0.18.0 // indirect
 )
