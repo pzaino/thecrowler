@@ -1,0 +1,24 @@
+--- Dockerfile	2024-04-29 20:55:19
++++ Dockerfile_patched	2024-04-29 20:54:54
+@@ -19,9 +19,9 @@
+ #================================================
+ # Customize sources for apt-get
+ #================================================
+-RUN  echo "deb http://archive.ubuntu.com/ubuntu jammy main universe\n" > /etc/apt/sources.list \
+-  && echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main universe\n" >> /etc/apt/sources.list \
+-  && echo "deb http://security.ubuntu.com/ubuntu jammy-security main universe\n" >> /etc/apt/sources.list
++RUN  echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main universe\n" > /etc/apt/sources.list \
++  && echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe\n" >> /etc/apt/sources.list \
++  && echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-security main universe\n" >> /etc/apt/sources.list
+
+ # No interactive frontend during docker build
+ ENV DEBIAN_FRONTEND=noninteractive \
+@@ -48,7 +48,7 @@
+     gnupg2 \
+     libnss3-tools \
+   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+-  && sed -i 's/securerandom\.source=file:\/dev\/random/securerandom\.source=file:\/dev\/urandom/' ./usr/lib/jvm/java-11-openjdk-amd64/conf/security/java.security
++  && sed -i 's/securerandom\.source=file:\/dev\/random/securerandom\.source=file:\/dev\/urandom/' ./usr/lib/jvm/java-11-openjdk-arm64/conf/security/java.security
+
+ #===================
+ # Timezone settings

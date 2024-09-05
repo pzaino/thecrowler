@@ -1,4 +1,5 @@
-version: '3.8'
+---
+#version: '3.8'
 services:
   crowler_db:
     container_name: crowler_db
