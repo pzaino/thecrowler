@@ -108,16 +108,17 @@ CHROME_DRIVER_PATH_PROPERTY=-Dwebdriver.chrome.driver=/usr/bin/chromedriver
 EDGE_DRIVER_PATH_PROPERTY=-Dwebdriver.edge.driver=/usr/bin/msedgedriver
 GECKO_DRIVER_PATH_PROPERTY=-Dwebdriver.gecko.driver=/usr/bin/geckodriver
 
-java "${JAVA_OPTS:-$SE_JAVA_OPTS}" \
-  "${CHROME_DRIVER_PATH_PROPERTY}" \
-  "${EDGE_DRIVER_PATH_PROPERTY}" \
-  "${GECKO_DRIVER_PATH_PROPERTY}" \
+# shellcheck disable=SC2086
+java ${JAVA_OPTS:-$SE_JAVA_OPTS} \
+  ${CHROME_DRIVER_PATH_PROPERTY} \
+  ${EDGE_DRIVER_PATH_PROPERTY} \
+  ${GECKO_DRIVER_PATH_PROPERTY} \
   -jar /opt/selenium/selenium-server.jar \
-  "${EXTRA_LIBS}" standalone \
-  --session-request-timeout "${SE_SESSION_REQUEST_TIMEOUT}" \
-  --session-retry-interval "${SE_SESSION_RETRY_INTERVAL}" \
-  --healthcheck-interval "${SE_HEALTHCHECK_INTERVAL}" \
-  --bind-host "${SE_BIND_HOST}" \
+  ${EXTRA_LIBS} standalone \
+  --session-request-timeout ${SE_SESSION_REQUEST_TIMEOUT} \
+  --session-retry-interval ${SE_SESSION_RETRY_INTERVAL} \
+  --healthcheck-interval ${SE_HEALTHCHECK_INTERVAL} \
+  --bind-host ${SE_BIND_HOST} \
   --config /opt/selenium/config.toml \
-  "${SUB_PATH_CONFIG}" \
-  "${SE_OPTS}"
+  ${SUB_PATH_CONFIG} \
+  ${SE_OPTS}
