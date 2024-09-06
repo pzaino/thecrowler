@@ -1,9 +1,10 @@
 module github.com/pzaino/thecrowler
 
 go 1.22.5
+toolchain go1.23.1
 
 require (
-	github.com/PuerkitoBio/goquery v1.9.2
+	github.com/PuerkitoBio/goquery v1.10.0
 	github.com/antchfx/htmlquery v1.3.2
 	github.com/aws/aws-sdk-go v1.55.5
 	github.com/lib/pq v1.10.9
