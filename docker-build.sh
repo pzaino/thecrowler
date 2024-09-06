@@ -78,8 +78,14 @@ POSTGRES_IMAGE=""
 #export SELENIUM_VER_NUM="4.19.1"
 #export SELENIUM_BUILDID="20240402"
 # Tested through 4.20.0
-export SELENIUM_VER_NUM="4.20.0"
-export SELENIUM_BUILDID="20240425"
+#export SELENIUM_VER_NUM="4.20.0"
+#export SELENIUM_BUILDID="20240425"
+# Tested through 4.21.0
+#export SELENIUM_VER_NUM="4.21.0"
+#export SELENIUM_BUILDID="20240522"
+# Tested through 4.23.1
+export SELENIUM_VER_NUM="4.23.1"
+export SELENIUM_BUILDID="20240813"
 # Latest version:
 #export SELENIUM_VER_NUM="4.24.0"
 #export SELENIUM_BUILDID="20240830"
@@ -104,9 +110,10 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     POSTGRES_IMAGE="arm64v8/"
     #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
     #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
-    SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELESE}"
     SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-    TARGET_VER_INT=$(version_to_integer "4.24.0")
+    TARGET_VER_INT=$(version_to_integer "4.21.0")
     # shellcheck disable=SC2086
     if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
         SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
@@ -158,24 +165,41 @@ then
             exit 1
         fi
     fi
-    if [ "$PLATFORM" == "linux/arm64/v8" ];
+
+    # check if there is a `noarch` Base patch first:
+    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Base_noarch_${SELENIUM_VER_NUM}.patch" ];
     then
-        # We need to patch the Dockerfile_Base file for ARM64
-        patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
-        echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
-        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
-        then
-            pushd ./Base || exit 1
-            cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
-            if patch Dockerfile ./${patch_file}; then
-                echo "Patch applied successfully."
-            else
-                echo "Failed to apply patch."
-                exit 1
-            fi
-            popd || exit 1
+        pushd ./Base || exit 1
+        cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Base_noarch_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Base.patch"
+        if patch Dockerfile ./Dockerfile_Base.patch; then
+            echo "Base patch applied successfully."
         else
-            echo "No architecture patch file found for ${patch_file}, skipping patching."
+            echo "Failed to apply Base patch."
+            exit 1
+        fi
+        popd || exit 1
+    else
+        # We have no noarch patch (for this version),
+        # check if we have an architecture specific patch then
+        if [ "$PLATFORM" == "linux/arm64/v8" ];
+        then
+            # We need to patch the Dockerfile_Base file for ARM64
+            patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
+            echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
+            if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+            then
+                pushd ./Base || exit 1
+                cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
+                if patch Dockerfile ./${patch_file}; then
+                    echo "Patch applied successfully."
+                else
+                    echo "Failed to apply patch."
+                    exit 1
+                fi
+                popd || exit 1
+            else
+                echo "No architecture patch file found for ${patch_file}, skipping patching."
+            fi
         fi
     fi
 else
@@ -190,7 +214,7 @@ cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomatio
 if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     # Google chrome is not yet supported officially on ARM64
     SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-    TARGET_VER_INT=$(version_to_integer "4.24.0")
+    TARGET_VER_INT=$(version_to_integer "4.21.0")
     # shellcheck disable=SC2086
     if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
         make standalone_firefox

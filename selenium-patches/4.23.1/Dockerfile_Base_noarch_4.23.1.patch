@@ -1,0 +1,26 @@
+--- ./selenium-patches/4.23.1/Dockerfile_Base_orig	2024-09-06 15:33:51
++++ ./selenium-patches/4.23.1/Dockerfile_Base_fixed	2024-09-06 17:47:32
+@@ -1,4 +1,4 @@
+-FROM ubuntu:noble-20240605
++FROM arm64v8/ubuntu:jammy-20240808
+ LABEL authors="Selenium <selenium-developers@googlegroups.com>"
+
+ # Arguments to define the version of dependencies to download
+@@ -40,13 +40,14 @@
+ # Includes minimal runtime used for executing non GUI Java programs
+ #========================
+ RUN  if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+-      echo "deb http://archive.ubuntu.com/ubuntu noble main universe\n" > /etc/apt/sources.list \
+-      && echo "deb http://archive.ubuntu.com/ubuntu noble-updates main universe\n" >> /etc/apt/sources.list \
+-      && echo "deb http://security.ubuntu.com/ubuntu noble-security main universe\n" >> /etc/apt/sources.list ; \
++      echo "deb http://archive.ubuntu.com/ubuntu jammy main universe\n" > /etc/apt/sources.list \
++      && echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main universe\n" >> /etc/apt/sources.list \
++      && echo "deb http://security.ubuntu.com/ubuntu jammy-security main universe\n" >> /etc/apt/sources.list ; \
+      fi \
+   && apt-get -qqy update \
+   && apt-get upgrade -yq \
+   && apt-get -qqy --no-install-recommends install \
++    base-files \
+     acl \
+     bzip2 \
+     ca-certificates \
