@@ -202,6 +202,28 @@ then
             fi
         fi
     fi
+
+    # Check if there are Chromium patches
+    if [ "$PLATFORM" == "linux/arm64/v8" ];
+    then
+        # We need to patch the Dockerfile_Base file for ARM64
+        patch_file="Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
+        echo "Patching Dockerfile in ./NodeChromium for ARM64: ${patch_file}"
+        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+        then
+            pushd ./NodeChromium || exit 1
+            cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
+            if patch Dockerfile ./${patch_file}; then
+                echo "Patch applied successfully."
+            else
+                echo "Failed to apply patch."
+                exit 1
+            fi
+            popd || exit 1
+        else
+            echo "No architecture patch file found for ${patch_file}, skipping patching."
+        fi
+    fi
 else
     echo "No patches found for Selenium version ${SELENIUM_VER_NUM}, skipping..."
 fi
