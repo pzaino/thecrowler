@@ -81,12 +81,12 @@ POSTGRES_IMAGE=""
 #export SELENIUM_VER_NUM="4.20.0"
 #export SELENIUM_BUILDID="20240425"
 # Tested through 4.21.0
-#export SELENIUM_VER_NUM="4.21.0"
-#export SELENIUM_BUILDID="20240522"
-# Tested through 4.23.1
-export SELENIUM_VER_NUM="4.23.1"
-export SELENIUM_BUILDID="20240813"
-# Latest version:
+export SELENIUM_VER_NUM="4.21.0"
+export SELENIUM_BUILDID="20240522"
+# (Not yet working!) 4.23.1
+#export SELENIUM_VER_NUM="4.23.1"
+#export SELENIUM_BUILDID="20240813"
+# (Not yet working!) 4.24.0
 #export SELENIUM_VER_NUM="4.24.0"
 #export SELENIUM_BUILDID="20240830"
 
