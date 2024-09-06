@@ -297,13 +297,13 @@ var (
 		},
 		"firefox": {
 			"browserName":   "firefox",
-			"initialWindow": browserStartMaxDefault,   // Start with a maximized window
-			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
-			"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
-			"extensions":    browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
-			"popups":        browserPopupsDefault,     // Disable pop-up blocking
-			"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
-			"javascript":    browserJSDefault,         // Enable JavaScript, which is typically enabled in real user browsers
+			"initialWindow": browserStartMaxDefault, // Start with a maximized window
+			//"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
+			//"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
+			"extensions": browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
+			"popups":     browserPopupsDefault,     // Disable pop-up blocking
+			//"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
+			"javascript": browserJSDefault, // Enable JavaScript, which is typically enabled in real user browsers
 		},
 		"chromium": {
 			"browserName":   "chromium",

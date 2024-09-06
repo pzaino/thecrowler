@@ -1,5 +1,11 @@
---- ./docker-selenium/Base/Dockerfile	2024-09-05 13:42:12
-+++ ./docker-selenium/Base/Dockerfile_Base_ARM64_4.20.0	2024-09-05 13:44:36
+--- ./docker-selenium/Base/Dockerfile	2024-09-06 00:44:57
++++ ./docker-selenium/Base/Dockerfile_Base_ARM64_4.20.0	2024-09-06 00:47:59
+@@ -1,4 +1,4 @@
+-FROM ubuntu:jammy-20240405
++FROM arm64v8/ubuntu:jammy-20240405
+ LABEL authors="Selenium <selenium-developers@googlegroups.com>"
+
+ # Arguments to define the version of dependencies to download
 @@ -17,7 +17,7 @@
  ARG GID=1201
  ARG TZ="UTC"
