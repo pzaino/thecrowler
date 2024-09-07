@@ -249,23 +249,26 @@ or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
 link [here (it's freely available to everyone)](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support)
 
 **Please Note(2)**: If you're running the CROWler on a Raspberry Pi, you'll
-need to build the CROWler with the `arm` platform. To do so, the easier way
+need to build the CROWler for the `arm64` platform. To do so, the easier way
 is to build the CROWler with the `docker-build.sh` script directly on the
 Raspberry Pi.
 
-**Please Note(3)**: If need to do a rebuild and want to clean up everything,
-run the following command:
+**Please Note(3)**: If you need to do a rebuild and want to clean up
+everything, run the following command:
+
+```bash
+./docker-rebuild.sh up
+```
+
+That will clean up, rebuild everything and start the containers.
 
 **Please Note(4)**: To build the CROWler VDI docker image, it's required to
 build also Selenium (don't worry everything is automatic), however you need
 to ensure that GNU Make is installed on your system. That is required to
 build selenium images (nothing to do with the CROWler itself).
 
-```bash
-./docker-rebuild.sh
-```
-
-This will clean up everything and rebuild the CROWler from scratch.
+If you use `docker-build` or `docker-rebuild`, don't worry dependencies are
+installed automatically.
 
 ### Usage
 
