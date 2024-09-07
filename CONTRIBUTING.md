@@ -47,9 +47,23 @@ On the **Mac**, you can install pre-commit using Homebrew:
 brew install pre-commit
 ```
 
-Once you have pre-commit installed, fork TheCROWler and clone it to your
-development machine. Then, in the root directory of the repository of the
-project, run the following command to install the pre-commit hooks:
+Another tool used locally is `golangci-lint`. To install it, run the following
+command:
+
+```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+And govulncheck:
+
+```bash
+go install github.com/ossf/govulncheck/cmd/govulncheck@latest
+```
+
+Once you have pre-commit (and the other dependencies) installed, fork TheCROWler
+and clone it to your development machine. Then, in the root directory of the
+repository of the project, run the following command to install the pre-commit
+hooks:
 
 ```bash
 pre-commit install
@@ -69,6 +83,47 @@ pre-commit run --all-files
 If you have all the dependencies installed, everything should pass. If not,
 you'll see a list of errors and warnings. You can install the dependencies
 by following the instructions in the error messages.
+
+## How the branches work in TheCROWler
+
+TheCROWler has two main branches:
+
+- `main`: This branch is the one that is used for the releases. It is the
+branch that contains the latest stable version of the code. Here stable
+means that the code has passed all the local tests and the CI/CD pipeline,
+and it's open for the community to run their own tests.
+- `develop`: This branch is the one that contains the latest changes that
+are being developed. It is the branch that is used to test new features and
+fixes before they are merged into the `main` branch. This branch is not
+stable and should not be used for production!
+
+All your changes should be based on the `develop` branch and then merged
+back into the `develop` branch when they are ready.
+
+In other words, the main is for users to test the code and the develop is
+for developers to test the integration of their code with the rest of the
+codebase.
+
+Every time we have a window of time where the code in develop passes all
+the tests, we merge it into the main branch opening a new test window for
+the community. This is the way we ensure that the code in the main branch
+is always stable.
+
+If we have a window of time (usually 2 to 4 weeks) and we are available to
+handle a new release, we tag a new release from the main branch.
+
+So, the CROWler supports both basically CI/CD and a more traditional release
+cycle. So users with complex environments can stick to a specific release
+until they are ready to move to the next one. While users with more DevOps
+orientated environments can use the main branch branch to test the latest
+stable changes which are continuously integrated and deployed.
+
+When you work on a new feature you should create a new branch from the
+`develop` branch. When you are ready to merge your changes back into the
+`develop` branch, you should create a pull request from your branch to the
+`develop` branch.
+
+## Here is the process for submitting a pull request
 
 We actively welcome your pull requests:
 
