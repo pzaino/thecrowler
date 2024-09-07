@@ -22,7 +22,7 @@ The following images will be built:
 
 Plus a set of "support" images, that are used to build the main images.
 
-## Build the CROWler docker images nd run them
+## Build the CROWler docker images and run them
 
 To build the CROWler docker images and run them, run the following command:
 
