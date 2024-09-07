@@ -47,9 +47,23 @@ On the **Mac**, you can install pre-commit using Homebrew:
 brew install pre-commit
 ```
 
-Once you have pre-commit installed, fork TheCROWler and clone it to your
-development machine. Then, in the root directory of the repository of the
-project, run the following command to install the pre-commit hooks:
+Another tool used locally is `golangci-lint`. To install it, run the following
+command:
+
+```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+And govulncheck:
+
+```bash
+go install github.com/ossf/govulncheck/cmd/govulncheck@latest
+```
+
+Once you have pre-commit (and the other dependencies) installed, fork TheCROWler
+and clone it to your development machine. Then, in the root directory of the
+repository of the project, run the following command to install the pre-commit
+hooks:
 
 ```bash
 pre-commit install
