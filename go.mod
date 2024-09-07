@@ -1,6 +1,6 @@
 module github.com/pzaino/thecrowler
 
-go 1.22.5
+go 1.23.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
