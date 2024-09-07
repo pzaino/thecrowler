@@ -117,7 +117,7 @@ window for the community. This is the way we ensure that the code in the
 If we have a window of time (usually 2 to 4 weeks) and we are available to
 handle a new release, we tag a new release from the main branch.
 
-So, the CROWler supports both basically CI/CD and a more traditional release
+So, the CROWler supports both basically, CI/CD and a more traditional release
 cycle. So users with complex environments can stick to a specific release
 until they are ready to move to the next one. While users with more DevOps
 orientated environments can use the main branch to test the latest
