@@ -100,14 +100,19 @@ stable and should not be used for production!
 All your changes should be based on the `develop` branch and then merged
 back into the `develop` branch when they are ready.
 
-In other words, the main is for users to test the code and the develop is
-for developers to test the integration of their code with the rest of the
-codebase.
+In other words, the `main` branch is for users to test the code and the
+`develop` branch is for developers to test the integration of their code
+with the rest of the codebase.
 
-Every time we have a window of time where the code in develop passes all
-the tests, we merge it into the main branch opening a new test window for
-the community. This is the way we ensure that the code in the main branch
-is always stable.
+Every time we have a window of time where the code in `develop` branch
+passes all the tests, we merge it into the main branch opening a new test
+window for the community. This is the way we ensure that the code in the
+ main branch is always stable. Basically the code has to pass:
+
+- All the local tests
+- The CI/CD pipeline
+- Be reviewed by at least one other developer to be merge in develop
+- Pass all CI/CD pipeline tests again to be merged in main
 
 If we have a window of time (usually 2 to 4 weeks) and we are available to
 handle a new release, we tag a new release from the main branch.
@@ -115,7 +120,7 @@ handle a new release, we tag a new release from the main branch.
 So, the CROWler supports both basically CI/CD and a more traditional release
 cycle. So users with complex environments can stick to a specific release
 until they are ready to move to the next one. While users with more DevOps
-orientated environments can use the main branch branch to test the latest
+orientated environments can use the main branch to test the latest
 stable changes which are continuously integrated and deployed.
 
 When you work on a new feature you should create a new branch from the
