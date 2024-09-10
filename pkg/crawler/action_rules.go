@@ -135,8 +135,10 @@ func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.We
 	// Execute the action based on the ActionType
 	if (len(r.Conditions) == 0) || checkActionConditions(ctx, r.Conditions, wd) {
 		switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
-		case "click":
-			return executeActionClick(r, wd)
+		case "click", "left_click":
+			return executeActionClick(r, wd, 0)
+		case "right_click":
+			return executeActionClick(r, wd, 2)
 		case "scroll":
 			return executeActionScroll(r, wd)
 		case "input_text":
@@ -449,7 +451,7 @@ func executeWaitCondition(ctx *ProcessContext, r *rules.WaitCondition, wd *selen
 }
 
 // executeActionClick is responsible for executing a "click" action
-func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver, button int) error {
 	var err error
 
 	// Find the element
@@ -457,6 +459,14 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
 		err = nil
+	}
+
+	// Set correct button for click
+	var buttonName string
+	if button == 0 {
+		buttonName = "click"
+	} else if button == 2 {
+		buttonName = "right_click"
 	}
 
 	// If the element is found, attempt to move the mouse and click using Rbee
@@ -483,7 +493,7 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
                         clickXhr.open("POST", "http://localhost:3000/v1/rb", true);
                         clickXhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
                         var clickData = JSON.stringify({
-                            "Action": "click"
+                            "Action": "%s" // Click or right_click
                         });
                         clickXhr.onreadystatechange = function () {
                             if (clickXhr.readyState === 4 && clickXhr.status === 200) {
@@ -502,7 +512,7 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
                 };
                 xhr.send(data);
             })();
-        `, loc.X, loc.Y)
+        `, loc.X, loc.Y, buttonName)
 
 		// Execute the JavaScript in the browser context
 		var success interface{}
@@ -515,7 +525,33 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver) error {
 		}
 
 		// Fall back to using Selenium's Click method
-		err = wdf.Click()
+		if button == 0 {
+			err = wdf.Click()
+		} else if button == 2 {
+			// Selenium does not support right_click directly so we use the following workaround
+			id, err := wdf.GetAttribute("id")
+			if err != nil {
+				id, err = wdf.GetAttribute("name")
+				if err != nil {
+					return err
+				}
+			}
+			script := `
+				var elem = document.getElementById('` + id + `');
+				var evt = new MouseEvent('contextmenu', {
+					bubbles: true,
+					cancelable: true,
+					clientX: elem.getBoundingClientRect().left,
+					clientY: elem.getBoundingClientRect().top,
+					view: window
+				});
+				elem.dispatchEvent(evt);
+			`
+			_, err = (*wd).ExecuteScript(script, nil)
+			if err != nil {
+				return fmt.Errorf("failed to right click on element: %v", err)
+			}
+		}
 		return err
 	}
 
