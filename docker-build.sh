@@ -1,17 +1,7 @@
 #!/bin/bash
 
-p1="$1"
-p2="$2"
-if [ "${p1}" = "up" ] || [ "${p1}" = "run" ] || [ "${p2}" = "up" ] || [ "${p2}" = "run" ]; then
-    state_up="up --build"
-else
-    state_up="build"
-fi
-if [ "${p1}" = "debug" ] || [ "${p2}" = "debug" ]; then
-    state_debug="--debug"
-else
-    state_debug=""
-fi
+# shellcheck disable=SC2124
+pars="$@"
 
 # Support functions
 
@@ -249,7 +239,7 @@ fi
 
 # Run Docker Compose
 # shellcheck disable=SC2086
-docker-compose ${state_up} ${state_debug}
+docker-compose ${pars}
 rval=$?
 if [ $rval -ne 0 ]; then
     echo "Failed to build the Docker containers"

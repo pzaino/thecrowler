@@ -1,33 +1,127 @@
-# docker_build
+# docker-build
 
-The manual build of the CROWler can be a complex activity, as it requires the installation of several dependencies and the configuration of the environment. To simplify this process, the `docker_build` script was created. This script is responsible for building the CROWler docker images and running them in separate containers.
+The manual build of the CROWler can be a complex activity, as it requires the
+ installation of several dependencies and the configuration of the environment.
+  To simplify this process, the `docker-build` script was created. This script
+   is responsible for building the CROWler docker images and running them in
+    separate containers.
 
-docker_build takes care of building the CROWler docker images using the config.yml file and determine the platform (x86_64 or ARM64) you want to use and configuring the build appropriately.
+docker-build takes care of building the CROWler docker images using the
+ config.yml file and determine the platform (x86_64 or ARM64) you want to use
+  and configuring the build appropriately.
+
+**Before you start**: There are a bunch of ENV variables you can set to
+customize the CROWler deployment. These ENV vars allow you to set up your
+username and password for the database, the database name, the port the API
+will listen on, etc.
+
+To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
+
+There are 3 ENV vars **you must set**, otherwise the CROWler won't build or
+work:
+
+- `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in
+the database (non-admin level).
+- `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in
+the database (admin level).
+- `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
+You normally set this one with the IP of the host where you're running the
+Postgres container.
+
+Once you've set your ENV vars, follow these steps:
 
 ## Build the CROWler docker images
 
-To build the CROWler docker images, run the following command:
+- Before you start, make sure the docker daemon is installed and running on
+ your machine.
 
-```bash
-./docker_build
-```
+- If you haven't yet, clone TheCrowler repository on your build machine
+   and `cd` into the root directory of the repository
 
-This command will build the CROWler docker images and tag them with the `crowler` prefix.
+- Next, run the following script to generate your specific Docker-compose
+  file:
 
-The following images will be built:
+  ```bash
+  ./scripts/generate-docker-compose.sh 1 1
+  ```
 
-- `crowler/crowler-engine`: The base image for the CROWler docker images.
-- `crowler/crowler-api`: The CROWler API image.
-- `crowler/crowler-vdi`: The CROWler Virtual Desktop Image.
+  This script will generate a docker-compose file that will be used to build
+  the CROWler docker images.
+  The two 1 1 arguments are used to specify that you want 1 single engine and 1
+  single VDI.
+  If you need to scale further use the appropriate number of engines and VDIs
+  (for example, 2 2 etc.).
 
-Plus a set of "support" images, that are used to build the main images.
+- Next generate your config.yml file based on your desired configuration.
+You can simply start from renaming config.default to config.yml and then
+ modify it according to your needs. If you are building multiple VDI's you
+  will need to add the appropriate number of VDI's to the config.yml and
+  their reachable ports (you can check your docker-compose for the ports).
+  If you need more info on the available options and how to configure them
+    please click [here](./config_yaml.md) for more details.
+
+- To build the CROWler docker images, run the following command:
+
+  ```bash
+  ./docker-build
+  ```
+
+  Please note that the `docker-build` script accepts the docker-compose
+  arguments, so it's a special wrapper that will ensure that the images are
+  configured and generated correctly and then call docker-compose.
+
+  `docker-build` will build the CROWler docker images and tag them with the `crowler` prefix.
+
+  The following images will be built:
+
+  - `crowler/crowler-engine`: The base image for the CROWler docker images.
+  - `crowler/crowler-api`: The CROWler API image.
+  - `crowler/crowler-vdi`: The CROWler Virtual Desktop Image.
+
+  Plus a set of "support" images, that are used to build the main images.
 
 ## Build the CROWler docker images and run them
 
-To build the CROWler docker images and run them, run the following command:
+To build the CROWler docker images and run them at once, follow the previous
+ procedure (it the same), and then run the following command instead of the
+  previous syntax for `docker-build`:
 
 ```bash
-./docker_build up
+./docker-build up --build
 ```
 
 This command will build the CROWler docker images and tag them with the `crowler` prefix, and then run them all into 3 separate containers.
+
+## Build the CROWler docker images and run them in detached mode
+
+To build the CROWler docker images and run them in detached mode, follow the
+ previous procedure (it the same), and then run the following command instead
+  of the previous syntax for `docker-build`:
+
+```bash
+./docker-build up --build -d
+```
+
+This command will build the CROWler docker images and tag them with the `crowler` prefix, and then run them all into 3 separate containers in detached mode.
+
+## Stop the CROWler docker containers
+
+To stop the CROWler docker containers, run the following command:
+
+```bash
+./docker-compose down
+```
+
+This command will stop and remove the CROWler docker containers.
+
+## Rebuild the CROWler docker images from clean
+
+To rebuild (for example after you've downloaded a new version of the CROWler
+ code) the CROWler docker images from scratch, run the following command:
+
+```bash
+./docker_rebuild up --build --no-cache
+```
+
+Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
+ the images are built from scratch.
