@@ -1,14 +1,14 @@
-# docker-build
+# Installation of the CROWler using Docker
 
 The manual build of the CROWler can be a complex activity, as it requires the
- installation of several dependencies and the configuration of the environment.
-  To simplify this process, the `docker-build` script was created. This script
-   is responsible for building the CROWler docker images and running them in
-    separate containers.
+installation of several dependencies and the configuration of the environment.
+To simplify this process, the `docker-build` script was created. This script
+is responsible for building the CROWler docker images and running them in
+separate containers.
 
 docker-build takes care of building the CROWler docker images using the
- config.yml file and determine the platform (x86_64 or ARM64) you want to use
-  and configuring the build appropriately.
+config.yml file and determine the platform (x86_64 or ARM64) you want to use
+and configuring the build appropriately.
 
 **Before you start**: There are a bunch of ENV variables you can set to
 customize the CROWler deployment. These ENV vars allow you to set up your
@@ -32,14 +32,17 @@ Once you've set your ENV vars, follow these steps:
 
 ## Build the CROWler docker images
 
-- Before you start, make sure the docker daemon is installed and running on
- your machine.
+- **Step 1**: Before you build, make sure the docker daemon is installed and
+ running on your machine.
 
-- If you haven't yet, clone TheCrowler repository on your build machine
-   and `cd` into the root directory of the repository
+- **Step 2**: If you haven't yet, clone TheCrowler repository on your build
+ machine and `cd` into the root directory of the repository
 
-- Next, run the following script to generate your specific Docker-compose
-  file:
+- **Step 3**: If you haven't yet, configure the ENV variables as described
+ above.
+
+- **Step 4**: Run the following command to generate your specific
+ Docker-compose file:
 
   ```bash
   ./scripts/generate-docker-compose.sh 1 1
@@ -50,17 +53,17 @@ Once you've set your ENV vars, follow these steps:
   The two 1 1 arguments are used to specify that you want 1 single engine and 1
   single VDI.
   If you need to scale further use the appropriate number of engines and VDIs
-  (for example, 2 2 etc.).
+  (for example, 2 2 etc).
 
-- Next generate your config.yml file based on your desired configuration.
-You can simply start from renaming config.default to config.yml and then
- modify it according to your needs. If you are building multiple VDI's you
-  will need to add the appropriate number of VDI's to the config.yml and
-  their reachable ports (you can check your docker-compose for the ports).
-  If you need more info on the available options and how to configure them
-    please click [here](./config_yaml.md) for more details.
+- **Step 5**: Generate your **config.yaml** file based on your desired
+ configuration. You can simply start from renaming config.default to
+ `config.yaml` and then modify it according to your needs. If you are building
+ multiple VDI's you will need to add the appropriate number of VDI's to the
+ `config.yaml` and their reachable ports (you can check your docker-compose for
+ the ports). If you need more info on the available options and how to
+ configure them please click [here](./config_yaml.md) for more details.
 
-- To build the CROWler docker images, run the following command:
+- **Step 6**: To build the CROWler docker images, run the following command:
 
   ```bash
   ./docker-build
@@ -70,7 +73,8 @@ You can simply start from renaming config.default to config.yml and then
   arguments, so it's a special wrapper that will ensure that the images are
   configured and generated correctly and then call docker-compose.
 
-  `docker-build` will build the CROWler docker images and tag them with the `crowler` prefix.
+  `docker-build` will build the CROWler docker images and tag them with the
+   `crowler` prefix.
 
   The following images will be built:
 
@@ -83,26 +87,29 @@ You can simply start from renaming config.default to config.yml and then
 ## Build the CROWler docker images and run them
 
 To build the CROWler docker images and run them at once, follow the previous
- procedure (it the same), and then run the following command instead of the
-  previous syntax for `docker-build`:
+ procedure (it the same), and replace Step 6 with executing the following
+  command instead of the previous syntax for `docker-build`:
 
 ```bash
 ./docker-build up --build
 ```
 
-This command will build the CROWler docker images and tag them with the `crowler` prefix, and then run them all into 3 separate containers.
+This command will build the CROWler docker images and then run them all into 3
+ separate containers.
 
 ## Build the CROWler docker images and run them in detached mode
 
 To build the CROWler docker images and run them in detached mode, follow the
- previous procedure (it the same), and then run the following command instead
-  of the previous syntax for `docker-build`:
+ [Build the CROWler images](#build-the-crowler-docker-images) procedure, it's
+  the same, and instead of Step 6, run the following command:
 
 ```bash
 ./docker-build up --build -d
 ```
 
-This command will build the CROWler docker images and tag them with the `crowler` prefix, and then run them all into 3 separate containers in detached mode.
+This command will build the CROWler docker images and tag them with the
+ `crowler` prefix, and then run them all into 3 separate containers in
+  detached mode.
 
 ## Stop the CROWler docker containers
 
@@ -124,4 +131,4 @@ To rebuild (for example after you've downloaded a new version of the CROWler
 ```
 
 Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
- the images are built from scratch.
+the images are built from scratch.
