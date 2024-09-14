@@ -28,7 +28,15 @@ the database (admin level).
 You normally set this one with the IP of the host where you're running the
 Postgres container.
 
-Once you've set your ENV vars, follow these steps:
+**Note**: If you rebuild the CROWler docker images often, you might want to
+set these ENV vars in your shell file called config.sh, and then source it
+before you execute the [Build the CROWler docker images](#build-the-crowler-docker-images)
+procedure. This way you don't have to set them every time you rebuild the
+CROWler docker images. Why config.sh? Because it's a file name already ignored
+by git (in the .gitignore file), so you can safely put your ENV vars in there
+without worrying about accidentally committing them to the repository.
+
+Once you've set your ENV vars, follow the procedure below:
 
 ## Build the CROWler docker images
 
@@ -87,29 +95,29 @@ Once you've set your ENV vars, follow these steps:
 ## Build the CROWler docker images and run them
 
 To build the CROWler docker images and run them at once, follow the previous
- procedure (it the same), and replace Step 6 with executing the following
-  command instead of the previous syntax for `docker-build`:
+procedure (it's the same), and replace Step 6 with executing the following
+command instead of the previous syntax for `docker-build`:
 
 ```bash
 ./docker-build up --build
 ```
 
 This command will build the CROWler docker images and then run them all into 3
- separate containers.
+separate containers.
 
 ## Build the CROWler docker images and run them in detached mode
 
 To build the CROWler docker images and run them in detached mode, follow the
- [Build the CROWler images](#build-the-crowler-docker-images) procedure, it's
-  the same, and instead of Step 6, run the following command:
+[Build the CROWler images](#build-the-crowler-docker-images) procedure, it's
+the same, and instead of Step 6, run the following command:
 
 ```bash
 ./docker-build up --build -d
 ```
 
 This command will build the CROWler docker images and tag them with the
- `crowler` prefix, and then run them all into 3 separate containers in
-  detached mode.
+`crowler` prefix, and then run them all into 3 separate containers in
+detached mode.
 
 ## Stop the CROWler docker containers
 
@@ -124,7 +132,7 @@ This command will stop and remove the CROWler docker containers.
 ## Rebuild the CROWler docker images from clean
 
 To rebuild (for example after you've downloaded a new version of the CROWler
- code) the CROWler docker images from scratch, run the following command:
+code) the CROWler docker images from scratch, run the following command:
 
 ```bash
 ./docker_rebuild up --build --no-cache
