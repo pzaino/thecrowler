@@ -139,6 +139,20 @@ For a docker compose based installation, that's all you need.
 If you have docker and docker compose installed you can skip the next section
 and go straight to the **Installation** section.
 
+### Installation
+
+The **easiest way** to install the CROWler is to use the docker compose file.
+To do so, follow the [instructions here](doc/docker_build.md).
+
+**Please note(1)**: If you have questions about config.yaml or the ENV vars,
+or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
+link [here (it's freely available to everyone)](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support)
+
+**Please Note(2)**: If you're running the CROWler on a Raspberry Pi, you'll
+need to build the CROWler for the `arm64` platform. To do so, the easier way
+is to build the CROWler with the `docker-build.sh` script directly on the
+Raspberry Pi.
+
 #### If you're planning to install it manually
 
 If you're planning to install the CROWler manually, you'll need to install
@@ -211,75 +225,9 @@ CROWler VDI docker image, that is needed because the CROWler uses a bunch of
 external tools to do its job and all those tools are grouped and built in the
 VDI image (Virtual Desktop Image).
 
-### Installation
-
-The **easiest way** to install the CROWler is to use the docker compose file.
-To do so, follow the steps below.
-
-**Before you start**: There are a bunch of ENV variables you can set to
-customize the CROWler deployment. These ENV vars allow you to set up your
-username and password for the database, the database name, the port the API
-will listen on, etc.
-
-To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
-
-There are 3 ENV vars **you must set**, otherwise the CROWler won't build or
-work:
-
-- `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in
-the database (non-admin level).
-- `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in
-the database (admin level).
-- `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
-You normally set this one with the IP of the host where you're running the
-Postgres container.
-
-Once you've set your ENV vars, follow these steps:
-
-1. If you haven't yet, clone TheCrowler repository on your build machine
-   and `cd` into the root directory of the repository
-2. Create your **config.yaml** file (see [here](doc/config_yaml.md) for more
-info). You can use the `config.default` file as a template (just rename it
-to `config.yaml` and edit it as you need).
-3. Run `./docker-build.sh` to build the with Docker compose and the right
-platform (see [here](doc/docker_build.md) for more info)
-
-**Please note(1)**: If you have questions about config.yaml or the ENV vars,
-or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
-link [here (it's freely available to everyone)](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support)
-
-**Please Note(2)**: If you're running the CROWler on a Raspberry Pi, you'll
-need to build the CROWler for the `arm64` platform. To do so, the easier way
-is to build the CROWler with the `docker-build.sh` script directly on the
-Raspberry Pi.
-
-**Please Note(3)**: If you need to do a rebuild and want to clean up
-everything, run the following command:
-
-```bash
-./docker-rebuild.sh up
-```
-
-That will clean up, rebuild everything and start the containers.
-
-**Please Note(4)**: To build the CROWler VDI docker image, it's required to
-build also Selenium (don't worry everything is automatic), however you need
-to ensure that GNU Make is installed on your system. That is required to
-build selenium images (nothing to do with the CROWler itself).
-
-If you use `docker-build` or `docker-rebuild`, don't worry dependencies are
-installed automatically.
-
 ### Usage
 
 For instruction on how to use it see [here](doc/usage.md).
-
-#### Configuration
-
-To configure both the API and the Crawler, you'll need to create a config.yaml
-file in the root directory of the repository.
-
-See [here](doc/config_yaml.md) for more info.
 
 ## Production
 
