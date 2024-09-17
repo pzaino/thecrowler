@@ -64,12 +64,18 @@ Once you've set your ENV vars, follow the procedure below:
   (for example, 2 2 etc).
 
 - **Step 5**: Generate your **config.yaml** file based on your desired
- configuration. You can simply start from renaming config.default to
- `config.yaml` and then modify it according to your needs. If you are building
- multiple VDI's you will need to add the appropriate number of VDI's to the
- `config.yaml` and their reachable ports (you can check your docker-compose for
- the ports). If you need more info on the available options and how to
- configure them please click [here](./config_yaml.md) for more details.
+  configuration. You can simply start from renaming config.default to
+  `config.yaml` and then modify it according to your needs. If you are building
+  multiple VDI's you will need to add the appropriate number of VDI's to the
+  `config.yaml` and their reachable ports (you can check your docker-compose for
+  the ports). If you need more info on the available options and how to
+  configure them please click [here](./config_yaml.md) for more details.
+
+  **Please Note**: If you decided to spin up multiple VDIs, you will need to
+  modify the `config.yaml` file to reflect the number of VDIs you want to
+  spin up. You will need to add an entry for each of them with the port
+  number that you want to use for each VDI (check your Docker-compose file
+  for the port numbers), and the container name for each VDI.
 
 - **Step 6**: To build the CROWler docker images, run the following command:
 
