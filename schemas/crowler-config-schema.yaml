@@ -138,6 +138,37 @@ properties:
       collect_metatags:
         type: "boolean"
         description: "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases."
+      control:
+        type: "object"
+        properties:
+          host:
+            type: "string"
+            description: "This is the host for the control API."
+          port:
+            type: "integer"
+            description: "This is the port for the control API."
+          sslmode:
+            type: "string"
+            description: "This is the sslmode for the control API."
+          cert_file:
+            type: "string"
+            description: "This is the certificate file for the control API."
+          key_file:
+            type: "string"
+            description: "This is the key file for the control API."
+          timeout:
+            type: "integer"
+            description: "This is the timeout for the control API."
+          rate_limit:
+            type: "string"
+            description: "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will allow to the control API per second."
+          readheader_timeout:
+            type: "integer"
+            description: "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond with the header."
+          writeheader_timeout:
+            type: "integer"
+            description: "This is the writeheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond with the header."
+        description: "This is the configuration for the control API. This API is internal and it's used to do some control operations for the CROWler engine."
   api:
     type: "object"
     properties:

@@ -25,10 +25,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -38,6 +41,7 @@ import (
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	"golang.org/x/time/rate"
 
 	_ "github.com/lib/pq"
 )
@@ -47,12 +51,16 @@ const (
 )
 
 var (
-	configFile   *string    // Configuration file path
-	config       cfg.Config // Configuration "object"
-	configMutex  sync.Mutex
+	limiter      *rate.Limiter    // Rate limiter
+	configFile   *string          // Configuration file path
+	config       cfg.Config       // Configuration "object"
+	configMutex  sync.Mutex       // Mutex to protect the configuration
 	GRulesEngine rules.RuleEngine // Global rules engine
 )
 
+// WorkBlock is a struct that holds all the necessary information to instantiate a new
+// crawling job on the pipeline. It's used to pass the information to the goroutines
+// that will perform the actual crawling.
 type WorkBlock struct {
 	db             cdb.Handler
 	sel            *chan crowler.SeleniumInstance
@@ -60,6 +68,11 @@ type WorkBlock struct {
 	RulesEngine    *rules.RuleEngine
 	PipelineStatus *[]crowler.Status
 	Config         *cfg.Config
+}
+
+// HealthCheck is a struct that holds the health status of the application.
+type HealthCheck struct {
+	Status string `json:"status"`
 }
 
 // This function is responsible for performing database maintenance
@@ -421,7 +434,9 @@ func StatusStr(condition int) string {
 	}
 }
 
-func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) error {
+func initAll(configFile *string, config *cfg.Config,
+	db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance,
+	RulesEngine *rules.RuleEngine, lmt **rate.Limiter) error {
 	var err error
 	// Reload the configuration file
 	*config, err = cfg.LoadConfig(*configFile)
@@ -434,6 +449,32 @@ func initAll(configFile *string, config *cfg.Config, db *cdb.Handler, seleniumIn
 	if err != nil {
 		return fmt.Errorf("creating database handler: %s", err)
 	}
+
+	// Set the rate limiter
+	var rl, bl int
+	if strings.TrimSpace(config.Crawler.Control.RateLimit) == "" {
+		config.Crawler.Control.RateLimit = "10,10"
+	}
+	if !strings.Contains(config.Crawler.Control.RateLimit, ",") {
+		config.Crawler.Control.RateLimit = config.API.RateLimit + ",10"
+	}
+	rlStr := strings.Split(config.Crawler.Control.RateLimit, ",")[0]
+	if rlStr == "" {
+		rlStr = "10"
+	}
+	rl, err = strconv.Atoi(rlStr)
+	if err != nil {
+		rl = 10
+	}
+	blStr := strings.Split(config.Crawler.Control.RateLimit, ",")[1]
+	if blStr == "" {
+		blStr = "10"
+	}
+	bl, err = strconv.Atoi(blStr)
+	if err != nil {
+		bl = 10
+	}
+	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reinitialize the Selenium services
 	*seleniumInstances = make(chan crowler.SeleniumInstance, len(config.Selenium))
@@ -517,7 +558,7 @@ func main() {
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
-				err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine)
+				err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine, &limiter)
 				if err != nil {
 					configMutex.Unlock()
 					cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
@@ -536,7 +577,7 @@ func main() {
 	}()
 
 	// Initialize the crawler
-	err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine)
+	err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine, &limiter)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 	}
@@ -551,10 +592,117 @@ func main() {
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	checkSources(&db, &seleniumInstances, &GRulesEngine)
+	go checkSources(&db, &seleniumInstances, &GRulesEngine)
 
-	// Wait forever
-	//select {}
+	// Start the internal/control API server
+	srv := &http.Server{
+		Addr: config.Crawler.Control.Host + ":" + fmt.Sprintf("%d", config.Crawler.Control.Port),
+
+		// ReadHeaderTimeout is the amount of time allowed to read
+		// request headers. The connection's read deadline is reset
+		// after reading the headers and the Handler can decide what
+		// is considered too slow for the body. If ReadHeaderTimeout
+		// is zero, the value of ReadTimeout is used. If both are
+		// zero, there is no timeout.
+		ReadHeaderTimeout: time.Duration(config.Crawler.Control.ReadHeaderTimeout) * time.Second,
+
+		// ReadTimeout is the maximum duration for reading the entire
+		// request, including the body. A zero or negative value means
+		// there will be no timeout.
+		//
+		// Because ReadTimeout does not let Handlers make per-request
+		// decisions on each request body's acceptable deadline or
+		// upload rate, most users will prefer to use
+		// ReadHeaderTimeout. It is valid to use them both.
+		ReadTimeout: time.Duration(config.Crawler.Control.ReadTimeout) * time.Second,
+
+		// WriteTimeout is the maximum duration before timing out
+		// writes of the response. It is reset whenever a new
+		// request's header is read. Like ReadTimeout, it does not
+		// let Handlers make decisions on a per-request basis.
+		// A zero or negative value means there will be no timeout.
+		WriteTimeout: time.Duration(config.Crawler.Control.WriteTimeout) * time.Second,
+
+		// IdleTimeout is the maximum amount of time to wait for the
+		// next request when keep-alive are enabled. If IdleTimeout
+		// is zero, the value of ReadTimeout is used. If both are
+		// zero, there is no timeout.
+		IdleTimeout: time.Duration(config.Crawler.Control.Timeout) * time.Second,
+	}
+
+	// Set the handlers
+	initAPIv1()
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Crawler.Control.Host, config.Crawler.Control.Port)
+	var rStatus error
+	if strings.ToLower(strings.TrimSpace(config.Crawler.Control.SSLMode)) == "enable" {
+		rStatus = srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile)
+	} else {
+		rStatus = srv.ListenAndServe()
+	}
+	statusMsg := "Server stopped."
+	if rStatus != nil {
+		statusMsg = fmt.Sprintf("Server stopped with error: %v", rStatus)
+	}
+	cmn.DebugMsg(cmn.DbgLvlFatal, statusMsg)
+}
+
+// initAPIv1 initializes the API v1 handlers
+func initAPIv1() {
+	// Health check
+	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
+
+	http.Handle("/v1/health", healthCheckWithMiddlewares)
+}
+
+// RateLimitMiddleware is a middleware for rate limiting
+func RateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Rate limit exceeded")
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// SecurityHeadersMiddleware adds security-related headers to responses
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Add various security headers here
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleErrorAndRespond encapsulates common error handling and JSON response logic.
+func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}, errMsg string, errCode int, successCode int) {
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
+		http.Error(w, err.Error(), errCode)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(successCode) // Explicitly set the success status code
+	if err := json.NewEncoder(w).Encode(results); err != nil {
+		// Log the error and send a generic error message to the client
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON response: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	// Create a JSON document with the health status
+	healthStatus := HealthCheck{
+		Status: "OK",
+	}
+
+	// Respond with the health status
+	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {

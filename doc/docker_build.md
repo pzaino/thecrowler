@@ -84,7 +84,7 @@ Once you've set your ENV vars, follow the procedure below:
 - **Step 6**: To build the CROWler docker images, run the following command:
 
   ```bash
-  ./docker-build
+  ./docker-build build
   ```
 
   Please note that the `docker-build` script accepts the docker-compose
