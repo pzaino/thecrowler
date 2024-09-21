@@ -12,7 +12,8 @@
 ## legend
 
 |  Symbol means choice: a|b means a OR b
-[] Means Optional
+
+[] Means Optional: \[a\] means a is optional
 
 ## Introduction
 
@@ -72,6 +73,26 @@ crawler:
   source_screenshot: true # Optional, this is the flag to enable or disable the source screenshot for the source URL
   full_site_screenshot: true # Optional, this is the flag to enable or disable the screenshots for the entire site (not just the source URL)
   max_sources: 4   # Optional, this is the maximum number of sources to be crawled per engine
+  delay: random(random(1,2), random(3,5)) # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
+  browsing_mode: "headless|normal" # Optional, this is the browsing mode for the crawler (headless or normal)
+  max_retries: 3   # Optional, this is the maximum number of retries for a request
+  max_requests: 10 # Optional, this is the maximum number of requests for a source
+  collect_html: true # Optional, this is the flag to enable or disable the collection of the HTML content
+  collect_images: true # Optional, this is the flag to enable or disable the collection of the images
+  collect_files: true # Optional, this is the flag to enable or disable the collection of the files
+  collect_content: true # Optional, this is the flag to enable or disable the collection of the content
+  collect_keywords: true # Optional, this is the flag to enable or disable the collection of the keywords
+  collect_metatags: true # Optional, this is the flag to enable or disable the collection of the metatags
+  control:          # This section allow you to configure the control API
+    host: localhost # Optional, this is the IP of the control API
+    port: 8080      # Optional, this is the port of the control API
+    sslmode: disable # Optional, this is the SSL mode for the control API
+    cert_file: ""   # Optional, this is the SSL certificate for the control API
+    key_file: ""    # Optional, this is the SSL key for the control API
+    timeout: 10     # Optional, this is the timeout for the control API
+    rate_limit: 10  # Optional, this is the rate limit for the control API
+    readheader_timeout: 10 # Optional, this is the read header timeout for the control API
+    write_timeout: 10 # Optional, this is the write timeout for the control API
 
 image_storage:
   type: local       # Required, this is the type of the image storage API
@@ -86,7 +107,7 @@ image_storage:
 file_storage:
   # This is identical to image_storage, however it applies to files and web objects (not to images!)
 
-api:
+api:                # This is the API configuration (this is the general API)
   port: 8080        # Required, this is the port of the API
   host: 0.0.0.0     # Required, this is the IP of the API
   timeout: 10       # Optional, this is the timeout for the API
@@ -99,7 +120,7 @@ api:
   key_file: ""       # Optional, this is the SSL key for the API
   enable_console: true  # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
 
-selenium:
+selenium:           # This is the Selenium container configuration (please note that this tag will soon be replaced by "vdi" and that is because a VDI image is not just selenium but also other tools which will soon need to be configured)
   - type: chrome    # Required, this is the type of the Selenium container
     port: 4444      # Required, this is the port of the Selenium container
     headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
