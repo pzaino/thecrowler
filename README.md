@@ -40,6 +40,20 @@ access to indexed data for various applications.
 The CROWler is designed to be micro-services based, so it can be easily
 deployed in a containerized environment.
 
+## Table of contents
+
+- [Features](#features)
+- [What problem does it solves?](#what-problem-does-it-solves)
+- [How do I pronounce the name?](#how-do-i-pronounce-the-name)
+- [How to use it?](#how-to-use-it)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+    - [Easy Installation and deployment](#easy-installation-and-deployment)
+    - [If you're planning to install it manually](#if-youre-planning-to-install-it-manually)
+    - [Build from source](#build-from-source)
+- [Production](#production)
+- [DB Maintenance](#db-maintenance)
+
 ### Features
 
 - **Low-noise**: The CROWler is designed to be as gentle as possible when
@@ -77,6 +91,8 @@ features that go beyond basic crawling:
 equipped with dorking capabilities and comprehensive content search, opening
 new avenues for data analysis and insight.
 
+For more information on the features, see the [features](doc/features.md) page.
+
 ### What problem does it solves?
 
 The CROWler is designed to solve a set of problems about web crawling, content
@@ -87,7 +103,7 @@ engine.
 
 On top of that it can also be used as the "base" for a more complex cyber security
 tool, as it can be used to gather information about a website, its network, its
-owners, which services are being exposed etc.
+owners, vulnerabilities, which services are being exposed etc.
 
 Given it can also extract information, it can be used to create knowledge bases
 with reference to the sources, or to create a database of information about a
@@ -140,6 +156,8 @@ If you have docker and docker compose installed you can skip the next section
 and go straight to the **Installation** section.
 
 ### Installation
+
+#### Easy Installation and deployment
 
 The **easiest way** to install the CROWler is to use the docker compose file.
 To do so, follow the [instructions here](doc/docker_build.md).

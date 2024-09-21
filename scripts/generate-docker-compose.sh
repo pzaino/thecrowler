@@ -151,10 +151,11 @@ networks:
     driver: bridge
 
 volumes:
+  crowler_api_data:
   crowler_db_data:
     driver: local
-  crowler_api_data:
   crowler_engine_data:
+    driver: local
 EOF
 
 echo "docker-compose.generated.yml has been generated with $engine_count crowler_engine instance(s) and $vdi_count crowler_vdi instance(s)."
