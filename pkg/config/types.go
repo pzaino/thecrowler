@@ -46,28 +46,43 @@ type Database struct {
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	Workers               int    `yaml:"workers"`                 // Number of crawler workers
-	Interval              string `yaml:"interval"`                // Interval between crawler requests (in seconds)
-	Timeout               int    `yaml:"timeout"`                 // Timeout for crawler requests (in seconds)
-	Maintenance           int    `yaml:"maintenance"`             // Interval between crawler maintenance tasks (in seconds)
-	SourceScreenshot      bool   `yaml:"source_screenshot"`       // Whether to take a screenshot of the source page or not
-	FullSiteScreenshot    bool   `yaml:"full_site_screenshot"`    // Whether to take a screenshot of the full site or not
-	ScreenshotMaxHeight   int    `yaml:"screenshot_max_height"`   // Maximum height of the screenshot
-	ScreenshotSectionWait int    `yaml:"screenshot_section_wait"` // Time to wait before taking a screenshot of a section in seconds
-	MaxDepth              int    `yaml:"max_depth"`               // Maximum depth to crawl
-	MaxSources            int    `yaml:"max_sources"`             // Maximum number of sources to crawl
-	Delay                 string `yaml:"delay"`                   // Delay between requests (in seconds)
-	BrowsingMode          string `yaml:"browsing_mode"`           // Browsing type (e.g., "recursive", "human", "fuzzing")
-	MaxRetries            int    `yaml:"max_retries"`             // Maximum number of retries
-	MaxRedirects          int    `yaml:"max_redirects"`           // Maximum number of redirects
-	CollectHTML           bool   `yaml:"collect_html"`            // Whether to collect the HTML content or not
-	CollectImages         bool   `yaml:"collect_images"`          // Whether to collect the images or not
-	CollectFiles          bool   `yaml:"collect_files"`           // Whether to collect the files or not
-	CollectContent        bool   `yaml:"collect_content"`         // Whether to collect the content or not
-	CollectKeywords       bool   `yaml:"collect_keywords"`        // Whether to collect the keywords or not
-	CollectMetaTags       bool   `yaml:"collect_metatags"`        // Whether to collect the metatags or not
-	ReportInterval        int    `yaml:"report_time"`             // Time to wait before sending the report (in minutes)
-	CheckForRobots        bool   `yaml:"check_for_robots"`        // Whether to check for robots.txt or not
+	Workers               int           `yaml:"workers"`                 // Number of crawler workers
+	Interval              string        `yaml:"interval"`                // Interval between crawler requests (in seconds)
+	Timeout               int           `yaml:"timeout"`                 // Timeout for crawler requests (in seconds)
+	Maintenance           int           `yaml:"maintenance"`             // Interval between crawler maintenance tasks (in seconds)
+	SourceScreenshot      bool          `yaml:"source_screenshot"`       // Whether to take a screenshot of the source page or not
+	FullSiteScreenshot    bool          `yaml:"full_site_screenshot"`    // Whether to take a screenshot of the full site or not
+	ScreenshotMaxHeight   int           `yaml:"screenshot_max_height"`   // Maximum height of the screenshot
+	ScreenshotSectionWait int           `yaml:"screenshot_section_wait"` // Time to wait before taking a screenshot of a section in seconds
+	MaxDepth              int           `yaml:"max_depth"`               // Maximum depth to crawl
+	MaxSources            int           `yaml:"max_sources"`             // Maximum number of sources to crawl
+	Delay                 string        `yaml:"delay"`                   // Delay between requests (in seconds)
+	BrowsingMode          string        `yaml:"browsing_mode"`           // Browsing type (e.g., "recursive", "human", "fuzzing")
+	MaxRetries            int           `yaml:"max_retries"`             // Maximum number of retries
+	MaxRedirects          int           `yaml:"max_redirects"`           // Maximum number of redirects
+	CollectHTML           bool          `yaml:"collect_html"`            // Whether to collect the HTML content or not
+	CollectImages         bool          `yaml:"collect_images"`          // Whether to collect the images or not
+	CollectFiles          bool          `yaml:"collect_files"`           // Whether to collect the files or not
+	CollectContent        bool          `yaml:"collect_content"`         // Whether to collect the content or not
+	CollectKeywords       bool          `yaml:"collect_keywords"`        // Whether to collect the keywords or not
+	CollectMetaTags       bool          `yaml:"collect_metatags"`        // Whether to collect the metatags or not
+	ReportInterval        int           `yaml:"report_time"`             // Time to wait before sending the report (in minutes)
+	CheckForRobots        bool          `yaml:"check_for_robots"`        // Whether to check for robots.txt or not
+	Control               ControlConfig `yaml:"control"`                 // Control/COnsole internal API
+}
+
+// HealthCheckConfig represents the health check configuration
+type ControlConfig struct {
+	Host              string `yaml:"host"`               // IP address for the health check server
+	Port              int    `yaml:"port"`               // Port number for the health check server
+	Timeout           int    `yaml:"timeout"`            // Timeout for API requests (in seconds)
+	SSLMode           string `yaml:"sslmode"`            // SSL mode for API connection (e.g., "disable")
+	CertFile          string `yaml:"cert_file"`          // Path to the SSL certificate file
+	KeyFile           string `yaml:"key_file"`           // Path to the SSL key file
+	RateLimit         string `yaml:"rate_limit"`         // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout int    `yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
 }
 
 // DNSConfig represents the DNS information gathering configuration

@@ -34,6 +34,7 @@ RUN adduser -D apiuser
 COPY --from=builder /app/bin/api /app/
 COPY --from=builder /app/bin/addSource /app/
 COPY --from=builder /app/bin/removeSource /app/
+COPY --from=builder /app/bin/healthCheck /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 

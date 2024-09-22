@@ -180,6 +180,16 @@ func NewConfig() *Config {
 			ScreenshotMaxHeight:   0,
 			ScreenshotSectionWait: 2,
 			CheckForRobots:        false,
+			Control: ControlConfig{
+				Host:              "localhost",
+				Port:              8081,
+				SSLMode:           "disable",
+				Timeout:           15,
+				RateLimit:         "10,10",
+				ReadHeaderTimeout: 15,
+				ReadTimeout:       15,
+				WriteTimeout:      30,
+			},
 		},
 		API: API{
 			Host:              "localhost",
@@ -544,6 +554,7 @@ func (c *Config) validateCrawler() {
 	c.setDefaultScreenshotMaxHeight()
 	c.setDefaultMaxRetries()
 	c.setDefaultMaxRedirects()
+	c.setDefaultControl()
 }
 
 func (c *Config) setDefaultWorkers() {
@@ -627,6 +638,34 @@ func (c *Config) setDefaultMaxRetries() {
 func (c *Config) setDefaultMaxRedirects() {
 	if c.Crawler.MaxRedirects < 0 {
 		c.Crawler.MaxRedirects = 0
+	}
+}
+
+func (c *Config) setDefaultControl() {
+	if c.Crawler.Control.Port < 1 || c.Crawler.Control.Port > 65535 {
+		c.Crawler.Control.Port = 8081
+	}
+	if strings.TrimSpace(c.Crawler.Control.Host) == "" {
+		c.Crawler.Control.Host = "localhost"
+	} else {
+		c.Crawler.Control.Host = strings.TrimSpace(c.Crawler.Control.Host)
+	}
+	if strings.TrimSpace(c.Crawler.Control.RateLimit) == "" {
+		c.Crawler.Control.RateLimit = "10,10"
+	} else {
+		c.Crawler.Control.RateLimit = strings.TrimSpace(c.Crawler.Control.RateLimit)
+	}
+	if c.Crawler.Control.Timeout < 1 {
+		c.Crawler.Control.Timeout = 15
+	}
+	if c.Crawler.Control.ReadHeaderTimeout < 1 {
+		c.Crawler.Control.ReadHeaderTimeout = 15
+	}
+	if c.Crawler.Control.ReadTimeout < 1 {
+		c.Crawler.Control.ReadTimeout = 15
+	}
+	if c.Crawler.Control.WriteTimeout < 1 {
+		c.Crawler.Control.WriteTimeout = 30
 	}
 }
 

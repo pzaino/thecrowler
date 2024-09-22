@@ -80,6 +80,11 @@ services:
       - crowler_api_data:/app/data
     user: apiuser
     read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "healthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 EOF
 
@@ -115,6 +120,11 @@ cat << EOF >> docker-compose.yml
     volumes:
       - crowler_engine_data:/app/data
     user: crowler
+    healthcheck:
+      test: ["CMD-SHELL", "healthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 EOF
 done
@@ -151,10 +161,11 @@ networks:
     driver: bridge
 
 volumes:
+  crowler_api_data:
   crowler_db_data:
     driver: local
-  crowler_api_data:
   crowler_engine_data:
+    driver: local
 EOF
 
 echo "docker-compose.generated.yml has been generated with $engine_count crowler_engine instance(s) and $vdi_count crowler_vdi instance(s)."

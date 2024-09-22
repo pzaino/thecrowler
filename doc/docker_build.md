@@ -57,11 +57,15 @@ Once you've set your ENV vars, follow the procedure below:
   ```
 
   This script will generate a docker-compose file that will be used to build
-  the CROWler docker images.
-  The two 1 1 arguments are used to specify that you want 1 single engine and 1
-  single VDI.
+  the CROWler docker images. The two 1 1 arguments are used to specify that
+  you want 1 single engine and 1 single VDI.
   If you need to scale further use the appropriate number of engines and VDIs
   (for example, 2 2 etc).
+
+  **Please Note**: If you are planning to scale up using tools like Kubernetes
+  then you won't need to generate your docker-compose file using multiple VDIs
+  and engines. You can simply generate a single engine and VDI and then scale
+  up using Kubernetes.
 
 - **Step 5**: Generate your **config.yaml** file based on your desired
   configuration. You can simply start from renaming config.default to
@@ -80,7 +84,7 @@ Once you've set your ENV vars, follow the procedure below:
 - **Step 6**: To build the CROWler docker images, run the following command:
 
   ```bash
-  ./docker-build
+  ./docker-build build
   ```
 
   Please note that the `docker-build` script accepts the docker-compose
