@@ -1547,6 +1547,15 @@ func extractMetaTags(doc *goquery.Document) []MetaTag {
 
 // IsValidURL checks if the string is a valid URL.
 func IsValidURL(u string) bool {
+	// Check the obvious
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return false
+	}
+	if u == "http://" || u == "https://" || u == "ftp://" || u == "ftps://" {
+		return false
+	}
+
 	// Prepend a scheme if it's missing
 	if !strings.Contains(u, "://") {
 		u = "http://" + u
@@ -1559,6 +1568,7 @@ func IsValidURL(u string) bool {
 
 // IsValidURIProtocol checks if the URI has a valid protocol.
 func IsValidURIProtocol(u string) bool {
+	u = strings.TrimSpace(u)
 	if !strings.HasPrefix(u, "http://") &&
 		!strings.HasPrefix(u, "https://") &&
 		!strings.HasPrefix(u, "ftp://") &&
