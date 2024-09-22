@@ -80,6 +80,11 @@ services:
       - crowler_api_data:/app/data
     user: apiuser
     read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "healthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 EOF
 
@@ -115,6 +120,11 @@ cat << EOF >> docker-compose.yml
     volumes:
       - crowler_engine_data:/app/data
     user: crowler
+    healthcheck:
+      test: ["CMD-SHELL", "healthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 EOF
 done
