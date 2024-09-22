@@ -44,15 +44,15 @@ you can have a look at the [config schema](../schemas/crowler-config-schema.json
 The config.yaml file should look like this:
 
 ```yaml
-remote:                     # Optional, this is the remote configuration section, here you can configure the remote CROWler API to be used to download the actual configuration
-  type: ""                  # Required, this is the type of the remote configuration API
-  host: localhost           # Required, this is the IP of the remote configuration API
-  port: 8080                # Required, this is the port of the remote configuration API
-  token: ${TOKEN}           # Optional, this is the token to use to authenticate to the remote configuration API
-  secret: ${SECRET}         # Optional, this is the secret to use to authenticate to the remote configuration API
-  region: ${REGION}         # Optional, this is the region of the remote configuration API
-  timeout: 10               # Optional, this is the timeout for the remote configuration API
-  sslmode: "enable|disable" # Optional, this is the SSL mode for the remote configuration API
+remote:                      # Optional, this is the remote configuration section, here you can configure the remote CROWler API to be used to download the actual configuration
+  type: ""                   # Required, this is the type of the remote configuration API
+  host: localhost            # Required, this is the IP of the remote configuration API
+  port: 8080                 # Required, this is the port of the remote configuration API
+  token: ${TOKEN}            # Optional, this is the token to use to authenticate to the remote configuration API
+  secret: ${SECRET}          # Optional, this is the secret to use to authenticate to the remote configuration API
+  region: ${REGION}          # Optional, this is the region of the remote configuration API
+  timeout: 10                # Optional, this is the timeout for the remote configuration API
+  sslmode: "enable|disable"  # Optional, this is the SSL mode for the remote configuration API
 
 database:
   type: postgres
