@@ -64,122 +64,163 @@ database:
   sslmode: disable
 
 crawler:
-  workers: 5        # Required, this is the number of workers the crawler will use
-  max_depth: 1      # Optional, this is the maximum depth the crawler will reach (0 for no limit)
-  delay: "2"        # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
-  timeout: 10       # Optional, this is the timeout for a request
-  maintenance: 60   # Optional, this is the time between two maintenance operations (in seconds)
-  interval: 10      # Optional, this is the time before start executing action rules on a just fetched page (this is useful for slow websites)
-  source_screenshot: true # Optional, this is the flag to enable or disable the source screenshot for the source URL
+  workers: 5                 # Required, this is the number of workers the crawler will use
+  max_depth: 1               # Optional, this is the maximum depth the crawler will reach (0 for no limit)
+  delay: "2"                 # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
+  timeout: 10                # Optional, this is the timeout for a request
+  maintenance: 60            # Optional, this is the time between two maintenance operations (in seconds)
+  interval: 10               # Optional, this is the time before start executing action rules on a just fetched page (this is useful for slow websites)
+  source_screenshot: true    # Optional, this is the flag to enable or disable the source screenshot for the source URL
   full_site_screenshot: true # Optional, this is the flag to enable or disable the screenshots for the entire site (not just the source URL)
-  max_sources: 4   # Optional, this is the maximum number of sources to be crawled per engine
+  max_sources: 4             # Optional, this is the maximum number of sources to be crawled per engine
   delay: random(random(1,2), random(3,5)) # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
   browsing_mode: "headless|normal" # Optional, this is the browsing mode for the crawler (headless or normal)
-  max_retries: 3   # Optional, this is the maximum number of retries for a request
-  max_requests: 10 # Optional, this is the maximum number of requests for a source
-  collect_html: true # Optional, this is the flag to enable or disable the collection of the HTML content
-  collect_images: true # Optional, this is the flag to enable or disable the collection of the images
-  collect_files: true # Optional, this is the flag to enable or disable the collection of the files
-  collect_content: true # Optional, this is the flag to enable or disable the collection of the content
-  collect_keywords: true # Optional, this is the flag to enable or disable the collection of the keywords
-  collect_metatags: true # Optional, this is the flag to enable or disable the collection of the metatags
-  control:          # This section allow you to configure the control API
-    host: localhost # Optional, this is the IP of the control API
-    port: 8080      # Optional, this is the port of the control API
-    sslmode: disable # Optional, this is the SSL mode for the control API
-    cert_file: ""   # Optional, this is the SSL certificate for the control API
-    key_file: ""    # Optional, this is the SSL key for the control API
-    timeout: 10     # Optional, this is the timeout for the control API
-    rate_limit: 10  # Optional, this is the rate limit for the control API
-    readheader_timeout: 10 # Optional, this is the read header timeout for the control API
-    write_timeout: 10 # Optional, this is the write timeout for the control API
+  max_retries: 3             # Optional, this is the maximum number of retries for a request
+  max_requests: 10           # Optional, this is the maximum number of requests for a source
+  collect_html: true         # Optional, this is the flag to enable or disable the collection of the HTML content
+  collect_images: true       # Optional, this is the flag to enable or disable the collection of the images
+  collect_files: true        # Optional, this is the flag to enable or disable the collection of the files
+  collect_content: true      # Optional, this is the flag to enable or disable the collection of the content
+  collect_keywords: true     # Optional, this is the flag to enable or disable the collection of the keywords
+  collect_metatags: true     # Optional, this is the flag to enable or disable the collection of the metatags
+  control:                   # This section allow you to configure the control API
+    host: localhost          # Optional, this is the IP of the control API
+    port: 8080               # Optional, this is the port of the control API
+    sslmode: disable         # Optional, this is the SSL mode for the control API
+    cert_file: ""            # Optional, this is the SSL certificate for the control API
+    key_file: ""             # Optional, this is the SSL key for the control API
+    timeout: 10              # Optional, this is the timeout for the control API
+    rate_limit: 10           # Optional, this is the rate limit for the control API
+    readheader_timeout: 10   # Optional, this is the read header timeout for the control API
+    write_timeout: 10        # Optional, this is the write timeout for the control API
 
 image_storage:
-  type: local       # Required, this is the type of the image storage API
-  path: /images     # Required, this is the path of the image storage API
-  host: localhost   # Optional, this is the IP of the image storage API
-  port: 8080        # Optional, this is the port of the image storage API
-  token: ${TOKEN}   # Optional, this is the token to use to authenticate to the image storage API
-  secret: ${SECRET} # Optional, this is the secret to use to authenticate to the image storage API
-  region: ${REGION} # Optional, this is the region of the image storage API
-  timeout: 10       # Optional, this is the timeout for the image storage API
+  type: local                # Required, this is the type of the image storage API
+  path: /images              # Required, this is the path of the image storage API
+  host: localhost            # Optional, this is the IP of the image storage API
+  port: 8080                 # Optional, this is the port of the image storage API
+  token: ${TOKEN}            # Optional, this is the token to use to authenticate to the image storage API
+  secret: ${SECRET}          # Optional, this is the secret to use to authenticate to the image storage API
+  region: ${REGION}          # Optional, this is the region of the image storage API
+  timeout: 10                # Optional, this is the timeout for the image storage API
 
 file_storage:
   # This is identical to image_storage, however it applies to files and web objects (not to images!)
 
-api:                # This is the API configuration (this is the general API)
-  port: 8080        # Required, this is the port of the API
-  host: 0.0.0.0     # Required, this is the IP of the API
-  timeout: 10       # Optional, this is the timeout for the API
-  rate_limit: 10    # Optional, this is the rate limit for the API
-  readheader_timeout: 10 # Optional, this is the read header timeout for the API
-  write_timeout: 10 # Optional, this is the write timeout for the API
-  read_timeout: 10  # Optional, this is the read timeout for the API
+api:                         # This is the API configuration (this is the general API)
+  port: 8080                 # Required, this is the port of the API
+  host: 0.0.0.0              # Required, this is the IP of the API
+  timeout: 10                # Optional, this is the timeout for the API
+  rate_limit: 10             # Optional, this is the rate limit for the API
+  readheader_timeout: 10     # Optional, this is the read header timeout for the API
+  write_timeout: 10          # Optional, this is the write timeout for the API
+  read_timeout: 10           # Optional, this is the read timeout for the API
   ssl_mode: "enable|disable" # Optional, this is the SSL mode for the API
-  cert_file: ""      # Optional, this is the SSL certificate for the API
-  key_file: ""       # Optional, this is the SSL key for the API
-  enable_console: true  # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
+  cert_file: ""              # Optional, this is the SSL certificate for the API
+  key_file: ""               # Optional, this is the SSL key for the API
+  enable_console: true       # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
 
-selenium:           # This is the Selenium container configuration (please note that this tag will soon be replaced by "vdi" and that is because a VDI image is not just selenium but also other tools which will soon need to be configured)
-  - type: chrome    # Required, this is the type of the Selenium container
-    port: 4444      # Required, this is the port of the Selenium container
-    headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
-    host: ${SELENIUM_HOST} # required, this is the IP of the Selenium container
-    proxy_url: ""   # Optional and if populated will configure the proxy for the selenium container
+selenium:                    # This is the Selenium container configuration (please note that this tag will soon be replaced by "vdi" and that is because a VDI image is not just selenium but also other tools which will soon need to be configured)
+  - name: thecrowler_vdi_1   # Optional, This field allow you to specify a name for the VDI container
+    location: AWS_EU_WEST_1  # Optional, This field allow you to specify the location of the VDI container
+    type: chrome             # Required, this is the type of the Selenium container
+    port: 4444               # Required, this is the port of the Selenium container
+    headless: true           # Optional, if true the Selenium container will run in headless mode (not recommended)
+    host: ${SELENIUM_HOST}   # required, this is the IP of the Selenium container
+    proxy_url: ""            # Optional and if populated will configure the proxy for the selenium container
+    download_path: /app/data # Optional, this is the download path for the VDI container, this path is used to store temporarily the downloaded files
 
-  - type: chrome    # This configure ANOTHER instance of the Selenium container (useful for parallel crawling)
-    port: 4445      # Required, this is the port of the Selenium container
-    headless: true  # Optional, if true the Selenium container will run in headless mode (not recommended)
-    host: localhost # required, this is the IP of the Selenium container
-    proxy_url: ""   # Optional and if populated will configure the proxy for the selenium container
-                    # YES you can use different proxies, the CROWler is not a toy ;)
-                    # Note: if you use or need a single Selenium container, you can remove this second section!
+  - type: chrome             # This configure ANOTHER instance of the Selenium container (useful for parallel crawling)
+    port: 4445               # Required, this is the port of the Selenium container
+    headless: true           # Optional, if true the Selenium container will run in headless mode (not recommended)
+    host: localhost          # required, this is the IP of the Selenium container
+    proxy_url: ""            # Optional and if populated will configure the proxy for the selenium container
+                             # YES you can use different proxies, the CROWler is not a toy ;)
+                             # Note: if you use or need a single Selenium container, you can remove this second section!
 
 network_info:
   dns:
-    enabled: true   # Enables DNS information gathering (recursive and authoritative)
-    delay: 1        # Delay between two requests
-    timeout: 60     # Timeout for a request
+    enabled: true            # Enables DNS information gathering (recursive and authoritative)
+    delay: 1                 # Delay between two requests
+    timeout: 60              # Timeout for a request
   whois:
-    enabled: true   # Enables WHOIS information gathering
-    timeout: 60     # Timeout for a request
+    enabled: true            # Enables WHOIS information gathering
+    timeout: 60              # Timeout for a request
   httpinfo:
-    enabled: true   # Enables HTTP information gathering
-    timeout: 60     # Timeout for a request
-    ssl_discovery: true # Enables SSL information gathering
+    enabled: true            # Enables HTTP information gathering
+    timeout: 60              # Timeout for a request
+    ssl_discovery: true      # Enables SSL information gathering
   service_scout:
-    enabled: true   # Enables service discovery (this is a network scanner, use with caution!)
-    timeout: 60     # Timeout for a request
+    enabled: true            # Enables service discovery (this is a network scanner, use with caution!)
+    timeout: 60              # Timeout for a request
+    idle_scan: true          # Enables idle scan (this is a network scanner, use with caution!)
+      host: ""               # The host to use for the idle scan
+      port: "80"             # The port to use for the idle scan
+    ping_scan: true          # Enables ping scan (this is a network scanner, use with caution!)
+    connect_scan: true       # Enables connect scan (this is a network scanner, use with caution!)
+    syn_scan: true           # Enables syn scan (this is a network scanner, use with caution!)
+    udp_scan: true           # Enables udp scan (this is a network scanner, use with caution!)
+    no_dns_resolution: true  # Disables DNS resolution (this is a network scanner, use with caution!)
+    service_detection: true  # Enables service detection (this is a network scanner, use with caution!)
+    service_db: ""           # The service database to use for the service detection
+    os_finger_print: true    # Enables OS finger print (this is a network scanner, use with caution!)
+    aggressive_scan: true    # Enables aggressive scan (this is a network scanner, use with caution!)
+    script_scan: true        # Enables script scan (this is a network scanner, use with caution!)
+      - default
+      - vuln
+    excluded_hosts:          # A list of hosts to NEVER scan (the list of host to scan is automatically generated by the DNS, Whois and NetInfo modules, this list here allows to specify IPs that should never be scanned)
+      - 192.168.101.1
+    timing_template: "T3"    # The timing template to use for the scan
+    host_timeout: "60"       # The host timeout for the scan, this is expressed as a string so you can use the expterpreter to specify the time
+    min_rate: "10"           # The minimum rate for the scan, this is expressed as a string so you can use the expterpreter to specify the rate
+    max_retries: "100"          # The maximum number of retries for the scan, this is expressed as a string so you can use the expterpreter to specify the number
+    source_port: "80"        # The source port for the scan, this is expressed as a string so you can use the expterpreter to specify the port
+    interface: "eth0"        # The interface to use for the scan
+    spoof_ip: "10.10.10.10"  # The IP to spoof for the scan
+    randomize_hosts: true    # Randomize the hosts to scan
+    data_length: 10          # The data length for the scan, this is expressed as a string so you can use the expterpreter to specify the length
+    delay: "1"               # The delay for the scan, this is expressed as a string so you can use the expterpreter to specify the delay
+    mtu_discovery: true      # Enable the MTU discovery
+    scan_flags: "SYN"        # The scan flags to use for the scan
+    ip_fragment: true        # Enable the IP fragment
+    max_port_number: 65535   # The maximum port number to scan
+    max_parallelism: 10      # The maximum parallelism for the scan
+    dns_servers:             # The DNS servers to use for the scan
+      - 1.1.1.1
+    proxies:                 # The proxies to use for the scan
+      - "http://proxy1:8080"
+      - "http://proxy2:8080"
+
   geo_localization:
-    enabled: false  # Enables geo localization information gathering
-    type: "local|remote" # The type of the geo localization service (for local it uses maxmind, for remote it uses an IP2Location API)
-    path: ""        # The path to the geo localization database (for maxmind)
-    timeout: 60     # Timeout for a request
-    host: ""        # The geo localization service host (if they are remote)
-    port: "80"      # The geo localization service port (if they are remote)
-    region: ""      # The region of the geo localization service (if they are remote)
-    token: ""       # The token to use to authenticate to the geo localization service (if they are remote)
-    secret: ""      # The secret to use to authenticate to the geo localization service (if they are remote)
+    enabled: false           # Enables geo localization information gathering
+    type: "local|remote"     # The type of the geo localization service (for local it uses maxmind, for remote it uses an IP2Location API)
+    path: ""                 # The path to the geo localization database (for maxmind)
+    timeout: 60              # Timeout for a request
+    host: ""                 # The geo localization service host (if they are remote)
+    port: "80"               # The geo localization service port (if they are remote)
+    region: ""               # The region of the geo localization service (if they are remote)
+    token: ""                # The token to use to authenticate to the geo localization service (if they are remote)
+    secret: ""               # The secret to use to authenticate to the geo localization service (if they are remote)
 
 rulesets:
-  - type: "local|remote" # The type of the ruleset distribution (local or remote)
-    path: ""      # The path to the ruleset file
-    timeout: 60   # Timeout for a request
-    host: ""      # The ruleset distribution host (if they are remote)
-    port: "80"    # The ruleset distribution port (if they are remote)
-    region: ""    # The region of the ruleset distribution (if they are remote)
-    token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
-    secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
-  - type: "local|remote" # YES you can use multiple rulesets, and YES mix of local and remote too!
-    path: ""      # The path to the ruleset file
-    timeout: 60   # Timeout for a request
-    host: ""      # The ruleset distribution host (if they are remote)
-    port: "80"    # The ruleset distribution port (if they are remote)
-    region: ""    # The region of the ruleset distribution (if they are remote)
-    token: ""     # The token to use to authenticate to the ruleset distribution (if they are remote)
-    secret: ""    # The secret to use to authenticate to the ruleset distribution (if they are remote)
+  - type: "local|remote"     # The type of the ruleset distribution (local or remote)
+    path: ""                 # The path to the ruleset file
+    timeout: 60              # Timeout for a request
+    host: ""                 # The ruleset distribution host (if they are remote)
+    port: "80"               # The ruleset distribution port (if they are remote)
+    region: ""               # The region of the ruleset distribution (if they are remote)
+    token: ""                # The token to use to authenticate to the ruleset distribution (if they are remote)
+    secret: ""               # The secret to use to authenticate to the ruleset distribution (if they are remote)
+  - type: "local|remote"     # YES you can use multiple rulesets, and YES mix of local and remote too!
+    path: ""                 # The path to the ruleset file
+    timeout: 60              # Timeout for a request
+    host: ""                 # The ruleset distribution host (if they are remote)
+    port: "80"               # The ruleset distribution port (if they are remote)
+    region: ""               # The region of the ruleset distribution (if they are remote)
+    token: ""                # The token to use to authenticate to the ruleset distribution (if they are remote)
+    secret: ""               # The secret to use to authenticate to the ruleset distribution (if they are remote)
 
-debug_level: 0      # Optional, this is the debug level (0 for no debug, 1 or more for debug, the higher the number the more verbose the output will be)
+debug_level: 0               # Optional, this is the debug level (0 for no debug, 1 or more for debug, the higher the number the more verbose the output will be)
 ```
 
 The sections are:
