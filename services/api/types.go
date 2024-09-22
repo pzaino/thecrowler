@@ -292,6 +292,11 @@ type SearchResponse interface {
 	Populate(data []byte) error // Assuming data comes as a byte array of JSON
 }
 
+// HealthCheck is a struct that holds the health status of the application.
+type HealthCheck struct {
+	Status string `json:"status"`
+}
+
 // IsEmpty returns true if the response is empty
 func (r *HTTPInfoResponse) IsEmpty() bool {
 	return len(r.Items) == 0

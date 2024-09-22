@@ -188,6 +188,12 @@ func main() {
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
+	// Health check
+	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
+
+	http.Handle("/v1/health", healthCheckWithMiddlewares)
+
+	// Query handlers
 	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
 	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
 	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
@@ -237,6 +243,16 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
+	// Create a JSON document with the health status
+	healthStatus := HealthCheck{
+		Status: "OK",
+	}
+
+	// Respond with the health status
+	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 // searchHandler handles the traditional search requests

@@ -84,6 +84,7 @@ RUN mkdir -p /results && \
 RUN chown -R scanner:scannergroup /chroot/home/scanner
 
 COPY --from=builder /app/bin/thecrowler /app/
+COPY --from=builder /app/bin/healthCheck /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 COPY --from=builder /app/rules /app/rules
