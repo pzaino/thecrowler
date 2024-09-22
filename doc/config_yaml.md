@@ -173,7 +173,7 @@ network_info:
     timing_template: "T3"    # The timing template to use for the scan
     host_timeout: "60"       # The host timeout for the scan, this is expressed as a string so you can use the expterpreter to specify the time
     min_rate: "10"           # The minimum rate for the scan, this is expressed as a string so you can use the expterpreter to specify the rate
-    max_retries: "100"          # The maximum number of retries for the scan, this is expressed as a string so you can use the expterpreter to specify the number
+    max_retries: "100"       # The maximum number of retries for the scan, this is expressed as a string so you can use the expterpreter to specify the number
     source_port: "80"        # The source port for the scan, this is expressed as a string so you can use the expterpreter to specify the port
     interface: "eth0"        # The interface to use for the scan
     spoof_ip: "10.10.10.10"  # The IP to spoof for the scan
