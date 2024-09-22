@@ -155,7 +155,7 @@ network_info:
     timeout: 60              # Timeout for a request
     idle_scan: true          # Enables idle scan (this is a network scanner, use with caution!)
       host: ""               # The host to use for the idle scan
-      port: "80"             # The port to use for the idle scan
+      port: "80"             # The host port to use for the idle scan
     ping_scan: true          # Enables ping scan (this is a network scanner, use with caution!)
     connect_scan: true       # Enables connect scan (this is a network scanner, use with caution!)
     syn_scan: true           # Enables syn scan (this is a network scanner, use with caution!)
