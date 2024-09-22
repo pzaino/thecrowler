@@ -153,3 +153,47 @@ func TestIsJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestJSONStrToMap(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected map[string]interface{}
+		wantErr  bool
+	}{
+		{
+			name:  "Valid JSON",
+			input: `{"name": "John", "age": 30, "city": "New York"}`,
+			expected: map[string]interface{}{
+				"name": "John",
+				"age":  float64(30),
+				"city": "New York",
+			},
+			wantErr: false,
+		},
+		{
+			name:     "Invalid JSON",
+			input:    `{"name": "John", "age": 30, "city": "New York"`,
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:     "Empty string",
+			input:    "",
+			expected: nil,
+			wantErr:  true,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := JSONStrToMap(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("JSONStrToMap() error = %v, wantErr %v", err, tc.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("JSONStrToMap() got = %v, want %v", result, tc.expected)
+			}
+		})
+	}
+}

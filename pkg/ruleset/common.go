@@ -73,7 +73,7 @@ func (ct *CustomTime) IsEmpty() bool {
 	return ct.Time.IsZero()
 }
 
-// ParseRules parses a YAML file containing site rules and returns a slice of SiteRules.
+// BulkLoadRules parses a YAML file containing site rules and returns a slice of SiteRules.
 // It takes a file path as input and returns the parsed site rules or an error if the
 // file cannot be read or parsed.
 // This function is meant to process both fully qualified path names and path names
@@ -367,11 +367,22 @@ func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
 
 // getPluginName extracts the plugin name from the first line of the plugin file.
 func getPluginName(pluginBody, file string) string {
-	pluginName := strings.TrimSpace(strings.Split(string(pluginBody), "\n")[0])
-	if strings.HasPrefix(pluginName, "//") {
-		pluginName = strings.TrimSpace(pluginName[2:])
-		if strings.HasPrefix(strings.ToLower(pluginName), "name:") {
-			pluginName = strings.TrimSpace(pluginName[5:])
+	// Extract the first line of the plugin file
+	var line0 string
+	for _, line := range strings.Split(pluginBody, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			line0 = line
+			break
+		}
+	}
+
+	// Extract the plugin name from the first line
+	pluginName := ""
+	if strings.HasPrefix(line0, "//") {
+		line0 = strings.TrimSpace(line0[2:])
+		if strings.HasPrefix(strings.ToLower(line0), "name:") {
+			pluginName = strings.TrimSpace(line0[5:])
 		}
 	}
 	if strings.TrimSpace(pluginName) == "" {

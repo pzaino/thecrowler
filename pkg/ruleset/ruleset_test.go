@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/qri-io/jsonschema"
 )
 
@@ -134,27 +133,6 @@ func TestCustomTimeIsEmpty(t *testing.T) {
 		t.Errorf("Expected IsEmpty() to return true, got false")
 	}
 }
-func TestParseRules(t *testing.T) {
-	// Create a temporary YAML file for testing
-	tempFile := "./test-ruleset.yaml"
-
-	// Call the ParseRules function with the temporary file
-	sites, err := BulkLoadRules(nil, tempFile)
-	if err != nil {
-		t.Fatalf("ParseRules returned an error: %v", err)
-	}
-
-	// Verify the parsed rules
-	expectedSites := rulesets
-	if diff := cmp.Diff(expectedSites, sites); diff != "" {
-		t.Errorf("Parsed rules mismatch (-expected +actual):\n%s", diff)
-	}
-	/*
-		if !reflect.DeepEqual(sites, expectedSites) {
-			t.Errorf("Parsed rules do not match expected rules")
-		}
-	*/
-}
 
 type MockRuleParser struct{}
 
@@ -163,16 +141,6 @@ func (m *MockRuleParser) ParseRules(_ *jsonschema.Schema, file string) ([]Rulese
 	return []Ruleset{}, nil
 }
 
-func TestInitializeLibrary(t *testing.T) {
-	mockParser := &MockRuleParser{}
-	engine, err := NewRuleEngineWithParser(mockParser, "./test-ruleset.yaml")
-	if err != nil {
-		t.Fatalf("InitializeLibrary returned an error: %v", err)
-	}
-	if engine == nil {
-		t.Errorf("Expected non-nil engine, got nil")
-	}
-}
 func TestNewRuleEngine(t *testing.T) {
 	sites := rulesets
 

@@ -233,7 +233,7 @@ The sections are:
 * The image_storage_api section configures the image storage API
 * The file_storage_api section configures the file storage API (downloaded files and/or web objects)
 * The API section configures the API
-* The selenium section configures the Selenium Chrome container
+* The selenium section configures the VDI container (please note the selenium tag will soon be replaced by the VDI tag)
 * The network_info section configures the network information gathering
 * The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
 * The debug_level section configures the debug level
