@@ -37,6 +37,7 @@ func TestParseRules(t *testing.T) {
 	if diff := cmp.Diff(expectedSites, sites); diff != "" {
 		t.Errorf("Parsed rules mismatch (-expected +actual):\n%s", diff)
 	}
+
 	/*
 		if !reflect.DeepEqual(sites, expectedSites) {
 			t.Errorf("Parsed rules do not match expected rules")
@@ -45,8 +46,7 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestInitializeLibrary(t *testing.T) {
-	mockParser := &MockRuleParser{}
-	engine, err := NewRuleEngineWithParser(mockParser, "./test-ruleset.yaml")
+	engine, err := InitializeLibrary("./test-ruleset.yaml")
 	if err != nil {
 		t.Fatalf("InitializeLibrary returned an error: %v", err)
 	}
