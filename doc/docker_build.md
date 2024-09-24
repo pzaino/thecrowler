@@ -149,7 +149,7 @@ To rebuild (for example after you've downloaded a new version of the CROWler
 code) the CROWler docker images from scratch, run the following command:
 
 ```bash
-./docker_rebuild up --build --no-cache
+./docker_rebuild build --no-cache
 ```
 
 Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
