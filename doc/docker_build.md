@@ -12,7 +12,8 @@ and configuring the build appropriately.
 
 ## Before you start
 
-- **Step A** Make sure you have `git`, `make` and `docker` installed on your machine.
+- **Step A** Make sure you have `git`, `make`, `docker` and `docker-compose`
+  are installed on your machine, these are ALL required to build the images.
 
 - **Step B** There are a bunch of ENV variables you can set to
   customize the CROWler deployment. These ENV vars allow you to set up your
