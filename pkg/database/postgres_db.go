@@ -60,7 +60,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 					break
 				}
 			}
-			cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully connected to the database!")
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
 			break
 		}
 	}
