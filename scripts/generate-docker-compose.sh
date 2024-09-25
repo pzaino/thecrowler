@@ -41,7 +41,7 @@ services:
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
     volumes:
-      - thecrowler_db_data:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
       - ./pkg/database/postgresql-setup-v1.5.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql
     networks:
@@ -77,7 +77,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - thecrowler_api_data:/app/data
+      - api_data:/app/data
     user: apiuser
     read_only: true
     healthcheck:
@@ -118,7 +118,7 @@ cat << EOF >> docker-compose.yml
     stdin_open: true # For interactive terminal access (optional)
     tty: true        # For interactive terminal access (optional)
     volumes:
-      - thecrowler_engine_data:/app/data
+      - engine_data:/app/data
     user: crowler
     healthcheck:
       test: ["CMD-SHELL", "healthCheck"]
@@ -161,10 +161,10 @@ networks:
     driver: bridge
 
 volumes:
-  thecrowler_api_data:
-  thecrowler_db_data:
+  api_data:
+  db_data:
     driver: local
-  thecrowler_engine_data:
+  engine_data:
     driver: local
 EOF
 
