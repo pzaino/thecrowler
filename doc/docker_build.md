@@ -10,38 +10,42 @@ docker-build takes care of building the CROWler docker images using the
 config.yml file and determine the platform (x86_64 or ARM64) you want to use
 and configuring the build appropriately.
 
-**Before you start**: There are a bunch of ENV variables you can set to
-customize the CROWler deployment. These ENV vars allow you to set up your
-username and password for the database, the database name, the port the API
-will listen on, etc.
+## Before you start
 
-To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
+- **Step A** Make sure you have `git`, `make`, `docker` and `docker-compose`
+  are installed on your machine, these are ALL required to build the images.
 
-There are 3 ENV vars **you must set**, otherwise the CROWler won't build or
-work:
+- **Step B** There are a bunch of ENV variables you can set to
+  customize the CROWler deployment. These ENV vars allow you to set up your
+  username and password for the database, the database name, the port the API
+  will listen on, etc.
 
-- `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in
-the database (non-admin level).
-- `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in
-the database (admin level).
-- `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
-You normally set this one with the IP of the host where you're running the
-Postgres container.
+  To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
 
-**Note**: If you rebuild the CROWler docker images often, you might want to
-set these ENV vars in your shell file called config.sh, and then source it
-before you execute the [Build the CROWler docker images](#build-the-crowler-docker-images)
-procedure. This way you don't have to set them every time you rebuild the
-CROWler docker images. Why config.sh? Because it's a file name already ignored
-by git (in the .gitignore file), so you can safely put your ENV vars in there
-without worrying about accidentally committing them to the repository.
+  There are 3 ENV vars **you must set**, otherwise the CROWler won't build or
+  work:
 
-Once you've set your ENV vars, follow the procedure below:
+  - `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in
+    the database (non-admin level).
+  - `DOCKER_POSTGRES_PASSWORD`, this is the password for the postgres user in
+    the database (admin level).
+  - `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
+    You normally set this one with the IP of the host where you're running the
+    Postgres container.
+
+  **Note**: If you rebuild the CROWler docker images often, you might want to
+  set these ENV vars in your shell file called config.sh, and then source it
+  before you execute the [Build the CROWler docker images](#build-the-crowler-docker-images)
+  procedure. This way you don't have to set them every time you rebuild the
+  CROWler docker images. Why config.sh? Because it's a file name already ignored
+  by git (in the .gitignore file), so you can safely put your ENV vars in there
+  without worrying about accidentally committing them to the repository.
+
+Once you've completed the steps above, follow the procedure below:
 
 ## Build the CROWler docker images
 
-- **Step 1**: Before you build, make sure the docker daemon is installed and
- running on your machine.
+- **Step 1**: Before you build, make sure the docker daemon is running on your machine.
 
 - **Step 2**: If you haven't yet, clone TheCrowler repository on your build
  machine and `cd` into the root directory of the repository
@@ -145,7 +149,7 @@ To rebuild (for example after you've downloaded a new version of the CROWler
 code) the CROWler docker images from scratch, run the following command:
 
 ```bash
-./docker_rebuild up --build --no-cache
+./docker_rebuild build --no-cache
 ```
 
 Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
