@@ -72,6 +72,9 @@ properties:
       optimize_for:
         type: "string"
         description: "This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value 'write'. If the user is doing more query operations than write, then use the value 'query'. If unsure leave it empty."
+      max_connections:
+        type: "integer"
+        description: "This is the maximum number of connections that the CROWler will use to connect to the database."
     description: "This is the configuration for the database that the CROWler will use to store data."
     extraProperties: "false"
     required:

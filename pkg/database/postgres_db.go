@@ -60,7 +60,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 					break
 				}
 			}
-			cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully connected to the database!")
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
 			break
 		}
 	}
@@ -69,8 +69,13 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
 	if optFor == "" || optFor == "none" {
 		handler.db.SetConnMaxLifetime(time.Minute * 5)
-		handler.db.SetMaxOpenConns(25)
-		handler.db.SetMaxIdleConns(25)
+		if c.Database.MaxConnections < 25 {
+			handler.db.SetMaxOpenConns(25)
+			handler.db.SetMaxIdleConns(25)
+		} else {
+			handler.db.SetMaxOpenConns(c.Database.MaxConnections)
+			handler.db.SetMaxIdleConns(c.Database.MaxConnections)
+		}
 	}
 	if optFor == "write" {
 		handler.ConfigForWrite()
@@ -209,22 +214,7 @@ func (handler *PostgresHandler) ConfigForWrite() {
 		"max_parallel_workers":            "8",
 	}
 
-	for key, value := range params {
-		_, err := handler.db.Exec(fmt.Sprintf("ALTER SYSTEM SET %s TO '%s'", key, value))
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "setting %s: %v", key, err)
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully set %s to %s", key, value)
-		}
-	}
-
-	// Reload PostgreSQL configuration
-	_, err := handler.db.Exec("SELECT pg_reload_conf()")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "reloading configuration: %v", err)
-	}
-
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Configuration reloaded successfully")
+	handler.ConfigForOptimize(params)
 }
 
 func (handler *PostgresHandler) ConfigForQuery() {
@@ -246,6 +236,10 @@ func (handler *PostgresHandler) ConfigForQuery() {
 		"max_parallel_workers":            "4",
 	}
 
+	handler.ConfigForOptimize(params)
+}
+
+func (handler *PostgresHandler) ConfigForOptimize(params map[string]string) {
 	for key, value := range params {
 		_, err := handler.db.Exec(fmt.Sprintf("ALTER SYSTEM SET %s TO '%s'", key, value))
 		if err != nil {
