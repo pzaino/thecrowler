@@ -32,17 +32,18 @@ type FileStorageAPI struct {
 
 // Database represents the database configuration
 type Database struct {
-	Type           string `yaml:"type"`            // Type of database (e.g., "postgres", "mysql", "sqlite")
-	Host           string `yaml:"host"`            // Hostname of the database server
-	Port           int    `yaml:"port"`            // Port number of the database server
-	User           string `yaml:"user"`            // Username for database authentication
-	Password       string `yaml:"password"`        // Password for database authentication
-	DBName         string `yaml:"dbname"`          // Name of the database
-	RetryTime      int    `yaml:"retry_time"`      // Time to wait before retrying to connect to the database (in seconds)
-	PingTime       int    `yaml:"ping_time"`       // Time to wait before retrying to ping the database (in seconds)
-	SSLMode        string `yaml:"sslmode"`         // SSL mode for database connection (e.g., "disable")
-	OptimizeFor    string `yaml:"optimize_for"`    // Optimize for the database connection (e.g., "read", "write")
-	MaxConnections int    `yaml:"max_connections"` // Maximum number of connections to the database
+	Type         string `yaml:"type"`           // Type of database (e.g., "postgres", "mysql", "sqlite")
+	Host         string `yaml:"host"`           // Hostname of the database server
+	Port         int    `yaml:"port"`           // Port number of the database server
+	User         string `yaml:"user"`           // Username for database authentication
+	Password     string `yaml:"password"`       // Password for database authentication
+	DBName       string `yaml:"dbname"`         // Name of the database
+	RetryTime    int    `yaml:"retry_time"`     // Time to wait before retrying to connect to the database (in seconds)
+	PingTime     int    `yaml:"ping_time"`      // Time to wait before retrying to ping the database (in seconds)
+	SSLMode      string `yaml:"sslmode"`        // SSL mode for database connection (e.g., "disable")
+	OptimizeFor  string `yaml:"optimize_for"`   // Optimize for the database connection (e.g., "read", "write")
+	MaxConns     int    `yaml:"max_conns"`      // Maximum number of connections to the database
+	MaxIdleConns int    `yaml:"max_idle_conns"` // Maximum number of idle connections to the database
 }
 
 // Crawler represents the crawler configuration

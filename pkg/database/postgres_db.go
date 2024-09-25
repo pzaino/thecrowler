@@ -66,28 +66,31 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	}
 
 	// Set the database management system
+	mxConns := 25
+	mxIdleConns := 25
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
 	if optFor == "" || optFor == "none" {
 		handler.db.SetConnMaxLifetime(time.Minute * 5)
-		if c.Database.MaxConnections < 25 {
-			handler.db.SetMaxOpenConns(25)
-			handler.db.SetMaxIdleConns(25)
-		} else {
-			handler.db.SetMaxOpenConns(c.Database.MaxConnections)
-			handler.db.SetMaxIdleConns(c.Database.MaxConnections)
-		}
-	}
-	if optFor == "write" {
+	} else if optFor == "write" {
 		handler.ConfigForWrite()
 		handler.db.SetConnMaxLifetime(time.Minute * 5)
-		handler.db.SetMaxOpenConns(100)
-		handler.db.SetMaxIdleConns(100)
-	}
-	if optFor == "query" {
+		mxConns = 100
+		mxIdleConns = 100
+	} else if optFor == "query" {
 		handler.ConfigForQuery()
 		handler.db.SetConnMaxLifetime(time.Minute * 5)
-		handler.db.SetMaxOpenConns(100)
-		handler.db.SetMaxIdleConns(100)
+		mxConns = 100
+		mxIdleConns = 100
+	}
+	if c.Database.MaxConns < mxConns {
+		handler.db.SetMaxOpenConns(mxConns)
+	} else {
+		handler.db.SetMaxOpenConns(c.Database.MaxConns)
+	}
+	if c.Database.MaxIdleConns < mxIdleConns {
+		handler.db.SetMaxIdleConns(mxIdleConns)
+	} else {
+		handler.db.SetMaxIdleConns(c.Database.MaxIdleConns)
 	}
 
 	return err

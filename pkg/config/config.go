@@ -146,17 +146,18 @@ func NewConfig() *Config {
 			SSLMode: "disable",
 		},
 		Database: Database{
-			Type:           "postgres",
-			Host:           "localhost",
-			Port:           5432,
-			User:           "postgres",
-			Password:       "",
-			DBName:         "SitesIndex",
-			RetryTime:      5,
-			PingTime:       5,
-			SSLMode:        "disable",
-			OptimizeFor:    "",
-			MaxConnections: 100,
+			Type:         "postgres",
+			Host:         "localhost",
+			Port:         5432,
+			User:         "postgres",
+			Password:     "",
+			DBName:       "SitesIndex",
+			RetryTime:    5,
+			PingTime:     5,
+			SSLMode:      "disable",
+			OptimizeFor:  "",
+			MaxConns:     100,
+			MaxIdleConns: 75,
 		},
 		Crawler: Crawler{
 			Workers:               1,
@@ -711,8 +712,11 @@ func (c *Config) validateDatabase() {
 	} else {
 		c.Database.OptimizeFor = strings.TrimSpace(c.Database.OptimizeFor)
 	}
-	if c.Database.MaxConnections < 1 {
-		c.Database.MaxConnections = 100
+	if c.Database.MaxConns < 1 {
+		c.Database.MaxConns = 100
+	}
+	if c.Database.MaxIdleConns < 1 {
+		c.Database.MaxIdleConns = 75
 	}
 }
 
