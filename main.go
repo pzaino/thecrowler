@@ -653,6 +653,11 @@ func initAPIv1() {
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
+
+	// Config Check
+	configCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(configCheckHandler)))
+
+	http.Handle("/v1/config", configCheckWithMiddlewares)
 }
 
 // RateLimitMiddleware is a middleware for rate limiting
@@ -703,6 +708,15 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Respond with the health status
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func configCheckHandler(w http.ResponseWriter, r *http.Request) {
+	// Make a copy of the configuration and remove the sensitive data
+	configCopy := config
+	configCopy.Database.Password = "********"
+
+	// Respond with the configuration
+	handleErrorAndRespond(w, nil, configCopy, "Error in configuration Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {

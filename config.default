@@ -22,9 +22,12 @@ crawler:
 
 api:
   port: 8080
-  host: 0.0.0.0        # Replace this with the network interface IP you want to use for the API (0.0.0.0 means respond on all available IPs)
-  timeout: 10
-  enable_console: true # Enable the console for the API (this enables extra endpoint to check system status and add/remove/update crowler sources aka websites entry-point URLs)
+  host: 0.0.0.0           # Replace this with the network interface IP you want to use for the API (0.0.0.0 means respond on all available IPs)
+  timeout: 60
+  write_timeout: 60
+  read_timeout: 60
+  rate_limit: "1010,1010" # Rate limit for the API, in requests per second
+  enable_console: true    # Enable the console for the API (this enables extra endpoint to check system status and add/remove/update crowler sources aka websites entry-point URLs)
   return_404: false
 
 selenium:
