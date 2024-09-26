@@ -216,7 +216,7 @@
                         },
                         "rate_limit": {
                             "type": "string",
-                            "description": "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit."
+                            "description": "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
                         },
                         "readheader_timeout": {
                             "type": "integer",

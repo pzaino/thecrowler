@@ -12,8 +12,14 @@ export let options = {
   rps: test_target,  // Force test_target requests per second
 };
 
+/*
+ * This test script sends a GET request to the health check endpoint
+ * and checks if the response status code is 200.
+ * This perf test allows to measure performance of the API without
+ * having the DB queries in the way.
+ */
 export default function () {
-  let res = http.get('http://localhost:8080/v1/get_all_source_status');
+  let res = http.get('http://localhost:8080/v1/health');
   check(res, {
     'is status 200': (r) => r.status === 200,
   });

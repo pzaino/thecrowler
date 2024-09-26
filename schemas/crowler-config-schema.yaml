@@ -167,7 +167,7 @@ properties:
             description: "This is the timeout for the control API."
           rate_limit:
             type: "string"
-            description: "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will allow to the control API per second."
+            description: "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will allow to the control API per second. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
           readheader_timeout:
             type: "integer"
             description: "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond with the header."

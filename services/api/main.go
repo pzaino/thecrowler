@@ -175,6 +175,8 @@ func main() {
 		IdleTimeout: time.Duration(config.API.Timeout) * time.Second,
 	}
 
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	// Set the handlers
 	initAPIv1()
 
