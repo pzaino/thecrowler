@@ -41,12 +41,12 @@ type PostgresHandler struct {
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
-	var err error
 
 	// Set a limit for retries
 	retryInterval := time.Duration(c.Database.RetryTime) * time.Second
 	pingInterval := time.Duration(c.Database.PingTime) * time.Second
 
+	var err error
 	for {
 		// Try to open the database connection
 		handler.db, err = sql.Open("postgres", connectionString)
@@ -55,35 +55,24 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 			time.Sleep(retryInterval)
 			continue // Retry opening the connection
 		}
-
-		// Retry pinging the database to establish a live connection
-		pingRetries := 15 // Limit ping retries
-		for pingRetries > 0 {
-			err = handler.db.Ping()
-			if err == nil {
-				cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
-				break // Ping successful, stop retrying
-			}
-			//cmn.DebugMsg(cmn.DbgLvlError, "Pinging the database failed: %v", err)
-			time.Sleep(pingInterval)
-			pingRetries--
-		}
-
-		if pingRetries == 0 && err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Ping retries exhausted")
-			time.Sleep(retryInterval) // Wait before retrying connection
-			break
-		}
-
-		// If connection and ping are successful, break the loop
-		if err == nil {
-			break
-		}
+		break
 	}
 
-	// Return an error if unable to connect after max retries
+	// Retry pinging the database to establish a live connection
+	pingRetries := 15 // Limit ping retries
+	for pingRetries > 0 {
+		err = handler.db.Ping()
+		if err == nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
+			break // Ping successful, stop retrying
+		}
+		time.Sleep(pingInterval)
+		pingRetries--
+	}
+
 	if err != nil {
-		return fmt.Errorf("failed to connect to the database: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Ping retries exhausted. We are connected, but the DB is not responding: %v", err)
+		time.Sleep(retryInterval) // Give it one more wait before proceeding
 	}
 
 	// Set connection parameters (open and idle connections)
@@ -92,7 +81,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	handler.db.SetMaxOpenConns(mxConns)
 	handler.db.SetMaxIdleConns(mxIdleConns)
 
-	return nil
+	return err
 }
 
 // determineConnectionLimits calculates connection limits based on config
