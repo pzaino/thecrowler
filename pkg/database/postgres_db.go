@@ -41,70 +41,80 @@ type PostgresHandler struct {
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
-
 	var err error
-	maxRetries := 10 // Set a limit to retries
 
-	for retries := 0; retries < maxRetries; retries++ {
+	// Set a limit for retries
+	retryInterval := time.Duration(c.Database.RetryTime) * time.Second
+	pingInterval := time.Duration(c.Database.PingTime) * time.Second
+
+	for {
+		// Try to open the database connection
 		handler.db, err = sql.Open("postgres", connectionString)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "connecting to the database: %v", err)
-			time.Sleep(time.Duration(c.Database.RetryTime) * time.Second)
-			continue
+			cmn.DebugMsg(cmn.DbgLvlError, "Error opening database connection: %v", err)
+			time.Sleep(retryInterval)
+			continue // Retry opening the connection
 		}
 
-		// Check database connection
-		pingRetries := 5 // Set limit for ping retries
+		// Retry pinging the database to establish a live connection
+		pingRetries := 15 // Limit ping retries
 		for pingRetries > 0 {
 			err = handler.db.Ping()
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "pinging the database: %v", err)
-				time.Sleep(time.Duration(c.Database.PingTime) * time.Second)
-				pingRetries--
-			} else {
+			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
-				return nil
+				break // Ping successful, stop retrying
 			}
+			//cmn.DebugMsg(cmn.DbgLvlError, "Pinging the database failed: %v", err)
+			time.Sleep(pingInterval)
+			pingRetries--
 		}
 
-		if pingRetries == 0 {
-			return fmt.Errorf("pinging the database failed after multiple attempts")
+		if pingRetries == 0 && err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Ping retries exhausted")
+			time.Sleep(retryInterval) // Wait before retrying connection
+			break
+		}
+
+		// If connection and ping are successful, break the loop
+		if err == nil {
+			break
 		}
 	}
 
+	// Return an error if unable to connect after max retries
 	if err != nil {
-		return fmt.Errorf("failed to connect to the database after multiple retries")
+		return fmt.Errorf("failed to connect to the database: %v", err)
 	}
 
-	// Set the database management system
-	mxConns := 25
-	mxIdleConns := 25
+	// Set connection parameters (open and idle connections)
+	mxConns, mxIdleConns := determineConnectionLimits(c)
+	handler.db.SetConnMaxLifetime(time.Minute * 5)
+	handler.db.SetMaxOpenConns(mxConns)
+	handler.db.SetMaxIdleConns(mxIdleConns)
+
+	return nil
+}
+
+// determineConnectionLimits calculates connection limits based on config
+func determineConnectionLimits(c cfg.Config) (int, int) {
+	mxConns, mxIdleConns := 25, 25
+
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
-	if optFor == "" || optFor == "none" {
-		handler.db.SetConnMaxLifetime(time.Minute * 5)
-	} else if optFor == "write" {
-		handler.ConfigForWrite()
-		handler.db.SetConnMaxLifetime(time.Minute * 5)
+	switch optFor {
+	case "write", "query":
 		mxConns = 100
 		mxIdleConns = 100
-	} else if optFor == "query" {
-		handler.ConfigForQuery()
-		handler.db.SetConnMaxLifetime(time.Minute * 5)
-		mxConns = 100
-		mxIdleConns = 100
-	}
-	if c.Database.MaxConns < mxConns {
-		handler.db.SetMaxOpenConns(mxConns)
-	} else {
-		handler.db.SetMaxOpenConns(c.Database.MaxConns)
-	}
-	if c.Database.MaxIdleConns < mxIdleConns {
-		handler.db.SetMaxIdleConns(mxIdleConns)
-	} else {
-		handler.db.SetMaxIdleConns(c.Database.MaxIdleConns)
 	}
 
-	return err
+	// Use config-defined max connections if smaller
+	if c.Database.MaxConns > 0 && c.Database.MaxConns < mxConns {
+		mxConns = c.Database.MaxConns
+	}
+	if c.Database.MaxIdleConns > 0 && c.Database.MaxIdleConns < mxIdleConns {
+		mxIdleConns = c.Database.MaxIdleConns
+	}
+
+	return mxConns, mxIdleConns
 }
 
 func buildConnectionString(c cfg.Config) string {
