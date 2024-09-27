@@ -43,26 +43,37 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
 
 	var err error
-	for {
-		// Connect to the database
+	maxRetries := 10 // Set a limit to retries
+
+	for retries := 0; retries < maxRetries; retries++ {
 		handler.db, err = sql.Open("postgres", connectionString)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "connecting to the database: %v", err)
 			time.Sleep(time.Duration(c.Database.RetryTime) * time.Second)
-		} else {
-			for {
-				// Check database connection
-				err = handler.db.Ping()
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "pinging the database: %v", err)
-					time.Sleep(time.Duration(c.Database.PingTime) * time.Second)
-				} else {
-					break
-				}
-			}
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
-			break
+			continue
 		}
+
+		// Check database connection
+		pingRetries := 5 // Set limit for ping retries
+		for pingRetries > 0 {
+			err = handler.db.Ping()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "pinging the database: %v", err)
+				time.Sleep(time.Duration(c.Database.PingTime) * time.Second)
+				pingRetries--
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
+				return nil
+			}
+		}
+
+		if pingRetries == 0 {
+			return fmt.Errorf("pinging the database failed after multiple attempts")
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to connect to the database after multiple retries")
 	}
 
 	// Set the database management system
