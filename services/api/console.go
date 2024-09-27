@@ -32,7 +32,7 @@ const (
 	errFailedToCommitTransaction   = "Failed to commit transaction"
 )
 
-func performAddSource(query string, qType int) (ConsoleResponse, error) {
+func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var sqlQuery string
 	var sqlParams addSourceRequest
 	if qType == getQuery {
@@ -53,7 +53,7 @@ func performAddSource(query string, qType int) (ConsoleResponse, error) {
 	}
 
 	// Perform the addSource operation
-	results, err := addSource(sqlQuery, sqlParams)
+	results, err := addSource(sqlQuery, sqlParams, db)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding the source: %v", err)
 		return results, err
@@ -105,7 +105,7 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 
 }
 
-func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error) {
+func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (ConsoleResponse, error) {
 	var results ConsoleResponse
 	results.Message = "Failed to add the source"
 
@@ -119,20 +119,6 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 		}
 	}
 
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return results, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "connecting to the database: %v", err)
-		return results, err
-	}
-	defer db.Close()
-
 	// Get the JSON string for the Config field
 	configJSON, err := json.Marshal(params.Config)
 	if err != nil {
@@ -140,7 +126,7 @@ func addSource(sqlQuery string, params addSourceRequest) (ConsoleResponse, error
 	}
 
 	// Execute the SQL statement
-	_, err = db.Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
+	_, err = (*db).Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
 	if err != nil {
 		return results, err
 	}
@@ -180,7 +166,7 @@ func validateAndReformatConfig(config *cfg.SourceConfig) error {
 	return nil
 }
 
-func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
+func performRemoveSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var results ConsoleResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
@@ -193,21 +179,8 @@ func performRemoveSource(query string, qType int) (ConsoleResponse, error) {
 		return ConsoleResponse{Message: "Invalid request"}, nil
 	}
 
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return ConsoleResponse{Message: errFailedToInitializeDBHandler}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		return ConsoleResponse{Message: errFailedToConnectToDB}, err
-	}
-	defer db.Close()
-
 	// Start a transaction
-	tx, err := db.Begin()
+	tx, err := (*db).Begin()
 	if err != nil {
 		return ConsoleResponse{Message: errFailedToStartTransaction}, err
 	}
@@ -269,7 +242,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	return results, nil
 }
 
-func performGetURLStatus(query string, qType int) (StatusResponse, error) {
+func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
 	var results StatusResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
@@ -282,21 +255,8 @@ func performGetURLStatus(query string, qType int) (StatusResponse, error) {
 		return StatusResponse{Message: "Invalid request"}, nil
 	}
 
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return StatusResponse{Message: errFailedToInitializeDBHandler}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		return StatusResponse{Message: errFailedToConnectToDB}, err
-	}
-	defer db.Close()
-
 	// Start a transaction
-	tx, err := db.Begin()
+	tx, err := (*db).Begin()
 	if err != nil {
 		return StatusResponse{Message: errFailedToStartTransaction}, err
 	}
@@ -362,23 +322,11 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	return results, nil
 }
 
-func performGetAllURLStatus(_ int) (StatusResponse, error) {
+func performGetAllURLStatus(_ int, db *cdb.Handler) (StatusResponse, error) {
 	// using _ instead of qType because for now we don't need it
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return StatusResponse{Message: errFailedToInitializeDBHandler}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		return StatusResponse{Message: errFailedToConnectToDB}, err
-	}
-	defer db.Close()
 
 	// Start a transaction
-	tx, err := db.Begin()
+	tx, err := (*db).Begin()
 	if err != nil {
 		return StatusResponse{Message: errFailedToStartTransaction}, err
 	}
