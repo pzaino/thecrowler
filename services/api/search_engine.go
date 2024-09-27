@@ -405,21 +405,7 @@ func isLogicalOperator(op string) bool {
 	return op == "AND" || op == "OR"
 }
 
-func performSearch(query string) (SearchResult, error) {
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return SearchResult{}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
-		return SearchResult{}, err
-	}
-	defer db.Close()
-
+func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Prepare the query body
@@ -471,7 +457,7 @@ func performSearch(query string) (SearchResult, error) {
 	start := time.Now()
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -513,20 +499,8 @@ func performSearch(query string) (SearchResult, error) {
 	return results, nil
 }
 
-func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error) {
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return ScreenshotResponse{}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
-		return ScreenshotResponse{}, err
-	}
-	defer db.Close()
+func performScreenshotSearch(query string, qType int, db *cdb.Handler) (ScreenshotResponse, error) {
+	var err error
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
@@ -558,7 +532,7 @@ func performScreenshotSearch(query string, qType int) (ScreenshotResponse, error
 	start := time.Now()
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return ScreenshotResponse{}, err
 	}
@@ -694,21 +668,8 @@ func parseScreenshotQuery(input string) (SearchQuery, error) {
 	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }
 
-func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) {
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return WebObjectResponse{}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
-		return WebObjectResponse{}, err
-	}
-	defer db.Close()
-
+func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObjectResponse, error) {
+	var err error
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
@@ -739,7 +700,7 @@ func performWebObjectSearch(query string, qType int) (WebObjectResponse, error) 
 	start := time.Now()
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
@@ -879,21 +840,8 @@ func parseWebObjectQuery(input string) (SearchQuery, error) {
 	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
 }
 
-func performCorrelatedSitesSearch(query string, qType int) (CorrelatedSitesResponse, error) {
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return CorrelatedSitesResponse{}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
-		return CorrelatedSitesResponse{}, err
-	}
-	defer db.Close()
-
+func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (CorrelatedSitesResponse, error) {
+	var err error
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
@@ -924,7 +872,7 @@ func performCorrelatedSitesSearch(query string, qType int) (CorrelatedSitesRespo
 	start := time.Now()
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return CorrelatedSitesResponse{}, err
 	}
@@ -1101,21 +1049,8 @@ func parseCorrelatedSitesQuery(input string) (SearchQuery, error) {
 }
 
 // performNetInfoSearch performs a search for network information.
-func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return NetInfoResponse{}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
-		return NetInfoResponse{}, err
-	}
-	defer db.Close()
-
+func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResponse, error) {
+	var err error
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
@@ -1146,7 +1081,7 @@ func performNetInfoSearch(query string, qType int) (NetInfoResponse, error) {
 	start := time.Now()
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return NetInfoResponse{}, err
 	}
@@ -1280,21 +1215,8 @@ func parseNetInfoQuery(input string) (SearchQuery, error) {
 }
 
 // performNetInfoSearch performs a search for network information.
-func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
-	// Initialize the database handler
-	db, err := cdb.NewHandler(config)
-	if err != nil {
-		return HTTPInfoResponse{}, err
-	}
-
-	// Connect to the database
-	err = db.Connect(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnErrorLabel, err)
-		return HTTPInfoResponse{}, err
-	}
-	defer db.Close()
-
+func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoResponse, error) {
+	var err error
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
@@ -1325,7 +1247,7 @@ func performHTTPInfoSearch(query string, qType int) (HTTPInfoResponse, error) {
 	start := time.Now()
 
 	// Execute the query
-	rows, err := db.ExecuteQuery(sqlQuery, sqlParams...)
+	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
 	if err != nil {
 		return HTTPInfoResponse{}, err
 	}
