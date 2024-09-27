@@ -84,7 +84,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Set the database semaphore
-	dbSemaphore = make(chan struct{}, config.Database.MaxConns)
+	dbSemaphore = make(chan struct{}, config.Database.MaxConns-3)
 
 	return nil
 }
