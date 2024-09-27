@@ -35,6 +35,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	errTooManyRequests = "Too Many Requests"
+	errRateLimitExceed = "Rate limit exceeded"
+)
+
 // Create a rate limiter for your application. Adjust the parameters as needed.
 var (
 	limiter     *rate.Limiter
@@ -231,8 +236,8 @@ func initAPIv1() {
 func RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.Allow() {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Rate limit exceeded")
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+			http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -252,6 +257,12 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 }
 
 func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	// Create a JSON document with the health status
 	healthStatus := HealthCheck{
 		Status: "OK",
@@ -263,6 +274,12 @@ func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 
 // searchHandler handles the traditional search requests
 func searchHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}: // Try to acquire a DB connection
 		defer func() { <-dbSemaphore }() // Release the connection after the work is done
@@ -304,6 +321,12 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func webObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -354,6 +377,12 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -405,6 +434,12 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 
 // scrImgSrchHandler handles the search requests for screenshot images
 func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -438,6 +473,12 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 
 // netInfoHandler handles the network information requests
 func netInfoHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -489,6 +530,12 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpInfoHandler handles the http information requests
 func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -540,6 +587,12 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 // addSourceHandler handles the addition of new sources
 func addSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -563,6 +616,12 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 // removeSourceHandler handles the removal of sources
 func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -586,6 +645,12 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 // singleURLstatusHandler handles the status requests
 func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -609,6 +674,12 @@ func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 
 // allURLstatusHandler handles the status requests for all sources
 func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
+	if !limiter.Allow() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		return
+	}
+
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
