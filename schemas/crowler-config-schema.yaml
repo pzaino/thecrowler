@@ -79,7 +79,7 @@ properties:
         type: "integer"
         description: "This is the maximum number of idle connections that the CROWler will use to connect to the database."
     description: "This is the configuration for the database that the CROWler will use to store data."
-    extraProperties: "false"
+    additionalProperties: "false"
     required:
       - "type"
       - "host"
@@ -149,32 +149,32 @@ properties:
         properties:
           host:
             type: "string"
-            description: "This is the host for the control API."
+            description: "This is the host that the CROWler will use to allow connections to the control API."
           port:
             type: "integer"
-            description: "This is the port for the control API."
-          sslmode:
-            type: "string"
-            description: "This is the sslmode for the control API."
-          cert_file:
-            type: "string"
-            description: "This is the certificate file for the control API."
-          key_file:
-            type: "string"
-            description: "This is the key file for the control API."
+            description: "This is the port that the CROWler will use to allow connections to the control API."
           timeout:
             type: "integer"
-            description: "This is the timeout for the control API."
+            description: "This is the timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+          sslmode:
+            type: "string"
+            description: "This is the sslmode switch for the control API. Use 'enable' to make the control API use HTTPS."
+          cert_file:
+            type: "string"
+            description: "This is the certificate file for the control API HTTPS protocol."
+          key_file:
+            type: "string"
+            description: "This is the key file for the control API HTTPS certificates."
           rate_limit:
             type: "string"
-            description: "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will allow to the control API per second. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
+            description: "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
           readheader_timeout:
             type: "integer"
-            description: "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond with the header."
-          writeheader_timeout:
+            description: "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+          write_timeout:
             type: "integer"
-            description: "This is the writeheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond with the header."
-        description: "This is the configuration for the control API. This API is internal and it's used to do some control operations for the CROWler engine."
+            description: "This is the write timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+        description: "This is the configuration for the control API. It is the configuration for the control API that the CROWler will use to allow connections to the control API."
   api:
     type: "object"
     properties:
@@ -394,7 +394,7 @@ properties:
             description: "This is the API key for the geolocation database. It is the API key that the CROWler will use to connect to the geolocation database."
           sslmode:
             type: "string"
-            description: "This is the sslmode for the geolocation database. It is the sslmode that the CROWler will use to connect to the geolocation database."
+            description: "This is the sslmode that the CROWler will use to connect to the geolocation database."
         required:
           - "enabled"
           - "path"
