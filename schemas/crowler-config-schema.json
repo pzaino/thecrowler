@@ -1,810 +1,871 @@
 {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-      "remote": {
-        "type": "object",
-        "properties": {
-          "host": {
-            "type": "string",
-            "description": "This is the host that the CROWler will use to fetch its configuration."
-          },
-          "path": {
-            "type": "string",
-            "description": "This is the path that the CROWler will use to fetch its configuration."
-          },
-          "port": {
-            "type": "integer",
-            "description": "This is the port that the CROWler will use to fetch its configuration."
-          },
-          "region": {
-            "type": "string",
-            "description": "This is the region that the CROWler will use to fetch its configuration. For example in case the distribution server is on an AWS S3 bucket, you can specify the region here."
-          },
-          "token": {
-            "type": "string",
-            "description": "This is the token that the CROWler will use to connect to the distribution server to fetch its configuration."
-          },
-          "secret": {
-            "type": "string",
-            "description": "This is the secret that the CROWler will use to connect to the distribution server to fetch its configuration."
-          },
-          "timeout": {
-            "type": "integer",
-            "description": "This is the timeout for the CROWler to fetch its configuration."
-          },
-          "type": {
-            "type": "string",
-            "description": "This is the type of the distribution server that the CROWler will use to fetch its configuration. For example, s3 or http."
-          },
-          "sslmode": {
-            "type": "string",
-            "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch its configuration."
-          }
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "remote": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "This is the host that the CROWler will use to fetch its configuration."
         },
-        "description": "This is the configuration section to tell the CROWler its actual configuration has to be fetched remotely from a distribution server. If you use this section, then do not populate the other configuration sections as they will be ignored. The CROWler will fetch its configuration from the remote server and use it to start the engine.",
-        "required": [
-          "host",
-          "path",
-          "port",
-          "type"
-        ]
-      },
-      "database": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "description": "This is the type of the database that the CROWler will use to store data. For example, postgres."
-          },
-          "host": {
-            "type": "string",
-            "description": "This is the host that the CROWler will use to connect to the database."
-          },
-          "port": {
-            "type": "integer",
-            "description": "This is the port that the CROWler will use to connect to the database."
-          },
-          "user": {
-            "type": "string",
-            "description": "This is the user that the CROWler will use to connect to the database."
-          },
-          "password": {
-            "type": "string"
-          },
-          "dbname": {
-            "type": "string",
-            "description": "This is the name of the database that the CROWler will use to store data."
-          },
-          "retry_time": {
-            "type": "integer",
-            "description": "This is the time in seconds that the CROWler will wait before retrying a database connection."
-          },
-          "ping_time": {
-            "type": "integer",
-            "description": "This is the time in seconds that the CROWler will wait before pinging the database to check if it is still alive."
-          },
-          "sslmode": {
-            "type": "string",
-            "description": "This is the sslmode that the CROWler will use to connect to the database. Use 'enable' to enable the ssl mode connection to the DB. (default is 'disable')."
-          },
-          "optimize_for": {
-            "type": "string",
-            "description": "This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value 'write'. If the user is doing more query operations than write, then use the value 'query'. If unsure leave it empty."
-          },
-          "max_conns": {
-            "type": "integer",
-            "description": "This is the maximum number of connections that the CROWler will use to connect to the database."
-          },
-          "max_idle_conns": {
-            "type": "integer",
-            "description": "This is the maximum number of idle connections that the CROWler will use to connect to the database."
-          }
+        "path": {
+          "type": "string",
+          "description": "This is the path that the CROWler will use to fetch its configuration."
         },
-        "description": "This is the configuration for the database that the CROWler will use to store data.",
-        "additionalProperties": false,
-        "required": [
-          "type",
-          "host",
-          "port",
-          "user",
-          "password",
-          "dbname"
-        ]
-      },
-      "crawler": {
-        "type": "object",
-        "properties": {
-          "workers": {
-            "type": "integer",
-            "description": "This is the number of workers that the CROWler will use to crawl websites. Minimum number is 3 per each Source if you have network discovery enabled or 1 per each source if you are doing crawling only. Increase the number of workers to scale up the CROWler engine vertically."
-          },
-          "interval": {
-            "type": "string",
-            "description": "This is the interval at which the CROWler will crawl websites. It is the interval at which the CROWler will crawl websites, values are in seconds, e.g. '3' means 3 seconds. For the interval you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
-          },
-          "timeout": {
-            "type": "integer",
-            "description": "This is the timeout for the CROWler. It is the maximum amount of time that the CROWler will wait for a website to respond."
-          },
-          "maintenance": {
-            "type": "integer",
-            "description": "This is the maintenance interval for the CROWler. It is the interval at which the CROWler will perform automatic maintenance tasks."
-          },
-          "source_screenshot": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to take a screenshot of the source website. This is useful for debugging purposes."
-          },
-          "full_site_screenshot": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to take a screenshot of the full website. This is useful for debugging purposes."
-          },
-          "max_depth": {
-            "type": "integer",
-            "description": "This is the maximum depth that the CROWler will crawl websites."
-          },
-          "max_sources": {
-            "type": "integer",
-            "description": "This is the maximum number of sources that a single instance of the CROWler's engine will fetch atomically to enqueue and crawl."
-          },
-          "delay": {
-            "type": "string",
-            "description": "This is the delay between requests that the CROWler will use to crawl websites. It is the delay between requests that the CROWler will use to crawl websites. For delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
-          },
-          "browsing_mode": {
-            "type": "string",
-            "description": "This is the browsing mode that the CROWler will use to crawl websites. For example, recursive, human, or fuzzing."
-          },
-          "max_retries": {
-            "type": "integer",
-            "description": "This is the maximum number of times that the CROWler will retry a request to a website. If the CROWler is unable to fetch a website after this number of retries, it will move on to the next website."
-          },
-          "max_requests": {
-            "type": "integer",
-            "description": "This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website."
-          },
-          "collect_html": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is useful for debugging purposes."
-          },
-          "collect_images": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to collect images from a website. This is useful for debugging purposes."
-          },
-          "collect_files": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to collect files from a website. This is useful for debugging purposes."
-          },
-          "collect_content": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to collect the text content of a website. This is useful for AI datasets creation and knowledge bases."
-          },
-          "collect_keywords": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases."
-          },
-          "collect_metatags": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases."
-          },
-          "control": {
-            "type": "object",
-            "properties": {
-              "host": {
-                "type": "string",
-                "description": "This is the host that the CROWler will use to allow connections to the control API."
-              },
-              "port": {
-                "type": "integer",
-                "description": "This is the port that the CROWler will use to allow connections to the control API."
-              },
-              "timeout": {
-                "type": "integer",
-                "description": "This is the timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
-              },
-              "sslmode": {
-                "type": "string",
-                "description": "This is the sslmode switch for the control API. Use 'enable' to make the control API use HTTPS."
-              },
-              "cert_file": {
-                "type": "string",
-                "description": "This is the certificate file for the control API HTTPS protocol."
-              },
-              "key_file": {
-                "type": "string",
-                "description": "This is the key file for the control API HTTPS certificates."
-              },
-              "rate_limit": {
-                "type": "string",
-                "description": "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
-              },
-              "readheader_timeout": {
-                "type": "integer",
-                "description": "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
-              },
-              "write_timeout": {
-                "type": "integer",
-                "description": "This is the write timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
-              }
-            },
-            "description": "This is the configuration for the control API. It is the configuration for the control API that the CROWler will use to allow connections to the control API."
-          }
+        "port": {
+          "type": "integer",
+          "description": "This is the port that the CROWler will use to fetch its configuration.",
+          "examples": [
+            80
+          ]
+        },
+        "region": {
+          "type": "string",
+          "description": "This is the region that the CROWler will use to fetch its configuration. For example in case the distribution server is on an AWS S3 bucket, you can specify the region here."
+        },
+        "token": {
+          "type": "string",
+          "description": "This is the token that the CROWler will use to connect to the distribution server to fetch its configuration."
+        },
+        "secret": {
+          "type": "string",
+          "description": "This is the secret that the CROWler will use to connect to the distribution server to fetch its configuration."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "This is the timeout for the CROWler to fetch its configuration."
+        },
+        "type": {
+          "type": "string",
+          "description": "This is the type of the distribution server that the CROWler will use to fetch its configuration. For example, s3 or http."
+        },
+        "sslmode": {
+          "type": "string",
+          "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch its configuration."
         }
       },
-      "api": {
-        "type": "object",
-        "properties": {
-          "host": {
-            "type": "string",
-            "description": "This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address."
-          },
-          "port": {
-            "type": "integer",
-            "description": "This is the port that the API will use to communicate with the outside world."
-          },
-          "timeout": {
-            "type": "integer",
-            "description": "This is the timeout for the API. It is the maximum amount of time that the CROWler will wait for the API to respond."
-          },
-          "content_search": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to search also in the content field of a web object in the search results. This is useful for searching for every possible details of a web object, however will reduce performance quite a bit."
-          },
-          "return_content": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to return the web object content of a page in the search results. To improve performance, you can disable this option."
-          },
-          "sslmode": {
-            "type": "string",
-            "description": "This is the sslmode switch for the API. Use 'enable' to make the API use HTTPS."
-          },
-          "cert_file": {
-            "type": "string",
-            "description": "This is the certificate file for the API HTTPS protocol."
-          },
-          "key_file": {
-            "type": "string",
-            "description": "This is the key file for the API HTTPS certificates."
-          },
-          "rate_limit": {
-            "type": "string",
-            "description": "This is the rate limit for the API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit."
-          },
-          "enable_console": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to enable the admin console via the API. In other words, you'll get more endpoints to manage the CROWler via the Search API instead of local commands."
-          },
-          "return_404": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to return 404 status code if a query has no results."
-          }
+      "description": "This is the configuration section to tell the CROWler its actual configuration has to be fetched remotely from a distribution server. If you use this section, then do not populate the other configuration sections as they will be ignored. The CROWler will fetch its configuration from the remote server and use it to start the engine.",
+      "required": [
+        "host",
+        "path",
+        "type"
+      ]
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "This is the type of the database that the CROWler will use to store data. For example, postgres."
         },
-        "description": "This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world.",
-        "required": [
-          "host",
-          "port",
-          "timeout"
-        ]
+        "host": {
+          "type": "string",
+          "description": "This is the host that the CROWler will use to connect to the database."
+        },
+        "port": {
+          "type": "integer",
+          "description": "This is the port that the CROWler will use to connect to the database.",
+          "examples": [
+            5432
+          ]
+        },
+        "user": {
+          "type": "string",
+          "description": "This is the user that the CROWler will use to connect to the database."
+        },
+        "password": {
+          "type": "string"
+        },
+        "dbname": {
+          "type": "string",
+          "description": "This is the name of the database that the CROWler will use to store data."
+        },
+        "retry_time": {
+          "type": "integer",
+          "description": "This is the time in seconds that the CROWler will wait before retrying a database connection."
+        },
+        "ping_time": {
+          "type": "integer",
+          "description": "This is the time in seconds that the CROWler will wait before pinging the database to check if it is still alive."
+        },
+        "sslmode": {
+          "type": "string",
+          "description": "This is the sslmode that the CROWler will use to connect to the database. Use 'enable' to enable the ssl mode connection to the DB. (default is 'disable')."
+        },
+        "optimize_for": {
+          "type": "string",
+          "description": "This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value 'write'. If the user is doing more query operations than write, then use the value 'query'. If unsure leave it empty."
+        },
+        "max_conns": {
+          "type": "integer",
+          "description": "This is the maximum number of connections that the CROWler will use to connect to the database."
+        },
+        "max_idle_conns": {
+          "type": "integer",
+          "description": "This is the maximum number of idle connections that the CROWler will use to connect to the database."
+        }
       },
-      "selenium": {
-        "type": "array",
-        "items": {
+      "description": "This is the configuration for the database that the CROWler will use to store data.",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "host",
+        "user",
+        "password",
+        "dbname"
+      ]
+    },
+    "crawler": {
+      "type": "object",
+      "properties": {
+        "workers": {
+          "type": "integer",
+          "description": "This is the number of workers that the CROWler will use to crawl websites. Minimum number is 3 per each Source if you have network discovery enabled or 1 per each source if you are doing crawling only. Increase the number of workers to scale up the CROWler engine vertically."
+        },
+        "interval": {
+          "type": "string",
+          "description": "This is the interval at which the CROWler will crawl websites. It is the interval at which the CROWler will crawl websites, values are in seconds, e.g. '3' means 3 seconds. For the interval you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "This is the timeout for the CROWler. It is the maximum amount of time that the CROWler will wait for a website to respond."
+        },
+        "maintenance": {
+          "type": "integer",
+          "description": "This is the maintenance interval for the CROWler. It is the interval at which the CROWler will perform automatic maintenance tasks."
+        },
+        "source_screenshot": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to take a screenshot of the source website. This is useful for debugging purposes."
+        },
+        "full_site_screenshot": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to take a screenshot of the full website. This is useful for debugging purposes."
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "This is the maximum depth that the CROWler will crawl websites."
+        },
+        "max_sources": {
+          "type": "integer",
+          "description": "This is the maximum number of sources that a single instance of the CROWler's engine will fetch atomically to enqueue and crawl."
+        },
+        "delay": {
+          "type": "string",
+          "description": "This is the delay between requests that the CROWler will use to crawl websites. It is the delay between requests that the CROWler will use to crawl websites. For delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+        },
+        "browsing_mode": {
+          "type": "string",
+          "description": "This is the browsing mode that the CROWler will use to crawl websites. For example, recursive, human, or fuzzing."
+        },
+        "max_retries": {
+          "type": "integer",
+          "description": "This is the maximum number of times that the CROWler will retry a request to a website. If the CROWler is unable to fetch a website after this number of retries, it will move on to the next website."
+        },
+        "max_requests": {
+          "type": "integer",
+          "description": "This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website."
+        },
+        "collect_html": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is useful for debugging purposes."
+        },
+        "collect_images": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to collect images from a website. This is useful for debugging purposes."
+        },
+        "collect_files": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to collect files from a website. This is useful for debugging purposes."
+        },
+        "collect_content": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to collect the text content of a website. This is useful for AI datasets creation and knowledge bases."
+        },
+        "collect_keywords": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases."
+        },
+        "collect_metatags": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases."
+        },
+        "control": {
           "type": "object",
           "properties": {
-            "name": {
+            "host": {
               "type": "string",
-              "description": "This is the name of the VDI image. This is not a network name, so you can pick whatever makes sense for your business logic. This name can be used in a Source Configuration, to ensure the CROWler will use that specific VDI image to crawl the website."
-            },
-            "location": {
-              "type": "string",
-              "description": "This is the location of the VDI image."
-            },
-            "path": {
-              "type": "string",
-              "description": "This is the path to the selenium driver (IF LOCAL). It is the path to the selenium driver that the CROWler will use to crawl websites. (deprecated)"
-            },
-            "driver_path": {
-              "type": "string",
-              "description": "This is the path to the selenium driver (IF REMOTE). It is the path to the selenium driver that the CROWler will use to crawl websites. (deprecated)"
-            },
-            "type": {
-              "type": "string",
-              "description": "This is the type of selenium driver that the CROWler will use to crawl websites. For example, chrome or firefox."
+              "description": "This is the host that the CROWler will use to allow connections to the control API."
             },
             "port": {
               "type": "integer",
-              "description": "This is the port that the selenium driver will use to connect to the CROWler. It is the port that the selenium driver will use to connect to the CROWler."
+              "description": "This is the port that the CROWler will use to allow connections to the control API.",
+              "examples": [
+                8081
+              ]
             },
-            "host": {
-              "type": "string",
-              "description": "This is the VDI host name or IP that the CROWler will use to connect to the VDI. It is the host that will be used to fetch web pages and that runs Selenium, RBee etc. For example, localhost. This is also the recommended way to use and connect to a VDI (in other words, don't try to run selenium, Rbee etc. locally, use a container for the VDI)."
-            },
-            "headless": {
-              "type": "boolean",
-              "description": "This is a flag that tells the selenium driver to run in headless mode. This is useful for running the selenium driver in a headless environment. It's generally NOT recommended to enable headless mode for the selenium driver. (don't use headless unless you know what you're doing, headless browsing is mostly blocked these days!)"
-            },
-            "use_service": {
-              "type": "boolean",
-              "description": "This is a flag that tells the CROWler to access Selenium as service. (deprecated)"
+            "timeout": {
+              "type": "integer",
+              "description": "This is the timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
             },
             "sslmode": {
               "type": "string",
-              "description": "This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler."
+              "description": "This is the sslmode switch for the control API. Use 'enable' to make the control API use HTTPS."
             },
-            "download_path": {
+            "cert_file": {
               "type": "string",
-              "description": "This is the temporary download path for the VDI. It is the local path where the VDI will download files. This is useful for downloading files from websites (like pdf or zip etc.). The CROWler will use this path to temporarily store the downloaded files (before moving them to the storage files area)."
+              "description": "This is the certificate file for the control API HTTPS protocol."
+            },
+            "key_file": {
+              "type": "string",
+              "description": "This is the key file for the control API HTTPS certificates."
+            },
+            "rate_limit": {
+              "type": "string",
+              "description": "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
+            },
+            "readheader_timeout": {
+              "type": "integer",
+              "description": "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+            },
+            "write_timeout": {
+              "type": "integer",
+              "description": "This is the write timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
             }
           },
-          "required": [
-            "type",
-            "path",
-            "port",
-            "host"
-          ],
           "additionalProperties": false,
-          "description": "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array."
+          "description": "This is the configuration for the control API. It is the configuration for the control API that the CROWler will use to allow connections to the control API."
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address."
+        },
+        "port": {
+          "type": "integer",
+          "description": "This is the port that the API will use to communicate with the outside world.",
+          "examples": [
+            8080
+          ]
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "This is the timeout for the API. It is the maximum amount of time that the CROWler will wait for the API to respond."
+        },
+        "content_search": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to search also in the content field of a web object in the search results. This is useful for searching for every possible details of a web object, however will reduce performance quite a bit."
+        },
+        "return_content": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to return the web object content of a page in the search results. To improve performance, you can disable this option."
+        },
+        "sslmode": {
+          "type": "string",
+          "description": "This is the sslmode switch for the API. Use 'enable' to make the API use HTTPS."
+        },
+        "cert_file": {
+          "type": "string",
+          "description": "This is the certificate file for the API HTTPS protocol."
+        },
+        "key_file": {
+          "type": "string",
+          "description": "This is the key file for the API HTTPS certificates."
+        },
+        "rate_limit": {
+          "type": "string",
+          "description": "This is the rate limit for the API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit."
+        },
+        "enable_console": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to enable the admin console via the API. In other words, you'll get more endpoints to manage the CROWler via the Search API instead of local commands."
+        },
+        "return_404": {
+          "type": "boolean",
+          "description": "This is a flag that tells the CROWler to return 404 status code if a query has no results."
         }
       },
-      "image_storage": {
+      "additionalProperties": false,
+      "description": "This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world.",
+      "required": [
+        "host",
+        "timeout"
+      ]
+    },
+    "selenium": {
+      "type": "array",
+      "items": {
         "type": "object",
         "properties": {
-          "host": {
+          "name": {
             "type": "string",
-            "description": "This is the remote host for the image storage request."
+            "description": "This is the name of the VDI image. This is not a network name, so you can pick whatever makes sense for your business logic. This name can be used in a Source Configuration, to ensure the CROWler will use that specific VDI image to crawl the website."
+          },
+          "location": {
+            "type": "string",
+            "description": "This is the location of the VDI image."
           },
           "path": {
             "type": "string",
-            "description": "This is the path to the image storage. It is the path to the storage that the CROWler will use to store images. if the image storage is local, this is the path to the local directory where the images will be stored. If the image storage is remote, this is the path to the remote storage where the images will be stored."
+            "description": "This is the path to the selenium driver (IF LOCAL). It is the path to the selenium driver that the CROWler will use to crawl websites. (deprecated)"
           },
-          "port": {
-            "type": "integer",
-            "description": "This is the remote port for the image storage request."
-          },
-          "region": {
+          "driver_path": {
             "type": "string",
-            "description": "This is the region for the image storage request (for example for AWS s3 buckets)."
-          },
-          "token": {
-            "type": "string",
-            "description": "This is the token for the image storage request for remote storage."
-          },
-          "secret": {
-            "type": "string",
-            "description": "This is the secret for the image storage request for remote storage."
-          },
-          "timeout": {
-            "type": "integer",
-            "description": "This is the remote request timeout in seconds."
+            "description": "This is the path to the selenium driver (IF REMOTE). It is the path to the selenium driver that the CROWler will use to crawl websites. (deprecated)"
           },
           "type": {
             "type": "string",
-            "description": "This is the type of storage that the CROWler will use to store images. For example, s3, http or local (local is the default type)."
+            "description": "This is the type of selenium driver that the CROWler will use to crawl websites. For example, chrome or firefox."
           },
-          "sslmode": {
-            "type": "string",
-            "description": "This is the ssl mode for the image storage request for remote storage. Use enable to force https over http."
-          }
-        },
-        "description": "This is the configuration for the image storage. It is the configuration for the storage that the CROWler will use to store images.",
-        "required": [
-          "path",
-          "type"
-        ]
-      },
-      "file_storage": {
-        "type": "object",
-        "properties": {
+          "port": {
+            "type": "integer",
+            "description": "This is the port that the selenium driver will use to connect to the CROWler. It is the port that the selenium driver will use to connect to the CROWler."
+          },
           "host": {
             "type": "string",
-            "description": "This is the remote host for the file storage request."
+            "description": "This is the VDI host name or IP that the CROWler will use to connect to the VDI. It is the host that will be used to fetch web pages and that runs Selenium, RBee etc. For example, localhost. This is also the recommended way to use and connect to a VDI (in other words, don't try to run selenium, Rbee etc. locally, use a container for the VDI)."
           },
-          "path": {
-            "type": "string",
-            "description": "This is the path to the file storage. It is the path to the storage that the CROWler will use to store files. if the file storage is local, this is the path to the local directory where the files will be stored. If the file storage is remote, this is the path to the remote storage where the files will be stored."
+          "headless": {
+            "type": "boolean",
+            "description": "This is a flag that tells the selenium driver to run in headless mode. This is useful for running the selenium driver in a headless environment. It's generally NOT recommended to enable headless mode for the selenium driver. (don't use headless unless you know what you're doing, headless browsing is mostly blocked these days!)"
           },
-          "port": {
-            "type": "integer",
-            "description": "This is the remote port for the file storage request."
-          },
-          "region": {
-            "type": "string",
-            "description": "This is the region for the file storage request (for example for AWS s3 buckets)."
-          },
-          "token": {
-            "type": "string",
-            "description": "This is the token for the file storage request for remote storage."
-          },
-          "secret": {
-            "type": "string",
-            "description": "This is the secret for the file storage request for remote storage."
-          },
-          "timeout": {
-            "type": "integer",
-            "description": "This is the remote request timeout in seconds."
-          },
-          "type": {
-            "type": "string",
-            "description": "This is the type of storage that the CROWler will use to store files. For example, s3, http or local (local is the default type)."
+          "use_service": {
+            "type": "boolean",
+            "description": "This is a flag that tells the CROWler to access Selenium as service. (deprecated)"
           },
           "sslmode": {
             "type": "string",
-            "description": "This is the ssl mode for the file storage request for remote storage. Use enable to force https over http."
+            "description": "This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler."
+          },
+          "download_path": {
+            "type": "string",
+            "description": "This is the temporary download path for the VDI. It is the local path where the VDI will download files. This is useful for downloading files from websites (like pdf or zip etc.). The CROWler will use this path to temporarily store the downloaded files (before moving them to the storage files area)."
           }
         },
-        "description": "This is the configuration for the file storage. File storage will be used for web object content storage.",
         "required": [
-          "path",
-          "type"
-        ]
-      },
-      "network_info": {
-        "type": "object",
-        "properties": {
-          "dns": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use DNS techniques. This is useful for detecting the IP address of a domain."
-              },
-              "timeout": {
-                "type": "integer",
-                "description": "This is the timeout for the DNS database. It is the maximum amount of time that the CROWler will wait for the DNS database to respond."
-              },
-              "rate_limit": {
-                "type": "string",
-                "description": "This is the rate limit for the DNS database. It is the maximum number of requests that the CROWler will send to the DNS database per second. You can use the ExprTerpreter language to set the rate limit."
-              }
-            },
-            "required": [
-              "enabled"
-            ]
-          },
-          "whois": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use whois techniques. This is useful for detecting the owner of a domain."
-              },
-              "timeout": {
-                "type": "integer",
-                "description": "This is the timeout for the whois database. It is the maximum amount of time that the CROWler will wait for the whois database to respond."
-              },
-              "rate_limit": {
-                "type": "string",
-                "description": "This is the rate limit for the whois database. It is the maximum number of requests that the CROWler will send to the whois database per second. You can use the ExprTerpreter language to set the rate limit."
-              }
-            },
-            "required": [
-              "enabled"
-            ]
-          },
-          "netlookup": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use netlookup techniques. This is useful for detecting the network information of a host."
-              },
-              "timeout": {
-                "type": "integer",
-                "description": "This is the timeout for the netlookup database. It is the maximum amount of time that the CROWler will wait for the netlookup database to respond."
-              },
-              "rate_limit": {
-                "type": "string",
-                "description": "This is the rate limit for the netlookup database. It is the maximum number of requests that the CROWler will send to the netlookup database per second. You can use the ExprTerpreter language to set the rate limit."
-              }
-            },
-            "required": [
-              "enabled"
-            ]
-          },
-          "geo_localization": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use geolocation techniques. This is useful for detecting the location of a host."
-              },
-              "path": {
-                "type": "string",
-                "description": "This is the path to the geolocation database. It is the path to the database that the CROWler will use to determine the location of a host."
-              },
-              "type": {
-                "type": "string",
-                "description": "This is the type of geolocation database that the CROWler will use. It is the type of database that the CROWler will use to determine the location of a host. For example maxmind or ip2location"
-              },
-              "timeout": {
-                "type": "integer",
-                "description": "This is the timeout for the geolocation database. It is the maximum amount of time that the CROWler will wait for the geolocation database to respond."
-              },
-              "api_key": {
-                "type": "string",
-                "description": "This is the API key for the geolocation database. It is the API key that the CROWler will use to connect to the geolocation database."
-              },
-              "sslmode": {
-                "type": "string",
-                "description": "This is the sslmode that the CROWler will use to connect to the geolocation database."
-              }
-            },
-            "required": [
-              "enabled",
-              "path"
-            ]
-          },
-          "service_scout": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use service scanning techniques. This is useful for detecting services that are running on a host."
-              },
-              "timeout": {
-                "type": "integer",
-                "description": "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
-              },
-              "idle_scan": {
-                "type": "object",
-                "description": "This is the configuration for the idle scan.",
-                "properties": {
-                  "host": {
-                    "type": "string",
-                    "description": "Host FQDN or IP address."
-                  },
-                  "port": {
-                    "type": "integer",
-                    "description": "Port number."
-                  }
-                }
-              },
-              "ping_scan": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use ping scanning techniques. This is useful for detecting hosts that are alive."
-              },
-              "connect_scan": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use connect scanning techniques. This is useful for detecting services that are running on a host."
-              },
-              "syn_scan": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use SYN scanning techniques. This is useful for detecting services that are running on a host."
-              },
-              "udp_scan": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use UDP scanning techniques. This is useful for detecting services that are running on a host."
-              },
-              "no_dns_resolution": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler not to resolve hostnames to IP addresses. This is useful for avoiding detection by intrusion detection systems."
-              },
-              "service_detection": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use service detection techniques. This is useful for detecting services that are running on a host."
-              },
-              "service_db": {
-                "type": "string",
-                "description": "This is the service detection database."
-              },
-              "os_finger_print": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use OS fingerprinting techniques. This is useful for detecting the operating system that is running on a host."
-              },
-              "aggressive_scan": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use aggressive scanning techniques. This is useful for detecting services that are running on a host."
-              },
-              "script_scan": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "This is a list of nmap scripts to run. This is particularly important when a user wants to do vulnerability scanning."
-              },
-              "excluded_hosts": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "This is a list of hosts to exclude from the scan. The CROWler may encounter such hosts during its crawling activities, so this field makes it easy to define a list of hosts that it should always avoid scanning."
-              },
-              "timing_template": {
-                "type": "string",
-                "description": "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan. DO not specify values using Tx, where x is a number. Instead, use just the number, e.g., '3'."
-              },
-              "host_timeout": {
-                "type": "string",
-                "description": "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
-              },
-              "min_rate": {
-                "type": "string",
-                "description": "This is the minimum rate at which the CROWler will scan hosts. It is the minimum number of packets that the CROWler will send to a host per second."
-              },
-              "max_retries": {
-                "type": "integer",
-                "description": "This is the maximum number of times that the CROWler will retry a scan on a host. If the CROWler is unable to scan a host after this number of retries, it will move on to the next host."
-              },
-              "source_port": {
-                "type": "integer",
-                "description": "This is the source port that the CROWler will use for scanning. It is the port that the CROWler will use to send packets to hosts."
-              },
-              "interface": {
-                "type": "string",
-                "description": "This is the interface that the CROWler will use for scanning. It is the network interface that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
-              },
-              "spoof_ip": {
-                "type": "string",
-                "description": "This is the IP address that the CROWler will use to spoof its identity. It is the IP address that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
-              },
-              "randomize_hosts": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to randomize the order in which it scans hosts. This is useful for avoiding detection by intrusion detection systems."
-              },
-              "data_length": {
-                "type": "integer",
-                "description": "This is the length of the data that the CROWler will send to hosts. It is the length of the data that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
-              },
-              "delay": {
-                "type": "string",
-                "description": "This is the delay between packets that the CROWler will use for scanning. It is the delay between packets that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results. For the delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
-              },
-              "mtu_discovery": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to use MTU discovery when scanning hosts. This is useful for avoiding detection by intrusion detection systems."
-              },
-              "scan_flags": {
-                "type": "string",
-                "description": "This is the flags that the CROWler will use for scanning. It is the flags that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
-              },
-              "ip_fragment": {
-                "type": "boolean",
-                "description": "This is a flag that tells the CROWler to fragment IP packets. This is useful for avoiding detection by intrusion detection systems."
-              },
-              "max_port_number": {
-                "type": "integer",
-                "description": "This is the maximum port number to scan (default is 9000)."
-              },
-              "max_parallelism": {
-                "type": "integer",
-                "description": "This is the maximum number of parallelism."
-              },
-              "dns_servers": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "This is a list of custom DNS servers."
-              },
-              "proxies": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Proxies for the database connection."
-              }
-            },
-            "required": [
-              "enabled"
-            ]
-          }
+          "type",
+          "host"
+        ],
+        "additionalProperties": false,
+        "description": "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array."
+      }
+    },
+    "image_storage": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "This is the remote host for the image storage request."
         },
-        "description": "This is the configuration for the network information collection."
+        "path": {
+          "type": "string",
+          "description": "This is the path to the image storage. It is the path to the storage that the CROWler will use to store images. if the image storage is local, this is the path to the local directory where the images will be stored. If the image storage is remote, this is the path to the remote storage where the images will be stored."
+        },
+        "port": {
+          "type": "integer",
+          "description": "This is the remote port for the image storage request."
+        },
+        "region": {
+          "type": "string",
+          "description": "This is the region for the image storage request (for example for AWS s3 buckets)."
+        },
+        "token": {
+          "type": "string",
+          "description": "This is the token for the image storage request for remote storage."
+        },
+        "secret": {
+          "type": "string",
+          "description": "This is the secret for the image storage request for remote storage."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "This is the remote request timeout in seconds."
+        },
+        "type": {
+          "type": "string",
+          "description": "This is the type of storage that the CROWler will use to store images. For example, s3, http or local (local is the default type)."
+        },
+        "sslmode": {
+          "type": "string",
+          "description": "This is the ssl mode for the image storage request for remote storage. Use enable to force https over http."
+        }
       },
-      "rulesets": {
-        "type": "array",
-        "items": {
+      "additionalProperties": false,
+      "description": "This is the configuration for the image storage. It is the configuration for the storage that the CROWler will use to store images.",
+      "required": [
+        "path",
+        "type"
+      ]
+    },
+    "file_storage": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "This is the remote host for the file storage request."
+        },
+        "path": {
+          "type": "string",
+          "description": "This is the path to the file storage. It is the path to the storage that the CROWler will use to store files. if the file storage is local, this is the path to the local directory where the files will be stored. If the file storage is remote, this is the path to the remote storage where the files will be stored."
+        },
+        "port": {
+          "type": "integer",
+          "description": "This is the remote port for the file storage request."
+        },
+        "region": {
+          "type": "string",
+          "description": "This is the region for the file storage request (for example for AWS s3 buckets)."
+        },
+        "token": {
+          "type": "string",
+          "description": "This is the token for the file storage request for remote storage."
+        },
+        "secret": {
+          "type": "string",
+          "description": "This is the secret for the file storage request for remote storage."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "This is the remote request timeout in seconds."
+        },
+        "type": {
+          "type": "string",
+          "description": "This is the type of storage that the CROWler will use to store files. For example, s3, http or local (local is the default type)."
+        },
+        "sslmode": {
+          "type": "string",
+          "description": "This is the ssl mode for the file storage request for remote storage. Use enable to force https over http."
+        }
+      },
+      "additionalProperties": false,
+      "description": "This is the configuration for the file storage. File storage will be used for web object content storage.",
+      "required": [
+        "path",
+        "type"
+      ]
+    },
+    "network_info": {
+      "type": "object",
+      "properties": {
+        "dns": {
           "type": "object",
           "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use DNS techniques. This is useful for detecting the IP address of a domain."
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "This is the timeout for the DNS database. It is the maximum amount of time that the CROWler will wait for the DNS database to respond."
+            },
+            "rate_limit": {
+              "type": "string",
+              "description": "This is the rate limit for the DNS database. It is the maximum number of requests that the CROWler will send to the DNS database per second. You can use the ExprTerpreter language to set the rate limit."
+            }
+          },
+          "additionalProperties": false,
+          "description": "This is the configuration for the DNS data collection. It is the configuration for the DNS data collection that the CROWler will use to detect the IP address of a domain, subdomains etc.",
+          "required": [
+            "enabled"
+          ]
+        },
+        "whois": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use whois techniques. This is useful for detecting the owner of a domain."
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "This is the timeout for the whois database. It is the maximum amount of time that the CROWler will wait for the whois database to respond."
+            },
+            "rate_limit": {
+              "type": "string",
+              "description": "This is the rate limit for the whois database. It is the maximum number of requests that the CROWler will send to the whois database per second. You can use the ExprTerpreter language to set the rate limit."
+            }
+          },
+          "description": "This is the configuration for the whois data collection. It is the configuration for the whois data collection that the CROWler will use to detect the owner of a domain.",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
+        },
+        "netlookup": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use netlookup techniques. This is useful for detecting the network information of a host."
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "This is the timeout for the netlookup database. It is the maximum amount of time that the CROWler will wait for the netlookup database to respond."
+            },
+            "rate_limit": {
+              "type": "string",
+              "description": "This is the rate limit for the netlookup database. It is the maximum number of requests that the CROWler will send to the netlookup database per second. You can use the ExprTerpreter language to set the rate limit."
+            }
+          },
+          "additionalProperties": false,
+          "description": "This is the configuration for the netlookup data collection. It is the configuration for the netlookup data collection that the CROWler will use to detect the network information of a host.",
+          "required": [
+            "enabled"
+          ]
+        },
+        "geo_localization": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use geolocation techniques. This is useful for detecting the location of a host."
+            },
             "path": {
+              "type": "string",
+              "description": "This is the path to the geolocation database. It is the path to the database that the CROWler will use to determine the location of a host."
+            },
+            "type": {
+              "type": "string",
+              "description": "This is the type of geolocation database that the CROWler will use. It is the type of database that the CROWler will use to determine the location of a host. For example maxmind or ip2location"
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "This is the timeout for the geolocation database. It is the maximum amount of time that the CROWler will wait for the geolocation database to respond."
+            },
+            "api_key": {
+              "type": "string",
+              "description": "This is the API key for the geolocation database. It is the API key that the CROWler will use to connect to the geolocation database."
+            },
+            "sslmode": {
+              "type": "string",
+              "description": "This is the sslmode that the CROWler will use to connect to the geolocation database.",
+              "examples": [
+                "enable"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "description": "This is the configuration for the geolocation data collection. It is the configuration for the geolocation data collection that the CROWler will use to detect the location of a host.",
+          "required": [
+            "enabled",
+            "path"
+          ]
+        },
+        "service_scout": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use service scanning techniques. This is useful for detecting services that are running on a host."
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
+            },
+            "idle_scan": {
+              "type": "object",
+              "description": "This is the configuration for the idle scan.",
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "description": "Host FQDN or IP address."
+                },
+                "port": {
+                  "type": "integer",
+                  "description": "Port number."
+                }
+              },
+              "additionalProperties": false
+            },
+            "ping_scan": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use ping scanning techniques. This is useful for detecting hosts that are alive."
+            },
+            "connect_scan": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use connect scanning techniques. This is useful for detecting services that are running on a host."
+            },
+            "syn_scan": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use SYN scanning techniques. This is useful for detecting services that are running on a host."
+            },
+            "udp_scan": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use UDP scanning techniques. This is useful for detecting services that are running on a host."
+            },
+            "no_dns_resolution": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler not to resolve hostnames to IP addresses. This is useful for avoiding detection by intrusion detection systems."
+            },
+            "service_detection": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use service detection techniques. This is useful for detecting services that are running on a host."
+            },
+            "service_db": {
+              "type": "string",
+              "description": "This is the service detection database."
+            },
+            "os_finger_print": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use OS fingerprinting techniques. This is useful for detecting the operating system that is running on a host."
+            },
+            "aggressive_scan": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use aggressive scanning techniques. This is useful for detecting services that are running on a host."
+            },
+            "script_scan": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "This is a list of nmap and crowler-scanner scripts to run. This is particularly important when a user wants to do vulnerability scanning.",
+                "examples": [
+                  "http-enum",
+                  "http-headers",
+                  "default",
+                  "vuln"
+                ]
+              },
+              "description": "This is a list of nmap scripts to run. This is particularly important when a user wants to do vulnerability scanning."
+            },
+            "excluded_hosts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "oneOf": [
+                  { "format": "ipv4" },
+                  { "format": "ipv6" },
+                  { "format": "hostname" }
+                ],
+                "examples": [
+                  "example.com",
+                  "192.168.0.1",
+                  "localhost",
+                  "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+                ]
+              },
+              "additionalProperties": false,
+              "description": "This is a list of hosts to exclude from the scan. The CROWler may encounter such hosts during its crawling activities, so this field makes it easy to define a list of hosts that it should always avoid scanning."
+            },
+            "timing_template": {
+              "type": "string",
+              "description": "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan. DO not specify values using Tx, where x is a number. Instead, use just the number, e.g., '3'.",
+              "examples": [
+                "3"
+              ]
+            },
+            "host_timeout": {
+              "type": "string",
+              "description": "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
+            },
+            "min_rate": {
+              "type": "string",
+              "description": "This is the minimum rate at which the CROWler will scan hosts. It is the minimum number of packets that the CROWler will send to a host per second."
+            },
+            "max_retries": {
+              "type": "integer",
+              "description": "This is the maximum number of times that the CROWler will retry a scan on a host. If the CROWler is unable to scan a host after this number of retries, it will move on to the next host."
+            },
+            "source_port": {
+              "type": "integer",
+              "description": "This is the source port that the CROWler will use for scanning. It is the port that the CROWler will use to send packets to hosts."
+            },
+            "interface": {
+              "type": "string",
+              "description": "This is the interface that the CROWler will use for scanning. It is the network interface that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
+            },
+            "spoof_ip": {
+              "type": "string",
+              "description": "This is the IP address that the CROWler will use to spoof its identity. It is the IP address that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
+            },
+            "randomize_hosts": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to randomize the order in which it scans hosts. This is useful for avoiding detection by intrusion detection systems."
+            },
+            "data_length": {
+              "type": "integer",
+              "description": "This is the length of the data that the CROWler will send to hosts. It is the length of the data that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
+            },
+            "delay": {
+              "type": "string",
+              "description": "This is the delay between packets that the CROWler will use for scanning. It is the delay between packets that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results. For the delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+            },
+            "mtu_discovery": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to use MTU discovery when scanning hosts. This is useful for avoiding detection by intrusion detection systems."
+            },
+            "scan_flags": {
+              "type": "string",
+              "description": "This is the flags that the CROWler will use for scanning. It is the flags that the CROWler will use to send packets to hosts. Use this option with a port that is behind a VPN or a proxy for better results."
+            },
+            "ip_fragment": {
+              "type": "boolean",
+              "description": "This is a flag that tells the CROWler to fragment IP packets. This is useful for avoiding detection by intrusion detection systems."
+            },
+            "max_port_number": {
+              "type": "integer",
+              "description": "This is the maximum port number to scan (default is 9000)."
+            },
+            "max_parallelism": {
+              "type": "integer",
+              "description": "This is the maximum number of parallelism."
+            },
+            "dns_servers": {
               "type": "array",
               "items": {
                 "type": "string"
               },
-              "description": "This is the path that the CROWler will use to fetch the ruleset. You can use wildcard to fetch multiple rulesets. for example './rules/*.yaml'."
+              "additionalProperties": false,
+              "description": "This is a list of custom DNS servers."
             },
-            "host": {
-              "type": "string",
-              "description": "This is the host that the CROWler will use to fetch the ruleset."
-            },
-            "port": {
-              "type": "string",
-              "description": "This is the port that the CROWler will use to fetch the ruleset."
-            },
-            "region": {
-              "type": "string",
-              "description": "This is the region that the CROWler will use to fetch the ruleset (for example, if you're hosting your ruleset on an AWS S3 bucket)."
-            },
-            "token": {
-              "type": "string",
-              "description": "This is the token that the CROWler will use to connect to the distribution server to download the ruleset."
-            },
-            "secret": {
-              "type": "string",
-              "description": "This is the secret that the CROWler will use to connect to the distribution server to download the ruleset."
-            },
-            "timeout": {
-              "type": "integer",
-              "description": "This is the timeout in seconds for the CROWler to fetch the ruleset."
-            },
-            "type": {
-              "type": "string",
-              "description": "This is the type of the distribution server that the CROWler will use to fetch the ruleset. For example, s3, http or local. (local is default)"
-            },
-            "sslmode": {
-              "type": "string",
-              "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch the ruleset. Use 'enable' to force https over http."
-            },
-            "refresh": {
-              "type": "integer",
-              "description": "This is the refresh interval in seconds for the CROWler to fetch the ruleset (refresh it)."
+            "proxies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "additionalProperties": false,
+              "description": "Proxies for the database connection."
             }
           },
+          "additionalProperties": false,
+          "description": "This is the configuration for the service scout data collection. It is the configuration for the service scout data collection that the CROWler will use to detect services that are running on a host, network vulnerabilities, network software versions etc.",
           "required": [
-            "path",
-            "type"
-          ]
-        },
-        "description": "This is the configuration for the rulesets that the CROWler will use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
-      },
-      "external_detection": {
-        "description": "This is the configuration for the external detection services like VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs.",
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string",
-              "description": "This is the name of the external detection service. For example, VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs."
-            },
-            "enabled": {
-              "type": "boolean",
-              "description": "This is a flag that tells the CROWler to use the external detection service."
-            },
-            "api_key": {
-              "type": "string",
-              "description": "This is the API key for the external detection service."
-            },
-            "timeout": {
-              "type": "integer",
-              "description": "This is the timeout in seconds for the external detection service."
-            },
-            "delay": {
-              "type": "string",
-              "description": "This is the delay time (in seconds) between requests for the external detection service."
-            },
-            "full_site": {
-              "type": "boolean",
-              "description": "This is a flag that tells the CROWler to use the external detection service only for the Source URL only or for every URLs being crawler for the Source. (default is false, to reduce traffic over 3rd party services)."
-            }
-          },
-          "required": [
-            "name",
-            "api_key"
+            "enabled"
           ]
         }
       },
-      "os": {
-        "type": "string"
+      "additionalProperties": false,
+      "description": "This is the configuration for the network information collection."
+    },
+    "rulesets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "This is the path that the CROWler will use to fetch the ruleset. You can use wildcard to fetch multiple rulesets. for example './rules/*.yaml'.",
+            "examples": [
+              [
+                "./rules/*.yaml"
+              ]
+            ]
+          },
+          "host": {
+            "type": "string",
+            "description": "This is the host that the CROWler will use to fetch the ruleset."
+          },
+          "port": {
+            "type": "string",
+            "description": "This is the port that the CROWler will use to fetch the ruleset.",
+            "examples": [
+              "443"
+            ]
+          },
+          "region": {
+            "type": "string",
+            "description": "This is the region that the CROWler will use to fetch the ruleset (for example, if you're hosting your ruleset on an AWS S3 bucket)."
+          },
+          "token": {
+            "type": "string",
+            "description": "This is the token that the CROWler will use to connect to the distribution server to download the ruleset."
+          },
+          "secret": {
+            "type": "string",
+            "description": "This is the secret that the CROWler will use to connect to the distribution server to download the ruleset."
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "This is the timeout in seconds for the CROWler to fetch the ruleset."
+          },
+          "type": {
+            "type": "string",
+            "description": "This is the type of the distribution server that the CROWler will use to fetch the ruleset. For example, s3, http or local. (local is default)"
+          },
+          "sslmode": {
+            "type": "string",
+            "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch the ruleset. Use 'enable' to force https over http."
+          },
+          "refresh": {
+            "type": "integer",
+            "description": "This is the refresh interval in seconds for the CROWler to fetch the ruleset (refresh it)."
+          }
+        },
+        "required": [
+          "path",
+          "type"
+        ]
       },
-      "debug_level": {
-        "type": "integer"
+      "additionalProperties": false,
+      "description": "This is the configuration for the rulesets that the CROWler will use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
+    },
+    "external_detection": {
+      "description": "This is the configuration for the external detection services like VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "This is the name of the external detection service. For example, VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "This is a flag that tells the CROWler to use the external detection service."
+          },
+          "api_key": {
+            "type": "string",
+            "description": "This is the API key for the external detection service."
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "This is the timeout in seconds for the external detection service."
+          },
+          "delay": {
+            "type": "string",
+            "description": "This is the delay time (in seconds) between requests for the external detection service."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "api_key"
+        ]
       }
     },
-    "anyOf": [
-      {
-        "required": [
-          "remote"
-        ]
-      },
-      {
-        "required": [
-          "database",
-          "crawler",
-          "api",
-          "selenium",
-          "network_info"
-        ]
-      }
-    ]
-  }
+    "os": {
+      "type": "string",
+      "description": "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually."
+    },
+    "debug_level": {
+      "type": "integer",
+      "description": "This is the debug level for the CROWler. It is the level of debugging that the CROWler will use to log messages. The higher the level, the more messages will be logged.",
+      "examples": [
+        1
+      ]
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "remote"
+      ]
+    },
+    {
+      "required": [
+        "database",
+        "crawler",
+        "api",
+        "selenium",
+        "network_info"
+      ]
+    }
+  ]
+}
