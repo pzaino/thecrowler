@@ -9,15 +9,18 @@ properties:
     properties:
       host:
         type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
         description: "This is the host that the CROWler will use to fetch its configuration."
       path:
         type: "string"
         description: "This is the path that the CROWler will use to fetch its configuration."
       port:
         type: "integer"
+        minimum: "1"
+        maximum: "65535"
         description: "This is the port that the CROWler will use to fetch its configuration."
         examples:
-          - "80"
+        - "80"
       region:
         type: "string"
         description: "This is the region that the CROWler will use to fetch its configuration. For example in case the distribution server is on an AWS S3 bucket, you can specify the region here."
@@ -36,11 +39,15 @@ properties:
       sslmode:
         type: "string"
         description: "This is the sslmode that the CROWler will use to connect to the distribution server to fetch its configuration."
+        pattern: "^(enable|disable|)$"
+        examples:
+        - "enable"
+        - "disable"
     description: "This is the configuration section to tell the CROWler its actual configuration has to be fetched remotely from a distribution server. If you use this section, then do not populate the other configuration sections as they will be ignored. The CROWler will fetch its configuration from the remote server and use it to start the engine."
     required:
-      - "host"
-      - "path"
-      - "type"
+    - "host"
+    - "path"
+    - "type"
   database:
     type: "object"
     properties:
@@ -49,12 +56,15 @@ properties:
         description: "This is the type of the database that the CROWler will use to store data. For example, postgres."
       host:
         type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
         description: "This is the host that the CROWler will use to connect to the database."
       port:
         type: "integer"
+        minimum: "1"
+        maximum: "65535"
         description: "This is the port that the CROWler will use to connect to the database."
         examples:
-          - "5432"
+        - "5432"
       user:
         type: "string"
         description: "This is the user that the CROWler will use to connect to the database."
@@ -72,23 +82,33 @@ properties:
       sslmode:
         type: "string"
         description: "This is the sslmode that the CROWler will use to connect to the database. Use 'enable' to enable the ssl mode connection to the DB. (default is 'disable')."
+        pattern: "^(enable|disable|)$"
+        examples:
+        - "enable"
+        - "disable"
       optimize_for:
         type: "string"
         description: "This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value 'write'. If the user is doing more query operations than write, then use the value 'query'. If unsure leave it empty."
+        pattern: "^(write|query|)$"
+        examples:
+        - "write"
+        - "query"
       max_conns:
         type: "integer"
+        minimum: "25"
         description: "This is the maximum number of connections that the CROWler will use to connect to the database."
       max_idle_conns:
         type: "integer"
+        minimum: "25"
         description: "This is the maximum number of idle connections that the CROWler will use to connect to the database."
     description: "This is the configuration for the database that the CROWler will use to store data."
     additionalProperties: "false"
     required:
-      - "type"
-      - "host"
-      - "user"
-      - "password"
-      - "dbname"
+    - "type"
+    - "host"
+    - "user"
+    - "password"
+    - "dbname"
   crawler:
     type: "object"
     properties:
@@ -130,39 +150,46 @@ properties:
         description: "This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website."
       collect_html:
         type: "boolean"
-        description: "This is a flag that tells the CROWler to collect the HTML of a website. This is useful for debugging purposes."
+        description: "This is a flag that tells the CROWler to collect the HTML of a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source."
       collect_images:
         type: "boolean"
-        description: "This is a flag that tells the CROWler to collect images from a website. This is useful for debugging purposes."
+        description: "This is a flag that tells the CROWler to collect images from a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source"
       collect_files:
         type: "boolean"
-        description: "This is a flag that tells the CROWler to collect files from a website. This is useful for debugging purposes."
+        description: "This is a flag that tells the CROWler to collect files from a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source"
       collect_content:
         type: "boolean"
-        description: "This is a flag that tells the CROWler to collect the text content of a website. This is useful for AI datasets creation and knowledge bases."
+        description: "This is a flag that tells the CROWler to collect the text content of a website. This is also useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source"
       collect_keywords:
         type: "boolean"
-        description: "This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases."
+        description: "This is a flag that tells the CROWler to collect the keywords of a website. This is also useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source. Keywords and metadata are used in searches, so we recommend enabling this option."
       collect_metatags:
         type: "boolean"
-        description: "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases."
+        description: "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source. Keywords and metadata are used in searches, so we recommend enabling this option."
       control:
         type: "object"
         properties:
           host:
             type: "string"
+            pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
             description: "This is the host that the CROWler will use to allow connections to the control API."
           port:
             type: "integer"
+            minimum: "1"
+            maximum: "65535"
             description: "This is the port that the CROWler will use to allow connections to the control API."
             examples:
-              - "8081"
+            - "8081"
           timeout:
             type: "integer"
             description: "This is the timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
           sslmode:
             type: "string"
             description: "This is the sslmode switch for the control API. Use 'enable' to make the control API use HTTPS."
+            pattern: "^(enable|disable|)$"
+            examples:
+            - "enable"
+            - "disable"
           cert_file:
             type: "string"
             description: "This is the certificate file for the control API HTTPS protocol."
@@ -179,18 +206,23 @@ properties:
             type: "integer"
             description: "This is the write timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
         additionalProperties: "false"
-        description: "This is the configuration for the control API. It is the configuration for the control API that the CROWler will use to allow connections to the control API."
+        description: "The Control API is an internal API used by tools like healthCheck etc to control the status of the CROWler. It has nothing to do with the General API `api` which is used to interact with the CROWler, make requests and post Sources. This section is the configuration for the control API that the CROWler Engine will use to allow connections to the control API. The COntrol API is part of the CROWler Engine."
+    additionalProperties: "false"
+    description: "This is the configuration for the CROWler engine. It is the configuration for the CROWler engine that the CROWler will use to crawl websites."
   api:
     type: "object"
     properties:
       host:
         type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
         description: "This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address."
       port:
         type: "integer"
+        minimum: "1"
+        maximum: "65535"
         description: "This is the port that the API will use to communicate with the outside world."
         examples:
-          - "8080"
+        - "8080"
       timeout:
         type: "integer"
         description: "This is the timeout for the API. It is the maximum amount of time that the CROWler will wait for the API to respond."
@@ -203,6 +235,10 @@ properties:
       sslmode:
         type: "string"
         description: "This is the sslmode switch for the API. Use 'enable' to make the API use HTTPS."
+        pattern: "^(enable|disable|)$"
+        examples:
+        - "enable"
+        - "disable"
       cert_file:
         type: "string"
         description: "This is the certificate file for the API HTTPS protocol."
@@ -219,10 +255,10 @@ properties:
         type: "boolean"
         description: "This is a flag that tells the CROWler to return 404 status code if a query has no results."
     additionalProperties: "false"
-    description: "This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world."
+    description: "This is the configuration for the General API (it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API). It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc."
     required:
-      - "host"
-      - "timeout"
+    - "host"
+    - "timeout"
   selenium:
     type: "array"
     items:
@@ -245,9 +281,12 @@ properties:
           description: "This is the type of selenium driver that the CROWler will use to crawl websites. For example, chrome or firefox."
         port:
           type: "integer"
+          minimum: "1"
+          maximum: "65535"
           description: "This is the port that the selenium driver will use to connect to the CROWler. It is the port that the selenium driver will use to connect to the CROWler."
         host:
           type: "string"
+          pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
           description: "This is the VDI host name or IP that the CROWler will use to connect to the VDI. It is the host that will be used to fetch web pages and that runs Selenium, RBee etc. For example, localhost. This is also the recommended way to use and connect to a VDI (in other words, don't try to run selenium, Rbee etc. locally, use a container for the VDI)."
         headless:
           type: "boolean"
@@ -258,12 +297,16 @@ properties:
         sslmode:
           type: "string"
           description: "This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler."
+          pattern: "^(enable|disable|)$"
+          examples:
+          - "enable"
+          - "disable"
         download_path:
           type: "string"
           description: "This is the temporary download path for the VDI. It is the local path where the VDI will download files. This is useful for downloading files from websites (like pdf or zip etc.). The CROWler will use this path to temporarily store the downloaded files (before moving them to the storage files area)."
       required:
-        - "type"
-        - "host"
+      - "type"
+      - "host"
       additionalProperties: "false"
       description: "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array."
   image_storage:
@@ -271,12 +314,15 @@ properties:
     properties:
       host:
         type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
         description: "This is the remote host for the image storage request."
       path:
         type: "string"
         description: "This is the path to the image storage. It is the path to the storage that the CROWler will use to store images. if the image storage is local, this is the path to the local directory where the images will be stored. If the image storage is remote, this is the path to the remote storage where the images will be stored."
       port:
         type: "integer"
+        minimum: "1"
+        maximum: "65535"
         description: "This is the remote port for the image storage request."
       region:
         type: "string"
@@ -296,22 +342,29 @@ properties:
       sslmode:
         type: "string"
         description: "This is the ssl mode for the image storage request for remote storage. Use enable to force https over http."
+        pattern: "^(enable|disable|)$"
+        examples:
+        - "enable"
+        - "disable"
     additionalProperties: "false"
     description: "This is the configuration for the image storage. It is the configuration for the storage that the CROWler will use to store images."
     required:
-      - "path"
-      - "type"
+    - "path"
+    - "type"
   file_storage:
     type: "object"
     properties:
       host:
         type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
         description: "This is the remote host for the file storage request."
       path:
         type: "string"
         description: "This is the path to the file storage. It is the path to the storage that the CROWler will use to store files. if the file storage is local, this is the path to the local directory where the files will be stored. If the file storage is remote, this is the path to the remote storage where the files will be stored."
       port:
         type: "integer"
+        minimum: "1"
+        maximum: "65535"
         description: "This is the remote port for the file storage request."
       region:
         type: "string"
@@ -331,11 +384,15 @@ properties:
       sslmode:
         type: "string"
         description: "This is the ssl mode for the file storage request for remote storage. Use enable to force https over http."
+        pattern: "^(enable|disable|)$"
+        examples:
+        - "enable"
+        - "disable"
     additionalProperties: "false"
     description: "This is the configuration for the file storage. File storage will be used for web object content storage."
     required:
-      - "path"
-      - "type"
+    - "path"
+    - "type"
   network_info:
     type: "object"
     properties:
@@ -354,7 +411,7 @@ properties:
         additionalProperties: "false"
         description: "This is the configuration for the DNS data collection. It is the configuration for the DNS data collection that the CROWler will use to detect the IP address of a domain, subdomains etc."
         required:
-          - "enabled"
+        - "enabled"
       whois:
         type: "object"
         properties:
@@ -370,7 +427,7 @@ properties:
         description: "This is the configuration for the whois data collection. It is the configuration for the whois data collection that the CROWler will use to detect the owner of a domain."
         additionalProperties: "false"
         required:
-          - "enabled"
+        - "enabled"
       netlookup:
         type: "object"
         properties:
@@ -386,7 +443,7 @@ properties:
         additionalProperties: "false"
         description: "This is the configuration for the netlookup data collection. It is the configuration for the netlookup data collection that the CROWler will use to detect the network information of a host."
         required:
-          - "enabled"
+        - "enabled"
       geo_localization:
         type: "object"
         properties:
@@ -408,13 +465,15 @@ properties:
           sslmode:
             type: "string"
             description: "This is the sslmode that the CROWler will use to connect to the geolocation database."
+            pattern: "^(enable|disable|)$"
             examples:
-              - "enable"
+            - "enable"
+            - "disable"
         additionalProperties: "false"
         description: "This is the configuration for the geolocation data collection. It is the configuration for the geolocation data collection that the CROWler will use to detect the location of a host."
         required:
-          - "enabled"
-          - "path"
+        - "enabled"
+        - "path"
       service_scout:
         type: "object"
         properties:
@@ -430,9 +489,12 @@ properties:
             properties:
               host:
                 type: "string"
+                pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
                 description: "Host FQDN or IP address."
               port:
                 type: "integer"
+                minimum: "1"
+                maximum: "65535"
                 description: "Port number."
             additionalProperties: "false"
           ping_scan:
@@ -468,31 +530,31 @@ properties:
               type: "string"
               description: "This is a list of nmap and crowler-scanner scripts to run. This is particularly important when a user wants to do vulnerability scanning."
               examples:
-                - "http-enum"
-                - "http-headers"
-                - "default"
-                - "vuln"
+              - "http-enum"
+              - "http-headers"
+              - "default"
+              - "vuln"
             description: "This is a list of nmap scripts to run. This is particularly important when a user wants to do vulnerability scanning."
           excluded_hosts:
             type: "array"
             items:
               type: "string"
               oneOf:
-                - format: "ipv4"
-                - format: "ipv6"
-                - format: "hostname"
+              - format: "ipv4"
+              - format: "ipv6"
+              - format: "hostname"
               examples:
-                - "example.com"
-                - "192.168.0.1"
-                - "localhost"
-                - "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+              - "example.com"
+              - "192.168.0.1"
+              - "localhost"
+              - "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
             additionalProperties: "false"
             description: "This is a list of hosts to exclude from the scan. The CROWler may encounter such hosts during its crawling activities, so this field makes it easy to define a list of hosts that it should always avoid scanning."
           timing_template:
             type: "string"
             description: "This allows the user to set the timing template for the scan. The timing template is a string that is passed to nmap to set the timing of the scan. DO not specify values using Tx, where x is a number. Instead, use just the number, e.g., '3'."
             examples:
-              - "3"
+            - "3"
           host_timeout:
             type: "string"
             description: "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
@@ -550,7 +612,7 @@ properties:
         additionalProperties: "false"
         description: "This is the configuration for the service scout data collection. It is the configuration for the service scout data collection that the CROWler will use to detect services that are running on a host, network vulnerabilities, network software versions etc."
         required:
-          - "enabled"
+        - "enabled"
     additionalProperties: "false"
     description: "This is the configuration for the network information collection."
   rulesets:
@@ -564,16 +626,19 @@ properties:
             type: "string"
           description: "This is the path that the CROWler will use to fetch the ruleset. You can use wildcard to fetch multiple rulesets. for example './rules/*.yaml'."
           examples:
-            -
-            - "./rules/*.yaml"
+          -
+          - "./rules/*.yaml"
         host:
           type: "string"
+          pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$"
           description: "This is the host that the CROWler will use to fetch the ruleset."
         port:
           type: "string"
+          minimum: "1"
+          maximum: "65535"
           description: "This is the port that the CROWler will use to fetch the ruleset."
           examples:
-            - "443"
+          - "443"
         region:
           type: "string"
           description: "This is the region that the CROWler will use to fetch the ruleset (for example, if you're hosting your ruleset on an AWS S3 bucket)."
@@ -592,13 +657,17 @@ properties:
         sslmode:
           type: "string"
           description: "This is the sslmode that the CROWler will use to connect to the distribution server to fetch the ruleset. Use 'enable' to force https over http."
+          pattern: "^(enable|disable|)$"
+          examples:
+          - "enable"
+          - "disable"
         refresh:
           type: "integer"
           description: "This is the refresh interval in seconds for the CROWler to fetch the ruleset (refresh it)."
+      additionalProperties: "false"
       required:
-        - "path"
-        - "type"
-    additionalProperties: "false"
+      - "path"
+      - "type"
     description: "This is the configuration for the rulesets that the CROWler will use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
   external_detection:
     description: "This is the configuration for the external detection services like VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs."
@@ -623,8 +692,8 @@ properties:
           description: "This is the delay time (in seconds) between requests for the external detection service."
       additionalProperties: "false"
       required:
-        - "name"
-        - "api_key"
+      - "name"
+      - "api_key"
   os:
     type: "string"
     description: "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually."
@@ -632,13 +701,15 @@ properties:
     type: "integer"
     description: "This is the debug level for the CROWler. It is the level of debugging that the CROWler will use to log messages. The higher the level, the more messages will be logged."
     examples:
-      - "1"
+    - "1"
 anyOf:
-  - required:
-      - "remote"
-  - required:
-      - "database"
-      - "crawler"
-      - "api"
-      - "selenium"
-      - "network_info"
+-
+  required:
+  - "remote"
+-
+  required:
+  - "database"
+  - "crawler"
+  - "api"
+  - "selenium"
+  - "network_info"
