@@ -67,7 +67,7 @@ database:
   dbname: SitesIndex
   sslmode: disable
 
-crawler:
+crawler:                     # This is the CROWler Engine's crawler configuration section
   workers: 5                 # Required, this is the number of workers the crawler will use
   max_depth: 1               # Optional, this is the maximum depth the crawler will reach (0 for no limit)
   delay: "2"                 # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
@@ -87,7 +87,7 @@ crawler:
   collect_content: true      # Optional, this is the flag to enable or disable the collection of the content
   collect_keywords: true     # Optional, this is the flag to enable or disable the collection of the keywords
   collect_metatags: true     # Optional, this is the flag to enable or disable the collection of the metatags
-  control:                   # This section allow you to configure the control API
+  control:                   # This section allow you to configure the CROWler's Engine Control API
     host: localhost          # Optional, this is the IP of the control API
     port: 8080               # Optional, this is the port of the control API
     sslmode: disable         # Optional, this is the SSL mode for the control API
