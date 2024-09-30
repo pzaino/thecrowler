@@ -2,12 +2,13 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+
     "remote": {
       "type": "object",
       "properties": {
         "host": {
           "type": "string",
-          "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|((([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)+([A-Za-z]{2,}))|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\]))$",
+          "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$",
           "description": "This is the host that the CROWler will use to fetch its configuration."
         },
         "path": {
@@ -60,6 +61,7 @@
         "type"
       ]
     },
+
     "database": {
       "type": "object",
       "properties": {
@@ -139,24 +141,44 @@
         "dbname"
       ]
     },
+
     "crawler": {
       "type": "object",
       "properties": {
         "workers": {
           "type": "integer",
-          "description": "This is the number of workers that the CROWler will use to crawl websites. Minimum number is 3 per each Source if you have network discovery enabled or 1 per each source if you are doing crawling only. Increase the number of workers to scale up the CROWler engine vertically."
+          "minimum": 3,
+          "description": "This is the number of workers that the CROWler Engine will use to crawl websites. Minimum number is 3 per each Source if you have network discovery enabled or 1 per each source if you are doing crawling only. Increase the number of workers to scale up the CROWler engine vertically.",
+          "examples": [
+            5,
+            10
+          ]
         },
         "interval": {
           "type": "string",
-          "description": "This is the interval at which the CROWler will crawl websites. It is the interval at which the CROWler will crawl websites, values are in seconds, e.g. '3' means 3 seconds. For the interval you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+          "description": "This is the interval at which the CROWler Engine will crawl websites. It is the part of the HBS, values are in seconds, e.g. '3' means 3 seconds. For the interval you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.",
+          "examples": [
+            "3",
+            "random(1, 3)",
+            "random(random(1,3), random(5,8))"
+          ]
         },
         "timeout": {
           "type": "integer",
-          "description": "This is the timeout for the CROWler. It is the maximum amount of time that the CROWler will wait for a website to respond."
+          "minimum": 5,
+          "description": "This is the timeout (in seconds) for the CROWler Engine. It is the maximum amount of time that the CROWler Engine will wait for a website to respond.",
+          "examples": [
+            30
+          ]
         },
         "maintenance": {
           "type": "integer",
-          "description": "This is the maintenance interval for the CROWler. It is the interval at which the CROWler will perform automatic maintenance tasks."
+          "minimum": 0,
+          "description": "This is the DB maintenance interval (in seconds) for the CROWler Engine. It is the interval at which the CROWler will perform automatic maintenance tasks, a value of 0 means NO automatic DB maintenance.",
+          "examples": [
+            0,
+            3600
+          ]
         },
         "source_screenshot": {
           "type": "boolean",
@@ -168,27 +190,60 @@
         },
         "max_depth": {
           "type": "integer",
-          "description": "This is the maximum depth that the CROWler will crawl websites."
+          "minimum": 1,
+          "description": "This is the maximum depth that the CROWler Engine will crawl websites.",
+          "examples": [
+            3,
+            5
+          ]
         },
         "max_sources": {
           "type": "integer",
-          "description": "This is the maximum number of sources that a single instance of the CROWler's engine will fetch atomically to enqueue and crawl."
+          "minimum": 1,
+          "description": "This is the maximum number of sources that a single instance of the CROWler's engine will fetch atomically and atomically to enqueue in the jobs-queue and crawl.",
+          "examples": [
+            4,
+            10,
+            20
+          ]
         },
         "delay": {
           "type": "string",
-          "description": "This is the delay between requests that the CROWler will use to crawl websites. It is the delay between requests that the CROWler will use to crawl websites. For delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+          "description": "This is the delay between requests that the CROWler Engine will use to crawl websites. It is the delay between requests that the CROWler will use as part of the HBS. For delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.",
+          "examples": [
+            "3",
+            "random(1, 3)",
+            "random(random(1,3), random(5,8))"
+          ]
         },
         "browsing_mode": {
           "type": "string",
-          "description": "This is the browsing mode that the CROWler will use to crawl websites. For example, recursive, human, or fuzzing."
+          "description": "This is the 'default' browsing mode that the CROWler Engine will use to crawl websites. For example, recursive, human, or fuzzing.",
+          "pattern": "^(default|recursive|human|fuzzing|)$",
+          "examples": [
+            "default",
+            "recursive",
+            "human",
+            "fuzzing"
+          ]
         },
         "max_retries": {
           "type": "integer",
-          "description": "This is the maximum number of times that the CROWler will retry a request to a website. If the CROWler is unable to fetch a website after this number of retries, it will move on to the next website."
+          "minimum": 0,
+          "description": "This is the maximum number of times that the CROWler Engine will retry a request to a website. If the CROWler is unable to fetch a website after this number of retries, it will move on to the next website.",
+          "examples": [
+            3,
+            5
+          ]
         },
         "max_requests": {
           "type": "integer",
-          "description": "This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website."
+          "minimum": 0,
+          "description": "This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website. A value of 0 means no limit.",
+          "examples": [
+            3,
+            1000
+          ]
         },
         "collect_html": {
           "type": "boolean",
@@ -233,7 +288,7 @@
             },
             "timeout": {
               "type": "integer",
-              "description": "This is the timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+              "description": "This is the timeout (in seconds) for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
             },
             "sslmode": {
               "type": "string",
@@ -246,32 +301,42 @@
             },
             "cert_file": {
               "type": "string",
-              "description": "This is the certificate file for the control API HTTPS protocol."
+              "description": "This is the certificate file for the Control API HTTPS protocol."
             },
             "key_file": {
               "type": "string",
-              "description": "This is the key file for the control API HTTPS certificates."
+              "description": "This is the full path to the key file for the Control API HTTPS certificates."
             },
             "rate_limit": {
               "type": "string",
-              "description": "This is the rate limit for the control API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit. The format of this parameter is 'query_per_second, total_query' (for example: '100,100')."
+              "description": "This is the rate limit for the control API. It is the maximum number of requests that the CROWler Engine will accept per second. You can use the ExprTerpreter language to set the rate limit. The format of this parameter is 'query_per_second, total_query' (for example: '100,100').",
+              "examples": [
+                "100,100",
+                "125000,125000"
+              ]
             },
             "readheader_timeout": {
               "type": "integer",
-              "description": "This is the readheader timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+              "minimum": 10,
+              "description": "This is the readheader timeout (in seconds) for the Control API. It is the maximum amount of time that the CROWler will wait for the control API to respond.",
+              "examples": [
+                30
+              ]
             },
             "write_timeout": {
               "type": "integer",
-              "description": "This is the write timeout for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+              "minimum": 10,
+              "description": "This is the write timeout (in seconds) for the Control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
             }
           },
           "additionalProperties": false,
-          "description": "This is the crawler's Control API configuration, it's an internal API used by tools like healthCheck etc to control the status of the CROWler. It has nothing to do with the General API `api` which is used to interact with the CROWler, make requests and post Sources. This section is the configuration for the control API that the CROWler Engine will use to allow connections to the control API. The COntrol API is part of the CROWler Engine."
+          "description": "This is the CROWler's Control API configuration. The Control API is an internal management API that resides within the CROWler Engine. Its primary purpose is to allow internal tools, like health checks, to monitor and manage the operational status of the CROWler Engine (e.g., starting, stopping, or checking the status of crawls). It is used to control and manage engine-level operations. Important: The Control API has nothing to do with the General API (configured using the api section). The General API is an external-facing interface, exposed to interact with The CROWler to make data requests or post new sources. This section specifically configures the Control API, which operates within the CROWler Engine itself. Unlike the General API, which is designed for external interactions, the Control API is part of the CROWler’s Engine internal management system, and is not an external service."
         }
       },
       "additionalProperties": false,
       "description": "This is the configuration for the CROWler engine. It is the configuration for the CROWler engine that the CROWler will use to crawl websites."
     },
+
     "api": {
       "type": "object",
       "properties": {
@@ -312,32 +377,33 @@
         },
         "cert_file": {
           "type": "string",
-          "description": "This is the certificate file for the API HTTPS protocol."
+          "description": "This is the certificate file for the General/Search API HTTPS protocol."
         },
         "key_file": {
           "type": "string",
-          "description": "This is the key file for the API HTTPS certificates."
+          "description": "This is the key file for the General/Search API HTTPS certificates."
         },
         "rate_limit": {
           "type": "string",
-          "description": "This is the rate limit for the API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit."
+          "description": "This is the rate limit for the General/Search API. It is the maximum number of requests that the CROWler General API will accept per second. You can use the ExprTerpreter language to set the rate limit."
         },
         "enable_console": {
           "type": "boolean",
-          "description": "This is a flag that tells the CROWler to enable the admin console via the API. In other words, you'll get more endpoints to manage the CROWler via the Search API instead of local commands."
+          "description": "This is a flag that tells the CROWler General API to enable the 'admin console' via the API. In other words, you'll get more endpoints to manage the CROWler via the General API instead of having to use local commands to do admin tasks."
         },
         "return_404": {
           "type": "boolean",
-          "description": "This is a flag that tells the CROWler to return 404 status code if a query has no results."
+          "description": "This is a flag that tells the CROWler to return 404 status code if a query has no results. This is mostly a secure measure to avoid leaking information about the CROWler's internal structure. If you are not exposing the General API to the public, you can disable this option."
         }
       },
       "additionalProperties": false,
-      "description": "This is the configuration for the General API (it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API). It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
+      "description": "This is the configuration for the General/Search API (it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API). It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
       "required": [
         "host",
         "timeout"
       ]
     },
+
     "selenium": {
       "type": "array",
       "items": {
@@ -404,6 +470,7 @@
         "description": "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array."
       }
     },
+
     "image_storage": {
       "type": "object",
       "properties": {
@@ -459,6 +526,7 @@
         "type"
       ]
     },
+
     "file_storage": {
       "type": "object",
       "properties": {
@@ -514,6 +582,7 @@
         "type"
       ]
     },
+
     "network_info": {
       "type": "object",
       "properties": {
@@ -811,6 +880,7 @@
       "additionalProperties": false,
       "description": "This is the configuration for the network information collection."
     },
+
     "rulesets": {
       "type": "array",
       "items": {
@@ -884,6 +954,7 @@
       },
       "description": "This is the configuration for the rulesets that the CROWler will use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
     },
+
     "external_detection": {
       "description": "This is the configuration for the external detection services like VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs.",
       "type": "array",
@@ -918,10 +989,12 @@
         ]
       }
     },
+
     "os": {
       "type": "string",
       "description": "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually."
     },
+
     "debug_level": {
       "type": "integer",
       "description": "This is the debug level for the CROWler. It is the level of debugging that the CROWler will use to log messages. The higher the level, the more messages will be logged.",
@@ -929,8 +1002,11 @@
         1
       ]
     }
+
   },
-  "anyOf": [
+  "additionalProperties": false,
+  "description": "This is the configuration for the CROWler. This schema describes all the sections of the config.yaml configuration file and provides info on configuring a fleet of CROWlers Engines, VDIs, APIs and how they should work. Keep in mind that the 'remote' section should be used on its own, and the 'database', 'crawler', 'api', 'selenium', 'network_info' sections should be used together.",
+  "oneOf": [
     {
       "required": [
         "remote"
