@@ -96,8 +96,10 @@
                                                                     "xpath",
                                                                     "id",
                                                                     "class_name",
+                                                                    "class",
                                                                     "name",
                                                                     "tag_name",
+                                                                    "element",
                                                                     "link_text",
                                                                     "partial_link_text",
                                                                     "regex",
@@ -243,6 +245,55 @@
                                         "type": "string",
                                         "description": "A unique name identifying the action rule."
                                     },
+                                    "url": {
+                                        "type": "string",
+                                        "format": "uri",
+                                        "description": "Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action. Do not use this field for 'navigate_to_url' action type, use instead the value field to specify the url to go to, url field is only to match the rule."
+                                    },
+                                    "wait_conditions": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "condition_type": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "element_presence",
+                                                        "element_visible",
+                                                        "plugin_call",
+                                                        "delay"
+                                                    ]
+                                                },
+                                                "value": {
+                                                    "type": "string",
+                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
+                                                },
+                                                "selector": {
+                                                    "type": "string",
+                                                    "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. If you're using plugin_call, then this field is used for the plugin name."
+                                                }
+                                            }
+                                        },
+                                        "description": "Conditions to wait for, that must be met before the action is executed. These conditions are designed to ensure that the page or elements are ready (e.g., waiting for an element to appear, or a delay). Do not use this field to wait after an action is performed, as it only applies before the action is executed."
+                                    },
+                                    "conditions": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "element",
+                                                    "language",
+                                                    "plugin_call"
+                                                ]
+                                            },
+                                            "selector": {
+                                                "type": "string",
+                                                "description": "The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call."
+                                            }
+                                        },
+                                        "description": "Conditions that must be met for the action to be executed. For example, you can check if a certain element exists on the page before performing an action. See this as something to do after we waited for the wait_conditions and we verify that the page is ready to perform the action."
+                                    },
                                     "action_type": {
                                         "type": "string",
                                         "enum": [
@@ -287,8 +338,10 @@
                                                         "xpath",
                                                         "id",
                                                         "class_name",
+                                                        "class",
                                                         "name",
                                                         "tag_name",
+                                                        "element",
                                                         "link_text",
                                                         "partial_link_text",
                                                         "plugin_call"
@@ -328,55 +381,6 @@
                                     "value": {
                                         "type": "string",
                                         "description": "The value to use with the action, e.g., text to input, applicable for input_text."
-                                    },
-                                    "url": {
-                                        "type": "string",
-                                        "format": "uri",
-                                        "description": "Optional. The specific URL to which this action applies or the URL to navigate to, applicable for navigate action. Do not use this field for 'navigate_to_url' action type, use instead the value field to specify the url to go to, url field is only to match the rule."
-                                    },
-                                    "wait_conditions": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "condition_type": {
-                                                    "type": "string",
-                                                    "enum": [
-                                                        "element_presence",
-                                                        "element_visible",
-                                                        "plugin_call",
-                                                        "delay"
-                                                    ]
-                                                },
-                                                "value": {
-                                                    "type": "string",
-                                                    "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
-                                                },
-                                                "selector": {
-                                                    "type": "string",
-                                                    "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. If you're using plugin_call, then this field is used for the plugin name."
-                                                }
-                                            }
-                                        },
-                                        "description": "Conditions to wait before being able to perform the action. This to ensure page readiness."
-                                    },
-                                    "conditions": {
-                                        "type": "object",
-                                        "properties": {
-                                            "type": {
-                                                "type": "string",
-                                                "enum": [
-                                                    "element",
-                                                    "language",
-                                                    "plugin_call"
-                                                ]
-                                            },
-                                            "selector": {
-                                                "type": "string",
-                                                "description": "The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call."
-                                            }
-                                        },
-                                        "description": "Conditions that must be met for the action to be executed."
                                     },
                                     "error_handling": {
                                         "type": "object",
