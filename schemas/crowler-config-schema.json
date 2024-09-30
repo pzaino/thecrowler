@@ -1,9 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-config-schema.json",
+  "title": "CROWler Configuration Schema",
+  "description": "This is the configuration schema for the CROWler. This schema describes all the sections of the config.yaml configuration file and provides info on configuring a fleet of CROWler's Engines, VDIs, APIs and how they should work. Keep in mind that the 'remote' property should be used on its own, and the 'database', 'crawler', 'api', 'selenium', 'network_info' properties should be used together.",
   "type": "object",
   "properties": {
 
     "remote": {
+      "description": "This is the remote configuration section to tell the CROWler's Engine that the actual config.yaml configuration has to be fetched remotely from a distribution server. If you use this section, then do not populate the other configuration sections as they will be ignored. The CROWler will fetch its configuration from the remote server and use it to start the engine.",
       "type": "object",
       "properties": {
         "host": {
@@ -38,6 +42,7 @@
         },
         "timeout": {
           "type": "integer",
+          "minimum": 10,
           "description": "This is the timeout for the CROWler to fetch its configuration."
         },
         "type": {
@@ -47,14 +52,14 @@
         "sslmode": {
           "type": "string",
           "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch its configuration.",
-          "pattern": "^(enable|disable|)$",
+          "enum": ["enable", "disable", ""],
           "examples": [
             "enable",
             "disable"
           ]
         }
       },
-      "description": "This is the configuration section to tell the CROWler its actual configuration has to be fetched remotely from a distribution server. If you use this section, then do not populate the other configuration sections as they will be ignored. The CROWler will fetch its configuration from the remote server and use it to start the engine.",
+      "additionalProperties": false,
       "required": [
         "host",
         "path",
@@ -63,6 +68,7 @@
     },
 
     "database": {
+      "description": "This is the database configuration section, it's used to tell the CROWler how to connect to the database to store collected data, which type of database we use and other options to optimize the database for a specific use case.",
       "type": "object",
       "properties": {
         "type": {
@@ -105,7 +111,7 @@
         "sslmode": {
           "type": "string",
           "description": "This is the sslmode that the CROWler will use to connect to the database. Use 'enable' to enable the ssl mode connection to the DB. (default is 'disable').",
-          "pattern": "^(enable|disable|)$",
+          "enum": ["enable", "disable", ""],
           "examples": [
             "enable",
             "disable"
@@ -114,7 +120,7 @@
         "optimize_for": {
           "type": "string",
           "description": "This option allows the user to optimize the database for a specific use case. For example, if the user is doing more write operations than query, then use the value 'write'. If the user is doing more query operations than write, then use the value 'query'. If unsure leave it empty.",
-          "pattern": "^(write|query|)$",
+          "enum": ["write", "query", ""],
           "examples": [
             "write",
             "query"
@@ -131,7 +137,6 @@
           "description": "This is the maximum number of idle connections that the CROWler will use to connect to the database."
         }
       },
-      "description": "This is the configuration for the database that the CROWler will use to store data.",
       "additionalProperties": false,
       "required": [
         "type",
@@ -143,6 +148,7 @@
     },
 
     "crawler": {
+      "description": "This is the crawler (CROWler Engine) configuration section, it's used to tell the CROWler's engine how to behave. It is the configuration for the CROWler engine that the CROWler will use to crawl websites, spin workers and configure it's internal Control API.",
       "type": "object",
       "properties": {
         "workers": {
@@ -219,7 +225,7 @@
         "browsing_mode": {
           "type": "string",
           "description": "This is the 'default' browsing mode that the CROWler Engine will use to crawl websites. For example, recursive, human, or fuzzing.",
-          "pattern": "^(default|recursive|human|fuzzing|)$",
+          "enum": ["default", "recursive", "human", "fuzzing", ""],
           "examples": [
             "default",
             "recursive",
@@ -288,12 +294,13 @@
             },
             "timeout": {
               "type": "integer",
+              "minimum": 10,
               "description": "This is the timeout (in seconds) for the control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
             },
             "sslmode": {
               "type": "string",
               "description": "This is the sslmode switch for the control API. Use 'enable' to make the control API use HTTPS.",
-              "pattern": "^(enable|disable|)$",
+              "enum": ["enable", "disable", ""],
               "examples": [
                 "enable",
                 "disable"
@@ -333,11 +340,11 @@
           "description": "This is the CROWler's Control API configuration. The Control API is an internal management API that resides within the CROWler Engine. Its primary purpose is to allow internal tools, like health checks, to monitor and manage the operational status of the CROWler Engine (e.g., starting, stopping, or checking the status of crawls). It is used to control and manage engine-level operations. Important: The Control API has nothing to do with the General API (configured using the api section). The General API is an external-facing interface, exposed to interact with The CROWler to make data requests or post new sources. This section specifically configures the Control API, which operates within the CROWler Engine itself. Unlike the General API, which is designed for external interactions, the Control API is part of the CROWler’s Engine internal management system, and is not an external service."
         }
       },
-      "additionalProperties": false,
-      "description": "This is the configuration for the CROWler engine. It is the configuration for the CROWler engine that the CROWler will use to crawl websites."
+      "additionalProperties": false
     },
 
     "api": {
+      "description": "This is the General/Search API configuration section, it's used to configure the General/Search API and it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API. It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
       "type": "object",
       "properties": {
         "host": {
@@ -356,6 +363,7 @@
         },
         "timeout": {
           "type": "integer",
+          "minimum": 10,
           "description": "This is the timeout for the API. It is the maximum amount of time that the CROWler will wait for the API to respond."
         },
         "content_search": {
@@ -369,7 +377,7 @@
         "sslmode": {
           "type": "string",
           "description": "This is the sslmode switch for the API. Use 'enable' to make the API use HTTPS.",
-          "pattern": "^(enable|disable|)$",
+          "enum": ["enable", "disable", ""],
           "examples": [
             "enable",
             "disable"
@@ -397,7 +405,6 @@
         }
       },
       "additionalProperties": false,
-      "description": "This is the configuration for the General/Search API (it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API). It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
       "required": [
         "host",
         "timeout"
@@ -405,6 +412,7 @@
     },
 
     "selenium": {
+      "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for the selenium driver, to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
       "type": "array",
       "items": {
         "type": "object",
@@ -451,7 +459,7 @@
           "sslmode": {
             "type": "string",
             "description": "This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler.",
-            "pattern": "^(enable|disable|)$",
+            "enum": ["enable", "disable", ""],
             "examples": [
               "enable",
               "disable"
@@ -462,16 +470,16 @@
             "description": "This is the temporary download path for the VDI. It is the local path where the VDI will download files. This is useful for downloading files from websites (like pdf or zip etc.). The CROWler will use this path to temporarily store the downloaded files (before moving them to the storage files area)."
           }
         },
+        "additionalProperties": false,
         "required": [
           "type",
           "host"
-        ],
-        "additionalProperties": false,
-        "description": "This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array."
+        ]
       }
     },
 
     "image_storage": {
+      "description": "This is the Image Storage configuration section, it is used to tell the CROWler's Engine how and where to store collected images.",
       "type": "object",
       "properties": {
         "host": {
@@ -503,6 +511,7 @@
         },
         "timeout": {
           "type": "integer",
+          "minimum": 10,
           "description": "This is the remote request timeout in seconds."
         },
         "type": {
@@ -512,7 +521,7 @@
         "sslmode": {
           "type": "string",
           "description": "This is the ssl mode for the image storage request for remote storage. Use enable to force https over http.",
-          "pattern": "^(enable|disable|)$",
+          "enum": ["enable", "disable", ""],
           "examples": [
             "enable",
             "disable"
@@ -520,7 +529,6 @@
         }
       },
       "additionalProperties": false,
-      "description": "This is the configuration for the image storage. It is the configuration for the storage that the CROWler will use to store images.",
       "required": [
         "path",
         "type"
@@ -528,6 +536,7 @@
     },
 
     "file_storage": {
+      "description": "This is the File Storage configuration section, it is used to tell the CROWler's Engine how and where to store collected files.",
       "type": "object",
       "properties": {
         "host": {
@@ -559,6 +568,7 @@
         },
         "timeout": {
           "type": "integer",
+          "minimum": 10,
           "description": "This is the remote request timeout in seconds."
         },
         "type": {
@@ -568,7 +578,7 @@
         "sslmode": {
           "type": "string",
           "description": "This is the ssl mode for the file storage request for remote storage. Use enable to force https over http.",
-          "pattern": "^(enable|disable|)$",
+          "enum": ["enable", "disable", ""],
           "examples": [
             "enable",
             "disable"
@@ -576,7 +586,6 @@
         }
       },
       "additionalProperties": false,
-      "description": "This is the configuration for the file storage. File storage will be used for web object content storage.",
       "required": [
         "path",
         "type"
@@ -584,6 +593,7 @@
     },
 
     "network_info": {
+      "description": "This is the network information collection configuration section, it is used to tell the CROWler's Engine how and what network information we want to collect for each discovered entity within the crawling of a Source. This section is also used to tell the CROWler if we want to detect network vulnerabilities, open ports, etc. Collect Whois information, DNS information, and more.",
       "type": "object",
       "properties": {
         "dns": {
@@ -595,6 +605,7 @@
             },
             "timeout": {
               "type": "integer",
+              "minimum": 5,
               "description": "This is the timeout for the DNS database. It is the maximum amount of time that the CROWler will wait for the DNS database to respond."
             },
             "rate_limit": {
@@ -617,6 +628,7 @@
             },
             "timeout": {
               "type": "integer",
+              "minimum": 5,
               "description": "This is the timeout for the whois database. It is the maximum amount of time that the CROWler will wait for the whois database to respond."
             },
             "rate_limit": {
@@ -639,6 +651,7 @@
             },
             "timeout": {
               "type": "integer",
+              "minimum": 5,
               "description": "This is the timeout for the netlookup database. It is the maximum amount of time that the CROWler will wait for the netlookup database to respond."
             },
             "rate_limit": {
@@ -669,6 +682,7 @@
             },
             "timeout": {
               "type": "integer",
+              "minimum": 5,
               "description": "This is the timeout for the geolocation database. It is the maximum amount of time that the CROWler will wait for the geolocation database to respond."
             },
             "api_key": {
@@ -678,7 +692,7 @@
             "sslmode": {
               "type": "string",
               "description": "This is the sslmode that the CROWler will use to connect to the geolocation database.",
-              "pattern": "^(enable|disable|)$",
+              "enum": ["enable", "disable", ""],
               "examples": [
                 "enable",
                 "disable"
@@ -701,6 +715,7 @@
             },
             "timeout": {
               "type": "integer",
+              "minimum": 5,
               "description": "This is the timeout for the scan. It is the maximum amount of time that the CROWler will wait for a host to respond to a scan."
             },
             "idle_scan": {
@@ -877,11 +892,11 @@
           ]
         }
       },
-      "additionalProperties": false,
-      "description": "This is the configuration for the network information collection."
+      "additionalProperties": false
     },
 
     "rulesets": {
+      "description": "This is the rulesets load configuration section, it is used to tell the CROWler where and how to load all the Rulesets we want to use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl.",
       "type": "array",
       "items": {
         "type": "object",
@@ -904,12 +919,12 @@
             "description": "This is the host that the CROWler will use to fetch the ruleset."
           },
           "port": {
-            "type": "string",
+            "type": "integer",
             "minimum": 1,
             "maximum": 65535,
             "description": "This is the port that the CROWler will use to fetch the ruleset.",
             "examples": [
-              "443"
+              443
             ]
           },
           "region": {
@@ -926,6 +941,7 @@
           },
           "timeout": {
             "type": "integer",
+            "minimum": 10,
             "description": "This is the timeout in seconds for the CROWler to fetch the ruleset."
           },
           "type": {
@@ -935,7 +951,7 @@
           "sslmode": {
             "type": "string",
             "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch the ruleset. Use 'enable' to force https over http.",
-            "pattern": "^(enable|disable|)$",
+            "enum": ["enable", "disable", ""],
             "examples": [
               "enable",
               "disable"
@@ -952,11 +968,12 @@
           "type"
         ]
       },
-      "description": "This is the configuration for the rulesets that the CROWler will use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
+      "minItems": 1,
+      "uniqueItems": true
     },
 
     "external_detection": {
-      "description": "This is the configuration for the external detection services like VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs.",
+      "description": "This is the External Detection configuration section, it is used to tell the CROWler's Engine which external detection services we want to use and provide credentials to access them. External detection services are provided by VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs. They can be accessed using the CROWler's Detection Rules.",
       "type": "array",
       "items": {
         "type": "object",
@@ -975,6 +992,7 @@
           },
           "timeout": {
             "type": "integer",
+            "minimum": 10,
             "description": "This is the timeout in seconds for the external detection service."
           },
           "delay": {
@@ -987,17 +1005,19 @@
           "name",
           "api_key"
         ]
-      }
+      },
+      "minItems": 1,
+      "uniqueItems": true
     },
 
     "os": {
-      "type": "string",
-      "description": "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually."
+      "description": "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually.",
+      "type": "string"
     },
 
     "debug_level": {
-      "type": "integer",
       "description": "This is the debug level for the CROWler. It is the level of debugging that the CROWler will use to log messages. The higher the level, the more messages will be logged.",
+      "type": "integer",
       "examples": [
         1
       ]
@@ -1005,7 +1025,6 @@
 
   },
   "additionalProperties": false,
-  "description": "This is the configuration for the CROWler. This schema describes all the sections of the config.yaml configuration file and provides info on configuring a fleet of CROWlers Engines, VDIs, APIs and how they should work. Keep in mind that the 'remote' section should be used on its own, and the 'database', 'crawler', 'api', 'selenium', 'network_info' sections should be used together.",
   "oneOf": [
     {
       "required": [
