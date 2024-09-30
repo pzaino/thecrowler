@@ -53,7 +53,11 @@ remote:                      # Optional, this is the remote configuration sectio
   region: ${REGION}          # Optional, this is the region of the remote configuration API
   timeout: 10                # Optional, this is the timeout for the remote configuration API
   sslmode: "enable|disable"  # Optional, this is the SSL mode for the remote configuration API
+```
 
+Or like this:
+
+```yaml
 database:
   type: postgres
   host: ${POSTGRES_DB_HOST}
