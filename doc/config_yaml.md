@@ -111,7 +111,7 @@ image_storage:
 file_storage:
   # This is identical to image_storage, however it applies to files and web objects (not to images!)
 
-api:                         # This is the API configuration (this is the general API)
+api:                         # This is the API configuration (this is the General/Search API)
   port: 8080                 # Required, this is the port of the API
   host: 0.0.0.0              # Required, this is the IP of the API
   timeout: 10                # Optional, this is the timeout for the API
