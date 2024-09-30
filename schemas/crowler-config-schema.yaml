@@ -133,6 +133,7 @@ properties:
         enum:
           - write
           - query
+          - none
           - ""
         examples:
           - write
