@@ -97,6 +97,11 @@ type ProcessContext struct {
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
+// GetContextID returns a unique context ID for the ProcessContext
+func (ctx *ProcessContext) GetContextID() string {
+	return fmt.Sprintf("%d-%d", ctx.SelID, ctx.source.ID)
+}
+
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
 func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestBuildConnectionString(t *testing.T) {
@@ -42,16 +41,19 @@ func TestBuildConnectionString(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result := buildConnectionString(test.config)
-			assert.Equal(t, test.expected, result)
+			if result != test.expected {
+				t.Errorf("expected '%s', got '%s'", test.expected, result)
+			}
 		})
 	}
 }
+
 func TestNewHandler(t *testing.T) {
 	// Test cases
 	tests := []struct {
 		name         string
 		config       cfg.Config
-		expectedType Handler
+		expectedType interface{}
 		expectedErr  error
 	}{
 		{
@@ -90,11 +92,24 @@ func TestNewHandler(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			handler, err := NewHandler(test.config)
-			assert.Equal(t, test.expectedErr, err)
+
+			if (err != nil && test.expectedErr == nil) || (err == nil && test.expectedErr != nil) || (err != nil && err.Error() != test.expectedErr.Error()) {
+				t.Errorf("expected error '%v', got '%v'", test.expectedErr, err)
+			}
+
 			if test.expectedType != nil {
-				assert.IsType(t, test.expectedType, handler)
-			} else {
-				assert.Nil(t, handler)
+				switch test.expectedType.(type) {
+				case *PostgresHandler:
+					if _, ok := handler.(*PostgresHandler); !ok {
+						t.Errorf("expected type *PostgresHandler, got %T", handler)
+					}
+				case *SQLiteHandler:
+					if _, ok := handler.(*SQLiteHandler); !ok {
+						t.Errorf("expected type *SQLiteHandler, got %T", handler)
+					}
+				}
+			} else if handler != nil {
+				t.Errorf("expected nil handler, got %T", handler)
 			}
 		})
 	}

@@ -1,13 +1,20 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
+    "$id": "https://github.com/pzaino/thecrowler/main/schemas/ruleset-schema.json",
+    "title": "CROWler Ruleset Schema",
+    "version": "1.0.4",
     "description": "The CROWler ruleset schema defines the structure of a ruleset file, which contains rules for scraping, action execution, detection, and crawling.",
+    "type": "object",
     "items": {
         "type": "object",
         "properties": {
             "format_version": {
                 "type": "string",
-                "description": "Version of the ruleset format, to ensure compatibility."
+                "description": "Version of the ruleset format, to ensure compatibility.",
+                "pattern": "^\\d+\\.\\d+\\.\\d+$",
+                "examples": [
+                    "1.0.4"
+                ]
             },
             "author": {
                 "type": "string",
@@ -15,8 +22,8 @@
             },
             "created_at": {
                 "type": "string",
-                "format": "date-time",
-                "description": "Creation date of the ruleset."
+                "description": "Creation date of the ruleset.",
+                "pattern": "(?:(?:(?:(\\d{4})[-\\/\\.](\\d{2})[-\\/\\.](\\d{2}))|(?:(\\d{2})[-\\/\\.](\\d{2})[-\\/\\.](\\d{4})))\\s*(?:T\\s*)?)?(?:(\\d{1,2}):(\\d{2})(?::(\\d{2}))?\\s*([AaPp][Mm])?)?"
             },
             "description": {
                 "type": "string",
@@ -24,7 +31,11 @@
             },
             "ruleset_name": {
                 "type": "string",
-                "description": "A unique name identifying the ruleset."
+                "description": "A unique name identifying the ruleset.",
+                "examples": [
+                    "My Ruleset",
+                    "https://example.com"
+                ]
             },
             "rule_groups": {
                 "type": "array",
@@ -33,7 +44,11 @@
                     "properties": {
                         "group_name": {
                             "type": "string",
-                            "description": "A unique name identifying the group of rules."
+                            "description": "A unique name identifying the group of rules.",
+                            "examples": [
+                                "My Group",
+                                "https://example.com"
+                            ]
                         },
                         "valid_from": {
                             "type": "string",
