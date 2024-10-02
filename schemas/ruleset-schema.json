@@ -257,8 +257,9 @@
                                 "type": "object",
                                 "properties": {
                                     "rule_name": {
-                                        "type": "string",
-                                        "description": "A unique name identifying the action rule."
+                                        "title": "Rule Name",
+                                        "description": "A unique name identifying the action rule.",
+                                        "type": "string"
                                     },
                                     "url": {
                                         "type": "string",
@@ -443,12 +444,14 @@
                                 "type": "object",
                                 "properties": {
                                     "rule_name": {
-                                        "type": "string",
-                                        "description": "A unique name identifying the detection rule."
+                                        "title": "Rule Name",
+                                        "description": "A unique name identifying the detection rule.",
+                                        "type": "string"
                                     },
                                     "object_name": {
-                                        "type": "string",
-                                        "description": "The name of the object or technology to identify. This will also be the JSON key in the output. This is also the field to use for the 'implies' field if you want to imply other objects."
+                                        "title": "Object Name",
+                                        "description": "The name of the object or technology to identify. This will also be the JSON key in the output. This is also the field to use for the 'implies' field if you want to imply other objects.",
+                                        "type": "string"
                                     },
                                     "http_header_fields": {
                                         "type": "array",
@@ -602,6 +605,49 @@
                                             }
                                         },
                                         "description": "Optional. Call a plugin to detect the technology."
+                                    },
+                                    "external_detection": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "provider": {
+                                                    "title": "Provider",
+                                                    "description": "The name of the supported external detection provider.",
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "abuse_ipdb",
+                                                        "alien_vault",
+                                                        "censys",
+                                                        "cisco_umbrella",
+                                                        "grey_noise",
+                                                        "google_safe_browsing",
+                                                        "hybrid_analysis",
+                                                        "ip_quality_score",
+                                                        "ipvoid",
+                                                        "malware_domain_list",
+                                                        "shodan",
+                                                        "virus_total",
+                                                        "url_haus"
+                                                    ],
+                                                    "examples": [
+                                                        "abuse_ipdb",
+                                                        "alien_vault",
+                                                        "censys",
+                                                        "cisco_umbrella",
+                                                        "grey_noise",
+                                                        "google_safe_browsing",
+                                                        "hybrid_analysis",
+                                                        "ip_quality_score",
+                                                        "ipvoid",
+                                                        "malware_domain_list",
+                                                        "shodan",
+                                                        "virus_total",
+                                                        "url_haus"
+                                                    ]
+                                                }
+                                            }
+                                        }
                                     }
                                 },
                                 "required": [

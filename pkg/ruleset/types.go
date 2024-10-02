@@ -154,6 +154,7 @@ type DetectionRule struct {
 	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
 	Implies             []string               `yaml:"implies,omitempty"`
 	PluginCalls         []PluginCall           `yaml:"plugin_calls,omitempty"`
+	ExternalDetections  []ExternalDetection    `yaml:"external_detection,omitempty"`
 }
 
 // PluginCall represents a call to a plugin
@@ -166,6 +167,11 @@ type PluginCall struct {
 type PluginParams struct {
 	ArgName  string `yaml:"parameter_name"`
 	ArgValue string `yaml:"parameter_value"`
+}
+
+// ExternalDetection represents a call to an external detection service
+type ExternalDetection struct {
+	Provider string `yaml:"provider"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields

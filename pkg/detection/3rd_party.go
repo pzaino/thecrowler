@@ -162,7 +162,7 @@ func ScanWithURLHaus(url string) map[string]interface{} {
 }
 
 // ScanWidthThreatCrowd scans a URL with ThreatCrowd.
-func ScanWidthThreatCrowd(url string) map[string]interface{} {
+func ScanWithThreatCrowd(url string) map[string]interface{} {
 	reqInfo := &trdPRequest{
 		Provider: "ThreatCrowd",
 		Method:   "GET",

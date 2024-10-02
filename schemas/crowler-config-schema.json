@@ -535,6 +535,21 @@
           "description": "This is the rate limit for the General/Search API. It is the maximum number of requests that the CROWler General API will accept per second. You can use the ExprTerpreter language to set the rate limit.",
           "type": "string"
         },
+        "readheader_timeout": {
+          "title": "CROWler General/Search API Readheader Timeout",
+          "type": "integer",
+          "minimum": 10,
+          "description": "This is the readheader timeout (in seconds) for the General/Search API. It is the maximum amount of time that the CROWler will wait for the General/Search API to respond.",
+          "examples": [
+            30
+          ]
+        },
+        "write_timeout": {
+          "title": "CROWler Engine General/Search API Write Timeout",
+          "type": "integer",
+          "minimum": 10,
+          "description": "This is the write timeout (in seconds) for the General/Search API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+        },
         "enable_console": {
           "title": "CROWler General/Search API Enable Admin Console",
           "description": "This is a flag that tells the CROWler General API to enable the 'admin console' via the API. In other words, you'll get more endpoints to manage the CROWler via the General API instead of having to use local commands to do admin tasks.",

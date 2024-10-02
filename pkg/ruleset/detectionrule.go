@@ -44,6 +44,11 @@ func (d *DetectionRule) GetPluginCalls() []PluginCall {
 	return d.PluginCalls
 }
 
+// GetExternalDetections returns the external detections for the specified detection rule.
+func (d *DetectionRule) GetExternalDetections() []ExternalDetection {
+	return d.ExternalDetections
+}
+
 // GetAllHTTPHeaderFields returns the HTTP header fields for the specified detection rule.
 func (d *DetectionRule) GetAllHTTPHeaderFields() []HTTPHeaderField {
 	return d.HTTPHeaderFields
@@ -239,6 +244,24 @@ func GetAllPluginCallsMap(d *[]DetectionRule) map[string][]PluginCall {
 		pluginCalls[ObjName] = rule.PluginCalls
 	}
 	return pluginCalls
+}
+
+// GetAllExternalDetectionsMap returns a map of all external detections for the specified detection rules.
+func GetAllExternalDetectionsMap(d *[]DetectionRule) map[string][]ExternalDetection {
+	externalDetections := make(map[string][]ExternalDetection)
+	for _, rule := range *d {
+		if rule.ExternalDetections == nil {
+			continue
+		}
+		// Check if the key already exists
+		if _, ok := externalDetections[strings.ToLower(rule.ObjectName)]; ok {
+			// Append the new external detections to the existing ones
+			externalDetections[strings.ToLower(rule.ObjectName)] = append(externalDetections[strings.ToLower(rule.ObjectName)], rule.ExternalDetections...)
+			continue
+		}
+		externalDetections[strings.ToLower(rule.ObjectName)] = rule.ExternalDetections
+	}
+	return externalDetections
 }
 
 ///// --------------------- HTTPHeaderField ------------------------------- /////

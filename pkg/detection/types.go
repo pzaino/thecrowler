@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
@@ -18,6 +19,7 @@ type DetectionContext struct {
 	HSSLInfo     *SSLInfo            `json:"ssl_info"`      // (optional) the SSL information of the target website
 	ResponseBody *string             `json:"response_body"` // (optional) the body of the HTTP response
 	RE           *ruleset.RuleEngine // (required) the RuleEngine to use for the detection process
+	Config       *cfg.Config         // (required) the configuration to use for the detection process
 }
 
 // DetectedEntity is a struct to store the detected entity (technology, asset, etc.)

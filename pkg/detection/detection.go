@@ -11,6 +11,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
 
 	"github.com/tebeka/selenium"
@@ -22,10 +23,11 @@ const (
 
 // detectionEntityDetails is used internally to represent the details of an entity detection
 type detectionEntityDetails struct {
-	entityType      string
-	matchedPatterns []string
-	confidence      float32
-	pluginResult    map[string]interface{}
+	entityType        string
+	matchedPatterns   []string
+	confidence        float32
+	pluginResult      map[string]interface{}
+	externalDetection map[string]interface{}
 }
 
 // IsEmpty checks if the detectionEntityDetails is empty
@@ -143,6 +145,14 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	// Process implied technologies
 	if len(detectedTech) > 0 {
 		processImpliedTechnologies(&detectedTech, &Patterns)
+	}
+
+	// Process external detection
+	if len(detectedTech) > 0 {
+		ExternalDetection := ruleset.GetAllExternalDetectionsMap(&Patterns)
+		if len(ExternalDetection) > 0 {
+			detectTechnologiesByExternalDetection(dtCtx.TargetURL, dtCtx.Config, &ExternalDetection, &detectedTech)
+		}
 	}
 
 	// Transform the detectedTech map into a map of strings
@@ -542,6 +552,123 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 			// Add the plugin result as PluginResult
 			updateDetectedTechCustom(detectedTech, ObjName, confidence, pluginCall.PluginName, resultStr)
 
+		}
+	}
+}
+
+func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, ExternalDetection *map[string][]ruleset.ExternalDetection, detectedTech *map[string]detectionEntityDetails) {
+	// Iterate through all the external detection services and check for possible technologies
+	for ObjName := range *ExternalDetection {
+		for _, externalDetection := range (*ExternalDetection)[ObjName] {
+			// Send Current URL to the configured external detection services
+			var result map[string]interface{}
+			switch externalDetection.Provider {
+			case "abuse_ipdb":
+				// Resolve IP of current URL
+				host := cmn.URLToHost(url)
+				ips := cmn.HostToIP(host)
+				result = make(map[string]interface{})
+				// AbuseIPDB
+				for _, ip := range ips {
+					rval := ScanWithAbuseIPDB(conf.ExternalDetection.AbuseIPDB.APIKey, ip)
+					if rval != nil {
+						// add rval rows to result
+						for k, v := range rval {
+							result[k] = v
+						}
+					}
+				}
+			case "ipvoid":
+				// Resolve IP of current URL
+				host := cmn.URLToHost(url)
+				ips := cmn.HostToIP(host)
+				result = make(map[string]interface{})
+				// IPVoid
+				for _, ip := range ips {
+					rval := ScanWithIPVoid(conf.ExternalDetection.IPVoid.APIKey, ip)
+					if rval != nil {
+						// add rval rows to result
+						for k, v := range rval {
+							result[k] = v
+						}
+					}
+				}
+			case "censys":
+				// Resolve IP of current URL
+				host := cmn.URLToHost(url)
+				ips := cmn.HostToIP(host)
+				result = make(map[string]interface{})
+				// Censys
+				for _, ip := range ips {
+					rval := ScanWithCensys(conf.ExternalDetection.Censys.APIID, conf.ExternalDetection.Censys.APISecret, ip)
+					if rval != nil {
+						// add rval rows to result
+						for k, v := range rval {
+							result[k] = v
+						}
+					}
+				}
+			case "ssllabs":
+				// SSL Labs
+				result = ScanWithSSLLabs(url)
+			case "url_haus":
+				// URL Haus
+				result = ScanWithURLHaus(url)
+			case "threat_crowd":
+				// Threat Crowd
+				result = ScanWithThreatCrowd(url)
+			case "cuckoo_url":
+				// Cuckoo URL
+				result = ScanWithCuckoo(conf.ExternalDetection.Cuckoo.Host, url)
+			case "virus_total":
+				// Virus Total
+				result = ScanWithVirusTotal(conf.ExternalDetection.VirusTotal.APIKey, url)
+			case "phish_tank":
+				// Phish Tank
+				result = ScanWithPhishTank(conf.ExternalDetection.PhishTank.APIKey, url)
+			case "google_safe_browsing":
+				// Google Safe Browsing
+				result = ScanWithGoogleSafeBrowsing(conf.ExternalDetection.GoogleSafeBrowsing.APIKey, url)
+			case "open_phish":
+				// Open Phish
+				result = ScanWithOpenPhish(conf.ExternalDetection.OpenPhish.APIKey, url)
+			case "hybrid_analysis":
+				// Hybrid Analysis
+				result = ScanWithHybridAnalysis(conf.ExternalDetection.HybridAnalysis.APIKey, url)
+			case "cisco_umbrella":
+				// Cisco Umbrella
+				result = ScanWithCiscoUmbrella(conf.ExternalDetection.CiscoUmbrella.APIKey, url)
+			case "alien_vault":
+				// Alien Vault
+				result = ScanWithAlienVault(conf.ExternalDetection.AlienVault.APIKey, url)
+			case "shodan":
+				// Shodan
+				result = ScanWithShodan(conf.ExternalDetection.Shodan.APIKey, url)
+			case "virus_total_file":
+				// Virus Total File
+				result = ScanWithVirusTotalFile(conf.ExternalDetection.VirusTotal.APIKey, url)
+			case "hybrid_analysis_file":
+				// Hybrid Analysis File
+				result = ScanWithHybridAnalysisFile(conf.ExternalDetection.HybridAnalysis.APIKey, url)
+			case "cuckoo_file":
+				// Cuckoo File
+				result = ScanWithCuckooFile(conf.ExternalDetection.Cuckoo.Host, url)
+			default:
+				cmn.DebugMsg(cmn.DbgLvlError, "unknown external detection service: %s", externalDetection.Provider)
+				continue
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "External Detection: %s", externalDetection.Provider)
+			// Add the external detection result ato detectedTech
+			if result != nil {
+				// transform the result to a JSON object
+				jsonResult, err := json.Marshal(result)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "marshalling external detection result: %s", err)
+					continue
+				}
+				resultStr := string(jsonResult)
+				updateDetectedTechCustom(detectedTech, ObjName, 10, externalDetection.Provider, resultStr)
+			}
 		}
 	}
 }
