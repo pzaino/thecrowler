@@ -146,9 +146,10 @@ type SSLScoutConfig struct {
 }
 
 type SOCKSProxy struct {
-	Address  string
-	Username string
-	Password string
+	Address  string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 // ServiceScoutConfig represents a structured configuration for an Nmap scan.
