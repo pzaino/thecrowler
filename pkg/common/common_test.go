@@ -622,3 +622,61 @@ func TestStringToFloat32(t *testing.T) {
 		})
 	}
 }
+
+func TestURLToHost(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected string
+	}{
+		{
+			name:     "URLToHost Test case 1",
+			url:      "http://example.com/path",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 2",
+			url:      "https://example.com/path/to/resource",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 3",
+			url:      "ftp://example.com/resource",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 4",
+			url:      "example.com/path",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 5",
+			url:      "example.com",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 6",
+			url:      "http://example.com/",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 7",
+			url:      "http://example.com",
+			expected: "example.com",
+		},
+		{
+			name:     "URLToHost Test case 8",
+			url:      "http://example.com:8080/path",
+			expected: "example.com:8080",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := URLToHost(test.url)
+			if result != test.expected {
+				t.Errorf("Expected host %q, but got %q", test.expected, result)
+			}
+		})
+	}
+}
