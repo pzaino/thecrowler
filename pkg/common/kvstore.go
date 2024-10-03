@@ -18,24 +18,25 @@ package common
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 )
 
-var (
-	// KVStore is the global key-value store
-	KVStore *KeyValueStore
-)
+// KVStore is the global key-value store
+var KVStore *KeyValueStore
 
 // Properties defines the additional attributes for each key-value entry.
 type Properties struct {
-	Persistent bool   // Whether the entry should be persistent
-	Source     string // The source of the key-value entry
+	Persistent bool   `yaml:"persistent"` // Whether the entry should be persistent
+	Static     bool   `yaml:"static"`     // Whether the entry should be static
+	Source     string `yaml:"source"`     // The source of the key-value entry
 	CtxID      string // Context ID for more specific identification
+	Type       string // The type of the stored value (e.g., "string", "[]string")
 }
 
 // Entry represents a key-value pair along with its properties.
 type Entry struct {
-	Value      string
+	Value      interface{}
 	Properties Properties
 }
 
@@ -52,44 +53,69 @@ func NewKeyValueStore() *KeyValueStore {
 	}
 }
 
+// NewKVStoreProperty initializes a new Properties object.
+func NewKVStoreProperty(persistent bool, static bool, source string, ctxID string, valueType string) Properties {
+	return Properties{
+		Persistent: persistent,
+		Static:     static,
+		Source:     source,
+		CtxID:      ctxID,
+		Type:       valueType, // Store the original type
+	}
+}
+
 // createKeyWithCtx combines the key and CtxID to create a unique key.
 func createKeyWithCtx(key string, ctxID string) string {
 	return fmt.Sprintf("%s:%s", key, ctxID)
 }
 
-// Set sets a value along with its properties for a given key and context.
-func (kv *KeyValueStore) Set(key string, value string, properties Properties) {
+// Set sets a value (either string or []string) along with its properties for a given key and context.
+func (kv *KeyValueStore) Set(key string, value interface{}, properties Properties) error {
+	// Store the type of the value in the properties
+	properties.Type = reflect.TypeOf(value).String()
+
 	fullKey := createKeyWithCtx(key, properties.CtxID)
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
-	kv.store[fullKey] = Entry{
-		Value:      value,
-		Properties: properties,
+	setEntry := true
+	if properties.Static {
+		properties.Persistent = true
+		// Search for existing key with the same context
+		if entry, exists := kv.store[fullKey]; exists {
+			setEntry = false
+			// If the existing entry is not static, update it
+			if !entry.Properties.Static {
+				kv.store[fullKey] = Entry{
+					Value:      value,
+					Properties: properties,
+				}
+			}
+		}
 	}
+	if setEntry {
+		kv.store[fullKey] = Entry{
+			Value:      value,
+			Properties: properties,
+		}
+	}
+	return nil
 }
 
-// Size returns the number of key-value pairs in the store.
-func (kv *KeyValueStore) Size() int {
-	kv.mutex.RLock()
-	defer kv.mutex.RUnlock()
-	return len(kv.store)
-}
-
-// Get retrieves the value and properties for a given key and context.
-func (kv *KeyValueStore) Get(key string, ctxID string) (string, Properties, error) {
+// Get retrieves the value (which could be string or []string) and properties for a given key and context.
+func (kv *KeyValueStore) Get(key string, ctxID string) (interface{}, Properties, error) {
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return "", Properties{}, errors.New("key not found for context")
+		return nil, Properties{}, errors.New("key not found for context")
 	}
 	return entry.Value, entry.Properties, nil
 }
 
 // GetBySource retrieves the value and properties for a given key and source.
-func (kv *KeyValueStore) GetBySource(key string, source string) (string, Properties, error) {
+func (kv *KeyValueStore) GetBySource(key string, source string) (interface{}, Properties, error) {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -98,22 +124,22 @@ func (kv *KeyValueStore) GetBySource(key string, source string) (string, Propert
 			return entry.Value, entry.Properties, nil
 		}
 	}
-	return "", Properties{}, errors.New("key not found for the specified source")
+	return nil, Properties{}, errors.New("key not found for the specified source")
 }
 
 // GetWithCtx retrieves the value for a given key, considering both Source and CtxID if provided.
-func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (string, Properties, error) {
+func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (interface{}, Properties, error) {
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return "", Properties{}, errors.New("key not found")
+		return nil, Properties{}, errors.New("key not found")
 	}
 
 	if source != "" && entry.Properties.Source != source {
-		return "", Properties{}, errors.New("source mismatch")
+		return nil, Properties{}, errors.New("source mismatch")
 	}
 
 	return entry.Value, entry.Properties, nil
@@ -131,6 +157,14 @@ func (kv *KeyValueStore) Delete(key string, ctxID string) error {
 
 	delete(kv.store, fullKey)
 	return nil
+}
+
+// Size returns the number of key-value pairs in the store.
+func (kv *KeyValueStore) Size() int {
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	return len(kv.store)
 }
 
 // DeleteNonPersistent removes all key-value pairs that are not persistent.
@@ -153,8 +187,8 @@ func (kv *KeyValueStore) DeleteAll() {
 	kv.store = make(map[string]Entry)
 }
 
-// Keys returns a slice of all keys in the store (ignoring context).
-func (kv *KeyValueStore) Keys() []string {
+// AllKeys returns a slice of all keys in the store (ignoring context).
+func (kv *KeyValueStore) AllKeys() []string {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -165,35 +199,16 @@ func (kv *KeyValueStore) Keys() []string {
 	return keys
 }
 
-/*
-func main() {
-     kvStore := NewKeyValueStore()
+// Keys returns a slice of all keys in the store for a given context.
+func (kv *KeyValueStore) Keys(ctxID string) []string {
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
 
-    // Simulate concurrent writing with different contexts
-    var wg sync.WaitGroup
-    wg.Add(2)
-
-    // Thread 1 with CtxID "123"
-    go func() {
-        defer wg.Done()
-        kvStore.Set("username", "admin", "123")
-        fmt.Println("Thread 1 finished writing")
-    }()
-
-    // Thread 2 with CtxID "456"
-    go func() {
-        defer wg.Done()
-        kvStore.Set("username", "user2", "456")
-        fmt.Println("Thread 2 finished writing")
-    }()
-
-    wg.Wait()
-
-    // Retrieve values from different contexts
-    user1, _ := kvStore.Get("username", "123")
-    user2, _ := kvStore.Get("username", "456")
-
-    fmt.Println("User 1:", user1)
-    fmt.Println("User 2:", user2)
+	keys := make([]string, 0, len(kv.store))
+	for key := range kv.store {
+		if key[len(key)-len(ctxID):] == ctxID {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
-*/

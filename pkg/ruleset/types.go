@@ -58,26 +58,41 @@ type CustomTime struct {
 
 // Ruleset represents the top-level structure of the rules YAML file
 type Ruleset struct {
-	FormatVersion string      `yaml:"format_version"`
-	Author        string      `yaml:"author"`
-	CreatedAt     CustomTime  `yaml:"created_at"`
-	Description   string      `yaml:"description"`
-	Name          string      `yaml:"ruleset_name"`
-	RuleGroups    []RuleGroup `yaml:"rule_groups"`
+	FormatVersion string               `yaml:"format_version"`
+	Author        string               `yaml:"author"`
+	CreatedAt     CustomTime           `yaml:"created_at"`
+	Description   string               `yaml:"description"`
+	Name          string               `yaml:"ruleset_name"`
+	RuleGroups    []RuleGroup          `yaml:"rule_groups"`
+	Env           []EnvSetting         `yaml:"environment_settings,omitempty"`
+	LoggingConf   LoggingConfiguration `yaml:"logging_configuration,omitempty"`
 }
 
 // RuleGroup represents a group of rules
 type RuleGroup struct {
-	GroupName            string               `yaml:"group_name"`
-	ValidFrom            CustomTime           `yaml:"valid_from,omitempty"`
-	ValidTo              CustomTime           `yaml:"valid_to,omitempty"`
-	IsEnabled            bool                 `yaml:"is_enabled"`
-	ScrapingRules        []ScrapingRule       `yaml:"scraping_rules,omitempty"`
-	ActionRules          []ActionRule         `yaml:"action_rules,omitempty"`
-	DetectionRules       []DetectionRule      `yaml:"detection_rules,omitempty"`
-	CrawlingRules        []CrawlingRule       `yaml:"crawling_rules,omitempty"`
-	EnvironmentSettings  EnvironmentSettings  `yaml:"environment_settings,omitempty"`
-	LoggingConfiguration LoggingConfiguration `yaml:"logging_configuration,omitempty"`
+	GroupName      string          `yaml:"group_name"`
+	ValidFrom      CustomTime      `yaml:"valid_from,omitempty"`
+	ValidTo        CustomTime      `yaml:"valid_to,omitempty"`
+	IsEnabled      bool            `yaml:"is_enabled"`
+	ScrapingRules  []ScrapingRule  `yaml:"scraping_rules,omitempty"`
+	ActionRules    []ActionRule    `yaml:"action_rules,omitempty"`
+	DetectionRules []DetectionRule `yaml:"detection_rules,omitempty"`
+	CrawlingRules  []CrawlingRule  `yaml:"crawling_rules,omitempty"`
+}
+
+// EnvSetting represents the environment settings for the ruleset
+type EnvSetting struct {
+	Key        string        `yaml:"key"`
+	Value      string        `yaml:"value"`
+	Properties EnvProperties `yaml:"properties"`
+}
+
+// EnvProperties represents the properties for the environment settings
+type EnvProperties struct {
+	Persistent bool   `yaml:"persistent"`
+	Static     bool   `yaml:"static"`
+	Type       string `yaml:"type"`
+	Source     string `yaml:"source"`
 }
 
 // PreCondition represents a pre-condition for a scraping rule

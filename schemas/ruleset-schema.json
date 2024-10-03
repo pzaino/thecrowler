@@ -795,6 +795,23 @@
                         "value": {
                             "type": "string",
                             "description": "The value of the environment setting."
+                        },
+                        "properties": {
+                            "type": "object",
+                            "properties": {
+                                "persistent": {
+                                    "type": "boolean",
+                                    "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
+                                },
+                                "static": {
+                                    "type": "boolean",
+                                    "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
+                                },
+                                "source": {
+                                    "type": "string",
+                                    "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
+                                }
+                            }
                         }
                     }
                 },

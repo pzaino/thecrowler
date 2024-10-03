@@ -116,7 +116,12 @@ func TestRuleEngineMarshalJSON(t *testing.T) {
               "CreatedAt": "0001-01-01T00:00:00Z",
               "Description": "",
               "Name": "",
-              "RuleGroups": null
+              "RuleGroups": null,
+              "Env": null,
+              "LoggingConf": {
+                "LogLevel": "",
+                "LogFile": ""
+              }
             }
           ],
           "schema": null
