@@ -118,6 +118,15 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
   - *Benefits*: Provides insights into the security measures implemented by a website.
 
 - **SSL/TLS Analysis**: Analyzes SSL/TLS certificates and configurations to identify security risks and compliance issues.
+  - The CROWler can detect and analyze the following:
+    - Certificate information
+    - Certificate chain (and order)
+    - Expiry date
+    - Key length
+    - Signature algorithm
+    - Cipher suites
+    - Protocols
+    - Vulnerabilities (e.g., Heartbleed, POODLE, DROWN)
   - *Benefits*: Helps ensure secure communication between clients and servers.
 
 - **3rd party Integration**: Integrates with third-party services like Shodan, VirusTotal, and others to gather additional information about web assets.
