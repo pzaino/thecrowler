@@ -359,6 +359,7 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Detect technologies used on the page
 	detectCtx := detect.DetectionContext{
+		CtxID:        ctx.GetContextID(),
 		TargetURL:    ctx.source.URL,
 		ResponseBody: nil,
 		Header:       nil,
@@ -1871,6 +1872,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect Detected Technologies
 	detectCtx := detect.DetectionContext{
+		CtxID:        processCtx.GetContextID(),
 		TargetURL:    url,
 		ResponseBody: nil,
 		Header:       nil,

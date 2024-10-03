@@ -392,54 +392,74 @@ func (re *RuleEngine) GetAllCrawlingRules() []CrawlingRule {
 }
 
 // GetAllDetectionRules returns all the detection rules in the RuleEngine.
-func (re *RuleEngine) GetAllDetectionRules() []DetectionRule {
+func (re *RuleEngine) GetAllDetectionRules(CtxID string) []DetectionRule {
 	var detectionRules []DetectionRule
+	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllRuleGroups() {
+		if CID != "" {
+			rg.SetEnv(CID)
+		}
 		detectionRules = append(detectionRules, rg.DetectionRules...)
 	}
 	return detectionRules
 }
 
 // GetAllEnabledScrapingRules returns all the enabled scraping rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledScrapingRules() []ScrapingRule {
+func (re *RuleEngine) GetAllEnabledScrapingRules(CtxID string) []ScrapingRule {
 	var scrapingRules []ScrapingRule
+	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
+		if CID != "" {
+			rg.SetEnv(CID)
+		}
 		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
 	}
 	return scrapingRules
 }
 
 // GetAllEnabledActionRules returns all the enabled action rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledActionRules() []ActionRule {
+func (re *RuleEngine) GetAllEnabledActionRules(CtxID string) []ActionRule {
 	var actionRules []ActionRule
+	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
+		if CID != "" {
+			rg.SetEnv(CID)
+		}
 		actionRules = append(actionRules, rg.ActionRules...)
 	}
 	return actionRules
 }
 
 // GetAllEnabledCrawlingRules returns all the enabled crawling rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledCrawlingRules() []CrawlingRule {
+func (re *RuleEngine) GetAllEnabledCrawlingRules(CtxID string) []CrawlingRule {
 	var crawlingRules []CrawlingRule
+	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
+		if CID != "" {
+			rg.SetEnv(CID)
+		}
 		crawlingRules = append(crawlingRules, rg.CrawlingRules...)
 	}
 	return crawlingRules
 }
 
 // GetAllEnabledDetectionRules returns all the enabled detection rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledDetectionRules() []DetectionRule {
+func (re *RuleEngine) GetAllEnabledDetectionRules(CtxID string) []DetectionRule {
 	var detectionRules []DetectionRule
+	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
+		if CID != "" {
+			rg.SetEnv(CID)
+		}
 		detectionRules = append(detectionRules, rg.DetectionRules...)
 	}
 	return detectionRules
 }
 
 // GetAllScrapingRulesByURL returns all the scraping rules for the specified URL.
-func (re *RuleEngine) GetAllScrapingRulesByURL(url string) []ScrapingRule {
+func (re *RuleEngine) GetAllScrapingRulesByURL(url, CtxID string) []ScrapingRule {
 	// find all scraping rules with the specified URL
-	rules := re.GetAllEnabledScrapingRules()
+	rules := re.GetAllEnabledScrapingRules(CtxID)
 	var scrapingRules []ScrapingRule
 
 	// Prepare the URL for search

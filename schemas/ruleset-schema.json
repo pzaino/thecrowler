@@ -779,64 +779,64 @@
                                     "fuzzing_parameters"
                                 ]
                             }
+                        },
+                        "environment_settings": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "The name of the environment setting."
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "The value of the environment setting."
+                                    },
+                                    "properties": {
+                                        "type": "object",
+                                        "properties": {
+                                            "persistent": {
+                                                "type": "boolean",
+                                                "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
+                                            },
+                                            "static": {
+                                                "type": "boolean",
+                                                "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
+                                            },
+                                            "source": {
+                                                "type": "string",
+                                                "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "description": "Optional. Custom key value settings to use in the rules. Normally used to set environment variables for the rules."
+                        },
+                        "logging_configuration": {
+                            "type": "object",
+                            "properties": {
+                                "log_level": {
+                                    "type": "string",
+                                    "enum": [
+                                        "DEBUG",
+                                        "INFO",
+                                        "WARNING",
+                                        "ERROR",
+                                        "CRITICAL"
+                                    ],
+                                    "description": "Optional. Specifies the logging level for actions and scraping activities."
+                                },
+                                "log_message": {
+                                    "type": "string",
+                                    "description": "Optional. The message you want to log if the rule matches something."
+                                }
+                            },
+                            "description": "rule log configuration (aka what you want to be logged when the rule execute)."
                         }
                     }
                 }
-            },
-            "environment_settings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "key": {
-                            "type": "string",
-                            "description": "The name of the environment setting."
-                        },
-                        "value": {
-                            "type": "string",
-                            "description": "The value of the environment setting."
-                        },
-                        "properties": {
-                            "type": "object",
-                            "properties": {
-                                "persistent": {
-                                    "type": "boolean",
-                                    "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
-                                },
-                                "static": {
-                                    "type": "boolean",
-                                    "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
-                                },
-                                "source": {
-                                    "type": "string",
-                                    "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
-                                }
-                            }
-                        }
-                    }
-                },
-                "description": "Optional. Custom key value settings to use in the rules. Normally used to set environment variables for the rules."
-            },
-            "logging_configuration": {
-                "type": "object",
-                "properties": {
-                    "log_level": {
-                        "type": "string",
-                        "enum": [
-                            "DEBUG",
-                            "INFO",
-                            "WARNING",
-                            "ERROR",
-                            "CRITICAL"
-                        ],
-                        "description": "Optional. Specifies the logging level for actions and scraping activities."
-                    },
-                    "log_message": {
-                        "type": "string",
-                        "description": "Optional. The message you want to log if the rule matches something."
-                    }
-                },
-                "description": "rule log configuration (aka what you want to be logged when the rule execute)."
             }
         },
         "required": [

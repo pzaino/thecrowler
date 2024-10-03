@@ -116,12 +116,7 @@ func TestRuleEngineMarshalJSON(t *testing.T) {
               "CreatedAt": "0001-01-01T00:00:00Z",
               "Description": "",
               "Name": "",
-              "RuleGroups": null,
-              "Env": null,
-              "LoggingConf": {
-                "LogLevel": "",
-                "LogFile": ""
-              }
+              "RuleGroups": null
             }
           ],
           "schema": null
@@ -352,7 +347,7 @@ func TestGetAllDetectionRules(t *testing.T) {
 		},
 	}
 
-	detectionRules := re.GetAllDetectionRules()
+	detectionRules := re.GetAllDetectionRules("")
 
 	if len(detectionRules) != 4 {
 		t.Errorf("Expected 4 detection rules, got %d", len(detectionRules))
@@ -403,7 +398,7 @@ func TestGetAllEnabledScrapingRules(t *testing.T) {
 		},
 	}
 
-	scrapingRules := re.GetAllEnabledScrapingRules()
+	scrapingRules := re.GetAllEnabledScrapingRules("")
 
 	if len(scrapingRules) != 3 {
 		t.Errorf("Expected 2 enabled scraping rules, got %d", len(scrapingRules))
@@ -454,7 +449,7 @@ func TestGetAllEnabledActionRules(t *testing.T) {
 		},
 	}
 
-	actionRules := re.GetAllEnabledActionRules()
+	actionRules := re.GetAllEnabledActionRules("")
 
 	if len(actionRules) != 3 {
 		t.Errorf("Expected 2 enabled action rules, got %d", len(actionRules))
@@ -505,7 +500,7 @@ func TestGetAllEnabledCrawlingRules(t *testing.T) {
 		},
 	}
 
-	crawlingRules := re.GetAllEnabledCrawlingRules()
+	crawlingRules := re.GetAllEnabledCrawlingRules("")
 
 	if len(crawlingRules) != 3 {
 		for _, cr := range crawlingRules {
@@ -559,7 +554,7 @@ func TestGetAllEnabledDetectionRules(t *testing.T) {
 		},
 	}
 
-	detectionRules := re.GetAllEnabledDetectionRules()
+	detectionRules := re.GetAllEnabledDetectionRules("")
 
 	if len(detectionRules) != 3 {
 		t.Errorf("Expected 3 detection rules, got %d", len(detectionRules))
@@ -630,7 +625,7 @@ func TestGetAllScrapingRulesByURL(t *testing.T) {
 		},
 	}
 
-	scrapingRules := re.GetAllScrapingRulesByURL("https://example.com")
+	scrapingRules := re.GetAllScrapingRulesByURL("https://example.com", "")
 
 	if len(scrapingRules) != 2 {
 		t.Errorf("Expected 2 scraping rules, but got %d", len(scrapingRules))

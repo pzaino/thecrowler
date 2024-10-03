@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -145,8 +146,19 @@ func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (in
 	return entry.Value, entry.Properties, nil
 }
 
+// Size returns the number of key-value pairs in the store.
+func (kv *KeyValueStore) Size() int {
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	return len(kv.store)
+}
+
 // Delete removes a key-value pair by key and context.
-func (kv *KeyValueStore) Delete(key string, ctxID string) error {
+// Flags can be used to specify whether to delete persistent.
+// If no flags are provided, only non-persistent entries are deleted.
+// Flag[0] set is to delete persistent entries
+func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
@@ -155,16 +167,53 @@ func (kv *KeyValueStore) Delete(key string, ctxID string) error {
 		return errors.New("key not found for context")
 	}
 
-	delete(kv.store, fullKey)
+	// Check if the entry should be removed
+	removeEntry := true
+	if len(flags) == 0 {
+		if kv.store[fullKey].Properties.Persistent {
+			removeEntry = false
+		}
+	} else {
+		if !flags[0] && kv.store[fullKey].Properties.Persistent {
+			removeEntry = false
+		}
+	}
+	if removeEntry {
+		delete(kv.store, fullKey)
+	}
 	return nil
 }
 
-// Size returns the number of key-value pairs in the store.
-func (kv *KeyValueStore) Size() int {
-	kv.mutex.RLock()
-	defer kv.mutex.RUnlock()
+// DeleteByCID removes all key-value pairs for a given context.
+// Flags can be used to specify whether to delete persistent.
+// If no flags are provided, only non-persistent entries are deleted.
+// Flag[0] set is to delete persistent entries
+func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
 
-	return len(kv.store)
+	for key := range kv.store {
+		if strings.HasSuffix(key, ctxID) {
+			removeEntry := true
+
+			// If no flags are provided, only delete non-persistent entries
+			if len(flags) == 0 {
+				if kv.store[key].Properties.Persistent {
+					removeEntry = false
+				}
+			} else {
+				// Handle persistent flag logic
+				if !flags[0] && kv.store[key].Properties.Persistent {
+					removeEntry = false
+				}
+			}
+
+			// Perform the deletion
+			if removeEntry {
+				delete(kv.store, key)
+			}
+		}
+	}
 }
 
 // DeleteNonPersistent removes all key-value pairs that are not persistent.

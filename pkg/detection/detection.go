@@ -40,7 +40,7 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
 
 	// micro-signatures
-	Patterns := dtCtx.RE.GetAllEnabledDetectionRules()
+	Patterns := dtCtx.RE.GetAllEnabledDetectionRules(dtCtx.CtxID)
 	if len(Patterns) == 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No detection rules enabled")
 		return nil
@@ -154,6 +154,9 @@ func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
 			detectTechnologiesByExternalDetection(dtCtx.TargetURL, dtCtx.Config, &ExternalDetection, &detectedTech)
 		}
 	}
+
+	// Delete non-persistent ENV entries
+	cmn.KVStore.DeleteByCID(dtCtx.CtxID)
 
 	// Transform the detectedTech map into a map of strings
 	detectedTechStr := make(map[string]DetectedEntity)

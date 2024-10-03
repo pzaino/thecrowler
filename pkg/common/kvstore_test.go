@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -274,7 +275,7 @@ func TestKeyValueStore_Size(t *testing.T) {
 	}
 
 	// Delete an entry and test size
-	err = kvStore.Delete("username", "123")
+	err = kvStore.Delete("username", "123", true)
 	if err != nil {
 		t.Fatalf("Error deleting key: %v", err)
 	}
@@ -320,7 +321,7 @@ func TestKeyValueStore_Delete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s_%s", tt.key, tt.ctxID), func(t *testing.T) {
-			err := kvStore.Delete(tt.key, tt.ctxID)
+			err := kvStore.Delete(tt.key, tt.ctxID, true)
 
 			if err != nil && err.Error() != tt.expected.Error() {
 				t.Fatalf("Expected error %v, got %v", tt.expected, err)
@@ -594,5 +595,60 @@ func TestKeyValueStore_Keys(t *testing.T) {
 		if !found {
 			t.Errorf("Expected key %s not found in keys", expectedKey)
 		}
+	}
+}
+
+func TestKeyValueStore_DeleteByCID(t *testing.T) {
+	kvStore := NewKeyValueStore()
+
+	// Prepopulate the store with some entries
+	err := kvStore.Set("username", "admin", Properties{Persistent: true, Static: false, Source: "test", CtxID: "123"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("email", "admin@example.com", Properties{Persistent: false, Static: false, Source: "test", CtxID: "123"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("password", "secret", Properties{Persistent: true, Static: true, Source: "test", CtxID: "456"}) // Static (implicitly persistent)
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("session", "xyz", Properties{Persistent: false, Static: false, Source: "test", CtxID: "456"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	tests := []struct {
+		ctxID       string
+		flags       []bool
+		expectedRem int // Expected number of remaining entries for the given CtxID
+	}{
+		{"123", nil, 1},          // Only non-persistent entries should be deleted, 1 persistent remains
+		{"456", nil, 1},          // Only non-persistent entries should be deleted, 1 persistent remains
+		{"456", []bool{true}, 0}, // All entries should be deleted
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("DeleteByCID_%s", tt.ctxID), func(t *testing.T) {
+			kvStore.DeleteByCID(tt.ctxID, tt.flags...)
+
+			// Count the number of remaining entries for the given CtxID
+			remaining := 0
+			for key := range kvStore.store {
+				parts := strings.Split(key, ":")
+				if len(parts) == 2 && parts[1] == tt.ctxID {
+					remaining++
+				}
+			}
+
+			// Verify the number of remaining entries for the specific CtxID
+			if remaining != tt.expectedRem {
+				t.Errorf("Expected %d remaining entries for CtxID %s, got %d", tt.expectedRem, tt.ctxID, remaining)
+			}
+		})
 	}
 }

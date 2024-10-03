@@ -58,26 +58,26 @@ type CustomTime struct {
 
 // Ruleset represents the top-level structure of the rules YAML file
 type Ruleset struct {
-	FormatVersion string               `yaml:"format_version"`
-	Author        string               `yaml:"author"`
-	CreatedAt     CustomTime           `yaml:"created_at"`
-	Description   string               `yaml:"description"`
-	Name          string               `yaml:"ruleset_name"`
-	RuleGroups    []RuleGroup          `yaml:"rule_groups"`
-	Env           []EnvSetting         `yaml:"environment_settings,omitempty"`
-	LoggingConf   LoggingConfiguration `yaml:"logging_configuration,omitempty"`
+	FormatVersion string      `yaml:"format_version"`
+	Author        string      `yaml:"author"`
+	CreatedAt     CustomTime  `yaml:"created_at"`
+	Description   string      `yaml:"description"`
+	Name          string      `yaml:"ruleset_name"`
+	RuleGroups    []RuleGroup `yaml:"rule_groups"`
 }
 
 // RuleGroup represents a group of rules
 type RuleGroup struct {
-	GroupName      string          `yaml:"group_name"`
-	ValidFrom      CustomTime      `yaml:"valid_from,omitempty"`
-	ValidTo        CustomTime      `yaml:"valid_to,omitempty"`
-	IsEnabled      bool            `yaml:"is_enabled"`
-	ScrapingRules  []ScrapingRule  `yaml:"scraping_rules,omitempty"`
-	ActionRules    []ActionRule    `yaml:"action_rules,omitempty"`
-	DetectionRules []DetectionRule `yaml:"detection_rules,omitempty"`
-	CrawlingRules  []CrawlingRule  `yaml:"crawling_rules,omitempty"`
+	GroupName      string               `yaml:"group_name"`
+	ValidFrom      CustomTime           `yaml:"valid_from,omitempty"`
+	ValidTo        CustomTime           `yaml:"valid_to,omitempty"`
+	IsEnabled      bool                 `yaml:"is_enabled"`
+	ScrapingRules  []ScrapingRule       `yaml:"scraping_rules,omitempty"`
+	ActionRules    []ActionRule         `yaml:"action_rules,omitempty"`
+	DetectionRules []DetectionRule      `yaml:"detection_rules,omitempty"`
+	CrawlingRules  []CrawlingRule       `yaml:"crawling_rules,omitempty"`
+	Env            []EnvSetting         `yaml:"environment_settings,omitempty"`
+	LoggingConf    LoggingConfiguration `yaml:"logging_configuration,omitempty"`
 }
 
 // EnvSetting represents the environment settings for the ruleset

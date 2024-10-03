@@ -19,8 +19,6 @@ package ruleset
 import (
 	"fmt"
 	"strings"
-
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 ///// ------------------------ RULESET ---------------------------------- /////
@@ -32,23 +30,6 @@ func NewRuleset(name string) Ruleset {
 	return Ruleset{
 		Name:       name,
 		RuleGroups: []RuleGroup{},
-	}
-}
-
-func (rs *Ruleset) SetEnv(CtxID string) {
-	if rs.Env != nil {
-		for i := 0; i < len(rs.Env); i++ {
-			// Retrieve the environment variable key, value and properties
-			key := rs.Env[i].Key
-			value := rs.Env[i].Value
-			properties := rs.Env[i].Properties
-			// Set the environment variable
-			envProperties := cmn.NewKVStoreProperty(properties.Persistent, properties.Static, properties.Source, CtxID, properties.Type)
-			err := cmn.KVStore.Set(key, value, envProperties)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, fmt.Sprintf("setting environment variable %s: %s", key, err.Error()))
-			}
-		}
 	}
 }
 
@@ -134,10 +115,15 @@ func (rs *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
 // GetAllEnabledActionRules returns a slice of Rule containing only the enabled action rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled action rules
 // to the result slice.
-func (rs *Ruleset) GetAllEnabledActionRules() []ActionRule {
+func (rs *Ruleset) GetAllEnabledActionRules(CtxID string, flags ...bool) []ActionRule {
 	var enabledRules []ActionRule
 
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
+		if len(flags) > 0 {
+			if flags[0] {
+				rg.SetEnv(CtxID)
+			}
+		}
 		enabledRules = append(enabledRules, rg.ActionRules...)
 	}
 
