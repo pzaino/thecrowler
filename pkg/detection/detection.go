@@ -491,7 +491,6 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 // detectTechnologiesWithPlugins runs plugins in the browser and collects the results
 // to detect technologies
 func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngine, plugins *map[string][]ruleset.PluginCall, detectedTech *map[string]detectionEntityDetails) {
-	//const detectionType = "plugin"
 	// Iterate through all the plugins and check for possible technologies
 	for ObjName := range *plugins {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running plugins for: %s", ObjName)
@@ -513,7 +512,7 @@ func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngin
 				for _, arg := range args {
 					jsArgs = append(jsArgs, arg.ArgValue)
 					if strings.ToLower(strings.TrimSpace(arg.ArgName)) == "confidence" {
-						confidence = cmn.StringToFloat32(arg.ArgValue)
+						confidence = cmn.StringToFloat32(strings.TrimSpace(arg.ArgValue.(string)))
 					}
 				}
 			}

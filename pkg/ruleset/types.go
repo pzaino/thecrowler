@@ -286,8 +286,118 @@ type PluginCall struct {
 
 // PluginParams represents the parameters for a plugin call
 type PluginParams struct {
-	ArgName  string `yaml:"parameter_name"`
-	ArgValue string `yaml:"parameter_value"`
+	ArgName    string                 `yaml:"parameter_name"`
+	ArgValue   interface{}            `yaml:"parameter_value"`
+	Properties PluginParamsProperties `yaml:"properties"`
+}
+
+// PluginParamsProperties represents the properties for the plugin parameters
+type PluginParamsProperties struct {
+	Type string `yaml:"type"`
+}
+
+// UnmarshalJSON implements custom unmarshaling logic for EnvSetting
+func (e *PluginParams) UnmarshalJSON(data []byte) error {
+	type Alias PluginParams
+	aux := &struct {
+		ArgValue json.RawMessage `json:"parameter_value"` // Read Values as raw JSON first
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+
+	// Unmarshal the raw data
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Now handle the "values" field, which can be multiple types
+	var value interface{}
+	if err := json.Unmarshal(aux.ArgValue, &value); err != nil {
+		return err
+	}
+
+	// Detect and process the type of "values"
+	switch v := value.(type) {
+	case string:
+		e.ArgValue = v
+		e.Properties.Type = "string"
+	case float64:
+		e.ArgValue = v
+		e.Properties.Type = "number"
+	case bool:
+		e.ArgValue = v
+		e.Properties.Type = "boolean"
+	case nil:
+		e.ArgValue = v
+		e.Properties.Type = "null"
+	case []interface{}:
+		e.ArgValue = processPlgArgArray(v, e)
+	default:
+		e.ArgValue = nil
+		e.Properties.Type = "unknown"
+	}
+
+	return nil
+}
+
+// Helper function to handle array processing and set the type in PluginParamsProperties
+func processPlgArgArray(arr []interface{}, e *PluginParams) interface{} {
+	if len(arr) == 0 {
+		e.Properties.Type = "array"
+		return arr
+	}
+
+	// Check the type of the first element to guess the array type
+	switch arr[0].(type) {
+	case string:
+		e.Properties.Type = "[]string"
+		var stringArray []string
+		for _, elem := range arr {
+			stringArray = append(stringArray, elem.(string))
+		}
+		return stringArray
+	case float64:
+		e.Properties.Type = "[]float64"
+		var numberArray []float64
+		for _, elem := range arr {
+			numberArray = append(numberArray, elem.(float64))
+		}
+		return numberArray
+	case bool:
+		e.Properties.Type = "[]bool"
+		var boolArray []bool
+		for _, elem := range arr {
+			boolArray = append(boolArray, elem.(bool))
+		}
+		return boolArray
+	default:
+		e.Properties.Type = "[]unknown"
+		return arr
+	}
+}
+
+// Custom MarshalJSON to ensure the correct format when marshaling the "parameter_value" field
+func (e *PluginParams) MarshalJSON() ([]byte, error) {
+	type Alias PluginParams
+	aux := &struct {
+		ArgValue interface{} `json:"parameter_value"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+
+	// Handle different types of the "Values" field for correct JSON output
+	switch reflect.TypeOf(e.ArgValue).Kind() {
+	case reflect.Slice, reflect.Array:
+		// If Values is a slice or array, keep it as-is
+		aux.ArgValue = e.ArgValue
+	default:
+		// Otherwise, marshal it as a primitive type (string, number, boolean, etc.)
+		aux.ArgValue = e.ArgValue
+	}
+
+	return json.Marshal(aux)
 }
 
 // ExternalDetection represents a call to an external detection service
