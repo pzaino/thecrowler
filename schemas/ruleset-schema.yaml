@@ -14,14 +14,14 @@ properties:
     type: "string"
     pattern: "^\\d+\\.\\d+\\.\\d+$"
     examples:
-    - "1.0.5"
+      - "1.0.5"
   author:
     title: "Author's name"
     description: "The name of the author or owner of the ruleset."
     type: "string"
     examples:
-    - "John Doe"
-    - "ZFP Systems Inc."
+      - "John Doe"
+      - "ZFP Systems Inc."
   created_at:
     title: "Creation Date"
     description: "The date of when this version of the RUleset was created. SUpports multiple date-time formats."
@@ -36,8 +36,8 @@ properties:
     description: "A unique name identifying the ruleset."
     type: "string"
     examples:
-    - "My Ruleset"
-    - "https://example.com"
+      - "My Ruleset"
+      - "https://example.com"
   rule_groups:
     title: "Rules Groups"
     description: "A list of rule groups, each containing mixes of scraping, action, detection, or crawling rules."
@@ -50,8 +50,8 @@ properties:
           description: "A unique name identifying the group of rules."
           type: "string"
           examples:
-          - "My Group"
-          - "https://example.com"
+            - "My Group"
+            - "https://example.com"
         valid_from:
           title: "Valid From"
           description: "The start date from which the rule group becomes active."
@@ -110,18 +110,18 @@ properties:
                           selector_type:
                             type: "string"
                             enum:
-                            - "css"
-                            - "xpath"
-                            - "id"
-                            - "class_name"
-                            - "class"
-                            - "name"
-                            - "tag_name"
-                            - "element"
-                            - "link_text"
-                            - "partial_link_text"
-                            - "regex"
-                            - "plugin_call"
+                              - "css"
+                              - "xpath"
+                              - "id"
+                              - "class_name"
+                              - "class"
+                              - "name"
+                              - "tag_name"
+                              - "element"
+                              - "link_text"
+                              - "partial_link_text"
+                              - "regex"
+                              - "plugin_call"
                             description: "The type of selector to use to find the element. To extract data using plugins, set this field to 'plugin_call'."
                           selector:
                             type: "string"
@@ -141,12 +141,12 @@ properties:
                             description: "Flag to extract all occurrences of the element, not just the first one. This flag has no effect when using CROWler plugins via plugin_call."
                         additionalProperties: "false"
                         required:
-                        - "selector_type"
-                        - "selector"
+                          - "selector_type"
+                          - "selector"
                   additionalProperties: "false"
                   required:
-                  - "key"
-                  - "selectors"
+                    - "key"
+                    - "selectors"
               extract_scripts:
                 title: "Extract Page's Scripts"
                 description: "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis."
@@ -160,8 +160,8 @@ properties:
                     type: "string"
                     description: "A unique name identifying the detection rule."
                     examples:
-                    - "My Object"
-                    - "https://example.com"
+                      - "My Object"
+                      - "https://example.com"
               json_field_rename:
                 title: "JSON Fields Renaming"
                 description: "Given that the CROWler scraper maps automatically HTML tags to JSON tags, you can use this feature to rename the json-html tag with whatever name you wish to use."
@@ -177,8 +177,8 @@ properties:
                       description: "The new name for the JSON tag."
                   additionalProperties: "false"
                   required:
-                  - "source_tag"
-                  - "dest_tag"
+                    - "source_tag"
+                    - "dest_tag"
               wait_conditions:
                 title: "Wait Conditions"
                 description: "Conditions to wait before being able to scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'."
@@ -189,10 +189,10 @@ properties:
                     condition_type:
                       type: "string"
                       enum:
-                      - "element_presence"
-                      - "element_visible"
-                      - "plugin_call"
-                      - "delay"
+                        - "element_presence"
+                        - "element_visible"
+                        - "plugin_call"
+                        - "delay"
                     value:
                       type: "string"
                       description: "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is ignored."
@@ -208,13 +208,13 @@ properties:
                     step_type:
                       type: "string"
                       enum:
-                      - "replace"
-                      - "remove"
-                      - "transform"
-                      - "validate"
-                      - "clean"
-                      - "plugin_call"
-                      - "external_api"
+                        - "replace"
+                        - "remove"
+                        - "transform"
+                        - "validate"
+                        - "clean"
+                        - "plugin_call"
+                        - "external_api"
                       description: "The type of post-processing step to perform on the scraped data. To use plugins to process the data, set this field to 'plugin_call' and place the plugin name in the 'details' object using a field called 'plugin_name'. Do not use 'transform' if you want to use a plugin to transform the output, use 'plugin_call' instead."
                     details:
                       type: "object"
@@ -223,12 +223,12 @@ properties:
                   additionalProperties: "false"
                 description: "Post-processing steps for the scraped data to transform, validate, or clean it. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
                 required:
-                - "step_type"
-                - "details"
+                  - "step_type"
+                  - "details"
             additionalProperties: "false"
             required:
-            - "rule_name"
-            - "elements"
+              - "rule_name"
+              - "elements"
         action_rules:
           title: "Action Rules"
           description: "A list of rules to interact with web pages."
@@ -252,10 +252,10 @@ properties:
                     condition_type:
                       type: "string"
                       enum:
-                      - "element_presence"
-                      - "element_visible"
-                      - "plugin_call"
-                      - "delay"
+                        - "element_presence"
+                        - "element_visible"
+                        - "plugin_call"
+                        - "delay"
                     value:
                       type: "string"
                       description: "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
@@ -269,9 +269,9 @@ properties:
                   type:
                     type: "string"
                     enum:
-                    - "element"
-                    - "language"
-                    - "plugin_call"
+                      - "element"
+                      - "language"
+                      - "plugin_call"
                   selector:
                     type: "string"
                     description: "The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call."
@@ -279,32 +279,32 @@ properties:
               action_type:
                 type: "string"
                 enum:
-                - "click"
-                - "input_text"
-                - "clear"
-                - "drag_and_drop"
-                - "mouse_hover"
-                - "right_click"
-                - "double_click"
-                - "click_and_hold"
-                - "release"
-                - "key_down"
-                - "key_up"
-                - "navigate_to_url"
-                - "forward"
-                - "back"
-                - "refresh"
-                - "switch_to_window"
-                - "switch_to_frame"
-                - "close_window"
-                - "accept_alert"
-                - "dismiss_alert"
-                - "get_alert_text"
-                - "send_keys_to_alert"
-                - "scroll_to_element"
-                - "scroll_by_amount"
-                - "take_screenshot"
-                - "custom"
+                  - "click"
+                  - "input_text"
+                  - "clear"
+                  - "drag_and_drop"
+                  - "mouse_hover"
+                  - "right_click"
+                  - "double_click"
+                  - "click_and_hold"
+                  - "release"
+                  - "key_down"
+                  - "key_up"
+                  - "navigate_to_url"
+                  - "forward"
+                  - "back"
+                  - "refresh"
+                  - "switch_to_window"
+                  - "switch_to_frame"
+                  - "close_window"
+                  - "accept_alert"
+                  - "dismiss_alert"
+                  - "get_alert_text"
+                  - "send_keys_to_alert"
+                  - "scroll_to_element"
+                  - "scroll_by_amount"
+                  - "take_screenshot"
+                  - "custom"
                 description: "The type of action to perform, including advanced interactions and calls to plugins.If you want to use plugins then set this field to 'custom', set selector_type field to 'plugin_call', and place the plugin name in the selector field."
               selectors:
                 type: "array"
@@ -314,17 +314,17 @@ properties:
                     selector_type:
                       type: "string"
                       enum:
-                      - "css"
-                      - "xpath"
-                      - "id"
-                      - "class_name"
-                      - "class"
-                      - "name"
-                      - "tag_name"
-                      - "element"
-                      - "link_text"
-                      - "partial_link_text"
-                      - "plugin_call"
+                        - "css"
+                        - "xpath"
+                        - "id"
+                        - "class_name"
+                        - "class"
+                        - "name"
+                        - "tag_name"
+                        - "element"
+                        - "link_text"
+                        - "partial_link_text"
+                        - "plugin_call"
                       description: "The type of selector to use to find the element."
                     selector:
                       type: "string"
@@ -343,8 +343,8 @@ properties:
                       type: "string"
                       description: "The value within the selector that we need to match for the action. (this is NOT the value to input!)"
                   required:
-                  - "selector_type"
-                  - "selector"
+                    - "selector_type"
+                    - "selector"
                 description: "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot."
               value:
                 type: "string"
@@ -370,19 +370,17 @@ properties:
                     step_type:
                       type: "string"
                       enum:
-                      - "collect_cookies"
+                        - "collect_cookies"
                       description: "The type of post-processing step to perform after an action rule has been successfully executed. At the moment the only valid post_processing step is 'collect_cookies'."
             additionalProperties: "false"
             required:
-            - "rule_name"
-            - "action_type"
+              - "rule_name"
+              - "action_type"
             anyOf:
-            -
-              required:
-              - "selectors"
-            -
-              required:
-              - "value"
+              - required:
+                  - "selectors"
+              - required:
+                  - "value"
         detection_rules:
           title: "Detection Rules"
           description: "A list of rules to detect technologies and objects on web pages."
@@ -510,58 +508,58 @@ properties:
                           parameter_value:
                             description: "The value of the parameter to pass to the plugin."
                             anyOf:
-                            - title: "Object"
-                              type: "object"
-                            - title: "String"
-                              type: "string"
-                            - title: "Number"
-                              type: "number"
-                            - title: "Boolean"
-                              type: "boolean"
-                            - title: "Null"
-                              type: "null"
-                            - title: "Integer"
-                              type: "integer"
-                            - title: "Array of Strings"
-                              type: "array"
-                              items:
-                                type: "string"
-                            - title: "Array of Numbers"
-                              type: "array"
-                              items:
-                                type: "number"
-                            - title: "Array of Booleans"
-                              type: "array"
-                              items:
-                                type: "boolean"
-                            - title: "Array of Objects"
-                              type: "array"
-                              items:
+                              - title: "Object"
                                 type: "object"
-                            - title: "Array of Nulls"
-                              type: "array"
-                              items:
+                              - title: "String"
+                                type: "string"
+                              - title: "Number"
+                                type: "number"
+                              - title: "Boolean"
+                                type: "boolean"
+                              - title: "Null"
                                 type: "null"
-                            - title: "Array of Integers"
-                              type: "array"
-                              items:
+                              - title: "Integer"
                                 type: "integer"
+                              - title: "Array of Strings"
+                                type: "array"
+                                items:
+                                  type: "string"
+                              - title: "Array of Numbers"
+                                type: "array"
+                                items:
+                                  type: "number"
+                              - title: "Array of Booleans"
+                                type: "array"
+                                items:
+                                  type: "boolean"
+                              - title: "Array of Objects"
+                                type: "array"
+                                items:
+                                  type: "object"
+                              - title: "Array of Nulls"
+                                type: "array"
+                                items:
+                                  type: "null"
+                              - title: "Array of Integers"
+                                type: "array"
+                                items:
+                                  type: "integer"
                             examples:
-                            - "my_api_key"
-                            - "my_db_password"
-                            - "700"
-                            - "true"
-                            - "1.76"
-                            - "['value1', 'value2']"
+                              - "my_api_key"
+                              - "my_db_password"
+                              - "700"
+                              - "true"
+                              - "1.76"
+                              - "['value1', 'value2']"
                         additionalProperties: "false"
                         required:
-                        - "parameter_name"
-                        - "parameter_value"
+                          - "parameter_name"
+                          - "parameter_value"
                       examples:
-                      - parameter_name: "api_key"
-                        parameter_value: "my_api_key"
-                      - parameter_name: "db_password"
-                        parameter_value: "my_db_password"
+                        - parameter_name: "api_key"
+                          parameter_value: "my_api_key"
+                        - parameter_name: "db_password"
+                          parameter_value: "my_db_password"
                   additionalProperties: "false"
               external_detection:
                 type: "array"
@@ -573,59 +571,52 @@ properties:
                       description: "The name of the supported external detection provider."
                       type: "string"
                       enum:
-                      - "abuse_ipdb"
-                      - "alien_vault"
-                      - "censys"
-                      - "cisco_umbrella"
-                      - "grey_noise"
-                      - "google_safe_browsing"
-                      - "hybrid_analysis"
-                      - "ip_quality_score"
-                      - "ipvoid"
-                      - "malware_domain_list"
-                      - "shodan"
-                      - "virus_total"
-                      - "url_haus"
+                        - "abuse_ipdb"
+                        - "alien_vault"
+                        - "censys"
+                        - "cisco_umbrella"
+                        - "grey_noise"
+                        - "google_safe_browsing"
+                        - "hybrid_analysis"
+                        - "ip_quality_score"
+                        - "ipvoid"
+                        - "malware_domain_list"
+                        - "shodan"
+                        - "virus_total"
+                        - "url_haus"
                       examples:
-                      - "abuse_ipdb"
-                      - "alien_vault"
-                      - "censys"
-                      - "cisco_umbrella"
-                      - "grey_noise"
-                      - "google_safe_browsing"
-                      - "hybrid_analysis"
-                      - "ip_quality_score"
-                      - "ipvoid"
-                      - "malware_domain_list"
-                      - "shodan"
-                      - "virus_total"
-                      - "url_haus"
+                        - "abuse_ipdb"
+                        - "alien_vault"
+                        - "censys"
+                        - "cisco_umbrella"
+                        - "grey_noise"
+                        - "google_safe_browsing"
+                        - "hybrid_analysis"
+                        - "ip_quality_score"
+                        - "ipvoid"
+                        - "malware_domain_list"
+                        - "shodan"
+                        - "virus_total"
+                        - "url_haus"
             additionalProperties: "false"
             required:
-            - "rule_name"
-            - "object_name"
+              - "rule_name"
+              - "object_name"
             anyOf:
-            -
-              required:
-              - "http_header_fields"
-            -
-              required:
-              - "page_content_patterns"
-            -
-              required:
-              - "certificates_patterns"
-            -
-              required:
-              - "url_micro_signatures"
-            -
-              required:
-              - "meta_tags"
-            -
-              required:
-              - "implies"
-            -
-              required:
-              - "plugin_calls"
+              - required:
+                  - "http_header_fields"
+              - required:
+                  - "page_content_patterns"
+              - required:
+                  - "certificates_patterns"
+              - required:
+                  - "url_micro_signatures"
+              - required:
+                  - "meta_tags"
+              - required:
+                  - "implies"
+              - required:
+                  - "plugin_calls"
         crawling_rules:
           title: "Crawling Rules"
           description: "A list of rules to crawl web pages and fuzz parameters."
@@ -639,8 +630,8 @@ properties:
               request_type:
                 type: "string"
                 enum:
-                - "GET"
-                - "POST"
+                  - "GET"
+                  - "POST"
                 description: "The type of request to perform for fuzzing."
               target_elements:
                 type: "array"
@@ -650,15 +641,15 @@ properties:
                     selector_type:
                       type: "string"
                       enum:
-                      - "css"
-                      - "xpath"
-                      - "form"
+                        - "css"
+                        - "xpath"
+                        - "form"
                     selector:
                       type: "string"
                       description: "The actual selector or form name used to find and interact with the target elements for fuzzing."
                   required:
-                  - "selector_type"
-                  - "selector"
+                    - "selector_type"
+                    - "selector"
                 description: "Specifies the elements to target for fuzzing, including forms."
               fuzzing_parameters:
                 type: "array"
@@ -671,8 +662,8 @@ properties:
                     fuzzing_type:
                       type: "string"
                       enum:
-                      - "fixed_list"
-                      - "pattern_based"
+                        - "fixed_list"
+                        - "pattern_based"
                       description: "The fuzzing strategy to use for the parameter."
                     values:
                       type: "array"
@@ -683,15 +674,15 @@ properties:
                       type: "string"
                       description: "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
                   required:
-                  - "parameter_name"
-                  - "fuzzing_type"
+                    - "parameter_name"
+                    - "fuzzing_type"
                 description: "Defines the parameters to fuzz and the strategy for generating fuzz values."
             additionalProperties: "false"
             required:
-            - "rule_name"
-            - "request_type"
-            - "target_elements"
-            - "fuzzing_parameters"
+              - "rule_name"
+              - "request_type"
+              - "target_elements"
+              - "fuzzing_parameters"
         environment_settings:
           title: "Environment Settings"
           description: "Optional. Custom key value settings to use in the rules. Normally used to set environment variables for the rules."
@@ -704,56 +695,56 @@ properties:
                 description: "The name of the environment setting. It has to be unique within the Rulesgroup namespace."
                 type: "string"
                 examples:
-                - "API_KEY"
-                - "DB_PASSWORD"
+                  - "API_KEY"
+                  - "DB_PASSWORD"
               value:
                 title: "Setting's Value"
                 description: "A single or a set of values for the environment key."
                 anyOf:
-                - title: "Object"
-                  type: "object"
-                - title: "String"
-                  type: "string"
-                - title: "Number"
-                  type: "number"
-                - title: "Boolean"
-                  type: "boolean"
-                - title: "Null"
-                  type: "null"
-                - title: "Integer"
-                  type: "integer"
-                - title: "Array of Strings"
-                  type: "array"
-                  items:
-                    type: "string"
-                - title: "Array of Numbers"
-                  type: "array"
-                  items:
-                    type: "number"
-                - title: "Array of Booleans"
-                  type: "array"
-                  items:
-                    type: "boolean"
-                - title: "Array of Objects"
-                  type: "array"
-                  items:
+                  - title: "Object"
                     type: "object"
-                - title: "Array of Nulls"
-                  type: "array"
-                  items:
+                  - title: "String"
+                    type: "string"
+                  - title: "Number"
+                    type: "number"
+                  - title: "Boolean"
+                    type: "boolean"
+                  - title: "Null"
                     type: "null"
-                - title: "Array of Integers"
-                  type: "array"
-                  items:
+                  - title: "Integer"
                     type: "integer"
+                  - title: "Array of Strings"
+                    type: "array"
+                    items:
+                      type: "string"
+                  - title: "Array of Numbers"
+                    type: "array"
+                    items:
+                      type: "number"
+                  - title: "Array of Booleans"
+                    type: "array"
+                    items:
+                      type: "boolean"
+                  - title: "Array of Objects"
+                    type: "array"
+                    items:
+                      type: "object"
+                  - title: "Array of Nulls"
+                    type: "array"
+                    items:
+                      type: "null"
+                  - title: "Array of Integers"
+                    type: "array"
+                    items:
+                      type: "integer"
                 examples:
-                - "my_api_key"
-                - "my_db_password"
-                - "my_secret_key"
-                - "500"
-                - "true"
-                - "1.76"
-                - "['value1', 'value2']"
+                  - "my_api_key"
+                  - "my_db_password"
+                  - "my_secret_key"
+                  - "500"
+                  - "true"
+                  - "1.76"
+                  - "['value1', 'value2']"
               properties:
                 title: "Setting's Properties"
                 description: "Optional. Additional properties for the environment setting. These properties are used to define the behavior of the environment setting."
@@ -771,19 +762,19 @@ properties:
                 additionalProperties: "false"
             additionalProperties: "false"
             required:
-            - "key"
-            - "value"
+              - "key"
+              - "value"
         logging_configuration:
           type: "object"
           properties:
             log_level:
               type: "string"
               enum:
-              - "DEBUG"
-              - "INFO"
-              - "WARNING"
-              - "ERROR"
-              - "CRITICAL"
+                - "DEBUG"
+                - "INFO"
+                - "WARNING"
+                - "ERROR"
+                - "CRITICAL"
               description: "Optional. Specifies the logging level for actions and scraping activities."
             log_message:
               type: "string"
@@ -791,25 +782,21 @@ properties:
           description: "rule log configuration (aka what you want to be logged when the rule execute)."
       additionalProperties: "false"
     required:
-    - "group_name"
-    - "is_enabled"
+      - "group_name"
+      - "is_enabled"
     anyOf:
-    -
-      required:
-      - "scraping_rules"
-    -
-      required:
-      - "action_rules"
-    -
-      required:
-      - "detection_rules"
-    -
-      required:
-      - "crawling_rules"
+      - required:
+          - "scraping_rules"
+      - required:
+          - "action_rules"
+      - required:
+          - "detection_rules"
+      - required:
+          - "crawling_rules"
 required:
-- "ruleset_name"
-- "format_version"
-- "rule_groups"
-- "created_at"
-- "author"
-- "description"
+  - "ruleset_name"
+  - "format_version"
+  - "rule_groups"
+  - "created_at"
+  - "author"
+  - "description"
