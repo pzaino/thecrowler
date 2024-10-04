@@ -112,7 +112,8 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) 
 	}
 
 	// Analyze response body for additional information
-	detectedItems, err := analyzeResponse(resp, info, sslInfo, re, &htmlContent)
+	// TODO: We need to receive cfg.Config as a parameter to pass it to the detection engine
+	detectedItems, err := analyzeResponse(resp, info, sslInfo, re, &htmlContent, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +275,7 @@ func handleRedirect(req *http.Request, _ []*http.Request, config Config, transpo
 // Note: In the future this needs to be moved in http_rules logic
 func analyzeResponse(resp *http.Response, info *HTTPDetails,
 	sslInfo *SSLInfo, re *ruleset.RuleEngine,
-	htmlContent *string) (map[string]detect.DetectedEntity, error) {
+	htmlContent *string, conf *cfg.Config) (map[string]detect.DetectedEntity, error) {
 	// Get the response headers
 	header := &(*info).ResponseHeaders
 
@@ -304,6 +305,8 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails,
 		Header:       header,
 		HSSLInfo:     &sslInfoDetect,
 		ResponseBody: &responseBody,
+		RE:           re,
+		Config:       conf,
 	}
 	x := detect.DetectTechnologies(&detectCtx)
 	if x != nil {

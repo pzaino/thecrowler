@@ -97,6 +97,11 @@ type ProcessContext struct {
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
 
+// GetContextID returns a unique context ID for the ProcessContext
+func (ctx *ProcessContext) GetContextID() string {
+	return fmt.Sprintf("%d-%d", ctx.SelID, ctx.source.ID)
+}
+
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
 func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
@@ -354,21 +359,18 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 
 	// Detect technologies used on the page
 	detectCtx := detect.DetectionContext{
+		CtxID:        ctx.GetContextID(),
 		TargetURL:    ctx.source.URL,
 		ResponseBody: nil,
 		Header:       nil,
 		HSSLInfo:     nil,
 		WD:           &(ctx.wd),
 		RE:           ctx.re,
+		Config:       &ctx.config,
 	}
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageInfo.DetectedTech = (*detectedTech)
-	}
-
-	// Use external Detection if enabled
-	if len(ctx.config.ExternalDetection) > 0 {
-		pageInfo.ExtDetectionResults = UseExternalDetection(ctx, ctx.source.URL)
 	}
 
 	if !ctx.config.Crawler.CollectHTML {
@@ -399,74 +401,6 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 
 	return pageSource, nil
-}
-
-// UseExternalDetection is responsible for using external detection services
-func UseExternalDetection(ctx *ProcessContext, url string) []map[string]interface{} {
-	var results []map[string]interface{}
-	for _, extDet := range ctx.config.ExternalDetection {
-		if extDet.Enabled {
-			// Call the external detection service
-			switch strings.ToLower(strings.TrimSpace(extDet.Name)) {
-			case "virustotal": // VirusTotal
-				vtResults := detect.ScanWithVirusTotal(extDet.APIKey, url)
-				if vtResults != nil {
-					results = append(results, vtResults)
-				}
-			case "shodan": // Shodan
-				shodanResults := detect.ScanWithShodan(extDet.APIKey, url)
-				if shodanResults != nil {
-					results = append(results, shodanResults)
-				}
-			case "urlhaus": // URLScan
-				uhResults := detect.ScanWithURLHaus(url)
-				if uhResults != nil {
-					results = append(results, uhResults)
-				}
-			case "hybridanalysis": // HybridAnalysis
-				haResults := detect.ScanWithHybridAnalysis(extDet.APIKey, url)
-				if haResults != nil {
-					results = append(results, haResults)
-				}
-			case "alienvalut": // AlienVault
-				avResults := detect.ScanWithAlienVault(extDet.APIKey, url)
-				if avResults != nil {
-					results = append(results, avResults)
-				}
-			case "phishtank": // PhishTank
-				ptResults := detect.ScanWithPhishTank(extDet.APIKey, url)
-				if ptResults != nil {
-					results = append(results, ptResults)
-				}
-			case "googlesafebrowsing": // Google Safe Browsing
-				gsbResults := detect.ScanWithGoogleSafeBrowsing(extDet.APIKey, url)
-				if gsbResults != nil {
-					results = append(results, gsbResults)
-				}
-			case "openphish": // OpenPhish
-				ofResults := detect.ScanWithOpenPhish(extDet.APIKey, url)
-				if ofResults != nil {
-					results = append(results, ofResults)
-				}
-			case "cuckoo": // Cuckoo
-				ckResults := detect.ScanWithCuckoo(extDet.APIKey, url)
-				if ckResults != nil {
-					results = append(results, ckResults)
-				}
-			case "ciscoumbrella": // Cisco Umbrella
-				cuResults := detect.ScanWithCiscoUmbrella(extDet.APIKey, url)
-				if cuResults != nil {
-					results = append(results, cuResults)
-				}
-			case "threatcrowd": // ThreatCrowd
-				tcResults := detect.ScanWidthThreatCrowd(url)
-				if tcResults != nil {
-					results = append(results, tcResults)
-				}
-			}
-		}
-	}
-	return results
 }
 
 // Collects the performance metrics logs from the browser
@@ -1686,10 +1620,10 @@ func isExternalLink(sourceURL, linkURL string, domainLevel uint) bool {
 		return sourceParsed.String() != linkParsed.String()
 	}
 
-	// Check if the link URL contains the source URL (if domainLevel is 1)
+	// Check if the link URL has the source URL as prefix (if domainLevel is 1)
 	if domainLevel == 1 {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Restriction level 1, Source Domain: %s, Link Domain: %s", sourceURL, linkParsed.String())
-		return !strings.Contains(linkParsed.String(), sourceURL)
+		return !strings.HasPrefix(linkParsed.String(), sourceURL)
 	}
 
 	// Get domain parts based on domainLevel
@@ -1938,12 +1872,14 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect Detected Technologies
 	detectCtx := detect.DetectionContext{
+		CtxID:        processCtx.GetContextID(),
 		TargetURL:    url,
 		ResponseBody: nil,
 		Header:       nil,
 		HSSLInfo:     nil,
 		WD:           &processCtx.wd,
 		RE:           processCtx.re,
+		Config:       &processCtx.config,
 	}
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {

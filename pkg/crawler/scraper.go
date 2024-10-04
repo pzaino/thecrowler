@@ -340,6 +340,9 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, url string, w
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
+	// Set the environment variables
+	ruleGroup.SetEnv(ctx.GetContextID())
+
 	// Iterate over the rules in the rule group
 	for _, rule := range ruleGroup.ScrapingRules {
 		// Apply the rule to the web page
@@ -349,6 +352,9 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, url string, w
 			extractedData[k] = v
 		}
 	}
+
+	// Remove non-persistent environment variables
+	cmn.KVStore.DeleteByCID(ctx.GetContextID())
 
 	return extractedData, nil
 }

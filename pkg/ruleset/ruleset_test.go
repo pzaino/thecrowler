@@ -724,7 +724,7 @@ func TestRulesetGetAllEnabledActionRules(t *testing.T) {
 		},
 	}
 
-	actualActionRules := ruleset.GetAllEnabledActionRules()
+	actualActionRules := ruleset.GetAllEnabledActionRules("")
 
 	if len(actualActionRules) != len(expectedActionRules) {
 		t.Errorf("Expected %d action rules, but got %d", len(expectedActionRules), len(actualActionRules))

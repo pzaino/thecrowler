@@ -350,7 +350,7 @@ type Config struct {
 
 	Plugins PluginsConfig `yaml:"plugins"` // Plugins configuration
 
-	ExternalDetection []ExternalDetectionConfig `yaml:"external_detection"`
+	ExternalDetection ExternalDetectionConfig `yaml:"external_detection"`
 
 	OS         string `yaml:"os"`          // Operating system name
 	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
@@ -362,12 +362,35 @@ type PluginsConfig struct {
 }
 
 type ExternalDetectionConfig struct {
-	Name     string `yaml:"name"`      // Name of the external detection service
-	Enabled  bool   `yaml:"enabled"`   // Whether to enable the external detection service or not
-	APIKey   string `yaml:"api_key"`   // API key for the external detection service
-	Timeout  int    `yaml:"timeout"`   // Timeout for the external detection service (in seconds)
-	Delay    string `yaml:"delay"`     // Delay between requests (in seconds)
-	FullSite bool   `yaml:"full_site"` // Send each collected URL to the external detection service
+	Timeout            int                     `yaml:"timeout"`      // Timeout for external detection (in seconds)
+	MaxRequests        int                     `yaml:"max_requests"` // Maximum number of requests
+	MaxRetries         int                     `yaml:"max_retries"`  // Maximum number of retries
+	Delay              string                  `yaml:"delay"`        // Delay between requests (in seconds)
+	AbuseIPDB          ExtDetectProviderConfig `yaml:"abuse_ipdb"`
+	AlienVault         ExtDetectProviderConfig `yaml:"alien_vault"`
+	Censys             ExtDetectProviderConfig `yaml:"censys"`
+	CiscoUmbrella      ExtDetectProviderConfig `yaml:"cisco_umbrella"`
+	Cuckoo             ExtDetectProviderConfig `yaml:"cuckoo"`
+	GreyNoise          ExtDetectProviderConfig `yaml:"grey_noise"`
+	GoogleSafeBrowsing ExtDetectProviderConfig `yaml:"google_safe_browsing"`
+	HybridAnalysis     ExtDetectProviderConfig `yaml:"hybrid_analysis"`
+	IPQualityScore     ExtDetectProviderConfig `yaml:"ip_quality_score"`
+	IPVoid             ExtDetectProviderConfig `yaml:"ipvoid"`
+	OpenPhish          ExtDetectProviderConfig `yaml:"open_phish"`
+	PhishTank          ExtDetectProviderConfig `yaml:"phish_tank"`
+	Shodan             ExtDetectProviderConfig `yaml:"shodan"`
+	VirusTotal         ExtDetectProviderConfig `yaml:"virus_total"`
+	URLHaus            ExtDetectProviderConfig `yaml:"url_haus"`
+}
+
+type ExtDetectProviderConfig struct {
+	Provider    string `yaml:"provider"`
+	Host        string `yaml:"host"`
+	APIKeyLabel string `yaml:"api_key_label"`
+	APIKey      string `yaml:"api_key"`
+	APIID       string `yaml:"api_id"`
+	APISecret   string `yaml:"api_secret"`
+	APIToken    string `yaml:"api_token"`
 }
 
 /////////////////////////////////////////////////

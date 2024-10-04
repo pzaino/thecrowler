@@ -1,3 +1,4 @@
+// Package common package is used to store common functions and variables
 package common
 
 import (

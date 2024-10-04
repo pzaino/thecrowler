@@ -535,6 +535,21 @@
           "description": "This is the rate limit for the General/Search API. It is the maximum number of requests that the CROWler General API will accept per second. You can use the ExprTerpreter language to set the rate limit.",
           "type": "string"
         },
+        "readheader_timeout": {
+          "title": "CROWler General/Search API Readheader Timeout",
+          "type": "integer",
+          "minimum": 10,
+          "description": "This is the readheader timeout (in seconds) for the General/Search API. It is the maximum amount of time that the CROWler will wait for the General/Search API to respond.",
+          "examples": [
+            30
+          ]
+        },
+        "write_timeout": {
+          "title": "CROWler Engine General/Search API Write Timeout",
+          "type": "integer",
+          "minimum": 10,
+          "description": "This is the write timeout (in seconds) for the General/Search API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
+        },
         "enable_console": {
           "title": "CROWler General/Search API Enable Admin Console",
           "description": "This is a flag that tells the CROWler General API to enable the 'admin console' via the API. In other words, you'll get more endpoints to manage the CROWler via the General API instead of having to use local commands to do admin tasks.",
@@ -558,6 +573,7 @@
       "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for the selenium driver, to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
       "type": "array",
       "items": {
+        "title": "CROWler VDI Configuration Items",
         "type": "object",
         "properties": {
           "name": {
@@ -826,6 +842,7 @@
           "description": "This is the list of proxies that the CROWler will use to collect HTTP headers.",
           "type": "array",
           "items": {
+            "title": "CROWler HTTP Headers collection Proxies Items",
             "type": "object",
             "properties": {
               "host": {
@@ -1265,6 +1282,7 @@
       "description": "This is the rulesets load configuration section, it is used to tell the CROWler where and how to load all the Rulesets we want to use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl.",
       "type": "array",
       "items": {
+        "title": "CROWler Rulesets locations Configuration parameters",
         "type": "object",
         "properties": {
           "path": {
@@ -1375,6 +1393,7 @@
           "description": "This is the list of locations from where the CROWler will load and register all available plugins.",
           "type": "array",
           "items": {
+            "title": "CROWler Plugins Location Configuration",
             "type": "object",
             "properties": {
               "path": {
@@ -1464,40 +1483,218 @@
     "external_detection": {
       "title": "CROWler External Detection Services Configuration",
       "description": "This is the External Detection configuration section, it is used to tell the CROWler's Engine which external detection services we want to use and provide credentials to access them. External detection services are provided by VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs. They can be accessed using the CROWler's Detection Rules.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "This is the name of the external detection service. For example, VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs."
+      "type": "object",
+      "properties": {
+        "abuse_ipdb": {
+          "title": "AbuseIPDB Configuration",
+          "description": "This is the AbuseIPDB configuration section, it is used to tell the CROWler's Engine how to connect to AbuseIPDB and use its services. AbuseIPDB will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "AbuseIPDB API Key",
+              "description": "This is the API key that the CROWler will use to connect to AbuseIPDB.",
+              "type": "string"
+            }
           },
-          "enabled": {
-            "type": "boolean",
-            "description": "This is a flag that tells the CROWler to use the external detection service."
-          },
-          "api_key": {
-            "type": "string",
-            "description": "This is the API key for the external detection service."
-          },
-          "timeout": {
-            "type": "integer",
-            "minimum": 10,
-            "description": "This is the timeout in seconds for the external detection service."
-          },
-          "delay": {
-            "type": "string",
-            "description": "This is the delay time (in seconds) between requests for the external detection service."
-          }
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
         },
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "api_key"
-        ]
+        "alien_vault": {
+          "title": "Alien Vault Configuration",
+          "description": "This is the Alien Vault configuration section, it is used to tell the CROWler's Engine how to connect to Alien Vault and use its services. Alien Vault will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "Alien Vault API Key",
+              "description": "This is the API key that the CROWler will use to connect to Alien Vault.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "censys": {
+          "title": "Censys Configuration",
+          "description": "This is the Censys configuration section, it is used to tell the CROWler's Engine how to connect to Censys and use its services. Censys will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_id": {
+              "title": "Censys API ID",
+              "description": "This is the API ID that the CROWler will use to connect to Censys.",
+              "type": "string"
+            },
+            "api_secret": {
+              "title": "Censys API Secret",
+              "description": "This is the API secret that the CROWler will use to connect to Censys.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_id",
+            "api_secret"
+          ]
+        },
+        "cisco_umbrella": {
+          "title": "Cisco Umbrella Configuration",
+          "description": "This is the Cisco Umbrella configuration section, it is used to tell the CROWler's Engine how to connect to Cisco Umbrella and use its services. Cisco Umbrella will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "Cisco Umbrella API Key",
+              "description": "This is the API key that the CROWler will use to connect to Cisco Umbrella.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "cuckoo": {
+          "title": "Cuckoo Configuration",
+          "description": "This is the Cuckoo configuration section, it is used to tell the CROWler's Engine how to connect to Cuckoo and use its services. Cuckoo will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+          },
+          "additionalProperties": false
+        },
+        "google_safe_browsing": {
+          "title": "Google Safe Browsing Configuration",
+          "description": "This is the Google Safe Browsing configuration section, it is used to tell the CROWler's Engine how to connect to Google Safe Browsing and use its services. Google Safe Browsing will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "title": "Google Safe Browsing Company ID",
+              "description": "This is the company ID that the CROWler will use to connect to Google Safe Browsing.",
+              "type": "string"
+            },
+            "api_key": {
+              "title": "Google Safe Browsing API Key",
+              "description": "This is the API key that the CROWler will use to connect to Google Safe Browsing.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "hybrid_analysis": {
+          "title": "Hybrid Analysis Configuration",
+          "description": "This is the Hybrid Analysis configuration section, it is used to tell the CROWler's Engine how to connect to Hybrid Analysis and use its services. Hybrid Analysis will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "Hybrid Analysis API Key",
+              "description": "This is the API key that the CROWler will use to connect to Hybrid Analysis.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "ipvoid": {
+          "title": "IPVoid Configuration",
+          "description": "This is the IPVoid configuration section, it is used to tell the CROWler's Engine how to connect to IPVoid and use its services. IPVoid will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "IPVoid API Key",
+              "description": "This is the API key that the CROWler will use to connect to IPVoid.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "open_phish": {
+          "title": "OpenPhish Configuration",
+          "description": "This is the OpenPhish configuration section, it is used to tell the CROWler's Engine how to connect to OpenPhish and use its services. OpenPhish will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "OpenPhish API Key",
+              "description": "This is the API key that the CROWler will use to connect to OpenPhish.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "phish_tank": {
+          "title": "PhishTank Configuration",
+          "description": "This is the PhishTank configuration section, it is used to tell the CROWler's Engine how to connect to PhishTank and use its services. PhishTank will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+          },
+          "additionalProperties": false
+        },
+        "shodan": {
+          "title": "Shodan Configuration",
+          "description": "This is the Shodan configuration section, it is used to tell the CROWler's Engine how to connect to Shodan and use its services. Shodan will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "Shodan API Key",
+              "description": "This is the API key that the CROWler will use to connect to Shodan.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        },
+        "ssllabs": {
+          "title": "SSLLabs Configuration",
+          "description": "This is the SSLLabs configuration section, it is used to tell the CROWler's Engine how to connect to SSLLabs and use its services. SSLLabs will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "SSLLabs API Key",
+              "description": "This is the API key that the CROWler will use to connect to SSLLabs.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "url_haus": {
+          "title": "URLHaus Configuration",
+          "description": "This is the URLHaus configuration section, it is used to tell the CROWler's Engine how to connect to URLHaus and use its services. URLHaus will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+          },
+          "additionalProperties": false
+        },
+        "virus_total": {
+          "title": "VirusTotal Configuration",
+          "description": "This is the VirusTotal configuration section, it is used to tell the CROWler's Engine how to connect to VirusTotal and use its services. VirusTotal will be accessed through CROWler's Detection Rules.",
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "title": "VirusTotal API Key",
+              "description": "This is the API key that the CROWler will use to connect to VirusTotal.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "api_key"
+          ]
+        }
       },
-      "minItems": 1,
-      "uniqueItems": true
+      "additionalProperties": false
     },
 
     "os": {
@@ -1524,9 +1721,11 @@
       "allOf": [
         { "$ref": "#/properties/remote" },
         {
+          "title": "Remote Configuration Mode requirements",
           "type": "object",
           "required": ["remote"],
           "not": {
+            "title": "Local Configuration exclusions",
             "required": ["database", "crawler", "api", "selenium", "network_info"]
           }
         }
@@ -1545,6 +1744,7 @@
       },
       "required": ["database", "crawler", "api", "selenium", "network_info"],
       "not": {
+        "title": "Local Configuration Mode exclusions",
         "required": ["remote"]
       }
     }

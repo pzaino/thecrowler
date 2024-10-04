@@ -5,12 +5,14 @@ import (
 	"net/http"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 )
 
 // DetectionContext is a struct to store the context of the detection process
 type DetectionContext struct {
+	CtxID        string              `json:"ctx_id"`     // (required) the ID of the detection context
 	TargetURL    string              `json:"target_url"` // (optional) the URL of the target website
 	TargetIP     string              `json:"target_ip"`  // (optional) the IP address of the target website
 	WD           *selenium.WebDriver // (optional) the Selenium WebDriver (required to run detection plugins)
@@ -18,6 +20,7 @@ type DetectionContext struct {
 	HSSLInfo     *SSLInfo            `json:"ssl_info"`      // (optional) the SSL information of the target website
 	ResponseBody *string             `json:"response_body"` // (optional) the body of the HTTP response
 	RE           *ruleset.RuleEngine // (required) the RuleEngine to use for the detection process
+	Config       *cfg.Config         // (required) the configuration to use for the detection process
 }
 
 // DetectedEntity is a struct to store the detected entity (technology, asset, etc.)

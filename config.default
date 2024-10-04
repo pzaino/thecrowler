@@ -2,45 +2,51 @@
 # that should work for most small to medium deployments. You can use this as a
 # starting point for your own configuration file.
 
+---
 database:
   type: postgres
-  host: ${POSTGRES_DB_HOST}
+  host: "${POSTGRES_DB_HOST}"
   port: 5432
-  user: ${CROWLER_DB_USER}
-  password: ${CROWLER_DB_PASSWORD}
+  user: "${CROWLER_DB_USER}"
+  password: "${CROWLER_DB_PASSWORD}"
   dbname: SitesIndex
   sslmode: disable
+  max_conns: 1000
+  max_idle_conns: 100
 
-# The CROWler calls web-site's entry-point URLs "sources" as in "source of information"
 crawler:
   source_screenshot: true
-  interval: random(random(5,15), random(45,75))
+  interval: random(random(2,5), random(5,10))
   workers: 5
-  delay: random(3,75)
+  delay: random(4,35)
   timeout: 10
   maintenance: 60
+  collect_html: false
+  collect_content: false
+  collect_images: false
 
 api:
   port: 8080
-  host: 0.0.0.0           # Replace this with the network interface IP you want to use for the API (0.0.0.0 means respond on all available IPs)
+  host: 0.0.0.0
   timeout: 60
   write_timeout: 60
-  read_timeout: 60
-  rate_limit: "1010,1010" # Rate limit for the API, in requests per second
-  enable_console: true    # Enable the console for the API (this enables extra endpoint to check system status and add/remove/update crowler sources aka websites entry-point URLs)
+  readheader_timeout: 60
+  rate_limit: '1010,1010'
+  enable_console: true
   return_404: false
 
 selenium:
-  - type: chrome       # This is the type of browser you want to use for this selenium instance, you can use chrome or firefox
-    path: ""           # If you have deployed CROWLER_VDIs then leave this empty
-    port: 4444         # The port where the selenium instance will be listening
-    host: crowler_vdi  # Replace this with the network name or the IP of your crowler_vdi container
-    use_service: false # If you are using CROWLER_VDIs, then set this to false
-    sslmode: disable   # If you are using CROWLER_VDIs locally (intranet/vpn/private lan), then set this to disable
+  - name: crowler_vdi_01
+    type: chrome
+    path: ''
+    port: 4444
+    host: crowler_vdi_1
+    use_service: false
+    sslmode: disable
 
 image_storage:
   type: local
-  path: /app/data/images
+  path: "/app/data/images"
 
 network_info:
   netlookup:
@@ -55,8 +61,9 @@ network_info:
   service_scout:
     enabled: true
     timeout: 1200
-  geolocation:
+  geo_localization:
     enabled: false
+    path: ''
     timeout: 15
 
 debug_level: 0

@@ -139,6 +139,20 @@ func IsPathCorrect(path string) bool {
 
 //// ----- HTTP related shared functions ----- ////
 
+// URLToHost extracts the host from a URL
+func URLToHost(url string) string {
+	host := url
+	if strings.Contains(host, "://") {
+		host = host[strings.Index(host, "://")+3:]
+	}
+	if strings.Contains(host, "/") {
+		host = host[:strings.Index(host, "/")]
+	}
+	host = strings.TrimSuffix(host, "/")
+	host = strings.TrimSpace(host)
+	return host
+}
+
 // HostToIP returns the IP address of a given host
 func HostToIP(host string) []string {
 	ips, err := net.LookupIP(host)

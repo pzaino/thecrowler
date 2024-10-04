@@ -328,7 +328,7 @@ func NewConfig() *Config {
 				}},
 			},
 		},
-		ExternalDetection: []ExternalDetectionConfig{},
+		ExternalDetection: ExternalDetectionConfig{},
 		OS:                runtime.GOOS,
 		DebugLevel:        0,
 	}
@@ -860,16 +860,23 @@ func (c *Config) validatePlugins() {
 }
 
 func (c *Config) validateExternalDetection() {
-	// Check ExternalDetection
-	for i := range c.ExternalDetection {
-		if c.ExternalDetection[i].Timeout < 1 {
-			c.ExternalDetection[i].Timeout = 60
-		}
-		if strings.TrimSpace(c.ExternalDetection[i].Delay) == "" {
-			c.ExternalDetection[i].Delay = "1"
-		} else {
-			c.ExternalDetection[i].Delay = strings.TrimSpace(c.ExternalDetection[i].Delay)
-		}
+	// Check ExternalDetection Timeout
+	if c.ExternalDetection.Timeout < 1 {
+		c.ExternalDetection.Timeout = 60
+	}
+	// Check ExternalDetection Delay
+	if strings.TrimSpace(c.ExternalDetection.Delay) == "" {
+		c.ExternalDetection.Delay = "1"
+	} else {
+		c.ExternalDetection.Delay = strings.TrimSpace(c.ExternalDetection.Delay)
+	}
+	// Check ExternalDetection MaxRetries
+	if c.ExternalDetection.MaxRetries < 0 {
+		c.ExternalDetection.MaxRetries = 0
+	}
+	// Check ExternalDetection MaxRequests
+	if c.ExternalDetection.MaxRequests < 1 {
+		c.ExternalDetection.MaxRequests = 1
 	}
 }
 

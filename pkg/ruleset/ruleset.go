@@ -115,10 +115,15 @@ func (rs *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
 // GetAllEnabledActionRules returns a slice of Rule containing only the enabled action rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled action rules
 // to the result slice.
-func (rs *Ruleset) GetAllEnabledActionRules() []ActionRule {
+func (rs *Ruleset) GetAllEnabledActionRules(CtxID string, flags ...bool) []ActionRule {
 	var enabledRules []ActionRule
 
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
+		if len(flags) > 0 {
+			if flags[0] {
+				rg.SetEnv(CtxID)
+			}
+		}
 		enabledRules = append(enabledRules, rg.ActionRules...)
 	}
 

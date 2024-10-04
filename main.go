@@ -438,11 +438,16 @@ func initAll(configFile *string, config *cfg.Config,
 	db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance,
 	RulesEngine *rules.RuleEngine, lmt **rate.Limiter) error {
 	var err error
+
 	// Reload the configuration file
 	*config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
 		return fmt.Errorf("loading configuration file: %s", err)
 	}
+
+	// Reset Key-Value Store
+	cmn.KVStore = nil
+	cmn.KVStore = cmn.NewKeyValueStore()
 
 	// Reconnect to the database
 	*db, err = cdb.NewHandler(*config)
