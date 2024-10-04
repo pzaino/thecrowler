@@ -16,6 +16,7 @@
 package common
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -55,25 +56,32 @@ func NewKeyValueStore() *KeyValueStore {
 }
 
 // NewKVStoreProperty initializes a new Properties object.
-func NewKVStoreProperty(persistent bool, static bool, source string, ctxID string, valueType string) Properties {
+func NewKVStoreProperty(persistent bool, static bool, source string, ctxID string, Type string) Properties {
 	return Properties{
 		Persistent: persistent,
 		Static:     static,
 		Source:     source,
 		CtxID:      ctxID,
-		Type:       valueType, // Store the original type
+		Type:       Type,
 	}
 }
 
 // createKeyWithCtx combines the key and CtxID to create a unique key.
 func createKeyWithCtx(key string, ctxID string) string {
-	return fmt.Sprintf("%s:%s", key, ctxID)
+	return fmt.Sprintf("%s:%s", strings.TrimSpace(key), strings.TrimSpace(ctxID))
 }
 
 // Set sets a value (either string or []string) along with its properties for a given key and context.
 func (kv *KeyValueStore) Set(key string, value interface{}, properties Properties) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("key cannot be empty")
+	}
+
 	// Store the type of the value in the properties
-	properties.Type = reflect.TypeOf(value).String()
+	if strings.TrimSpace(properties.Type) == "" {
+		properties.Type = reflect.TypeOf(value).String()
+	}
 
 	fullKey := createKeyWithCtx(key, properties.CtxID)
 	kv.mutex.Lock()
@@ -191,9 +199,9 @@ func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
-
+	ctxID = strings.TrimSpace(ctxID)
 	for key := range kv.store {
-		if strings.HasSuffix(key, ctxID) {
+		if strings.HasSuffix(key, ":"+ctxID) {
 			removeEntry := true
 
 			// If no flags are provided, only delete non-persistent entries
@@ -228,6 +236,18 @@ func (kv *KeyValueStore) DeleteNonPersistent() {
 	}
 }
 
+// DeleteNonPersistentByCID removes all key-value pairs for a given context that are not persistent.
+func (kv *KeyValueStore) DeleteNonPersistentByCID(ctxID string) {
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+	ctxID = strings.TrimSpace(ctxID)
+	for key := range kv.store {
+		if strings.HasSuffix(key, ":"+ctxID) && !kv.store[key].Properties.Persistent {
+			delete(kv.store, key)
+		}
+	}
+}
+
 // DeleteAll clears all key-value pairs from the store.
 func (kv *KeyValueStore) DeleteAll() {
 	kv.mutex.Lock()
@@ -236,8 +256,22 @@ func (kv *KeyValueStore) DeleteAll() {
 	kv.store = make(map[string]Entry)
 }
 
-// AllKeys returns a slice of all keys in the store (ignoring context).
+// AllKeys returns a slice of all keys (without the CIDs) in the store (ignoring context).
 func (kv *KeyValueStore) AllKeys() []string {
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	keys := make([]string, 0, len(kv.store))
+	for key := range kv.store {
+		// Remove the context ID from the key
+		key = key[:len(key)-len(kv.store[key].Properties.CtxID)-1]
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// AllKeys returns a slice of all keys in the store (ignoring context).
+func (kv *KeyValueStore) AllKeysAndCIDs() []string {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -248,7 +282,7 @@ func (kv *KeyValueStore) AllKeys() []string {
 	return keys
 }
 
-// Keys returns a slice of all keys in the store for a given context.
+// Keys returns a slice of all keys (without the CID) in the store for a given context.
 func (kv *KeyValueStore) Keys(ctxID string) []string {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
@@ -256,8 +290,35 @@ func (kv *KeyValueStore) Keys(ctxID string) []string {
 	keys := make([]string, 0, len(kv.store))
 	for key := range kv.store {
 		if key[len(key)-len(ctxID):] == ctxID {
+			// Remove the context ID from the key
+			key = key[:len(key)-len(ctxID)-1]
 			keys = append(keys, key)
 		}
 	}
 	return keys
+}
+
+// ToJSON converts the key-value store to a JSON string.
+// It uses json.Marshal to convert the value to the correct JSON format.
+func (kv *KeyValueStore) ToJSON() string {
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	// Create a map to hold the JSON structure
+	jsonMap := make(map[string]interface{})
+
+	// Iterate through the key-value store and add entries to the map
+	for key, entry := range kv.store {
+		jsonMap[key] = entry.Value
+	}
+
+	// Marshal the map into a JSON string
+	jsonBytes, err := json.Marshal(jsonMap)
+	if err != nil {
+		// If there's an error in marshaling, return an empty JSON object
+		return "{}"
+	}
+
+	// Return the generated JSON string
+	return string(jsonBytes)
 }

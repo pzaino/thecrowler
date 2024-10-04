@@ -789,9 +789,40 @@
                                         "type": "string",
                                         "description": "The name of the environment setting."
                                     },
-                                    "value": {
-                                        "type": "string",
-                                        "description": "The value of the environment setting."
+                                    "values": {
+                                        "description": "A single or a set of values for the environment key.",
+                                        "anyOf": [
+                                            { "type": "string" },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "string" }
+                                            },
+                                            { "type": "number" },
+                                            { "type": "boolean" },
+                                            { "type": "object" },
+                                            { "type": "null" },
+                                            { "type": "integer" },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "number" }
+                                            },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "boolean" }
+                                            },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "object" }
+                                            },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "null" }
+                                            },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "integer" }
+                                            }
+                                        ]
                                     },
                                     "properties": {
                                         "type": "object",

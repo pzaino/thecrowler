@@ -1620,10 +1620,10 @@ func isExternalLink(sourceURL, linkURL string, domainLevel uint) bool {
 		return sourceParsed.String() != linkParsed.String()
 	}
 
-	// Check if the link URL contains the source URL (if domainLevel is 1)
+	// Check if the link URL has the source URL as prefix (if domainLevel is 1)
 	if domainLevel == 1 {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Restriction level 1, Source Domain: %s, Link Domain: %s", sourceURL, linkParsed.String())
-		return !strings.Contains(linkParsed.String(), sourceURL)
+		return !strings.HasPrefix(linkParsed.String(), sourceURL)
 	}
 
 	// Get domain parts based on domainLevel

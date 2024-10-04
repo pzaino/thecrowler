@@ -454,11 +454,11 @@ func TestKeyValueStore_DeleteAll(t *testing.T) {
 	}
 }
 
-func TestKeyValueStore_AllKeys(t *testing.T) {
+func TestKeyValueStore_AllKeysAndCIDs(t *testing.T) {
 	kvStore := NewKeyValueStore()
 
 	// Test with an empty store
-	keys := kvStore.AllKeys()
+	keys := kvStore.AllKeysAndCIDs()
 	if len(keys) != 0 {
 		t.Fatalf("Expected 0 keys, got %d", len(keys))
 	}
@@ -478,7 +478,7 @@ func TestKeyValueStore_AllKeys(t *testing.T) {
 	}
 
 	// Test with a populated store
-	keys = kvStore.AllKeys()
+	keys = kvStore.AllKeysAndCIDs()
 	expectedKeys := []string{
 		createKeyWithCtx("username", "123"),
 		createKeyWithCtx("email", "456"),
@@ -553,8 +553,8 @@ func TestKeyValueStore_Keys(t *testing.T) {
 	// Test with a populated store for a specific context
 	keys = kvStore.Keys("123")
 	expectedKeys := []string{
-		createKeyWithCtx("username", "123"),
-		createKeyWithCtx("password", "123"),
+		"username",
+		"password",
 	}
 
 	if len(keys) != len(expectedKeys) {
@@ -577,7 +577,7 @@ func TestKeyValueStore_Keys(t *testing.T) {
 	// Test with a different context
 	keys = kvStore.Keys("456")
 	expectedKeys = []string{
-		createKeyWithCtx("email", "456"),
+		"email",
 	}
 
 	if len(keys) != len(expectedKeys) {
@@ -650,5 +650,133 @@ func TestKeyValueStore_DeleteByCID(t *testing.T) {
 				t.Errorf("Expected %d remaining entries for CtxID %s, got %d", tt.expectedRem, tt.ctxID, remaining)
 			}
 		})
+	}
+}
+
+func TestKeyValueStore_DeleteNonPersistentByCID(t *testing.T) {
+	kvStore := NewKeyValueStore()
+
+	// Prepopulate the store with some entries
+	err := kvStore.Set("username", "admin", Properties{Persistent: true, Source: "test", CtxID: "123"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("email", "admin@example.com", Properties{Persistent: false, Source: "test", CtxID: "123"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("password", "secret", Properties{Persistent: true, Source: "test", CtxID: "456"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("session", "xyz", Properties{Persistent: false, Source: "test", CtxID: "456"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	tests := []struct {
+		ctxID       string
+		expectedRem int // Expected number of remaining entries for the given CtxID
+	}{
+		{"123", 1}, // Only persistent entry should remain
+		{"456", 1}, // Only persistent entry should remain
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("DeleteNonPersistentByCID_%s", tt.ctxID), func(t *testing.T) {
+			kvStore.DeleteNonPersistentByCID(tt.ctxID)
+
+			// Count the number of remaining entries for the given CtxID
+			remaining := 0
+			for key := range kvStore.store {
+				parts := strings.Split(key, ":")
+				if len(parts) == 2 && parts[1] == tt.ctxID {
+					remaining++
+				}
+			}
+
+			// Verify the number of remaining entries for the specific CtxID
+			if remaining != tt.expectedRem {
+				t.Errorf("Expected %d remaining entries for CtxID %s, got %d", tt.expectedRem, tt.ctxID, remaining)
+			}
+		})
+	}
+}
+
+func TestKeyValueStore_AllKeys(t *testing.T) {
+	kvStore := NewKeyValueStore()
+
+	// Test with an empty store
+	keys := kvStore.AllKeys()
+	if len(keys) != 0 {
+		t.Fatalf("Expected 0 keys, got %d", len(keys))
+	}
+
+	// Add some entries
+	err := kvStore.Set("username", "admin", Properties{Persistent: true, Source: "test", CtxID: "123"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+	err = kvStore.Set("email", "admin@example.com", Properties{Persistent: false, Source: "test", CtxID: "456"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+	err = kvStore.Set("password", "secret", Properties{Persistent: true, Source: "test", CtxID: ""})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	// Test with a populated store
+	keys = kvStore.AllKeys()
+	expectedKeys := []string{"username", "email", "password"}
+
+	if len(keys) != len(expectedKeys) {
+		t.Fatalf("Expected %d keys, got %d", len(expectedKeys), len(keys))
+	}
+
+	for _, expectedKey := range expectedKeys {
+		found := false
+		for _, key := range keys {
+			if key == expectedKey {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected key %s not found in keys", expectedKey)
+		}
+	}
+}
+
+func TestKeyValueStore_ToJSON(t *testing.T) {
+	kvStore := NewKeyValueStore()
+
+	// Prepopulate the store with string and []string entries
+	err := kvStore.Set("username", "admin", Properties{Persistent: true, Static: false, Source: "test", CtxID: "123", Type: "string"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("email", []string{"admin@example.com", "user@example.com"}, Properties{Persistent: false, Static: false, Source: "test", CtxID: "456", Type: "[]string"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	err = kvStore.Set("password", "secret", Properties{Persistent: true, Static: false, Source: "test", CtxID: "", Type: "string"})
+	if err != nil {
+		t.Fatalf("Error setting key: %v", err)
+	}
+
+	expectedJSON := `{"email:456":["admin@example.com","user@example.com"],"password:":"secret","username:123":"admin"}`
+
+	// Convert the store to JSON
+	jsonResult := kvStore.ToJSON()
+
+	// Check if the JSON output matches the expected result
+	if jsonResult != expectedJSON {
+		t.Errorf("Expected JSON %s, got %s", expectedJSON, jsonResult)
 	}
 }

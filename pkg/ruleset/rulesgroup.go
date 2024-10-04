@@ -34,17 +34,15 @@ func (rg *RuleGroup) SetEnv(CtxID string) {
 		for i := 0; i < len(rg.Env); i++ {
 			// Retrieve the environment variable key, value and properties
 			key := rg.Env[i].Key
-			value := rg.Env[i].Value
+			values := rg.Env[i].Values
 			properties := rg.Env[i].Properties
-			// Set the environment variable
+
+			// Set the environment properties
 			envProperties := cmn.NewKVStoreProperty(properties.Persistent, properties.Static, properties.Source, CtxID, properties.Type)
-			err := cmn.KVStore.Set(key, value, envProperties)
+			// Set the environment variable
+			err := cmn.KVStore.Set(key, values, envProperties)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, fmt.Sprintf("setting environment variable %s: %s", key, err.Error()))
-			}
-			// test
-			for _, k := range cmn.KVStore.AllKeys() {
-				cmn.DebugMsg(cmn.DbgLvlInfo, k)
 			}
 		}
 	}
