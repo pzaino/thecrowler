@@ -912,6 +912,9 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	//fmt.Println(string(detailsJSON))
 
 	detectedTechJSON, err := json.Marshal((*pageInfo).DetectedTech)
+	if err != nil {
+		detectedTechJSON = []byte{}
+	}
 
 	var scrapedDataJSON []byte
 	if len((*pageInfo).ScrapedData) > 0 {
@@ -987,7 +990,6 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	hasher := sha256.New()
 	bytesToHash := []byte{}
 	if len((*pageInfo).BodyText) > 0 {
-		// set bytesToHas as the body text + scrapedDataJSON + detectedTechJSON
 		bytesToHash = []byte((*pageInfo).BodyText)
 	} else if len((*pageInfo).HTML) > 0 {
 		bytesToHash = []byte((*pageInfo).HTML)
