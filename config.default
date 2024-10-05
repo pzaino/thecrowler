@@ -36,7 +36,7 @@ api:
   return_404: false
 
 selenium:
-  - name: crowler_vdi_01
+  - name: crowler_vdi_1
     type: chrome
     path: ''
     port: 4444
