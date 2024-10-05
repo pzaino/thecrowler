@@ -73,13 +73,25 @@ func createKeyWithCtx(key string, ctxID string) string {
 
 // Set sets a value (either string or []string) along with its properties for a given key and context.
 func (kv *KeyValueStore) Set(key string, value interface{}, properties Properties) error {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
+
+	// Check if the key is empty
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return errors.New("key cannot be empty")
 	}
 
+	// Check if value is nil
+	if value == nil {
+		value = ""
+	}
+
 	// Store the type of the value in the properties
-	if strings.TrimSpace(properties.Type) == "" {
+	if properties == (Properties{}) {
+		properties.Type = reflect.TypeOf(value).String()
+	} else if strings.TrimSpace(properties.Type) == "" {
 		properties.Type = reflect.TypeOf(value).String()
 	}
 
@@ -112,6 +124,10 @@ func (kv *KeyValueStore) Set(key string, value interface{}, properties Propertie
 
 // Get retrieves the value (which could be string or []string) and properties for a given key and context.
 func (kv *KeyValueStore) Get(key string, ctxID string) (interface{}, Properties, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
+
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
