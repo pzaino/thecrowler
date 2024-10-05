@@ -15,7 +15,10 @@
 // Package common package is used to store common functions and variables
 package common
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // PrepareSlice trims spaces from all elements of a slice.
 // PrepareSlice prepares a slice of strings by trimming and lowercasing each element.
@@ -43,4 +46,44 @@ func SliceContains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// IntSliceToString converts a slice of integers to a string.
+func IntSliceToString(slice []int, join_str string) string {
+	// Convert the slice of integers to a slice of strings
+	str_slice := make([]string, len(slice))
+	for i, v := range slice {
+		str_slice[i] = strconv.Itoa(v)
+	}
+	return strings.Join(str_slice, join_str)
+}
+
+// Float64SliceToString converts a slice of float64 to a string.
+func Float64SliceToString(slice []float64, join_str string) string {
+	// Convert the slice of float64 to a slice of strings
+	str_slice := make([]string, len(slice))
+	for i, v := range slice {
+		str_slice[i] = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return strings.Join(str_slice, join_str)
+}
+
+// Float32SliceToString converts a slice of float32 to a string.
+func Float32SliceToString(slice []float32, join_str string) string {
+	// Convert the slice of float32 to a slice of strings
+	str_slice := make([]string, len(slice))
+	for i, v := range slice {
+		str_slice[i] = strconv.FormatFloat(float64(v), 'f', -1, 32)
+	}
+	return strings.Join(str_slice, join_str)
+}
+
+// BoolSliceToString converts a slice of bool to a string.
+func BoolSliceToString(slice []bool, join_str string) string {
+	// Convert the slice of bool to a slice of strings
+	str_slice := make([]string, len(slice))
+	for i, v := range slice {
+		str_slice[i] = strconv.FormatBool(v)
+	}
+	return strings.Join(str_slice, join_str)
 }

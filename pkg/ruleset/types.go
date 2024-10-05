@@ -247,6 +247,7 @@ type Selector struct {
 		Value string `yaml:"value"`
 	} `yaml:"attribute,omitempty"`
 	Value                 string `yaml:"value,omitempty"`
+	ResolvedValue         string `yaml:"resolved_value,omitempty"`
 	ExtractAllOccurrences bool   `yaml:"extract_all_occurrences"`
 }
 

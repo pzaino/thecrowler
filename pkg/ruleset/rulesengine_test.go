@@ -1104,7 +1104,7 @@ func TestGetRuleGroupByURL(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error, but got nil")
 	}
-	expectedError := fmt.Errorf(errRuleGroupNotFound)
+	expectedError := fmt.Errorf("%s", errRuleGroupNotFound)
 	if err.Error() != expectedError.Error() {
 		t.Errorf("Expected error: %v, but got: %v", expectedError, err)
 	}

@@ -91,6 +91,10 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 
 func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
+
+	// Setup the environment
+	rs.SetEnv(ctx.GetContextID())
+
 	for _, r := range rs.GetAllEnabledScrapingRules() {
 		// Execute the rule
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Executing rule: %v", r.RuleName)
@@ -100,11 +104,19 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *s
 		}
 		scrapedDataDoc += scrapedData
 	}
+
+	// Reset the environment
+	cmn.KVStore.DeleteNonPersistentByCID(ctx.GetContextID())
+
 	return scrapedDataDoc
 }
 
 func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *selenium.WebDriver) string {
 	scrapedDataDoc := ""
+
+	// Set the environment
+	rg.SetEnv(ctx.GetContextID())
+
 	for _, r := range rg.GetScrapingRules() {
 		// Execute the rule
 		scrapedData, err := executeScrapingRule(ctx, &r, wd)
@@ -113,6 +125,10 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		}
 		scrapedDataDoc += scrapedData
 	}
+
+	// Reset the environment
+	cmn.KVStore.DeleteNonPersistentByCID(ctx.GetContextID())
+
 	return scrapedDataDoc
 }
 

@@ -77,6 +77,16 @@ var (
 	loggerPrefix string
 )
 
+// EnvValue
+type EnvValue struct {
+	// Name is the name of the environment variable
+	Name string
+	// Value is the value of the environment variable
+	Value interface{}
+	// Type is the type of the environment variable
+	Type string
+}
+
 var (
 	// UsrAgentStrMap is a list of valid user agent strings.
 	UsrAgentStrMap = map[string]string{

@@ -18,6 +18,8 @@ package crawler
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,15 +144,15 @@ func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.We
 	if (len(r.Conditions) == 0) || checkActionConditions(ctx, r.Conditions, wd) {
 		switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
 		case "click", "left_click":
-			return executeActionClick(r, wd, 0)
+			return executeActionClick(ctx, r, wd, 0)
 		case "right_click":
-			return executeActionClick(r, wd, 2)
+			return executeActionClick(ctx, r, wd, 2)
 		case "scroll":
 			return executeActionScroll(r, wd)
 		case "input_text":
-			return executeActionInput(r, wd)
+			return executeActionInput(ctx, r, wd)
 		case "clear":
-			return executeActionClear(r, wd)
+			return executeActionClear(ctx, r, wd)
 		case "custom":
 			return executeActionJS(ctx, r, wd)
 		case "take_screenshot":
@@ -160,7 +162,7 @@ func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.We
 		case "key_up":
 			return executeActionKeyUp(r, wd)
 		case "mouse_hover":
-			return executeActionMouseHover(r, wd)
+			return executeActionMouseHover(ctx, r, wd)
 		case "forward":
 			return executeActionForward(wd)
 		case "back":
@@ -168,17 +170,17 @@ func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.We
 		case "refresh":
 			return executeActionRefresh(wd)
 		case "switch_to_frame":
-			return executeActionSwitchFrame(r, wd)
+			return executeActionSwitchFrame(ctx, r, wd)
 		case "switch_to_window":
 			return executeActionSwitchWindow(r, wd)
 		case "scroll_to_element":
-			return executeActionScrollToElement(r, wd)
+			return executeActionScrollToElement(ctx, r, wd)
 		case "scroll_by_amount":
 			return executeActionScrollByAmount(r, wd)
 		case "click_and_hold":
-			return executeActionClickAndHold(r, wd)
+			return executeActionClickAndHold(ctx, r, wd)
 		case "release":
-			return executeActionRelease(r, wd)
+			return executeActionRelease(ctx, r, wd)
 		case "navigate_to_url":
 			return executeActionNavigateToURL(r, wd)
 		}
@@ -191,8 +193,8 @@ func executeActionNavigateToURL(r *rules.ActionRule, wd *selenium.WebDriver) err
 	return (*wd).Get(r.GetValue())
 }
 
-func executeActionClickAndHold(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+func executeActionClickAndHold(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
 	}
@@ -227,10 +229,10 @@ func executeActionClickAndHold(r *rules.ActionRule, wd *selenium.WebDriver) erro
 	return err
 }
 
-func executeActionRelease(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionRelease(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
 	var element selenium.WebElement
 	if r.Selectors != nil {
-		element, _, _ = findElementBySelectorType(wd, r.Selectors)
+		element, _, _ = findElementBySelectorType(ctx, wd, r.Selectors)
 	}
 	var script string
 	if element != nil {
@@ -272,8 +274,8 @@ func executeActionRelease(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	return err
 }
 
-func executeActionClear(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+func executeActionClear(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
 	}
@@ -311,8 +313,8 @@ func executeActionKeyUp(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	return (*wd).KeyUp(r.Value)
 }
 
-func executeActionMouseHover(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	return executeMoveToElement(r, wd)
+func executeActionMouseHover(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+	return executeMoveToElement(ctx, r, wd)
 }
 
 func executeActionForward(wd *selenium.WebDriver) error {
@@ -327,8 +329,8 @@ func executeActionRefresh(wd *selenium.WebDriver) error {
 	return (*wd).Refresh()
 }
 
-func executeActionSwitchFrame(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+func executeActionSwitchFrame(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
 	}
@@ -340,9 +342,9 @@ func executeActionSwitchWindow(r *rules.ActionRule, wd *selenium.WebDriver) erro
 }
 
 // executeActionScrollToElement is responsible for executing a "scroll to element" action
-func executeActionScrollToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
 	// Find the element
-	wdf, selector, err := findElementBySelectorType(wd, r.Selectors)
+	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
 		err = nil
@@ -457,11 +459,11 @@ func executeWaitCondition(ctx *ProcessContext, r *rules.WaitCondition, wd *selen
 }
 
 // executeActionClick is responsible for executing a "click" action
-func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver, button int) error {
+func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver, button int) error {
 	var err error
 
 	// Find the element
-	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
 		err = nil
@@ -564,8 +566,8 @@ func executeActionClick(r *rules.ActionRule, wd *selenium.WebDriver, button int)
 	return err
 }
 
-func executeMoveToElement(r *rules.ActionRule, wd *selenium.WebDriver) error {
-	wdf, _, err := findElementBySelectorType(wd, r.Selectors)
+func executeMoveToElement(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
 	}
@@ -725,11 +727,11 @@ func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebD
 // clicks (generating a system level event) on it, and then inputs
 // the text using Rbee. 'cause that's what us human do and tools like
 // Selenium don't.
-func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
 	var err error
 
 	// Find the element
-	wdf, selector, err := findElementBySelectorType(wd, r.Selectors)
+	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
 		return nil
@@ -838,7 +840,7 @@ func executeActionInput(r *rules.ActionRule, wd *selenium.WebDriver) error {
 
 // findElementBySelectorType is responsible for finding an element in the WebDriver
 // using the appropriate selector type. It returns the first element found and an error.
-func findElementBySelectorType(wd *selenium.WebDriver, selectors []rules.Selector) (selenium.WebElement, rules.Selector, error) {
+func findElementBySelectorType(ctx *ProcessContext, wd *selenium.WebDriver, selectors []rules.Selector) (selenium.WebElement, rules.Selector, error) {
 	var wdf selenium.WebElement = nil
 	var err error
 	var selector rules.Selector
@@ -856,7 +858,7 @@ func findElementBySelectorType(wd *selenium.WebDriver, selectors []rules.Selecto
 			}
 			matchL3 := false
 			if matchL3 && strings.TrimSpace(selector.Value) != "" {
-				if matchValue(wdf, selector) {
+				if matchValue(ctx, wdf, selector) {
 					matchL3 = true
 				}
 			} else {
@@ -896,32 +898,53 @@ func findElementByType(wd *selenium.WebDriver, selectorType string, selector str
 	}
 }
 
-func matchValue(wdf selenium.WebElement, selector rules.Selector) bool {
+func matchValue(ctx *ProcessContext, wdf selenium.WebElement, selector rules.Selector) bool {
 	// Precompute the common value for comparison
 	wdfText, err := wdf.Text()
 	if err != nil {
 		return false
 	}
-	wdfText = strings.ToLower(strings.TrimSpace(wdfText))
 
 	// Check if the selector value is one of the special cases
-	selVal := strings.ToLower(strings.TrimSpace(selector.Value))
-	if texts, ok := textMap[selVal]; ok {
-		for _, val := range texts {
-			if strings.Contains(wdfText, strings.ToLower(strings.TrimSpace(val))) {
-				return true
+	selValue := strings.TrimSpace(selector.Value)
+	var rValue cmn.EnvValue
+	if strings.HasPrefix(selValue, "{{") && strings.HasSuffix(selValue, "}}") {
+		rValue, err = cmn.ProcessEnvTemplate(selValue, ctx.GetContextID())
+		if err != nil {
+			selValue = ""
+		} else {
+			// We have a match, let's update the selector value
+			switch rValue.Type {
+			case "string":
+				selValue = rValue.Value.(string)
+			case "int":
+				selValue = strconv.Itoa(rValue.Value.(int))
+			case "float":
+				selValue = fmt.Sprintf("%f", rValue.Value.(float64))
+			case "bool":
+				selValue = fmt.Sprintf("%t", rValue.Value.(bool))
+			case "[]string":
+				selValue = strings.Join(rValue.Value.([]string), "|")
+			case "[]int":
+				selValue = cmn.IntSliceToString(rValue.Value.([]int), "|")
+			case "[]float64":
+				selValue = cmn.Float64SliceToString(rValue.Value.([]float64), "|")
+			case "[]float32":
+				selValue = cmn.Float32SliceToString(rValue.Value.([]float32), "|")
+			case "[]bool":
+				selValue = cmn.BoolSliceToString(rValue.Value.([]bool), "|")
+			default:
+				selValue = ""
 			}
+
 		}
-		return false
 	}
 
-	// Generic comparison case
-	if selVal != "" {
-		if wdfText == selVal {
-			return true
-		}
-	}
-	return false
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Selector Value Resolved: '%s'", selValue)
+
+	// Use Regex to match the selValue against the wdfText
+	regEx := regexp.MustCompile(selValue)
+	return regEx.MatchString(wdfText)
 }
 
 func DefaultActionConfig(url string) cfg.SourceConfig {

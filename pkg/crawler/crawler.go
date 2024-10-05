@@ -911,6 +911,9 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
 
+	detectedTechJSON, err := json.Marshal((*pageInfo).DetectedTech)
+
+	var scrapedDataJSON []byte
 	if len((*pageInfo).ScrapedData) > 0 {
 		scrapedDoc1 := make(map[string]interface{})
 		// Transform the scraped data into a JSON object
@@ -935,7 +938,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		scrapedDoc1 = map[string]interface{}{"scraped_data": scrapedDoc1}
 
 		// Convert the scraped data to JSON
-		scrapedDataJSON, err := json.Marshal(scrapedDoc1)
+		scrapedDataJSON, err = json.Marshal(scrapedDoc1)
 		if err != nil {
 			return err
 		}
@@ -978,15 +981,22 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		//fmt.Println(string(detailsJSON))
 	}
 
+	// Extract Scraped Data and Detected Tech from detailsJSON
+
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
+	bytesToHash := []byte{}
 	if len((*pageInfo).BodyText) > 0 {
-		hasher.Write([]byte((*pageInfo).BodyText))
+		// set bytesToHas as the body text + scrapedDataJSON + detectedTechJSON
+		bytesToHash = []byte((*pageInfo).BodyText)
 	} else if len((*pageInfo).HTML) > 0 {
-		hasher.Write([]byte((*pageInfo).HTML))
+		bytesToHash = []byte((*pageInfo).HTML)
 	} else {
 		hasher.Write([]byte(detailsJSON))
 	}
+	bytesToHash = append(bytesToHash, scrapedDataJSON...)
+	bytesToHash = append(bytesToHash, detectedTechJSON...)
+	hasher.Write(bytesToHash)
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Get HTML and text Content
@@ -1960,7 +1970,7 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	var retries int
 	if c.UseService {
 		for {
-			service, err = selenium.NewSeleniumService(fmt.Sprintf(protocol+"://"+c.Host+":%d/wd/hub"), c.Port)
+			service, err = selenium.NewSeleniumService(fmt.Sprintf(protocol+"://"+c.Host+":%d/wd/hub", c.Port), c.Port)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium service started successfully.")
 				break
