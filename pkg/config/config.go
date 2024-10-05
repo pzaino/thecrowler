@@ -16,6 +16,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1369,4 +1370,85 @@ func (hc *HTTPConfig) IsEmpty() bool {
 	}
 
 	return true
+}
+
+// CombineConfig combine the given config with a custom one provided as raw JSON message.
+func CombineConfig(dstConfig *Config, srcConfig json.RawMessage) error {
+	// Parse the provided JSON message
+	var srcCfg Config
+	err := json.Unmarshal(srcConfig, &srcCfg)
+	if err != nil {
+		return err
+	}
+
+	// Combine the configurations
+	*dstConfig = CombineConfigs(*dstConfig, srcCfg)
+
+	return nil
+}
+
+// CombineConfigs combine the given configs.
+func CombineConfigs(dstConfig Config, srcConfig Config) Config {
+	// Combine the configurations
+	if srcConfig.Remote != (Remote{}) {
+		dstConfig.Remote = srcConfig.Remote
+	}
+
+	if srcConfig.Database != (Database{}) {
+		dstConfig.Database = srcConfig.Database
+	}
+
+	if srcConfig.Crawler != (Crawler{}) {
+		dstConfig.Crawler = srcConfig.Crawler
+	}
+
+	if srcConfig.API != (API{}) {
+		dstConfig.API = srcConfig.API
+	}
+
+	if len(srcConfig.Selenium) != 0 {
+		dstConfig.Selenium = srcConfig.Selenium
+	}
+
+	if srcConfig.ImageStorageAPI != (FileStorageAPI{}) {
+		dstConfig.ImageStorageAPI = srcConfig.ImageStorageAPI
+	}
+
+	if srcConfig.FileStorageAPI != (FileStorageAPI{}) {
+		dstConfig.FileStorageAPI = srcConfig.FileStorageAPI
+	}
+
+	if !srcConfig.HTTPHeaders.IsEmpty() {
+		dstConfig.HTTPHeaders = srcConfig.HTTPHeaders
+	}
+
+	if srcConfig.NetworkInfo.DNS != (DNSConfig{}) {
+		dstConfig.NetworkInfo.DNS = srcConfig.NetworkInfo.DNS
+	}
+
+	if srcConfig.NetworkInfo.WHOIS != (WHOISConfig{}) {
+		dstConfig.NetworkInfo.WHOIS = srcConfig.NetworkInfo.WHOIS
+	}
+
+	if srcConfig.NetworkInfo.NetLookup != (NetLookupConfig{}) {
+		dstConfig.NetworkInfo.NetLookup = srcConfig.NetworkInfo.NetLookup
+	}
+
+	if !srcConfig.NetworkInfo.ServiceScout.IsEmpty() {
+		dstConfig.NetworkInfo.ServiceScout = srcConfig.NetworkInfo.ServiceScout
+	}
+
+	if srcConfig.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
+		dstConfig.NetworkInfo.Geolocation = srcConfig.NetworkInfo.Geolocation
+	}
+
+	if srcConfig.OS != "" {
+		dstConfig.OS = srcConfig.OS
+	}
+
+	if srcConfig.DebugLevel != 0 {
+		dstConfig.DebugLevel = srcConfig.DebugLevel
+	}
+
+	return dstConfig
 }

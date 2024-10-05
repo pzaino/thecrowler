@@ -130,7 +130,7 @@ func TestConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-empty config
 	if isEmpty {
-		t.Errorf(errExpectedFalse)
+		t.Errorf("%s", errExpectedFalse)
 	}
 
 	// Create an empty config
@@ -141,7 +141,7 @@ func TestConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for an empty config
 	if !isEmpty {
-		t.Errorf(errExpectedTrue)
+		t.Errorf("%s", errExpectedTrue)
 	}
 }
 
@@ -1587,7 +1587,7 @@ func TestServiceScoutConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-empty config
 	if isEmpty {
-		t.Errorf(errExpectedFalse)
+		t.Errorf("%s", errExpectedFalse)
 	}
 
 	// Create an empty ServiceScoutConfig
@@ -1598,7 +1598,7 @@ func TestServiceScoutConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for an empty config
 	if !isEmpty {
-		t.Errorf(errExpectedTrue)
+		t.Errorf("%s", errExpectedTrue)
 	}
 }
 
@@ -1612,7 +1612,7 @@ func TestExecutionPlanItemIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for an empty item
 	if !isEmpty {
-		t.Errorf(errExpectedTrue)
+		t.Errorf("%s", errExpectedTrue)
 	}
 
 	// Create a non-empty ExecutionPlanItem
@@ -1627,7 +1627,7 @@ func TestExecutionPlanItemIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-empty item
 	if isEmpty {
-		t.Errorf(errExpectedFalse)
+		t.Errorf("%s", errExpectedFalse)
 	}
 }
 
@@ -1641,7 +1641,7 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for a nil SourceConfig
 	if !isEmpty {
-		t.Errorf(errExpectedTrue)
+		t.Errorf("%s", errExpectedTrue)
 	}
 
 	// Create a non-nil SourceConfig with a nil ExecutionPlan
@@ -1654,7 +1654,7 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns true for a non-nil SourceConfig with a nil ExecutionPlan
 	if !isEmpty {
-		t.Errorf(errExpectedTrue)
+		t.Errorf("%s", errExpectedTrue)
 	}
 
 	// Create a non-nil SourceConfig with a non-nil ExecutionPlan
@@ -1667,7 +1667,7 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 
 	// Check if the IsEmpty function returns false for a non-nil SourceConfig with a non-nil ExecutionPlan
 	if isEmpty {
-		t.Errorf(errExpectedFalse)
+		t.Errorf("%s", errExpectedFalse)
 	}
 }
 
