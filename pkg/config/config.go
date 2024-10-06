@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strings"
@@ -1386,288 +1387,319 @@ func (hc *HTTPConfig) IsEmpty() bool {
 }
 
 // CombineConfig combine the given config with a custom one provided as raw JSON message.
-func CombineConfig(dstConfig *Config, srcConfig json.RawMessage) error {
+func CombineConfig(dstConfig Config, srcConfig json.RawMessage) (Config, error) {
 	// Parse the provided JSON message
 	var srcCfg SourceConfig
 	err := json.Unmarshal(srcConfig, &srcCfg)
 	if err != nil {
-		return err
+		return dstConfig, err
+	}
+
+	// Pretty print the parsed JSON message in srcCfg
+	srcCfgJSON, err := json.MarshalIndent(srcCfg, "", "  ")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to pretty print the parsed JSON message: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Parsed JSON message: %s", srcCfgJSON)
 	}
 
 	// Combine the configurations
-	*dstConfig = CombineConfigs(*dstConfig, srcCfg)
+	dstConfig = CombineConfigs(dstConfig, srcCfg)
 
-	return nil
+	return dstConfig, nil
 }
 
 // CombineConfigs combine the given configs.
 func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 	// Combine the configurations
-	if srcConfig.Crawler != (Crawler{}) {
-		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Crawler)
+	if srcConfig.Custom["crawler"] != nil {
+		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Custom["crawler"])
 	}
 
-	if len(srcConfig.Selenium) != 0 {
-		combineVDICfg(&dstConfig.Selenium, srcConfig.Selenium)
+	if srcConfig.Custom["selenium"] != nil {
+		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["selenium"])
 	}
 
-	if srcConfig.ImageStorageAPI != (FileStorageAPI{}) {
+	if srcConfig.Custom["image_storage"] != nil {
 		// ImageStorage uses the same format as FileStorage
-		combineFileStorageCfg(&dstConfig.ImageStorageAPI, srcConfig.ImageStorageAPI)
+		combineFileStorageCfg(&dstConfig.ImageStorageAPI, srcConfig.Custom["image_storage"])
 	}
 
-	if srcConfig.FileStorageAPI != (FileStorageAPI{}) {
-		combineFileStorageCfg(&dstConfig.FileStorageAPI, srcConfig.FileStorageAPI)
+	if srcConfig.Custom["file_storage"] != nil {
+		combineFileStorageCfg(&dstConfig.FileStorageAPI, srcConfig.Custom["file_storage"])
 	}
 
-	if !srcConfig.HTTPHeaders.IsEmpty() {
-		combineHTTPHeadersCfg(&dstConfig.HTTPHeaders, srcConfig.HTTPHeaders)
+	if srcConfig.Custom["http_headers"] != nil {
+		combineHTTPHeadersCfg(&dstConfig.HTTPHeaders, srcConfig.Custom["http_headers"])
 	}
 
-	if srcConfig.NetworkInfo.DNS != (DNSConfig{}) {
-		combineNIDNSCfg(&dstConfig.NetworkInfo.DNS, srcConfig.NetworkInfo.DNS)
-	}
+	if srcConfig.Custom["network_info"] != nil {
+		NICfg := srcConfig.Custom["network_info"].(map[string]interface{})
 
-	if srcConfig.NetworkInfo.WHOIS != (WHOISConfig{}) {
-		combineNIWHOISCfg(&dstConfig.NetworkInfo.WHOIS, srcConfig.NetworkInfo.WHOIS)
-	}
+		if NICfg["dns"] != nil {
+			combineNIDNSCfg(&dstConfig.NetworkInfo.DNS, NICfg["dns"])
+		}
 
-	if srcConfig.NetworkInfo.NetLookup != (NetLookupConfig{}) {
-		combineNINetLookupCfg(&dstConfig.NetworkInfo.NetLookup, srcConfig.NetworkInfo.NetLookup)
-	}
+		if NICfg["whois"] != nil {
+			combineNIWHOISCfg(&dstConfig.NetworkInfo.WHOIS, NICfg["whois"])
+		}
 
-	if !srcConfig.NetworkInfo.ServiceScout.IsEmpty() {
-		combineNIServiceScoutCfg(&dstConfig.NetworkInfo.ServiceScout, srcConfig.NetworkInfo.ServiceScout)
-	}
+		if NICfg["netlookup"] != nil {
+			combineNINetLookupCfg(&dstConfig.NetworkInfo.NetLookup, NICfg["netlookup"])
+		}
 
-	if srcConfig.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
-		dstConfig.NetworkInfo.Geolocation = srcConfig.NetworkInfo.Geolocation
+		if NICfg["servicescout"] != nil {
+			combineNIServiceScoutCfg(&dstConfig.NetworkInfo.ServiceScout, NICfg["servicescout"])
+		}
+
+		if NICfg["geolocation"] != nil {
+			dstConfig.NetworkInfo.Geolocation = NICfg["geolocation"].(GeoLookupConfig)
+		}
 	}
 
 	return dstConfig
 }
 
-func combineCrawlerCfg(dstCfg *Crawler, srcCfg Crawler) {
-	if srcCfg.Workers != 0 {
-		dstCfg.Workers = srcCfg.Workers
+func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
+
+	if srcCfg["workers"] != nil {
+		dstCfg.Workers = srcCfg["workers"].(int)
 	}
-	if srcCfg.Interval != "" {
-		dstCfg.Interval = srcCfg.Interval
+	if srcCfg["interval"] != nil {
+		dstCfg.Interval = srcCfg["interval"].(string)
 	}
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
+	if srcCfg["timeout"] != nil {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
 	}
-	if srcCfg.MaxDepth != 0 {
-		dstCfg.MaxDepth = srcCfg.MaxDepth
+	if srcCfg["max_depth"] != nil {
+		dstCfg.MaxDepth = srcCfg["max_depth"].(int)
 	}
-	if srcCfg.Delay != "" {
-		dstCfg.Delay = srcCfg.Delay
+	if srcCfg["delay"] != nil {
+		dstCfg.Delay = srcCfg["delay"].(string)
 	}
-	if srcCfg.BrowsingMode != "" {
-		dstCfg.BrowsingMode = srcCfg.BrowsingMode
+	if srcCfg["browsing_mode"] != nil {
+		dstCfg.BrowsingMode = srcCfg["browsing_mode"].(string)
 	}
-	if srcCfg.ScreenshotSectionWait != 0 {
-		dstCfg.ScreenshotSectionWait = srcCfg.ScreenshotSectionWait
+	if srcCfg["screenshot_section_wait"] != nil {
+		dstCfg.ScreenshotSectionWait = srcCfg["screenshot_section_wait"].(int)
 	}
-	if srcCfg.MaxSources != 0 {
-		dstCfg.MaxSources = srcCfg.MaxSources
+	if srcCfg["max_sources"] != nil {
+		dstCfg.MaxSources = srcCfg["max_sources"].(int)
 	}
-	if srcCfg.ReportInterval != 0 {
-		dstCfg.ReportInterval = srcCfg.ReportInterval
+	if srcCfg["screenshot_max_height"] != nil {
+		dstCfg.ScreenshotMaxHeight = srcCfg["screenshot_max_height"].(int)
 	}
-	if srcCfg.ScreenshotMaxHeight != 0 {
-		dstCfg.ScreenshotMaxHeight = srcCfg.ScreenshotMaxHeight
+	if srcCfg["max_retries"] != nil {
+		dstCfg.MaxRetries = srcCfg["max_retries"].(int)
 	}
-	if srcCfg.MaxRetries != 0 {
-		dstCfg.MaxRetries = srcCfg.MaxRetries
-	}
-	if srcCfg.MaxRedirects != 0 {
-		dstCfg.MaxRedirects = srcCfg.MaxRedirects
+	if srcCfg["max_redirects"] != nil {
+		dstCfg.MaxRedirects = srcCfg["max_redirects"].(int)
 	}
 }
 
-func combineVDICfg(dstCfg *[]Selenium, srcCfg []Selenium) {
-	for i, src := range srcCfg {
-		if i <= len(*dstCfg) {
-			(*dstCfg)[i] = src
-		} else {
-			*dstCfg = append(*dstCfg, src)
+// TODO: Selenium customization is not yet implemented
+func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
+	srcCfgSlice := srcCfgIface.([]interface{})
+	for i, v := range srcCfgSlice {
+		srcCfg := v.(map[string]interface{})
+		if srcCfg["type"] != nil {
+			(*dstCfg)[i].Type = srcCfg["type"].(string)
+		}
+		if srcCfg["service_type"] != nil {
+			(*dstCfg)[i].ServiceType = srcCfg["service_type"].(string)
+		}
+		if srcCfg["path"] != nil {
+			(*dstCfg)[i].Path = srcCfg["path"].(string)
+		}
+		if srcCfg["driver_path"] != nil {
+			(*dstCfg)[i].DriverPath = srcCfg["driver_path"].(string)
+		}
+		if srcCfg["host"] != nil {
+			(*dstCfg)[i].Host = srcCfg["host"].(string)
+		}
+		if srcCfg["port"] != nil {
+			(*dstCfg)[i].Port = srcCfg["port"].(int)
+		}
+		if srcCfg["proxy_url"] != nil {
+			(*dstCfg)[i].ProxyURL = srcCfg["proxy_url"].(string)
 		}
 	}
 }
 
-func combineFileStorageCfg(dstCfg *FileStorageAPI, srcCfg FileStorageAPI) {
-	if srcCfg.Type != "" {
-		dstCfg.Type = srcCfg.Type
+func combineFileStorageCfg(dstCfg *FileStorageAPI, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
+	if srcCfg["type"] != nil {
+		dstCfg.Type = srcCfg["type"].(string)
 	}
-	if srcCfg.Host != "" {
-		dstCfg.Host = srcCfg.Host
+	if srcCfg["host"] != nil {
+		dstCfg.Host = srcCfg["host"].(string)
 	}
-	if srcCfg.Path != "" {
-		dstCfg.Path = srcCfg.Path
+	if srcCfg["path"] != nil {
+		dstCfg.Path = srcCfg["path"].(string)
 	}
-	if srcCfg.Port != 0 {
-		dstCfg.Port = srcCfg.Port
+	if srcCfg["port"] != nil {
+		dstCfg.Port = srcCfg["port"].(int)
 	}
-	if srcCfg.Region != "" {
-		dstCfg.Region = srcCfg.Region
+	if srcCfg["region"] != "" {
+		dstCfg.Region = srcCfg["region"].(string)
 	}
-	if srcCfg.Token != "" {
-		dstCfg.Token = srcCfg.Token
+	if srcCfg["token"] != "" {
+		dstCfg.Token = srcCfg["token"].(string)
 	}
-	if srcCfg.Secret != "" {
-		dstCfg.Secret = srcCfg.Secret
+	if srcCfg["secret"] != "" {
+		dstCfg.Secret = srcCfg["secret"].(string)
 	}
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
-	}
-}
-
-func combineHTTPHeadersCfg(dstCfg *HTTPConfig, srcCfg HTTPConfig) {
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
-	}
-	if !srcCfg.SSLDiscovery.IsEmpty() {
-		dstCfg.SSLDiscovery = srcCfg.SSLDiscovery
-	}
-	if len(srcCfg.Proxies) != 0 {
-		dstCfg.Proxies = srcCfg.Proxies
+	if srcCfg["timeout"] != 0 {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
 	}
 }
 
-func combineNIDNSCfg(dstCfg *DNSConfig, srcCfg DNSConfig) {
-	dstCfg.Enabled = srcCfg.Enabled
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
-	}
-	if srcCfg.RateLimit != "" {
-		dstCfg.RateLimit = srcCfg.RateLimit
-	}
-}
+func combineHTTPHeadersCfg(dstCfg *HTTPConfig, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
 
-func combineNIWHOISCfg(dstCfg *WHOISConfig, srcCfg WHOISConfig) {
-	dstCfg.Enabled = srcCfg.Enabled
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
+	if srcCfg["timeout"] != nil {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
 	}
-	if srcCfg.RateLimit != "" {
-		dstCfg.RateLimit = srcCfg.RateLimit
+	if srcCfg["ssl_discovery"] != nil {
+		dstCfg.SSLDiscovery = srcCfg["ssl_discovery"].(SSLScoutConfig)
+	}
+	if srcCfg["proxies"] != nil {
+		dstCfg.Proxies = srcCfg["proxies"].([]SOCKSProxy)
 	}
 }
 
-func combineNINetLookupCfg(dstCfg *NetLookupConfig, srcCfg NetLookupConfig) {
-	dstCfg.Enabled = srcCfg.Enabled
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
+func combineNIDNSCfg(dstCfg *DNSConfig, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
+	if srcCfg["enabled"] != nil {
+		dstCfg.Enabled = srcCfg["enabled"].(bool)
 	}
-	if srcCfg.RateLimit != "" {
-		dstCfg.RateLimit = srcCfg.RateLimit
+	if srcCfg["timeout"] != nil {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
+	}
+	if srcCfg["rate_limit"] != nil {
+		dstCfg.RateLimit = srcCfg["rate_limit"].(string)
 	}
 }
 
-func combineNIServiceScoutCfg(dstCfg *ServiceScoutConfig, srcCfg ServiceScoutConfig) {
-	// Merging the two ServiceScoutConfig structs
-	// with fields in alphabetical order:
-
-	dstCfg.AggressiveScan = srcCfg.AggressiveScan
-
-	dstCfg.ConnectScan = srcCfg.ConnectScan
-
-	if len(srcCfg.DNSServers) != 0 {
-		dstCfg.DNSServers = srcCfg.DNSServers
+func combineNIWHOISCfg(dstCfg *WHOISConfig, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
+	if srcCfg["enabled"] != nil {
+		dstCfg.Enabled = srcCfg["enabled"].(bool)
 	}
-
-	if srcCfg.DataLength != 0 {
-		dstCfg.DataLength = srcCfg.DataLength
+	if srcCfg["timeout"] != nil {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
 	}
-
-	dstCfg.Enabled = srcCfg.Enabled
-
-	if len(srcCfg.ExcludeHosts) != 0 {
-		dstCfg.ExcludeHosts = srcCfg.ExcludeHosts
+	if srcCfg["rate_limit"] != nil {
+		dstCfg.RateLimit = srcCfg["rate_limit"].(string)
 	}
+}
 
-	if srcCfg.HostTimeout != "" {
-		dstCfg.HostTimeout = srcCfg.HostTimeout
+func combineNINetLookupCfg(dstCfg *NetLookupConfig, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
+	if srcCfg["enabled"] != nil {
+		dstCfg.Enabled = srcCfg["enabled"].(bool)
 	}
-
-	if srcCfg.IdleScan != (SSIdleScan{}) {
-		combineSSIdleScanCfg(&dstCfg.IdleScan, srcCfg.IdleScan)
+	if srcCfg["timeout"] != nil {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
 	}
-
-	dstCfg.IPFragment = srcCfg.IPFragment
-
-	if srcCfg.MaxParallelism != 0 {
-		dstCfg.MaxParallelism = srcCfg.MaxParallelism
+	if srcCfg["rate_limit"] != nil {
+		dstCfg.RateLimit = srcCfg["rate_limit"].(string)
 	}
+}
 
-	if srcCfg.MaxPortNumber != 0 {
-		dstCfg.MaxPortNumber = srcCfg.MaxPortNumber
+func combineNIServiceScoutCfg(dstCfg *ServiceScoutConfig, srcCfgIface interface{}) {
+	srcCfg := srcCfgIface.(map[string]interface{})
+	if srcCfg["aggressive_scan"] != nil {
+		dstCfg.AggressiveScan = srcCfg["aggressive_scan"].(bool)
 	}
-
-	if srcCfg.MaxRetries != 0 {
-		dstCfg.MaxRetries = srcCfg.MaxRetries
+	if srcCfg["connect_scan"] != nil {
+		dstCfg.ConnectScan = srcCfg["connect_scan"].(bool)
 	}
-
-	if srcCfg.MinRate != "" {
-		dstCfg.MinRate = srcCfg.MinRate
+	if srcCfg["dns_servers"] != nil {
+		dstCfg.DNSServers = srcCfg["dns_servers"].([]string)
 	}
-
-	dstCfg.NoDNSResolution = srcCfg.NoDNSResolution
-
-	dstCfg.OSFingerprinting = srcCfg.OSFingerprinting
-
-	dstCfg.PingScan = srcCfg.PingScan
-
-	if len(srcCfg.Proxies) != 0 {
-		dstCfg.Proxies = srcCfg.Proxies
+	if srcCfg["data_length"] != nil {
+		dstCfg.DataLength = srcCfg["data_length"].(int)
 	}
-
-	dstCfg.RandomizeHosts = srcCfg.RandomizeHosts
-
-	if srcCfg.ScanDelay != "" {
-		dstCfg.ScanDelay = srcCfg.ScanDelay
+	if srcCfg["enabled"] != nil {
+		dstCfg.Enabled = srcCfg["enabled"].(bool)
 	}
-
-	if srcCfg.ScanFlags != "" {
-		dstCfg.ScanFlags = srcCfg.ScanFlags
+	if srcCfg["exclude_hosts"] != nil {
+		dstCfg.ExcludeHosts = srcCfg["exclude_hosts"].([]string)
 	}
-
-	if len(srcCfg.ScriptScan) != 0 {
-		dstCfg.ScriptScan = srcCfg.ScriptScan
+	if srcCfg["host_timeout"] != nil {
+		dstCfg.HostTimeout = srcCfg["host_timeout"].(string)
 	}
-
-	if srcCfg.ServiceDB != "" {
-		dstCfg.ServiceDB = srcCfg.ServiceDB
+	if srcCfg["idle_scan"] != nil {
+		combineSSIdleScanCfg(&dstCfg.IdleScan, srcCfg["idle_scan"].(SSIdleScan))
 	}
-
-	if srcCfg.ServiceDetection {
-		dstCfg.ServiceDetection = srcCfg.ServiceDetection
+	if srcCfg["ip_fragment"] != nil {
+		dstCfg.IPFragment = srcCfg["ip_fragment"].(bool)
 	}
-
-	if srcCfg.SourcePort != 0 {
-		dstCfg.SourcePort = srcCfg.SourcePort
+	if srcCfg["max_parallelism"] != nil {
+		dstCfg.MaxParallelism = srcCfg["max_parallelism"].(int)
 	}
-
-	if srcCfg.SpoofIP != "" {
-		dstCfg.SpoofIP = srcCfg.SpoofIP
+	if srcCfg["max_port_number"] != nil {
+		dstCfg.MaxPortNumber = srcCfg["max_port_number"].(int)
 	}
-
-	dstCfg.SynScan = srcCfg.SynScan
-
-	if len(srcCfg.Targets) != 0 {
-		dstCfg.Targets = srcCfg.Targets
+	if srcCfg["max_retries"] != nil {
+		dstCfg.MaxRetries = srcCfg["max_retries"].(int)
 	}
-
-	if srcCfg.Timeout != 0 {
-		dstCfg.Timeout = srcCfg.Timeout
+	if srcCfg["min_rate"] != nil {
+		dstCfg.MinRate = srcCfg["min_rate"].(string)
 	}
-
-	if srcCfg.TimingTemplate != "" {
-		dstCfg.TimingTemplate = srcCfg.TimingTemplate
+	if srcCfg["no_dns_resolution"] != nil {
+		dstCfg.NoDNSResolution = srcCfg["no_dns_resolution"].(bool)
 	}
-
-	dstCfg.UDPScan = srcCfg.UDPScan
+	if srcCfg["os_fingerprinting"] != nil {
+		dstCfg.OSFingerprinting = srcCfg["os_fingerprinting"].(bool)
+	}
+	if srcCfg["ping_scan"] != nil {
+		dstCfg.PingScan = srcCfg["ping_scan"].(bool)
+	}
+	if srcCfg["proxies"] != nil {
+		dstCfg.Proxies = srcCfg["proxies"].([]string)
+	}
+	if srcCfg["randomize_hosts"] != nil {
+		dstCfg.RandomizeHosts = srcCfg["randomize_hosts"].(bool)
+	}
+	if srcCfg["scan_delay"] != nil {
+		dstCfg.ScanDelay = srcCfg["scan_delay"].(string)
+	}
+	if srcCfg["scan_flags"] != nil {
+		dstCfg.ScanFlags = srcCfg["scan_flags"].(string)
+	}
+	if srcCfg["script_scan"] != nil {
+		dstCfg.ScriptScan = srcCfg["script_scan"].([]string)
+	}
+	if srcCfg["service_db"] != nil {
+		dstCfg.ServiceDB = srcCfg["service_db"].(string)
+	}
+	if srcCfg["service_detection"] != nil {
+		dstCfg.ServiceDetection = srcCfg["service_detection"].(bool)
+	}
+	if srcCfg["source_port"] != nil {
+		dstCfg.SourcePort = srcCfg["source_port"].(int)
+	}
+	if srcCfg["spoof_ip"] != nil {
+		dstCfg.SpoofIP = srcCfg["spoof_ip"].(string)
+	}
+	if srcCfg["syn_scan"] != nil {
+		dstCfg.SynScan = srcCfg["syn_scan"].(bool)
+	}
+	if srcCfg["targets"] != nil {
+		dstCfg.Targets = srcCfg["targets"].([]string)
+	}
+	if srcCfg["timeout"] != nil {
+		dstCfg.Timeout = srcCfg["timeout"].(int)
+	}
+	if srcCfg["timing_template"] != nil {
+		dstCfg.TimingTemplate = srcCfg["timing_template"].(string)
+	}
+	if srcCfg["udp_scan"] != nil {
+		dstCfg.UDPScan = srcCfg["udp_scan"].(bool)
+	}
 }
 
 func combineSSIdleScanCfg(dstCfg *SSIdleScan, srcCfg SSIdleScan) {
@@ -1675,4 +1707,85 @@ func combineSSIdleScanCfg(dstCfg *SSIdleScan, srcCfg SSIdleScan) {
 		dstCfg.ZombieHost = srcCfg.ZombieHost
 		dstCfg.ZombiePort = srcCfg.ZombiePort
 	}
+}
+
+// DeepCopyConfig performs a deep copy of the Config struct
+func DeepCopyConfig(src *Config) *Config {
+	if src == nil {
+		return nil
+	}
+
+	// Create a new Config instance
+	copyConfig := *src // Shallow copy the main struct first
+
+	// Deep copy Remote (struct can be copied directly as it's not containing references or slices)
+	copyConfig.Remote = src.Remote
+
+	// Deep copy Database (struct can be copied directly)
+	copyConfig.Database = src.Database
+
+	// Deep copy Crawler (struct can be copied directly)
+	copyConfig.Crawler = src.Crawler
+
+	// Deep copy API (struct can be copied directly)
+	copyConfig.API = src.API
+
+	// Deep copy the Selenium slice
+	copyConfig.Selenium = make([]Selenium, len(src.Selenium))
+	copy(copyConfig.Selenium, src.Selenium)
+
+	// Deep copy ImageStorageAPI (struct can be copied directly)
+	copyConfig.ImageStorageAPI = src.ImageStorageAPI
+
+	// Deep copy FileStorageAPI (struct can be copied directly)
+	copyConfig.FileStorageAPI = src.FileStorageAPI
+
+	// Deep copy HTTPHeaders (deep copy SSLScoutConfig and Proxies slice inside)
+	copyConfig.HTTPHeaders = src.HTTPHeaders
+	copyConfig.HTTPHeaders.Proxies = make([]SOCKSProxy, len(src.HTTPHeaders.Proxies))
+	copy(copyConfig.HTTPHeaders.Proxies, src.HTTPHeaders.Proxies)
+
+	// Deep copy SSLScoutConfig in HTTPHeaders (not needed for basic types, but ensuring clarity)
+	copyConfig.HTTPHeaders.SSLDiscovery = src.HTTPHeaders.SSLDiscovery
+
+	// Deep copy NetworkInfo (each field is either a basic type or a struct that can be shallow copied)
+	copyConfig.NetworkInfo = src.NetworkInfo
+
+	// Deep copy Rulesets slice
+	copyConfig.Rulesets = make([]RulesetConfig, len(src.Rulesets))
+	copy(copyConfig.Rulesets, src.Rulesets)
+
+	// Deep copy PluginsConfig (deep copy Plugins slice)
+	copyConfig.Plugins.Plugins = make([]PluginConfig, len(src.Plugins.Plugins))
+	copy(copyConfig.Plugins.Plugins, src.Plugins.Plugins)
+
+	// Deep copy ExternalDetectionConfig
+	copyConfig.ExternalDetection = src.ExternalDetection
+
+	// Return the deep copied config
+	return &copyConfig
+}
+
+// MergeConfig merges the values from type Config into the SourceConfig when fields are missing
+func MergeConfig(sourceConfig *SourceConfig, globalConfig Config) {
+	// Get the value of the source config (destination of the merge)
+	srcVal := reflect.ValueOf(sourceConfig).Elem()
+	// Get the value of the global config (source of the merge)
+	globVal := reflect.ValueOf(globalConfig)
+
+	// Iterate over the fields of SourceConfig
+	for i := 0; i < srcVal.NumField(); i++ {
+		srcField := srcVal.Field(i)
+		globField := globVal.Field(i)
+
+		// If the field in SourceConfig is empty, copy it from globalConfig
+		if isZeroValue(srcField) {
+			srcField.Set(globField)
+		}
+	}
+}
+
+// isZeroValue checks if the given field is empty or uninitialized (zero value)
+func isZeroValue(v reflect.Value) bool {
+	return reflect.DeepEqual(v.Interface(), reflect.Zero(v.Type()).Interface())
 }

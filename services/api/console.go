@@ -79,20 +79,21 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 	if params.Restricted < 0 || params.Restricted > 4 {
 		params.Restricted = 2
 	}
-	if params.Config.IsEmpty() {
-		params.Config = cfg.SourceConfig{}
-	} else {
+	if !params.Config.IsEmpty() {
 		// Validate and potentially reformat the existing Config JSON
 		// First, marshal the params.Config struct to JSON
 		configJSON, err := json.Marshal(params.Config)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "marshalling the Config field: %v", err)
 		}
+
+		// Unmarshal the JSON into a map to check for invalid JSON
 		var jsonRaw map[string]interface{}
 		if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
 			// Handle invalid JSON
 			cmn.DebugMsg(cmn.DbgLvlError, "Config field contains invalid JSON: %v", err)
 		}
+
 		// Re-marshal to ensure the JSON is in a standardized format (optional)
 		configJSONChecked, err := json.Marshal(jsonRaw)
 		if err != nil {
@@ -102,7 +103,6 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field: %v", err)
 		}
 	}
-
 }
 
 func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (ConsoleResponse, error) {
@@ -110,9 +110,8 @@ func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (Conso
 	results.Message = "Failed to add the source"
 
 	// Check if Config is empty and set to default JSON if it is
-	if params.Config.IsEmpty() {
-		params.Config = getDefaultConfig()
-	} else {
+	if !params.Config.IsEmpty() {
+		// Validate and potentially reformat the existing Config JSON
 		err := validateAndReformatConfig(&params.Config)
 		if err != nil {
 			return results, fmt.Errorf("failed to validate and reformat Config: %w", err)
@@ -135,6 +134,7 @@ func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (Conso
 	return results, nil
 }
 
+/*
 func getDefaultConfig() cfg.SourceConfig {
 	defaultConfig := map[string]string{}
 	defaultConfigJSON, _ := json.Marshal(defaultConfig)
@@ -142,6 +142,7 @@ func getDefaultConfig() cfg.SourceConfig {
 	_ = json.Unmarshal(defaultConfigJSON, &config)
 	return config
 }
+*/
 
 func validateAndReformatConfig(config *cfg.SourceConfig) error {
 	configJSON, err := json.Marshal(config)

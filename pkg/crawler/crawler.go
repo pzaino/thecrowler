@@ -113,10 +113,11 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.PipelineRunning = 1
 	processCtx.SelInstance = sel
 
+	var err error
 	// Combine default configuration with the source configuration
 	if processCtx.source.Config != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Custom Source configuration found, proceeding to combine it with the default one for this source...")
-		err := cfg.CombineConfig(&processCtx.config, *processCtx.source.Config)
+		processCtx.config, err = cfg.CombineConfig(processCtx.config, *processCtx.source.Config)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", err)
 		} else {
@@ -148,8 +149,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 
 	// Initialize the Selenium instance
-	var err error
-	if err := processCtx.ConnectToVDI(sel); err != nil {
+	if err = processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		processCtx.Status.EndTime = time.Now()
@@ -163,7 +163,8 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	defer processCtx.WG.Done()
 
 	// Crawl the initial URL and get the HTML content
-	pageSource, err := processCtx.CrawlInitialURL(sel)
+	var pageSource selenium.WebDriver
+	pageSource, err = processCtx.CrawlInitialURL(sel)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 		processCtx.Status.EndTime = time.Now()
@@ -177,7 +178,8 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.TakeScreenshot(pageSource, args.Src.URL, processCtx.fpIdx)
 
 	// Extract the HTML content and extract links
-	htmlContent, err := pageSource.PageSource()
+	var htmlContent string
+	htmlContent, err = pageSource.PageSource()
 	if err != nil {
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
@@ -286,12 +288,12 @@ func NewProcessContext(args Pars) *ProcessContext {
 		source: &args.Src,
 		db:     &args.DB,
 		sel:    args.Sel,
-		config: config,
 		re:     args.RE,
 		SelID:  args.SelIdx,
 		Status: args.Status,
 		WG:     args.WG,
 	}
+	newPCtx.config = *cfg.DeepCopyConfig(&config)
 	newPCtx.visitedLinks = make(map[string]bool)
 	return &newPCtx
 }
