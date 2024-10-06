@@ -1388,7 +1388,7 @@ func (hc *HTTPConfig) IsEmpty() bool {
 // CombineConfig combine the given config with a custom one provided as raw JSON message.
 func CombineConfig(dstConfig *Config, srcConfig json.RawMessage) error {
 	// Parse the provided JSON message
-	var srcCfg Config
+	var srcCfg SourceConfig
 	err := json.Unmarshal(srcConfig, &srcCfg)
 	if err != nil {
 		return err
@@ -1401,7 +1401,7 @@ func CombineConfig(dstConfig *Config, srcConfig json.RawMessage) error {
 }
 
 // CombineConfigs combine the given configs.
-func CombineConfigs(dstConfig Config, srcConfig Config) Config {
+func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 	// Combine the configurations
 	if srcConfig.Crawler != (Crawler{}) {
 		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Crawler)
@@ -1442,14 +1442,6 @@ func CombineConfigs(dstConfig Config, srcConfig Config) Config {
 
 	if srcConfig.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
 		dstConfig.NetworkInfo.Geolocation = srcConfig.NetworkInfo.Geolocation
-	}
-
-	if srcConfig.OS != "" {
-		dstConfig.OS = srcConfig.OS
-	}
-
-	if srcConfig.DebugLevel != 0 {
-		dstConfig.DebugLevel = srcConfig.DebugLevel
 	}
 
 	return dstConfig

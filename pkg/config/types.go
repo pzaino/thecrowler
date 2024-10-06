@@ -406,8 +406,11 @@ type SourceConfig struct {
 	// Crawling and Fuzzing configuration
 	CrawlingConfig CrawlingConfig `json:"crawling_config"`
 
+	// Crawler configuration
+	Crawler Crawler `json:"crawler"`
+
 	// Selenium and Crowler VDI configuration
-	SeleniumConfig []Selenium `json:"selenium_config"`
+	Selenium []Selenium `json:"selenium_config"`
 
 	// Image storage API configuration (to store images on a separate server)
 	ImageStorageAPI FileStorageAPI `yaml:"image_storage"`
