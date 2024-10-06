@@ -8,7 +8,7 @@
 
     "version": {
       "title": "CROWler Configuration version",
-      "description": "This is the version of the CROWler configuration.",
+      "description": "This is the version of the CROWler configuration. This is for you to version your work.",
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
@@ -19,7 +19,7 @@
     },
     "description": {
       "title": "CROWler Configuration description",
-      "description": "Local configuration for The CROWler.",
+      "description": "A description field.",
       "type": "string"
     },
     "created_at": {

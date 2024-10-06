@@ -1263,6 +1263,19 @@ func (cfg *Config) IsEmpty() bool {
 	return true
 }
 
+// IsEmpty checks if the given SSLScoutConfig is empty.
+func (ssld *SSLScoutConfig) IsEmpty() bool {
+	if ssld == nil {
+		return true
+	}
+
+	if ssld.Enabled {
+		return false
+	}
+
+	return true
+}
+
 // IsEmpty checks if the given DNSConfig is empty.
 func (dc *DNSConfig) IsEmpty() bool {
 	if dc == nil {
@@ -1390,52 +1403,41 @@ func CombineConfig(dstConfig *Config, srcConfig json.RawMessage) error {
 // CombineConfigs combine the given configs.
 func CombineConfigs(dstConfig Config, srcConfig Config) Config {
 	// Combine the configurations
-	if srcConfig.Remote != (Remote{}) {
-		dstConfig.Remote = srcConfig.Remote
-	}
-
-	if srcConfig.Database != (Database{}) {
-		dstConfig.Database = srcConfig.Database
-	}
-
 	if srcConfig.Crawler != (Crawler{}) {
-		dstConfig.Crawler = srcConfig.Crawler
-	}
-
-	if srcConfig.API != (API{}) {
-		dstConfig.API = srcConfig.API
+		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Crawler)
 	}
 
 	if len(srcConfig.Selenium) != 0 {
-		dstConfig.Selenium = srcConfig.Selenium
+		combineVDICfg(&dstConfig.Selenium, srcConfig.Selenium)
 	}
 
 	if srcConfig.ImageStorageAPI != (FileStorageAPI{}) {
-		dstConfig.ImageStorageAPI = srcConfig.ImageStorageAPI
+		// ImageStorage uses the same format as FileStorage
+		combineFileStorageCfg(&dstConfig.ImageStorageAPI, srcConfig.ImageStorageAPI)
 	}
 
 	if srcConfig.FileStorageAPI != (FileStorageAPI{}) {
-		dstConfig.FileStorageAPI = srcConfig.FileStorageAPI
+		combineFileStorageCfg(&dstConfig.FileStorageAPI, srcConfig.FileStorageAPI)
 	}
 
 	if !srcConfig.HTTPHeaders.IsEmpty() {
-		dstConfig.HTTPHeaders = srcConfig.HTTPHeaders
+		combineHTTPHeadersCfg(&dstConfig.HTTPHeaders, srcConfig.HTTPHeaders)
 	}
 
 	if srcConfig.NetworkInfo.DNS != (DNSConfig{}) {
-		dstConfig.NetworkInfo.DNS = srcConfig.NetworkInfo.DNS
+		combineNIDNSCfg(&dstConfig.NetworkInfo.DNS, srcConfig.NetworkInfo.DNS)
 	}
 
 	if srcConfig.NetworkInfo.WHOIS != (WHOISConfig{}) {
-		dstConfig.NetworkInfo.WHOIS = srcConfig.NetworkInfo.WHOIS
+		combineNIWHOISCfg(&dstConfig.NetworkInfo.WHOIS, srcConfig.NetworkInfo.WHOIS)
 	}
 
 	if srcConfig.NetworkInfo.NetLookup != (NetLookupConfig{}) {
-		dstConfig.NetworkInfo.NetLookup = srcConfig.NetworkInfo.NetLookup
+		combineNINetLookupCfg(&dstConfig.NetworkInfo.NetLookup, srcConfig.NetworkInfo.NetLookup)
 	}
 
 	if !srcConfig.NetworkInfo.ServiceScout.IsEmpty() {
-		dstConfig.NetworkInfo.ServiceScout = srcConfig.NetworkInfo.ServiceScout
+		combineNIServiceScoutCfg(&dstConfig.NetworkInfo.ServiceScout, srcConfig.NetworkInfo.ServiceScout)
 	}
 
 	if srcConfig.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
@@ -1451,4 +1453,234 @@ func CombineConfigs(dstConfig Config, srcConfig Config) Config {
 	}
 
 	return dstConfig
+}
+
+func combineCrawlerCfg(dstCfg *Crawler, srcCfg Crawler) {
+	if srcCfg.Workers != 0 {
+		dstCfg.Workers = srcCfg.Workers
+	}
+	if srcCfg.Interval != "" {
+		dstCfg.Interval = srcCfg.Interval
+	}
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+	if srcCfg.MaxDepth != 0 {
+		dstCfg.MaxDepth = srcCfg.MaxDepth
+	}
+	if srcCfg.Delay != "" {
+		dstCfg.Delay = srcCfg.Delay
+	}
+	if srcCfg.BrowsingMode != "" {
+		dstCfg.BrowsingMode = srcCfg.BrowsingMode
+	}
+	if srcCfg.ScreenshotSectionWait != 0 {
+		dstCfg.ScreenshotSectionWait = srcCfg.ScreenshotSectionWait
+	}
+	if srcCfg.MaxSources != 0 {
+		dstCfg.MaxSources = srcCfg.MaxSources
+	}
+	if srcCfg.ReportInterval != 0 {
+		dstCfg.ReportInterval = srcCfg.ReportInterval
+	}
+	if srcCfg.ScreenshotMaxHeight != 0 {
+		dstCfg.ScreenshotMaxHeight = srcCfg.ScreenshotMaxHeight
+	}
+	if srcCfg.MaxRetries != 0 {
+		dstCfg.MaxRetries = srcCfg.MaxRetries
+	}
+	if srcCfg.MaxRedirects != 0 {
+		dstCfg.MaxRedirects = srcCfg.MaxRedirects
+	}
+}
+
+func combineVDICfg(dstCfg *[]Selenium, srcCfg []Selenium) {
+	for i, src := range srcCfg {
+		if i <= len(*dstCfg) {
+			(*dstCfg)[i] = src
+		} else {
+			*dstCfg = append(*dstCfg, src)
+		}
+	}
+}
+
+func combineFileStorageCfg(dstCfg *FileStorageAPI, srcCfg FileStorageAPI) {
+	if srcCfg.Type != "" {
+		dstCfg.Type = srcCfg.Type
+	}
+	if srcCfg.Host != "" {
+		dstCfg.Host = srcCfg.Host
+	}
+	if srcCfg.Path != "" {
+		dstCfg.Path = srcCfg.Path
+	}
+	if srcCfg.Port != 0 {
+		dstCfg.Port = srcCfg.Port
+	}
+	if srcCfg.Region != "" {
+		dstCfg.Region = srcCfg.Region
+	}
+	if srcCfg.Token != "" {
+		dstCfg.Token = srcCfg.Token
+	}
+	if srcCfg.Secret != "" {
+		dstCfg.Secret = srcCfg.Secret
+	}
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+}
+
+func combineHTTPHeadersCfg(dstCfg *HTTPConfig, srcCfg HTTPConfig) {
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+	if !srcCfg.SSLDiscovery.IsEmpty() {
+		dstCfg.SSLDiscovery = srcCfg.SSLDiscovery
+	}
+	if len(srcCfg.Proxies) != 0 {
+		dstCfg.Proxies = srcCfg.Proxies
+	}
+}
+
+func combineNIDNSCfg(dstCfg *DNSConfig, srcCfg DNSConfig) {
+	dstCfg.Enabled = srcCfg.Enabled
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+	if srcCfg.RateLimit != "" {
+		dstCfg.RateLimit = srcCfg.RateLimit
+	}
+}
+
+func combineNIWHOISCfg(dstCfg *WHOISConfig, srcCfg WHOISConfig) {
+	dstCfg.Enabled = srcCfg.Enabled
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+	if srcCfg.RateLimit != "" {
+		dstCfg.RateLimit = srcCfg.RateLimit
+	}
+}
+
+func combineNINetLookupCfg(dstCfg *NetLookupConfig, srcCfg NetLookupConfig) {
+	dstCfg.Enabled = srcCfg.Enabled
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+	if srcCfg.RateLimit != "" {
+		dstCfg.RateLimit = srcCfg.RateLimit
+	}
+}
+
+func combineNIServiceScoutCfg(dstCfg *ServiceScoutConfig, srcCfg ServiceScoutConfig) {
+	// Merging the two ServiceScoutConfig structs
+	// with fields in alphabetical order:
+
+	dstCfg.AggressiveScan = srcCfg.AggressiveScan
+
+	dstCfg.ConnectScan = srcCfg.ConnectScan
+
+	if len(srcCfg.DNSServers) != 0 {
+		dstCfg.DNSServers = srcCfg.DNSServers
+	}
+
+	if srcCfg.DataLength != 0 {
+		dstCfg.DataLength = srcCfg.DataLength
+	}
+
+	dstCfg.Enabled = srcCfg.Enabled
+
+	if len(srcCfg.ExcludeHosts) != 0 {
+		dstCfg.ExcludeHosts = srcCfg.ExcludeHosts
+	}
+
+	if srcCfg.HostTimeout != "" {
+		dstCfg.HostTimeout = srcCfg.HostTimeout
+	}
+
+	if srcCfg.IdleScan != (SSIdleScan{}) {
+		combineSSIdleScanCfg(&dstCfg.IdleScan, srcCfg.IdleScan)
+	}
+
+	dstCfg.IPFragment = srcCfg.IPFragment
+
+	if srcCfg.MaxParallelism != 0 {
+		dstCfg.MaxParallelism = srcCfg.MaxParallelism
+	}
+
+	if srcCfg.MaxPortNumber != 0 {
+		dstCfg.MaxPortNumber = srcCfg.MaxPortNumber
+	}
+
+	if srcCfg.MaxRetries != 0 {
+		dstCfg.MaxRetries = srcCfg.MaxRetries
+	}
+
+	if srcCfg.MinRate != "" {
+		dstCfg.MinRate = srcCfg.MinRate
+	}
+
+	dstCfg.NoDNSResolution = srcCfg.NoDNSResolution
+
+	dstCfg.OSFingerprinting = srcCfg.OSFingerprinting
+
+	dstCfg.PingScan = srcCfg.PingScan
+
+	if len(srcCfg.Proxies) != 0 {
+		dstCfg.Proxies = srcCfg.Proxies
+	}
+
+	dstCfg.RandomizeHosts = srcCfg.RandomizeHosts
+
+	if srcCfg.ScanDelay != "" {
+		dstCfg.ScanDelay = srcCfg.ScanDelay
+	}
+
+	if srcCfg.ScanFlags != "" {
+		dstCfg.ScanFlags = srcCfg.ScanFlags
+	}
+
+	if len(srcCfg.ScriptScan) != 0 {
+		dstCfg.ScriptScan = srcCfg.ScriptScan
+	}
+
+	if srcCfg.ServiceDB != "" {
+		dstCfg.ServiceDB = srcCfg.ServiceDB
+	}
+
+	if srcCfg.ServiceDetection {
+		dstCfg.ServiceDetection = srcCfg.ServiceDetection
+	}
+
+	if srcCfg.SourcePort != 0 {
+		dstCfg.SourcePort = srcCfg.SourcePort
+	}
+
+	if srcCfg.SpoofIP != "" {
+		dstCfg.SpoofIP = srcCfg.SpoofIP
+	}
+
+	dstCfg.SynScan = srcCfg.SynScan
+
+	if len(srcCfg.Targets) != 0 {
+		dstCfg.Targets = srcCfg.Targets
+	}
+
+	if srcCfg.Timeout != 0 {
+		dstCfg.Timeout = srcCfg.Timeout
+	}
+
+	if srcCfg.TimingTemplate != "" {
+		dstCfg.TimingTemplate = srcCfg.TimingTemplate
+	}
+
+	dstCfg.UDPScan = srcCfg.UDPScan
+}
+
+func combineSSIdleScanCfg(dstCfg *SSIdleScan, srcCfg SSIdleScan) {
+	if srcCfg.ZombieHost != "" {
+		dstCfg.ZombieHost = srcCfg.ZombieHost
+		dstCfg.ZombiePort = srcCfg.ZombiePort
+	}
 }

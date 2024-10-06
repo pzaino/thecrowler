@@ -1917,6 +1917,27 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 		processCtx.linksMutex.Unlock()
 	}
 
+	// Before we return, we need to call goBack to go back to the previous page
+	err = goBack(processCtx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error navigating back: %v\n", id, err)
+	}
+
+	return nil
+}
+
+// Go back to the previous page
+func goBack(processCtx *ProcessContext) error {
+	_, err := processCtx.wd.ExecuteScript("window.history.back();", nil)
+	if err != nil {
+		return fmt.Errorf("Failed to navigate back: %v", err)
+	}
+	// Wait for the page to load after going back
+	delay := exi.GetFloat(config.Crawler.Interval)
+	if delay <= 0 {
+		delay = 3
+	}
+	time.Sleep(time.Second * time.Duration(delay))
 	return nil
 }
 
@@ -1936,9 +1957,6 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 			return err
 		}
 	}
-
-	// Get docType
-	docType := inferDocumentType(url.Link, &processCtx.wd)
 
 	// find the <a> element that contains the URL
 	element, err := processCtx.wd.FindElement(selenium.ByLinkText, url.Link)
@@ -1971,8 +1989,8 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Re-Get current URL (because some Action Rules may change the URL)
 	currentURL, _ = processCtx.wd.CurrentURL()
 
-	// Re-Get docType (because some Action Rules may change the URL)
-	docType = inferDocumentType(currentURL, &processCtx.wd)
+	// Get docType (because some Action Rules may change the URL)
+	docType := inferDocumentType(currentURL, &processCtx.wd)
 
 	// Allocate pageCache object
 	pageCache := PageInfo{}
