@@ -397,49 +397,32 @@ type ExtDetectProviderConfig struct {
 //// ----------- Source Config ------------ ////
 
 type SourceConfig struct {
-	FormatVersion string    `json:"format_version"`
-	Author        string    `json:"author"`
-	CreatedAt     time.Time `json:"created_at"`
-	Description   string    `json:"description"`
-	SourceName    string    `json:"source_name"`
-
-	// Crawling and Fuzzing configuration
-	CrawlingConfig CrawlingConfig `json:"crawling_config"`
-
-	// Selenium and Crowler VDI configuration
-	SeleniumConfig []Selenium `json:"selenium_config"`
-
-	// Image storage API configuration (to store images on a separate server)
-	ImageStorageAPI FileStorageAPI `yaml:"image_storage"`
-
-	// File storage API configuration (to store files on a separate server)
-	FileStorageAPI FileStorageAPI `yaml:"file_storage"`
-
-	// HTTP Headers Info configuration
-	HTTPHeaders HTTPConfig `yaml:"http_headers"`
-
-	// NetworkInfo configuration
-	NetworkInfo NetworkInfo `yaml:"network_info"`
-
-	// Rules configuration
-	ExecutionPlan []ExecutionPlanItem `json:"execution_plan"`
+	Version        string                 `json:"version" yaml:"version" validate:"required,version_format"`               // Version of the source configuration
+	FormatVersion  string                 `json:"format_version" yaml:"format_version" validate:"required,version_format"` // Regex for version format validation
+	Author         string                 `json:"author,omitempty" yaml:"author,omitempty"`
+	CreatedAt      time.Time              `json:"created_at,omitempty" yaml:"created_at,omitempty" validate:"datetime_format"` // Date-time formatted as string
+	Description    string                 `json:"description,omitempty" yaml:"description,omitempty"`
+	SourceName     string                 `json:"source_name" yaml:"source_name" validate:"required"`
+	CrawlingConfig CrawlingConfig         `json:"crawling_config" yaml:"crawling_config" validate:"required"`
+	ExecutionPlan  []ExecutionPlanItem    `json:"execution_plan,omitempty" yaml:"execution_plan,omitempty"`
+	Custom         map[string]interface{} `json:"custom,omitempty" yaml:"custom,omitempty"` // Flexible custom configuration
 }
 
 type CrawlingConfig struct {
-	Site string `json:"site"`
+	Site string `json:"site" yaml:"site" validate:"required,url"`
 }
 
 type ExecutionPlanItem struct {
-	Label                string                 `json:"label"`
-	Conditions           Condition              `json:"conditions"`
-	Rulesets             []string               `json:"rulesets,omitempty"`
-	RuleGroups           []string               `json:"rule_groups,omitempty"`
-	Rules                []string               `json:"rules,omitempty"`
-	AdditionalConditions map[string]interface{} `json:"additional_conditions,omitempty"`
+	Label                string                 `json:"label" yaml:"label" validate:"required"`
+	Conditions           Condition              `json:"conditions" yaml:"conditions" validate:"required"`
+	Rulesets             []string               `json:"rulesets,omitempty" yaml:"rulesets,omitempty"`
+	RuleGroups           []string               `json:"rule_groups,omitempty" yaml:"rule_groups,omitempty"`
+	Rules                []string               `json:"rules,omitempty" yaml:"rules,omitempty"`
+	AdditionalConditions map[string]interface{} `json:"additional_conditions,omitempty" yaml:"additional_conditions,omitempty"`
 }
 
 type Condition struct {
-	UrlPatterns []string `json:"url_patterns"`
+	UrlPatterns []string `json:"url_patterns" yaml:"url_patterns" validate:"required"`
 }
 
 type FileReader interface {

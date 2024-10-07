@@ -49,8 +49,8 @@ deployed in a containerized environment.
 - [How to use it?](#how-to-use-it)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
-    - [Easy Installation and deployment](#easy-installation-and-deployment)
-    - [If you're planning to install it manually](#if-youre-planning-to-install-it-manually)
+    - [Easy Installation and deployment](#1-easy-installation-and-deployment)
+    - [If you're planning to install it manually](#2-if-youre-planning-to-install-it-manually)
     - [Build from source](#build-from-source)
 - [Production](#production)
 - [DB Maintenance](#db-maintenance)
@@ -158,7 +158,7 @@ and go straight to the **Installation** section.
 
 ### Installation
 
-#### Easy Installation and deployment
+#### 1. Easy Installation and deployment
 
 The **easiest way** to install the CROWler is to use the docker compose file.
 To do so, follow the [instructions here](doc/docker_build.md).
@@ -172,16 +172,19 @@ need to build the CROWler for the `arm64` platform. To do so, the easier way
 is to build the CROWler with the `docker-build.sh` script directly on the
 Raspberry Pi.
 
-#### If you're planning to install it manually
+#### 2. If you're planning to install it manually
 
-If you're planning to install the CROWler manually, you'll need to install
-the following Docker container:
+If, instead, you're planning to install the CROWler manually, you'll need to
+install the following Docker container:
 
 - [PostgreSQL Container](https://hub.docker.com/_/postgres)
   - Postgres 15 up (for both ARM and x86) are supported at the moment.
   - And then run the DB Schema setup script on it (make sure you check the
     section of the db schema with the user credentials and set those SQL
     variables correctly)
+
+- Also please note: The Crowler will need its VDI image to be built, so you'll
+  need to build the VDI image as well.
 
 ### Build from source
 

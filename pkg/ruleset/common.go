@@ -396,7 +396,7 @@ func getPluginName(pluginBody, file string) string {
 // loadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
 func loadRulesFromConfig(schema *jsonschema.Schema, config cfg.RulesetConfig) (*[]Ruleset, error) {
 	if config.Path == nil {
-		return nil, fmt.Errorf(errEmptyPath)
+		return nil, fmt.Errorf("%s", errEmptyPath)
 	}
 	if config.Host == "" {
 		// Rules are stored locally
@@ -472,7 +472,7 @@ func findScrapingRuleByPath(parsedPath string, rules []ScrapingRule) (*ScrapingR
 			}
 		}
 	}
-	return nil, fmt.Errorf(errScrapingNotFound)
+	return nil, fmt.Errorf("%s", errScrapingNotFound)
 }
 
 // LoadSchema loads the JSON Schema from the specified file and returns a pointer to the created Schema.
@@ -501,12 +501,12 @@ func LoadSchema(schemaPath string) (*jsonschema.Schema, error) {
 
 func PrepareURLForSearch(urlStr string) (string, error) {
 	if strings.TrimSpace(urlStr) == "" {
-		return "", fmt.Errorf(errEmptyURL)
+		return "", fmt.Errorf("%s", errEmptyURL)
 	}
 
 	_, err := url.Parse(urlStr)
 	if err != nil {
-		return "", fmt.Errorf(errInvalidURL)
+		return "", fmt.Errorf("%s", errInvalidURL)
 	}
 
 	return strings.ToLower(strings.TrimSpace(urlStr)), nil
@@ -514,14 +514,38 @@ func PrepareURLForSearch(urlStr string) (string, error) {
 
 func PrepareNameForSearch(name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf(errEmptyName)
+		return "", fmt.Errorf("%s", errEmptyName)
 	}
 	return strings.ToLower(strings.TrimSpace(name)), nil
 }
 
 func PreparePathForSearch(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
-		return "", fmt.Errorf(errEmptyPath)
+		return "", fmt.Errorf("%s", errEmptyPath)
 	}
 	return strings.ToLower(strings.TrimSpace(path)), nil
+}
+
+func IsValidURL(urlStr string) bool {
+	urlStr = strings.TrimSpace(urlStr)
+	if urlStr == "" {
+		return false
+	}
+
+	_, err := url.Parse(urlStr)
+	if err != nil {
+		return false
+	}
+
+	// Check if it has a valid scheme
+	// "*" is a valid here as it's a wildcard
+	if urlStr != "*" &&
+		!strings.HasPrefix(urlStr, "http://") &&
+		!strings.HasPrefix(urlStr, "https://") &&
+		!strings.HasPrefix(urlStr, "ftp://") &&
+		!strings.HasPrefix(urlStr, "ftps://") {
+		return false
+	}
+
+	return true
 }

@@ -9,7 +9,7 @@ type: "object"
 properties:
   version:
     title: "CROWler Configuration version"
-    description: "This is the version of the CROWler configuration."
+    description: "This is the version of the CROWler configuration. This is for you to version your work."
     type: "string"
     pattern: "^\\d+\\.\\d+\\.\\d+$"
   author:
@@ -18,7 +18,7 @@ properties:
     type: "string"
   description:
     title: "CROWler Configuration description"
-    description: "Local configuration for The CROWler."
+    description: "A description field."
     type: "string"
   created_at:
     title: "CROWler Configuration creation date"
@@ -257,11 +257,12 @@ properties:
         - "random(random(1,3), random(5,8))"
       browsing_mode:
         title: "CROWler Engine Browsing Mode"
-        description: "This is the 'default' browsing mode that the CROWler Engine will use to crawl websites. For example, recursive, human, or fuzzing."
+        description: "This is the 'default' browsing mode that the CROWler Engine will use to crawl websites. For example, recursive, human, or fuzzing.\n- default or empty string means use recursive mode.\n- recursive means the CROWler will crawl websites in a recursive way.\n- right_click_recursive means the CROWler will crawl websites in a right-click recursive way.\n- human means the CROWler will crawl websites in a human way.\n- fuzzing means the CROWler will crawl websites by fuzzing URL and Query Parameters (this also requires crawling rules!)."
         type: "string"
         enum:
         - "default"
         - "recursive"
+        - "right_click_recursive"
         - "human"
         - "fuzzing"
         - ""

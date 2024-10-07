@@ -113,6 +113,23 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.PipelineRunning = 1
 	processCtx.SelInstance = sel
 
+	var err error
+	// Combine default configuration with the source configuration
+	if processCtx.source.Config != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Custom Source configuration found, proceeding to combine it with the default one for this source...")
+		processCtx.config, err = cfg.CombineConfig(processCtx.config, *processCtx.source.Config)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Source configuration combined successfully.")
+			//cmn.DebugMsg(cmn.DbgLvlDebug5, "Default configuration: %+v", config)
+			//cmn.DebugMsg(cmn.DbgLvlDebug5, "Source configuration: %+v", processCtx.config)
+		}
+	}
+
+	// Log the crawling process
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Crawling using: %s", processCtx.config.Crawler.BrowsingMode)
+
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
 	if !IsValidURIProtocol(args.Src.URL) {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
@@ -132,8 +149,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 
 	// Initialize the Selenium instance
-	var err error
-	if err := processCtx.ConnectToVDI(sel); err != nil {
+	if err = processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		processCtx.Status.EndTime = time.Now()
@@ -147,7 +163,8 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	defer processCtx.WG.Done()
 
 	// Crawl the initial URL and get the HTML content
-	pageSource, err := processCtx.CrawlInitialURL(sel)
+	var pageSource selenium.WebDriver
+	pageSource, err = processCtx.CrawlInitialURL(sel)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 		processCtx.Status.EndTime = time.Now()
@@ -161,7 +178,8 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.TakeScreenshot(pageSource, args.Src.URL, processCtx.fpIdx)
 
 	// Extract the HTML content and extract links
-	htmlContent, err := pageSource.PageSource()
+	var htmlContent string
+	htmlContent, err = pageSource.PageSource()
 	if err != nil {
 		// Return the Selenium instance to the channel
 		// and update the source state in the database
@@ -270,12 +288,12 @@ func NewProcessContext(args Pars) *ProcessContext {
 		source: &args.Src,
 		db:     &args.DB,
 		sel:    args.Sel,
-		config: config,
 		re:     args.RE,
 		SelID:  args.SelIdx,
 		Status: args.Status,
 		WG:     args.WG,
 	}
+	newPCtx.config = *cfg.DeepCopyConfig(&config)
 	newPCtx.visitedLinks = make(map[string]bool)
 	return &newPCtx
 }
@@ -344,18 +362,8 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 		return pageSource, err
 	}
 
-	// Continue with extracting page info and indexing
-	pageInfo := extractPageInfo(&pageSource, ctx, docType)
-	pageInfo.DetectedType = docType
-	pageInfo.HTTPInfo = ctx.hi
-	pageInfo.NetInfo = ctx.ni
-	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
-
-	// Collect Navigation Timing metrics
-	collectNavigationMetrics(&ctx.wd, &pageInfo)
-
-	// Collect Page logs
-	collectPageLogs(&pageSource, &pageInfo)
+	// Create a new PageInfo struct
+	var pageInfo PageInfo
 
 	// Detect technologies used on the page
 	detectCtx := detect.DetectionContext{
@@ -372,6 +380,19 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	if detectedTech != nil {
 		pageInfo.DetectedTech = (*detectedTech)
 	}
+
+	// Continue with extracting page info and indexing
+	extractPageInfo(&pageSource, ctx, docType, &pageInfo)
+	pageInfo.DetectedType = docType
+	pageInfo.HTTPInfo = ctx.hi
+	pageInfo.NetInfo = ctx.ni
+	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
+
+	// Collect Navigation Timing metrics
+	collectNavigationMetrics(&ctx.wd, &pageInfo)
+
+	// Collect Page logs
+	collectPageLogs(&pageSource, &pageInfo)
 
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
@@ -633,13 +654,13 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	}
 
 	// Call GetHTTPInfo to retrieve HTTP header information
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP Headers information for %s...", ctx.source.URL)
 	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
 	ctx.Status.HTTPInfoRunning = 2
 
 	// Check for errors
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "while retrieving HTTP Information: %v", ctx.source.URL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "while retrieving HTTP Headers Information: %v", ctx.source.URL, err)
 		ctx.Status.HTTPInfoRunning = 3
 		return
 	}
@@ -911,6 +932,12 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
 
+	detectedTechJSON, err := json.Marshal((*pageInfo).DetectedTech)
+	if err != nil {
+		detectedTechJSON = []byte{}
+	}
+
+	var scrapedDataJSON []byte
 	if len((*pageInfo).ScrapedData) > 0 {
 		scrapedDoc1 := make(map[string]interface{})
 		// Transform the scraped data into a JSON object
@@ -935,7 +962,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		scrapedDoc1 = map[string]interface{}{"scraped_data": scrapedDoc1}
 
 		// Convert the scraped data to JSON
-		scrapedDataJSON, err := json.Marshal(scrapedDoc1)
+		scrapedDataJSON, err = json.Marshal(scrapedDoc1)
 		if err != nil {
 			return err
 		}
@@ -978,15 +1005,21 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		//fmt.Println(string(detailsJSON))
 	}
 
+	// Extract Scraped Data and Detected Tech from detailsJSON
+
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
+	bytesToHash := []byte{}
 	if len((*pageInfo).BodyText) > 0 {
-		hasher.Write([]byte((*pageInfo).BodyText))
+		bytesToHash = []byte((*pageInfo).BodyText)
 	} else if len((*pageInfo).HTML) > 0 {
-		hasher.Write([]byte((*pageInfo).HTML))
+		bytesToHash = []byte((*pageInfo).HTML)
 	} else {
 		hasher.Write([]byte(detailsJSON))
 	}
+	bytesToHash = append(bytesToHash, scrapedDataJSON...)
+	bytesToHash = append(bytesToHash, detectedTechJSON...)
+	hasher.Write(bytesToHash)
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Get HTML and text Content
@@ -1313,7 +1346,7 @@ func docTypeIsHTML(mime string) bool {
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
-func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType string) PageInfo {
+func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType string, PageCache *PageInfo) {
 	currentURL, _ := (*webPage).CurrentURL()
 
 	// Detect Object Type
@@ -1331,7 +1364,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
-			return PageInfo{} // Return an empty struct in case of an error
+			return
 		}
 
 		// Run scraping rules if any
@@ -1402,16 +1435,15 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		}
 	}
 
-	return PageInfo{
-		Title:        title,
-		Summary:      summary,
-		BodyText:     bodyText,
-		HTML:         htmlContent,
-		MetaTags:     metaTags,
-		DetectedLang: detectLang((*webPage)),
-		DetectedType: objType,
-		ScrapedData:  scrapedList,
-	}
+	// Update the PageInfo object
+	(*PageCache).Title = title
+	(*PageCache).Summary = summary
+	(*PageCache).BodyText = bodyText
+	(*PageCache).HTML = htmlContent
+	(*PageCache).MetaTags = metaTags
+	(*PageCache).DetectedLang = detectLang((*webPage))
+	(*PageCache).DetectedType = objType
+	(*PageCache).ScrapedData = scrapedList
 }
 
 func detectLang(wd selenium.WebDriver) string {
@@ -1523,14 +1555,16 @@ func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkIte
 
 	// Find all the links in the document
 	var links []LinkItem
-	if ctx.config.Crawler.BrowsingMode == "human" || ctx.config.Crawler.BrowsingMode == "recursive" {
+	if ctx.config.Crawler.BrowsingMode == "human" ||
+		ctx.config.Crawler.BrowsingMode == "recursive" ||
+		ctx.config.Crawler.BrowsingMode == "right_click_recursive" {
 		doc.Find("a").Each(func(index int, item *goquery.Selection) {
 			linkTag := item
 			link, _ := linkTag.Attr("href")
 			link = normalizeURL(link, 0)
 			linkItem := LinkItem{
-				PageURL:   url,
-				Link:      link,
+				PageURL:   url,  // URL of the page where the link was found (CurrentURL)
+				Link:      link, // Link to crawl
 				ElementID: item.AttrOr("id", ""),
 			}
 			if link != "" && IsValidURL(link) {
@@ -1675,23 +1709,35 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 		// Process the job
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
 		var err error
-		if processCtx.config.Crawler.BrowsingMode == "recursive" {
+		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "recursive" {
 			// Recursive Mode
 			urlLink := url.Link
 			if strings.HasPrefix(url.Link, "/") {
 				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
 			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
-		} else if processCtx.config.Crawler.BrowsingMode == "human" {
+		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "right_click_recursive" {
+			// Right Click Recursive Mode
+			err = rightClick(processCtx, id, url)
+		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "human" {
 			// Human Mode
 			// Find the <a> element that contains the URL and click it
 			err = clickLink(processCtx, id, url)
+		} else {
+			// Fuzzing Mode
+			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
+			urlLink := url.Link
+			if strings.HasPrefix(url.Link, "/") {
+				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
+			}
+			err = processJob(processCtx, id, urlLink, skippedURLs)
 		}
 		if err == nil {
 			processCtx.Status.TotalPages++
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
 		} else {
 			processCtx.Status.TotalErrors++
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s with an error: %v\n", id, url.Link, err)
 		}
 
 		// Clear the skipped URLs
@@ -1721,16 +1767,22 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 	return false
 }
 
-func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
-	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
+// rightClick simulates right-clicking on a link and opening it in the current tab using custom JavaScript
+func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
+	// Lock the mutex to ensure only one goroutine accesses the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
 
+	var err error
+
+	// Check if we are on the right page that should contain url.Link:
 	pageURL, err := processCtx.wd.CurrentURL()
 	if err != nil {
 		return err
 	}
-	if url.PageURL != pageURL {
+
+	// If we are not already on the right page that should contain url.Link, navigate to it
+	if (url.PageURL != pageURL) && (url.PageURL+"/" != pageURL) {
 		// Navigate to the page if not already there
 		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
 		if err != nil {
@@ -1738,8 +1790,193 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 		}
 	}
 
-	// Get docType
+	// JavaScript to simulate right-click and open the link in the same tab
+	jsScript := `
+		(function(url) {
+			var link = document.querySelector('a[href="' + url + '"]');
+			if (link) {
+				// Simulate right-click event
+				var rightClickEvent = new MouseEvent('contextmenu', {
+					bubbles: true,
+					cancelable: true,
+					view: window,
+					button: 2  // Right-click
+				});
+				link.dispatchEvent(rightClickEvent);
+
+				// Open the link in the same tab
+				window.location.href = link.href;
+				return { success: "Opened link in the same tab: " + link.href };
+			} else {
+				return { error: "Link not found for the URL: " + url };
+			}
+		})(arguments[0]);
+	`
+
+	// Execute the custom JavaScript to right-click and open the link
+	_, err = processCtx.wd.ExecuteScript(jsScript, []interface{}{url.Link})
+	if err != nil {
+		return err
+	}
+
+	// Wait for the page to load (adjustable delay based on configuration)
+	delay := exi.GetFloat(config.Crawler.Interval)
+	if delay <= 0 {
+		delay = 3
+	}
+	time.Sleep(time.Second * time.Duration(delay))
+
+	// Check current URL (because some Action Rules may change the URL)
+	currentURL, _ := processCtx.wd.CurrentURL()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab and opened: %s\n", id, url.Link, currentURL)
+
+	// Execute any action rules after the link is opened
+	processActionRules(&processCtx.wd, processCtx, currentURL)
+
+	// Re-Check current URL (because some Action Rules may change the URL)
+	currentURL, _ = processCtx.wd.CurrentURL()
+
+	// Allocate pageCache object
+	pageCache := PageInfo{}
+
+	// Collect Detected Technologies
+	detectCtx := detect.DetectionContext{
+		CtxID:        processCtx.GetContextID(),
+		TargetURL:    currentURL,
+		ResponseBody: nil,
+		Header:       nil,
+		HSSLInfo:     nil,
+		WD:           &processCtx.wd,
+		RE:           processCtx.re,
+		Config:       &processCtx.config,
+	}
+	detectedTech := detect.DetectTechnologies(&detectCtx)
+	if detectedTech != nil {
+		pageCache.DetectedTech = *detectedTech
+	}
+
+	// Extract page information and cache it for indexing
 	docType := inferDocumentType(url.Link, &processCtx.wd)
+	extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
+	pageCache.sourceID = processCtx.source.ID
+	// Extract links from the Current Page
+	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
+	/*
+		urlItem := LinkItem{
+			PageURL:   url.Link,
+			Link:      currentURL,
+			ElementID: "",
+		}
+		pageCache.Links = append(pageCache.Links, urlItem)
+	*/
+
+	// Collect performance metrics (optional)
+	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, errFailedToRetrieveMetrics, err)
+	} else {
+		for key, value := range metrics {
+			switch key {
+			case "dns_lookup":
+				pageCache.PerfInfo.DNSLookup = value.(float64)
+			case "tcp_connection":
+				pageCache.PerfInfo.TCPConnection = value.(float64)
+			case "time_to_first_byte":
+				pageCache.PerfInfo.TimeToFirstByte = value.(float64)
+			case "content_load":
+				pageCache.PerfInfo.ContentLoad = value.(float64)
+			case "page_load":
+				pageCache.PerfInfo.PageLoad = value.(float64)
+			}
+		}
+	}
+
+	// Collect performance logs
+	logs, err := processCtx.wd.Log("performance")
+	if err != nil {
+		return err
+	}
+
+	// Parse and store performance logs
+	for _, entry := range logs {
+		var log PerformanceLogEntry
+		err := json.Unmarshal([]byte(entry.Message), &log)
+		if err != nil {
+			return err
+		}
+		if len(log.Message.Params.ResponseInfo.URL) > 0 {
+			pageCache.PerfInfo.LogEntries = append(pageCache.PerfInfo.LogEntries, log)
+		}
+	}
+
+	// Clear HTML and content if not required
+	if !processCtx.config.Crawler.CollectHTML {
+		pageCache.HTML = ""
+	}
+	if !processCtx.config.Crawler.CollectContent {
+		pageCache.BodyText = ""
+	}
+
+	// Index the page after collecting data
+	pageCache.Config = &processCtx.config
+	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
+	}
+
+	// Mark the link as visited and add new links to the process context
+	processCtx.visitedLinks[url.Link] = true
+	processCtx.visitedLinks[currentURL] = true
+
+	// Add new links to the process context
+	if len(pageCache.Links) > 0 {
+		processCtx.linksMutex.Lock()
+		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
+		processCtx.linksMutex.Unlock()
+	}
+
+	// Before we return, we need to call goBack to go back to the previous page
+	err = goBack(processCtx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error navigating back: %v\n", id, err)
+	}
+
+	return nil
+}
+
+// Go back to the previous page
+func goBack(processCtx *ProcessContext) error {
+	_, err := processCtx.wd.ExecuteScript("window.history.back();", nil)
+	if err != nil {
+		return fmt.Errorf("Failed to navigate back: %v", err)
+	}
+	// Wait for the page to load after going back
+	delay := exi.GetFloat(config.Crawler.Interval)
+	if delay <= 0 {
+		delay = 3
+	}
+	time.Sleep(time.Second * time.Duration(delay))
+	return nil
+}
+
+func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
+	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
+	processCtx.getURLMutex.Lock()
+	defer processCtx.getURLMutex.Unlock()
+
+	// Check if we are on the right page that should contain url.Link:
+	pageURL, err := processCtx.wd.CurrentURL()
+	if err != nil {
+		return err
+	}
+	if (url.PageURL != pageURL) && (url.PageURL+"/" != pageURL) {
+		// Navigate to the page if not already there
+		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
+		if err != nil {
+			return err
+		}
+	}
 
 	// find the <a> element that contains the URL
 	element, err := processCtx.wd.FindElement(selenium.ByLinkText, url.Link)
@@ -1769,8 +2006,33 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Execute Action Rules
 	processActionRules(&processCtx.wd, processCtx, url.Link)
 
+	// Re-Get current URL (because some Action Rules may change the URL)
+	currentURL, _ = processCtx.wd.CurrentURL()
+
+	// Get docType (because some Action Rules may change the URL)
+	docType := inferDocumentType(currentURL, &processCtx.wd)
+
+	// Allocate pageCache object
+	pageCache := PageInfo{}
+
+	// Collect Detected Technologies
+	detectCtx := detect.DetectionContext{
+		CtxID:        processCtx.GetContextID(),
+		TargetURL:    currentURL,
+		ResponseBody: nil,
+		Header:       nil,
+		HSSLInfo:     nil,
+		WD:           &processCtx.wd,
+		RE:           processCtx.re,
+		Config:       &processCtx.config,
+	}
+	detectedTech := detect.DetectTechnologies(&detectCtx)
+	if detectedTech != nil {
+		pageCache.DetectedTech = *detectedTech
+	}
+
 	// Extract page information
-	pageCache := extractPageInfo(&processCtx.wd, processCtx, docType)
+	extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
 	urlItem := LinkItem{
@@ -1858,22 +2120,16 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		return err
 	}
 
-	// Extract page information
-	pageCache := extractPageInfo(&htmlContent, processCtx, docType)
-	pageCache.sourceID = processCtx.source.ID
-	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url)...)
-	pageCache.Links = append(pageCache.Links, skippedURLs...)
+	// Re-Get current URL (because some Action Rules may change the URL)
+	currentURL, _ := processCtx.wd.CurrentURL()
 
-	// Collect Navigation Timing metrics
-	collectNavigationMetrics(&processCtx.wd, &pageCache)
-
-	// Collect Page logs
-	collectPageLogs(&htmlContent, &pageCache)
+	// Create PageInfo object to store the extracted information
+	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
 	detectCtx := detect.DetectionContext{
 		CtxID:        processCtx.GetContextID(),
-		TargetURL:    url,
+		TargetURL:    currentURL,
 		ResponseBody: nil,
 		Header:       nil,
 		HSSLInfo:     nil,
@@ -1886,6 +2142,18 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		pageCache.DetectedTech = *detectedTech
 	}
 
+	// Extract page information
+	extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
+	pageCache.sourceID = processCtx.source.ID
+	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
+	pageCache.Links = append(pageCache.Links, skippedURLs...)
+
+	// Collect Navigation Timing metrics
+	collectNavigationMetrics(&processCtx.wd, &pageCache)
+
+	// Collect Page logs
+	collectPageLogs(&htmlContent, &pageCache)
+
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
 		pageCache.HTML = ""
@@ -1897,7 +2165,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 
 	pageCache.Config = &processCtx.config
-	_, err = indexPage(*processCtx.db, url, &pageCache)
+	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url, err)
 	}
@@ -1960,7 +2228,7 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	var retries int
 	if c.UseService {
 		for {
-			service, err = selenium.NewSeleniumService(fmt.Sprintf(protocol+"://"+c.Host+":%d/wd/hub"), c.Port)
+			service, err = selenium.NewSeleniumService(fmt.Sprintf(protocol+"://"+c.Host+":%d/wd/hub", c.Port), c.Port)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium service started successfully.")
 				break

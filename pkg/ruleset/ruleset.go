@@ -33,6 +33,15 @@ func NewRuleset(name string) Ruleset {
 	}
 }
 
+/// --- Actions --- ///
+
+// SetEnv sets the environment variables for the RuleGroup.
+func (rs *Ruleset) SetEnv(CtxID string) {
+	for i := 0; i < len(rs.RuleGroups); i++ {
+		rs.RuleGroups[i].SetEnv(CtxID)
+	}
+}
+
 /// --- Checks --- ///
 
 // IsValid checks if the Ruleset is valid.
@@ -170,7 +179,7 @@ func (rs *Ruleset) GetRuleGroupByName(name string) (RuleGroup, error) {
 			return rg, nil
 		}
 	}
-	return RuleGroup{}, fmt.Errorf(errRuleGroupNotFound)
+	return RuleGroup{}, fmt.Errorf("%s", errRuleGroupNotFound)
 }
 
 // GetRuleGroupByURL returns the rule group for the specified URL.
@@ -185,7 +194,7 @@ func (rs *Ruleset) GetRuleGroupByURL(urlStr string) (RuleGroup, error) {
 			return rg, nil
 		}
 	}
-	return RuleGroup{}, fmt.Errorf(errRuleGroupNotFound)
+	return RuleGroup{}, fmt.Errorf("%s", errRuleGroupNotFound)
 }
 
 // GetActionRuleByName returns the action rule with the specified name.
@@ -202,7 +211,7 @@ func (rs *Ruleset) GetActionRuleByName(name string) (ActionRule, error) {
 			}
 		}
 	}
-	return ActionRule{}, fmt.Errorf(errActionNotFound)
+	return ActionRule{}, fmt.Errorf("%s", errActionNotFound)
 }
 
 // GetActionRuleByURL returns the action rule for the specified URL.
@@ -219,7 +228,7 @@ func (rs *Ruleset) GetActionRuleByURL(urlStr string) (ActionRule, error) {
 			}
 		}
 	}
-	return ActionRule{}, fmt.Errorf(errActionNotFound)
+	return ActionRule{}, fmt.Errorf("%s", errActionNotFound)
 }
 
 // GetScrapingRuleByName returns the scraping rule with the specified name.
@@ -236,7 +245,7 @@ func (rs *Ruleset) GetScrapingRuleByName(name string) (ScrapingRule, error) {
 			}
 		}
 	}
-	return ScrapingRule{}, fmt.Errorf(errScrapingNotFound)
+	return ScrapingRule{}, fmt.Errorf("%s", errScrapingNotFound)
 }
 
 // GetScrapingRuleByPath returns the scraping rule for the specified path.
@@ -255,7 +264,7 @@ func (rs *Ruleset) GetScrapingRuleByPath(path string) (ScrapingRule, error) {
 			}
 		}
 	}
-	return ScrapingRule{}, fmt.Errorf(errScrapingNotFound)
+	return ScrapingRule{}, fmt.Errorf("%s", errScrapingNotFound)
 }
 
 // GetScrapingRuleByURL returns the scraping rule for the specified URL.
@@ -274,7 +283,7 @@ func (rs *Ruleset) GetScrapingRuleByURL(urlStr string) (ScrapingRule, error) {
 			}
 		}
 	}
-	return ScrapingRule{}, fmt.Errorf(errScrapingNotFound)
+	return ScrapingRule{}, fmt.Errorf("%s", errScrapingNotFound)
 }
 
 // GetEnabledRulesByGroupName returns a slice of Rule containing only the enabled rules for the specified group.
