@@ -61,7 +61,7 @@ func validateURL(inputURL string) (bool, error) {
 
 // ExtractHTTPInfo extracts HTTP header information based on the provided configuration
 func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) (*HTTPDetails, error) {
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Extracting HTTP information for URL: %s", config.URL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Extracting HTTP Headers information for URL: %s", config.URL)
 
 	// Validate the URL
 	if ok, err := validateURL(config.URL); !ok {

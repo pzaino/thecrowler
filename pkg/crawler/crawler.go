@@ -654,13 +654,13 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	}
 
 	// Call GetHTTPInfo to retrieve HTTP header information
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP information for %s...", ctx.source.URL)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP Headers information for %s...", ctx.source.URL)
 	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
 	ctx.Status.HTTPInfoRunning = 2
 
 	// Check for errors
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "while retrieving HTTP Information: %v", ctx.source.URL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "while retrieving HTTP Headers Information: %v", ctx.source.URL, err)
 		ctx.Status.HTTPInfoRunning = 3
 		return
 	}
@@ -1563,8 +1563,8 @@ func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkIte
 			link, _ := linkTag.Attr("href")
 			link = normalizeURL(link, 0)
 			linkItem := LinkItem{
-				PageURL:   url,
-				Link:      link,
+				PageURL:   url,  // URL of the page where the link was found (CurrentURL)
+				Link:      link, // Link to crawl
 				ElementID: item.AttrOr("id", ""),
 			}
 			if link != "" && IsValidURL(link) {
@@ -1709,17 +1709,17 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 		// Process the job
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
 		var err error
-		if processCtx.config.Crawler.BrowsingMode == "recursive" {
+		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "recursive" {
 			// Recursive Mode
 			urlLink := url.Link
 			if strings.HasPrefix(url.Link, "/") {
 				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
 			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
-		} else if processCtx.config.Crawler.BrowsingMode == "right_click_recursive" {
+		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "right_click_recursive" {
 			// Right Click Recursive Mode
 			err = rightClick(processCtx, id, url)
-		} else if processCtx.config.Crawler.BrowsingMode == "human" {
+		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "human" {
 			// Human Mode
 			// Find the <a> element that contains the URL and click it
 			err = clickLink(processCtx, id, url)
@@ -1732,6 +1732,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
 		} else {
 			processCtx.Status.TotalErrors++
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s with an error: %v\n", id, url.Link, err)
 		}
 
 		// Clear the skipped URLs
@@ -1767,13 +1768,17 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
 
+	var err error
+
+	// Check if we are on the right page that should contain url.Link:
 	pageURL, err := processCtx.wd.CurrentURL()
 	if err != nil {
 		return err
 	}
 
-	// If we are not already on the target page, navigate to the correct page
-	if url.PageURL != pageURL {
+	// If we are not already on the right page that should contain url.Link, navigate to it
+	if (url.PageURL != pageURL) && (url.PageURL+"/" != pageURL) {
+		// Navigate to the page if not already there
 		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
 		if err != nil {
 			return err
@@ -1816,15 +1821,13 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 	time.Sleep(time.Second * time.Duration(delay))
 
-	// Verify the current URL after navigation
+	// Check current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
-	if currentURL != url.Link {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error navigating to %s: URL mismatch\n", id, url)
-		return errors.New("URL mismatch")
-	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab and opened: %s\n", id, url.Link, currentURL)
 
 	// Execute any action rules after the link is opened
-	processActionRules(&processCtx.wd, processCtx, url.Link)
+	processActionRules(&processCtx.wd, processCtx, currentURL)
 
 	// Re-Check current URL (because some Action Rules may change the URL)
 	currentURL, _ = processCtx.wd.CurrentURL()
@@ -1852,13 +1855,16 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	docType := inferDocumentType(url.Link, &processCtx.wd)
 	extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
 	pageCache.sourceID = processCtx.source.ID
+	// Extract links from the Current Page
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
-	urlItem := LinkItem{
-		PageURL:   url.Link,
-		Link:      currentURL,
-		ElementID: "",
-	}
-	pageCache.Links = append(pageCache.Links, urlItem)
+	/*
+		urlItem := LinkItem{
+			PageURL:   url.Link,
+			Link:      currentURL,
+			ElementID: "",
+		}
+		pageCache.Links = append(pageCache.Links, urlItem)
+	*/
 
 	// Collect performance metrics (optional)
 	metrics, err := retrieveNavigationMetrics(&processCtx.wd)
@@ -1916,6 +1922,9 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Mark the link as visited and add new links to the process context
 	processCtx.visitedLinks[url.Link] = true
+	processCtx.visitedLinks[currentURL] = true
+
+	// Add new links to the process context
 	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
@@ -1951,11 +1960,12 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
 
+	// Check if we are on the right page that should contain url.Link:
 	pageURL, err := processCtx.wd.CurrentURL()
 	if err != nil {
 		return err
 	}
-	if url.PageURL != pageURL {
+	if (url.PageURL != pageURL) && (url.PageURL+"/" != pageURL) {
 		// Navigate to the page if not already there
 		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
 		if err != nil {
@@ -2155,7 +2165,6 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url, err)
 	}
 	processCtx.visitedLinks[url] = true
-	processCtx.visitedLinks[currentURL] = true
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
