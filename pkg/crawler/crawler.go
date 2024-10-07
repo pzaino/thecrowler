@@ -1725,7 +1725,12 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 			err = clickLink(processCtx, id, url)
 		} else {
 			// Fuzzing Mode
-			err = fmt.Errorf("Not implemented yet!")
+			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
+			urlLink := url.Link
+			if strings.HasPrefix(url.Link, "/") {
+				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
+			}
+			err = processJob(processCtx, id, urlLink, skippedURLs)
 		}
 		if err == nil {
 			processCtx.Status.TotalPages++
