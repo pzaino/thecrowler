@@ -322,6 +322,7 @@ properties:
                         - "name"
                         - "tag_name"
                         - "element"
+                        - "js_path"
                         - "link_text"
                         - "partial_link_text"
                         - "plugin_call"

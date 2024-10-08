@@ -42,24 +42,22 @@ func processActionRules(wd *selenium.WebDriver, ctx *ProcessContext, url string)
 			configStr := string((*ctx.source.Config))
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
 		}
-	} else {
-		// Check for rules based on the URL
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Action rules...")
-		// If the URL matches a rule, execute it
-		processURLRules(wd, ctx, url)
 	}
+	// Check for rules based on the URL
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Action rules (if any)...")
+	// If the URL matches a rule, execute it
+	processURLRules(wd, ctx, url)
+
 }
 
 func processURLRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
 	rs, err := ctx.re.GetRulesetByURL(url)
-	if err == nil {
-		if rs != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
-			// Execute all the rules in the ruleset
-			executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
-			// Clean up non-persistent rules
-			cmn.KVStore.DeleteByCID(ctx.GetContextID())
-		}
+	if err == nil && rs != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
+		// Execute all the rules in the ruleset
+		executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
+		// Clean up non-persistent rules
+		cmn.KVStore.DeleteByCID(ctx.GetContextID())
 	} else {
 		rg, err := ctx.re.GetRuleGroupByURL(url)
 		if err == nil {
@@ -471,10 +469,10 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 
 	// Set correct button for click
 	var buttonName string
-	if button == 0 {
-		buttonName = "click"
-	} else if button == 2 {
+	if button == 2 {
 		buttonName = "right_click"
+	} else {
+		buttonName = "click"
 	}
 
 	// If the element is found, attempt to move the mouse and click using Rbee
@@ -845,57 +843,86 @@ func findElementBySelectorType(ctx *ProcessContext, wd *selenium.WebDriver, sele
 	var err error
 	var selector rules.Selector
 	for _, selector = range selectors {
-		wdf, err = findElementByType(wd, selector.SelectorType, selector.Selector)
+		wdf, err = findElementByType(ctx, wd, selector)
 		if err == nil && wdf != nil {
-			matchL2 := false
-			if strings.TrimSpace(selector.Attribute.Name) != "" {
-				attrValue, _ := wdf.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
-				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
-					matchL2 = true
-				}
-			} else {
-				matchL2 = true
-			}
-			matchL3 := false
-			if matchL3 && strings.TrimSpace(selector.Value) != "" {
-				if matchValue(ctx, wdf, selector) {
-					matchL3 = true
-				}
-			} else {
-				if matchL2 {
-					matchL3 = true
-				}
-			}
-			if matchL3 {
-				break
-			}
+			break
 		}
 	}
 
 	return wdf, selector, err
 }
 
-func findElementByType(wd *selenium.WebDriver, selectorType string, selector string) (selenium.WebElement, error) {
-	switch strings.ToLower(strings.TrimSpace(selectorType)) {
+func findElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rules.Selector) (selenium.WebElement, error) {
+	var elements []selenium.WebElement
+	var err error
+	selectorType := strings.TrimSpace(selector.SelectorType)
+	switch strings.ToLower(selectorType) {
 	case "css":
-		return (*wd).FindElement(selenium.ByCSSSelector, selector)
-	case "xpath":
-		return (*wd).FindElement(selenium.ByXPATH, selector)
+		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
 	case "id":
-		return (*wd).FindElement(selenium.ByID, selector)
+		elements, err = (*wd).FindElements(selenium.ByID, selector.Selector)
 	case "name":
-		return (*wd).FindElement(selenium.ByName, selector)
+		elements, err = (*wd).FindElements(selenium.ByName, selector.Selector)
 	case "linktext", "link_text":
-		return (*wd).FindElement(selenium.ByLinkText, selector)
+		elements, err = (*wd).FindElements(selenium.ByLinkText, selector.Selector)
 	case "partiallinktext", "partial_link_text":
-		return (*wd).FindElement(selenium.ByPartialLinkText, selector)
+		elements, err = (*wd).FindElements(selenium.ByPartialLinkText, selector.Selector)
 	case "tagname", "tag_name", "tag", "element":
-		return (*wd).FindElement(selenium.ByTagName, selector)
+		elements, err = (*wd).FindElements(selenium.ByTagName, selector.Selector)
 	case "class", "classname", "class_name":
-		return (*wd).FindElement(selenium.ByClassName, selector)
+		elements, err = (*wd).FindElements(selenium.ByClassName, selector.Selector)
+	case "js_path":
+		js := fmt.Sprintf("return document.querySelector(\"%s\");", selector.Selector)
+		res, err := (*wd).ExecuteScript(js, nil)
+		if err != nil {
+			return nil, fmt.Errorf("error executing JavaScript: %v", err)
+		}
+		if element, ok := res.(selenium.WebElement); ok {
+			elements = append(elements, element)
+		} else {
+			return nil, fmt.Errorf("no element found for JS Path: %s", selector.Selector)
+		}
+	case "xpath":
+		elements, err = (*wd).FindElements(selenium.ByXPATH, selector.Selector)
 	default:
 		return nil, fmt.Errorf("unsupported selector type: %s", selectorType)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("error finding element: %v", err)
+	}
+
+	// Check for the Value if provided
+	var element selenium.WebElement
+	for _, e := range elements {
+		matchL2 := false
+		if strings.TrimSpace(selector.Attribute.Name) != "" {
+			attrValue, _ := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+				matchL2 = true
+			}
+		} else {
+			matchL2 = true
+		}
+		matchL3 := false
+		if matchL2 && strings.TrimSpace(selector.Value) != "" {
+			if matchValue(ctx, e, selector) {
+				matchL3 = true
+			}
+		} else {
+			if matchL2 {
+				matchL3 = true
+			}
+		}
+		if matchL3 {
+			element = e
+			break
+		}
+	}
+	if element == nil {
+		return element, fmt.Errorf("element '%s' Not found", selector.Selector)
+	}
+
+	return element, nil
 }
 
 func matchValue(ctx *ProcessContext, wdf selenium.WebElement, selector rules.Selector) bool {
@@ -933,14 +960,12 @@ func matchValue(ctx *ProcessContext, wdf selenium.WebElement, selector rules.Sel
 				selValue = cmn.Float32SliceToString(rValue.Value.([]float32), "|")
 			case "[]bool":
 				selValue = cmn.BoolSliceToString(rValue.Value.([]bool), "|")
-			default:
-				selValue = ""
 			}
 
 		}
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Selector Value Resolved: '%s'", selValue)
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Selector Value Resolved: '%s'", selValue)
 
 	// Use Regex to match the selValue against the wdfText
 	regEx := regexp.MustCompile(selValue)

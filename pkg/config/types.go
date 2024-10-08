@@ -19,144 +19,144 @@ import "time"
 
 // FileStorageAPI is a generic File Storage API configuration
 type FileStorageAPI struct {
-	Host    string `yaml:"host"`    // Hostname of the API server
-	Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images" or Bucket name)
-	Port    int    `yaml:"port"`    // Port number of the API server
-	Region  string `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
-	Token   string `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
-	Secret  string `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
-	Timeout int    `yaml:"timeout"` // Timeout for API requests (in seconds)
-	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
-	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
+	Host    string `json:"host" yaml:"host"`       // Hostname of the API server
+	Path    string `json:"path" yaml:"path"`       // Path to the storage (e.g., "/tmp/images" or Bucket name)
+	Port    int    `json:"port" yaml:"port"`       // Port number of the API server
+	Region  string `json:"region" yaml:"region"`   // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string `json:"token" yaml:"token"`     // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string `json:"secret" yaml:"secret"`   // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int    `json:"timeout" yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string `json:"type" yaml:"type"`       // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode string `json:"sslmode" yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
 
 // Database represents the database configuration
 type Database struct {
-	Type         string `yaml:"type"`           // Type of database (e.g., "postgres", "mysql", "sqlite")
-	Host         string `yaml:"host"`           // Hostname of the database server
-	Port         int    `yaml:"port"`           // Port number of the database server
-	User         string `yaml:"user"`           // Username for database authentication
-	Password     string `yaml:"password"`       // Password for database authentication
-	DBName       string `yaml:"dbname"`         // Name of the database
-	RetryTime    int    `yaml:"retry_time"`     // Time to wait before retrying to connect to the database (in seconds)
-	PingTime     int    `yaml:"ping_time"`      // Time to wait before retrying to ping the database (in seconds)
-	SSLMode      string `yaml:"sslmode"`        // SSL mode for database connection (e.g., "disable")
-	OptimizeFor  string `yaml:"optimize_for"`   // Optimize for the database connection (e.g., "read", "write")
-	MaxConns     int    `yaml:"max_conns"`      // Maximum number of connections to the database
-	MaxIdleConns int    `yaml:"max_idle_conns"` // Maximum number of idle connections to the database
+	Type         string `json:"type" yaml:"type"`                     // Type of database (e.g., "postgres", "mysql", "sqlite")
+	Host         string `json:"host" yaml:"host"`                     // Hostname of the database server
+	Port         int    `json:"port" yaml:"port"`                     // Port number of the database server
+	User         string `json:"user" yaml:"user"`                     // Username for database authentication
+	Password     string `json:"password" yaml:"password"`             // Password for database authentication
+	DBName       string `json:"dbname" yaml:"dbname"`                 // Name of the database
+	RetryTime    int    `json:"retry_time" yaml:"retry_time"`         // Time to wait before retrying to connect to the database (in seconds)
+	PingTime     int    `json:"ping_time" yaml:"ping_time"`           // Time to wait before retrying to ping the database (in seconds)
+	SSLMode      string `json:"sslmode" yaml:"sslmode"`               // SSL mode for database connection (e.g., "disable")
+	OptimizeFor  string `json:"optimize_for" yaml:"optimize_for"`     // Optimize for the database connection (e.g., "read", "write")
+	MaxConns     int    `json:"max_conns" yaml:"max_conns"`           // Maximum number of connections to the database
+	MaxIdleConns int    `json:"max_idle_conns" yaml:"max_idle_conns"` // Maximum number of idle connections to the database
 }
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	Workers               int           `yaml:"workers"`                 // Number of crawler workers
-	Interval              string        `yaml:"interval"`                // Interval between crawler requests (in seconds)
-	Timeout               int           `yaml:"timeout"`                 // Timeout for crawler requests (in seconds)
-	Maintenance           int           `yaml:"maintenance"`             // Interval between crawler maintenance tasks (in seconds)
-	SourceScreenshot      bool          `yaml:"source_screenshot"`       // Whether to take a screenshot of the source page or not
-	FullSiteScreenshot    bool          `yaml:"full_site_screenshot"`    // Whether to take a screenshot of the full site or not
-	ScreenshotMaxHeight   int           `yaml:"screenshot_max_height"`   // Maximum height of the screenshot
-	ScreenshotSectionWait int           `yaml:"screenshot_section_wait"` // Time to wait before taking a screenshot of a section in seconds
-	MaxDepth              int           `yaml:"max_depth"`               // Maximum depth to crawl
-	MaxSources            int           `yaml:"max_sources"`             // Maximum number of sources to crawl
-	Delay                 string        `yaml:"delay"`                   // Delay between requests (in seconds)
-	BrowsingMode          string        `yaml:"browsing_mode"`           // Browsing type (e.g., "recursive", "human", "fuzzing")
-	MaxRetries            int           `yaml:"max_retries"`             // Maximum number of retries
-	MaxRedirects          int           `yaml:"max_redirects"`           // Maximum number of redirects
-	CollectHTML           bool          `yaml:"collect_html"`            // Whether to collect the HTML content or not
-	CollectImages         bool          `yaml:"collect_images"`          // Whether to collect the images or not
-	CollectFiles          bool          `yaml:"collect_files"`           // Whether to collect the files or not
-	CollectContent        bool          `yaml:"collect_content"`         // Whether to collect the content or not
-	CollectKeywords       bool          `yaml:"collect_keywords"`        // Whether to collect the keywords or not
-	CollectMetaTags       bool          `yaml:"collect_metatags"`        // Whether to collect the metatags or not
-	ReportInterval        int           `yaml:"report_time"`             // Time to wait before sending the report (in minutes)
-	CheckForRobots        bool          `yaml:"check_for_robots"`        // Whether to check for robots.txt or not
-	Control               ControlConfig `yaml:"control"`                 // Control/COnsole internal API
+	Workers               int           `json:"workers" yaml:"workers"`                                 // Number of crawler workers
+	Interval              string        `json:"interval" yaml:"interval"`                               // Interval between crawler requests (in seconds)
+	Timeout               int           `json:"timeout" yaml:"timeout"`                                 // Timeout for crawler requests (in seconds)
+	Maintenance           int           `json:"maintenance" yaml:"maintenance"`                         // Interval between crawler maintenance tasks (in seconds)
+	SourceScreenshot      bool          `json:"source_screenshot" yaml:"source_screenshot"`             // Whether to take a screenshot of the source page or not
+	FullSiteScreenshot    bool          `json:"full_site_screenshot" yaml:"full_site_screenshot"`       // Whether to take a screenshot of the full site or not
+	ScreenshotMaxHeight   int           `json:"screenshot_max_height" yaml:"screenshot_max_height"`     // Maximum height of the screenshot
+	ScreenshotSectionWait int           `json:"screenshot_section_wait" yaml:"screenshot_section_wait"` // Time to wait before taking a screenshot of a section in seconds
+	MaxDepth              int           `json:"max_depth" yaml:"max_depth"`                             // Maximum depth to crawl
+	MaxSources            int           `json:"max_sources" yaml:"max_sources"`                         // Maximum number of sources to crawl
+	Delay                 string        `json:"delay" yaml:"delay"`                                     // Delay between requests (in seconds)
+	BrowsingMode          string        `json:"browsing_mode" yaml:"browsing_mode"`                     // Browsing type (e.g., "recursive", "human", "fuzzing")
+	MaxRetries            int           `json:"max_retries" yaml:"max_retries"`                         // Maximum number of retries
+	MaxRedirects          int           `json:"max_redirects" yaml:"max_redirects"`                     // Maximum number of redirects
+	CollectHTML           bool          `json:"collect_html" yaml:"collect_html"`                       // Whether to collect the HTML content or not
+	CollectImages         bool          `json:"collect_images" yaml:"collect_images"`                   // Whether to collect the images or not
+	CollectFiles          bool          `json:"collect_files" yaml:"collect_files"`                     // Whether to collect the files or not
+	CollectContent        bool          `json:"collect_content" yaml:"collect_content"`                 // Whether to collect the content or not
+	CollectKeywords       bool          `json:"collect_keywords" yaml:"collect_keywords"`               // Whether to collect the keywords or not
+	CollectMetaTags       bool          `json:"collect_metatags" yaml:"collect_metatags"`               // Whether to collect the metatags or not
+	ReportInterval        int           `json:"report_time" yaml:"report_time"`                         // Time to wait before sending the report (in minutes)
+	CheckForRobots        bool          `json:"check_for_robots" yaml:"check_for_robots"`               // Whether to check for robots.txt or not
+	Control               ControlConfig `json:"control" yaml:"control"`                                 // Control/COnsole internal API
 }
 
 // HealthCheckConfig represents the health check configuration
 type ControlConfig struct {
-	Host              string `yaml:"host"`               // IP address for the health check server
-	Port              int    `yaml:"port"`               // Port number for the health check server
-	Timeout           int    `yaml:"timeout"`            // Timeout for API requests (in seconds)
-	SSLMode           string `yaml:"sslmode"`            // SSL mode for API connection (e.g., "disable")
-	CertFile          string `yaml:"cert_file"`          // Path to the SSL certificate file
-	KeyFile           string `yaml:"key_file"`           // Path to the SSL key file
-	RateLimit         string `yaml:"rate_limit"`         // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
-	ReadHeaderTimeout int    `yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
-	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
-	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
+	Host              string `json:"host" yaml:"host"`                             // IP address for the health check server
+	Port              int    `json:"port" yaml:"port"`                             // Port number for the health check server
+	Timeout           int    `json:"timeout" yaml:"timeout"`                       // Timeout for API requests (in seconds)
+	SSLMode           string `json:"sslmode" yaml:"sslmode"`                       // SSL mode for API connection (e.g., "disable")
+	CertFile          string `json:"cert_file" yaml:"cert_file"`                   // Path to the SSL certificate file
+	KeyFile           string `json:"key_file" yaml:"key_file"`                     // Path to the SSL key file
+	RateLimit         string `json:"rate_limit" yaml:"rate_limit"`                 // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout int    `json:"readheader_timeout" yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int    `json:"read_timeout" yaml:"read_timeout"`             // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int    `json:"write_timeout" yaml:"write_timeout"`           // WriteTimeout
 }
 
 // DNSConfig represents the DNS information gathering configuration
 type DNSConfig struct {
-	Enabled   bool   `yaml:"enabled"`    // Whether to enable DNS information gathering or not
-	Timeout   int    `yaml:"timeout"`    // Timeout for DNS requests (in seconds)
-	RateLimit string `yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
+	Enabled   bool   `json:"enabled" yaml:"enabled"`       // Whether to enable DNS information gathering or not
+	Timeout   int    `json:"timeout" yaml:"timeout"`       // Timeout for DNS requests (in seconds)
+	RateLimit string `json:"rate_limit" yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
 }
 
 // WHOISConfig represents the WHOIS information gathering configuration
 type WHOISConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Timeout   int    `yaml:"timeout"`
-	RateLimit string `yaml:"rate_limit"`
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Timeout   int    `json:"timeout" yaml:"timeout"`
+	RateLimit string `json:"rate_limit" yaml:"rate_limit"`
 }
 
 // NetLookupConfig represents the network information gathering configuration
 type NetLookupConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Timeout   int    `yaml:"timeout"`
-	RateLimit string `yaml:"rate_limit"`
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Timeout   int    `json:"timeout" yaml:"timeout"`
+	RateLimit string `json:"rate_limit" yaml:"rate_limit"`
 }
 
 // GeoLookupConfig represents the network information gathering configuration
 type GeoLookupConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Type    string `yaml:"type"`    // "maxmind" or "ip2location"
-	DBPath  string `yaml:"db_path"` // Used for MaxMind
-	APIKey  string `yaml:"api_key"` // Used for IP2Location
-	Timeout int    `yaml:"timeout"`
-	SSLMode string `yaml:"sslmode"`
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	Type    string `json:"type" yaml:"type"`       // "maxmind" or "ip2location"
+	DBPath  string `json:"db_path" yaml:"db_path"` // Used for MaxMind
+	APIKey  string `json:"api_key" yaml:"api_key"` // Used for IP2Location
+	Timeout int    `json:"timeout" yaml:"timeout"`
+	SSLMode string `json:"sslmode" yaml:"sslmode"`
 }
 
 type HTTPConfig struct {
-	Enabled         bool           `yaml:"enabled"`
-	Timeout         int            `yaml:"timeout"`
-	FollowRedirects bool           `yaml:"follow_redirects"`
-	SSLDiscovery    SSLScoutConfig `yaml:"ssl_discovery"`
-	Proxies         []SOCKSProxy   `yaml:"proxies"`
+	Enabled         bool           `json:"enabled" yaml:"enabled"`
+	Timeout         int            `json:"timeout" yaml:"timeout"`
+	FollowRedirects bool           `json:"follow_redirects" yaml:"follow_redirects"`
+	SSLDiscovery    SSLScoutConfig `json:"ssl_discovery" yaml:"ssl_discovery"`
+	Proxies         []SOCKSProxy   `json:"proxies" yaml:"proxies"`
 }
 
 type SSLScoutConfig struct {
-	Enabled     bool `yaml:"enabled"`
-	JARM        bool `yaml:"jarm"`
-	JA3         bool `yaml:"ja3"`
-	JA3S        bool `yaml:"ja3s"`
-	JA4         bool `yaml:"ja4"`
-	JA4S        bool `yaml:"ja4s"`
-	HASSH       bool `yaml:"hassh"`
-	HASSHServer bool `yaml:"hassh_server"`
-	TLSH        bool `yaml:"tlsh"`
-	SimHash     bool `yaml:"simhash"`
-	MinHash     bool `yaml:"minhash"`
-	BLAKE2      bool `yaml:"blake2"`
-	SHA256      bool `yaml:"sha256"`
-	CityHash    bool `yaml:"cityhash"`
-	MurmurHash  bool `yaml:"murmurhash"`
-	CustomTLS   bool `yaml:"custom_tls"`
+	Enabled     bool `json:"enabled" yaml:"enabled"`
+	JARM        bool `json:"jarm" yaml:"jarm"`
+	JA3         bool `json:"ja3" yaml:"ja3"`
+	JA3S        bool `json:"ja3s" yaml:"ja3s"`
+	JA4         bool `json:"ja4" yaml:"ja4"`
+	JA4S        bool `json:"ja4s" yaml:"ja4s"`
+	HASSH       bool `json:"hassh" yaml:"hassh"`
+	HASSHServer bool `json:"hassh_server" yaml:"hassh_server"`
+	TLSH        bool `json:"tlsh" yaml:"tlsh"`
+	SimHash     bool `json:"simhash" yaml:"simhash"`
+	MinHash     bool `json:"minhash" yaml:"minhash"`
+	BLAKE2      bool `json:"blake2" yaml:"blake2"`
+	SHA256      bool `json:"sha256" yaml:"sha256"`
+	CityHash    bool `json:"cityhash" yaml:"cityhash"`
+	MurmurHash  bool `json:"murmurhash" yaml:"murmurhash"`
+	CustomTLS   bool `json:"custom_tls" yaml:"custom_tls"`
 }
 
 type SOCKSProxy struct {
-	Address  string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Address  string `json:"host" yaml:"host"`
+	Port     int    `json:"port" yaml:"port"`
+	Username string `json:"username" yaml:"username"`
+	Password string `json:"password" yaml:"password"`
 }
 
 // ServiceScoutConfig represents a structured configuration for an Nmap scan.
 // This is a simplified example and does not cover all possible Nmap options.
 type ServiceScoutConfig struct {
-	Enabled bool `yaml:"enabled"` // Whether to enable the Nmap scan or not
-	Timeout int  `yaml:"timeout"` // Timeout for the Nmap scan (in seconds)
+	Enabled bool `json:"enabled" yaml:"enabled"` // Whether to enable the Nmap scan or not
+	Timeout int  `json:"timeout" yaml:"timeout"` // Timeout for the Nmap scan (in seconds)
 
 	// Basic scan types
 	IdleScan         SSIdleScan `yaml:"idle_scan"`             // --ip-options (Use idle scan)
@@ -318,79 +318,79 @@ type PluginConfig struct {
 // Config represents the structure of the configuration file
 type Config struct {
 	// Remote configuration
-	Remote Remote `yaml:"remote"`
+	Remote Remote `json:"remote" yaml:"remote"`
 
 	// Database configuration
-	Database Database `yaml:"database"`
+	Database Database `json:"database" yaml:"database"`
 
 	// Crawler configuration
-	Crawler Crawler `yaml:"crawler"`
+	Crawler Crawler `json:"crawler" yaml:"crawler"`
 
 	// API configuration
-	API API `yaml:"api"`
+	API API `json:"api" yaml:"api"`
 
 	// Selenium configuration
-	Selenium []Selenium `yaml:"selenium"`
+	Selenium []Selenium `json:"selenium" yaml:"selenium"`
 
 	// Image storage API configuration (to store images on a separate server)
-	ImageStorageAPI FileStorageAPI `yaml:"image_storage"`
+	ImageStorageAPI FileStorageAPI `json:"image_storage" yaml:"image_storage"`
 
 	// File storage API configuration (to store files on a separate server)
-	FileStorageAPI FileStorageAPI `yaml:"file_storage"`
+	FileStorageAPI FileStorageAPI `json:"file_storage" yaml:"file_storage"`
 
 	// HTTP Headers Info configuration
-	HTTPHeaders HTTPConfig `yaml:"http_headers"`
+	HTTPHeaders HTTPConfig `json:"http_headers" yaml:"http_headers"`
 
 	// NetworkInfo configuration
-	NetworkInfo NetworkInfo `yaml:"network_info"`
+	NetworkInfo NetworkInfo `json:"network_info" yaml:"network_info"`
 
 	// Rules configuration
-	RulesetsSchemaPath string          `yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
-	Rulesets           []RulesetConfig `yaml:"rulesets"`
+	RulesetsSchemaPath string          `json:"rulesets_schema_path" yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
+	Rulesets           []RulesetConfig `json:"rulesets" yaml:"rulesets"`
 
-	Plugins PluginsConfig `yaml:"plugins"` // Plugins configuration
+	Plugins PluginsConfig `json:"plugins" yaml:"plugins"` // Plugins configuration
 
-	ExternalDetection ExternalDetectionConfig `yaml:"external_detection"`
+	ExternalDetection ExternalDetectionConfig `json:"external_detection" yaml:"external_detection"`
 
-	OS         string `yaml:"os"`          // Operating system name
-	DebugLevel int    `yaml:"debug_level"` // Debug level for logging
+	OS         string // Operating system name
+	DebugLevel int    `json:"debug_level" yaml:"debug_level"` // Debug level for logging
 }
 
 type PluginsConfig struct {
-	PluginTimeout int            `yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
-	Plugins       []PluginConfig `yaml:"plugins"`
+	PluginTimeout int            `json:"plugin_timeout" yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
+	Plugins       []PluginConfig `json:"plugins" yaml:"plugins"`
 }
 
 type ExternalDetectionConfig struct {
-	Timeout            int                     `yaml:"timeout"`      // Timeout for external detection (in seconds)
-	MaxRequests        int                     `yaml:"max_requests"` // Maximum number of requests
-	MaxRetries         int                     `yaml:"max_retries"`  // Maximum number of retries
-	Delay              string                  `yaml:"delay"`        // Delay between requests (in seconds)
-	AbuseIPDB          ExtDetectProviderConfig `yaml:"abuse_ipdb"`
-	AlienVault         ExtDetectProviderConfig `yaml:"alien_vault"`
-	Censys             ExtDetectProviderConfig `yaml:"censys"`
-	CiscoUmbrella      ExtDetectProviderConfig `yaml:"cisco_umbrella"`
-	Cuckoo             ExtDetectProviderConfig `yaml:"cuckoo"`
-	GreyNoise          ExtDetectProviderConfig `yaml:"grey_noise"`
-	GoogleSafeBrowsing ExtDetectProviderConfig `yaml:"google_safe_browsing"`
-	HybridAnalysis     ExtDetectProviderConfig `yaml:"hybrid_analysis"`
-	IPQualityScore     ExtDetectProviderConfig `yaml:"ip_quality_score"`
-	IPVoid             ExtDetectProviderConfig `yaml:"ipvoid"`
-	OpenPhish          ExtDetectProviderConfig `yaml:"open_phish"`
-	PhishTank          ExtDetectProviderConfig `yaml:"phish_tank"`
-	Shodan             ExtDetectProviderConfig `yaml:"shodan"`
-	VirusTotal         ExtDetectProviderConfig `yaml:"virus_total"`
-	URLHaus            ExtDetectProviderConfig `yaml:"url_haus"`
+	Timeout            int                     `json:"timeout" yaml:"timeout"`           // Timeout for external detection (in seconds)
+	MaxRequests        int                     `json:"max_requests" yaml:"max_requests"` // Maximum number of requests
+	MaxRetries         int                     `json:"max_retries" yaml:"max_retries"`   // Maximum number of retries
+	Delay              string                  `json:"delay" yaml:"delay"`               // Delay between requests (in seconds)
+	AbuseIPDB          ExtDetectProviderConfig `json:"abuse_ipdb" yaml:"abuse_ipdb"`
+	AlienVault         ExtDetectProviderConfig `json:"alien_vault" yaml:"alien_vault"`
+	Censys             ExtDetectProviderConfig `json:"censys" yaml:"censys"`
+	CiscoUmbrella      ExtDetectProviderConfig `json:"cisco_umbrella" yaml:"cisco_umbrella"`
+	Cuckoo             ExtDetectProviderConfig `json:"cuckoo" yaml:"cuckoo"`
+	GreyNoise          ExtDetectProviderConfig `json:"grey_noise" yaml:"grey_noise"`
+	GoogleSafeBrowsing ExtDetectProviderConfig `json:"google_safe_browsing" yaml:"google_safe_browsing"`
+	HybridAnalysis     ExtDetectProviderConfig `json:"hybrid_analysis" yaml:"hybrid_analysis"`
+	IPQualityScore     ExtDetectProviderConfig `json:"ip_quality_score" yaml:"ip_quality_score"`
+	IPVoid             ExtDetectProviderConfig `json:"ipvoid" yaml:"ipvoid"`
+	OpenPhish          ExtDetectProviderConfig `json:"open_phish" yaml:"open_phish"`
+	PhishTank          ExtDetectProviderConfig `json:"phish_tank" yaml:"phish_tank"`
+	Shodan             ExtDetectProviderConfig `json:"shodan" yaml:"shodan"`
+	VirusTotal         ExtDetectProviderConfig `json:"virus_total" yaml:"virus_total"`
+	URLHaus            ExtDetectProviderConfig `json:"url_haus" yaml:"url_haus"`
 }
 
 type ExtDetectProviderConfig struct {
-	Provider    string `yaml:"provider"`
-	Host        string `yaml:"host"`
-	APIKeyLabel string `yaml:"api_key_label"`
-	APIKey      string `yaml:"api_key"`
-	APIID       string `yaml:"api_id"`
-	APISecret   string `yaml:"api_secret"`
-	APIToken    string `yaml:"api_token"`
+	Provider    string `json:"provider" yaml:"provider" validate:"required"`
+	Host        string `json:"host" yaml:"host"`
+	APIKeyLabel string `json:"api_key_label" yaml:"api_key_label"`
+	APIKey      string `json:"api_key" yaml:"api_key"`
+	APIID       string `json:"api_id" yaml:"api_id"`
+	APISecret   string `json:"api_secret" yaml:"api_secret"`
+	APIToken    string `json:"api_token" yaml:"api_token"`
 }
 
 /////////////////////////////////////////////////

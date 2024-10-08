@@ -334,17 +334,20 @@ func getEntities(ni *NetInfo) error {
 // GetNetInfo returns the IP addresses and hostnames of the provided URL
 func (ni *NetInfo) GetNetInfo(url string) error {
 	ni.URL = url
+	var err error
 
-	// Get IP addresses and hostnames
-	err := getEntities(ni)
-	if err != nil {
-		return err
-	}
+	if ni.Config.NetLookup.Enabled {
+		// Get IP addresses and hostnames
+		err = getEntities(ni)
+		if err != nil {
+			return err
+		}
 
-	// Check if host0 has been removed from the list
-	if len(ni.Hosts.Host) == 0 {
-		host0 := urlToDomain(url)
-		ni.Hosts.Host = append(ni.Hosts.Host, host0)
+		// Check if host0 has been removed from the list
+		if len(ni.Hosts.Host) == 0 {
+			host0 := urlToDomain(url)
+			ni.Hosts.Host = append(ni.Hosts.Host, host0)
+		}
 	}
 
 	// Get WHOIS information for all collected IPs
