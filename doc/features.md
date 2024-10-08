@@ -37,6 +37,9 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 - **Customizable Browsing Speed**: Allows users to configure the speed of crawling to avoid overloading servers, being detected, or triggering anti-bot mechanisms. Speed is also configurable at runtime and per source, allowing for more human-like behavior.
   - *Benefits*: Prevents excessive traffic to target websites, ensuring minimal impact on their performance and stability while reducing the risk of being blocked.
 
+- **Per Source Configuration**: Allows users to define custom configurations for each source (URL) to control crawling behavior, such as the depth of crawling, the frequency of requests, the speed of crawling for that specific SOurce etc.
+  - *Benefits*: Provides fine-grained control over the crawling process to optimize performance and avoid detection.
+
 - **Human Behavior Simulation (HBS)**: A system architecture designed to mimic human-like browsing patterns to avoid detection by anti-bot systems.
   - *Benefits*: Enhances low-noise operations and reduces the risk of being blocked by websites and proxy services.
 
@@ -191,7 +194,16 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 - **Configurable Environment**: Supports detailed configuration options for customizing crawling and scraping behavior.
   - *Benefits*: Provides flexibility to adapt to different use cases and environments.
 
-- **Scalability**: Supports multiple workers and Selenium drivers to handle large-scale operations.
+- **Scalability**:
+  - The CROWler Engine supports multiple workers for parallel processing of tasks.
+  - All CROWler components can be scaled horizontally. Multiple Engines,
+    multiple VDIs (Virtual Desktop Images) and also multiple APIs (Scaling the
+     Search API requires a load Balancer).
+  - Database can also be scaled (check PostgresSQL documentation for more
+    information).
+  - The CROWler also comes with a tool to have static scaled deployments (useful
+    when a user does not want to use tools like Kubernetes or when the user is
+     crawling the entire Internet, where tasks never ends basically).
   - *Benefits*: Ensures the tool can handle high workloads and scale as needed.
 
 ## (Features Group 13) Security and Privacy
