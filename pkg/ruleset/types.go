@@ -18,7 +18,6 @@ package ruleset
 
 import (
 	"encoding/json"
-	"reflect"
 	"sync"
 	"time"
 
@@ -185,19 +184,9 @@ func (e *EnvSetting) MarshalJSON() ([]byte, error) {
 		Values interface{} `json:"values"`
 		*Alias
 	}{
-		Alias: (*Alias)(e),
+		Alias:  (*Alias)(e),
+		Values: e.Values, // Directly assign without reflection
 	}
-
-	// Handle different types of the "Values" field for correct JSON output
-	switch reflect.TypeOf(e.Values).Kind() {
-	case reflect.Slice, reflect.Array:
-		// If Values is a slice or array, keep it as-is
-		aux.Values = e.Values
-	default:
-		// Otherwise, marshal it as a primitive type (string, number, boolean, etc.)
-		aux.Values = e.Values
-	}
-
 	return json.Marshal(aux)
 }
 
@@ -385,17 +374,8 @@ func (e *PluginParams) MarshalJSON() ([]byte, error) {
 		ArgValue interface{} `json:"parameter_value"`
 		*Alias
 	}{
-		Alias: (*Alias)(e),
-	}
-
-	// Handle different types of the "Values" field for correct JSON output
-	switch reflect.TypeOf(e.ArgValue).Kind() {
-	case reflect.Slice, reflect.Array:
-		// If Values is a slice or array, keep it as-is
-		aux.ArgValue = e.ArgValue
-	default:
-		// Otherwise, marshal it as a primitive type (string, number, boolean, etc.)
-		aux.ArgValue = e.ArgValue
+		Alias:    (*Alias)(e),
+		ArgValue: e.ArgValue, // Directly assign without reflection
 	}
 
 	return json.Marshal(aux)
