@@ -54,6 +54,12 @@ deployed in a containerized environment.
     - [Build from source](#build-from-source)
 - [Production](#production)
 - [DB Maintenance](#db-maintenance)
+- [License](#license)
+- [Contributing](#contributing)
+- [Code of Conduct](#code-of-conduct)
+- [Acknowledgements](#acknowledgements)
+- [Disclaimer](#disclaimer)
+- [Top Contributors](#top-contributors)
 
 ### Features
 
