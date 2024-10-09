@@ -587,6 +587,16 @@
             "description": "This is the location of the VDI image.",
             "type": "string"
           },
+          "language": {
+            "title": "CROWler VDI Language",
+            "description": "This is the language oto set the VDI image to.",
+            "type": "string",
+            "examples": [
+              "en",
+              "de",
+              "fr"
+            ]
+          },
           "path": {
             "title": "CROWler Selenium Path",
             "description": "This is the path to the selenium driver (IF LOCAL). It is the path to the selenium driver that the CROWler will use to crawl websites. (deprecated)",
@@ -648,6 +658,15 @@
             "title": "CROWler VDI Downloaded files Path",
             "description": "This is the temporary download path for the VDI. It is the local path where the VDI will download files. This is useful for downloading files from websites (like pdf or zip etc.). The CROWler will use this path to temporarily store the downloaded files (before moving them to the storage files area).",
             "type": "string"
+          },
+          "proxy": {
+            "title": "CROWler VDI Proxy Configuration",
+            "description": "This is the proxy configuration for the VDI. It is the proxy that the VDI will use to connect to the internet. This is useful for bypassing firewalls or accessing websites that are blocked in your country.",
+            "type": "string",
+            "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$",
+            "examples": [
+              "http://username:password@proxy:port"
+            ]
           }
         },
         "additionalProperties": false,
