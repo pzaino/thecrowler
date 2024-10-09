@@ -54,6 +54,12 @@ deployed in a containerized environment.
     - [Build from source](#build-from-source)
 - [Production](#production)
 - [DB Maintenance](#db-maintenance)
+- [License](#license)
+- [Contributing](#contributing)
+- [Code of Conduct](#code-of-conduct)
+- [Acknowledgements](#acknowledgements)
+- [Disclaimer](#disclaimer)
+- [Top Contributors](#top-contributors)
 
 ### Features
 
@@ -270,3 +276,39 @@ The DB should need no maintenance, The CROWler will take care of that. Any time
 there is no crawling activity and it's passed 1 hours from the previous
 maintenance activity, The CROWler will clean up the database and optimize the
 indexes.
+
+## License
+
+The CROWler is licensed under the Apache 2.0 License. For more information, see
+the [LICENSE](LICENSE) file.
+
+## Contributing
+
+If you want to contribute to the project, please read the [CONTRIBUTING](CONTRIBUTING.md)
+file.
+
+## Code of Conduct
+
+The CROWler has adopted the Contributor Covenant Code of Conduct. For more
+information, see the [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md) file.
+
+## Acknowledgements
+
+The CROWler is built on top of a lot of open-source projects, and I want to
+thank all the developers that contributed to those projects. Without them, the
+CROWler would not be possible.
+
+Also, I want to thank the people that are helping me with the project, either
+by contributing code, by testing it, or by providing feedback. Thank you all!
+
+## Disclaimer
+
+The CROWler is a tool designed to help you crawl websites in a respectful way.
+However, it's up to you to use it in a respectful way. The CROWler is not
+responsible for any misuse of the tool.
+
+## Top Contributors
+
+<a href="https://github.com/pzaino/thecrowler/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pzaino/thecrowler" />
+</a>
