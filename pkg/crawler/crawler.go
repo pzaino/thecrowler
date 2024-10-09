@@ -207,15 +207,19 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}(processCtx)
 
 	// Get HTTP header information
-	processCtx.wgNetInfo.Add(1)
-	go func(ctx *ProcessContext, htmlContent string) {
-		defer ctx.wgNetInfo.Done()
-		ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
-		_, err := ctx.IndexNetInfo(2)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", err)
-		}
-	}(processCtx, htmlContent)
+	if processCtx.config.HTTPHeaders.Enabled {
+		processCtx.wgNetInfo.Add(1)
+		go func(ctx *ProcessContext, htmlContent string) {
+			defer ctx.wgNetInfo.Done()
+			ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
+			_, err := ctx.IndexNetInfo(2)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", err)
+			}
+		}(processCtx, htmlContent)
+	} else {
+		processCtx.Status.HTTPInfoRunning = 2
+	}
 
 	// Crawl the website
 	allLinks := initialLinks // links extracted from the initial page
