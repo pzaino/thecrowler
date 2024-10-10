@@ -298,6 +298,16 @@
             5
           ]
         },
+        "max_links": {
+          "title": "CROWler Engine Crawling Maximum Number of Links",
+          "description": "This is the maximum number of links that the CROWler Engine will crawl per each Source. If zero, no limit.",
+          "type": "integer",
+          "minimum": 1,
+          "examples": [
+            3,
+            5
+          ]
+        },
         "max_sources": {
           "title": "CROWler Engine Maximum Sources",
           "description": "This is the maximum number of sources that a single instance of the CROWler's engine will fetch atomically and atomically to enqueue in the jobs-queue and crawl.",
@@ -571,7 +581,7 @@
 
     "selenium": {
       "title": "CROWler VDI access Configuration",
-      "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for the selenium driver, to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
+      "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for all the tools in the VDI image (for ex. selenium driver, Rbee etc.), to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
       "type": "array",
       "items": {
         "title": "CROWler VDI Configuration Items",
@@ -607,9 +617,14 @@
             "description": "This is the path to the selenium driver (IF REMOTE). It is the path to the selenium driver that the CROWler will use to crawl websites. (deprecated)",
             "type": "string"
           },
+          "use_service": {
+            "title": "CROWler VDI Use Service (deprecated)",
+            "description": "This is a flag that tells the CROWler to access Selenium as service. (deprecated)",
+            "type": "boolean"
+          },
           "type": {
             "title": "CROWler VDI Browser Type",
-            "description": "This is the type of selenium driver that the CROWler will use to crawl websites. For example, chrome or firefox.",
+            "description": "This is the type of web browser the CROWler will use to crawl websites. For example, chrome or firefox (normally a VDI image has only one web Browser to reduce space).",
             "type": "string",
             "enum": [
               "chrome",
@@ -619,7 +634,7 @@
           },
           "port": {
             "title": "CROWler VDI Port",
-            "description": "This is the port that the selenium driver will use to connect to the CROWler. It is the port that the selenium driver will use to connect to the CROWler.",
+            "description": "This is the VDI's API port.",
             "type": "integer",
             "minimum": 1,
             "maximum": 65535
@@ -632,17 +647,12 @@
           },
           "headless": {
             "title": "CROWler VDI Headless Mode",
-            "description": "This is a flag that tells the selenium driver to run in headless mode. This is useful for running the selenium driver in a headless environment. It's generally NOT recommended to enable headless mode for the selenium driver. (don't use headless unless you know what you're doing, headless browsing is mostly blocked these days!)",
-            "type": "boolean"
-          },
-          "use_service": {
-            "title": "CROWler VDI Use Service (deprecated)",
-            "description": "This is a flag that tells the CROWler to access Selenium as service. (deprecated)",
+            "description": "This is a flag that tells the VDI to run in headless mode. This is useful for running the selenium driver in a headless environment. It's generally NOT recommended to enable headless mode. (don't use headless unless you know what you're doing, headless browsing is mostly blocked these days!)",
             "type": "boolean"
           },
           "sslmode": {
             "title": "CROWler VDI SSL Mode",
-            "description": "This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler.",
+            "description": "This is the sslmode. If set to `enable` then the CROWler Engine will try to connect to the VDI using HTTPS. Make sure the VDI is configured to accept HTTPS connections.",
             "type": "string",
             "enum": [
               "enable",
@@ -659,13 +669,12 @@
             "description": "This is the temporary download path for the VDI. It is the local path where the VDI will download files. This is useful for downloading files from websites (like pdf or zip etc.). The CROWler will use this path to temporarily store the downloaded files (before moving them to the storage files area).",
             "type": "string"
           },
-          "proxy": {
+          "proxy_url": {
             "title": "CROWler VDI Proxy Configuration",
             "description": "This is the proxy configuration for the VDI. It is the proxy that the VDI will use to connect to the internet. This is useful for bypassing firewalls or accessing websites that are blocked in your country.",
             "type": "string",
-            "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$",
             "examples": [
-              "http://username:password@proxy:port"
+              "http://proxy:port"
             ]
           }
         },

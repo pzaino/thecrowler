@@ -138,7 +138,7 @@
                                                                 "element",
                                                                 "link_text",
                                                                 "partial_link_text",
-                                                                "regex",
+                                                                "js_path",
                                                                 "plugin_call"
                                                             ],
                                                             "description": "The type of selector to use to find the element. To extract data using plugins, set this field to 'plugin_call'."
@@ -160,6 +160,10 @@
                                                                 }
                                                             },
                                                             "description": "Optional. The attribute of the element to extract. This field is ignored when using CROWler plugins via plugin_call."
+                                                        },
+                                                        "value": {
+                                                            "type": "string",
+                                                            "description": "Optional. The value within the selector that we need to match for the action. (this is NOT the value to input!)"
                                                         },
                                                         "extract_all_occurrences": {
                                                             "type": "boolean",

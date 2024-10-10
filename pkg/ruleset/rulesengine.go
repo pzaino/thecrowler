@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -470,9 +471,13 @@ func (re *RuleEngine) GetAllScrapingRulesByURL(url, CtxID string) []ScrapingRule
 	}
 
 	for _, rule := range rules {
-		for i2 := 0; i2 < len(rule.PreConditions); i2++ {
-			if strings.HasPrefix(url, strings.ToLower(strings.TrimSpace(rule.PreConditions[i2].URL))) {
-				scrapingRules = append(scrapingRules, rule)
+		if CheckURL(url, rule.RuleName) {
+			scrapingRules = append(scrapingRules, rule)
+		} else {
+			for i2 := 0; i2 < len(rule.PreConditions); i2++ {
+				if CheckURL(url, rule.PreConditions[i2].URL) {
+					scrapingRules = append(scrapingRules, rule)
+				}
 			}
 		}
 	}
@@ -560,12 +565,12 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 	}
 
 	for i := 0; i < len((*re).Rulesets); i++ {
-		rsName := strings.ToLower(strings.TrimSpace(re.Rulesets[i].Name))
-		if rsName == "" || !IsValidURL(rsName) {
+		rsName := strings.TrimSpace(re.Rulesets[i].Name)
+		if rsName == "" || !IsURL(rsName) {
 			continue
 		}
-		//cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking ruleset: '%s' == '%s'", rsName, parsedURL)
-		if strings.HasPrefix(parsedURL, rsName) || rsName == "*" || strings.Contains(parsedURL, rsName) {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking ruleset: '%s' == '%s'", rsName, parsedURL)
+		if CheckURL(parsedURL, rsName) {
 			return &re.Rulesets[i], nil
 		}
 	}
@@ -610,11 +615,13 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 	}
 
 	for _, rg := range re.GetAllRuleGroups() {
-		rgName := strings.ToLower(strings.TrimSpace(rg.GroupName))
-		if rgName == "" || !IsValidURL(rgName) {
+		rgName := strings.TrimSpace(rg.GroupName)
+		if rgName == "" || !IsURL(rgName) {
 			continue
 		}
-		if strings.HasPrefix(parsedURL, rgName) || rgName == "*" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking rule group: '%s' == '%s'", rgName, parsedURL)
+		re := regexp.MustCompile(rgName)
+		if re.MatchString(parsedURL) || rgName == "*" {
 			if rg.IsValid() {
 				return rg, nil
 			}
@@ -669,8 +676,11 @@ func (re *RuleEngine) GetActionRuleByURL(urlStr string) (*ActionRule, error) {
 
 	for _, rg := range re.GetAllRuleGroups() {
 		for _, r := range rg.ActionRules {
-			if strings.HasPrefix(parsedURL, strings.ToLower(strings.TrimSpace(r.URL))) {
-				return &r, nil
+			if IsURL(r.URL) {
+				reg := regexp.MustCompile(r.URL)
+				if reg.MatchString(parsedURL) {
+					return &r, nil
+				}
 			}
 		}
 	}

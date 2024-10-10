@@ -23,7 +23,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -526,26 +528,51 @@ func PreparePathForSearch(path string) (string, error) {
 	return strings.ToLower(strings.TrimSpace(path)), nil
 }
 
-func IsValidURL(urlStr string) bool {
+// IsURL checks if the provided string is a URL or a a pattern to match URLs.
+// returns false if it's not a URL or a pattern to match URLs otherwise returns true.
+func IsURL(urlStr string) bool {
 	urlStr = strings.TrimSpace(urlStr)
 	if urlStr == "" {
 		return false
+	} else if urlStr == "*" {
+		return true
 	}
 
-	_, err := url.Parse(urlStr)
-	if err != nil {
-		return false
-	}
+	var re *regexp.Regexp
+	var once sync.Once
 
-	// Check if it has a valid scheme
-	// "*" is a valid here as it's a wildcard
-	if urlStr != "*" &&
-		!strings.HasPrefix(urlStr, "http://") &&
-		!strings.HasPrefix(urlStr, "https://") &&
-		!strings.HasPrefix(urlStr, "ftp://") &&
-		!strings.HasPrefix(urlStr, "ftps://") {
-		return false
-	}
+	// Define a function to compile the regex only once
+	once.Do(func() {
+		// The pattern below is capable of matching regEx patterns used to match URLs
+		// I understand this might be mind-blowing for somebody, so trust me, it works.
+		urlHeaders := "(?i)[\\^]?[\\s]*(\\{0,2}http[s]?[\\[s\\]]?.*:|\\{0,2}ftp[s]?:|\\{0,2}www\\.|\\.[a-z]{2,})"
 
+		re = regexp.MustCompile(urlHeaders)
+	})
+
+	// Check if it urlStr matches the pattern and so it's a URL or a pattern to match URLs
+	//return re.MatchString(urlStr)
+	x := re.MatchString(urlStr)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "IsURL: %s -> %v", urlStr, x)
 	return true
+}
+
+// CheckURL checks if the provided URL match.
+func CheckURL(urlStr, urlPattern string) bool {
+	if !IsURL(urlPattern) {
+		return false
+	}
+
+	if urlPattern == "*" {
+		return true
+	}
+
+	// Check if the URL matches the pattern
+	matched, err := regexp.MatchString(urlPattern, urlStr)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "error matching URL: %v", err)
+		return false
+	}
+
+	return matched
 }
