@@ -115,8 +115,8 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rules.Selector) ([]selenium.WebElement, error) {
 	var elements []selenium.WebElement
 	var err error
-	selectorType := strings.TrimSpace(selector.SelectorType)
-	switch strings.ToLower(selectorType) {
+
+	switch strings.ToLower(strings.TrimSpace(selector.SelectorType)) {
 	case "css":
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Finding elements by CSS Selector: '%s'", selector.Selector)
 		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
@@ -163,7 +163,7 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 	case "xpath":
 		elements, err = (*wd).FindElements(selenium.ByXPATH, selector.Selector)
 	default:
-		return nil, fmt.Errorf("unsupported selector type: %s", selectorType)
+		return nil, fmt.Errorf("unsupported selector type: %s", selector.SelectorType)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("error finding element: %v", err)
