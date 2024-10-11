@@ -103,10 +103,12 @@ For more information on the features, see the [features](doc/features.md) page.
 ### What problem does it solves?
 
 The CROWler is designed to solve a set of problems about web crawling, content
-discovery, and data extraction. It's designed to be able to crawl websites in a
-respectful and efficient way. It's also designed to be able to crawl private
-networks and intranets, so you can use it to create your own or company search
-engine.
+ discovery, technology detection and data extraction.
+
+While it’s main goal is to enable private, professional and enterprise users to
+quickly develop their content discovery solutions, It’s also designed to be
+able to crawl private networks and intranets, so you can use it to create your
+own or your company search engine.
 
 On top of that it can also be used as the "base" for a more complex cyber security
 tool, as it can be used to gather information about a website, its network, its

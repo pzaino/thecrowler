@@ -57,6 +57,7 @@ type Crawler struct {
 	ScreenshotMaxHeight   int           `json:"screenshot_max_height" yaml:"screenshot_max_height"`     // Maximum height of the screenshot
 	ScreenshotSectionWait int           `json:"screenshot_section_wait" yaml:"screenshot_section_wait"` // Time to wait before taking a screenshot of a section in seconds
 	MaxDepth              int           `json:"max_depth" yaml:"max_depth"`                             // Maximum depth to crawl
+	MaxLinks              int           `json:"max_links" yaml:"max_links"`                             // Maximum number of links to crawl per Source
 	MaxSources            int           `json:"max_sources" yaml:"max_sources"`                         // Maximum number of sources to crawl
 	Delay                 string        `json:"delay" yaml:"delay"`                                     // Delay between requests (in seconds)
 	BrowsingMode          string        `json:"browsing_mode" yaml:"browsing_mode"`                     // Browsing type (e.g., "recursive", "human", "fuzzing")

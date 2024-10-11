@@ -164,7 +164,7 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 
 func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
 	for _, wc := range conditions {
-		err := executeWaitCondition(ctx, &wc, wd)
+		err := WaitForCondition(ctx, wd, wc)
 		if err != nil {
 			return fmt.Errorf("executing wait condition: %v", err)
 		}

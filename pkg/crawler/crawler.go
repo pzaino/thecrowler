@@ -252,6 +252,16 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		// Prepare for the next iteration
 		processCtx.linksMutex.Lock()
 		if len(processCtx.newLinks) > 0 {
+			// If MaxLinks is set, limit the number of new links
+			if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
+				linksToCrawl := processCtx.config.Crawler.MaxLinks - processCtx.Status.TotalPages
+				if linksToCrawl <= 0 {
+					// Remove all new links
+					processCtx.newLinks = []LinkItem{}
+				} else {
+					processCtx.newLinks = processCtx.newLinks[:linksToCrawl]
+				}
+			}
 			newLinksFound = len(processCtx.newLinks)
 			processCtx.Status.TotalLinks += newLinksFound
 			allLinks = processCtx.newLinks
@@ -1362,6 +1372,9 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 	metaTags := []MetaTag{}
 	scrapedList := []ScrapedItem{}
 
+	// Copy the current webPage object
+	webPageCopy := *webPage
+
 	// Get the HTML content of the page
 	if docTypeIsHTML(objType) {
 		htmlContent, _ = (*webPage).PageSource()
@@ -1376,7 +1389,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		var url string
 		url, err = (*webPage).CurrentURL()
 		if err == nil {
-			scrapedData = processScrapingRules(webPage, ctx, url)
+			scrapedData = processScrapingRules(&webPageCopy, ctx, url)
 		}
 		if scrapedData != "" {
 			// put ScrapedData into a map
@@ -1695,6 +1708,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
+		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
+			break
+		}
 
 		// Check if the URL should be skipped
 		skip := skipURL(processCtx, id, url.Link)
@@ -1752,6 +1769,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 			delay := exi.GetFloat(config.Crawler.Delay)
 			processCtx.Status.LastDelay = delay
 			time.Sleep(time.Duration(delay) * time.Second)
+		}
+		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
+			break
 		}
 	}
 }
@@ -2433,11 +2454,9 @@ func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *ProcessContext, sel *Selen
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
-			//*(*pCtx).sel <- (*sel)
 			releaseSelenium <- (*sel)
 		}
 		(*pCtx).Status.CrawlingRunning = 2
-		//wg.Done()
 	}
 }
 

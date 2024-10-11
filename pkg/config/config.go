@@ -169,6 +169,7 @@ func NewConfig() *Config {
 			SourceScreenshot:      false,
 			FullSiteScreenshot:    false,
 			MaxDepth:              0,
+			MaxLinks:              0,
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
@@ -1464,37 +1465,64 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
 
 	if srcCfg["workers"] != nil {
-		dstCfg.Workers = srcCfg["workers"].(int)
+		if val, ok := srcCfg["workers"].(float64); ok {
+			dstCfg.Workers = int(val)
+		}
 	}
 	if srcCfg["interval"] != nil {
-		dstCfg.Interval = srcCfg["interval"].(string)
+		if val, ok := srcCfg["interval"].(string); ok {
+			dstCfg.Interval = val
+		}
 	}
 	if srcCfg["timeout"] != nil {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+		if val, ok := srcCfg["timeout"].(float64); ok {
+			dstCfg.Timeout = int(val)
+		}
 	}
 	if srcCfg["max_depth"] != nil {
-		dstCfg.MaxDepth = srcCfg["max_depth"].(int)
+		if val, ok := srcCfg["max_depth"].(float64); ok {
+			dstCfg.MaxDepth = int(val)
+		}
+	}
+	if srcCfg["max_links"] != nil {
+		if val, ok := srcCfg["max_links"].(float64); ok {
+			dstCfg.MaxLinks = int(val)
+		}
 	}
 	if srcCfg["delay"] != nil {
-		dstCfg.Delay = srcCfg["delay"].(string)
+		if val, ok := srcCfg["delay"].(string); ok {
+			dstCfg.Delay = val
+		}
 	}
 	if srcCfg["browsing_mode"] != nil {
-		dstCfg.BrowsingMode = srcCfg["browsing_mode"].(string)
+		if val, ok := srcCfg["browsing_mode"].(string); ok {
+			dstCfg.BrowsingMode = val
+		}
 	}
 	if srcCfg["screenshot_section_wait"] != nil {
-		dstCfg.ScreenshotSectionWait = srcCfg["screenshot_section_wait"].(int)
+		if val, ok := srcCfg["screenshot_section_wait"].(float64); ok {
+			dstCfg.ScreenshotSectionWait = int(val)
+		}
 	}
 	if srcCfg["max_sources"] != nil {
-		dstCfg.MaxSources = srcCfg["max_sources"].(int)
+		if val, ok := srcCfg["max_sources"].(float64); ok {
+			dstCfg.MaxSources = int(val)
+		}
 	}
 	if srcCfg["screenshot_max_height"] != nil {
-		dstCfg.ScreenshotMaxHeight = srcCfg["screenshot_max_height"].(int)
+		if val, ok := srcCfg["screenshot_max_height"].(float64); ok {
+			dstCfg.ScreenshotMaxHeight = int(val)
+		}
 	}
 	if srcCfg["max_retries"] != nil {
-		dstCfg.MaxRetries = srcCfg["max_retries"].(int)
+		if val, ok := srcCfg["max_retries"].(float64); ok {
+			dstCfg.MaxRetries = int(val)
+		}
 	}
 	if srcCfg["max_redirects"] != nil {
-		dstCfg.MaxRedirects = srcCfg["max_redirects"].(int)
+		if val, ok := srcCfg["max_redirects"].(float64); ok {
+			dstCfg.MaxRedirects = int(val)
+		}
 	}
 }
 
@@ -1504,25 +1532,39 @@ func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
 	for i, v := range srcCfgSlice {
 		srcCfg := v.(map[string]interface{})
 		if srcCfg["type"] != nil {
-			(*dstCfg)[i].Type = srcCfg["type"].(string)
+			if val, ok := srcCfg["type"].(string); ok {
+				(*dstCfg)[i].Type = val
+			}
 		}
 		if srcCfg["service_type"] != nil {
-			(*dstCfg)[i].ServiceType = srcCfg["service_type"].(string)
+			if val, ok := srcCfg["service_type"].(string); ok {
+				(*dstCfg)[i].ServiceType = val
+			}
 		}
 		if srcCfg["path"] != nil {
-			(*dstCfg)[i].Path = srcCfg["path"].(string)
+			if val, ok := srcCfg["path"].(string); ok {
+				(*dstCfg)[i].Path = val
+			}
 		}
 		if srcCfg["driver_path"] != nil {
-			(*dstCfg)[i].DriverPath = srcCfg["driver_path"].(string)
+			if val, ok := srcCfg["driver_path"].(string); ok {
+				(*dstCfg)[i].DriverPath = val
+			}
 		}
 		if srcCfg["host"] != nil {
-			(*dstCfg)[i].Host = srcCfg["host"].(string)
+			if val, ok := srcCfg["host"].(string); ok {
+				(*dstCfg)[i].Host = val
+			}
 		}
 		if srcCfg["port"] != nil {
-			(*dstCfg)[i].Port = srcCfg["port"].(int)
+			if val, ok := srcCfg["port"].(float64); ok { // Handle float64 to int conversion
+				(*dstCfg)[i].Port = int(val)
+			}
 		}
 		if srcCfg["proxy_url"] != nil {
-			(*dstCfg)[i].ProxyURL = srcCfg["proxy_url"].(string)
+			if val, ok := srcCfg["proxy_url"].(string); ok {
+				(*dstCfg)[i].ProxyURL = val
+			}
 		}
 	}
 }
@@ -1530,28 +1572,44 @@ func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
 func combineFileStorageCfg(dstCfg *FileStorageAPI, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
 	if srcCfg["type"] != nil {
-		dstCfg.Type = srcCfg["type"].(string)
+		if val, ok := srcCfg["type"].(string); ok {
+			dstCfg.Type = val
+		}
 	}
 	if srcCfg["host"] != nil {
-		dstCfg.Host = srcCfg["host"].(string)
+		if val, ok := srcCfg["host"].(string); ok {
+			dstCfg.Host = val
+		}
 	}
 	if srcCfg["path"] != nil {
-		dstCfg.Path = srcCfg["path"].(string)
+		if val, ok := srcCfg["path"].(string); ok {
+			dstCfg.Path = val
+		}
 	}
 	if srcCfg["port"] != nil {
-		dstCfg.Port = srcCfg["port"].(int)
+		if val, ok := srcCfg["port"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Port = int(val)
+		}
 	}
-	if srcCfg["region"] != "" {
-		dstCfg.Region = srcCfg["region"].(string)
+	if srcCfg["region"] != nil {
+		if val, ok := srcCfg["region"].(string); ok {
+			dstCfg.Region = val
+		}
 	}
-	if srcCfg["token"] != "" {
-		dstCfg.Token = srcCfg["token"].(string)
+	if srcCfg["token"] != nil {
+		if val, ok := srcCfg["token"].(string); ok {
+			dstCfg.Token = val
+		}
 	}
-	if srcCfg["secret"] != "" {
-		dstCfg.Secret = srcCfg["secret"].(string)
+	if srcCfg["secret"] != nil {
+		if val, ok := srcCfg["secret"].(string); ok {
+			dstCfg.Secret = val
+		}
 	}
-	if srcCfg["timeout"] != 0 {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+	if srcCfg["timeout"] != nil {
+		if val, ok := srcCfg["timeout"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Timeout = int(val)
+		}
 	}
 }
 
@@ -1559,146 +1617,271 @@ func combineHTTPHeadersCfg(dstCfg *HTTPConfig, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
 
 	if srcCfg["timeout"] != nil {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+		if val, ok := srcCfg["timeout"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Timeout = int(val)
+		}
 	}
 	if srcCfg["ssl_discovery"] != nil {
-		dstCfg.SSLDiscovery = srcCfg["ssl_discovery"].(SSLScoutConfig)
+		if val, ok := srcCfg["ssl_discovery"].(SSLScoutConfig); ok {
+			dstCfg.SSLDiscovery = val
+		}
 	}
 	if srcCfg["proxies"] != nil {
-		dstCfg.Proxies = srcCfg["proxies"].([]SOCKSProxy)
+		if val, ok := srcCfg["proxies"].([]interface{}); ok {
+			// Converting interface{} slice to []SOCKSProxy
+			proxies := make([]SOCKSProxy, len(val))
+			for i, p := range val {
+				if proxy, ok := p.(SOCKSProxy); ok {
+					proxies[i] = proxy
+				}
+			}
+			dstCfg.Proxies = proxies
+		}
 	}
 }
 
 func combineNIDNSCfg(dstCfg *DNSConfig, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
+
 	if srcCfg["enabled"] != nil {
-		dstCfg.Enabled = srcCfg["enabled"].(bool)
+		if val, ok := srcCfg["enabled"].(bool); ok {
+			dstCfg.Enabled = val
+		}
 	}
 	if srcCfg["timeout"] != nil {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+		if val, ok := srcCfg["timeout"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Timeout = int(val)
+		}
 	}
 	if srcCfg["rate_limit"] != nil {
-		dstCfg.RateLimit = srcCfg["rate_limit"].(string)
+		if val, ok := srcCfg["rate_limit"].(string); ok {
+			dstCfg.RateLimit = val
+		}
 	}
 }
 
 func combineNIWHOISCfg(dstCfg *WHOISConfig, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
+
 	if srcCfg["enabled"] != nil {
-		dstCfg.Enabled = srcCfg["enabled"].(bool)
+		if val, ok := srcCfg["enabled"].(bool); ok {
+			dstCfg.Enabled = val
+		}
 	}
 	if srcCfg["timeout"] != nil {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+		if val, ok := srcCfg["timeout"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Timeout = int(val)
+		}
 	}
 	if srcCfg["rate_limit"] != nil {
-		dstCfg.RateLimit = srcCfg["rate_limit"].(string)
+		if val, ok := srcCfg["rate_limit"].(string); ok {
+			dstCfg.RateLimit = val
+		}
 	}
 }
 
 func combineNINetLookupCfg(dstCfg *NetLookupConfig, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
+
 	if srcCfg["enabled"] != nil {
-		dstCfg.Enabled = srcCfg["enabled"].(bool)
+		if val, ok := srcCfg["enabled"].(bool); ok {
+			dstCfg.Enabled = val
+		}
 	}
 	if srcCfg["timeout"] != nil {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+		if val, ok := srcCfg["timeout"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Timeout = int(val)
+		}
 	}
 	if srcCfg["rate_limit"] != nil {
-		dstCfg.RateLimit = srcCfg["rate_limit"].(string)
+		if val, ok := srcCfg["rate_limit"].(string); ok {
+			dstCfg.RateLimit = val
+		}
 	}
 }
 
 func combineNIServiceScoutCfg(dstCfg *ServiceScoutConfig, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
+
 	if srcCfg["aggressive_scan"] != nil {
-		dstCfg.AggressiveScan = srcCfg["aggressive_scan"].(bool)
+		if val, ok := srcCfg["aggressive_scan"].(bool); ok {
+			dstCfg.AggressiveScan = val
+		}
 	}
 	if srcCfg["connect_scan"] != nil {
-		dstCfg.ConnectScan = srcCfg["connect_scan"].(bool)
+		if val, ok := srcCfg["connect_scan"].(bool); ok {
+			dstCfg.ConnectScan = val
+		}
 	}
 	if srcCfg["dns_servers"] != nil {
-		dstCfg.DNSServers = srcCfg["dns_servers"].([]string)
+		if val, ok := srcCfg["dns_servers"].([]interface{}); ok {
+			dnsServers := make([]string, len(val))
+			for i, v := range val {
+				if str, ok := v.(string); ok {
+					dnsServers[i] = str
+				}
+			}
+			dstCfg.DNSServers = dnsServers
+		}
 	}
 	if srcCfg["data_length"] != nil {
-		dstCfg.DataLength = srcCfg["data_length"].(int)
+		if val, ok := srcCfg["data_length"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.DataLength = int(val)
+		}
 	}
 	if srcCfg["enabled"] != nil {
-		dstCfg.Enabled = srcCfg["enabled"].(bool)
+		if val, ok := srcCfg["enabled"].(bool); ok {
+			dstCfg.Enabled = val
+		}
 	}
 	if srcCfg["exclude_hosts"] != nil {
-		dstCfg.ExcludeHosts = srcCfg["exclude_hosts"].([]string)
+		if val, ok := srcCfg["exclude_hosts"].([]interface{}); ok {
+			excludeHosts := make([]string, len(val))
+			for i, v := range val {
+				if str, ok := v.(string); ok {
+					excludeHosts[i] = str
+				}
+			}
+			dstCfg.ExcludeHosts = excludeHosts
+		}
 	}
 	if srcCfg["host_timeout"] != nil {
-		dstCfg.HostTimeout = srcCfg["host_timeout"].(string)
+		if val, ok := srcCfg["host_timeout"].(string); ok {
+			dstCfg.HostTimeout = val
+		}
 	}
 	if srcCfg["idle_scan"] != nil {
-		combineSSIdleScanCfg(&dstCfg.IdleScan, srcCfg["idle_scan"].(SSIdleScan))
+		if val, ok := srcCfg["idle_scan"].(SSIdleScan); ok {
+			combineSSIdleScanCfg(&dstCfg.IdleScan, val)
+		}
 	}
 	if srcCfg["ip_fragment"] != nil {
-		dstCfg.IPFragment = srcCfg["ip_fragment"].(bool)
+		if val, ok := srcCfg["ip_fragment"].(bool); ok {
+			dstCfg.IPFragment = val
+		}
 	}
 	if srcCfg["max_parallelism"] != nil {
-		dstCfg.MaxParallelism = srcCfg["max_parallelism"].(int)
+		if val, ok := srcCfg["max_parallelism"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.MaxParallelism = int(val)
+		}
 	}
 	if srcCfg["max_port_number"] != nil {
-		dstCfg.MaxPortNumber = srcCfg["max_port_number"].(int)
+		if val, ok := srcCfg["max_port_number"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.MaxPortNumber = int(val)
+		}
 	}
 	if srcCfg["max_retries"] != nil {
-		dstCfg.MaxRetries = srcCfg["max_retries"].(int)
+		if val, ok := srcCfg["max_retries"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.MaxRetries = int(val)
+		}
 	}
 	if srcCfg["min_rate"] != nil {
-		dstCfg.MinRate = srcCfg["min_rate"].(string)
+		if val, ok := srcCfg["min_rate"].(string); ok {
+			dstCfg.MinRate = val
+		}
 	}
 	if srcCfg["no_dns_resolution"] != nil {
-		dstCfg.NoDNSResolution = srcCfg["no_dns_resolution"].(bool)
+		if val, ok := srcCfg["no_dns_resolution"].(bool); ok {
+			dstCfg.NoDNSResolution = val
+		}
 	}
 	if srcCfg["os_fingerprinting"] != nil {
-		dstCfg.OSFingerprinting = srcCfg["os_fingerprinting"].(bool)
+		if val, ok := srcCfg["os_fingerprinting"].(bool); ok {
+			dstCfg.OSFingerprinting = val
+		}
 	}
 	if srcCfg["ping_scan"] != nil {
-		dstCfg.PingScan = srcCfg["ping_scan"].(bool)
+		if val, ok := srcCfg["ping_scan"].(bool); ok {
+			dstCfg.PingScan = val
+		}
 	}
 	if srcCfg["proxies"] != nil {
-		dstCfg.Proxies = srcCfg["proxies"].([]string)
+		if val, ok := srcCfg["proxies"].([]interface{}); ok {
+			proxies := make([]string, len(val))
+			for i, v := range val {
+				if str, ok := v.(string); ok {
+					proxies[i] = str
+				}
+			}
+			dstCfg.Proxies = proxies
+		}
 	}
 	if srcCfg["randomize_hosts"] != nil {
-		dstCfg.RandomizeHosts = srcCfg["randomize_hosts"].(bool)
+		if val, ok := srcCfg["randomize_hosts"].(bool); ok {
+			dstCfg.RandomizeHosts = val
+		}
 	}
 	if srcCfg["scan_delay"] != nil {
-		dstCfg.ScanDelay = srcCfg["scan_delay"].(string)
+		if val, ok := srcCfg["scan_delay"].(string); ok {
+			dstCfg.ScanDelay = val
+		}
 	}
 	if srcCfg["scan_flags"] != nil {
-		dstCfg.ScanFlags = srcCfg["scan_flags"].(string)
+		if val, ok := srcCfg["scan_flags"].(string); ok {
+			dstCfg.ScanFlags = val
+		}
 	}
 	if srcCfg["script_scan"] != nil {
-		dstCfg.ScriptScan = srcCfg["script_scan"].([]string)
+		if val, ok := srcCfg["script_scan"].([]interface{}); ok {
+			scriptScan := make([]string, len(val))
+			for i, v := range val {
+				if str, ok := v.(string); ok {
+					scriptScan[i] = str
+				}
+			}
+			dstCfg.ScriptScan = scriptScan
+		}
 	}
 	if srcCfg["service_db"] != nil {
-		dstCfg.ServiceDB = srcCfg["service_db"].(string)
+		if val, ok := srcCfg["service_db"].(string); ok {
+			dstCfg.ServiceDB = val
+		}
 	}
 	if srcCfg["service_detection"] != nil {
-		dstCfg.ServiceDetection = srcCfg["service_detection"].(bool)
+		if val, ok := srcCfg["service_detection"].(bool); ok {
+			dstCfg.ServiceDetection = val
+		}
 	}
 	if srcCfg["source_port"] != nil {
-		dstCfg.SourcePort = srcCfg["source_port"].(int)
+		if val, ok := srcCfg["source_port"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.SourcePort = int(val)
+		}
 	}
 	if srcCfg["spoof_ip"] != nil {
-		dstCfg.SpoofIP = srcCfg["spoof_ip"].(string)
+		if val, ok := srcCfg["spoof_ip"].(string); ok {
+			dstCfg.SpoofIP = val
+		}
 	}
 	if srcCfg["syn_scan"] != nil {
-		dstCfg.SynScan = srcCfg["syn_scan"].(bool)
+		if val, ok := srcCfg["syn_scan"].(bool); ok {
+			dstCfg.SynScan = val
+		}
 	}
 	if srcCfg["targets"] != nil {
-		dstCfg.Targets = srcCfg["targets"].([]string)
+		if val, ok := srcCfg["targets"].([]interface{}); ok {
+			targets := make([]string, len(val))
+			for i, v := range val {
+				if str, ok := v.(string); ok {
+					targets[i] = str
+				}
+			}
+			dstCfg.Targets = targets
+		}
 	}
 	if srcCfg["timeout"] != nil {
-		dstCfg.Timeout = srcCfg["timeout"].(int)
+		if val, ok := srcCfg["timeout"].(float64); ok { // Handle float64 to int conversion
+			dstCfg.Timeout = int(val)
+		}
 	}
 	if srcCfg["timing_template"] != nil {
-		dstCfg.TimingTemplate = srcCfg["timing_template"].(string)
+		if val, ok := srcCfg["timing_template"].(string); ok {
+			dstCfg.TimingTemplate = val
+		}
 	}
 	if srcCfg["udp_scan"] != nil {
-		dstCfg.UDPScan = srcCfg["udp_scan"].(bool)
+		if val, ok := srcCfg["udp_scan"].(bool); ok {
+			dstCfg.UDPScan = val
+		}
 	}
 }
 

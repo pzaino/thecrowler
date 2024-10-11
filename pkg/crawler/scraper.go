@@ -31,34 +31,16 @@ import (
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
 
-	"github.com/PuerkitoBio/goquery"
-	"github.com/antchfx/htmlquery"
 	"golang.org/x/net/html"
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
 func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
 	// Debug message
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying rule: %v", rule.RuleName)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying scraping rule: %v", rule.RuleName)
 
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
-
-	// Prepare content for goquery:
-	htmlContent, _ := (*webPage).PageSource()
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
-		return extractedData
-	}
-
-	// Parse the HTML content
-	node, err := htmlquery.Parse(strings.NewReader(htmlContent))
-	if err != nil {
-		// handle error
-		cmn.DebugMsg(cmn.DbgLvlError, "parsing HTML content: %v", err)
-		return extractedData
-	}
 
 	// Iterate over the elements to be extracted
 	for _, elementSet := range rule.Elements {
@@ -68,32 +50,9 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 		var allExtracted []string
 		for _, element := range selectors {
 			selectorType := strings.ToLower(strings.TrimSpace(element.SelectorType))
-			selector := element.Selector
 			getAllOccurrences := element.ExtractAllOccurrences
 
-			var extracted []string
-			switch selectorType {
-			case "css":
-				extracted = extractByCSS(doc, selector, getAllOccurrences)
-			case "xpath":
-				extracted = extractByXPath(node, selector, getAllOccurrences)
-			case "id":
-				extracted = extractByCSS(doc, "#"+selector, getAllOccurrences)
-			case "class", "class_name":
-				extracted = extractByCSS(doc, "."+selector, getAllOccurrences)
-			case "name":
-				extracted = extractByCSS(doc, "[name="+selector+"]", getAllOccurrences)
-			case "tag":
-				extracted = extractByCSS(doc, selector, getAllOccurrences)
-			case "link_text", "partial_link_text":
-				extracted = extractByCSS(doc, "a:contains('"+selector+"')", getAllOccurrences)
-			case "regex":
-				extracted = extractByRegex(htmlContent, selector, getAllOccurrences)
-			case "plugin_call":
-				extracted = extractByPlugin(ctx, webPage, selector)
-			default:
-				extracted = []string{}
-			}
+			extracted := extractContent(ctx, webPage, element, getAllOccurrences)
 			if len(extracted) > 0 {
 				allExtracted = append(allExtracted, extracted...)
 				if !getAllOccurrences || selectorType == "plugin_call" {
@@ -102,7 +61,26 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 			}
 		}
 		if len(allExtracted) > 0 {
-			extractedData[key] = allExtracted
+			// Ensure that allExtracted is JSON valid
+			if len(allExtracted) == 1 {
+				// Check if it's a JSON string
+				if json.Valid([]byte(allExtracted[0])) {
+					var jsonData map[string]interface{}
+					if err := json.Unmarshal([]byte(allExtracted[0]), &jsonData); err == nil {
+						extractedData[key] = jsonData
+						continue
+					}
+				}
+			} else {
+				// Check if it's a JSON array
+				if json.Valid([]byte("[" + strings.Join(allExtracted, ",") + "]")) {
+					var jsonData []interface{}
+					if err := json.Unmarshal([]byte("["+strings.Join(allExtracted, ",")+"]"), &jsonData); err == nil {
+						extractedData[key] = jsonData
+						continue
+					}
+				}
+			}
 		}
 	}
 
@@ -260,79 +238,30 @@ func lintScript(scriptContent string) []string {
 	return errors
 }
 
-// extractByCSS extracts the content from the provided document using the provided CSS selector.
-func extractByCSS(doc *goquery.Document, selector string, all bool) []string {
+// extractContent extracts the content from the provided document using the provided CSS selector.
+func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Selector, all bool) []string {
 	var results []string
+	var elements []selenium.WebElement
+	var err error
 	if all {
-		doc.Find(selector).Each(func(i int, s *goquery.Selection) {
-			results = append(results, s.Text())
-		})
+		elements, err = FindElementsByType(ctx, wd, selector)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error finding elements: %v", err)
+			return results
+		}
 	} else {
-		if selection := doc.Find(selector).First(); selection.Length() > 0 {
-			results = append(results, selection.Text())
+		element, err := FindElementByType(ctx, wd, selector)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error finding element: %v", err)
+			return results
 		}
+		elements = append(elements, element)
+	}
+	for _, element := range elements {
+		text, _ := element.Text()
+		results = append(results, text)
 	}
 	return results
-}
-
-func extractByXPath(node *html.Node, selector string, all bool) []string {
-	var results []string
-	elements, err := htmlquery.QueryAll(node, selector)
-	if err != nil {
-		// handle error
-		return results
-	}
-	if all {
-		for _, element := range elements {
-			results = append(results, htmlquery.InnerText(element))
-		}
-	} else if len(elements) > 0 {
-		results = append(results, htmlquery.InnerText(elements[0]))
-	}
-	return results
-}
-
-func extractByRegex(content string, pattern string, all bool) []string {
-	re := regexp.MustCompile(pattern)
-	if all {
-		return re.FindAllString(content, -1)
-	}
-	if match := re.FindString(content); match != "" {
-		return []string{match}
-	}
-
-	return []string{}
-}
-
-func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector string) []string {
-	// Retrieve the JS plugin
-	plugin, exists := ctx.re.JSPlugins.GetPlugin(selector)
-	if !exists {
-		return []string{}
-	}
-
-	// Execute the plugin
-	value, err := (*wd).ExecuteScript(plugin.String(), nil)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS plugin: %v", err)
-		return []string{}
-	}
-	// Transform value to a string
-	valueStr := fmt.Sprintf("%v", value)
-
-	// Check if the valueSTr is a valid JSON
-	if json.Valid([]byte(valueStr)) {
-		return []string{valueStr}
-	}
-
-	// Check if the result can be converted to a valid JSON
-	if !json.Valid([]byte(valueStr)) {
-		// transform the valueStr to a valid JSON
-		valueStr = fmt.Sprintf("{\"plugin_scrap\": \"%v\"}", valueStr)
-	}
-
-	// It seems we were unable to retrieve the result from the JS output
-	return []string{valueStr}
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
