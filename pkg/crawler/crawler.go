@@ -227,55 +227,58 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	maxDepth := checkMaxDepth(config.Crawler.MaxDepth) // set a maximum depth for crawling
 	newLinksFound := len(initialLinks)
 	processCtx.Status.TotalLinks = newLinksFound
-	for (currentDepth < maxDepth) && (newLinksFound > 0) {
-		// Create a channel to enqueue jobs
-		jobs := make(chan LinkItem, len(allLinks))
+	if processCtx.source.Restricted != 0 {
+		// Restriction level is higher than 0, so we need to crawl the website
+		for (currentDepth < maxDepth) && (newLinksFound > 0) {
+			// Create a channel to enqueue jobs
+			jobs := make(chan LinkItem, len(allLinks))
 
-		// Launch worker goroutines
-		for w := 1; w <= config.Crawler.Workers-2; w++ {
-			processCtx.wg.Add(1)
-			go worker(processCtx, w, jobs) // crawling worker
-		}
-
-		// Enqueue jobs (allLinks)
-		for _, link := range allLinks {
-			jobs <- link
-		}
-		close(jobs)
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
-
-		// Wait for workers to finish and collect new links
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
-		processCtx.wg.Wait()
-		cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
-
-		// Prepare for the next iteration
-		processCtx.linksMutex.Lock()
-		if len(processCtx.newLinks) > 0 {
-			// If MaxLinks is set, limit the number of new links
-			if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
-				linksToCrawl := processCtx.config.Crawler.MaxLinks - processCtx.Status.TotalPages
-				if linksToCrawl <= 0 {
-					// Remove all new links
-					processCtx.newLinks = []LinkItem{}
-				} else {
-					processCtx.newLinks = processCtx.newLinks[:linksToCrawl]
-				}
+			// Launch worker goroutines
+			for w := 1; w <= config.Crawler.Workers-2; w++ {
+				processCtx.wg.Add(1)
+				go worker(processCtx, w, jobs) // crawling worker
 			}
-			newLinksFound = len(processCtx.newLinks)
-			processCtx.Status.TotalLinks += newLinksFound
-			allLinks = processCtx.newLinks
-		} else {
-			newLinksFound = 0
-		}
-		processCtx.newLinks = []LinkItem{} // reset newLinks
-		processCtx.linksMutex.Unlock()
 
-		// Increment the current depth
-		currentDepth++
-		processCtx.Status.CurrentDepth = currentDepth
-		if config.Crawler.MaxDepth == 0 {
-			maxDepth = currentDepth + 1
+			// Enqueue jobs (allLinks)
+			for _, link := range allLinks {
+				jobs <- link
+			}
+			close(jobs)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
+
+			// Wait for workers to finish and collect new links
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
+			processCtx.wg.Wait()
+			cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
+
+			// Prepare for the next iteration
+			processCtx.linksMutex.Lock()
+			if len(processCtx.newLinks) > 0 {
+				// If MaxLinks is set, limit the number of new links
+				if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
+					linksToCrawl := processCtx.config.Crawler.MaxLinks - processCtx.Status.TotalPages
+					if linksToCrawl <= 0 {
+						// Remove all new links
+						processCtx.newLinks = []LinkItem{}
+					} else {
+						processCtx.newLinks = processCtx.newLinks[:linksToCrawl]
+					}
+				}
+				newLinksFound = len(processCtx.newLinks)
+				processCtx.Status.TotalLinks += newLinksFound
+				allLinks = processCtx.newLinks
+			} else {
+				newLinksFound = 0
+			}
+			processCtx.newLinks = []LinkItem{} // reset newLinks
+			processCtx.linksMutex.Unlock()
+
+			// Increment the current depth
+			currentDepth++
+			processCtx.Status.CurrentDepth = currentDepth
+			if config.Crawler.MaxDepth == 0 {
+				maxDepth = currentDepth + 1
+			}
 		}
 	}
 

@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PuerkitoBio/goquery"
+	"github.com/antchfx/htmlquery"
 	"github.com/evanw/esbuild/pkg/api"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -245,23 +247,118 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	var err error
 	if all {
 		elements, err = FindElementsByType(ctx, wd, selector)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error finding elements: %v", err)
-			return results
-		}
 	} else {
 		element, err := FindElementByType(ctx, wd, selector)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error finding element: %v", err)
+		if err == nil {
+			elements = append(elements, element)
+		}
+	}
+	if len(elements) == 0 || err != nil || selector.SelectorType == "plugin_call" || selector.SelectorType == "regex" {
+		// Let's use fallback mechanism to try to extract the data
+		htmlContent, _ := (*wd).PageSource()
+		doc, err2 := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+		if err2 != nil {
+			// Fallback failed
+			cmn.DebugMsg(cmn.DbgLvlError, "Error finding elements: %v, and fallback mechanism failed too: %v", err, err2)
 			return results
 		}
-		elements = append(elements, element)
+		switch strings.ToLower(selector.SelectorType) {
+		case "css":
+			results = fallbackExtractByCSS(doc, selector.Selector, all)
+		case "xpath":
+			results = fallbackExtractByXPath(doc.Nodes[0], selector.Selector, all)
+		case "regex":
+			results = fallbackExtractByRegex(htmlContent, selector.Selector, all)
+		case "plugin_call":
+			results = extractByPlugin(ctx, wd, selector.Selector)
+		}
+	} else {
+		for _, element := range elements {
+			text, _ := element.Text()
+			results = append(results, text)
+		}
 	}
-	for _, element := range elements {
-		text, _ := element.Text()
-		results = append(results, text)
+	if len(results) == 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Failed to find element: '%s' %v", selector.Selector, err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Found element: '%s' %v", selector.Selector, results)
 	}
 	return results
+}
+
+// extractByCSS extracts the content from the provided document using the provided CSS selector.
+func fallbackExtractByCSS(doc *goquery.Document, selector string, all bool) []string {
+	var results []string
+	if all {
+		doc.Find(selector).Each(func(i int, s *goquery.Selection) {
+			results = append(results, s.Text())
+		})
+	} else {
+		if selection := doc.Find(selector).First(); selection.Length() > 0 {
+			results = append(results, selection.Text())
+		}
+	}
+	return results
+}
+
+func fallbackExtractByXPath(node *html.Node, selector string, all bool) []string {
+	var results []string
+	elements, err := htmlquery.QueryAll(node, selector)
+	if err != nil {
+		// handle error
+		return results
+	}
+	if all {
+		for _, element := range elements {
+			results = append(results, htmlquery.InnerText(element))
+		}
+	} else if len(elements) > 0 {
+		results = append(results, htmlquery.InnerText(elements[0]))
+	}
+	return results
+}
+
+func fallbackExtractByRegex(content string, pattern string, all bool) []string {
+	re := regexp.MustCompile(pattern)
+	if all {
+		return re.FindAllString(content, -1)
+	}
+	if match := re.FindString(content); match != "" {
+		return []string{match}
+	}
+
+	return []string{}
+}
+
+func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector string) []string {
+	// Retrieve the JS plugin
+	plugin, exists := ctx.re.JSPlugins.GetPlugin(selector)
+	if !exists {
+		return []string{}
+	}
+
+	// Execute the plugin
+	value, err := (*wd).ExecuteScript(plugin.String(), nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS plugin: %v", err)
+		return []string{}
+	}
+	// Transform value to a string
+	valueStr := fmt.Sprintf("%v", value)
+
+	// Check if the valueSTr is a valid JSON
+	if json.Valid([]byte(valueStr)) {
+		return []string{valueStr}
+	}
+
+	// Check if the result can be converted to a valid JSON
+	if !json.Valid([]byte(valueStr)) {
+		// transform the valueStr to a valid JSON
+		valueStr = fmt.Sprintf("{\"plugin_scrap\": \"%v\"}", valueStr)
+	}
+
+	// It seems we were unable to retrieve the result from the JS output
+	return []string{valueStr}
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
