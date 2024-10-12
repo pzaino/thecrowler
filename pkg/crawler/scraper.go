@@ -62,28 +62,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 				}
 			}
 		}
-		if len(allExtracted) > 0 {
-			// Ensure that allExtracted is JSON valid
-			if len(allExtracted) == 1 {
-				// Check if it's a JSON string
-				if json.Valid([]byte(allExtracted[0])) {
-					var jsonData map[string]interface{}
-					if err := json.Unmarshal([]byte(allExtracted[0]), &jsonData); err == nil {
-						extractedData[key] = jsonData
-						continue
-					}
-				}
-			} else {
-				// Check if it's a JSON array
-				if json.Valid([]byte("[" + strings.Join(allExtracted, ",") + "]")) {
-					var jsonData []interface{}
-					if err := json.Unmarshal([]byte("["+strings.Join(allExtracted, ",")+"]"), &jsonData); err == nil {
-						extractedData[key] = jsonData
-						continue
-					}
-				}
-			}
-		}
+		extractedData[key] = allExtracted
 	}
 
 	// Optional: Extract JavaScript files if required

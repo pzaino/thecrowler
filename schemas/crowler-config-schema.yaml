@@ -319,6 +319,14 @@ properties:
         title: "CROWler Engine Collect Page's Metatags"
         description: "This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source. Keywords and metadata are used in searches, so we recommend enabling this option."
         type: "boolean"
+      collect_performance:
+        title: "CROWler Engine Collect Page's Performance Metrics"
+        description: "This is a flag that tells the CROWler to collect the performance metrics of each website's page."
+        type: "boolean"
+      collect_events:
+        title: "CROWler Engine Collect Page's Events"
+        description: "This is a flag that tells the CROWler to collect the events of a website. This is useful for Cybersecurity applications, given it collects every page events, included Javascript calling-back home etc."
+        type: "boolean"
       control:
         title: "CROWler Engine (internal) Control API Configuration"
         description: "This is the CROWler's Control API configuration. The Control API is an internal management API that resides within the CROWler Engine. Its primary purpose is to allow internal tools, like health checks, to monitor and manage the operational status of the CROWler Engine (e.g., starting, stopping, or checking the status of crawls). It is used to control and manage engine-level operations. Important: The Control API has nothing to do with the General API (configured using the api section). The General API is an external-facing interface, exposed to interact with The CROWler to make data requests or post new sources. This section specifically configures the Control API, which operates within the CROWler Engine itself. Unlike the General API, which is designed for external interactions, the Control API is part of the CROWler’s Engine internal management system, and is not an external service."
