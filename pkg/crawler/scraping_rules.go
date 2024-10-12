@@ -50,19 +50,27 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url strin
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Scraping rules...")
 		// Execute the rules
 		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
-			runDefaultScrapingRules(wd, ctx)
+			addScrapedDataToDocument(&scrapedDataDoc, runDefaultScrapingRules(wd, ctx))
 		} else {
 			configStr := string((*ctx.source.Config))
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration: %v", configStr)
 		}
 	}
 
 	// Check for rules based on the URL
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL-based Scraping rules (if any)...")
 	// If the URL matches a rule, execute it
-	scrapedDataDoc += executeScrapingRulesByURL(wd, ctx, url)
+	addScrapedDataToDocument(&scrapedDataDoc, executeScrapingRulesByURL(wd, ctx, url))
 
-	return scrapedDataDoc
+	return "{" + scrapedDataDoc + "}"
+}
+
+func addScrapedDataToDocument(scrapedDataDoc *string, newScrapedData string) {
+	if (*scrapedDataDoc) == "" {
+		(*scrapedDataDoc) = newScrapedData
+	} else {
+		(*scrapedDataDoc) += "," + newScrapedData
+	}
 }
 
 func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url string) string {
@@ -71,8 +79,8 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 	// Retrieve the rule group by URL
 	rg, err := ctx.re.GetRuleGroupByURL(url)
 	if err == nil && rg != nil {
-		// Execute all the rules in the rule group
-		scrapedDataDoc += executeScrapingRulesInRuleGroup(ctx, rg, wd)
+		// Execute all the rules in the rule group (the following function also set the Env and clears it)
+		addScrapedDataToDocument(&scrapedDataDoc, executeScrapingRulesInRuleGroup(ctx, rg, wd))
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No rule group found for URL: %v", url)
 	}
@@ -81,7 +89,7 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 	rs, err := ctx.re.GetRulesetByURL(url)
 	if err == nil && rs != nil {
 		// Execute all the rules in the ruleset
-		scrapedDataDoc += executeScrapingRulesInRuleset(ctx, rs, wd)
+		addScrapedDataToDocument(&scrapedDataDoc, executeScrapingRulesInRuleset(ctx, rs, wd))
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No ruleset found for URL: %v", url)
 	}
@@ -102,7 +110,7 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *s
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
-		scrapedDataDoc += scrapedData
+		addScrapedDataToDocument(&scrapedDataDoc, scrapedData)
 	}
 
 	// Reset the environment
@@ -123,7 +131,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
-		scrapedDataDoc += scrapedData
+		addScrapedDataToDocument(&scrapedDataDoc, scrapedData)
 	}
 
 	// Reset the environment
@@ -156,7 +164,13 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 		if len(r.PostProcessing) != 0 {
 			runPostProcessingSteps(ctx, &r.PostProcessing, &jsonData)
 		}
-		jsonDocument = string(jsonData)
+		rval := strings.TrimSpace(string(jsonData))
+		// Remove the leading and trailing {}
+		if strings.HasPrefix(rval, "{") && strings.HasSuffix(rval, "}") {
+			rval = strings.Trim(rval, "{")
+			rval = strings.Trim(rval, "}")
+		}
+		jsonDocument = string(rval)
 	}
 
 	return jsonDocument, nil
@@ -252,7 +266,7 @@ func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	}
 }
 
-func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext) {
+func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext) string {
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default scraping rules...")
 
@@ -270,8 +284,9 @@ func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext) {
 		if !checkScrapingPreConditions(r.Conditions, url) {
 			continue
 		}
-		scrapedDataDoc += executeRulesInExecutionPlan(r, wd, ctx)
+		addScrapedDataToDocument(&scrapedDataDoc, executeRulesInExecutionPlan(r, wd, ctx))
 	}
+	return scrapedDataDoc
 }
 
 func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriver, ctx *ProcessContext) string {

@@ -406,10 +406,14 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
 
 	// Collect Navigation Timing metrics
-	collectNavigationMetrics(&ctx.wd, &pageInfo)
+	if ctx.config.Crawler.CollectPerfMetrics {
+		collectNavigationMetrics(&ctx.wd, &pageInfo)
+	}
 
 	// Collect Page logs
-	collectPageLogs(&pageSource, &pageInfo)
+	if ctx.config.Crawler.CollectPageEvents {
+		collectPageLogs(&pageSource, &pageInfo)
+	}
 
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
@@ -1397,6 +1401,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		if scrapedData != "" {
 			// put ScrapedData into a map
 			scrapedMap := make(map[string]interface{})
+			//cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data: %v", scrapedData)
 			err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v", err)
@@ -1406,6 +1411,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 			scrapedList = append(scrapedList, scrapedMap)
 			ctx.Status.TotalScraped++
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
 		title, _ = (*webPage).Title()
 		// To get the summary, we extract the content of the "description" meta tag
@@ -2177,10 +2183,14 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 
 	// Collect Navigation Timing metrics
-	collectNavigationMetrics(&processCtx.wd, &pageCache)
+	if processCtx.config.Crawler.CollectPerfMetrics {
+		collectNavigationMetrics(&processCtx.wd, &pageCache)
+	}
 
 	// Collect Page logs
-	collectPageLogs(&htmlContent, &pageCache)
+	if processCtx.config.Crawler.CollectPageEvents {
+		collectPageLogs(&htmlContent, &pageCache)
+	}
 
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it

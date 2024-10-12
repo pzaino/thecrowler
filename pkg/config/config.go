@@ -179,6 +179,8 @@ func NewConfig() *Config {
 			CollectMetaTags:       true,
 			CollectFiles:          false,
 			CollectImages:         false,
+			CollectPerfMetrics:    true,
+			CollectPageEvents:     true,
 			MaxRetries:            0,
 			MaxRedirects:          3,
 			ReportInterval:        1,
@@ -1522,6 +1524,36 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 	if srcCfg["max_redirects"] != nil {
 		if val, ok := srcCfg["max_redirects"].(float64); ok {
 			dstCfg.MaxRedirects = int(val)
+		}
+	}
+	if srcCfg["collect_html"] != nil {
+		if val, ok := srcCfg["collect_html"].(bool); ok {
+			dstCfg.CollectHTML = val
+		}
+	}
+	if srcCfg["collect_content"] != nil {
+		if val, ok := srcCfg["collect_content"].(bool); ok {
+			dstCfg.CollectContent = val
+		}
+	}
+	if srcCfg["collect_performance"] != nil {
+		if val, ok := srcCfg["collect_performance"].(bool); ok {
+			dstCfg.CollectPerfMetrics = val
+		}
+	}
+	if srcCfg["collect_events"] != nil {
+		if val, ok := srcCfg["collect_events"].(bool); ok {
+			dstCfg.CollectPageEvents = val
+		}
+	}
+	if srcCfg["collect_keywords"] != nil {
+		if val, ok := srcCfg["collect_keywords"].(bool); ok {
+			dstCfg.CollectKeywords = val
+		}
+	}
+	if srcCfg["collect_metatags"] != nil {
+		if val, ok := srcCfg["collect_metatags"].(bool); ok {
+			dstCfg.CollectMetaTags = val
 		}
 	}
 }
