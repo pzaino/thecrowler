@@ -55,6 +55,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 			getAllOccurrences := element.ExtractAllOccurrences
 
 			extracted := extractContent(ctx, webPage, element, getAllOccurrences)
+			// Check if there was data extracted and append it to the allExtracted slice
 			if len(extracted) > 0 {
 				allExtracted = append(allExtracted, extracted...)
 				if !getAllOccurrences || selectorType == "plugin_call" {
@@ -62,6 +63,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 				}
 			}
 		}
+		// Add the extracted data to the WebObject's map
 		extractedData[key] = allExtracted
 	}
 
@@ -71,6 +73,8 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 		extractedData["js_files"] = jsFiles
 	}
 
+	// return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
+	// given the user may have configured multiple rules.
 	return extractedData
 }
 
@@ -243,9 +247,9 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 		}
 		switch strings.ToLower(selector.SelectorType) {
 		case "css":
-			results = fallbackExtractByCSS(doc, selector.Selector, all)
-		case "xpath":
-			results = fallbackExtractByXPath(doc.Nodes[0], selector.Selector, all)
+			results = fallbackExtractByCSS(ctx, doc, selector, all)
+		case "xpath": // XPath is not supported by goquery, so we use htmlquery
+			results = fallbackExtractByXPath(ctx, doc, selector, all)
 		case "regex":
 			results = fallbackExtractByRegex(htmlContent, selector.Selector, all)
 		case "plugin_call":
@@ -266,34 +270,98 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 }
 
 // extractByCSS extracts the content from the provided document using the provided CSS selector.
-func fallbackExtractByCSS(doc *goquery.Document, selector string, all bool) []string {
+func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
 	var results []string
+	var elements []*goquery.Selection
 	if all {
-		doc.Find(selector).Each(func(i int, s *goquery.Selection) {
-			results = append(results, s.Text())
+		doc.Find(selector.Selector).Each(func(i int, s *goquery.Selection) {
+			elements = append(elements, s)
 		})
 	} else {
-		if selection := doc.Find(selector).First(); selection.Length() > 0 {
-			results = append(results, selection.Text())
+		if selection := doc.Find(selector.Selector).First(); selection.Length() > 0 {
+			elements = append(elements, selection)
+		}
+	}
+	for _, e := range elements {
+		matchL2 := false
+		if strings.TrimSpace(selector.Attribute.Name) != "" {
+			attrValue := e.AttrOr(strings.TrimSpace(selector.Attribute.Name), "")
+			matchValue := strings.TrimSpace(selector.Attribute.Value)
+			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
+				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+					matchL2 = true
+				}
+			} else {
+				matchL2 = true
+			}
+		} else {
+			matchL2 = true
+		}
+		matchL3 := false
+		if matchL2 && strings.TrimSpace(selector.Value) != "" {
+			if matchValue(ctx, e, selector) {
+				matchL3 = true
+			}
+		} else {
+			if matchL2 {
+				matchL3 = true
+			}
+		}
+		if matchL3 {
+			results = append(results, e.Text())
+			break
 		}
 	}
 	return results
 }
 
-func fallbackExtractByXPath(node *html.Node, selector string, all bool) []string {
+func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
 	var results []string
-	elements, err := htmlquery.QueryAll(node, selector)
+	items, err := htmlquery.QueryAll(doc.Nodes[0], selector.Selector)
 	if err != nil {
 		// handle error
 		return results
 	}
-	if all {
-		for _, element := range elements {
-			results = append(results, htmlquery.InnerText(element))
+
+	// Process the matched elements
+	for _, item := range items {
+		matchL2 := false
+
+		// Check for attribute match if specified
+		if strings.TrimSpace(selector.Attribute.Name) != "" {
+			attrValue := htmlquery.SelectAttr(item, strings.TrimSpace(selector.Attribute.Name))
+			matchValue := strings.TrimSpace(selector.Attribute.Value)
+			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
+				if strings.EqualFold(strings.TrimSpace(attrValue), matchValue) {
+					matchL2 = true
+				}
+			} else {
+				matchL2 = true
+			}
+		} else {
+			matchL2 = true
 		}
-	} else if len(elements) > 0 {
-		results = append(results, htmlquery.InnerText(elements[0]))
+
+		matchL3 := false
+		// Check if the element's text or value matches the selector's value
+		if matchL2 && strings.TrimSpace(selector.Value) != "" {
+			if matchValue(ctx, item, selector) {
+				matchL3 = true
+			}
+		} else {
+			if matchL2 {
+				matchL3 = true
+			}
+		}
+
+		if matchL3 {
+			results = append(results, htmlquery.InnerText(item))
+			if !all {
+				break // Stop after first match if not processing all
+			}
+		}
 	}
+
 	return results
 }
 

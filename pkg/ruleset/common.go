@@ -551,10 +551,7 @@ func IsURL(urlStr string) bool {
 	})
 
 	// Check if it urlStr matches the pattern and so it's a URL or a pattern to match URLs
-	//return re.MatchString(urlStr)
-	x := re.MatchString(urlStr)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "IsURL: %s -> %v", urlStr, x)
-	return true
+	return re.MatchString(urlStr)
 }
 
 // CheckURL checks if the provided URL match.
@@ -574,5 +571,6 @@ func CheckURL(urlStr, urlPattern string) bool {
 		return false
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "URL '%s' matched: %t", urlStr, matched)
 	return matched
 }

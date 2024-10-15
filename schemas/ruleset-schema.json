@@ -139,6 +139,7 @@
                                                                 "link_text",
                                                                 "partial_link_text",
                                                                 "js_path",
+                                                                "regex",
                                                                 "plugin_call"
                                                             ],
                                                             "description": "The type of selector to use to find the element. To extract data using plugins, set this field to 'plugin_call'."
