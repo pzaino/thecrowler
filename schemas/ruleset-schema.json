@@ -166,6 +166,22 @@
                                                             "type": "string",
                                                             "description": "Optional. The value within the selector that we need to match for the action. (this is NOT the value to input!)"
                                                         },
+                                                        "extract": {
+                                                            "title": "Extract Data",
+                                                            "type": "object",
+                                                            "description": "Optional. The type of data to extract from the element, e.g., 'text', 'html', 'attribute'.",
+                                                            "properties": {
+                                                                "type": {
+                                                                    "type": "string",
+                                                                    "enum": [
+                                                                        "text",
+                                                                        "attribute",
+                                                                        "html"
+                                                                    ]
+                                                                }
+                                                            },
+                                                            "additionalProperties": false
+                                                        },
                                                         "extract_all_occurrences": {
                                                             "type": "boolean",
                                                             "description": "Flag to extract all occurrences of the element, not just the first one. This flag has no effect when using CROWler plugins via plugin_call."

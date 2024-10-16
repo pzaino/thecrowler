@@ -78,10 +78,14 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 	for _, e := range elements {
 		matchL2 := false
 		if strings.TrimSpace(selector.Attribute.Name) != "" {
-			attrValue, _ := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
-			matchValue := strings.TrimSpace(selector.Attribute.Value)
-			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+			attrValue, err := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			if err != nil {
+				continue
+			}
+			matchValue := selector.Attribute.Value
+			if matchValue != "" {
+				re := regexp.MustCompile(matchValue)
+				if re.MatchString(attrValue) {
 					matchL2 = true
 				}
 			} else {
@@ -174,7 +178,10 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 	for i, e := range elements {
 		matchL2 := false
 		if strings.TrimSpace(selector.Attribute.Name) != "" {
-			attrValue, _ := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			attrValue, err := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			if err != nil {
+				continue
+			}
 			matchValue := strings.TrimSpace(selector.Attribute.Value)
 			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
 				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
