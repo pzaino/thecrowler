@@ -145,11 +145,10 @@ properties:
                                   - "text"
                                   - "html"
                                   - "attribute"
-                                  - "outer_html"
-                                  - "inner_html"
-                                  - "value"
-                                  - "plugin_call"
-                                description: "The type of data to extract from the element. To extract data using plugins, set this field to 'plugin_call'."
+                                description: "The type of data to extract from the element."
+                              pattern:
+                                type: "string"
+                                description: "Optional. The attribute's name of the element to extract, e.g., 'class'."
                             additional_properties: "false"
                           extract_all_occurrences:
                             type: "boolean"

@@ -269,8 +269,14 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	} else {
 		// All good, let's extract the data from the found elements
 		for i := 0; i < len(elements); i++ {
-			text, _ := elements[i].Text()
-			results = append(results, text)
+			if selector.Extract != (rs.ItemToExtract{}) {
+				// Extract the data using the provided regex
+				results = append(results, extractDataFromElement(ctx, elements[i], selector)...)
+			} else {
+				// Extract the innerText from the element
+				text, _ := elements[i].Text()
+				results = append(results, text)
+			}
 		}
 	}
 
@@ -280,6 +286,64 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Found element: '%s' %v", selector.Selector, results)
 	}
+	return results
+}
+
+func extractDataFromElement(_ *ProcessContext, item interface{}, selector rs.Selector) []string {
+	// Check if item is a WebElement
+	tmp1, ok := item.(selenium.WebElement)
+	var tmp2 *goquery.Selection
+	if !ok {
+		tmp1 = nil
+		// Check if item is a *goquery.Selection
+		tmp2, ok = item.(*goquery.Selection)
+		if !ok {
+			return []string{}
+		}
+	}
+
+	var results []string
+	var err error
+
+	eEpType := strings.ToLower(strings.TrimSpace(selector.Extract.Type))
+
+	var data string
+	pattern := selector.Extract.Pattern
+	switch eEpType {
+	case "text", "inner_text", "html":
+		if tmp1 != nil {
+			data, err = tmp1.Text()
+		} else {
+			data = tmp2.Text()
+		}
+	case "attribute":
+		if tmp1 != nil {
+			data, err = tmp1.GetAttribute(selector.Extract.Pattern)
+		} else {
+			var exists bool
+			data, exists = tmp2.Attr(selector.Extract.Pattern)
+			if !exists {
+				data = ""
+				err = errors.New("Attribute not found")
+			}
+		}
+		pattern = ""
+	}
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error extracting data from element: %v", err)
+		return results
+	}
+
+	if pattern != "" && pattern != ".*" {
+		// Extract the data using the provided regex
+		re := regexp.MustCompile(pattern)
+		if allMatches := re.FindAllString(data, -1); len(allMatches) > 0 {
+			results = append(results, allMatches...)
+		}
+	} else {
+		results = append(results, data)
+	}
+
 	return results
 }
 
@@ -328,7 +392,8 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 			}
 		}
 		if matchL3 {
-			results = append(results, e.Text())
+			results = append(results, extractDataFromElement(ctx, e, selector)...)
+			//results = append(results, e.Text())
 			break
 		}
 	}
