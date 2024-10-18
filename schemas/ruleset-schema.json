@@ -139,6 +139,7 @@
                                                                 "link_text",
                                                                 "partial_link_text",
                                                                 "js_path",
+                                                                "regex",
                                                                 "plugin_call"
                                                             ],
                                                             "description": "The type of selector to use to find the element. To extract data using plugins, set this field to 'plugin_call'."
@@ -164,6 +165,35 @@
                                                         "value": {
                                                             "type": "string",
                                                             "description": "Optional. The value within the selector that we need to match for the action. (this is NOT the value to input!)"
+                                                        },
+                                                        "extract": {
+                                                            "title": "Extract Data",
+                                                            "type": "object",
+                                                            "description": "Optional. The type of data to extract from the element, e.g., 'text', 'html', 'attribute'.",
+                                                            "properties": {
+                                                                "type": {
+                                                                    "type": "string",
+                                                                    "enum": [
+                                                                        "text",
+                                                                        "attribute",
+                                                                        "html"
+                                                                    ],
+                                                                    "examples": [
+                                                                        "text",
+                                                                        "attribute",
+                                                                        "html"
+                                                                    ]
+                                                                },
+                                                                "pattern": {
+                                                                    "type": "string",
+                                                                    "description": "The name of the attribute to extract, applicable for 'attribute' type.",
+                                                                    "examples": [
+                                                                        "href",
+                                                                        "src"
+                                                                    ]
+                                                                }
+                                                            },
+                                                            "additionalProperties": false
                                                         },
                                                         "extract_all_occurrences": {
                                                             "type": "boolean",

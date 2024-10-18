@@ -38,30 +38,32 @@ import (
 
 // ApplyRule applies the provided scraping rule to the provided web page.
 func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
-	// Debug message
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying scraping rule: %v", rule.RuleName)
-
-	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
-	// Iterate over the elements to be extracted
-	for _, elementSet := range rule.Elements {
-		key := elementSet.Key
-		selectors := elementSet.Selectors
-
+	// Iterate over the rule's elements to be extracted
+	for e := 0; e < len(rule.Elements); e++ {
+		key := rule.Elements[e].Key
+		selectors := rule.Elements[e].Selectors
 		var allExtracted []string
-		for _, element := range selectors {
-			selectorType := strings.ToLower(strings.TrimSpace(element.SelectorType))
-			getAllOccurrences := element.ExtractAllOccurrences
 
-			extracted := extractContent(ctx, webPage, element, getAllOccurrences)
+		// Iterate over the rule element's selectors to extract the data
+		for i := 0; i < len(selectors); i++ {
+			getAllOccurrences := selectors[i].ExtractAllOccurrences
+
+			// Try to find and extract the data from the web page
+			extracted := extractContent(ctx, webPage, selectors[i], getAllOccurrences)
+
+			// Check if there was data extracted and append it to the allExtracted slice
 			if len(extracted) > 0 {
 				allExtracted = append(allExtracted, extracted...)
-				if !getAllOccurrences || selectorType == "plugin_call" {
+				if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == "plugin_call" {
 					break
 				}
 			}
 		}
+
+		// Add the extracted data to the WebObject's map
 		extractedData[key] = allExtracted
 	}
 
@@ -71,6 +73,8 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 		extractedData["js_files"] = jsFiles
 	}
 
+	// return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
+	// given the user may have configured multiple rules.
 	return extractedData
 }
 
@@ -224,15 +228,24 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	var results []string
 	var elements []selenium.WebElement
 	var err error
-	if all {
-		elements, err = FindElementsByType(ctx, wd, selector)
-	} else {
-		element, err := FindElementByType(ctx, wd, selector)
-		if err == nil {
-			elements = append(elements, element)
+	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
+
+	// Find the elements using the provided selector directly in the VDI's browser
+	if sType != "plugin_call" && sType != "regex" && sType != "xpath" {
+		if all {
+			elements, err = FindElementsByType(ctx, wd, selector)
+		} else {
+			element, err := FindElementByType(ctx, wd, selector)
+			if err == nil {
+				elements = append(elements, element)
+			}
 		}
 	}
-	if len(elements) == 0 || err != nil || selector.SelectorType == "plugin_call" || selector.SelectorType == "regex" {
+
+	// Fallback mechanism if there are no elements found, we had errors or the selector type is not supported by FindElementsByType
+	if len(elements) == 0 || err != nil ||
+		selector.SelectorType == "plugin_call" || selector.SelectorType == "regex" {
+
 		// Let's use fallback mechanism to try to extract the data
 		htmlContent, _ := (*wd).PageSource()
 		doc, err2 := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
@@ -241,67 +254,210 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 			cmn.DebugMsg(cmn.DbgLvlError, "Error finding elements: %v, and fallback mechanism failed too: %v", err, err2)
 			return results
 		}
-		switch strings.ToLower(selector.SelectorType) {
+
+		switch sType {
 		case "css":
-			results = fallbackExtractByCSS(doc, selector.Selector, all)
-		case "xpath":
-			results = fallbackExtractByXPath(doc.Nodes[0], selector.Selector, all)
+			results = fallbackExtractByCSS(ctx, doc, selector, all)
+		case "xpath": // XPath is not supported by goquery, so we use htmlquery
+			results = fallbackExtractByXPath(ctx, doc, selector, all)
 		case "regex":
 			results = fallbackExtractByRegex(htmlContent, selector.Selector, all)
 		case "plugin_call":
 			results = extractByPlugin(ctx, wd, selector.Selector)
 		}
+
 	} else {
-		for _, element := range elements {
-			text, _ := element.Text()
-			results = append(results, text)
+		// All good, let's extract the data from the found elements
+		for i := 0; i < len(elements); i++ {
+			if selector.Extract != (rs.ItemToExtract{}) {
+				// Extract the data using the provided regex
+				results = append(results, extractDataFromElement(ctx, elements[i], selector)...)
+			} else {
+				// Extract the innerText from the element
+				text, _ := elements[i].Text()
+				results = append(results, text)
+			}
 		}
 	}
+
+	// Let's check results before we return it
 	if len(results) == 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Failed to find element: '%s' %v", selector.Selector, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Failed to find element: '%s' %v", selector.Selector, err)
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Found element: '%s' %v", selector.Selector, results)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Found element: '%s' %v", selector.Selector, results)
 	}
+	return results
+}
+
+func extractDataFromElement(_ *ProcessContext, item interface{}, selector rs.Selector) []string {
+	// Check if item is a WebElement
+	tmp1, ok := item.(selenium.WebElement)
+	var tmp2 *goquery.Selection
+	if !ok {
+		tmp1 = nil
+		// Check if item is a *goquery.Selection
+		tmp2, ok = item.(*goquery.Selection)
+		if !ok {
+			return []string{}
+		}
+	}
+
+	var results []string
+	var err error
+
+	eEpType := strings.ToLower(strings.TrimSpace(selector.Extract.Type))
+
+	var data string
+	pattern := selector.Extract.Pattern
+	switch eEpType {
+	case "text", "inner_text", "html":
+		if tmp1 != nil {
+			data, err = tmp1.Text()
+		} else {
+			data = tmp2.Text()
+		}
+	case "attribute":
+		if tmp1 != nil {
+			data, err = tmp1.GetAttribute(selector.Extract.Pattern)
+		} else {
+			var exists bool
+			data, exists = tmp2.Attr(selector.Extract.Pattern)
+			if !exists {
+				data = ""
+				err = errors.New("Attribute not found")
+			}
+		}
+		pattern = ""
+	}
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error extracting data from element: %v", err)
+		return results
+	}
+
+	if pattern != "" && pattern != ".*" {
+		// Extract the data using the provided regex
+		re := regexp.MustCompile(pattern)
+		if allMatches := re.FindAllString(data, -1); len(allMatches) > 0 {
+			results = append(results, allMatches...)
+		}
+	} else {
+		results = append(results, data)
+	}
+
 	return results
 }
 
 // extractByCSS extracts the content from the provided document using the provided CSS selector.
-func fallbackExtractByCSS(doc *goquery.Document, selector string, all bool) []string {
+func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
 	var results []string
+	var elements []*goquery.Selection
+
 	if all {
-		doc.Find(selector).Each(func(i int, s *goquery.Selection) {
-			results = append(results, s.Text())
+		doc.Find(selector.Selector).Each(func(i int, s *goquery.Selection) {
+			elements = append(elements, s)
 		})
 	} else {
-		if selection := doc.Find(selector).First(); selection.Length() > 0 {
-			results = append(results, selection.Text())
+		if selection := doc.Find(selector.Selector).First(); selection.Length() > 0 {
+			elements = append(elements, selection)
 		}
 	}
+
+	// Process the matched elements
+	for _, e := range elements {
+		matchL2 := false
+		if strings.TrimSpace(selector.Attribute.Name) != "" {
+			attrValue, exists := e.Attr(strings.TrimSpace(selector.Attribute.Name))
+			if !exists {
+				continue
+			}
+			matchValue := strings.TrimSpace(selector.Attribute.Value)
+			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
+				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+					matchL2 = true
+				}
+			} else {
+				matchL2 = true
+			}
+		} else {
+			matchL2 = true
+		}
+		matchL3 := false
+		if matchL2 && strings.TrimSpace(selector.Value) != "" {
+			if matchValue(ctx, e, selector) {
+				matchL3 = true
+			}
+		} else {
+			if matchL2 {
+				matchL3 = true
+			}
+		}
+		if matchL3 {
+			results = append(results, extractDataFromElement(ctx, e, selector)...)
+			//results = append(results, e.Text())
+			break
+		}
+	}
+
 	return results
 }
 
-func fallbackExtractByXPath(node *html.Node, selector string, all bool) []string {
+func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
 	var results []string
-	elements, err := htmlquery.QueryAll(node, selector)
+	items, err := htmlquery.QueryAll(doc.Nodes[0], selector.Selector)
 	if err != nil {
 		// handle error
 		return results
 	}
-	if all {
-		for _, element := range elements {
-			results = append(results, htmlquery.InnerText(element))
+
+	// Process the matched elements
+	for _, item := range items {
+		matchL2 := false
+
+		// Check for attribute match if specified
+		if strings.TrimSpace(selector.Attribute.Name) != "" {
+			attrValue := htmlquery.SelectAttr(item, strings.TrimSpace(selector.Attribute.Name))
+			matchValue := strings.TrimSpace(selector.Attribute.Value)
+			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
+				if strings.EqualFold(strings.TrimSpace(attrValue), matchValue) {
+					matchL2 = true
+				}
+			} else {
+				matchL2 = true
+			}
+		} else {
+			matchL2 = true
 		}
-	} else if len(elements) > 0 {
-		results = append(results, htmlquery.InnerText(elements[0]))
+
+		matchL3 := false
+		// Check if the element's text or value matches the selector's value
+		if matchL2 && strings.TrimSpace(selector.Value) != "" {
+			if matchValue(ctx, item, selector) {
+				matchL3 = true
+			}
+		} else {
+			if matchL2 {
+				matchL3 = true
+			}
+		}
+
+		if matchL3 {
+			results = append(results, htmlquery.InnerText(item))
+			if !all {
+				break // Stop after first match if not processing all
+			}
+		}
 	}
+
 	return results
 }
 
 func fallbackExtractByRegex(content string, pattern string, all bool) []string {
 	re := regexp.MustCompile(pattern)
+
 	if all {
 		return re.FindAllString(content, -1)
 	}
+
 	if match := re.FindString(content); match != "" {
 		return []string{match}
 	}
@@ -322,6 +478,7 @@ func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector strin
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS plugin: %v", err)
 		return []string{}
 	}
+
 	// Transform value to a string
 	valueStr := fmt.Sprintf("%v", value)
 

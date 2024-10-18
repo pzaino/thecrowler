@@ -1353,31 +1353,46 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION update_sources(INTEGER, VARCHAR);
+        DROP FUNCTION update_sources(integer,character varying,character varying,character varying,character varying,character varying);
     END IF;
 END
 $$;
-CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER, engineID VARCHAR)
+CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER, p_engineID VARCHAR, p_last_ok_update VARCHAR, p_last_error VARCHAR, p_regular_crawling VARCHAR, p_processing_timeout VARCHAR)
 RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
 $$
 BEGIN
+    IF p_last_ok_update = '' THEN
+        p_last_ok_update := '3 days';
+    END IF;
+    IF p_last_error = '' THEN
+        p_last_error := '15 minutes';
+    END IF;
+    IF p_regular_crawling = '' THEN
+        p_regular_crawling := '1 week';
+    END IF;
+    IF p_processing_timeout = '' THEN
+        p_processing_timeout := '1 day';  -- Default to 1 day if not provided
+    END IF;
     RETURN QUERY
     WITH SelectedSources AS (
         SELECT s.source_id
         FROM Sources AS s
         WHERE s.disabled = FALSE
           AND (
-               (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - INTERVAL '3 days')
-            OR (s.status = 'error' AND s.last_updated_at < NOW() - INTERVAL '15 minutes')
-            OR (s.status = 'completed' AND s.last_updated_at < NOW() - INTERVAL '1 week')
-            OR s.status = 'pending' OR s.status = 'new' OR s.status IS NULL
+               (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL)
+            OR (LOWER(TRIM(s.status)) = 'error' AND s.last_updated_at < NOW() - p_last_error::INTERVAL)
+            OR (LOWER(TRIM(s.status)) = 'completed' AND s.last_updated_at < NOW() - p_regular_crawling::INTERVAL)
+            OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
+            OR LOWER(TRIM(s.status)) = 'pending'
+            OR LOWER(TRIM(s.status)) = 'new'
+            OR s.status IS NULL
           )
         FOR UPDATE
         LIMIT limit_val
     )
     UPDATE Sources
         SET status = 'processing',
-            engine = engineID
+            engine = p_engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
     RETURNING Sources.source_id, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
 END;

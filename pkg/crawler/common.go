@@ -23,11 +23,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	"github.com/tebeka/selenium"
+	"golang.org/x/net/html"
 )
 
 // FindElementByType finds an element by the provided selector type
@@ -76,10 +78,14 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 	for _, e := range elements {
 		matchL2 := false
 		if strings.TrimSpace(selector.Attribute.Name) != "" {
-			attrValue, _ := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
-			matchValue := strings.TrimSpace(selector.Attribute.Value)
-			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+			attrValue, err := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			if err != nil {
+				continue
+			}
+			matchValue := selector.Attribute.Value
+			if matchValue != "" {
+				re := regexp.MustCompile(matchValue)
+				if re.MatchString(attrValue) {
 					matchL2 = true
 				}
 			} else {
@@ -118,7 +124,6 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 
 	switch strings.ToLower(strings.TrimSpace(selector.SelectorType)) {
 	case "css":
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Finding elements by CSS Selector: '%s'", selector.Selector)
 		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
 	case "id":
 		elements, err = (*wd).FindElements(selenium.ByID, selector.Selector)
@@ -173,7 +178,10 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 	for i, e := range elements {
 		matchL2 := false
 		if strings.TrimSpace(selector.Attribute.Name) != "" {
-			attrValue, _ := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			attrValue, err := e.GetAttribute(strings.TrimSpace(selector.Attribute.Name))
+			if err != nil {
+				continue
+			}
 			matchValue := strings.TrimSpace(selector.Attribute.Value)
 			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
 				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
@@ -207,10 +215,22 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 	return elements, nil
 }
 
-func matchValue(ctx *ProcessContext, wdf selenium.WebElement, selector rules.Selector) bool {
-	// Precompute the common value for comparison
-	wdfText, err := wdf.Text()
-	if err != nil {
+func matchValue(ctx *ProcessContext, item interface{}, selector rules.Selector) bool {
+	var wdfText string
+	var err error
+	if tmp1, ok := item.(selenium.WebElement); ok { // Check if the wdf is a WebElement
+		// Get the element Text
+		wdfText, err = tmp1.Text()
+		if err != nil {
+			return false
+		}
+	} else if tmp2, ok := item.(goquery.Selection); ok { // Check if item is a goquery.Selection
+		// Get the goquery.Selection Text
+		wdfText = tmp2.Text()
+	} else if tmp3, ok := item.(*html.Node); ok { // Check if item is a *html.Node
+		// Get the *html.Node Text
+		wdfText = tmp3.Data
+	} else {
 		return false
 	}
 

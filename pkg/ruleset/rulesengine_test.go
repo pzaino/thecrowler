@@ -111,12 +111,12 @@ func TestRuleEngineMarshalJSON(t *testing.T) {
 	expectedJSON := `{
           "rulesets": [
             {
-              "FormatVersion": "",
-              "Author": "",
-              "CreatedAt": "0001-01-01T00:00:00Z",
-              "Description": "",
-              "Name": "",
-              "RuleGroups": null
+              "format_version": "",
+              "author": "",
+              "created_at": "0001-01-01T00:00:00Z",
+              "description": "",
+              "ruleset_name": "",
+              "rule_groups": null
             }
           ],
           "schema": null

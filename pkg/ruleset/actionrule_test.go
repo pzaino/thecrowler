@@ -121,8 +121,8 @@ func TestSelectorGetSelector(t *testing.T) {
 func TestSelectorGetAttribute(t *testing.T) {
 	s := Selector{
 		Attribute: struct {
-			Name  string `yaml:"name"`
-			Value string `yaml:"value"`
+			Name  string `json:"name" yaml:"name"`
+			Value string `json:"value" yaml:"value"`
 		}{
 			Name:  "value",
 			Value: "value",

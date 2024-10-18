@@ -26,11 +26,13 @@ import (
 
 // RuleEngine represents the top-level structure for the rule engine
 type RuleEngine struct {
-	Schema          *jsonschema.Schema `yaml:"schema"`
-	Rulesets        []Ruleset          `yaml:"rulesets"`
-	DetectionConfig DetectionConfig    `yaml:"detection_config"`
-	JSPlugins       JSPluginRegister   `yaml:"js_plugins"`
-	Cache           Cache              `yaml:"cache"`
+	Schema          *jsonschema.Schema `json:"schema" yaml:"schema"`
+	Rulesets        []Ruleset          `json:"rulesets" yaml:"rulesets"`
+	DetectionConfig DetectionConfig    `json:"detection_config" yaml:"detection_config"`
+	JSPlugins       JSPluginRegister   `json:"js_plugins" yaml:"js_plugins"`
+
+	// Not available in the YAML file (for internal use only)
+	Cache Cache
 }
 
 // Cache represents the cache for the ruleset
@@ -47,9 +49,9 @@ type Cache struct {
 
 // DetectionConfig represents the configuration for the detection engine
 type DetectionConfig struct {
-	NoiseThreshold    float32 `yaml:"noise_threshold"`
-	MaybeThreshold    float32 `yaml:"maybe_threshold"`
-	DetectedThreshold float32 `yaml:"detected_threshold"`
+	NoiseThreshold    float32 `json:"noise_threshold" yaml:"noise_threshold"`
+	MaybeThreshold    float32 `json:"maybe_threshold" yaml:"maybe_threshold"`
+	DetectedThreshold float32 `json:"detected_threshold" yaml:"detected_threshold"`
 }
 
 // CustomTime wraps time.Time to provide custom parsing.
@@ -59,41 +61,41 @@ type CustomTime struct {
 
 // Ruleset represents the top-level structure of the rules YAML file
 type Ruleset struct {
-	FormatVersion string      `yaml:"format_version"`
-	Author        string      `yaml:"author"`
-	CreatedAt     CustomTime  `yaml:"created_at"`
-	Description   string      `yaml:"description"`
-	Name          string      `yaml:"ruleset_name"`
-	RuleGroups    []RuleGroup `yaml:"rule_groups"`
+	FormatVersion string      `json:"format_version" yaml:"format_version"`
+	Author        string      `json:"author" yaml:"author"`
+	CreatedAt     CustomTime  `json:"created_at" yaml:"created_at"`
+	Description   string      `json:"description" yaml:"description"`
+	Name          string      `json:"ruleset_name" yaml:"ruleset_name"`
+	RuleGroups    []RuleGroup `json:"rule_groups" yaml:"rule_groups"`
 }
 
 // RuleGroup represents a group of rules
 type RuleGroup struct {
-	GroupName      string               `yaml:"group_name"`
-	ValidFrom      CustomTime           `yaml:"valid_from,omitempty"`
-	ValidTo        CustomTime           `yaml:"valid_to,omitempty"`
-	IsEnabled      bool                 `yaml:"is_enabled"`
-	ScrapingRules  []ScrapingRule       `yaml:"scraping_rules,omitempty"`
-	ActionRules    []ActionRule         `yaml:"action_rules,omitempty"`
-	DetectionRules []DetectionRule      `yaml:"detection_rules,omitempty"`
-	CrawlingRules  []CrawlingRule       `yaml:"crawling_rules,omitempty"`
-	Env            []EnvSetting         `yaml:"environment_settings,omitempty"`
-	LoggingConf    LoggingConfiguration `yaml:"logging_configuration,omitempty"`
+	GroupName      string               `json:"group_name" yaml:"group_name"`
+	ValidFrom      CustomTime           `json:"valid_from,omitempty" yaml:"valid_from,omitempty"`
+	ValidTo        CustomTime           `json:"valid_to,omitempty" yaml:"valid_to,omitempty"`
+	IsEnabled      bool                 `json:"is_enabled" yaml:"is_enabled"`
+	ScrapingRules  []ScrapingRule       `json:"scraping_rules,omitempty" yaml:"scraping_rules,omitempty"`
+	ActionRules    []ActionRule         `json:"action_rules,omitempty" yaml:"action_rules,omitempty"`
+	DetectionRules []DetectionRule      `json:"detection_rules,omitempty" yaml:"detection_rules,omitempty"`
+	CrawlingRules  []CrawlingRule       `json:"crawling_rules,omitempty" yaml:"crawling_rules,omitempty"`
+	Env            []EnvSetting         `json:"environment_settings,omitempty" yaml:"environment_settings,omitempty"`
+	LoggingConf    LoggingConfiguration `json:"logging_configuration,omitempty" yaml:"logging_configuration,omitempty"`
 }
 
 // EnvSetting represents the environment settings for the ruleset
 type EnvSetting struct {
-	Key        string        `yaml:"key"`
-	Values     interface{}   `yaml:"values"`
-	Properties EnvProperties `yaml:"properties"`
+	Key        string        `json:"key" yaml:"key"`
+	Values     interface{}   `json:"values" yaml:"values"`
+	Properties EnvProperties `json:"properties" yaml:"properties"`
 }
 
 // EnvProperties represents the properties for the environment settings
 type EnvProperties struct {
-	Persistent bool   `yaml:"persistent"`
-	Static     bool   `yaml:"static"`
-	Type       string `yaml:"type"`
-	Source     string `yaml:"source"`
+	Persistent bool   `json:"persistent" yaml:"persistent"`
+	Static     bool   `json:"static" yaml:"static"`
+	Type       string `json:"type" yaml:"type"`
+	Source     string `json:"source" yaml:"source"`
 }
 
 // UnmarshalJSON implements custom unmarshaling logic for EnvSetting
@@ -192,66 +194,74 @@ func (e *EnvSetting) MarshalJSON() ([]byte, error) {
 
 // PreCondition represents a pre-condition for a scraping rule
 type PreCondition struct {
-	URL  string `yaml:"url"`
-	Path string `yaml:"path"`
+	URL  string `json:"url" yaml:"url"`
+	Path string `json:"path" yaml:"path"`
 }
 
 // ScrapingRule represents a scraping rule
 type ScrapingRule struct {
-	RuleName          string                 `yaml:"rule_name"`
-	PreConditions     []PreCondition         `yaml:"pre_conditions,omitempty"`
-	Conditions        map[string]interface{} `yaml:"conditions"`
-	WaitConditions    []WaitCondition        `yaml:"wait_conditions"`
-	Elements          []Element              `yaml:"elements"`
-	JsFiles           bool                   `yaml:"js_files"`
-	JSONFieldMappings map[string]string      `yaml:"json_field_mappings"`
-	PostProcessing    []PostProcessingStep   `yaml:"post_processing"`
+	RuleName          string                 `json:"rule_name" yaml:"rule_name"`
+	PreConditions     []PreCondition         `json:"pre_conditions,omitempty" yaml:"pre_conditions,omitempty"`
+	Conditions        map[string]interface{} `json:"conditions" yaml:"conditions"`
+	WaitConditions    []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
+	Elements          []Element              `json:"elements" yaml:"elements"`
+	JsFiles           bool                   `json:"js_files" yaml:"js_files"`
+	JSONFieldMappings map[string]string      `json:"json_field_mappings" yaml:"json_field_mappings"`
+	PostProcessing    []PostProcessingStep   `json:"post_processing" yaml:"post_processing"`
 }
 
 // ActionRule represents an action rule
 type ActionRule struct {
-	RuleName       string                 `yaml:"rule_name"`
-	ActionType     string                 `yaml:"action_type"`
-	Selectors      []Selector             `yaml:"selectors"`
-	Value          string                 `yaml:"value,omitempty"`
-	URL            string                 `yaml:"url,omitempty"`
-	WaitConditions []WaitCondition        `yaml:"wait_conditions"`
-	Conditions     map[string]interface{} `yaml:"conditions"`
-	PostProcessing []PostProcessingStep   `yaml:"post_processing"`
-	ErrorHandling  ErrorHandling          `yaml:"error_handling"`
+	RuleName       string                 `json:"rule_name" yaml:"rule_name"`
+	ActionType     string                 `json:"action_type" yaml:"action_type"`
+	Selectors      []Selector             `json:"selectors" yaml:"selectors"`
+	Value          string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	URL            string                 `json:"url,omitempty" yaml:"url,omitempty"`
+	WaitConditions []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
+	Conditions     map[string]interface{} `json:"conditions" yaml:"conditions"`
+	PostProcessing []PostProcessingStep   `json:"post_processing" yaml:"post_processing"`
+	ErrorHandling  ErrorHandling          `json:"error_handling" yaml:"error_handling"`
 }
 
 // Element represents a single element to be scraped
 type Element struct {
-	Key       string     `yaml:"key"`
-	Selectors []Selector `yaml:"selectors"`
+	Key       string     `json:"key" yaml:"key"`
+	Selectors []Selector `json:"selectors" yaml:"selectors"`
 }
 
 // Selector represents a single selector
 type Selector struct {
-	SelectorType string `yaml:"selector_type"`
-	Selector     string `yaml:"selector"`
+	SelectorType string `json:"selector_type" yaml:"selector_type"`
+	Selector     string `json:"selector" yaml:"selector"`
 	Attribute    struct {
-		Name  string `yaml:"name"`
-		Value string `yaml:"value"`
-	} `yaml:"attribute,omitempty"`
-	Value                 string `yaml:"value,omitempty"`
-	ResolvedValue         string `yaml:"resolved_value,omitempty"`
-	ExtractAllOccurrences bool   `yaml:"extract_all_occurrences"`
+		Name  string `json:"name" yaml:"name"`
+		Value string `json:"value" yaml:"value"`
+	} `json:"attribute,omitempty" yaml:"attribute,omitempty"`
+	Value                 string        `json:"value,omitempty" yaml:"value,omitempty"`
+	Extract               ItemToExtract `json:"extract,omitempty" yaml:"extract,omitempty"`
+	ExtractAllOccurrences bool          `json:"extract_all_occurrences" yaml:"extract_all_occurrences"`
+	// Not available in the YAML file (for internal use only)
+	ResolvedValue string
+}
+
+// ItemToExtract represents the item to extract from the selector
+type ItemToExtract struct {
+	Type    string `json:"type" yaml:"type"`
+	Pattern string `json:"pattern" yaml:"pattern"`
 }
 
 // WaitCondition represents a single wait condition
 type WaitCondition struct {
-	ConditionType string   `yaml:"condition_type"`
-	Selector      Selector `yaml:"selector,omitempty"`
-	CustomJS      string   `yaml:"custom_js,omitempty"`
-	Value         string   `yaml:"value,omitempty"`
+	ConditionType string   `json:"condition_type" yaml:"condition_type"`
+	Selector      Selector `json:"selector,omitempty" yaml:"selector,omitempty"`
+	CustomJS      string   `json:"custom_js,omitempty" yaml:"custom_js,omitempty"`
+	Value         string   `json:"value,omitempty" yaml:"value,omitempty"`
 }
 
 // PostProcessingStep represents a single post-processing step
 type PostProcessingStep struct {
-	Type    string                 `yaml:"step_type"`
-	Details map[string]interface{} `yaml:"details"`
+	Type    string                 `json:"step_type" yaml:"step_type"`
+	Details map[string]interface{} `json:"details" yaml:"details"`
 }
 
 // DetectionRule represents a rule for detecting specific technologies or objects
