@@ -227,6 +227,10 @@ func NewConfig() *Config {
 				ProxyURL:    "",
 			},
 		},
+		Prometheus: PrometheusConfig{
+			Enabled: false,
+			Port:    9090,
+		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
 			Path:    DataDefaultPath,
@@ -453,6 +457,7 @@ func (c *Config) Validate() error {
 	c.validateDatabase()
 	c.validateAPI()
 	c.validateSelenium()
+	c.validatePrometheus()
 	c.validateImageStorageAPI()
 	c.validateFileStorageAPI()
 	c.validateHTTPHeaders()
@@ -818,6 +823,18 @@ func (c *Config) validateSeleniumProxyURL(selenium *Selenium) {
 		selenium.ProxyURL = ""
 	} else {
 		selenium.ProxyURL = strings.TrimSpace(selenium.ProxyURL)
+	}
+}
+
+func (c *Config) validatePrometheus() {
+	// Check Prometheus
+	if c.Prometheus.Port < 1 || c.Prometheus.Port > 65535 {
+		c.Prometheus.Port = 9090
+	}
+	if strings.TrimSpace(c.Prometheus.Host) == "" {
+		c.Prometheus.Host = "localhost"
+	} else {
+		c.Prometheus.Host = strings.TrimSpace(c.Prometheus.Host)
 	}
 }
 

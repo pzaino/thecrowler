@@ -318,6 +318,13 @@ type PluginConfig struct {
 	Refresh int      `yaml:"refresh"` // Refresh interval for the ruleset (in seconds)
 }
 
+// PrometheusConfig represents the Prometheus configuration
+type PrometheusConfig struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"` // Whether to enable Prometheus or not
+	Host    string `json:"host" yaml:"host"`       // Hostname of the Prometheus server
+	Port    int    `json:"port" yaml:"port"`       // Port number of the Prometheus server
+}
+
 // Config represents the structure of the configuration file
 type Config struct {
 	// Remote configuration
@@ -334,6 +341,8 @@ type Config struct {
 
 	// Selenium configuration
 	Selenium []Selenium `json:"selenium" yaml:"selenium"`
+
+	Prometheus PrometheusConfig `json:"prometheus" yaml:"prometheus"`
 
 	// Image storage API configuration (to store images on a separate server)
 	ImageStorageAPI FileStorageAPI `json:"image_storage" yaml:"image_storage"`

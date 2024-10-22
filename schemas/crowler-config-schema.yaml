@@ -186,6 +186,7 @@ properties:
     - "user"
     - "password"
     - "dbname"
+
   crawler:
     title: "CROWler Engine's crawling Configuration"
     description: "This is the crawler (CROWler Engine) configuration section, it's used to tell the CROWler's engine how to behave. It is the configuration for the CROWler engine that the CROWler will use to crawl websites, spin workers and configure it's internal Control API."
@@ -390,6 +391,7 @@ properties:
             description: "This is the write timeout (in seconds) for the Control API. It is the maximum amount of time that the CROWler will wait for the control API to respond."
         additionalProperties: "false"
     additionalProperties: "false"
+
   api:
     title: "CROWler General/Search API Configuration"
     description: "This is the General/Search API configuration section, it's used to configure the General/Search API and it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API. It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc."
@@ -468,6 +470,7 @@ properties:
     required:
     - "host"
     - "timeout"
+
   selenium:
     title: "CROWler VDI access Configuration"
     description: "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for the selenium driver, to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format."
@@ -550,6 +553,37 @@ properties:
       required:
       - "type"
       - "host"
+
+  prometheus:
+    title: "CROWler Prometheus metrics exporter Configuration"
+    description: "This is the Prometheus metrics exporter configuration section, it's used to configure the Prometheus metrics exporter and tell the CROWler's Engine how to connect to it. Prometheus metrics exporter can be used to monitor the CROWler's Engine."
+    type: "object"
+    properties:
+      enabled:
+        title: "CROWler Prometheus metrics exporter Enabled"
+        description: "This is a flag that tells the CROWler to enable the Prometheus metrics. This is useful for monitoring the CROWler's Engine."
+        type: "boolean"
+      host:
+        title: "CROWler Prometheus metrics exporter Host"
+        description: "This is the Prometheus Gateway host to which each CROWler engine instance will send their metrics."
+        type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$"
+      port:
+        title: "CROWler Prometheus metrics exporter Host Port"
+        description: "This is the port of the Prometheus Gateway host to which each CROWler engine instance will send their metrics."
+        type: "integer"
+        minimum: "1"
+        maximum: "65535"
+        examples:
+        - "9090"
+      timeout:
+        title: "CROWler Prometheus metrics exporter Timeout"
+        description: "This is the timeout for the Prometheus metrics exporter. It is the maximum amount of time that the CROWler will wait for the Prometheus metrics exporter to respond."
+        type: "integer"
+        minimum: "10"
+        examples:
+        - "30"
+
   image_storage:
     title: "CROWler Images Storage access Configuration"
     description: "This is the Image Storage configuration section, it is used to tell the CROWler's Engine how and where to store collected images."
