@@ -229,7 +229,7 @@ func NewConfig() *Config {
 		},
 		Prometheus: PrometheusConfig{
 			Enabled: false,
-			Port:    9090,
+			Port:    9091,
 		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
