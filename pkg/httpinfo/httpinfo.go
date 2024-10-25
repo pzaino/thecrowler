@@ -89,7 +89,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Handle redirects
 	if shouldFollowRedirects(config, resp) {

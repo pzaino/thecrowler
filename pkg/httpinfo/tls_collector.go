@@ -40,6 +40,7 @@ type captureConn struct {
 	w io.Writer
 }
 
+// Read wraps Read and returns an error if it is not supported
 func (c *captureConn) Read(b []byte) (int, error) {
 	if c.r == nil {
 		return 0, io.EOF
@@ -47,6 +48,7 @@ func (c *captureConn) Read(b []byte) (int, error) {
 	return c.r.Read(b)
 }
 
+// Write wraps Write and returns an error if it is not supported
 func (c *captureConn) Write(b []byte) (int, error) {
 	if c.w == nil {
 		return len(b), fmt.Errorf("write not supported")
@@ -54,6 +56,7 @@ func (c *captureConn) Write(b []byte) (int, error) {
 	return c.w.Write(b)
 }
 
+// DataCollector stores the proxy configuration and provides methods to collect data from a host
 type DataCollector struct {
 	Proxy *cfg.SOCKSProxy
 }
@@ -111,7 +114,7 @@ func (dc DataCollector) CollectAll(host string, port string, c *Config) (*Collec
 	if err != nil {
 		return nil, err
 	}
-	defer rawConn.Close()
+	defer rawConn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Capture server-side communication (ServerHello)
 	serverHelloCapture := io.TeeReader(rawConn, &serverHelloBuf)
@@ -200,7 +203,7 @@ func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, po
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Create SSH client config
 	clientConfig := &ssh.ClientConfig{
@@ -218,7 +221,7 @@ func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, po
 	if err != nil {
 		return err
 	}
-	defer sshConn.Close()
+	defer sshConn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Store captured SSH ClientHello and ServerHello messages
 	collectedData.SSHClientHello = clientHelloBuf.Bytes()
@@ -238,7 +241,7 @@ func handleSSHChannels(channels <-chan ssh.NewChannel) {
 			continue
 		}
 		go ssh.DiscardRequests(requests)
-		channel.Close()
+		_ = channel.Close()
 	}
 }
 

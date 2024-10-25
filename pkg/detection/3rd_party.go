@@ -88,7 +88,7 @@ func trdPRequestInfo(reqInfo *trdPRequest) (map[string]interface{}, error) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error scanning with %s: %v", reqInfo.Provider, err)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

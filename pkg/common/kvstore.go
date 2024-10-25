@@ -286,7 +286,7 @@ func (kv *KeyValueStore) AllKeys() []string {
 	return keys
 }
 
-// AllKeys returns a slice of all keys in the store (ignoring context).
+// AllKeysAndCIDs returns a slice of all keys in the store (ignoring context).
 func (kv *KeyValueStore) AllKeysAndCIDs() []string {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()

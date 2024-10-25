@@ -1629,7 +1629,7 @@ func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkIte
 	if ctx.config.Crawler.BrowsingMode == "human" ||
 		ctx.config.Crawler.BrowsingMode == "recursive" ||
 		ctx.config.Crawler.BrowsingMode == "right_click_recursive" {
-		doc.Find("a").Each(func(index int, item *goquery.Selection) {
+		doc.Find("a").Each(func(_ int, item *goquery.Selection) {
 			linkTag := item
 			link, _ := linkTag.Attr("href")
 			link = normalizeURL(link, 0)

@@ -310,7 +310,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	var statuses []StatusResponseRow
 	for rows.Next() {
@@ -360,7 +360,7 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	var statuses []StatusResponseRow
 	for rows.Next() {

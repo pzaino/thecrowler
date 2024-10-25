@@ -76,7 +76,7 @@ type Crawler struct {
 	Control               ControlConfig `json:"control" yaml:"control"`                                 // Control/COnsole internal API
 }
 
-// HealthCheckConfig represents the health check configuration
+// ControlConfig represents the internal control API configuration
 type ControlConfig struct {
 	Host              string `json:"host" yaml:"host"`                             // IP address for the health check server
 	Port              int    `json:"port" yaml:"port"`                             // Port number for the health check server
@@ -121,6 +121,7 @@ type GeoLookupConfig struct {
 	SSLMode string `json:"sslmode" yaml:"sslmode"`
 }
 
+// HTTPConfig represents the HTTP information gathering configuration
 type HTTPConfig struct {
 	Enabled         bool           `json:"enabled" yaml:"enabled"`
 	Timeout         int            `json:"timeout" yaml:"timeout"`
@@ -129,6 +130,7 @@ type HTTPConfig struct {
 	Proxies         []SOCKSProxy   `json:"proxies" yaml:"proxies"`
 }
 
+// SSLScoutConfig represents the SSL information gathering configuration
 type SSLScoutConfig struct {
 	Enabled     bool `json:"enabled" yaml:"enabled"`
 	JARM        bool `json:"jarm" yaml:"jarm"`
@@ -148,6 +150,7 @@ type SSLScoutConfig struct {
 	CustomTLS   bool `json:"custom_tls" yaml:"custom_tls"`
 }
 
+// SOCKSProxy represents a SOCKS proxy configuration
 type SOCKSProxy struct {
 	Address  string `json:"host" yaml:"host"`
 	Port     int    `json:"port" yaml:"port"`
@@ -209,6 +212,7 @@ type ServiceScoutConfig struct {
 	Proxies        []string `yaml:"proxies"`         // Proxies for the database connection
 }
 
+// SSIdleScan represents the idle scan configuration
 type SSIdleScan struct {
 	ZombieHost string `yaml:"zombie_host"` // --zombie-host (Use a zombie host)
 	ZombiePort int    `yaml:"zombie_port"` // --zombie-port (Use a zombie port)
@@ -224,6 +228,7 @@ type NetworkInfo struct {
 	HostPlatform PlatformInfo       `yaml:"host_platform"`
 }
 
+// PlatformInfo represents the platform information
 type PlatformInfo struct {
 	OSName    string `yaml:"os_name"`
 	OSVersion string `yaml:"os_version"`
@@ -289,7 +294,7 @@ type Remote struct {
 	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
 
-// Ruleset represents the top-level structure of the rules YAML file
+// RulesetConfig represents the top-level structure of the rules YAML file
 type RulesetConfig struct {
 	SchemaPath string   `yaml:"schema_path"` // Path to the JSON schema file
 	Path       []string `yaml:"path"`        // Path to the ruleset files
@@ -368,11 +373,13 @@ type Config struct {
 	DebugLevel int    `json:"debug_level" yaml:"debug_level"` // Debug level for logging
 }
 
+// PluginsConfig represents the configuration for plugins
 type PluginsConfig struct {
 	PluginTimeout int            `json:"plugin_timeout" yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
 	Plugins       []PluginConfig `json:"plugins" yaml:"plugins"`
 }
 
+// ExternalDetectionConfig represents the configuration for external detection providers
 type ExternalDetectionConfig struct {
 	Timeout            int                     `json:"timeout" yaml:"timeout"`           // Timeout for external detection (in seconds)
 	MaxRequests        int                     `json:"max_requests" yaml:"max_requests"` // Maximum number of requests
@@ -395,6 +402,7 @@ type ExternalDetectionConfig struct {
 	URLHaus            ExtDetectProviderConfig `json:"url_haus" yaml:"url_haus"`
 }
 
+// ExtDetectProviderConfig represents the configuration for an external detection provider
 type ExtDetectProviderConfig struct {
 	Provider    string `json:"provider" yaml:"provider" validate:"required"`
 	Host        string `json:"host" yaml:"host"`
@@ -408,6 +416,7 @@ type ExtDetectProviderConfig struct {
 /////////////////////////////////////////////////
 //// ----------- Source Config ------------ ////
 
+// SourceConfig represents the source configuration
 type SourceConfig struct {
 	Version        string                 `json:"version" yaml:"version" validate:"required,version_format"`               // Version of the source configuration
 	FormatVersion  string                 `json:"format_version" yaml:"format_version" validate:"required,version_format"` // Regex for version format validation
@@ -420,10 +429,12 @@ type SourceConfig struct {
 	Custom         map[string]interface{} `json:"custom,omitempty" yaml:"custom,omitempty"` // Flexible custom configuration
 }
 
+// CrawlingConfig represents the crawling configuration for a source
 type CrawlingConfig struct {
 	Site string `json:"site" yaml:"site" validate:"required,url"`
 }
 
+// ExecutionPlanItem represents the execution plan item for a source
 type ExecutionPlanItem struct {
 	Label                string                 `json:"label" yaml:"label" validate:"required"`
 	Conditions           Condition              `json:"conditions" yaml:"conditions" validate:"required"`
@@ -433,10 +444,12 @@ type ExecutionPlanItem struct {
 	AdditionalConditions map[string]interface{} `json:"additional_conditions,omitempty" yaml:"additional_conditions,omitempty"`
 }
 
+// Condition represents the conditions for a source
 type Condition struct {
 	UrlPatterns []string `json:"url_patterns" yaml:"url_patterns" validate:"required"`
 }
 
+// FileReader is an interface to read files
 type FileReader interface {
 	ReadFile(filename string) ([]byte, error)
 }

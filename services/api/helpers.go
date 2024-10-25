@@ -30,7 +30,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 func extractQueryOrBody(r *http.Request) (string, error) {
 	if r.Method == "POST" {
 		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
+		defer r.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 		if err != nil {
 			return "", err
 		}

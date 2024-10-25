@@ -406,9 +406,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		status := (*PipelineStatus)[idx]
 		if status.PipelineRunning == 0 {
 			continue
-		} else {
-			runningPipelines++
 		}
+		runningPipelines++
+
 		var totalRunningTime time.Duration
 		if status.EndTime.IsZero() {
 			totalRunningTime = time.Since(status.StartTime)
@@ -801,8 +801,12 @@ func configCheckHandler(w http.ResponseWriter, r *http.Request) {
 func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 	// Close the database connection
 	if db != nil {
-		db.Close()
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection closed.")
+		err := db.Close()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "closing database connection: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection closed.")
+		}
 	}
 	// Stop the Selenium services
 	close(sel)

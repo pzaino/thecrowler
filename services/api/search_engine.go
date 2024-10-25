@@ -461,7 +461,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	if err != nil {
 		return SearchResult{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)
@@ -536,7 +536,7 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 	if err != nil {
 		return ScreenshotResponse{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)
@@ -704,7 +704,7 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)
@@ -876,7 +876,7 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 	if err != nil {
 		return CorrelatedSitesResponse{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)
@@ -1085,7 +1085,7 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 	if err != nil {
 		return NetInfoResponse{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)
@@ -1251,7 +1251,7 @@ func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoRe
 	if err != nil {
 		return HTTPInfoResponse{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
 	elapsed := time.Since(start)

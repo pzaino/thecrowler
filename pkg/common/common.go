@@ -33,6 +33,7 @@ const (
 	errIPNotAllowed = "ip address is not allowed"
 )
 
+// GetEngineID returns the engine ID
 func GetEngineID() string {
 	// Retrieve process PID
 	pid := os.Getpid()
@@ -81,7 +82,7 @@ func UpdateLoggerConfig(logType string) {
 	logType = strings.ToLower(strings.TrimSpace(logType))
 	if logType == "file" {
 		// Set log to log to a file
-		logFile, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		logFile, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 		if err == nil {
 			log.SetOutput(logFile)
 		}
@@ -129,7 +130,7 @@ func GetFileExt(filePath string) string {
 	return fileType
 }
 
-// Create a function that checks if a path is correct and if it exists
+// IsPathCorrect checks if the given path exists
 func IsPathCorrect(path string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false
@@ -224,7 +225,7 @@ func SafeTransport(timeout int, sslmode string) *http.Transport {
 }
 
 func dialContextWithIPCheck(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(_ context.Context, network, addr string) (net.Conn, error) {
 		c, err := net.DialTimeout(network, addr, timeout)
 		if err != nil {
 			return nil, err
@@ -259,7 +260,7 @@ func dialTLSWithIPCheck(timeout time.Duration) func(ctx context.Context, network
 
 //// ----- ENV related shared functions ----- ////
 
-// interpolateEnvVars replaces occurrences of `${VAR}` or `$VAR` in the input string
+// InterpolateEnvVars replaces occurrences of `${VAR}` or `$VAR` in the input string
 // with the value of the VAR environment variable.
 func InterpolateEnvVars(input string) string {
 	envVarPattern := regexp.MustCompile(`\$\{?(\w+)\}?`)
@@ -274,7 +275,7 @@ func InterpolateEnvVars(input string) string {
 	})
 }
 
-// Convert a string to an integer
+// StringToInt converts a string to an integer
 func StringToInt(s string) int {
 	i, err := strconv.Atoi(s)
 	if err != nil {
@@ -283,7 +284,7 @@ func StringToInt(s string) int {
 	return i
 }
 
-// Convert a string to a float
+// StringToFloat converts a string to a float
 func StringToFloat(s string) float64 {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
@@ -292,7 +293,7 @@ func StringToFloat(s string) float64 {
 	return f
 }
 
-// Convert String to FLoat32
+// StringToFloat32 converts String to FLoat32
 func StringToFloat32(s string) float32 {
 	f, err := strconv.ParseFloat(s, 32)
 	if err != nil {

@@ -580,7 +580,7 @@ func (jc JARMCollector) sendPacket(packet []byte, host string, port string) ([]b
 			return nil, fmt.Errorf("direct dial error: %v", err)
 		}
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Set timeout
 	err = conn.SetDeadline(time.Now().Add(20 * time.Second))

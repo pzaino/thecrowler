@@ -31,14 +31,23 @@ import (
 )
 
 const (
-	PluginsDefaultPath    = "./plugins/*.js"
-	JSONRulesDefaultPath  = "./rules/*.json"
+	//nolint:errcheck // Don't lint for error not checked, this is a defer statement
+	// PluginsDefaultPath Default plugins path
+	PluginsDefaultPath = "./plugins/*.js"
+	// JSONRulesDefaultPath Default rules path for json rules
+	JSONRulesDefaultPath = "./rules/*.json"
+	// YAMLRulesDefaultPath1 Default rules path for yaml rules
 	YAMLRulesDefaultPath1 = "./rules/*.yaml"
+	// YAMLRulesDefaultPath2 Default rules path for yaml rules
 	YAMLRulesDefaultPath2 = "./rules/*.yml"
-	DataDefaultPath       = "./data"
-	SSDefaultTimeProfile  = 3
-	SSDefaultTimeout      = 3600
-	SSDefaultDelayTime    = 100
+	// DataDefaultPath Default data path
+	DataDefaultPath = "./data"
+	// SSDefaultTimeProfile Default time profile for service scout
+	SSDefaultTimeProfile = 3
+	// SSDefaultTimeout Default timeout for service scout
+	SSDefaultTimeout = 3600
+	// SSDefaultDelayTime Default delay time for service scout
+	SSDefaultDelayTime = 100
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -46,14 +55,18 @@ type RemoteFetcher interface {
 	FetchRemoteFile(url string, timeout int, sslMode string) (string, error)
 }
 
+// CMNFetcher is a fetcher that uses the common package to fetch remote files.
 type CMNFetcher struct{}
 
+// FetchRemoteFile fetches a remote file using the common package.
 func (f *CMNFetcher) FetchRemoteFile(url string, timeout int, sslMode string) (string, error) {
 	return cmn.FetchRemoteFile(url, timeout, sslMode)
 }
 
+// OsFileReader is a file reader that uses the os package to read files.
 type OsFileReader struct{}
 
+// ReadFile reads a file using the os package.
 func (OsFileReader) ReadFile(filename string) ([]byte, error) {
 	return os.ReadFile(filename)
 }
