@@ -30,6 +30,10 @@ const (
 	errFailedToConnectToDB         = "Error connecting to the database"
 	errFailedToStartTransaction    = "Failed to start transaction"
 	errFailedToCommitTransaction   = "Failed to commit transaction"
+
+	infoAllSourcesStatus = "All Sources status"
+	//infoSourceStatus     = "Source status"
+	infoSourceRemoved = "Source and related data removed successfully"
 )
 
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
@@ -198,7 +202,7 @@ func performRemoveSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		return ConsoleResponse{Message: errFailedToCommitTransaction}, err
 	}
 
-	results.Message = "Source and related data removed successfully"
+	results.Message = infoSourceRemoved
 	return results, nil
 }
 
@@ -239,7 +243,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 		return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err
 	}
 
-	results.Message = "Source and related data removed successfully"
+	results.Message = infoSourceRemoved
 	return results, nil
 }
 
@@ -306,7 +310,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	var statuses []StatusResponseRow
 	for rows.Next() {
@@ -318,7 +322,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 		statuses = append(statuses, row)
 	}
 
-	results.Message = "All Sources statuses"
+	results.Message = infoAllSourcesStatus
 	results.Items = statuses
 	return results, nil
 }
@@ -356,7 +360,7 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	var statuses []StatusResponseRow
 	for rows.Next() {
@@ -368,7 +372,7 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 		statuses = append(statuses, row)
 	}
 
-	results.Message = "All Sources statuses"
+	results.Message = infoAllSourcesStatus
 	results.Items = statuses
 	return results, nil
 }

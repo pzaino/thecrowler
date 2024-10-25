@@ -36,6 +36,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
@@ -56,6 +59,31 @@ var (
 	config       cfg.Config       // Configuration "object"
 	configMutex  sync.Mutex       // Mutex to protect the configuration
 	GRulesEngine rules.RuleEngine // Global rules engine
+
+	// Prometheus metrics
+	totalPages = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_pages",
+			Help: "Total number of pages crawled.",
+		},
+		[]string{"pipeline_id", "source"},
+	)
+	totalLinks = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_links",
+			Help: "Total number of links collected.",
+		},
+		[]string{"pipeline_id", "source"},
+	)
+	totalErrors = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_errors",
+			Help: "Total number of errors encountered.",
+		},
+		[]string{"pipeline_id", "source"},
+	)
+	// TODO: Define more prometheus metrics here...
+
 )
 
 // WorkBlock is a struct that holds all the necessary information to instantiate a new
@@ -378,9 +406,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		status := (*PipelineStatus)[idx]
 		if status.PipelineRunning == 0 {
 			continue
-		} else {
-			runningPipelines++
 		}
+		runningPipelines++
+
 		var totalRunningTime time.Duration
 		if status.EndTime.IsZero() {
 			totalRunningTime = time.Since(status.StartTime)
@@ -410,6 +438,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("        Last Page Delay: %f\n", status.LastDelay)
 		report += sepPLine + "\n"
 
+		// Update the metrics
+		updateMetrics(status)
+
 		// Reset the status if the pipeline has completed (display only the last report)
 		if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
 			status.PipelineRunning = 0
@@ -418,6 +449,40 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	report += sepRLine + "\n"
 	if runningPipelines > 0 {
 		cmn.DebugMsg(cmn.DbgLvlInfo, report)
+	}
+}
+
+func updateMetrics(status crowler.Status) {
+	if !config.Prometheus.Enabled {
+		return
+	}
+
+	// Update the metrics
+	labels := prometheus.Labels{
+		"pipeline_id": fmt.Sprintf("%d", status.PipelineID),
+		"source":      status.Source,
+	}
+	totalPages.With(labels).Set(float64(status.TotalPages))
+	totalLinks.With(labels).Set(float64(status.TotalLinks))
+	totalErrors.With(labels).Set(float64(status.TotalErrors))
+
+	// Push metrics
+	if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
+		Collector(totalPages).
+		// Add other collectors...
+		Grouping("pipeline_id", fmt.Sprintf("%d", status.PipelineID)).
+		Push(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Could not push metrics: %v", err)
+	}
+
+	// Delete metrics if pipeline is complete
+	if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
+		// Use the configured pushgateway URL
+		if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
+			Grouping("pipeline_id", fmt.Sprintf("%d", status.PipelineID)).
+			Delete(); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Could not delete metrics: %v", err)
+		}
 	}
 }
 
@@ -511,6 +576,13 @@ func initAll(configFile *string, config *cfg.Config,
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Scraping rules loaded: %d", RulesEngine.CountScrapingRules())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling rules loaded: %d", RulesEngine.CountCrawlingRules())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Plugins loaded: %d", RulesEngine.CountPlugins())
+
+	// Initialize the prometheus metrics
+	if config.Prometheus.Enabled {
+		prometheus.MustRegister(totalPages)
+		prometheus.MustRegister(totalLinks)
+		prometheus.MustRegister(totalErrors)
+	}
 
 	// Start the crawler
 	crowler.StartCrawler(*config)
@@ -729,8 +801,12 @@ func configCheckHandler(w http.ResponseWriter, r *http.Request) {
 func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 	// Close the database connection
 	if db != nil {
-		db.Close()
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection closed.")
+		err := db.Close()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "closing database connection: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection closed.")
+		}
 	}
 	// Stop the Selenium services
 	close(sel)

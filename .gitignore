@@ -24,6 +24,7 @@ go.work
 app_config.go
 config.yaml
 config.sh
+.env
 .DS_Store
 
 # build artefacts

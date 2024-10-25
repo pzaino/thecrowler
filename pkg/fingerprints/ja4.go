@@ -16,6 +16,7 @@
 package fingerprints
 
 import (
+	//nolint:gosec // Disabling G501: Md5 is required for backward compatibility, we do not use it for security purposes
 	"crypto/md5"
 	"encoding/hex"
 	"strconv"
@@ -43,6 +44,7 @@ func compute(data string) string {
 	fingerprint := strings.Join(fields, ",")
 
 	// Compute the MD5 hash of the joined fields
+	//nolint:gosec // Disabling G401: Md5 is required for backward compatibility, we do not use it for security purposes
 	hash := md5.Sum([]byte(fingerprint))
 	return hex.EncodeToString(hash[:])
 }

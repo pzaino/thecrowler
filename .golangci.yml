@@ -1,0 +1,44 @@
+# .golangci.yml
+run:
+  timeout: 5m
+  tests: false
+
+linters-settings:
+  gocyclo:
+    min-complexity: 45
+
+  staticcheck: {}
+
+  goconst:
+    min-len: 3
+    min-occurrences: 2
+
+  dupl:
+    threshold: 50
+
+linters:
+  enable:
+    - govet                 # Use govet instead of maligned (it has 'fieldalignment' check)
+    - gocyclo
+    - gosec
+    - revive
+    - goconst
+#    - dupl
+    - unused                # Replaces structcheck, varcheck, and deadcode
+    - ineffassign
+    - typecheck
+    - nakedret
+    - misspell
+    - dogsled
+
+  disable:
+    - lll        # Line length linter, often too restrictive
+    - funlen     # Function length linter, can be noisy for large projects
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  sort-results: true

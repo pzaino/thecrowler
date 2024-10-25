@@ -61,6 +61,7 @@ type Status struct {
 	CurrentDepth    int
 	LastWait        float64
 	LastDelay       float64
+	LastError       string
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 	NetInfoRunning  int // Flag to check if network info is already gathered
 	HTTPInfoRunning int // Flag to check if HTTP info is already gathered

@@ -42,15 +42,21 @@ func NewMinHash(numHash int) *MinHash {
 // hashFunction computes the hash of the given data with the given seed.
 func hashFunction(data []byte, seed uint64) uint64 {
 	h := fnv.New64a()
-	h.Write(data)
-	h.Write([]byte{byte(seed)})
+	_, err := h.Write(data)
+	if err != nil {
+		_, err = h.Write([]byte{byte(seed)})
+		if err != nil {
+			return 0
+		}
+	}
 	return h.Sum64()
 }
 
 // Push pushes the given data into the MinHash fingerprint.
 func (mh *MinHash) Push(data []byte) {
-	for i := 0; i < mh.numHash; i++ {
-		hashValue := hashFunction(data, uint64(i))
+	//nolint:gosec // Disabling G115: We are using the hash function to generate a fingerprint
+	for i := uint64(0); i < uint64(mh.numHash); i++ {
+		hashValue := hashFunction(data, i)
 		if hashValue < mh.hashes[i] {
 			mh.hashes[i] = hashValue
 		}
@@ -63,8 +69,8 @@ func (mh *MinHash) Signature() []uint64 {
 }
 
 // Compute computes the MinHash fingerprint of a given data.
-func (m MinHash) Compute(data string) string {
-	mh := NewMinHash(200)
+func (mh MinHash) Compute(data string) string {
+	mh = *NewMinHash(200)
 	mh.Push([]byte(data))
 	return fmt.Sprintf("%x", mh.Signature())
 }

@@ -179,7 +179,7 @@ func processArray(arr []interface{}, e *EnvSetting) interface{} {
 	}
 }
 
-// Custom MarshalJSON to ensure the correct format when marshaling the "values" field
+// MarshalJSON is a custom MarshalJSON to ensure the correct format when marshaling the "values" field
 func (e *EnvSetting) MarshalJSON() ([]byte, error) {
 	type Alias EnvSetting
 	aux := &struct {
@@ -227,6 +227,7 @@ type ActionRule struct {
 type Element struct {
 	Key       string     `json:"key" yaml:"key"`
 	Selectors []Selector `json:"selectors" yaml:"selectors"`
+	Critical  bool       `json:"critical" yaml:"critical"`
 }
 
 // Selector represents a single selector
@@ -377,7 +378,7 @@ func processPlgArgArray(arr []interface{}, e *PluginParams) interface{} {
 	}
 }
 
-// Custom MarshalJSON to ensure the correct format when marshaling the "parameter_value" field
+// MarshalJSON is a custom MarshalJSON to ensure the correct format when marshaling the "parameter_value" field
 func (e *PluginParams) MarshalJSON() ([]byte, error) {
 	type Alias PluginParams
 	aux := &struct {

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 )
 
+// TxHandler is a wrapper around the sql.Tx type.
 type TxHandler struct {
 	sql.Tx
 }

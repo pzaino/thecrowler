@@ -39,7 +39,7 @@ const (
 )
 
 // processScrapingRules processes the scraping rules
-func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) string {
+func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) (string, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Scraping rules...")
 
 	scrapedDataDoc := ""
@@ -60,9 +60,10 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url strin
 	// Check for rules based on the URL
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL-based Scraping rules (if any)...")
 	// If the URL matches a rule, execute it
-	addScrapedDataToDocument(&scrapedDataDoc, executeScrapingRulesByURL(wd, ctx, url))
+	data, err := executeScrapingRulesByURL(wd, ctx, url)
+	addScrapedDataToDocument(&scrapedDataDoc, data)
 
-	return "{" + scrapedDataDoc + "}"
+	return "{" + scrapedDataDoc + "}", err
 }
 
 func addScrapedDataToDocument(scrapedDataDoc *string, newScrapedData string) {
@@ -73,31 +74,38 @@ func addScrapedDataToDocument(scrapedDataDoc *string, newScrapedData string) {
 	}
 }
 
-func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url string) string {
+func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url string) (string, error) {
 	scrapedDataDoc := ""
 
 	// Retrieve the rule group by URL
 	rg, err := ctx.re.GetRuleGroupByURL(url)
 	if err == nil && rg != nil {
 		// Execute all the rules in the rule group (the following function also set the Env and clears it)
-		addScrapedDataToDocument(&scrapedDataDoc, executeScrapingRulesInRuleGroup(ctx, rg, wd))
+		var data string
+		data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd)
+		addScrapedDataToDocument(&scrapedDataDoc, data)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No rule group found for URL: %v", url)
+	}
+	if err != nil {
+		return scrapedDataDoc, fmt.Errorf("%v", err)
 	}
 
 	// Retrieve the ruleset by URL
 	rs, err := ctx.re.GetRulesetByURL(url)
 	if err == nil && rs != nil {
 		// Execute all the rules in the ruleset
-		addScrapedDataToDocument(&scrapedDataDoc, executeScrapingRulesInRuleset(ctx, rs, wd))
+		var data string
+		data, err = executeScrapingRulesInRuleset(ctx, rs, wd)
+		addScrapedDataToDocument(&scrapedDataDoc, data)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No ruleset found for URL: %v", url)
 	}
 
-	return scrapedDataDoc
+	return scrapedDataDoc, err
 }
 
-func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *selenium.WebDriver) string {
+func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *selenium.WebDriver) (string, error) {
 	scrapedDataDoc := ""
 
 	// Setup the environment
@@ -108,6 +116,9 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *s
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Executing rule: %v", r.RuleName)
 		scrapedData, err := executeScrapingRule(ctx, &r, wd)
 		if err != nil {
+			if strings.Contains(err.Error(), "Critical") {
+				return "", fmt.Errorf("%v", err)
+			}
 			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 		}
 		addScrapedDataToDocument(&scrapedDataDoc, scrapedData)
@@ -116,28 +127,27 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *s
 	// Reset the environment
 	cmn.KVStore.DeleteNonPersistentByCID(ctx.GetContextID())
 
-	return scrapedDataDoc
+	return scrapedDataDoc, nil
 }
 
-func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *selenium.WebDriver) string {
+func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *selenium.WebDriver) (string, error) {
 	scrapedDataDoc := ""
 
 	// Set the environment
 	rg.SetEnv(ctx.GetContextID())
 
+	var err error
 	for _, r := range rg.GetScrapingRules() {
 		// Execute the rule
-		scrapedData, err := executeScrapingRule(ctx, &r, wd)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
-		}
+		var scrapedData string
+		scrapedData, err = executeScrapingRule(ctx, &r, wd)
 		addScrapedDataToDocument(&scrapedDataDoc, scrapedData)
 	}
 
 	// Reset the environment
 	cmn.KVStore.DeleteNonPersistentByCID(ctx.GetContextID())
 
-	return scrapedDataDoc
+	return scrapedDataDoc, err
 }
 
 // executeScrapingRule executes a single ScrapingRule
@@ -155,7 +165,10 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 
 	// Execute the scraping rule
 	if shouldExecuteScrapingRule(r, wd) {
-		extractedData := ApplyRule(ctx, r, wd)
+		extractedData, err := ApplyRule(ctx, r, wd)
+		if err != nil {
+			return "", fmt.Errorf("%v", err)
+		}
 		processedData := processExtractedData(extractedData)
 		jsonData, err := json.Marshal(processedData)
 		if err != nil {

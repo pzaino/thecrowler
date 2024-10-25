@@ -37,7 +37,7 @@ import (
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
-func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
+func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) (map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
@@ -57,8 +57,13 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 			// Check if there was data extracted and append it to the allExtracted slice
 			if len(extracted) > 0 {
 				allExtracted = append(allExtracted, extracted...)
-				if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == "plugin_call" {
+				if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall {
 					break
+				}
+			} else {
+				if rule.Elements[e].Critical {
+					cmn.DebugMsg(cmn.DbgLvlError, "element not found "+errCriticalError+": %v", selectors[i].Selector)
+					return extractedData, errors.New("element not found, with " + errCriticalError + " flag set")
 				}
 			}
 		}
@@ -75,14 +80,14 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 
 	// return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
 	// given the user may have configured multiple rules.
-	return extractedData
+	return extractedData, nil
 }
 
 // extractJSFiles extracts the JavaScript files from the current page.
 func extractJSFiles(wd *selenium.WebDriver) []CollectedScript {
 	var jsFiles []CollectedScript
 
-	script := `
+	const script = `
 	var scripts = document.getElementsByTagName('script');
 	var result = [];
 	for (var i = 0; i < scripts.length; i++) {
@@ -146,6 +151,7 @@ func extractJSFiles(wd *selenium.WebDriver) []CollectedScript {
 
 		// Append the script content to the list
 		newCollectedScript := CollectedScript{
+			//nolint:gosec // Disabling G115: integer overflow conversion int -> uint64 as it won't happen here
 			ID:           uint64(i),
 			ScriptType:   scriptMap["type"].(string),
 			Original:     scriptOrig,
@@ -231,7 +237,7 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
 
 	// Find the elements using the provided selector directly in the VDI's browser
-	if sType != "plugin_call" && sType != "regex" && sType != "xpath" {
+	if sType != strPluginCall && sType != strRegEx && sType != strXPath {
 		if all {
 			elements, err = FindElementsByType(ctx, wd, selector)
 		} else {
@@ -244,7 +250,7 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 
 	// Fallback mechanism if there are no elements found, we had errors or the selector type is not supported by FindElementsByType
 	if len(elements) == 0 || err != nil ||
-		selector.SelectorType == "plugin_call" || selector.SelectorType == "regex" {
+		selector.SelectorType == strPluginCall || selector.SelectorType == strRegEx {
 
 		// Let's use fallback mechanism to try to extract the data
 		htmlContent, _ := (*wd).PageSource()
@@ -258,11 +264,11 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 		switch sType {
 		case "css":
 			results = fallbackExtractByCSS(ctx, doc, selector, all)
-		case "xpath": // XPath is not supported by goquery, so we use htmlquery
+		case strXPath: // XPath is not supported by goquery, so we use htmlquery
 			results = fallbackExtractByXPath(ctx, doc, selector, all)
-		case "regex":
+		case strRegEx:
 			results = fallbackExtractByRegex(htmlContent, selector.Selector, all)
-		case "plugin_call":
+		case strPluginCall:
 			results = extractByPlugin(ctx, wd, selector.Selector)
 		}
 
@@ -310,7 +316,7 @@ func extractDataFromElement(_ *ProcessContext, item interface{}, selector rs.Sel
 	var data string
 	pattern := selector.Extract.Pattern
 	switch eEpType {
-	case "text", "inner_text", "html":
+	case strText1, strText2, strText3, strText4:
 		if tmp1 != nil {
 			data, err = tmp1.Text()
 		} else {
@@ -353,7 +359,7 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 	var elements []*goquery.Selection
 
 	if all {
-		doc.Find(selector.Selector).Each(func(i int, s *goquery.Selection) {
+		doc.Find(selector.Selector).Each(func(_ int, s *goquery.Selection) {
 			elements = append(elements, s)
 		})
 	} else {
@@ -498,7 +504,7 @@ func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector strin
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
-func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, url string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
+func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 
@@ -508,10 +514,15 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, url string, w
 	// Iterate over the rules in the rule group
 	for _, rule := range ruleGroup.ScrapingRules {
 		// Apply the rule to the web page
-		data := ApplyRule(ctx, &rule, webPage)
+		data, err := ApplyRule(ctx, &rule, webPage)
 		// Add the extracted data to the map
-		for k, v := range data {
-			extractedData[k] = v
+		if err == nil {
+			for k, v := range data {
+				extractedData[k] = v
+			}
+		} else {
+			cmn.KVStore.DeleteByCID(ctx.GetContextID())
+			return extractedData, err
 		}
 	}
 
@@ -536,7 +547,7 @@ func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, d
 		ppStepValidate(data, step)
 	case "clean":
 		ppStepClean(data, step)
-	case "plugin_call":
+	case strPluginCall:
 		ppStepPluginCall(ctx, step, data)
 	default:
 		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
@@ -654,7 +665,7 @@ func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingS
 	case "api": // Call an API to transform the data
 		// Implement the API call here
 		err = processAPITransformation(step, data)
-	case "plugin_call": // Use a custom transformation function
+	case strPluginCall: // Use a custom transformation function
 		err = processCustomJS(ctx, step, data)
 
 	}
@@ -762,7 +773,7 @@ func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to send request to %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
@@ -774,7 +785,6 @@ func processAPITransformation(step *rs.PostProcessingStep, data *[]byte) error {
 	}
 
 	*data = body
-	resp.Body.Close()
 
 	return nil
 }
@@ -789,12 +799,13 @@ func validateAPIURL(step *rs.PostProcessingStep) error {
 func determineProtocolAndSSLMode(step *rs.PostProcessingStep) (string, string) {
 	var protocol string
 	var sslMode string
+	const dis1 = "disable"
 	if step.Details["ssl_mode"] == nil {
 		protocol = "http"
-		sslMode = "disable"
+		sslMode = dis1
 	} else {
 		sslMode = strings.ToLower(strings.TrimSpace(step.Details["ssl_mode"].(string)))
-		if sslMode == "disable" || sslMode == "disabled" {
+		if sslMode == dis1 || sslMode == "disabled" {
 			protocol = "http"
 		} else {
 			protocol = "https"

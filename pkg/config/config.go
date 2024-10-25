@@ -31,14 +31,23 @@ import (
 )
 
 const (
-	PluginsDefaultPath    = "./plugins/*.js"
-	JSONRulesDefaultPath  = "./rules/*.json"
+	//nolint:errcheck // Don't lint for error not checked, this is a defer statement
+	// PluginsDefaultPath Default plugins path
+	PluginsDefaultPath = "./plugins/*.js"
+	// JSONRulesDefaultPath Default rules path for json rules
+	JSONRulesDefaultPath = "./rules/*.json"
+	// YAMLRulesDefaultPath1 Default rules path for yaml rules
 	YAMLRulesDefaultPath1 = "./rules/*.yaml"
+	// YAMLRulesDefaultPath2 Default rules path for yaml rules
 	YAMLRulesDefaultPath2 = "./rules/*.yml"
-	DataDefaultPath       = "./data"
-	SSDefaultTimeProfile  = 3
-	SSDefaultTimeout      = 3600
-	SSDefaultDelayTime    = 100
+	// DataDefaultPath Default data path
+	DataDefaultPath = "./data"
+	// SSDefaultTimeProfile Default time profile for service scout
+	SSDefaultTimeProfile = 3
+	// SSDefaultTimeout Default timeout for service scout
+	SSDefaultTimeout = 3600
+	// SSDefaultDelayTime Default delay time for service scout
+	SSDefaultDelayTime = 100
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -46,14 +55,18 @@ type RemoteFetcher interface {
 	FetchRemoteFile(url string, timeout int, sslMode string) (string, error)
 }
 
+// CMNFetcher is a fetcher that uses the common package to fetch remote files.
 type CMNFetcher struct{}
 
+// FetchRemoteFile fetches a remote file using the common package.
 func (f *CMNFetcher) FetchRemoteFile(url string, timeout int, sslMode string) (string, error) {
 	return cmn.FetchRemoteFile(url, timeout, sslMode)
 }
 
+// OsFileReader is a file reader that uses the os package to read files.
 type OsFileReader struct{}
 
+// ReadFile reads a file using the os package.
 func (OsFileReader) ReadFile(filename string) ([]byte, error) {
 	return os.ReadFile(filename)
 }
@@ -226,6 +239,10 @@ func NewConfig() *Config {
 				SSLMode:     "disable",
 				ProxyURL:    "",
 			},
+		},
+		Prometheus: PrometheusConfig{
+			Enabled: false,
+			Port:    9091,
 		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
@@ -453,6 +470,7 @@ func (c *Config) Validate() error {
 	c.validateDatabase()
 	c.validateAPI()
 	c.validateSelenium()
+	c.validatePrometheus()
 	c.validateImageStorageAPI()
 	c.validateFileStorageAPI()
 	c.validateHTTPHeaders()
@@ -821,6 +839,18 @@ func (c *Config) validateSeleniumProxyURL(selenium *Selenium) {
 	}
 }
 
+func (c *Config) validatePrometheus() {
+	// Check Prometheus
+	if c.Prometheus.Port < 1 || c.Prometheus.Port > 65535 {
+		c.Prometheus.Port = 9090
+	}
+	if strings.TrimSpace(c.Prometheus.Host) == "" {
+		c.Prometheus.Host = "localhost"
+	} else {
+		c.Prometheus.Host = strings.TrimSpace(c.Prometheus.Host)
+	}
+}
+
 func (c *Config) validateRulesets() {
 	// Check Rulesets
 	if strings.TrimSpace(c.RulesetsSchemaPath) == "" {
@@ -1160,24 +1190,24 @@ func IsEmpty(config Config) bool {
 }
 
 // IsEmpty checks if ServiceScoutConfig is empty.
-func (ssc *ServiceScoutConfig) IsEmpty() bool {
-	if ssc == nil {
+func (c *ServiceScoutConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if ssc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if ssc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if ssc.OSFingerprinting {
+	if c.OSFingerprinting {
 		return false
 	}
 
-	if ssc.ServiceDetection {
+	if c.ServiceDetection {
 		return false
 	}
 
@@ -1211,56 +1241,56 @@ func (sc *SourceConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given Config is empty.
-func (cfg *Config) IsEmpty() bool {
-	if cfg == nil {
+func (c *Config) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if cfg.Remote != (Remote{}) {
+	if c.Remote != (Remote{}) {
 		return false
 	}
 
-	if cfg.Database != (Database{}) {
+	if c.Database != (Database{}) {
 		return false
 	}
 
-	if cfg.Crawler != (Crawler{}) {
+	if c.Crawler != (Crawler{}) {
 		return false
 	}
 
-	if cfg.API != (API{}) {
+	if c.API != (API{}) {
 		return false
 	}
 
-	if len(cfg.Selenium) != 0 {
+	if len(c.Selenium) != 0 {
 		return false
 	}
 
-	if cfg.ImageStorageAPI != (FileStorageAPI{}) {
+	if c.ImageStorageAPI != (FileStorageAPI{}) {
 		return false
 	}
 
-	if cfg.FileStorageAPI != (FileStorageAPI{}) {
+	if c.FileStorageAPI != (FileStorageAPI{}) {
 		return false
 	}
 
-	if !cfg.HTTPHeaders.IsEmpty() {
+	if !c.HTTPHeaders.IsEmpty() {
 		return false
 	}
 
-	if cfg.NetworkInfo.DNS != (DNSConfig{}) ||
-		cfg.NetworkInfo.WHOIS != (WHOISConfig{}) ||
-		cfg.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
-		!cfg.NetworkInfo.ServiceScout.IsEmpty() ||
-		cfg.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
+	if c.NetworkInfo.DNS != (DNSConfig{}) ||
+		c.NetworkInfo.WHOIS != (WHOISConfig{}) ||
+		c.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
+		!c.NetworkInfo.ServiceScout.IsEmpty() ||
+		c.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
 		return false
 	}
 
-	if cfg.OS != "" {
+	if c.OS != "" {
 		return false
 	}
 
-	if cfg.DebugLevel != 0 {
+	if c.DebugLevel != 0 {
 		return false
 	}
 
@@ -1268,12 +1298,12 @@ func (cfg *Config) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given SSLScoutConfig is empty.
-func (ssld *SSLScoutConfig) IsEmpty() bool {
-	if ssld == nil {
+func (c *SSLScoutConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if ssld.Enabled {
+	if c.Enabled {
 		return false
 	}
 
@@ -1281,20 +1311,20 @@ func (ssld *SSLScoutConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given DNSConfig is empty.
-func (dc *DNSConfig) IsEmpty() bool {
-	if dc == nil {
+func (c *DNSConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if dc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if dc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if dc.RateLimit != "" {
+	if c.RateLimit != "" {
 		return false
 	}
 
@@ -1302,20 +1332,20 @@ func (dc *DNSConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given WHOISConfig is empty.
-func (wc *WHOISConfig) IsEmpty() bool {
-	if wc == nil {
+func (c *WHOISConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if wc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if wc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if wc.RateLimit != "" {
+	if c.RateLimit != "" {
 		return false
 	}
 
@@ -1323,20 +1353,20 @@ func (wc *WHOISConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given NetLookupConfig is empty.
-func (nlc *NetLookupConfig) IsEmpty() bool {
-	if nlc == nil {
+func (c *NetLookupConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if nlc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if nlc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if nlc.RateLimit != "" {
+	if c.RateLimit != "" {
 		return false
 	}
 
@@ -1344,20 +1374,20 @@ func (nlc *NetLookupConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given GeoLookupConfig is empty.
-func (glc *GeoLookupConfig) IsEmpty() bool {
-	if glc == nil {
+func (c *GeoLookupConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if glc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if glc.Type != "" {
+	if c.Type != "" {
 		return false
 	}
 
-	if glc.DBPath != "" {
+	if c.DBPath != "" {
 		return false
 	}
 

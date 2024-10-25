@@ -40,6 +40,7 @@ type captureConn struct {
 	w io.Writer
 }
 
+// Read wraps Read and returns an error if it is not supported
 func (c *captureConn) Read(b []byte) (int, error) {
 	if c.r == nil {
 		return 0, io.EOF
@@ -47,6 +48,7 @@ func (c *captureConn) Read(b []byte) (int, error) {
 	return c.r.Read(b)
 }
 
+// Write wraps Write and returns an error if it is not supported
 func (c *captureConn) Write(b []byte) (int, error) {
 	if c.w == nil {
 		return len(b), fmt.Errorf("write not supported")
@@ -54,6 +56,7 @@ func (c *captureConn) Write(b []byte) (int, error) {
 	return c.w.Write(b)
 }
 
+// DataCollector stores the proxy configuration and provides methods to collect data from a host
 type DataCollector struct {
 	Proxy *cfg.SOCKSProxy
 }
@@ -111,7 +114,7 @@ func (dc DataCollector) CollectAll(host string, port string, c *Config) (*Collec
 	if err != nil {
 		return nil, err
 	}
-	defer rawConn.Close()
+	defer rawConn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Capture server-side communication (ServerHello)
 	serverHelloCapture := io.TeeReader(rawConn, &serverHelloBuf)
@@ -122,6 +125,7 @@ func (dc DataCollector) CollectAll(host string, port string, c *Config) (*Collec
 
 	// Perform the TLS handshake
 	conn := tls.Client(captureConn, &tls.Config{
+		//nolint:gosec // Disabling G402: My code has to test insecure connections, so it's ok here to disable this
 		InsecureSkipVerify: true,
 		ServerName:         host,                       // Ensures SNI is used
 		NextProtos:         []string{"h2", "http/1.1"}, // Enables ALPN negotiation for HTTP/2
@@ -171,6 +175,7 @@ func (dc DataCollector) CollectAll(host string, port string, c *Config) (*Collec
 	return collectedData, nil
 }
 
+// ExtractServerHelloDetailsUsingState extracts TLS version, cipher suite, extensions, and ALPN from a TLS ConnectionState
 func ExtractServerHelloDetailsUsingState(state tls.ConnectionState) (tlsVersion uint16, cipherSuite uint16, extensions []uint16, alpn string, err error) {
 	tlsVersion = state.Version
 	cipherSuite = state.CipherSuite
@@ -188,6 +193,7 @@ func ExtractServerHelloDetailsUsingState(state tls.ConnectionState) (tlsVersion 
 	return tlsVersion, cipherSuite, extensions, alpn, nil
 }
 
+// CollectSSH collects SSH data from the given host and port
 func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, port string) error {
 	// Buffers to capture the SSH handshake
 	var clientHelloBuf, serverHelloBuf bytes.Buffer
@@ -197,7 +203,7 @@ func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, po
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Create SSH client config
 	clientConfig := &ssh.ClientConfig{
@@ -215,7 +221,7 @@ func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, po
 	if err != nil {
 		return err
 	}
-	defer sshConn.Close()
+	defer sshConn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Store captured SSH ClientHello and ServerHello messages
 	collectedData.SSHClientHello = clientHelloBuf.Bytes()
@@ -235,7 +241,7 @@ func handleSSHChannels(channels <-chan ssh.NewChannel) {
 			continue
 		}
 		go ssh.DiscardRequests(requests)
-		channel.Close()
+		_ = channel.Close()
 	}
 }
 
@@ -408,7 +414,7 @@ func ExtractExtensionsFromServerHello(rawServerHello []byte) ([]uint16, error) {
 	pos += 2
 
 	// Compression Method
-	pos += 1
+	pos++
 
 	// Extensions Length
 	if pos+2 > len(rawServerHello) {
@@ -436,6 +442,7 @@ func ExtractExtensionsFromServerHello(rawServerHello []byte) ([]uint16, error) {
 	return extensions, nil
 }
 
+// ExtractServerHelloDetails extracts TLS version, cipher suite, extensions, and ALPN from a raw ServerHello message
 func ExtractServerHelloDetails(rawServerHello []byte) (tlsVersion uint16, cipherSuite uint16, extensions []uint16, alpn string, err error) {
 	if len(rawServerHello) < 5 {
 		return 0, 0, nil, "", errors.New("not enough data for TLS record header")
@@ -458,7 +465,7 @@ func ExtractServerHelloDetails(rawServerHello []byte) (tlsVersion uint16, cipher
 	if rawServerHello[pos] != 0x02 {
 		return 0, 0, nil, "", errors.New("not a valid ServerHello message")
 	}
-	pos += 1
+	pos++
 
 	// Read the handshake message length
 	handshakeLength := int(binary.BigEndian.Uint32(append([]byte{0}, rawServerHello[pos:pos+3]...)))
@@ -488,7 +495,7 @@ func ExtractServerHelloDetails(rawServerHello []byte) (tlsVersion uint16, cipher
 	pos += 2
 
 	// Skip compression method
-	pos += 1
+	pos++
 
 	if pos+2 > len(rawServerHello) {
 		return 0, 0, nil, "", errors.New("unexpected end of data after compression method")

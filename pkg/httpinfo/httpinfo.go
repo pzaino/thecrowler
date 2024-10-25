@@ -89,7 +89,7 @@ func ExtractHTTPInfo(config Config, re *ruleset.RuleEngine, htmlContent string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Handle redirects
 	if shouldFollowRedirects(config, resp) {
@@ -185,6 +185,7 @@ func getSSLInfo(config *Config) (*SSLInfo, error) {
 func createHTTPClient(config Config) *http.Client {
 	transport := cmn.SafeTransport(config.Timeout, "ignore")
 	transport.TLSClientConfig = &tls.Config{
+		//nolint:gosec // Disabling G402: My code has to test the security of the target, so I need to disable the security check here
 		InsecureSkipVerify: true, // Skip TLS certificate verification
 		MinVersion:         tls.VersionTLS10,
 		MaxVersion:         tls.VersionTLS13,

@@ -19,6 +19,14 @@ version_to_integer() {
 }
 
 # Check for mandatory settings
+if [ -f config.sh ]; then
+    source config.sh
+else
+    if [ -f .env ]; then
+        source .env
+    fi
+    echo "config.sh or .env not found! Proceeding with checking if the user has defined the Environment variables manually."
+fi
 
 # shellcheck disable=SC2153
 if [ "${DOCKER_DB_HOST}" = "" ]; then

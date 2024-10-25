@@ -16,6 +16,7 @@
 package fingerprints
 
 import (
+	//nolint:gosec // Disabling G501: Md5 is required for backward compatibility, we do not use it for security purposes
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
@@ -31,6 +32,7 @@ func (s SimHash) Compute(data string) string {
 	words := strings.Fields(data)
 
 	for _, word := range words {
+		//nolint:gosec // Disabling G501: Md5 is required for backward compatibility, we do not use it for security purposes
 		hash := md5.Sum([]byte(word))
 		for i := 0; i < 64; i++ {
 			bit := (binary.BigEndian.Uint64(hash[:]) >> i) & 1

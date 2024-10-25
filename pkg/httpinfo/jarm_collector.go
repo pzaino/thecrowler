@@ -43,10 +43,12 @@ const (
 	tlsV13Support = "1.3_SUPPORT"
 )
 
+// JARMCollector is a struct that collects JARM fingerprints
 type JARMCollector struct {
 	Proxy *cfg.SOCKSProxy
 }
 
+// ProxyConfig is a struct that holds the proxy configuration
 type ProxyConfig struct {
 	Address  string
 	Username string
@@ -68,7 +70,7 @@ func formatForPython(data []byte) string {
 	return buffer.String()
 }
 
-// Print out detailed parts of the ClientHello message
+// PrintClientHelloDetails prints out detailed parts of the ClientHello message
 func PrintClientHelloDetails(packet []byte) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -578,7 +580,7 @@ func (jc JARMCollector) sendPacket(packet []byte, host string, port string) ([]b
 			return nil, fmt.Errorf("direct dial error: %v", err)
 		}
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Set timeout
 	err = conn.SetDeadline(time.Now().Add(20 * time.Second))

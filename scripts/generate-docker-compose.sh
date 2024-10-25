@@ -2,6 +2,7 @@
 
 engine_count="$1"
 vdi_count="$2"
+prometheus="$3"
 
 # If no arguments are provided, ask the user for the number of instances
 if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
@@ -10,6 +11,21 @@ if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
     read -p "Enter the number of crowler_engine instances: " engine_count
     # shellcheck disable=SC2162
     read -p "Enter the number of crowler_vdi instances: " vdi_count
+    # Ask the user if they want to include the Prometheus PushGateway
+    # shellcheck disable=SC2162
+    read -p "Do you want to include the Prometheus PushGateway? (yes/no): " prometheus
+fi
+
+# trim trail spaces in prometheus input and transform to lowercase
+prometheus=$(echo "$prometheus" | tr '[:upper:]' '[:lower:]' | xargs)
+
+# If no value is provided for prometheus, set it to "no"
+if [ -z "$prometheus" ]; then
+    prometheus="no"
+fi
+if [ "$prometheus" != "yes" ] && [ "$prometheus" != "no" ]; then
+    echo "Invalid input. Please provide 'yes' or 'no' for the Prometheus PushGateway."
+    exit 1
 fi
 
 # Check if engine_count and vdi_count are provided
@@ -152,6 +168,28 @@ cat << EOF >> docker-compose.yml
     restart: always
 EOF
 done
+
+# Add the Prometheus PushGateway (if requested by the user)
+# shellcheck disable=SC2086
+if [ $prometheus == "yes" ];
+then
+  cat << EOF >> docker-compose.yml
+
+    pushgateway:
+      image: prom/pushgateway
+      container_name: pushgateway
+      ports:
+        - "9091:9091"
+      networks:
+        - crowler-net
+      restart: always
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"
+          max-file: "3"
+EOF
+fi
 
 # Add the networks and volumes
 cat << EOF >> docker-compose.yml

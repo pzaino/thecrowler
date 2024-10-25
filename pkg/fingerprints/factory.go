@@ -21,18 +21,31 @@ import "fmt"
 type FingerprintType int
 
 const (
+	// TypeJA3 represents the JA3 fingerprint type.
 	TypeJA3 FingerprintType = iota
+	// TypeJA3S represents the JA3S fingerprint type.
 	TypeJA3S
+	// TypeHASSH represents the HASSH fingerprint type.
 	TypeHASSH
+	// TypeHASSHServer represents the HASSHServer fingerprint type.
 	TypeHASSHServer
+	// TypeTLSH represents the TLSH fingerprint type.
 	TypeTLSH
+	// TypeSimHash represents the SimHash fingerprint type.
 	TypeSimHash
+	// TypeMinHash represents the MinHash fingerprint type.
 	TypeMinHash
+	// TypeBLAKE2 represents the BLAKE2 fingerprint type.
 	TypeBLAKE2
+	// TypeSHA256 represents the SHA256 fingerprint type.
 	TypeSHA256
+	// TypeCityHash represents the CityHash fingerprint type.
 	TypeCityHash
+	// TypeMurmurHash represents the MurmurHash fingerprint type.
 	TypeMurmurHash
+	// TypeCustomTLS represents the CustomTLS fingerprint type.
 	TypeCustomTLS
+	// TypeJARM represents the JARM fingerprint type.
 	TypeJARM
 )
 

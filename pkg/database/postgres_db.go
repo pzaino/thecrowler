@@ -208,6 +208,7 @@ func (handler *PostgresHandler) CheckConnection(c cfg.Config) error {
 // ---------------------------------------------------------------
 // Server Configuration
 
+// ConfigForWrite optimizes the database configuration for write operations
 func (handler *PostgresHandler) ConfigForWrite() {
 	params := map[string]string{
 		"max_connections":                 "1000",
@@ -230,6 +231,7 @@ func (handler *PostgresHandler) ConfigForWrite() {
 	handler.ConfigForOptimize(params)
 }
 
+// ConfigForQuery optimizes the database configuration for queries
 func (handler *PostgresHandler) ConfigForQuery() {
 	params := map[string]string{
 		"max_connections":                 "100",
@@ -252,6 +254,7 @@ func (handler *PostgresHandler) ConfigForQuery() {
 	handler.ConfigForOptimize(params)
 }
 
+// ConfigForOptimize optimizes the database configuration
 func (handler *PostgresHandler) ConfigForOptimize(params map[string]string) {
 	for key, value := range params {
 		_, err := handler.db.Exec(fmt.Sprintf("ALTER SYSTEM SET %s TO '%s'", key, value))

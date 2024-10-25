@@ -1,3 +1,18 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package detection implements the detection library for the Crowler.
 package detection
 
 import (
@@ -23,11 +38,11 @@ const (
 
 // detectionEntityDetails is used internally to represent the details of an entity detection
 type detectionEntityDetails struct {
-	entityType        string
-	matchedPatterns   []string
-	confidence        float32
-	pluginResult      map[string]interface{}
-	externalDetection map[string]interface{}
+	entityType      string
+	matchedPatterns []string
+	confidence      float32
+	pluginResult    map[string]interface{}
+	//externalDetection map[string]interface{}
 }
 
 // IsEmpty checks if the detectionEntityDetails is empty
@@ -226,11 +241,11 @@ func calculateConfidence(x, Noise, Maybe, Detected float32) float32 {
 		return 10 + ((x-Noise)/(Maybe-Noise))*30 // Maps [Noise, Maybe) to [10%, 40%]
 	} else if x < Detected {
 		return 40 + ((x-Maybe)/(Detected-Maybe))*60 // Maps [Maybe, Detected) to [40%, 100%]
-	} else {
-		// Maps [Detected, ∞) to [40%, 100%]
-		// i.e. this ensures that confidence doesn't exceed 100%
-		return min(100, 40+((x-Detected)/(Detected-Maybe))*60)
 	}
+
+	// Maps [Detected, ∞) to [40%, 100%]
+	// i.e. this ensures that confidence doesn't exceed 100%
+	return min(100, 40+((x-Detected)/(Detected-Maybe))*60)
 }
 
 func detectTechBySSL(sslInfo *SSLInfo, sslSignatures *map[string][]ruleset.SSLSignature, detectedTech *map[string]detectionEntityDetails) {
@@ -250,16 +265,15 @@ func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature rule
 		certField, err := getCertificateField(cert, signature.Key)
 		if err != nil {
 			continue
-		} else {
-			for _, signatureValue := range signature.Value {
-				matched, err := regexp.MatchString(signatureValue, certField)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
-				} else if matched {
-					//if strings.Contains(certField, signatureValue) {
-					updateDetectedTech(detectedTech, ObjName, signature.Confidence, signatureValue)
-					updateDetectedType(detectedTech, ObjName, detectionType)
-				}
+		}
+		for _, signatureValue := range signature.Value {
+			matched, err := regexp.MatchString(signatureValue, certField)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+			} else if matched {
+				//if strings.Contains(certField, signatureValue) {
+				updateDetectedTech(detectedTech, ObjName, signature.Confidence, signatureValue)
+				updateDetectedType(detectedTech, ObjName, detectionType)
 			}
 		}
 	}
@@ -298,7 +312,7 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 	} else {
 		// prepare the signature key
 		key := strings.ToLower(strings.TrimSpace(signature.Key))
-		doc.Find(key).Each(func(index int, htmlItem *goquery.Selection) {
+		doc.Find(key).Each(func(_ int, htmlItem *goquery.Selection) {
 			var text1 string
 			var text2 string
 			var attrExists bool
@@ -469,7 +483,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 	// Iterate through all the meta tags and check for possible technologies
 	for ObjName := range *signatures {
 		for _, signature := range (*signatures)[ObjName] {
-			doc.Find("meta").Each(func(index int, htmlItem *goquery.Selection) {
+			doc.Find("meta").Each(func(_ int, htmlItem *goquery.Selection) {
 				if strings.EqualFold(htmlItem.AttrOr("name", ""), strings.TrimSpace(signature.Name)) {
 					text, contExists := htmlItem.Attr("content")
 					if contExists && signature.Content != "" {
@@ -573,11 +587,9 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				// AbuseIPDB
 				for _, ip := range ips {
 					rval := ScanWithAbuseIPDB(conf.ExternalDetection.AbuseIPDB.APIKey, ip)
-					if rval != nil {
-						// add rval rows to result
-						for k, v := range rval {
-							result[k] = v
-						}
+					// add rval rows to result
+					for k, v := range rval {
+						result[k] = v
 					}
 				}
 			case "ipvoid":
@@ -588,11 +600,9 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				// IPVoid
 				for _, ip := range ips {
 					rval := ScanWithIPVoid(conf.ExternalDetection.IPVoid.APIKey, ip)
-					if rval != nil {
-						// add rval rows to result
-						for k, v := range rval {
-							result[k] = v
-						}
+					// add rval rows to result
+					for k, v := range rval {
+						result[k] = v
 					}
 				}
 			case "censys":
@@ -603,11 +613,9 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				// Censys
 				for _, ip := range ips {
 					rval := ScanWithCensys(conf.ExternalDetection.Censys.APIID, conf.ExternalDetection.Censys.APISecret, ip)
-					if rval != nil {
-						// add rval rows to result
-						for k, v := range rval {
-							result[k] = v
-						}
+					// add rval rows to result
+					for k, v := range rval {
+						result[k] = v
 					}
 				}
 			case "ssllabs":

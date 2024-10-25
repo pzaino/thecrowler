@@ -77,7 +77,7 @@ var (
 	loggerPrefix string
 )
 
-// EnvValue
+// EnvValue is a struct to represent an environment variable
 type EnvValue struct {
 	// Name is the name of the environment variable
 	Name string

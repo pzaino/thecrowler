@@ -30,30 +30,32 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 func extractQueryOrBody(r *http.Request) (string, error) {
 	if r.Method == "POST" {
 		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
+		defer r.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 		if err != nil {
 			return "", err
 		}
 		return string(body), nil
-	} else {
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			return "", fmt.Errorf("query parameter 'q' is required")
-		}
-		offset := r.URL.Query().Get("offset")
-		if offset != "" {
-			query += "&offset:" + offset
-		}
-		limit := r.URL.Query().Get("limit")
-		if limit != "" {
-			query += "&limit:" + limit
-		}
-		details := r.URL.Query().Get("details")
-		if details != "" {
-			query += "&details:" + details
-		}
-		return query, nil
 	}
+
+	// Process it as GET request
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		return "", fmt.Errorf("query parameter 'q' is required")
+	}
+	offset := r.URL.Query().Get("offset")
+	if offset != "" {
+		query += "&offset:" + offset
+	}
+	limit := r.URL.Query().Get("limit")
+	if limit != "" {
+		query += "&limit:" + limit
+	}
+	details := r.URL.Query().Get("details")
+	if details != "" {
+		query += "&details:" + details
+	}
+
+	return query, nil
 }
 
 func getQTypeFromName(name string) int {
@@ -75,6 +77,7 @@ func normalizeURL(url string) string {
 	return url
 }
 
+// PrepareInput prepares the input string by removing all \" and trimming external quotes and spaces.
 func PrepareInput(input string) string {
 	// Remove all \" from the input
 	input = strings.ReplaceAll(input, "\\\"", "\"")

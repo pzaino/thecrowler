@@ -527,7 +527,7 @@ func checkCertificateRevocation(cert *x509.Certificate, issuerCert *x509.Certifi
 	if err != nil {
 		return false, err // Error sending the OCSP request
 	}
-	defer httpResponse.Body.Close()
+	defer httpResponse.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	responseBytes, err := io.ReadAll(httpResponse.Body)
 	if err != nil {
@@ -582,7 +582,7 @@ func ProcessAuthFile() {
 		cmn.DebugMsg(cmn.DbgLvlError, "opening the file: %v", err)
 		return
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Create a CSV reader
 	reader := csv.NewReader(file)
@@ -681,7 +681,7 @@ func downloadFile(url, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to fetch the file: %s", resp.Status)
@@ -691,7 +691,7 @@ func downloadFile(url, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	_, err = io.Copy(file, resp.Body)
 	if err != nil {
@@ -713,7 +713,7 @@ func getCertChain(hostname string, port uint16) ([]*x509.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	if err := conn.Handshake(); err != nil {
 		return nil, err

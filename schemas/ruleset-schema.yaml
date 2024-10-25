@@ -157,6 +157,9 @@ properties:
                         required:
                           - "selector_type"
                           - "selector"
+                    critical:
+                      type: "boolean"
+                      description: "Flag to indicate if the element is critical for the rule to be considered successful. Keep in mind that setting this flag will make the rule fail and set the Source crawling to error state. This can be useful to stop the crawling process if a critical element is not found and get it re-scheduled with a different Proxy IP if the problem was due to a block."
                   additional_properties: "false"
                   required:
                     - "key"

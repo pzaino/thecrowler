@@ -62,13 +62,14 @@ func fuzzQueryParameters(parsedURL *url.URL, rule rules.CrawlingRule, fuzzedURLs
 }
 
 func fuzzURLPath(parsedURL *url.URL, rule rules.CrawlingRule, fuzzedURLs []string) []string {
+	const strPath = "path"
 	for _, target := range rule.GetTargetElements() {
 		selectorType := target.GetSelectorType()
 		selector := target.GetSelector()
 
-		if selectorType == "path" {
+		if selectorType == strPath {
 			for _, fuzzParam := range rule.GetFuzzingParameters() {
-				if fuzzParam.GetParameterName() == "path" {
+				if fuzzParam.GetParameterName() == strPath {
 					values := generateFuzzValues(fuzzParam)
 					for _, value := range values {
 						fuzzedURL := *parsedURL

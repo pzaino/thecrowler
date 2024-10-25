@@ -30,7 +30,7 @@ func FetchRemoteFile(url string, timeout int, sslmode string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch file from %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("received non-200 response from %s: %d", url, resp.StatusCode)
