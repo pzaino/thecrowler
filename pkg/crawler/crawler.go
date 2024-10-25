@@ -122,8 +122,6 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 			cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", err)
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Source configuration combined successfully.")
-			//cmn.DebugMsg(cmn.DbgLvlDebug5, "Default configuration: %+v", config)
-			//cmn.DebugMsg(cmn.DbgLvlDebug5, "Source configuration: %+v", processCtx.config)
 		}
 	}
 
@@ -187,6 +185,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
+		processCtx.Status.LastError = err.Error()
 		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 		return
 	}
@@ -232,11 +231,20 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		for (currentDepth < maxDepth) && (newLinksFound > 0) {
 			// Create a channel to enqueue jobs
 			jobs := make(chan LinkItem, len(allLinks))
+			// Create a channel to collect errors
+			errChan := make(chan error, config.Crawler.Workers-2)
 
 			// Launch worker goroutines
 			for w := 1; w <= config.Crawler.Workers-2; w++ {
 				processCtx.wg.Add(1)
-				go worker(processCtx, w, jobs) // crawling worker
+
+				go func(w int) {
+					defer processCtx.wg.Done()
+					if err := worker(processCtx, w, jobs); err != nil {
+						// Send any error from the worker to the error channel
+						errChan <- err
+					}
+				}(w)
 			}
 
 			// Enqueue jobs (allLinks)
@@ -249,6 +257,28 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 			// Wait for workers to finish and collect new links
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
 			processCtx.wg.Wait()
+			close(errChan)
+
+			// Handle any errors from workers
+			for err = range errChan {
+				if err != nil {
+					// Log the error
+					cmn.DebugMsg(cmn.DbgLvlError, "Worker error: %v", err)
+
+					// Check if the error contains "Critical"
+					if strings.Contains(err.Error(), "Critical") {
+						// Update source with error state
+						processCtx.Status.EndTime = time.Now()
+						processCtx.Status.PipelineRunning = 3
+						processCtx.Status.TotalErrors++
+						processCtx.Status.LastError = err.Error()
+
+						// Log the critical error and return to stop processing
+						cmn.DebugMsg(cmn.DbgLvlError, "Critical error encountered: %v. Stopping crawling for Source: %d", err, processCtx.source.ID)
+						return
+					}
+				}
+			}
 			cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
 
 			// Prepare for the next iteration
@@ -399,7 +429,14 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 	}
 
 	// Continue with extracting page info and indexing
-	extractPageInfo(&pageSource, ctx, docType, &pageInfo)
+	err = extractPageInfo(&pageSource, ctx, docType, &pageInfo)
+	if err != nil {
+		if strings.Contains(err.Error(), "Critical") {
+			UpdateSourceState(*ctx.db, ctx.source.URL, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "extracting page info: %v", err)
+			return pageSource, err
+		}
+	}
 	pageInfo.DetectedType = docType
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
@@ -1367,7 +1404,7 @@ func docTypeIsHTML(mime string) bool {
 // extractPageInfo is responsible for extracting information from a collected page.
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
-func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType string, PageCache *PageInfo) {
+func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType string, PageCache *PageInfo) error {
 	currentURL, _ := (*webPage).CurrentURL()
 
 	// Detect Object Type
@@ -1387,8 +1424,8 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		htmlContent, _ = (*webPage).PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content: %v", err)
-			return
+			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content, during Page Info Extraction: %v", err)
+			return err
 		}
 
 		// Run scraping rules if any
@@ -1396,7 +1433,13 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		var url string
 		url, err = (*webPage).CurrentURL()
 		if err == nil {
-			scrapedData = processScrapingRules(&webPageCopy, ctx, url)
+			scrapedData, err = processScrapingRules(&webPageCopy, ctx, url)
+			if err != nil {
+				if strings.Contains(err.Error(), "Critical") {
+					return err
+				}
+				cmn.DebugMsg(cmn.DbgLvlError, "processing scraping rules: %v", err)
+			}
 		}
 		if scrapedData != "" {
 			// put ScrapedData into a map
@@ -1470,6 +1513,8 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 	(*PageCache).DetectedLang = detectLang((*webPage))
 	(*PageCache).DetectedType = objType
 	(*PageCache).ScrapedData = scrapedList
+
+	return nil
 }
 
 func detectLang(wd selenium.WebDriver) string {
@@ -1711,8 +1756,7 @@ func getDomainParts(parts []string, level uint) string {
 }
 
 // worker is the worker function that is responsible for crawling a page
-func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
-	defer processCtx.wg.Done()
+func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 	var skippedURLs []LinkItem
 
 	// Loop over the jobs channel and process each job
@@ -1768,6 +1812,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 		} else {
 			processCtx.Status.TotalErrors++
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s with an error: %v\n", id, url.Link, err)
+			if strings.Contains(err.Error(), "Critical") {
+				return err
+			}
 		}
 
 		// Clear the skipped URLs
@@ -1784,6 +1831,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) {
 			break
 		}
 	}
+
+	return nil
 }
 
 func skipURL(processCtx *ProcessContext, id int, url string) bool {
@@ -1892,7 +1941,13 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Extract page information and cache it for indexing
 	docType := inferDocumentType(url.Link, &processCtx.wd)
-	extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
+	err = extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
+	if err != nil {
+		if strings.Contains(err.Error(), "Critical") {
+			return err
+		}
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+	}
 	pageCache.sourceID = processCtx.source.ID
 	// Extract links from the Current Page
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
@@ -2066,7 +2121,13 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// Extract page information
-	extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
+	err = extractPageInfo(&processCtx.wd, processCtx, docType, &pageCache)
+	if err != nil {
+		if strings.Contains(err.Error(), "Critical") {
+			return err
+		}
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+	}
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
 	urlItem := LinkItem{
@@ -2177,7 +2238,13 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 
 	// Extract page information
-	extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
+	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
+	if err != nil {
+		if strings.Contains(err.Error(), "Critical") {
+			return err
+		}
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+	}
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)

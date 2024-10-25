@@ -227,6 +227,7 @@ type ActionRule struct {
 type Element struct {
 	Key       string     `json:"key" yaml:"key"`
 	Selectors []Selector `json:"selectors" yaml:"selectors"`
+	Critical  bool       `json:"critical" yaml:"critical"`
 }
 
 // Selector represents a single selector

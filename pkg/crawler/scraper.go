@@ -37,7 +37,7 @@ import (
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
-func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) map[string]interface{} {
+func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) (map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
@@ -60,6 +60,11 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 				if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == "plugin_call" {
 					break
 				}
+			} else {
+				if rule.Elements[e].Critical {
+					cmn.DebugMsg(cmn.DbgLvlError, "Critical element not found: %v", selectors[i].Selector)
+					return extractedData, errors.New("Critical element not found")
+				}
 			}
 		}
 
@@ -75,7 +80,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 
 	// return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
 	// given the user may have configured multiple rules.
-	return extractedData
+	return extractedData, nil
 }
 
 // extractJSFiles extracts the JavaScript files from the current page.
@@ -508,10 +513,15 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, url string, w
 	// Iterate over the rules in the rule group
 	for _, rule := range ruleGroup.ScrapingRules {
 		// Apply the rule to the web page
-		data := ApplyRule(ctx, &rule, webPage)
+		data, err := ApplyRule(ctx, &rule, webPage)
 		// Add the extracted data to the map
-		for k, v := range data {
-			extractedData[k] = v
+		if err == nil {
+			for k, v := range data {
+				extractedData[k] = v
+			}
+		} else {
+			cmn.KVStore.DeleteByCID(ctx.GetContextID())
+			return extractedData, err
 		}
 	}
 

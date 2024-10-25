@@ -91,7 +91,7 @@
                                 },
                                 "pre_conditions": {
                                     "title": "Pre-Conditions",
-                                    "description": "Conditions that must be met for the scraping to be executed.",
+                                    "description": "Conditions that must be met for the rule to be considered for execution.",
                                     "type": "array",
                                     "items": {
                                         "type": "object",
@@ -106,6 +106,34 @@
                                                 "description": "Optional. The specific URL to which this rule applies. If omitted, the rule is considered applicable to any URL matching the path."
                                             }
                                         }
+                                    }
+                                },
+                                "wait_conditions": {
+                                    "title": "Wait Conditions",
+                                    "description": "Conditions to wait before being able to execute the rule and scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'.",
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "condition_type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "element_presence",
+                                                    "element_visible",
+                                                    "plugin_call",
+                                                    "delay"
+                                                ]
+                                            },
+                                            "value": {
+                                                "type": "string",
+                                                "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is ignored."
+                                            },
+                                            "selector": {
+                                                "type": "string",
+                                                "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. This field is used for the plugin's name when the condition_type is 'plugin_call'."
+                                            }
+                                        },
+                                        "additionalProperties": false
                                     }
                                 },
                                 "elements": {
@@ -206,6 +234,10 @@
                                                         "selector"
                                                     ]
                                                 }
+                                            },
+                                            "critical": {
+                                                "type": "boolean",
+                                                "description": "Flag to indicate if the element is critical for the rule to be considered successful. Keep in mind that setting this flag will make the rule fail and set the Source crawling to error state. This can be useful to stop the crawling process if a critical element is not found and get it re-scheduled with a different Proxy IP if the problem was due to a block."
                                             }
                                         },
                                         "additionalProperties": false,
@@ -256,34 +288,6 @@
                                             "source_tag",
                                             "dest_tag"
                                         ]
-                                    }
-                                },
-                                "wait_conditions": {
-                                    "title": "Wait Conditions",
-                                    "description": "Conditions to wait before being able to scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'.",
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "condition_type": {
-                                                "type": "string",
-                                                "enum": [
-                                                    "element_presence",
-                                                    "element_visible",
-                                                    "plugin_call",
-                                                    "delay"
-                                                ]
-                                            },
-                                            "value": {
-                                                "type": "string",
-                                                "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is ignored."
-                                            },
-                                            "selector": {
-                                                "type": "string",
-                                                "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. This field is used for the plugin's name when the condition_type is 'plugin_call'."
-                                            }
-                                        },
-                                        "additionalProperties": false
                                     }
                                 },
                                 "post_processing": {
