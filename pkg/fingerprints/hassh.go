@@ -16,6 +16,7 @@
 package fingerprints
 
 import (
+	//nolint:gosec // Disabling G501: Md5 is required for backward compatibility, we do not use it for security purposes
 	"crypto/md5"
 	"encoding/hex"
 )
@@ -25,6 +26,7 @@ type HASSH struct{}
 
 // Compute computes the HASSH fingerprint of a given data.
 func (h HASSH) Compute(data string) string {
+	//nolint:gosec // Disabling G401: Md5 is required for backward compatibility, we do not use it for security purposes
 	hash := md5.Sum([]byte(data))
 	return hex.EncodeToString(hash[:])
 }

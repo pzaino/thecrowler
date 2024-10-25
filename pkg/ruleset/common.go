@@ -269,6 +269,7 @@ func loadPluginsFromConfig(pluginRegistry *JSPluginRegister,
 	return nil
 }
 
+// BulkLoadPlugins loads the plugins from the specified file and returns a pointer to the created JSPlugin.
 func BulkLoadPlugins(config cfg.PluginConfig) ([]*JSPlugin, error) {
 	var plugins []*JSPlugin
 
@@ -501,6 +502,7 @@ func LoadSchema(schemaPath string) (*jsonschema.Schema, error) {
 
 /// --- Prepare Items for Search --- ///
 
+// PrepareURLForSearch prepares the URL for search by trimming spaces and converting it to lowercase.
 func PrepareURLForSearch(urlStr string) (string, error) {
 	if strings.TrimSpace(urlStr) == "" {
 		return "", fmt.Errorf("%s", errEmptyURL)
@@ -514,6 +516,7 @@ func PrepareURLForSearch(urlStr string) (string, error) {
 	return strings.ToLower(strings.TrimSpace(urlStr)), nil
 }
 
+// PrepareNameForSearch prepares the name for search by trimming spaces and converting it to lowercase.
 func PrepareNameForSearch(name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("%s", errEmptyName)
@@ -521,6 +524,7 @@ func PrepareNameForSearch(name string) (string, error) {
 	return strings.ToLower(strings.TrimSpace(name)), nil
 }
 
+// PreparePathForSearch prepares the path for search by trimming spaces and converting it to lowercase.
 func PreparePathForSearch(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("%s", errEmptyPath)

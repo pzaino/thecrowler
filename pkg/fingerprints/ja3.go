@@ -16,6 +16,7 @@
 package fingerprints
 
 import (
+	//nolint:gosec // Disabling G501: Md5 is required for backward compatibility, we do not use it for security purposes
 	"crypto/md5"
 	"encoding/hex"
 )
@@ -25,6 +26,7 @@ type JA3 struct{}
 
 // Compute computes the JA3 fingerprint of a given data.
 func (j JA3) Compute(data string) string {
+	//nolint:gosec // Disabling G401: Md5 is required for backward compatibility, we do not use it for security purposes
 	hash := md5.Sum([]byte(data))
 	return hex.EncodeToString(hash[:])
 }
@@ -34,6 +36,7 @@ type JA3S struct{}
 
 // Compute computes the JA3S fingerprint of a given data.
 func (j JA3S) Compute(data string) string {
+	//nolint:gosec // Disabling G401: Md5 is required for backward compatibility, we do not use it for security purposes
 	hash := md5.Sum([]byte(data))
 	return hex.EncodeToString(hash[:])
 }

@@ -29,6 +29,7 @@ import (
 
 /// --- Actions --- ///
 
+// SetEnv sets the environment variables for the RuleGroup.
 func (rg *RuleGroup) SetEnv(CtxID string) {
 	if rg.Env != nil {
 		for i := 0; i < len(rg.Env); i++ {

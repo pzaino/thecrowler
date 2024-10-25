@@ -43,10 +43,12 @@ const (
 	tlsV13Support = "1.3_SUPPORT"
 )
 
+// JARMCollector is a struct that collects JARM fingerprints
 type JARMCollector struct {
 	Proxy *cfg.SOCKSProxy
 }
 
+// ProxyConfig is a struct that holds the proxy configuration
 type ProxyConfig struct {
 	Address  string
 	Username string
@@ -68,7 +70,7 @@ func formatForPython(data []byte) string {
 	return buffer.String()
 }
 
-// Print out detailed parts of the ClientHello message
+// PrintClientHelloDetails prints out detailed parts of the ClientHello message
 func PrintClientHelloDetails(packet []byte) {
 	defer func() {
 		if r := recover(); r != nil {

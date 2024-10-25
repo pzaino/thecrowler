@@ -35,25 +35,27 @@ func extractQueryOrBody(r *http.Request) (string, error) {
 			return "", err
 		}
 		return string(body), nil
-	} else {
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			return "", fmt.Errorf("query parameter 'q' is required")
-		}
-		offset := r.URL.Query().Get("offset")
-		if offset != "" {
-			query += "&offset:" + offset
-		}
-		limit := r.URL.Query().Get("limit")
-		if limit != "" {
-			query += "&limit:" + limit
-		}
-		details := r.URL.Query().Get("details")
-		if details != "" {
-			query += "&details:" + details
-		}
-		return query, nil
 	}
+
+	// Process it as GET request
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		return "", fmt.Errorf("query parameter 'q' is required")
+	}
+	offset := r.URL.Query().Get("offset")
+	if offset != "" {
+		query += "&offset:" + offset
+	}
+	limit := r.URL.Query().Get("limit")
+	if limit != "" {
+		query += "&limit:" + limit
+	}
+	details := r.URL.Query().Get("details")
+	if details != "" {
+		query += "&details:" + details
+	}
+
+	return query, nil
 }
 
 func getQTypeFromName(name string) int {

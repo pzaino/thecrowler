@@ -81,6 +81,7 @@ func (f *FuzzingParameter) GetPattern() string {
 	return strings.TrimSpace(f.Pattern)
 }
 
+// GetSelector returns the selector for the specified fuzzing parameter.
 func (f *FuzzingParameter) GetSelector() string {
 	return strings.TrimSpace(f.Selector)
 }

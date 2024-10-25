@@ -52,7 +52,7 @@ type HTTPDetails struct {
 	DetectedEntities map[string]detect.DetectedEntity `json:"detected_assets"`
 }
 
-// This struct is used to store the info we fetch about trustworthy authorities
+// Authority struct is used to store the info we fetch about trustworthy authorities
 // from https://www.ccadb.org/resources
 type Authority struct {
 	CAOwner                           string `json:"ca_owner"`

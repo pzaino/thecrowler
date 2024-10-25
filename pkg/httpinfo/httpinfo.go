@@ -185,6 +185,7 @@ func getSSLInfo(config *Config) (*SSLInfo, error) {
 func createHTTPClient(config Config) *http.Client {
 	transport := cmn.SafeTransport(config.Timeout, "ignore")
 	transport.TLSClientConfig = &tls.Config{
+		//nolint:gosec // Disabling G402: My code has to test the security of the target, so I need to disable the security check here
 		InsecureSkipVerify: true, // Skip TLS certificate verification
 		MinVersion:         tls.VersionTLS10,
 		MaxVersion:         tls.VersionTLS13,

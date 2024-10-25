@@ -1,3 +1,18 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package detection implements the detection library for the Crowler.
 package detection
 
 import (
@@ -226,11 +241,11 @@ func calculateConfidence(x, Noise, Maybe, Detected float32) float32 {
 		return 10 + ((x-Noise)/(Maybe-Noise))*30 // Maps [Noise, Maybe) to [10%, 40%]
 	} else if x < Detected {
 		return 40 + ((x-Maybe)/(Detected-Maybe))*60 // Maps [Maybe, Detected) to [40%, 100%]
-	} else {
-		// Maps [Detected, ∞) to [40%, 100%]
-		// i.e. this ensures that confidence doesn't exceed 100%
-		return min(100, 40+((x-Detected)/(Detected-Maybe))*60)
 	}
+
+	// Maps [Detected, ∞) to [40%, 100%]
+	// i.e. this ensures that confidence doesn't exceed 100%
+	return min(100, 40+((x-Detected)/(Detected-Maybe))*60)
 }
 
 func detectTechBySSL(sslInfo *SSLInfo, sslSignatures *map[string][]ruleset.SSLSignature, detectedTech *map[string]detectionEntityDetails) {
@@ -250,16 +265,15 @@ func detectSSLTechBySignatureValue(certChain []*x509.Certificate, signature rule
 		certField, err := getCertificateField(cert, signature.Key)
 		if err != nil {
 			continue
-		} else {
-			for _, signatureValue := range signature.Value {
-				matched, err := regexp.MatchString(signatureValue, certField)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
-				} else if matched {
-					//if strings.Contains(certField, signatureValue) {
-					updateDetectedTech(detectedTech, ObjName, signature.Confidence, signatureValue)
-					updateDetectedType(detectedTech, ObjName, detectionType)
-				}
+		}
+		for _, signatureValue := range signature.Value {
+			matched, err := regexp.MatchString(signatureValue, certField)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+			} else if matched {
+				//if strings.Contains(certField, signatureValue) {
+				updateDetectedTech(detectedTech, ObjName, signature.Confidence, signatureValue)
+				updateDetectedType(detectedTech, ObjName, detectionType)
 			}
 		}
 	}
