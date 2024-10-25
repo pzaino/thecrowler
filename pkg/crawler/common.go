@@ -39,21 +39,21 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 	var err error
 	selectorType := strings.TrimSpace(selector.SelectorType)
 	switch strings.ToLower(selectorType) {
-	case "css":
+	case strCSS:
 		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
 	case "id":
 		elements, err = (*wd).FindElements(selenium.ByID, selector.Selector)
-	case "name":
+	case strName:
 		elements, err = (*wd).FindElements(selenium.ByName, selector.Selector)
-	case "linktext", "link_text":
+	case strLinkText1, strLinkText2:
 		elements, err = (*wd).FindElements(selenium.ByLinkText, selector.Selector)
-	case "partiallinktext", "partial_link_text":
+	case strPartialLinkText1, strPartialLinkText2:
 		elements, err = (*wd).FindElements(selenium.ByPartialLinkText, selector.Selector)
-	case "tagname", "tag_name", "tag", "element":
+	case strTagName1, strTagName2, strTagName3, strTagName4:
 		elements, err = (*wd).FindElements(selenium.ByTagName, selector.Selector)
-	case "class", "classname", "class_name":
+	case strClassName1, strClassName2, strClassName3:
 		elements, err = (*wd).FindElements(selenium.ByClassName, selector.Selector)
-	case "js_path":
+	case strJSPath:
 		js := fmt.Sprintf("return document.querySelector(\"%s\");", selector.Selector)
 		res, err := (*wd).ExecuteScript(js, nil)
 		if err != nil {
@@ -64,7 +64,7 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 		} else {
 			return nil, fmt.Errorf("no element found for JS Path: %s", selector.Selector)
 		}
-	case "xpath":
+	case strXPath:
 		elements, err = (*wd).FindElements(selenium.ByXPATH, selector.Selector)
 	default:
 		return nil, fmt.Errorf("unsupported selector type: %s", selectorType)
@@ -123,21 +123,21 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 	var err error
 
 	switch strings.ToLower(strings.TrimSpace(selector.SelectorType)) {
-	case "css":
+	case strCSS:
 		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
 	case "id":
 		elements, err = (*wd).FindElements(selenium.ByID, selector.Selector)
-	case "name":
+	case strName:
 		elements, err = (*wd).FindElements(selenium.ByName, selector.Selector)
-	case "linktext", "link_text":
+	case strLinkText1, strLinkText2:
 		elements, err = (*wd).FindElements(selenium.ByLinkText, selector.Selector)
-	case "partiallinktext", "partial_link_text":
+	case strPartialLinkText1, strPartialLinkText2:
 		elements, err = (*wd).FindElements(selenium.ByPartialLinkText, selector.Selector)
-	case "tagname", "tag_name", "tag", "element":
+	case strTagName1, strTagName2, strTagName3, strTagName4:
 		elements, err = (*wd).FindElements(selenium.ByTagName, selector.Selector)
-	case "class", "classname", "class_name":
+	case strClassName1, strClassName2, strClassName3:
 		elements, err = (*wd).FindElements(selenium.ByClassName, selector.Selector)
-	case "js_path":
+	case strJSPath:
 		js := fmt.Sprintf("return document.querySelector(\"%s\");", selector.Selector)
 		res, err := (*wd).ExecuteScript(js, nil)
 		if err != nil {
@@ -148,7 +148,7 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 		} else {
 			return nil, fmt.Errorf("no element found for JS Path: %s", selector.Selector)
 		}
-	case "plugin_call":
+	case strPluginCall:
 		// Call the plugin
 		pluginName := strings.TrimSpace(selector.Selector)
 		plugin, exists := ctx.re.JSPlugins.GetPlugin(pluginName)
@@ -165,7 +165,7 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 		if elements, ok = result.([]selenium.WebElement); !ok {
 			return nil, fmt.Errorf("plugin did not return a list of elements")
 		}
-	case "xpath":
+	case strXPath:
 		elements, err = (*wd).FindElements(selenium.ByXPATH, selector.Selector)
 	default:
 		return nil, fmt.Errorf("unsupported selector type: %s", selector.SelectorType)
@@ -274,6 +274,7 @@ func matchValue(ctx *ProcessContext, item interface{}, selector rules.Selector) 
 	return regEx.MatchString(wdfText)
 }
 
+// WaitForCondition waits for a condition to be met before continuing.
 func WaitForCondition(ctx *ProcessContext, wd *selenium.WebDriver, r rs.WaitCondition) error {
 	// Execute the wait condition
 	switch strings.ToLower(strings.TrimSpace(r.ConditionType)) {
@@ -285,7 +286,7 @@ func WaitForCondition(ctx *ProcessContext, wd *selenium.WebDriver, r rs.WaitCond
 			time.Sleep(time.Duration(delay) * time.Second)
 		}
 		return nil
-	case "plugin_call":
+	case strPluginCall:
 		plugin, exists := ctx.re.JSPlugins.GetPlugin(r.Value)
 		if !exists {
 			return fmt.Errorf("plugin not found: %s", r.Value)

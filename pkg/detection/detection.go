@@ -312,7 +312,7 @@ func detectTechBySignature(responseBody string, doc *goquery.Document, signature
 	} else {
 		// prepare the signature key
 		key := strings.ToLower(strings.TrimSpace(signature.Key))
-		doc.Find(key).Each(func(index int, htmlItem *goquery.Selection) {
+		doc.Find(key).Each(func(_ int, htmlItem *goquery.Selection) {
 			var text1 string
 			var text2 string
 			var attrExists bool
@@ -483,7 +483,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 	// Iterate through all the meta tags and check for possible technologies
 	for ObjName := range *signatures {
 		for _, signature := range (*signatures)[ObjName] {
-			doc.Find("meta").Each(func(index int, htmlItem *goquery.Selection) {
+			doc.Find("meta").Each(func(_ int, htmlItem *goquery.Selection) {
 				if strings.EqualFold(htmlItem.AttrOr("name", ""), strings.TrimSpace(signature.Name)) {
 					text, contExists := htmlItem.Attr("content")
 					if contExists && signature.Content != "" {

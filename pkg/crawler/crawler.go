@@ -396,7 +396,7 @@ func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) {
 }
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
-func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDriver, error) {
+func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriver, error) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
 
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
@@ -1475,7 +1475,7 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 		// copy doc to avoid modifying the original
 		docCopy := doc.Clone()
 		// remove script tags
-		docCopy.Find("script").Each(func(i int, s *goquery.Selection) {
+		docCopy.Find("script").Each(func(_ int, s *goquery.Selection) {
 			s.Remove()
 		})
 		bodyText = docCopy.Find("body").Text()
@@ -2439,8 +2439,9 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 
 	// Enable logging
 	logSel := log.Capabilities{}
-	logSel["performance"] = "ALL"
-	logSel["browser"] = "ALL"
+	const all = "ALL"
+	logSel["performance"] = all
+	logSel["browser"] = all
 	caps.AddLogging(logSel)
 
 	var protocol string
@@ -2486,9 +2487,8 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	selectedLanguage := ""
+
 	switch lang {
-	case "en-us":
-		selectedLanguage = "['en-US', 'en']"
 	case "en-gb":
 		selectedLanguage = "['en-GB', 'en']"
 	case "fr-fr":
@@ -2530,7 +2530,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(wg *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
@@ -2809,7 +2809,7 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Check for a successful response
 	if resp.StatusCode != http.StatusOK {
@@ -2842,7 +2842,7 @@ func writeDataToFile(filename string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// write data to file
 	_, err = file.Write(data)

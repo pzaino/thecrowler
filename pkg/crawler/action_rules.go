@@ -396,9 +396,8 @@ func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *
 		if err == nil && success == true {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "Scroll to element action executed successfully using Rbee")
 			return nil
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute scroll to element using Rbee, falling back to Selenium")
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute scroll to element using Rbee, falling back to Selenium")
 
 		// Fall back to using Selenium's ExecuteScript method
 		scrollScript := fmt.Sprintf(`
@@ -503,9 +502,8 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 		if err == nil && success == true {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "Mouse move and click action executed successfully using Rbee")
 			return nil
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute mouse move and click using Rbee, falling back to Selenium")
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute mouse move and click using Rbee, falling back to Selenium")
 
 		// Fall back to using Selenium's Click method
 		if button == 0 {
@@ -661,9 +659,8 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 	if err == nil && success == true {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scroll action executed successfully using Rbee")
 		return nil
-	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute scroll using Rbee, falling back to Selenium")
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute scroll using Rbee, falling back to Selenium")
 
 	// Fall back to using Selenium's ExecuteScript method
 	script := fmt.Sprintf("window.scrollTo(0, %s)", attribute)
@@ -792,9 +789,8 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 			if err == nil && success == true {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "Text input action executed successfully using Rbee")
 				return nil
-			} else {
-				cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute text input using Rbee, falling back to Selenium")
 			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute text input using Rbee, falling back to Selenium")
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute mouse move and click using Rbee, falling back to Selenium")
 		}
