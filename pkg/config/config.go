@@ -1177,24 +1177,24 @@ func IsEmpty(config Config) bool {
 }
 
 // IsEmpty checks if ServiceScoutConfig is empty.
-func (ssc *ServiceScoutConfig) IsEmpty() bool {
-	if ssc == nil {
+func (c *ServiceScoutConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if ssc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if ssc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if ssc.OSFingerprinting {
+	if c.OSFingerprinting {
 		return false
 	}
 
-	if ssc.ServiceDetection {
+	if c.ServiceDetection {
 		return false
 	}
 
@@ -1228,56 +1228,56 @@ func (sc *SourceConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given Config is empty.
-func (cfg *Config) IsEmpty() bool {
-	if cfg == nil {
+func (c *Config) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if cfg.Remote != (Remote{}) {
+	if c.Remote != (Remote{}) {
 		return false
 	}
 
-	if cfg.Database != (Database{}) {
+	if c.Database != (Database{}) {
 		return false
 	}
 
-	if cfg.Crawler != (Crawler{}) {
+	if c.Crawler != (Crawler{}) {
 		return false
 	}
 
-	if cfg.API != (API{}) {
+	if c.API != (API{}) {
 		return false
 	}
 
-	if len(cfg.Selenium) != 0 {
+	if len(c.Selenium) != 0 {
 		return false
 	}
 
-	if cfg.ImageStorageAPI != (FileStorageAPI{}) {
+	if c.ImageStorageAPI != (FileStorageAPI{}) {
 		return false
 	}
 
-	if cfg.FileStorageAPI != (FileStorageAPI{}) {
+	if c.FileStorageAPI != (FileStorageAPI{}) {
 		return false
 	}
 
-	if !cfg.HTTPHeaders.IsEmpty() {
+	if !c.HTTPHeaders.IsEmpty() {
 		return false
 	}
 
-	if cfg.NetworkInfo.DNS != (DNSConfig{}) ||
-		cfg.NetworkInfo.WHOIS != (WHOISConfig{}) ||
-		cfg.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
-		!cfg.NetworkInfo.ServiceScout.IsEmpty() ||
-		cfg.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
+	if c.NetworkInfo.DNS != (DNSConfig{}) ||
+		c.NetworkInfo.WHOIS != (WHOISConfig{}) ||
+		c.NetworkInfo.NetLookup != (NetLookupConfig{}) ||
+		!c.NetworkInfo.ServiceScout.IsEmpty() ||
+		c.NetworkInfo.Geolocation != (GeoLookupConfig{}) {
 		return false
 	}
 
-	if cfg.OS != "" {
+	if c.OS != "" {
 		return false
 	}
 
-	if cfg.DebugLevel != 0 {
+	if c.DebugLevel != 0 {
 		return false
 	}
 
@@ -1285,12 +1285,12 @@ func (cfg *Config) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given SSLScoutConfig is empty.
-func (ssld *SSLScoutConfig) IsEmpty() bool {
-	if ssld == nil {
+func (c *SSLScoutConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if ssld.Enabled {
+	if c.Enabled {
 		return false
 	}
 
@@ -1298,20 +1298,20 @@ func (ssld *SSLScoutConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given DNSConfig is empty.
-func (dc *DNSConfig) IsEmpty() bool {
-	if dc == nil {
+func (c *DNSConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if dc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if dc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if dc.RateLimit != "" {
+	if c.RateLimit != "" {
 		return false
 	}
 
@@ -1319,20 +1319,20 @@ func (dc *DNSConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given WHOISConfig is empty.
-func (wc *WHOISConfig) IsEmpty() bool {
-	if wc == nil {
+func (c *WHOISConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if wc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if wc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if wc.RateLimit != "" {
+	if c.RateLimit != "" {
 		return false
 	}
 
@@ -1340,20 +1340,20 @@ func (wc *WHOISConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given NetLookupConfig is empty.
-func (nlc *NetLookupConfig) IsEmpty() bool {
-	if nlc == nil {
+func (c *NetLookupConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if nlc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if nlc.Timeout != 0 {
+	if c.Timeout != 0 {
 		return false
 	}
 
-	if nlc.RateLimit != "" {
+	if c.RateLimit != "" {
 		return false
 	}
 
@@ -1361,20 +1361,20 @@ func (nlc *NetLookupConfig) IsEmpty() bool {
 }
 
 // IsEmpty checks if the given GeoLookupConfig is empty.
-func (glc *GeoLookupConfig) IsEmpty() bool {
-	if glc == nil {
+func (c *GeoLookupConfig) IsEmpty() bool {
+	if c == nil {
 		return true
 	}
 
-	if glc.Enabled {
+	if c.Enabled {
 		return false
 	}
 
-	if glc.Type != "" {
+	if c.Type != "" {
 		return false
 	}
 
-	if glc.DBPath != "" {
+	if c.DBPath != "" {
 		return false
 	}
 

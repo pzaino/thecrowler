@@ -94,7 +94,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	dbSemaphore = make(chan struct{}, config.Database.MaxConns-3)
 
 	// Initialize the database
-	var connected bool = false
+	connected := false
 	dbHandler, err = cdb.NewHandler(*config)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error allocating database resources: %v", err)
@@ -211,9 +211,8 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
 		log.Fatal(srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
-	} else {
-		log.Fatal(srv.ListenAndServe())
 	}
+	log.Fatal(srv.ListenAndServe())
 }
 
 // initAPIv1 initializes the API v1 handlers

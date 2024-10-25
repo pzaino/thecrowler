@@ -75,6 +75,7 @@ func normalizeURL(url string) string {
 	return url
 }
 
+// PrepareInput prepares the input string by removing all \" and trimming external quotes and spaces.
 func PrepareInput(input string) string {
 	// Remove all \" from the input
 	input = strings.ReplaceAll(input, "\\\"", "\"")

@@ -206,7 +206,7 @@ type HTTPInfoRow struct {
 	Details       httpi.HTTPDetails `json:"details"`
 }
 
-// NetInfoResponse represents the structure of the network information response
+// HTTPInfoResponse represents the structure of the network information response
 type HTTPInfoResponse struct {
 	Kind string `json:"kind"` // Identifier of the API's service
 	URL  struct {
@@ -427,10 +427,10 @@ func (r *SearchResult) Populate(data []byte) error {
 func GetQueryTemplate(kind string, version string, method string) string {
 	if method == "GET" {
 		return fmt.Sprintf("%s http(s)://%s/%s/%s?q={q}", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
-	} else {
-		// return the template for POST requests
-		return fmt.Sprintf("%s http(s)://%s/%s/%s", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
 	}
+
+	// return the template for POST requests
+	return fmt.Sprintf("%s http(s)://%s/%s/%s", method, config.API.Host+":"+strconv.Itoa(config.API.Port), version, kind)
 }
 
 // Enum for qType (query type)

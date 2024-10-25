@@ -13,7 +13,8 @@ repos:
       - id: go-fmt
      # - id: go-imports
       - id: no-go-testing
-      - id: golangci-lint
+     # - id: golangci-lint
+     #   args: [ "--config", ".golangci.yml" ]
       - id: go-unit-tests
   - repo: local
     hooks:

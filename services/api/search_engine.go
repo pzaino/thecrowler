@@ -41,7 +41,7 @@ const (
 	dataEncapTime       = "Data encapsulation execution time: %v"
 )
 
-// SearchResult represents the result of a processed search query.
+// SearchQuery represents the result of a processed search query.
 // (Please note: NOT the result of the search itself)
 type SearchQuery struct {
 	sqlQuery  string

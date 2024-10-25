@@ -486,7 +486,7 @@ func (ctx *ProcessContext) CrawlInitialURL(sel SeleniumInstance) (selenium.WebDr
 // Collects the performance metrics logs from the browser
 func collectNavigationMetrics(wd *selenium.WebDriver, pageInfo *PageInfo) {
 	// Retrieve Navigation Timing metrics
-	navigationTimingScript := `
+	const navigationTimingScript = `
 		var timing = window.performance.timing;
 		var metrics = {
 			"dns_lookup": timing.domainLookupEnd - timing.domainLookupStart,
@@ -673,7 +673,7 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 }
 
 // GetNetInfo is responsible for gathering network information for a Source
-func (ctx *ProcessContext) GetNetInfo(url string) {
+func (ctx *ProcessContext) GetNetInfo(_ string) {
 	ctx.Status.NetInfoRunning = 1
 
 	// Create a new NetInfo instance

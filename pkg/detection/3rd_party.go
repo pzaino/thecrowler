@@ -43,8 +43,8 @@ func trdPRequestInfo(reqInfo *trdPRequest) (map[string]interface{}, error) {
 	// Prepare client and request
 	client := &http.Client{}
 
-	var buffer *bytes.Buffer = nil
-	var reqBody []byte = nil
+	var buffer *bytes.Buffer
+	var reqBody []byte
 	if reqInfo.Method == "POST" {
 		reqBody, _ := json.Marshal(reqInfo.Body)
 		buffer = bytes.NewBuffer(reqBody)

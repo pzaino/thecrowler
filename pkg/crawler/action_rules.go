@@ -816,7 +816,7 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 // findElementBySelectorType is responsible for finding an element in the WebDriver
 // using the appropriate selector type. It returns the first element found and an error.
 func findElementBySelectorType(ctx *ProcessContext, wd *selenium.WebDriver, selectors []rules.Selector) (selenium.WebElement, rules.Selector, error) {
-	var wdf selenium.WebElement = nil
+	var wdf selenium.WebElement
 	var err error
 	var selector rules.Selector
 	for _, selector = range selectors {
@@ -829,6 +829,7 @@ func findElementBySelectorType(ctx *ProcessContext, wd *selenium.WebDriver, sele
 	return wdf, selector, err
 }
 
+// DefaultActionConfig returns a default configuration for the action rules
 func DefaultActionConfig(url string) cfg.SourceConfig {
 	return cfg.SourceConfig{
 		FormatVersion: "1.0",
