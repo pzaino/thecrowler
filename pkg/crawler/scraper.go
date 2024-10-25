@@ -62,8 +62,8 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 				}
 			} else {
 				if rule.Elements[e].Critical {
-					cmn.DebugMsg(cmn.DbgLvlError, "Critical element not found: %v", selectors[i].Selector)
-					return extractedData, errors.New("Critical element not found")
+					cmn.DebugMsg(cmn.DbgLvlError, "element not found "+errCriticalError+": %v", selectors[i].Selector)
+					return extractedData, errors.New("element not found, with " + errCriticalError + " flag set")
 				}
 			}
 		}

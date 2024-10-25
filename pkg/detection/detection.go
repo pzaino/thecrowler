@@ -23,11 +23,11 @@ const (
 
 // detectionEntityDetails is used internally to represent the details of an entity detection
 type detectionEntityDetails struct {
-	entityType        string
-	matchedPatterns   []string
-	confidence        float32
-	pluginResult      map[string]interface{}
-	externalDetection map[string]interface{}
+	entityType      string
+	matchedPatterns []string
+	confidence      float32
+	pluginResult    map[string]interface{}
+	//externalDetection map[string]interface{}
 }
 
 // IsEmpty checks if the detectionEntityDetails is empty
@@ -573,11 +573,9 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				// AbuseIPDB
 				for _, ip := range ips {
 					rval := ScanWithAbuseIPDB(conf.ExternalDetection.AbuseIPDB.APIKey, ip)
-					if rval != nil {
-						// add rval rows to result
-						for k, v := range rval {
-							result[k] = v
-						}
+					// add rval rows to result
+					for k, v := range rval {
+						result[k] = v
 					}
 				}
 			case "ipvoid":
@@ -588,11 +586,9 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				// IPVoid
 				for _, ip := range ips {
 					rval := ScanWithIPVoid(conf.ExternalDetection.IPVoid.APIKey, ip)
-					if rval != nil {
-						// add rval rows to result
-						for k, v := range rval {
-							result[k] = v
-						}
+					// add rval rows to result
+					for k, v := range rval {
+						result[k] = v
 					}
 				}
 			case "censys":
@@ -603,11 +599,9 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				// Censys
 				for _, ip := range ips {
 					rval := ScanWithCensys(conf.ExternalDetection.Censys.APIID, conf.ExternalDetection.Censys.APISecret, ip)
-					if rval != nil {
-						// add rval rows to result
-						for k, v := range rval {
-							result[k] = v
-						}
+					// add rval rows to result
+					for k, v := range rval {
+						result[k] = v
 					}
 				}
 			case "ssllabs":
