@@ -27,6 +27,11 @@ import (
 	"github.com/tebeka/selenium"
 )
 
+const (
+	errNoElementFound = "no element '%v' found."
+	errFailedToGetLoc = "failed to get element location: %v"
+)
+
 func processActionRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Action rules...")
 	// Run Action Rules if any
@@ -342,7 +347,7 @@ func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, err)
 		err = nil
 	}
 
@@ -350,7 +355,7 @@ func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *
 	if wdf != nil {
 		loc, err := wdf.Location()
 		if err != nil {
-			return fmt.Errorf("failed to get element location: %v", err)
+			return fmt.Errorf(errFailedToGetLoc, err)
 		}
 
 		// JavaScript to send a POST request to Rbee for scrolling to the element
@@ -439,7 +444,7 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 	// Find the element
 	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, err)
 		err = nil
 	}
 
@@ -455,7 +460,7 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 	if wdf != nil {
 		loc, err := wdf.Location()
 		if err != nil {
-			return fmt.Errorf("failed to get element location: %v", err)
+			return fmt.Errorf(errFailedToGetLoc, err)
 		}
 
 		// JavaScript to send a POST request to Rbee for mouse move and click
@@ -705,7 +710,7 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "No element '%v' found.", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, err)
 		return nil
 	}
 
@@ -713,7 +718,7 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 	if wdf != nil {
 		loc, err := wdf.Location()
 		if err != nil {
-			return fmt.Errorf("failed to get element location: %v", err)
+			return fmt.Errorf(errFailedToGetLoc, err)
 		}
 
 		// JavaScript to send a POST request to Rbee for mouse move and click
