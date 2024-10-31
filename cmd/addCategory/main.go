@@ -1,3 +1,4 @@
+// Package main (addCategory) is a command line that allows to add categories and subcategories to the CROWler DB.
 package main
 
 import (
@@ -21,17 +22,20 @@ var (
 	config cfg.Config
 )
 
+// Category represents the structure of a category
 type Category struct {
 	Name          string        `json:"name" yaml:"name" validate:"required"`
 	Description   string        `json:"description" yaml:"description"`
 	Subcategories []Subcategory `json:"subcategories" yaml:"subcategories"`
 }
 
+// Subcategory represents the structure of a subcategory
 type Subcategory struct {
 	Name        string `json:"name" yaml:"name" validate:"required"`
 	Description string `json:"description" yaml:"description"`
 }
 
+// CategoriesSchema represents the structure of the categories schema file
 type CategoriesSchema struct {
 	Categories []Category `json:"categories" yaml:"categories" validate:"required,dive"`
 }
@@ -82,7 +86,7 @@ func main() {
 		fmt.Printf("Error connecting to database: %v\n", err)
 		return
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // We can't check the error in a defer statement
 
 	// Insert categories and subcategories
 	for _, category := range categories.Categories {

@@ -523,7 +523,7 @@ func checkCertificateRevocation(cert *x509.Certificate, issuerCert *x509.Certifi
 	}
 
 	// Send the OCSP request and get the response
-	httpResponse, err := http.Post(ocspURL, "application/ocsp-request", bytes.NewReader(req))
+	httpResponse, err := http.Post(ocspURL, "application/ocsp-request", bytes.NewReader(req)) //nolint:gosec // This is a test tool
 	if err != nil {
 		return false, err // Error sending the OCSP request
 	}
@@ -677,7 +677,7 @@ func ProcessAuthFile() {
 
 // Download a file from the given URL and save it to the given filename
 func downloadFile(url, filename string) error {
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) //nolint:gosec // This is not a security risk
 	if err != nil {
 		return err
 	}

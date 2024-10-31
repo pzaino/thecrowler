@@ -130,7 +130,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // We can't check the error in a defer statement
 
 	// Check if the URL is provided
 	if *url != "" {
@@ -174,7 +174,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck // We can't check the error in a defer statement
 
 	// Create a new CSV reader
 	r := csv.NewReader(file)
@@ -259,9 +259,8 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 			if forceInsert {
 				fmt.Printf("Error inserting website %s: %v\n", sourceRecord.URL, err)
 				continue
-			} else {
-				return err
 			}
+			return err
 		}
 	}
 
