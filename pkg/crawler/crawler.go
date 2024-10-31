@@ -64,6 +64,7 @@ const (
 	selConnError               = "connecting to Selenium: %v"
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
+	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
 )
 
 var (
@@ -1957,7 +1958,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 		if strings.Contains(err.Error(), errCriticalError) {
 			return err
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	pageCache.sourceID = processCtx.source.ID
 	// Extract links from the Current Page
@@ -2137,7 +2138,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 		if strings.Contains(err.Error(), errCriticalError) {
 			return err
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
@@ -2254,7 +2255,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		if strings.Contains(err.Error(), errCriticalError) {
 			return err
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)

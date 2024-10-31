@@ -39,7 +39,7 @@ type Pars struct {
 	SelIdx  int
 	RE      *rules.RuleEngine
 	Sources *[]cdb.Source
-	Index   int
+	Index   uint64
 	Status  *Status
 }
 

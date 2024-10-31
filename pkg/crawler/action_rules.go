@@ -845,7 +845,7 @@ func DefaultActionConfig(url string) cfg.SourceConfig {
 			{
 				Label: "Default Execution Plan",
 				Conditions: cfg.Condition{
-					UrlPatterns: []string{url},
+					URLPatterns: []string{url},
 				},
 				RuleGroups: []string{"CookieAcceptanceRulesExtended"},
 			},
@@ -896,8 +896,8 @@ func runDefaultActionRules(wd *selenium.WebDriver, ctx *ProcessContext) {
 func checkActionPreConditions(conditions cfg.Condition, url string) bool {
 	canProceed := true
 	// Check the URL patterns
-	if len(conditions.UrlPatterns) > 0 {
-		for _, pattern := range conditions.UrlPatterns {
+	if len(conditions.URLPatterns) > 0 {
+		for _, pattern := range conditions.URLPatterns {
 			if strings.Contains(url, pattern) {
 				canProceed = true
 			} else {

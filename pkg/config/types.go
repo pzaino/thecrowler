@@ -446,7 +446,7 @@ type ExecutionPlanItem struct {
 
 // Condition represents the conditions for a source
 type Condition struct {
-	UrlPatterns []string `json:"url_patterns" yaml:"url_patterns" validate:"required"`
+	URLPatterns []string `json:"url_patterns" yaml:"url_patterns" validate:"required"`
 }
 
 // FileReader is an interface to read files

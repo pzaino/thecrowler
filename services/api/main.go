@@ -229,6 +229,7 @@ func initAPIv1() {
 	httpInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(httpInfoHandler)))
 	webObjectHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webObjectHandler)))
 	webCorrelatedSitesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webCorrelatedSitesHandler)))
+	webScrapedDataHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webScrapedDataHandler)))
 
 	http.Handle("/v1/search", searchHandlerWithMiddlewares)
 	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
@@ -236,6 +237,7 @@ func initAPIv1() {
 	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
 	http.Handle("/v1/webobject", webObjectHandlerWithMiddlewares)
 	http.Handle("/v1/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
+	http.Handle("/v1/collected_data", webScrapedDataHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
@@ -402,6 +404,57 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 				"correlatedsites#search",
 				jsonResponse,
 				GetQueryTemplate("correlatedsites", "v1", r.Method),
+				[]QueryRequest{
+					{
+						"search",
+						len(results.Items),
+						query,
+						len(results.Items),
+						results.Queries.Offset,
+						"utf8",
+						"utf8",
+						"off",
+						"0",
+					},
+				},
+			)
+			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
+		}
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+// webScrapedDataHandler handles the search requests for scraped data
+func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusOK
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in scraped_data search request", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := performScrapedDataSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		if results.IsEmpty() {
+			var retCode int
+			if config.API.Return404 {
+				retCode = http.StatusNotFound
+			} else {
+				retCode = successCode
+			}
+			handleErrorAndRespond(w, err, results, "Error performing scraped_data search: %v", http.StatusNotFound, retCode)
+		} else {
+			results.SetHeaderFields(
+				"scraped_data#search",
+				jsonResponse,
+				GetQueryTemplate("scraped_data", "v1", r.Method),
 				[]QueryRequest{
 					{
 						"search",

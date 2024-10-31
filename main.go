@@ -58,7 +58,7 @@ var (
 	configFile   *string          // Configuration file path
 	config       cfg.Config       // Configuration "object"
 	configMutex  sync.Mutex       // Mutex to protect the configuration
-	GRulesEngine rules.RuleEngine // Global rules engine
+	GRulesEngine rules.RuleEngine // GRulesEngine Global rules engine
 
 	// Prometheus metrics
 	totalPages = prometheus.NewGaugeVec(
@@ -187,8 +187,11 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 		var src cdb.Source
 		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "scanning rows: %v", err)
-			rows.Close()
-			err2 := tx.Rollback()
+			err2 := rows.Close()
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "closing rows iterator: %v", err2)
+			}
+			err2 = tx.Rollback()
 			if err2 != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "rolling back transaction: %v", err2)
 			}
@@ -205,7 +208,10 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 		sourcesToCrawl = append(sourcesToCrawl, src)
 		src = cdb.Source{} // Reset the source
 	}
-	rows.Close() // Close the rows iterator
+	err = rows.Close() // Close the rows iterator
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "closing rows iterator: %v", err)
+	}
 
 	// Commit the transaction if everything is successful
 	if err := tx.Commit(); err != nil {
@@ -314,10 +320,11 @@ func crawlSources(wb *WorkBlock) {
 	}(wb.PipelineStatus)
 
 	// Start the crawling process for each source
-	var wg sync.WaitGroup // WaitGroup to wait for all goroutines to finish
-	selIdx := 0           // Selenium instance index
-	sourceIdx := 0        // Source index
-	for idx := 0; idx < wb.Config.Crawler.MaxSources; idx++ {
+	var wg sync.WaitGroup                                    // WaitGroup to wait for all goroutines to finish
+	selIdx := 0                                              // Selenium instance index
+	sourceIdx := 0                                           // Source index
+	var maxSrc uint64 = uint64(wb.Config.Crawler.MaxSources) //nolint:gosec // DIsable G115 (integer overflow, given the MaxSources value is fully tested)
+	for idx := uint64(0); idx < maxSrc; idx++ {
 		// Check if the pipeline is already running
 		if (*wb.PipelineStatus)[idx].PipelineRunning == 1 {
 			continue
@@ -329,7 +336,7 @@ func crawlSources(wb *WorkBlock) {
 
 		// Initialize the status
 		(*wb.PipelineStatus)[idx] = crowler.Status{
-			PipelineID:      uint64(idx),
+			PipelineID:      idx,
 			Source:          source.URL,
 			SourceID:        source.ID,
 			PipelineRunning: 0,
@@ -360,7 +367,7 @@ func crawlSources(wb *WorkBlock) {
 	wg.Wait() // Block until all goroutines have decremented the counter
 }
 
-func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Source, idx int) {
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Source, idx uint64) {
 	// Prepare the go routine parameters
 	args := crowler.Pars{
 		WG:      wg,
@@ -486,6 +493,7 @@ func updateMetrics(status crowler.Status) {
 	}
 }
 
+// StatusStr returns a string representation of the status
 func StatusStr(condition int) string {
 	switch condition {
 	case 0:
@@ -779,7 +787,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	}
 }
 
-func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	// Create a JSON document with the health status
 	healthStatus := HealthCheck{
 		Status: "OK",
@@ -789,7 +797,7 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
-func configCheckHandler(w http.ResponseWriter, r *http.Request) {
+func configCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	// Make a copy of the configuration and remove the sensitive data
 	configCopy := config
 	configCopy.Database.Password = "********"
