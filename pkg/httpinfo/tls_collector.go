@@ -34,6 +34,10 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+const (
+	errInvalidExtension = "invalid extension"
+)
+
 type captureConn struct {
 	net.Conn
 	r io.Reader
@@ -207,7 +211,8 @@ func (dc DataCollector) CollectSSH(collectedData *CollectedData, host string, po
 
 	// Create SSH client config
 	clientConfig := &ssh.ClientConfig{
-		User:            "user",
+		User: "user",
+		//nolint:gosec // Disabling G402: My code has to test insecure connections, so it's ok here to disable this
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
@@ -288,7 +293,7 @@ func ExtractExtensionsFromClientHello(rawClientHello []byte) ([]uint16, error) {
 	// Parse each extension
 	for pos < endPos {
 		if pos+4 > len(rawClientHello) {
-			return nil, errors.New("invalid extension")
+			return nil, errors.New(errInvalidExtension)
 		}
 		extensionType := binary.BigEndian.Uint16(rawClientHello[pos:])
 		extensions = append(extensions, extensionType)
@@ -343,7 +348,7 @@ func ExtractClientHelloDetails(rawClientHello []byte) (tlsVersion uint16, cipher
 	// Parse each extension
 	for pos < endPos {
 		if pos+4 > len(rawClientHello) {
-			return 0, nil, nil, nil, nil, "", nil, errors.New("invalid extension")
+			return 0, nil, nil, nil, nil, "", nil, errors.New(errInvalidExtension)
 		}
 		extensionType := binary.BigEndian.Uint16(rawClientHello[pos:])
 		extensions = append(extensions, extensionType)
@@ -431,7 +436,7 @@ func ExtractExtensionsFromServerHello(rawServerHello []byte) ([]uint16, error) {
 	// Parse each extension
 	for pos < endPos {
 		if pos+4 > len(rawServerHello) {
-			return nil, errors.New("invalid extension")
+			return nil, errors.New(errInvalidExtension)
 		}
 		extensionType := binary.BigEndian.Uint16(rawServerHello[pos:])
 		extensions = append(extensions, extensionType)
@@ -513,7 +518,7 @@ func ExtractServerHelloDetails(rawServerHello []byte) (tlsVersion uint16, cipher
 	// Parse extensions
 	for pos < endPos {
 		if pos+4 > len(rawServerHello) {
-			return 0, 0, nil, "", errors.New("invalid extension")
+			return 0, 0, nil, "", errors.New(errInvalidExtension)
 		}
 
 		extensionType := binary.BigEndian.Uint16(rawServerHello[pos:])

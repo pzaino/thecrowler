@@ -284,6 +284,48 @@ type CorrelatedSitesRow struct {
 	SSLInfo  httpi.SSLInfo    `json:"ssl_info"`
 }
 
+// ScrapedDataRequest represents the structure of the Correlated Sites request POST
+type ScrapedDataRequest struct {
+	URL string `json:"url"`
+}
+
+// ScrapedDataResponse represents the structure of the correlated sites response
+type ScrapedDataResponse struct {
+	Kind string `json:"kind"` // Identifier of the API's service
+	URL  struct {
+		Type     string `json:"type"`     // Type of the request (e.g., "application/json")
+		Template string `json:"template"` // URL template for requests
+	} `json:"url"`
+	Queries struct {
+		Request  []QueryRequest `json:"request"`  // The request that was made
+		NextPage []QueryRequest `json:"nextPage"` // Information for the next page of results
+		Limit    int            `json:"limit"`    // Limit of results
+		Offset   int            `json:"offset"`   // Offset of results
+	} `json:"queries"`
+	Items []ScrapedDataRow `json:"items"`
+}
+
+// ScrapedDataRow represents the structure of the correlated sites response
+type ScrapedDataRow struct {
+	SourceID    uint64                 `json:"source_id"`
+	URL         string                 `json:"url"`
+	CollectedAt string                 `json:"collected_at"`
+	Details     map[string]interface{} `json:"details"`
+}
+
+// IsEmpty returns true if the response is empty
+func (r *ScrapedDataResponse) IsEmpty() bool {
+	return len(r.Items) == 0
+}
+
+// SetHeaderFields sets the header fields of the response
+func (r *ScrapedDataResponse) SetHeaderFields(kind, urlType, urlTemplate string, requests []QueryRequest) {
+	r.Kind = kind
+	r.URL.Type = urlType
+	r.URL.Template = urlTemplate
+	r.Queries.Request = requests
+}
+
 // SearchResponse is an interface that defines the methods that
 // a search response should implement.
 type SearchResponse interface {

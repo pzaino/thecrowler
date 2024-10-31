@@ -64,10 +64,12 @@ const (
 	selConnError               = "connecting to Selenium: %v"
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
+	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
 )
 
 var (
-	config cfg.Config // Configuration "object"
+	config           cfg.Config // Configuration "object"
+	allowedProtocols = strings.Split("http://,https://,ftp://,ftps://", ",")
 )
 
 // ProcessContext is a struct that holds the context of the crawling process
@@ -1589,13 +1591,22 @@ func IsValidURL(u string) bool {
 	if u == "" {
 		return false
 	}
-	if u == "http://" || u == "https://" || u == "ftp://" || u == "ftps://" {
-		return false
-	}
 
 	// Prepend a scheme if it's missing
 	if !strings.Contains(u, "://") {
 		u = "http://" + u
+	}
+
+	// Check if the URL has an allowed protocol
+	if !IsValidURIProtocol(u) {
+		return false
+	}
+
+	// Check if u is ONLY a protocol (aka not a full URL)
+	for _, proto := range allowedProtocols {
+		if u == proto {
+			return false
+		}
 	}
 
 	// Parse the URL and check for errors
@@ -1606,13 +1617,14 @@ func IsValidURL(u string) bool {
 // IsValidURIProtocol checks if the URI has a valid protocol.
 func IsValidURIProtocol(u string) bool {
 	u = strings.TrimSpace(u)
-	if !strings.HasPrefix(u, "http://") &&
-		!strings.HasPrefix(u, "https://") &&
-		!strings.HasPrefix(u, "ftp://") &&
-		!strings.HasPrefix(u, "ftps://") {
-		return false
+	found := false
+	for _, proto := range allowedProtocols {
+		if strings.HasPrefix(u, proto) {
+			found = true
+			break
+		}
 	}
-	return true
+	return found
 }
 
 // extractLinks extracts all the links from the given HTML content.
@@ -1946,7 +1958,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 		if strings.Contains(err.Error(), errCriticalError) {
 			return err
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	pageCache.sourceID = processCtx.source.ID
 	// Extract links from the Current Page
@@ -2126,7 +2138,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 		if strings.Contains(err.Error(), errCriticalError) {
 			return err
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, url.Link)...)
@@ -2243,7 +2255,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		if strings.Contains(err.Error(), errCriticalError) {
 			return err
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error extracting page info: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)

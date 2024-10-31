@@ -58,7 +58,7 @@ func detectLocationMaxMind(ipAddress string, dbPath string) (*DetectedLocation, 
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Parse the IP address
 	netIP := net.ParseIP(ipAddress)
@@ -86,7 +86,7 @@ func detectLocationIP2Location(ipAddress, apiKey string, timeout int, sslmode st
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("IP2Location API returned non-OK status: %d", resp.StatusCode)
