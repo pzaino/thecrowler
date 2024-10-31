@@ -129,7 +129,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // We can't check the error in a defer statement
 
 	// Remove the website
 	err = removeSite(db, *siteURL)

@@ -99,7 +99,7 @@ func main() {
 	}
 
 	// Perform the GET request
-	resp, err := http.Get(healthURL)
+	resp, err := http.Get(healthURL) //nolint:gosec // This is usually a localhost connection
 	if err != nil || resp.StatusCode != http.StatusOK {
 		// If there's an error or the status is not 200, exit with a non-zero status
 		os.Exit(1)
