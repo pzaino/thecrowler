@@ -15,7 +15,7 @@ require (
 	github.com/likexian/whois v1.15.5
 	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/qri-io/jsonschema v0.2.1
-	github.com/robertkrimen/otto v0.5.0
+	github.com/robertkrimen/otto v0.5.1
 )
 
 require (
