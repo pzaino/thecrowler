@@ -95,8 +95,11 @@ func tokenize(input string) tokens {
 
 	inQuotes := false
 	inEscape := false
-	specType := 0 // 0: none, 1: JSON specifier, 2: Dorcking specifier
-	for _, r := range input {
+	specType := 0          // 0: none, 1: JSON specifier, 2: Dorcking specifier
+	runes := []rune(input) // Convert input to runes for indexed access
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+
 		switch {
 		case r == '\\':
 			inEscape = true
@@ -123,10 +126,10 @@ func tokenize(input string) tokens {
 		case unicode.IsSpace(r) && !inQuotes:
 			handleSpace(&tokens, &currentToken, specType)
 			specType = 0
-		case (r == '|' || r == '&') && !inQuotes:
-			handlePipeAnd(&tokens, &currentToken, r, specType)
+		case (r == '|' || r == '&') && (!inQuotes && !inEscape):
+			handlePipeAnd(&tokens, &currentToken, r, specType, runes, &i)
 			specType = 0
-		case (r == ';' || r == '+') && !inQuotes:
+		case (r == ';' || r == '+') && (!inQuotes && !inEscape):
 			handleLogicalAnd(&tokens, &currentToken, specType)
 			specType = 0
 		default:
@@ -188,19 +191,24 @@ func handleSpace(tokens *tokens, currentToken *strings.Builder, specType int) {
 	}
 }
 
-// handlePipeAnd appends the current token to the tokens slice and adds the pipe (|) or and (&) operator.
-func handlePipeAnd(tokens *tokens, currentToken *strings.Builder, r rune, specType int) {
-	if currentToken.Len() > 0 {
-		if currentToken.String() != "|" && currentToken.String() != "||" && currentToken.String() != "&" && currentToken.String() != "&&" {
+// handlePipeAnd appends the current token to the tokens slice and adds the logical OR (||) or AND (&&) operator if detected.
+func handlePipeAnd(tokens *tokens, currentToken *strings.Builder, r rune, specType int, input []rune, i *int) {
+	// Check if the next character is the same, to detect || or &&
+	if *i+1 < len(input) && input[*i+1] == r {
+		// Handle || or &&
+		if currentToken.Len() > 0 {
 			*tokens = append(*tokens, token{tValue: currentToken.String(), tType: "0"})
 			currentToken.Reset()
-		} else {
-			*tokens = append(*tokens, token{tValue: currentToken.String() + string(r), tType: strconv.Itoa(specType)})
-			currentToken.Reset()
-			return
 		}
+		currentToken.WriteRune(r)
+		currentToken.WriteRune(r)
+		*tokens = append(*tokens, token{tValue: currentToken.String(), tType: strconv.Itoa(specType)})
+		currentToken.Reset()
+		*i++ // Skip the next character as we've processed it
+	} else {
+		// Treat single | or & as part of the current token
+		currentToken.WriteRune(r)
 	}
-	currentToken.WriteRune(r)
 }
 
 // handleRemainingToken appends the current token to the tokens slice.
@@ -263,326 +271,6 @@ func getDefaultFields() []string {
 
 // parseAdvancedQuery interpret the "dorcking" query language and returns the SQL query and its parameters.
 // queryBody represent the SQL query body, while input is the "raw" dorking input.
-/*
-func parseAdvancedQuery(queryBody string, input string, parsingType string) (SearchQuery, error) {
-	defaultFields := getDefaultFields()
-	tokens := tokenize(input)
-	var SQLQuery SearchQuery
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Query Body: %v", input)
-
-	// Parse the tokens and generate the query parts
-	// and query params:
-	var queryParts [][]string
-	var queryParams []interface{}
-	paramCounter := 1
-	const jObjAccOp = "->"
-	const jObjTxtAccOp = "->>"
-	var currentField string
-	queryGroup := -1 // Initialize to -1, so the first group starts at index 0
-	limit := 10      // Default limit
-	offset := 0      // Default offset
-	skipNextToken := false
-	var details Details
-	for i, token := range tokens {
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetched token: %s", token)
-		if skipNextToken {
-			skipNextToken = false
-			continue
-		}
-		switch {
-		case token.tValue == "" || token.tValue == ";":
-			// Skip empty tokens and "conjugation" tokens
-			continue
-
-		case strings.HasPrefix(token.tValue, "@"):
-			/*
-				// Extract the JSON path from the token
-				jsonPath := strings.TrimSuffix(strings.TrimPrefix(token.tValue, "@"), ":")
-
-				var jsonFieldQuery string
-
-				// Split the JSON path into components, handling both '->' and '->>'
-				pathComponents := []string{}
-				currentPath := jsonPath
-
-				// Split the path into parts and identify the operators
-				for strings.Contains(currentPath, jObjTxtAccOp) || strings.Contains(currentPath, jObjAccOp) {
-					if strings.Contains(currentPath, jObjTxtAccOp) {
-						// Split by '->>' operator
-						parts := strings.SplitN(currentPath, jObjTxtAccOp, 2)
-						pathComponents = append(pathComponents, parts[0])
-						pathComponents = append(pathComponents, jObjTxtAccOp)
-						currentPath = parts[1]
-					} else {
-						// Split by '->' operator
-						parts := strings.SplitN(currentPath, jObjAccOp, 2)
-						pathComponents = append(pathComponents, parts[0])
-						pathComponents = append(pathComponents, jObjAccOp)
-						currentPath = parts[1]
-					}
-				}
-				// Add the last part of the path
-				if currentPath != "" {
-					pathComponents = append(pathComponents, currentPath)
-				}
-
-				// Build the JSON path query starting with 'details->'
-				jsonFieldQuery = "details"
-				if len(pathComponents) > 1 {
-					jsonFieldQuery += jObjAccOp
-				} else {
-					jsonFieldQuery += jObjTxtAccOp
-				}
-
-				// Iterate over components and place operators and fields correctly
-				for i := 0; i < len(pathComponents); i++ {
-					component := pathComponents[i]
-
-					// Append the operators directly, outside of quotes
-					if component == jObjAccOp || component == "->>" {
-						jsonFieldQuery += component
-					} else {
-						// Append field names inside quotes
-						jsonFieldQuery += fmt.Sprintf("'%s'", component)
-					}
-				}
-
-				// Format the condition for comparison using a parameter placeholder
-				condition := fmt.Sprintf("%s LIKE $%d", jsonFieldQuery, paramCounter)
-
-				// Add the condition to the query parts
-				queryParts = append(queryParts, []string{condition})
-
-				// Append the user-provided value as a parameter safely
-				if len(tokens) > i+1 {
-					queryParams = append(queryParams, tokens[i+1].tValue)
-					paramCounter++
-				}
-			* /
-			// Extract the JSON path from the token
-			jsonPath := strings.TrimSuffix(strings.TrimPrefix(token.tValue, "@"), ":")
-			jsonPath = strings.Trim(jsonPath, " ")
-
-			// Split the JSON path into components, handling both '->' and '->>'
-			pathComponents := []string{}
-			currentPath := jsonPath
-
-			// Split the path into parts and identify the operators
-			for strings.Contains(currentPath, jObjTxtAccOp) || strings.Contains(currentPath, jObjAccOp) {
-				if strings.Contains(currentPath, jObjTxtAccOp) {
-					// Split by '->>' operator
-					parts := strings.SplitN(currentPath, jObjTxtAccOp, 2)
-					pathComponents = append(pathComponents, parts[0])
-					pathComponents = append(pathComponents, jObjTxtAccOp)
-					currentPath = parts[1]
-				} else {
-					// Split by '->' operator
-					parts := strings.SplitN(currentPath, jObjAccOp, 2)
-					pathComponents = append(pathComponents, parts[0])
-					pathComponents = append(pathComponents, jObjAccOp)
-					currentPath = parts[1]
-				}
-			}
-			// Add the last part of the path
-			if currentPath != "" {
-				pathComponents = append(pathComponents, currentPath)
-			}
-
-			// Build the JSON path query (e.g., details->'json_field'->>'nested_field')
-			jsonFieldQuery := "details"
-			if len(pathComponents) > 1 {
-				jsonFieldQuery += jObjAccOp
-			} else {
-				jsonFieldQuery += jObjTxtAccOp
-			}
-			// Iterate over components and place operators and fields correctly
-			for i := 0; i < len(pathComponents); i++ {
-				component := pathComponents[i]
-
-				// Append the operators directly, outside of quotes
-				if component == jObjAccOp || component == "->>" {
-					jsonFieldQuery += component
-				} else {
-					// Append field names inside quotes
-					jsonFieldQuery += fmt.Sprintf("'%s'", component)
-				}
-			}
-
-			queryParts = append(queryParts, []string{jsonFieldQuery})
-
-			// Set the currentField to the JSON field query for later processing
-			currentField = jsonFieldQuery
-
-			// Initialize a new group for JSON filters if needed
-			if queryGroup == -1 {
-				queryGroup = 0
-				queryParts = append(queryParts, []string{})
-			}
-
-		case token.tValue == "&limit:":
-			// Check if the next token is a number
-			if len(tokens) > i+1 {
-				var err error
-				limit, err = strconv.Atoi(tokens[i+1].tValue)
-				if err != nil {
-					return SearchQuery{}, errors.New("invalid limit value")
-				}
-			}
-			skipNextToken = true
-			continue
-
-		case token.tValue == "&offset:":
-			// Check if the next token is a number
-			if len(tokens) > i+1 {
-				var err error
-				offset, err = strconv.Atoi(tokens[i+1].tValue)
-				if err != nil {
-					return SearchQuery{}, errors.New("invalid offset value")
-				}
-			}
-			skipNextToken = true
-			continue
-
-		case strings.HasPrefix(token.tValue, "&details.") || token.tValue == "&details:":
-			// Check if the next token is a number
-			if len(tokens) > i+1 {
-				details.Value = tokens[i+1].tValue
-			}
-			// Extract the path
-			path := strings.Split(token.tValue, ".")
-			details.Path = path[0:]
-			skipNextToken = true
-			continue
-
-		case isFieldSpecifier(token.tValue):
-			currentField = strings.TrimSuffix(token.tValue, ":")
-			queryGroup++                                // Move to the next group
-			queryParts = append(queryParts, []string{}) // Initialize the new group
-
-		case token.tValue == "&", token.tValue == "|", token.tValue == "&&", token.tValue == "||":
-			// Check if the query group is initialized (if not, then initialize it)
-			if queryGroup == -1 {
-				queryGroup = 0
-				queryParts = append(queryParts, []string{})
-			}
-
-			// Append the logical operator to the current group
-			if token.tValue == "&&" {
-				queryParts[queryGroup] = append(queryParts[queryGroup], "AND")
-			} else {
-				queryParts[queryGroup] = append(queryParts[queryGroup], "OR")
-			}
-
-		default:
-			addCondition := func(condition string) {
-				if queryGroup == -1 {
-					queryGroup = 0
-					queryParts = append(queryParts, []string{condition})
-				} else {
-					queryParts[queryGroup] = append(queryParts[queryGroup], condition)
-				}
-				queryParams = append(queryParams, "%"+strings.ToLower(token.tValue)+"%")
-				paramCounter++
-			}
-
-			if isQuotedString(token.tValue) {
-				token.tValue = strings.Trim(token.tValue, `"`)
-			}
-
-			if isFieldSpecifier(currentField + ":") {
-				condition := fmt.Sprintf("LOWER(%s) LIKE $%d", currentField, paramCounter)
-				addCondition(condition)
-			} else {
-				var conditions []string
-				for _, field := range defaultFields {
-					condition := fmt.Sprintf("LOWER(%s) LIKE $%d", field, paramCounter)
-					conditions = append(conditions, condition)
-				}
-				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
-				addCondition(combinedCondition)
-			}
-
-			if len(tokens) > i+1 && !isFieldSpecifier(tokens[i+1].tValue) && tokens[i+1].tValue != "&&" && tokens[i+1].tValue != "||" {
-				queryParts[queryGroup] = append(queryParts[queryGroup], "AND")
-			}
-		}
-	}
-
-	// Add a separate group for keyword conditions
-	var keywordConditions []string
-	for i := 1; i < paramCounter; i++ {
-		keywordCondition := fmt.Sprintf("k.keyword LIKE $%d", i)
-		keywordConditions = append(keywordConditions, keywordCondition)
-	}
-
-	// Append the keyword group at the end
-	if len(keywordConditions) > 0 {
-		keywordGroup := "(" + strings.Join(keywordConditions, " OR ") + ")"
-		queryParts = append(queryParts, []string{keywordGroup})
-	}
-	if len(queryParts) == 0 {
-		return SearchQuery{}, errors.New("no valid query provided")
-	}
-
-	// Build the combined query
-	var combinedQuery string
-	if parsingType == "" {
-		combinedQuery = buildCombinedQuery(queryBody, queryParts)
-	} else if parsingType == "self-contained" {
-		combinedQuery = queryBody
-	}
-
-	// Add the limit and offset to the list of parameters:
-	queryParams = append(queryParams, limit, offset)
-
-	SQLQuery.sqlQuery = combinedQuery
-	SQLQuery.sqlParams = queryParams
-	SQLQuery.limit = limit
-	SQLQuery.offset = offset
-	SQLQuery.details = details
-
-	return SQLQuery, nil
-}
-
-/*
-// Checks if the field expects a numeric value based on the JSON path or field name
-func isNumericField(jsonPath string) bool {
-	// Example: return true if the field is known to be numeric
-	numericFields := []string{"price", "age", "count", "score"} // Extend this list
-	for _, field := range numericFields {
-		if strings.Contains(jsonPath, field) {
-			return true
-		}
-	}
-	return false
-}
-* /
-
-func buildCombinedQuery(queryBody string, queryParts [][]string) string {
-	var combinedQuery string
-	combinedQuery += queryBody
-	for i, group := range queryParts {
-		if i > 0 {
-			// Use 'OR' before the keyword group
-			if i == len(queryParts)-1 {
-				combinedQuery += " OR "
-			} else {
-				combinedQuery += " AND "
-			}
-		}
-		// let's clean up possible AND or OR at the end of the group
-		if isLogicalOperator(group[len(group)-1]) {
-			group = group[:len(group)-1]
-		}
-
-		combinedQuery += "(" + strings.Join(group, " ") + ")"
-	}
-	//combinedQuery += ";"
-
-	return combinedQuery
-}
-*/
-// parseAdvancedQuery interpret the "dorking" query language and returns the SQL query and its parameters.
 func parseAdvancedQuery(queryBody string, input string, parsingType string) (SearchQuery, error) {
 	defaultFields := getDefaultFields()
 	tokens := tokenize(input)
@@ -593,7 +281,6 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 	var queryParts [][]string
 	var queryParams []interface{}
 	var generalParamCounter = 1 // For general fields like example
-	//var jsonParamCounter = 1     // For JSON field parameters
 	const jObjAccOp = "->"
 	const jObjTxtAccOp = "->>"
 	var currentField string
