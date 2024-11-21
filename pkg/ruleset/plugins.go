@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/robertkrimen/otto"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // NewJSPlugin returns a new JS plugin
@@ -34,12 +36,19 @@ func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
 
 // Execute executes the JS plugin
 func (p *JSPlugin) Execute(timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+	// Consts
+	const (
+		errMsg01 = "Error getting result from JS plugin: %v"
+	)
 	// Create a new VM
 	vm := otto.New()
 	err := removeJSFunctions(vm)
 	if err != nil {
 		return nil, err
 	}
+
+	// Log params for debugging purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "JSPlugin params: %v", params)
 
 	// Set the params
 	err = vm.Set("params", params)
@@ -65,17 +74,19 @@ func (p *JSPlugin) Execute(timeout int, params map[string]interface{}) (map[stri
 	// Get the result
 	result, err := vm.Get("result")
 	if err != nil {
-		return nil, err
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		result = rval
 	}
 	resultMap, err := result.Export()
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
 	resultValue, ok := resultMap.(map[string]interface{})
 	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
-	resultValue["rval"] = rval
 
 	return resultValue, nil
 }
