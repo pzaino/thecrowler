@@ -47,9 +47,6 @@ func (p *JSPlugin) Execute(timeout int, params map[string]interface{}) (map[stri
 		return nil, err
 	}
 
-	// Log params for debugging purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "JSPlugin params: %v", params)
-
 	// Set the params
 	err = vm.Set("params", params)
 	if err != nil {

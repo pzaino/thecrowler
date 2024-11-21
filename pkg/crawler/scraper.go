@@ -866,14 +866,19 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		if err != nil {
 			return fmt.Errorf("error marshalling plugin output to JSON: %v", err)
 		}
-		*data = jsonResult
+		if jsonResult != nil {
+			*data = jsonResult
+		}
 
 	case string:
 		// Validate if the string is JSON
 		if !json.Valid([]byte(v)) {
 			return fmt.Errorf("plugin returned an invalid JSON string")
 		}
-		*data = []byte(v)
+		v = strings.TrimSpace(v)
+		if v != "" {
+			*data = []byte(v)
+		}
 
 	default:
 		return fmt.Errorf("plugin returned an unsupported type: %T", v)
