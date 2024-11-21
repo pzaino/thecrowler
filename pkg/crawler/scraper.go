@@ -41,11 +41,14 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
+	ErrorState := false
+	ErrorMsg := ""
+
 	// Iterate over the rule's elements to be extracted
 	for e := 0; e < len(rule.Elements); e++ {
 		key := rule.Elements[e].Key
 		selectors := rule.Elements[e].Selectors
-		var allExtracted []string
+		var allExtracted []interface{} // Changed to []interface{} to handle mixed data types
 
 		// Iterate over the rule element's selectors to extract the data
 		for i := 0; i < len(selectors); i++ {
@@ -56,20 +59,53 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 
 			// Check if there was data extracted and append it to the allExtracted slice
 			if len(extracted) > 0 {
-				allExtracted = append(allExtracted, extracted...)
-				if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall {
-					break
+				for _, ex := range extracted {
+					switch v := ex.(type) {
+					case string:
+						// Directly append string values
+						allExtracted = append(allExtracted, v)
+						if !getAllOccurrences {
+							break
+						}
+
+					case map[string]interface{}:
+						// Directly append map values (as sub-documents)
+						// Safely convert the map to JSON and store it directly in extractedData
+						jsonStr, err := json.Marshal(v)
+						if err != nil {
+							cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
+							return extractedData, err
+						}
+						allExtracted = append(allExtracted, string(jsonStr))
+						if !getAllOccurrences {
+							break
+						}
+
+					default:
+						// Log unexpected types and skip them
+						cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
+					}
+
+					// Break early if not extracting all occurrences or using a plugin_call selector
+					if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall {
+						break
+					}
 				}
-			} else {
-				if rule.Elements[e].Critical {
-					cmn.DebugMsg(cmn.DbgLvlError, "element not found "+errCriticalError+": %v", selectors[i].Selector)
-					return extractedData, errors.New("element not found, with " + errCriticalError + " flag set")
-				}
+			} else if rule.Elements[e].Critical {
+				ErrorState = true
+				ErrorMsg = "element not found, with " + errCriticalError + " flag set"
+				cmn.DebugMsg(cmn.DbgLvlError, "element not found "+errCriticalError+": %v", selectors[i].Selector)
 			}
 		}
 
 		// Add the extracted data to the WebObject's map
-		extractedData[key] = allExtracted
+		if len(allExtracted) == 1 {
+			// If only one result, store it directly (as an object or string)
+			extractedData[key] = allExtracted[0]
+		} else {
+			// Otherwise, store as an array
+			extractedData[key] = allExtracted
+		}
 	}
 
 	// Optional: Extract JavaScript files if required
@@ -78,8 +114,11 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 		extractedData["js_files"] = jsFiles
 	}
 
-	// return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
-	// given the user may have configured multiple rules.
+	if ErrorState {
+		return extractedData, errors.New(ErrorMsg)
+	}
+
+	// Return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
 	return extractedData, nil
 }
 
@@ -230,8 +269,8 @@ func lintScript(scriptContent string) []string {
 }
 
 // extractContent extracts the content from the provided document using the provided CSS selector.
-func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Selector, all bool) []string {
-	var results []string
+func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Selector, all bool) []interface{} {
+	var results []interface{}
 	var elements []selenium.WebElement
 	var err error
 	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
@@ -261,15 +300,19 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 			return results
 		}
 
+		rval := []string{}
 		switch sType {
 		case "css":
-			results = fallbackExtractByCSS(ctx, doc, selector, all)
+			rval = fallbackExtractByCSS(ctx, doc, selector, all)
 		case strXPath: // XPath is not supported by goquery, so we use htmlquery
-			results = fallbackExtractByXPath(ctx, doc, selector, all)
+			rval = fallbackExtractByXPath(ctx, doc, selector, all)
 		case strRegEx:
-			results = fallbackExtractByRegex(htmlContent, selector.Selector, all)
+			rval = fallbackExtractByRegex(htmlContent, selector.Selector, all)
 		case strPluginCall:
 			results = extractByPlugin(ctx, wd, selector.Selector)
+		}
+		for _, s := range rval {
+			results = append(results, s)
 		}
 
 	} else {
@@ -277,7 +320,9 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 		for i := 0; i < len(elements); i++ {
 			if selector.Extract != (rs.ItemToExtract{}) {
 				// Extract the data using the provided regex
-				results = append(results, extractDataFromElement(ctx, elements[i], selector)...)
+				for _, s := range extractDataFromElement(ctx, elements[i], selector) {
+					results = append(results, s)
+				}
 			} else {
 				// Extract the innerText from the element
 				text, _ := elements[i].Text()
@@ -399,7 +444,6 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 		}
 		if matchL3 {
 			results = append(results, extractDataFromElement(ctx, e, selector)...)
-			//results = append(results, e.Text())
 			break
 		}
 	}
@@ -471,36 +515,51 @@ func fallbackExtractByRegex(content string, pattern string, all bool) []string {
 	return []string{}
 }
 
-func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector string) []string {
+func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector string) []interface{} {
 	// Retrieve the JS plugin
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(selector)
 	if !exists {
-		return []string{}
+		cmn.DebugMsg(cmn.DbgLvlError, "Plugin '%s' does not exist", selector)
+		return []interface{}{}
 	}
 
 	// Execute the plugin
 	value, err := (*wd).ExecuteScript(plugin.String(), nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing JS plugin: %v", err)
-		return []string{}
+		return []interface{}{}
 	}
 
-	// Transform value to a string
-	valueStr := fmt.Sprintf("%v", value)
-
-	// Check if the valueSTr is a valid JSON
-	if json.Valid([]byte(valueStr)) {
-		return []string{valueStr}
+	// Handle nil return value from the plugin
+	if value == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Plugin '%s' returned `nil`", selector)
+		return []interface{}{}
 	}
 
-	// Check if the result can be converted to a valid JSON
-	if !json.Valid([]byte(valueStr)) {
-		// transform the valueStr to a valid JSON
-		valueStr = fmt.Sprintf("{\"plugin_scrap\": \"%v\"}", valueStr)
-	}
+	switch output := value.(type) {
+	case string:
+		// If the output is a string, check if it's valid JSON
+		if json.Valid([]byte(output)) {
+			var parsedOutput interface{}
+			err := json.Unmarshal([]byte(output), &parsedOutput)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse plugin output as JSON: %v", err)
+				return []interface{}{output} // Return raw string as fallback
+			}
+			return []interface{}{parsedOutput} // Store parsed JSON
+		}
+		// Return raw string as fallback if not valid JSON
+		return []interface{}{output}
 
-	// It seems we were unable to retrieve the result from the JS output
-	return []string{valueStr}
+	case map[string]interface{}:
+		// If the output is already a map, return it directly
+		return []interface{}{output}
+
+	default:
+		// For unsupported types, log a warning and return the raw output
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Plugin '%s' returned unsupported type: %T", selector, value)
+		return []interface{}{value}
+	}
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
@@ -547,10 +606,67 @@ func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, d
 		ppStepValidate(data, step)
 	case "clean":
 		ppStepClean(data, step)
+	case "set_env":
+		ppStepSetEnv(ctx, step, data)
 	case strPluginCall:
 		ppStepPluginCall(ctx, step, data)
 	default:
 		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
+	}
+}
+
+// ppStepSetEnv applies the "set_env" post-processing step to the provided data.
+func ppStepSetEnv(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
+	// Set the environment variable in the context
+	envKey := step.Details["env_key"].(string)
+
+	// Transform data into a JSON Document
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal(*data, &jsonData); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling data: %v", err)
+		return
+	}
+
+	// Search for the key in the jsonData
+	envValue, exists := jsonData[envKey]
+	if !exists {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Key %v not found in the data", step.Details["env_value"])
+		return
+	}
+
+	// Get the env variable properties from the step
+	envPropRaw, ok := step.Details["env_properties"]
+	envProperties := cmn.Properties{
+		Persistent: false,
+		Static:     false,
+		CtxID:      ctx.GetContextID(),
+	}
+	if ok {
+		// Convert the envPropRaw to a map[string]interface{}
+		envPropMap := cmn.InfToMap(envPropRaw)
+		// Check if envPropMap is not nil and has the required keys
+		if envPropMap != nil {
+			// Extract the persistent and static properties
+			persistentSrc := envPropMap["persistent"]
+			persistent := false
+			if persistentSrc != nil {
+				persistent = persistentSrc.(bool)
+			}
+			staticSrc := envPropMap["static"]
+			static := false
+			if staticSrc != nil {
+				static = staticSrc.(bool)
+			}
+
+			// Update the envProperties
+			envProperties.Persistent = persistent
+			envProperties.Static = static
+		}
+	}
+
+	err := cmn.KVStore.Set(envKey, envValue, envProperties)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error setting environment variable: %v", err)
 	}
 }
 
@@ -699,15 +815,29 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		errMsg := fmt.Sprintf("Error unmarshalling jsonData: %v", err)
 		return errors.New(errMsg)
 	}
+
+	// Prepare script parameters
+	params := make(map[string]interface{})
+	params["jsonData"] = string(jsonData)
+	// Add whatever other parameters are in the Details map
+	// Safely extract the "parameters" field from the Details map
+	parametersRaw, ok := step.Details["parameters"]
+	if ok {
+		// Check if "parameters" is a map[string]interface{}
+		parametersMap, isMap := parametersRaw.(map[string]interface{})
+		if isMap {
+			// Add whatever other parameters are in the Details map
+			for k, v := range parametersMap {
+				params[k] = v
+			}
+		}
+	}
 	/*
 		if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
 			errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
 			return errors.New(errMsg)
 		}
 	*/
-	// Prepare script parameters
-	params := make(map[string]interface{})
-	params["jsonData"] = string(jsonData)
 
 	// Retrieve the JS plugin
 	pluginName := step.Details["plugin_name"].(string)
@@ -728,6 +858,9 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	for _, val := range value {
 		// Convert the value to a string and check if it's a valid JSON
 		valStr := fmt.Sprintf("%v", val)
+		if valStr == "" || valStr == "false" {
+			continue
+		}
 
 		// Convert the value to a string and check if it's a valid JSON
 		if !json.Valid([]byte(valStr)) {

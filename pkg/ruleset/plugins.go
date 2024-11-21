@@ -82,23 +82,20 @@ func (p *JSPlugin) Execute(timeout int, params map[string]interface{}) (map[stri
 
 // removeJSFunctions removes the JS functions from the VM
 func removeJSFunctions(vm *otto.Otto) error {
+	// We need to keep the following functions:
+	// - "XMLHttpRequest", "fetch", "WebSocket", "Worker", "SharedWorker"
+	// - "setTimeout", "setInterval", "clearTimeout", "clearInterval"
+	// Because they are used in the JS plugins that needs to make HTTP requests and access APIs
+
+	// Functions to remove
 	functionsToRemove := []string{
 		"eval",
 		"Function",
-		"setTimeout",
-		"setInterval",
-		"clearTimeout",
-		"clearInterval",
 		"requestAnimationFrame",
 		"cancelAnimationFrame",
 		"requestIdleCallback",
 		"cancelIdleCallback",
 		"importScripts",
-		"XMLHttpRequest",
-		"fetch",
-		"WebSocket",
-		"Worker",
-		"SharedWorker",
 		"Notification",
 		"navigator",
 		"location",

@@ -376,7 +376,7 @@ type Config struct {
 // PluginsConfig represents the configuration for plugins
 type PluginsConfig struct {
 	PluginTimeout int            `json:"plugin_timeout" yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
-	Plugins       []PluginConfig `json:"plugins" yaml:"plugins"`
+	Plugins       []PluginConfig `json:"locations" yaml:"locations"`
 }
 
 // ExternalDetectionConfig represents the configuration for external detection providers
