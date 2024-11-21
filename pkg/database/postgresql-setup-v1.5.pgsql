@@ -223,6 +223,25 @@ CREATE TABLE IF NOT EXISTS SourceOwnerIndex (
     FOREIGN KEY (owner_id) REFERENCES Owners(owner_id) ON DELETE CASCADE
 );
 
+-- OwnerRelationships table stores the relationship between owners
+CREATE TABLE IF NOT EXISTS OwnerRelationships (
+    owner_relationship_id BIGSERIAL PRIMARY KEY,
+    parent_owner_id BIGINT NOT NULL,
+    child_owner_id BIGINT NOT NULL,
+    relationship_type VARCHAR(255) NOT NULL DEFAULT 'ownership', -- To define types of relationships
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_parent_owner
+        FOREIGN KEY(parent_owner_id)
+        REFERENCES Owners(owner_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_child_owner
+        FOREIGN KEY(child_owner_id)
+        REFERENCES Owners(owner_id)
+        ON DELETE CASCADE,
+    UNIQUE(parent_owner_id, child_owner_id) -- Ensure unique relationships
+);
+
 -- Create SourceSessionIndex table to store the relationship between sources and their sessions
 CREATE TABLE IF NOT EXISTS SourceSessionIndex (
     source_session_id BIGSERIAL PRIMARY KEY,
@@ -501,6 +520,32 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_owners_created_at') THEN
         CREATE INDEX idx_owners_created_at ON Owners(created_at);
+    END IF;
+END
+$$;
+
+-- Indexes for OwnerRelationships table ----------------------------------------
+CREATE INDEX IF NOT EXISTS idx_ownerrelationships_parent_owner_id
+    ON OwnerRelationships(parent_owner_id);
+
+CREATE INDEX IF NOT EXISTS idx_ownerrelationships_child_owner_id
+    ON OwnerRelationships(child_owner_id);
+
+CREATE OR REPLACE FUNCTION update_last_updated_at_owner_relationships()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.last_updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_owner_relationships_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_owner_relationships_last_updated_before_update
+        BEFORE UPDATE ON OwnerRelationships
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_owner_relationships();
     END IF;
 END
 $$;
@@ -1029,6 +1074,38 @@ $$;
 
 --------------------------------------------------------------------------------
 -- Functions and Triggers setup
+
+-- Trigger function to send notifications for new events
+CREATE OR REPLACE FUNCTION notify_new_event()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Notify the channel "new_event" with event details (serialized as JSON)
+    PERFORM pg_notify(
+        'new_event',
+        json_build_object(
+            'event_sha256', NEW.event_sha256,
+            'event_type', NEW.event_type,
+            'event_severity', NEW.event_severity,
+            'event_timestamp', NEW.event_timestamp,
+            'details', NEW.details
+        )::TEXT
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create a trigger to call the function on INSERT
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_notify_new_event') THEN
+        CREATE TRIGGER trg_notify_new_event
+        AFTER INSERT ON Events
+        FOR EACH ROW
+        EXECUTE FUNCTION notify_new_event();
+    END IF;
+END
+$$;
+
 
 -- Creates a function to update the last_updated_at column
 CREATE OR REPLACE FUNCTION update_last_updated_at_column()

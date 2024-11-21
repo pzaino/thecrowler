@@ -303,6 +303,7 @@
                                                     "transform",
                                                     "validate",
                                                     "clean",
+                                                    "set_env",
                                                     "plugin_call",
                                                     "external_api"
                                                 ],

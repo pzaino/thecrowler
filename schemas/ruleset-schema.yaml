@@ -230,6 +230,7 @@ properties:
                         - "transform"
                         - "validate"
                         - "clean"
+                        - "set_env"
                         - "plugin_call"
                         - "external_api"
                       description: "The type of post-processing step to perform on the scraped data. To use plugins to process the data, set this field to 'plugin_call' and place the plugin name in the 'details' object using a field called 'plugin_name'. Do not use 'transform' if you want to use a plugin to transform the output, use 'plugin_call' instead."

@@ -33,3 +33,43 @@ func ConvertInterfaceMapToStringMap(value interface{}) interface{} {
 	}
 	return value
 }
+
+// ConvertMapInfInf recursively converts a map[interface{}]interface{} to map[string]interface{}
+func ConvertMapInfInf(input map[interface{}]interface{}) map[string]interface{} {
+	output := make(map[string]interface{})
+	for key, value := range input {
+		strKey, ok := key.(string)
+		if !ok {
+			panic(fmt.Sprintf("Key %v is not a string", key))
+		}
+
+		// Recursively convert nested maps
+		switch value := value.(type) {
+		case map[interface{}]interface{}:
+			output[strKey] = ConvertMapInfInf(value)
+		default:
+			output[strKey] = value
+		}
+	}
+	return output
+}
+
+// InfToMap converts an interface{} to a map[string]interface{}
+func InfToMap(input interface{}) map[string]interface{} {
+	output := make(map[string]interface{})
+	for key, value := range input.(map[interface{}]interface{}) {
+		strKey, ok := key.(string)
+		if !ok {
+			panic(fmt.Sprintf("Key %v is not a string", key))
+		}
+
+		// Recursively convert nested maps
+		switch value := value.(type) {
+		case map[interface{}]interface{}:
+			output[strKey] = ConvertMapInfInf(value)
+		default:
+			output[strKey] = value
+		}
+	}
+	return output
+}

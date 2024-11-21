@@ -83,7 +83,11 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 		// Execute all the rules in the rule group (the following function also set the Env and clears it)
 		var data string
 		data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd)
-		addScrapedDataToDocument(&scrapedDataDoc, data)
+		// Add the data to the document
+		data = strings.TrimSpace(data)
+		if data != "" && data != "{}" && data != "false" && data != "true" {
+			addScrapedDataToDocument(&scrapedDataDoc, data)
+		}
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No rule group found for URL: %v", url)
 	}
@@ -163,16 +167,25 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 		}
 	}
 
+	// We need to collect errors instead of returning immediately, because we want to
+	// execute all the rules in the ruleset and return all the errors at once
+	var errList []error
+
 	// Execute the scraping rule
 	if shouldExecuteScrapingRule(r, wd) {
+		// Apply the rule
 		extractedData, err := ApplyRule(ctx, r, wd)
 		if err != nil {
-			return "", fmt.Errorf("%v", err)
+			errList = append(errList, err)
 		}
+
+		// Process the extracted data
 		processedData := processExtractedData(extractedData)
-		jsonData, err := json.Marshal(processedData)
+		cleanedData := cleanJSONDocument(processedData)
+
+		jsonData, err := json.Marshal(cleanedData)
 		if err != nil {
-			return "", fmt.Errorf("marshalling JSON: %v", err)
+			errList = append(errList, fmt.Errorf("marshalling JSON: %v", err))
 		}
 		if len(r.PostProcessing) != 0 {
 			runPostProcessingSteps(ctx, &r.PostProcessing, &jsonData)
@@ -180,13 +193,60 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 		rval := strings.TrimSpace(string(jsonData))
 		// Remove the leading and trailing {}
 		if strings.HasPrefix(rval, "{") && strings.HasSuffix(rval, "}") {
-			rval = strings.Trim(rval, "{")
-			rval = strings.Trim(rval, "}")
+			rval = rval[1:]
+			rval = rval[:len(rval)-1]
 		}
 		jsonDocument = string(rval)
 	}
 
+	if len(errList) > 0 {
+		// Join all errors
+		errStr := ""
+		for _, e := range errList {
+			errStr += e.Error() + "\n"
+		}
+		return jsonDocument, fmt.Errorf("executing scraping rule: %v", errStr)
+	}
+
 	return jsonDocument, nil
+}
+
+func cleanJSONDocument(doc map[string]interface{}) map[string]interface{} {
+	cleaned := make(map[string]interface{})
+
+	for key, value := range doc {
+		switch v := value.(type) {
+		case map[string]interface{}:
+			// Recursively clean nested maps
+			cleaned[key] = cleanJSONDocument(v)
+
+		case []interface{}:
+			// Filter out unstructured or invalid values in arrays
+			var validArray []interface{}
+			for _, item := range v {
+				switch item := item.(type) {
+				case map[string]interface{}:
+					validArray = append(validArray, cleanJSONDocument(item))
+				case string, float64, bool, nil:
+					validArray = append(validArray, item)
+				default:
+					// Skip unsupported types
+					continue
+				}
+			}
+			cleaned[key] = validArray
+
+		case string, float64, bool, nil:
+			// Keep valid primitive types
+			cleaned[key] = v
+
+		default:
+			// Skip unsupported or unstructured types
+			continue
+		}
+	}
+
+	return cleaned
 }
 
 func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
@@ -205,20 +265,50 @@ func shouldExecuteScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) bo
 
 func processExtractedData(extractedData map[string]interface{}) map[string]interface{} {
 	processedData := make(map[string]interface{})
+
 	for key, data := range extractedData {
-		dataStr := fmt.Sprintf("%v", data)
-		if StrIsHTML(dataStr) {
-			jsonData, err := ProcessHTMLToJSON(dataStr)
-			if err != nil {
-				data = strings.ReplaceAll(dataStr, "\"", "\\\"")
-				processedData[key] = data
-			} else {
-				processedData[key] = jsonData
+		if key == "" || key == "false" || key == "true" {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Not allowed key in extracted content: %v", key)
+			continue
+		}
+		switch v := data.(type) {
+		case string:
+			// Check if the string is valid JSON
+			if json.Valid([]byte(v)) {
+				var jsonData interface{}
+				if err := json.Unmarshal([]byte(v), &jsonData); err == nil {
+					processedData[key] = jsonData
+					continue
+				}
 			}
-		} else {
-			processedData[key] = data
+
+			// Check if the string is HTML
+			if StrIsHTML(v) {
+				jsonData, err := ProcessHTMLToJSON(v)
+				if err == nil {
+					processedData[key] = jsonData
+				} else {
+					processedData[key] = v // Store as raw string
+				}
+			} else {
+				processedData[key] = v // Store as plain string
+			}
+
+		case map[string]interface{}:
+			// If the data is already a map, store it directly
+			processedData[key] = v
+
+		case bool:
+			// Handle boolean values and ensure they're keyed
+			processedData[key] = v
+
+		default:
+			// Fallback for unexpected types
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
+			processedData[key] = v
 		}
 	}
+
 	return processedData
 }
 

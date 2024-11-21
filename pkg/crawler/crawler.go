@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/abadojack/whatlanggo"
@@ -1449,7 +1450,13 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 			//cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data: %v", scrapedData)
 			err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v, full data: %v", err, scrapedData)
+				// Try to remove impurities from the scraped data
+				scrapedData = removeImpurities(scrapedData)
+				err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v, full data: %v", err, scrapedData)
+				}
 			}
 
 			// append the map to the list
@@ -1517,6 +1524,50 @@ func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType s
 	(*PageCache).ScrapedData = scrapedList
 
 	return nil
+}
+
+// removeImpurities removes invalid JSON characters from a string, avoiding sequences like ",," or ",false,"
+func removeImpurities(s string) string {
+	var result strings.Builder
+	quotes := false
+	escape := false
+	prevComma := false
+	for _, r := range s {
+		if escape {
+			result.WriteRune(r)
+			escape = false
+			continue
+		}
+		if r == '\\' {
+			escape = true
+			result.WriteRune(r)
+			continue
+		}
+		if r == '"' {
+			quotes = !quotes
+			result.WriteRune(r)
+			prevComma = false
+			continue
+		}
+		if quotes {
+			result.WriteRune(r)
+			continue
+		}
+		if r == ',' {
+			if prevComma {
+				continue
+			}
+			result.WriteRune(r)
+			prevComma = true
+			continue
+		}
+		if strings.ContainsRune("[]{}:truefalsenull0123456789", r) || unicode.IsSpace(r) {
+			result.WriteRune(r)
+			prevComma = false
+			continue
+		}
+	}
+	return result.String()
 }
 
 func detectLang(wd selenium.WebDriver) string {
