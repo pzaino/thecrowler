@@ -91,6 +91,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 						break
 					}
 				}
+				break // If we found data, break the selectors loop and return the data!
 			} else if rule.Elements[e].Critical {
 				ErrorState = true
 				ErrorMsg = "element not found, with " + errCriticalError + " flag set"
@@ -276,7 +277,7 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
 
 	// Find the elements using the provided selector directly in the VDI's browser
-	if sType != strPluginCall && sType != strRegEx && sType != strXPath {
+	if (sType != strPluginCall) && (sType != strRegEx) && (sType != strXPath) {
 		if all {
 			elements, err = FindElementsByType(ctx, wd, selector)
 		} else {
