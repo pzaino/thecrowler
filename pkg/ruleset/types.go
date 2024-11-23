@@ -485,8 +485,10 @@ type DefaultRuleParser struct{}
 
 // JSPlugin struct to hold the JS plugin
 type JSPlugin struct {
-	name   string
-	script string
+	name        string
+	description string
+	pType       string
+	script      string
 }
 
 // JSPluginRegister struct to hold the JS plugins

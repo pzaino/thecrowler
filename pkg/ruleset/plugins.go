@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,7 +21,35 @@ const (
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
-	return &JSPlugin{script: script}
+	pNameRegEx := "^//\\s+[@]*name\\:?\\s+([^\n]+)"
+	pDescRegEx := "^//\\s+[@]*description\\:?\\s+([^\n]+)"
+	pTypeRegEx := "^//\\s+[@]*type\\:?\\s+([^\n]+)"
+	re1 := regexp.MustCompile(pNameRegEx)
+	re2 := regexp.MustCompile(pDescRegEx)
+	re3 := regexp.MustCompile(pTypeRegEx)
+	// Extract the "// @name" comment from the script (usually on the first line)
+	pName := ""
+	pDesc := ""
+	pType := "vdi_plugin"
+	lines := strings.Split(script, "\n")
+	for _, line := range lines {
+		if re1.MatchString(line) {
+			pName = strings.TrimSpace(re1.FindStringSubmatch(line)[1])
+		}
+		if re2.MatchString(line) {
+			pDesc = strings.TrimSpace(re2.FindStringSubmatch(line)[1])
+		}
+		if re3.MatchString(line) {
+			pType = strings.TrimSpace(re3.FindStringSubmatch(line)[1])
+		}
+	}
+
+	return &JSPlugin{
+		name:        pName,
+		description: pDesc,
+		pType:       pType,
+		script:      script,
+	}
 }
 
 // NewJSPluginRegister returns a new JSPluginRegister
@@ -34,6 +63,13 @@ func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 	if reg.registry == nil {
 		reg.registry = make(map[string]JSPlugin)
 	}
+
+	// Check if the name is empty
+	if strings.TrimSpace(name) == "" {
+		name = plugin.name
+	}
+	name = strings.TrimSpace(name)
+
 	// Register the plugin
 	reg.registry[name] = plugin
 }

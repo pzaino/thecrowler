@@ -81,6 +81,29 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 							break
 						}
 
+					case []interface{}:
+						// Append all elements of the array
+						for _, item := range v {
+							switch item := item.(type) {
+							case string:
+								allExtracted = append(allExtracted, item)
+							case map[string]interface{}:
+								// Safely convert the map to JSON and store it directly in extractedData
+								jsonStr, err := json.Marshal(item)
+								if err != nil {
+									cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
+									return extractedData, err
+								}
+								allExtracted = append(allExtracted, string(jsonStr))
+							default:
+								// Log unexpected types and skip them
+								cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", item)
+							}
+						}
+						if !getAllOccurrences {
+							break
+						}
+
 					default:
 						// Log unexpected types and skip them
 						cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)

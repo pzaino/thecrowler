@@ -298,6 +298,20 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 			// If the data is already a map, store it directly
 			processedData[key] = v
 
+		case []interface{}:
+			// Process each item in the array
+			var processedArray []interface{}
+			for _, item := range v {
+				switch item := item.(type) {
+				case map[string]interface{}:
+					processedArray = append(processedArray, processExtractedData(item))
+				default:
+					// Skip unsupported types
+					continue
+				}
+			}
+			processedData[key] = processedArray
+
 		case bool:
 			// Handle boolean values and ensure they're keyed
 			processedData[key] = v
