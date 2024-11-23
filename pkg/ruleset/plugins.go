@@ -18,6 +18,7 @@ import (
 
 const (
 	httpMethodGet = "GET"
+	vdiPlugin     = "vdi_plugin"
 )
 
 // NewJSPlugin returns a new JS plugin
@@ -31,7 +32,7 @@ func NewJSPlugin(script string) *JSPlugin {
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
 	pDesc := ""
-	pType := "vdi_plugin"
+	pType := vdiPlugin
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
 		if re1.MatchString(line) {
@@ -83,7 +84,7 @@ func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
 
 // Execute executes the JS plugin
 func (p *JSPlugin) Execute(wd *selenium.WebDriver, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
-	if p.pType == "vdi_plugin" {
+	if p.pType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
 	return execEnginePlugin(p, timeout, params)
@@ -115,7 +116,7 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	}
 
 	// Get the result
-	resultMap := cmn.InfToMap(result)
+	resultMap := cmn.ConvertInfToMap(result)
 
 	return resultMap, nil
 }

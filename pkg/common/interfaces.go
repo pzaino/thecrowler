@@ -15,7 +15,10 @@
 // Package common package is used to store common functions and variables
 package common
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // ConvertInterfaceMapToStringMap recursively converts map[interface{}]interface{} to map[string]interface{}.
 func ConvertInterfaceMapToStringMap(value interface{}) interface{} {
@@ -54,8 +57,8 @@ func ConvertMapInfInf(input map[interface{}]interface{}) map[string]interface{} 
 	return output
 }
 
-// InfToMap converts an interface{} to a map[string]interface{}
-func InfToMap(input interface{}) map[string]interface{} {
+// ConvertInfToMap converts an interface{} to a map[string]interface{}
+func ConvertInfToMap(input interface{}) map[string]interface{} {
 	output := make(map[string]interface{})
 	for key, value := range input.(map[interface{}]interface{}) {
 		strKey, ok := key.(string)
@@ -70,6 +73,15 @@ func InfToMap(input interface{}) map[string]interface{} {
 		default:
 			output[strKey] = value
 		}
+	}
+	return output
+}
+
+// ConvertMapToJSON converts a map[string]interface{} to a JSON document
+func ConvertMapToJSON(input map[string]interface{}) []byte {
+	output, err := json.Marshal(input)
+	if err != nil {
+		DebugMsg(DbgLvlError, fmt.Sprintf("Error converting map to JSON: %s", err.Error()))
 	}
 	return output
 }

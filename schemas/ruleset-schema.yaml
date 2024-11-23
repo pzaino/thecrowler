@@ -218,6 +218,7 @@ properties:
                       description: "The CSS selector for the element, applicable for element_presence and element_visible conditions. This field is used for the plugin's name when the condition_type is 'plugin_call'."
                   additional_properties: "false"
               post_processing:
+                title: "Rule's Post-Processing"
                 type: "array"
                 items:
                   type: "object"
@@ -239,7 +240,7 @@ properties:
                       description: "Detailed configuration for the post-processing step, structure depends on the step_type."
                       additional_properties: "true"
                   additional_properties: "false"
-                description: "Post-processing steps for the scraped data to transform, validate, or clean it. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
+                description: "Rule's post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of a single rule. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
                 required:
                   - "step_type"
                   - "details"
@@ -799,6 +800,33 @@ properties:
               type: "string"
               description: "Optional. The message you want to log if the rule matches something."
           description: "rule log configuration (aka what you want to be logged when the rule execute)."
+        post_processing:
+                title: "Rulesgroup's Post-Processing"
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    step_type:
+                      type: "string"
+                      enum:
+                        - "replace"
+                        - "remove"
+                        - "transform"
+                        - "validate"
+                        - "clean"
+                        - "set_env"
+                        - "plugin_call"
+                        - "external_api"
+                      description: "The type of post-processing step to perform on the scraped data. To use plugins to process the data, set this field to 'plugin_call' and place the plugin name in the 'details' object using a field called 'plugin_name'. Do not use 'transform' if you want to use a plugin to transform the output, use 'plugin_call' instead."
+                    details:
+                      type: "object"
+                      description: "Detailed configuration for the post-processing step, structure depends on the step_type."
+                      additional_properties: "true"
+                  additional_properties: "false"
+                description: "Rulesgroup's post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of an entire rulesgroup. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
+                required:
+                  - "step_type"
+                  - "details"
       additional_properties: "false"
     required:
       - "group_name"

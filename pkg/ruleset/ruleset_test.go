@@ -52,6 +52,7 @@ var rulesets = []Ruleset{
 						JsFiles: true,
 					},
 				},
+				PostProcessing: []PostProcessingStep{{Type: "remove"}, {Type: "replace"}, {Type: "plugin_call"}},
 			},
 			{
 				GroupName: "Group2",
@@ -81,6 +82,7 @@ var rulesets = []Ruleset{
 						JsFiles: false,
 					},
 				},
+				PostProcessing: nil,
 			},
 			{
 				GroupName: "GroupA",
@@ -109,6 +111,7 @@ var rulesets = []Ruleset{
 						},
 					},
 				},
+				PostProcessing: nil,
 			},
 		},
 	},

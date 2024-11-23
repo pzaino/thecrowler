@@ -1012,6 +1012,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 
 	var scrapedDataJSON []byte
 	if len((*pageInfo).ScrapedData) > 0 {
+		// Prepare the "Scraped Data" field for insertion
 		scrapedDoc1 := make(map[string]interface{})
 		// Transform the scraped data into a JSON object
 		for _, value := range (*pageInfo).ScrapedData {

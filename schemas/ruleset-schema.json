@@ -291,6 +291,7 @@
                                     }
                                 },
                                 "post_processing": {
+                                    "title": "Rule's Post-processing",
                                     "type": "array",
                                     "items": {
                                         "type": "object",
@@ -317,7 +318,7 @@
                                         },
                                         "additionalProperties": false
                                     },
-                                    "description": "Post-processing steps for the scraped data to transform, validate, or clean it. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
+                                    "description": "Rule's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within a single rule context. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
                                     "required": [
                                         "step_type",
                                         "details"
@@ -1122,6 +1123,40 @@
                             }
                         },
                         "description": "rule log configuration (aka what you want to be logged when the rule execute)."
+                    },
+                    "post_processing": {
+                        "title": "Rulesgroup's Post-processing",
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step_type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "replace",
+                                        "remove",
+                                        "transform",
+                                        "validate",
+                                        "clean",
+                                        "set_env",
+                                        "plugin_call",
+                                        "external_api"
+                                    ],
+                                    "description": "The type of post-processing step to perform on the scraped data. To use plugins to process the data, set this field to 'plugin_call' and place the plugin name in the 'details' object using a field called 'plugin_name'. Do not use 'transform' if you want to use a plugin to transform the output, use 'plugin_call' instead."
+                                },
+                                "details": {
+                                    "type": "object",
+                                    "description": "Detailed configuration for the post-processing step, structure depends on the step_type.",
+                                    "additionalProperties": true
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "description": "Rulesgroup's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of the entire rulesgroup (so it will access the entire JSON of collected data). To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
+                        "required": [
+                            "step_type",
+                            "details"
+                        ]
                     }
                 },
                 "additionalProperties": false

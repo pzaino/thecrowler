@@ -609,6 +609,20 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 		}
 	}
 
+	// Apply the post-processing steps to the extracted data
+	if ruleGroup.PostProcessing != nil {
+		data := cmn.ConvertMapToJSON(extractedData)
+		for _, step := range ruleGroup.PostProcessing {
+			ApplyPostProcessingStep(ctx, &step, &data)
+		}
+		// Unmarshal the JSON data back into a map
+		err := json.Unmarshal(data, &extractedData)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling collected data after post-processing: %v", err)
+			return extractedData, err
+		}
+	}
+
 	// Remove non-persistent environment variables
 	cmn.KVStore.DeleteByCID(ctx.GetContextID())
 
@@ -667,7 +681,7 @@ func ppStepSetEnv(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte
 	}
 	if ok {
 		// Convert the envPropRaw to a map[string]interface{}
-		envPropMap := cmn.InfToMap(envPropRaw)
+		envPropMap := cmn.ConvertInfToMap(envPropRaw)
 		// Check if envPropMap is not nil and has the required keys
 		if envPropMap != nil {
 			// Extract the persistent and static properties
