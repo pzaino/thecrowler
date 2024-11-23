@@ -66,6 +66,17 @@ const (
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
 	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
+
+	optDNSLookup = "dns_lookup"
+	optTCPConn   = "tcp_connection"
+	optTTFB      = "time_to_first_byte"
+	optContent   = "content_load"
+	optPageLoad  = "page_load"
+
+	optBrowsingHuman  = "human"
+	optBrowsingAuto   = "auto"
+	optBrowsingRecu   = "recursive"
+	optBrowsingRCRecu = "right_click_recursive"
 )
 
 var (
@@ -518,15 +529,15 @@ func collectNavigationMetrics(wd *selenium.WebDriver, pageInfo *PageInfo) {
 	// Process the metrics
 	for key, value := range metrics {
 		switch key {
-		case "dns_lookup":
+		case optDNSLookup:
 			pageInfo.PerfInfo.DNSLookup = value.(float64)
-		case "tcp_connection":
+		case optTCPConn:
 			pageInfo.PerfInfo.TCPConnection = value.(float64)
-		case "time_to_first_byte":
+		case optTTFB:
 			pageInfo.PerfInfo.TimeToFirstByte = value.(float64)
-		case "content_load":
+		case optContent:
 			pageInfo.PerfInfo.ContentLoad = value.(float64)
-		case "page_load":
+		case optPageLoad:
 			pageInfo.PerfInfo.PageLoad = value.(float64)
 		}
 	}
@@ -1689,9 +1700,9 @@ func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkIte
 
 	// Find all the links in the document
 	var links []LinkItem
-	if ctx.config.Crawler.BrowsingMode == "human" ||
-		ctx.config.Crawler.BrowsingMode == "recursive" ||
-		ctx.config.Crawler.BrowsingMode == "right_click_recursive" {
+	if ctx.config.Crawler.BrowsingMode == optBrowsingHuman ||
+		ctx.config.Crawler.BrowsingMode == optBrowsingRecu ||
+		ctx.config.Crawler.BrowsingMode == optBrowsingRCRecu {
 		doc.Find("a").Each(func(_ int, item *goquery.Selection) {
 			linkTag := item
 			link, _ := linkTag.Attr("href")
@@ -1846,17 +1857,17 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Process the job
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
 		var err error
-		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "recursive" {
+		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
 			// Recursive Mode
 			urlLink := url.Link
 			if strings.HasPrefix(url.Link, "/") {
 				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
 			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
-		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "right_click_recursive" {
+		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRCRecu {
 			// Right Click Recursive Mode
 			err = rightClick(processCtx, id, url)
-		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == "human" {
+		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingHuman {
 			// Human Mode
 			// Find the <a> element that contains the URL and click it
 			err = clickLink(processCtx, id, url)
@@ -2030,15 +2041,15 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	} else {
 		for key, value := range metrics {
 			switch key {
-			case "dns_lookup":
+			case optDNSLookup:
 				pageCache.PerfInfo.DNSLookup = value.(float64)
-			case "tcp_connection":
+			case optTCPConn:
 				pageCache.PerfInfo.TCPConnection = value.(float64)
-			case "time_to_first_byte":
+			case optTTFB:
 				pageCache.PerfInfo.TimeToFirstByte = value.(float64)
-			case "content_load":
+			case optContent:
 				pageCache.PerfInfo.ContentLoad = value.(float64)
-			case "page_load":
+			case optPageLoad:
 				pageCache.PerfInfo.PageLoad = value.(float64)
 			}
 		}
@@ -2207,15 +2218,15 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	} else {
 		for key, value := range metrics {
 			switch key {
-			case "dns_lookup":
+			case optDNSLookup:
 				pageCache.PerfInfo.DNSLookup = value.(float64)
-			case "tcp_connection":
+			case optTCPConn:
 				pageCache.PerfInfo.TCPConnection = value.(float64)
-			case "time_to_first_byte":
+			case optTTFB:
 				pageCache.PerfInfo.TimeToFirstByte = value.(float64)
-			case "content_load":
+			case optContent:
 				pageCache.PerfInfo.ContentLoad = value.(float64)
-			case "page_load":
+			case optPageLoad:
 				pageCache.PerfInfo.PageLoad = value.(float64)
 			}
 		}

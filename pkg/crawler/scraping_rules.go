@@ -36,6 +36,8 @@ import (
 
 const (
 	errExecutingScraping = "executing scraping rule: %v"
+	strFalse             = "false"
+	strTrue              = "true"
 )
 
 // processScrapingRules processes the scraping rules
@@ -85,7 +87,7 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 		data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd)
 		// Add the data to the document
 		data = strings.TrimSpace(data)
-		if data != "" && data != "{}" && data != "false" && data != "true" {
+		if data != "" && data != "{}" && data != strFalse && data != strTrue {
 			addScrapedDataToDocument(&scrapedDataDoc, data)
 		}
 	} else {
@@ -267,7 +269,7 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 	processedData := make(map[string]interface{})
 
 	for key, data := range extractedData {
-		if key == "" || key == "false" || key == "true" {
+		if key == "" || key == strFalse || key == strTrue {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Not allowed key in extracted content: %v", key)
 			continue
 		}

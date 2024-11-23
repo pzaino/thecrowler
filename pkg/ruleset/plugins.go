@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/robertkrimen/otto"
+	"github.com/tebeka/selenium"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -81,7 +82,45 @@ func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
 }
 
 // Execute executes the JS plugin
-func (p *JSPlugin) Execute(timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+func (p *JSPlugin) Execute(wd *selenium.WebDriver, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+	if p.pType == "vdi_plugin" {
+		return execVDIPlugin(p, timeout, params, wd)
+	}
+	return execEnginePlugin(p, timeout, params)
+}
+
+func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *selenium.WebDriver) (map[string]interface{}, error) {
+	// Consts
+	const (
+		errMsg01 = "Error getting result from JS plugin: %v"
+	)
+
+	// Transform params to []interface{}
+	paramsArr := make([]interface{}, 0)
+	for _, v := range params {
+		paramsArr = append(paramsArr, v)
+	}
+
+	// Setup a timeout for the script
+	err := (*wd).SetAsyncScriptTimeout(time.Duration(timeout) * time.Second)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+	}
+
+	// Run the script wd.ExecuteScript(script, args)
+	result, err := (*wd).ExecuteScript(p.script, paramsArr)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		return nil, err
+	}
+
+	// Get the result
+	resultMap := cmn.InfToMap(result)
+
+	return resultMap, nil
+}
+
+func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
 	// Consts
 	const (
 		errMsg01 = "Error getting result from JS plugin: %v"
