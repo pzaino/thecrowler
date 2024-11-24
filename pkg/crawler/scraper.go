@@ -81,6 +81,29 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 							break
 						}
 
+					case []interface{}:
+						// Append all elements of the array
+						for _, item := range v {
+							switch item := item.(type) {
+							case string:
+								allExtracted = append(allExtracted, item)
+							case map[string]interface{}:
+								// Safely convert the map to JSON and store it directly in extractedData
+								jsonStr, err := json.Marshal(item)
+								if err != nil {
+									cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
+									return extractedData, err
+								}
+								allExtracted = append(allExtracted, string(jsonStr))
+							default:
+								// Log unexpected types and skip them
+								cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", item)
+							}
+						}
+						if !getAllOccurrences {
+							break
+						}
+
 					default:
 						// Log unexpected types and skip them
 						cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
@@ -91,6 +114,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 						break
 					}
 				}
+				break // If we found data, break the selectors loop and return the data!
 			} else if rule.Elements[e].Critical {
 				ErrorState = true
 				ErrorMsg = "element not found, with " + errCriticalError + " flag set"
@@ -276,7 +300,7 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
 
 	// Find the elements using the provided selector directly in the VDI's browser
-	if sType != strPluginCall && sType != strRegEx && sType != strXPath {
+	if (sType != strPluginCall) && (sType != strRegEx) && (sType != strXPath) {
 		if all {
 			elements, err = FindElementsByType(ctx, wd, selector)
 		} else {
@@ -585,6 +609,20 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 		}
 	}
 
+	// Apply the post-processing steps to the extracted data
+	if ruleGroup.PostProcessing != nil {
+		data := cmn.ConvertMapToJSON(extractedData)
+		for _, step := range ruleGroup.PostProcessing {
+			ApplyPostProcessingStep(ctx, &step, &data)
+		}
+		// Unmarshal the JSON data back into a map
+		err := json.Unmarshal(data, &extractedData)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling collected data after post-processing: %v", err)
+			return extractedData, err
+		}
+	}
+
 	// Remove non-persistent environment variables
 	cmn.KVStore.DeleteByCID(ctx.GetContextID())
 
@@ -643,7 +681,7 @@ func ppStepSetEnv(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte
 	}
 	if ok {
 		// Convert the envPropRaw to a map[string]interface{}
-		envPropMap := cmn.InfToMap(envPropRaw)
+		envPropMap := cmn.ConvertInfToMap(envPropRaw)
 		// Check if envPropMap is not nil and has the required keys
 		if envPropMap != nil {
 			// Extract the persistent and static properties
@@ -807,73 +845,84 @@ func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingS
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
 */
+/*
+	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
+		errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
+		return errors.New(errMsg)
+	}
+*/
 func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) error {
-	// Convert the jsonData byte slice to a string and set it in the JS VM.
+	// Convert the jsonData byte slice to a map
 	jsonData := *data
 	var jsonDataMap map[string]interface{}
 	if err := json.Unmarshal(jsonData, &jsonDataMap); err != nil {
-		errMsg := fmt.Sprintf("Error unmarshalling jsonData: %v", err)
-		return errors.New(errMsg)
+		return fmt.Errorf("error unmarshalling jsonData: %v", err)
 	}
 
 	// Prepare script parameters
 	params := make(map[string]interface{})
-	params["jsonData"] = string(jsonData)
-	// Add whatever other parameters are in the Details map
-	// Safely extract the "parameters" field from the Details map
-	parametersRaw, ok := step.Details["parameters"]
-	if ok {
-		// Check if "parameters" is a map[string]interface{}
-		parametersMap, isMap := parametersRaw.(map[string]interface{})
-		if isMap {
-			// Add whatever other parameters are in the Details map
+	params["jsonData"] = jsonDataMap
+
+	// Safely extract and add "parameters" from Details map
+	if parametersRaw, ok := step.Details["parameters"]; ok {
+		if parametersMap, isMap := parametersRaw.(map[string]interface{}); isMap {
 			for k, v := range parametersMap {
 				params[k] = v
 			}
 		}
 	}
-	/*
-		if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
-			errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
-			return errors.New(errMsg)
-		}
-	*/
 
-	// Retrieve the JS plugin
-	pluginName := step.Details["plugin_name"].(string)
+	// Safely retrieve the JS plugin
+	pluginNameRaw, exists := step.Details["plugin_name"]
+	if !exists {
+		return fmt.Errorf("plugin_name not specified in step details")
+	}
+
+	pluginName, isString := pluginNameRaw.(string)
+	if !isString {
+		return fmt.Errorf("plugin_name is not a valid string")
+	}
+
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(pluginName)
 	if !exists {
-		errMsg := fmt.Sprintf("Plugin %s not found", pluginName)
-		return errors.New(errMsg)
+		return fmt.Errorf("plugin %s not found", pluginName)
 	}
 
 	// Execute the plugin
-	value, err := plugin.Execute(ctx.config.Plugins.PluginTimeout, params)
+	var value interface{}
+	var err error
+	value, err = plugin.Execute(&ctx.wd, ctx.config.Plugins.PluginTimeout, params)
 	if err != nil {
-		errMsg := fmt.Sprintf("Error executing JS plugin: %v", err)
-		return errors.New(errMsg)
+		return fmt.Errorf("error executing JS plugin: %v", err)
 	}
 
-	// Check if the result is a string
-	for _, val := range value {
-		// Convert the value to a string and check if it's a valid JSON
-		valStr := fmt.Sprintf("%v", val)
-		if valStr == "" || valStr == "false" {
-			continue
+	// Validate the plugin result
+	switch v := value.(type) {
+	case map[string]interface{}:
+		// Serialize map to JSON and assign to *data
+		jsonResult, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("error marshalling plugin output to JSON: %v", err)
+		}
+		if jsonResult != nil {
+			*data = jsonResult
 		}
 
-		// Convert the value to a string and check if it's a valid JSON
-		if !json.Valid([]byte(valStr)) {
-			continue
+	case string:
+		// Validate if the string is JSON
+		if !json.Valid([]byte(v)) {
+			return fmt.Errorf("plugin returned an invalid JSON string")
+		}
+		v = strings.TrimSpace(v)
+		if v != "" {
+			*data = []byte(v)
 		}
 
-		// Set the data to the new value
-		*data = []byte(valStr)
-		return nil
+	default:
+		return fmt.Errorf("plugin returned an unsupported type: %T", v)
 	}
 
-	// It seems we were unable to retrieve the result from the JS output
-	return errors.New("modified JSON is not valid")
+	return nil
 }
 
 // processAPITransformation allows to use a 3rd party API to process the JSON

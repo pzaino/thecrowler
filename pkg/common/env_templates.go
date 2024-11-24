@@ -2,6 +2,13 @@ package common
 
 import "strings"
 
+const (
+	strType    = "string"
+	optReject  = "reject"
+	optAccept  = "accept"
+	optConsent = "consent"
+)
+
 var (
 	// Lists of button texts in different languages for 'Accept' and 'Consent'
 	acceptTexts = []string{
@@ -33,18 +40,18 @@ func ProcessEnvTemplate(envVar, CtxID string) (EnvValue, error) {
 		envVar = strings.TrimSuffix(envVar, "}}")
 		envVar = strings.TrimSpace(envVar)
 		switch envVar {
-		case "accept":
-			rval.Name = "accept"
+		case optAccept:
+			rval.Name = optAccept
 			rval.Value = strings.Join(acceptTexts, "|")
-			rval.Type = "string"
-		case "consent":
-			rval.Name = "consent"
+			rval.Type = strType
+		case optConsent:
+			rval.Name = optConsent
 			rval.Value = strings.Join(consentTexts, "|")
-			rval.Type = "string"
-		case "reject":
-			rval.Name = "reject"
+			rval.Type = strType
+		case optReject:
+			rval.Name = optReject
 			rval.Value = strings.Join(rejectTexts, "|")
-			rval.Type = "string"
+			rval.Type = strType
 		default:
 			rIface, rProperties, err := KVStore.Get(envVar, CtxID)
 			if err != nil {

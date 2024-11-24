@@ -79,6 +79,7 @@ type RuleGroup struct {
 	ActionRules    []ActionRule         `json:"action_rules,omitempty" yaml:"action_rules,omitempty"`
 	DetectionRules []DetectionRule      `json:"detection_rules,omitempty" yaml:"detection_rules,omitempty"`
 	CrawlingRules  []CrawlingRule       `json:"crawling_rules,omitempty" yaml:"crawling_rules,omitempty"`
+	PostProcessing []PostProcessingStep `json:"post_processing" yaml:"post_processing"`
 	Env            []EnvSetting         `json:"environment_settings,omitempty" yaml:"environment_settings,omitempty"`
 	LoggingConf    LoggingConfiguration `json:"logging_configuration,omitempty" yaml:"logging_configuration,omitempty"`
 }
@@ -485,8 +486,10 @@ type DefaultRuleParser struct{}
 
 // JSPlugin struct to hold the JS plugin
 type JSPlugin struct {
-	name   string
-	script string
+	name        string
+	description string
+	pType       string
+	script      string
 }
 
 // JSPluginRegister struct to hold the JS plugins
