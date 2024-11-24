@@ -351,3 +351,7 @@ func (w *WHOISData) IsEmpty() bool {
 	}
 	return false
 }
+
+const (
+	naStr = "N/A"
+)

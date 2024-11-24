@@ -54,10 +54,11 @@ const (
 )
 
 var (
-	limiter      *rate.Limiter    // Rate limiter
-	configFile   *string          // Configuration file path
-	config       cfg.Config       // Configuration "object"
-	configMutex  sync.Mutex       // Mutex to protect the configuration
+	limiter     *rate.Limiter // Rate limiter
+	configFile  *string       // Configuration file path
+	config      cfg.Config    // Configuration "object"
+	configMutex sync.Mutex    // Mutex to protect the configuration
+	// GRulesEngine Global rules engine
 	GRulesEngine rules.RuleEngine // GRulesEngine Global rules engine
 
 	// Prometheus metrics

@@ -23,6 +23,12 @@ import (
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 )
 
+const (
+	dnsAnswerStr = "ANSWER"
+	dnsTxtStr    = "TXT"
+	dnsRRSIGStr  = "RRSIG"
+)
+
 // NewDNSInfo initializes a new DNSInfo struct.
 func NewDNSInfo(domain string) DNSInfo {
 	return DNSInfo{
@@ -92,7 +98,7 @@ func parseDNSInfo(ni *NetInfo, domain, host, output string) error {
 
 		// Check for unresolved answers:
 		for _, record := range dnsInfo.Records {
-			if record.Section == "ANSWER" && record.Type == "CNAME" {
+			if record.Section == dnsAnswerStr && record.Type == "CNAME" {
 				if stage > 1 {
 					host = record.Response
 					time.Sleep(time.Duration(exi.GetFloat(ni.Config.DNS.RateLimit)) * time.Second)
@@ -129,7 +135,7 @@ func getDigInfo(domain string, requestType string) (string, error) {
 	// Run the command
 	var cmd *exec.Cmd
 	if requestType == "" {
-		cmd = exec.Command("dig", domain, "TXT", "ANY")
+		cmd = exec.Command("dig", domain, dnsTxtStr, "ANY")
 	} else if requestType == "SRV" {
 		cmd = exec.Command("dig", domain, "SRV")
 	} else {
@@ -175,7 +181,7 @@ func processSection(record string, dnsInfo *DNSInfo) string {
 	}
 
 	if strings.Contains(record, "ANSWER SECTION") {
-		return "ANSWER"
+		return dnsAnswerStr
 	} else if strings.Contains(record, "AUTHORITY SECTION") {
 		return "AUTHORITY"
 	} else if strings.Contains(record, "ADDITIONAL SECTION") {
@@ -209,13 +215,13 @@ func processFields(record string, section string, dnsInfo *DNSInfo) {
 			dnsRecord.Value = fields[i]
 		}
 		switch {
-		case fields[i] == "TXT":
-			dnsRecord.Special = "TXT"
-			dnsRecord.Type = "TXT"
+		case fields[i] == dnsTxtStr:
+			dnsRecord.Special = dnsTxtStr
+			dnsRecord.Type = dnsTxtStr
 			continue
-		case fields[i] == "RRSIG":
-			dnsRecord.Special = "RRSIG"
-			dnsRecord.Type = "RRSIG"
+		case fields[i] == dnsRRSIGStr:
+			dnsRecord.Special = dnsRRSIGStr
+			dnsRecord.Type = dnsRRSIGStr
 			continue
 		default:
 			rType := parseDNSRecordType(fields[i], "")

@@ -63,7 +63,7 @@ func urlToDomain(inputURL string) string {
 // Helper function to return "N/A" for empty strings
 func defaultNA(s string) string {
 	if s == "" {
-		return "N/A"
+		return naStr
 	}
 	return s
 }
