@@ -477,6 +477,99 @@ END
 $$;
 
 
+-- Indexes for the Sessions table ----------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sessions_hash') THEN
+        CREATE INDEX idx_sessions_hash ON Sessions(hash);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sessions_user_agent') THEN
+        CREATE INDEX idx_sessions_user_agent ON Sessions(user_agent);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sessions_valid') THEN
+        CREATE INDEX idx_sessions_valid ON Sessions(valid);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sessions_created_at') THEN
+        CREATE INDEX idx_sessions_created_at ON Sessions(created_at);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sessions_last_updated_at') THEN
+        CREATE INDEX idx_sessions_last_updated_at ON Sessions(last_updated_at);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sessions_details') THEN
+        CREATE INDEX idx_sessions_details ON Sessions USING gin(details jsonb_path_ops);
+    END IF;
+END
+$$;
+
+-- Indexes for SourceSessionIndex table ----------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourcesessionindex_session_id') THEN
+        CREATE INDEX idx_sourcesessionindex_session_id ON SourceSessionIndex(session_id);
+    END IF;
+END
+$$;
+
+
+-- Indexes for the SourceInformationSeedIndex table ----------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceinformationseedindex_information_seed_id') THEN
+        CREATE INDEX idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceinformationseedindex_source_id') THEN
+        CREATE INDEX idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id);
+    END IF;
+END
+$$;
+
+-- Indexes for SourceCategoryIndex table ---------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourcecategoryindex_category_id') THEN
+        CREATE INDEX idx_sourcecategoryindex_category_id ON SourceCategoryIndex(category_id);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourcecategoryindex_source_id') THEN
+        CREATE INDEX idx_sourcecategoryindex_source_id ON SourceCategoryIndex(source_id);
+    END IF;
+END
+$$;
+
 -- Indexes for the Owners table ------------------------------------------------
 
 -- Creates an index for the Owners usr_id column
@@ -557,7 +650,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_searchindex_page_url') THEN
-        CREATE INDEX idx_searchindex_page_url ON SearchIndex(page_url);
+        CREATE INDEX idx_searchindex_page_url ON SearchIndex(page_url) WHERE page_url != '' AND page_url IS NOT NULL;
     END IF;
 END
 $$;
@@ -729,7 +822,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_created_at') THEN
-        CREATE INDEX idx_webobjects_created_at ON WebObjects(created_at);
+        CREATE INDEX idx_webobjects_created_at ON WebObjects(created_at DESC);
     END IF;
 END
 $$;
@@ -738,7 +831,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_last_updated_at') THEN
-        CREATE INDEX idx_webobjects_last_updated_at ON WebObjects(last_updated_at);
+        CREATE INDEX idx_webobjects_last_updated_at ON WebObjects(last_updated_at DESC);
     END IF;
 END
 $$;
@@ -753,7 +846,7 @@ END
 $$;
 
 
--- Indexes for WebObjectsIndex Table -------------------------------------------
+-- Indexes for the WebObjectsIndex Table -------------------------------------------
 
 -- Creates an index for the WebObjectsIndex table on the object_id column
 DO $$
@@ -773,6 +866,32 @@ BEGIN
 END
 $$;
 
+-- Creates a combined index for the WebObjectsIndex table on the object_id and index_id columns
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjectsindex_combined') THEN
+        CREATE INDEX idx_webobjectsindex_combined ON WebObjectsIndex(object_id, index_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjectsIndex table on the created_at column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjectsindex_created_at') THEN
+        CREATE INDEX idx_webobjectsindex_created_at ON WebObjectsIndex (created_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the WebObjectsIndex table on the last_updated_at column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjectsindex_last_updated_at') THEN
+        CREATE INDEX idx_webobjectsindex_last_updated_at ON WebObjectsIndex (last_updated_at);
+    END IF;
+END
+$$;
 
 -- Indexes for the Keywords table ----------------------------------------------
 
@@ -816,6 +935,46 @@ END
 $$;
 
 
+-- Indexes for MetaTags table --------------------------------------------------
+
+-- Creates an index for the MetaTags table on the name column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatags_name') THEN
+        CREATE INDEX idx_metatags_name ON MetaTags (name);
+    END IF;
+END
+$$;
+
+-- Creates an index for the MetaTags table on the content column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatags_content') THEN
+        CREATE INDEX idx_metatags_content ON MetaTags (content);
+    END IF;
+END
+$$;
+
+-- Indexes for the MetaTagsIndex table -----------------------------------------
+
+-- Creates an index for the MetaTagsIndex table on the index_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatagsindex_index_id') THEN
+        CREATE INDEX idx_metatagsindex_index_id ON MetaTagsIndex (index_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the MetaTagsIndex table on the metatag_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_metatagsindex_metatag_id') THEN
+        CREATE INDEX idx_metatagsindex_metatag_id ON MetaTagsIndex (metatag_id);
+    END IF;
+END
+$$;
+
 -- Indexes for the HTTPInfo table ----------------------------------------------
 
 -- Creates an index for the HTTPInfo details_hash column
@@ -850,6 +1009,84 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_created_at') THEN
         CREATE INDEX idx_httpinfo_created_at ON HTTPInfo(created_at);
+    END IF;
+END
+$$;
+
+-- Indexes for the HTTPInfoIndex table -----------------------------------------
+
+-- Creates an index for the HTTPInfoIndex table on the httpinfo_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfoindex_httpinfo_id') THEN
+        CREATE INDEX idx_httpinfoindex_httpinfo_id ON HTTPInfoIndex(httpinfo_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the HTTPInfoIndex table on the index_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfoindex_index_id') THEN
+        CREATE INDEX idx_httpinfoindex_index_id ON HTTPInfoIndex(index_id);
+    END IF;
+END
+$$;
+
+-- Indexes for NetInfo table ---------------------------------------------------
+
+-- Creates an index for the NetInfo details_hash column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_details_hash') THEN
+        CREATE INDEX idx_netinfo_details_hash ON NetInfo(details_hash);
+    END IF;
+END
+$$;
+
+-- Creates an index for the NetInfo details column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
+        CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
+    END IF;
+END
+$$;
+
+-- Creates an index for the NetInfo last_updated_at column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_last_updated_at') THEN
+        CREATE INDEX idx_netinfo_last_updated_at ON NetInfo(last_updated_at);
+    END IF;
+END
+$$;
+
+-- Creates an index for the NetInfo created_at column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_created_at') THEN
+        CREATE INDEX idx_netinfo_created_at ON NetInfo(created_at);
+    END IF;
+END
+$$;
+
+-- Indexes for the NetInfoIndex table ------------------------------------------
+
+-- Creates an index for the NetInfoIndex table on the netinfo_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfoindex_netinfo_id') THEN
+        CREATE INDEX idx_netinfoindex_netinfo_id ON NetInfoIndex(netinfo_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the NetInfoIndex table on the index_id column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfoindex_index_id') THEN
+        CREATE INDEX idx_netinfoindex_index_id ON NetInfoIndex(index_id);
     END IF;
 END
 $$;
