@@ -713,11 +713,11 @@ BEGIN
 END
 $$;
 
--- Creates an index for the NetInfo last_updated_at column
+-- Creates a gin index for the NetInfo details column
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_last_updated_at') THEN
-        CREATE INDEX idx_netinfo_last_updated_at ON NetInfo(last_updated_at);
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_details') THEN
+        CREATE INDEX idx_netinfo_details ON NetInfo USING gin(details jsonb_path_ops);
     END IF;
 END
 $$;
@@ -736,6 +736,15 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
         CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
+    END IF;
+END
+$$;
+
+-- Optimize for 'whois' key in NetInfo details
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_whois') THEN
+        CREATE INDEX idx_netinfo_whois ON NetInfo USING gin ((details -> 'whois') jsonb_path_ops);
     END IF;
 END
 $$;
@@ -999,7 +1008,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_last_updated_at') THEN
-        CREATE INDEX idx_httpinfo_last_updated_at ON HTTPInfo(last_updated_at);
+        CREATE INDEX idx_httpinfo_last_updated_at ON HTTPInfo(last_updated_at DESC);
     END IF;
 END
 $$;
@@ -1008,7 +1017,16 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_created_at') THEN
-        CREATE INDEX idx_httpinfo_created_at ON HTTPInfo(created_at);
+        CREATE INDEX idx_httpinfo_created_at ON HTTPInfo(created_at DESC);
+    END IF;
+END
+$$;
+
+-- Optimize for 'ssl_info' key in HTTPInfo details
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_ssl_info') THEN
+        CREATE INDEX idx_httpinfo_ssl_info ON HTTPInfo USING gin ((details -> 'ssl_info') jsonb_path_ops);
     END IF;
 END
 $$;
@@ -1029,6 +1047,15 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfoindex_index_id') THEN
         CREATE INDEX idx_httpinfoindex_index_id ON HTTPInfoIndex(index_id);
+    END IF;
+END
+$$;
+
+-- Composite index for HTTPInfoIndex
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfoindex_combined') THEN
+        CREATE INDEX idx_httpinfoindex_combined ON HTTPInfoIndex(httpinfo_id, index_id);
     END IF;
 END
 $$;
@@ -1057,7 +1084,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_last_updated_at') THEN
-        CREATE INDEX idx_netinfo_last_updated_at ON NetInfo(last_updated_at);
+        CREATE INDEX idx_netinfo_last_updated_at ON NetInfo(last_updated_at DESC);
     END IF;
 END
 $$;
@@ -1066,7 +1093,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_created_at') THEN
-        CREATE INDEX idx_netinfo_created_at ON NetInfo(created_at);
+        CREATE INDEX idx_netinfo_created_at ON NetInfo(created_at DESC);
     END IF;
 END
 $$;
@@ -1087,6 +1114,15 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfoindex_index_id') THEN
         CREATE INDEX idx_netinfoindex_index_id ON NetInfoIndex(index_id);
+    END IF;
+END
+$$;
+
+-- Composite index for NetInfoIndex
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfoindex_combined') THEN
+        CREATE INDEX idx_netinfoindex_combined ON NetInfoIndex(netinfo_id, index_id);
     END IF;
 END
 $$;
@@ -1220,6 +1256,14 @@ BEGIN
 END
 $$;
 
+-- Composite index for SourceSearchIndex
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_combined') THEN
+        CREATE INDEX idx_ssi_combined ON SourceSearchIndex(source_id, index_id);
+    END IF;
+END
+$$;
 
 -- Indexes for WebObjectsIndex table -----------------------------------------
 
