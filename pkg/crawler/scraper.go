@@ -610,7 +610,8 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 	}
 
 	// Apply the post-processing steps to the extracted data
-	if ruleGroup.PostProcessing != nil {
+	if len(ruleGroup.PostProcessing) != 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rulesgroup's post-processing steps to the extracted data")
 		data := cmn.ConvertMapToJSON(extractedData)
 		for _, step := range ruleGroup.PostProcessing {
 			ApplyPostProcessingStep(ctx, &step, &data)

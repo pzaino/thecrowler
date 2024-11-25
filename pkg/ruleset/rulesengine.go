@@ -284,7 +284,7 @@ func (re *RuleEngine) cleanCache() {
 		re.Cache.Action = nil
 		re.Cache.Detection = nil
 		re.Cache.Crawling = nil
-		re.Cache.IsInvalid = false
+		re.Cache.IsInvalid = true
 	}
 }
 
@@ -306,9 +306,10 @@ func (re *RuleEngine) GetAllRuleGroups() []*RuleGroup {
 
 	// Check if the cache is valid
 	re.Cache.Mu.RLock()
-	if !re.Cache.IsInvalid && re.Cache.RuleGroups != nil {
+	if !re.Cache.IsInvalid && len(re.Cache.RuleGroups) != 0 {
 		cachedGroups := re.Cache.RuleGroups
 		re.Cache.Mu.RUnlock()
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning %d Rulesgroup from the cache.", len(cachedGroups))
 		return cachedGroups
 	}
 	re.Cache.Mu.RUnlock()
@@ -326,6 +327,7 @@ func (re *RuleEngine) GetAllRuleGroups() []*RuleGroup {
 	re.Cache.RuleGroups = ruleGroups
 	re.Cache.IsInvalid = false
 	re.Cache.Mu.Unlock()
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Added %d Rulesgroup to the cache.", len(re.Cache.RuleGroups))
 
 	return ruleGroups
 }
@@ -579,6 +581,37 @@ func (re *RuleEngine) GetRulesetByURL(urlStr string) (*Ruleset, error) {
 	return nil, fmt.Errorf("%s", errRulesetNotFound)
 }
 
+// GetAllRulesetByURL returns all the rulesets who match the provided URL in the name.
+func (re *RuleEngine) GetAllRulesetByURL(urlStr string) ([]*Ruleset, error) {
+	if re == nil {
+		return nil, fmt.Errorf("%s", errRulesetNotFound)
+	}
+
+	if len((*re).Rulesets) == 0 {
+		return nil, fmt.Errorf("%s", errRulesetNotFound)
+	}
+
+	// Validate URL
+	parsedURL, err := PrepareURLForSearch(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("%s", errInvalidURL)
+	}
+
+	var ruleSets []*Ruleset
+	for i := 0; i < len((*re).Rulesets); i++ {
+		rsName := strings.TrimSpace(re.Rulesets[i].Name)
+		if rsName == "" || !IsURL(rsName) {
+			continue
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking ruleset: '%s' == '%s'", rsName, parsedURL)
+		if CheckURL(parsedURL, rsName) {
+			ruleSets = append(ruleSets, &re.Rulesets[i])
+		}
+	}
+
+	return ruleSets, nil
+}
+
 // GetRulesetByName returns the ruleset for the specified name.
 func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
 	if re == nil {
@@ -606,8 +639,8 @@ func (re *RuleEngine) GetRulesetByName(name string) (*Ruleset, error) {
 	return nil, fmt.Errorf("%s", errRulesetNotFound)
 }
 
-// GetRuleGroupByURL returns the rules group for the specified URL.
-func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
+// GetRulesGroupByURL returns the rules group for the specified URL.
+func (re *RuleEngine) GetRulesGroupByURL(urlStr string) (*RuleGroup, error) {
 	// Validate URL
 	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
@@ -619,15 +652,42 @@ func (re *RuleEngine) GetRuleGroupByURL(urlStr string) (*RuleGroup, error) {
 		if rgName == "" || !IsURL(rgName) {
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Checking rule group: '%s' == '%s'", rgName, parsedURL)
-		re := regexp.MustCompile(rgName)
-		if re.MatchString(parsedURL) || rgName == "*" {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Checking rules group: '%s' == '%s'", rgName, parsedURL)
+		if rgName == "*" || CheckURL(parsedURL, rgName) || CheckURL(parsedURL, rg.URL) {
 			if rg.IsValid() {
 				return rg, nil
 			}
 		}
 	}
 	return nil, fmt.Errorf("%s", errRuleGroupNotFound)
+}
+
+// GetAllRulesGroupByURL returns all the rules groups which match the provided URL either in the name or the url filed.
+func (re *RuleEngine) GetAllRulesGroupByURL(urlStr string) ([]*RuleGroup, error) {
+	// Validate URL
+	parsedURL, err := PrepareURLForSearch(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("%s", errInvalidURL)
+	}
+
+	var ruleGroups []*RuleGroup
+	for _, rg := range re.GetAllRuleGroups() {
+		rgName := strings.TrimSpace(rg.GroupName)
+		if rgName == "" || !IsURL(rgName) {
+			rgName = strings.TrimSpace(rg.URL)
+		}
+		if rgName == "" || !IsURL(rgName) {
+			continue
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Checking rules group: '%s' == '%s'", rgName, parsedURL)
+		if rgName == "*" || CheckURL(parsedURL, rgName) || CheckURL(parsedURL, rg.URL) {
+			if rg.IsValid() {
+				ruleGroups = append(ruleGroups, rg)
+			}
+		}
+	}
+
+	return ruleGroups, nil
 }
 
 // GetRuleGroupByName returns the rules group for the specified name.

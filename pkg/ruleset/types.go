@@ -75,6 +75,7 @@ type RuleGroup struct {
 	ValidFrom      CustomTime           `json:"valid_from,omitempty" yaml:"valid_from,omitempty"`
 	ValidTo        CustomTime           `json:"valid_to,omitempty" yaml:"valid_to,omitempty"`
 	IsEnabled      bool                 `json:"is_enabled" yaml:"is_enabled"`
+	URL            string               `json:"url" yaml:"url"`
 	ScrapingRules  []ScrapingRule       `json:"scraping_rules,omitempty" yaml:"scraping_rules,omitempty"`
 	ActionRules    []ActionRule         `json:"action_rules,omitempty" yaml:"action_rules,omitempty"`
 	DetectionRules []DetectionRule      `json:"detection_rules,omitempty" yaml:"detection_rules,omitempty"`

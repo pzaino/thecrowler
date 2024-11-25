@@ -1008,8 +1008,11 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 		if err := rows.Scan(&row.SourceID, &row.URL, &row.CollectedAt, &detailsJSON); err != nil {
 			return ScrapedDataResponse{}, err
 		}
-		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
-			return ScrapedDataResponse{}, err
+		// Check if row.Details contains data and, if so, unmarshal it
+		if len(detailsJSON) > 0 {
+			if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
+				return results, err
+			}
 		}
 
 		// Append the row to the results

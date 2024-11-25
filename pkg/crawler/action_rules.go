@@ -54,27 +54,32 @@ func processActionRules(wd *selenium.WebDriver, ctx *ProcessContext, url string)
 }
 
 func processURLRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
-	rs, err := ctx.re.GetRulesetByURL(url)
-	if err == nil && rs != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
-		// Execute all the rules in the ruleset
-		executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
-		// Clean up non-persistent rules
-		cmn.KVStore.DeleteByCID(ctx.GetContextID())
-	} else {
-		rg, err := ctx.re.GetRuleGroupByURL(url)
-		if err == nil {
-			if rg != nil {
-				cmn.DebugMsg(cmn.DbgLvlDebug, "Executing rule group: %s", rg.GroupName)
-				// Set the environment variables for the rule group
-				rg.SetEnv(ctx.GetContextID())
-				// Execute all the rules in the rule group
-				executeActionRules(ctx, rg.GetActionRules(), wd)
-				// Clean up non-persistent rules
-				cmn.KVStore.DeleteByCID(ctx.GetContextID())
-			}
+	// Find all the rulesets that match the URL
+	rsl, err := ctx.re.GetAllRulesetByURL(url)
+	if err == nil && len(rsl) != 0 {
+		for _, rs := range rsl {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
+			// Execute all the rules in the ruleset
+			executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
+			// Clean up non-persistent rules
+			cmn.KVStore.DeleteByCID(ctx.GetContextID())
 		}
 	}
+
+	// Find all the rulesgroup that match the URL
+	rgl, err := ctx.re.GetAllRulesGroupByURL(url)
+	if err == nil && len(rgl) != 0 {
+		for _, rg := range rgl {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing rule group: %s", rg.GroupName)
+			// Set the environment variables for the rule group
+			rg.SetEnv(ctx.GetContextID())
+			// Execute all the rules in the rule group
+			executeActionRules(ctx, rg.GetActionRules(), wd)
+			// Clean up non-persistent rules
+			cmn.KVStore.DeleteByCID(ctx.GetContextID())
+		}
+	}
+
 }
 
 func executeActionRules(ctx *ProcessContext,
