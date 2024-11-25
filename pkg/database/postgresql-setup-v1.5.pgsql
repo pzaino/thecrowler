@@ -1022,6 +1022,15 @@ BEGIN
 END
 $$;
 
+-- Creates a Composite index for HTTPInfo between detaius_hash and created_at
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_combined') THEN
+        CREATE INDEX idx_httpinfo_combined ON HTTPInfo(details_hash, created_at DESC);
+    END IF;
+END
+$$;
+
 -- Optimize for 'ssl_info' key in HTTPInfo details
 DO $$
 BEGIN
@@ -1193,6 +1202,14 @@ BEGIN
 END
 $$;
 
+-- Creates a Composite index for the Events table between source_id and event_timestamp
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_events_combined') THEN
+        CREATE INDEX idx_events_combined ON Events(source_id, event_timestamp);
+    END IF;
+END
+$$;
 
 -- Indexes for the SourceInformationSeedIndex table ----------------------------
 

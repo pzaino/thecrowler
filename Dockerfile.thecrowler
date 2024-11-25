@@ -17,6 +17,7 @@ COPY ./autobuild.sh .
 COPY ./schemas/ ./schemas
 COPY ./rules/ ./rules
 COPY ./plugins/ ./plugins
+COPY ./support/ ./support
 
 # Ensure the script has correct permissions and check its presence
 RUN chmod +x autobuild.sh
@@ -89,6 +90,7 @@ COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 COPY --from=builder /app/rules /app/rules
 COPY --from=builder /app/plugins /app/plugins
+COPY --from=builder /app/support /app/support
 
 # Ensure the executable is runnable
 RUN chmod +x thecrowler

@@ -17,8 +17,13 @@
 package crawler
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -30,80 +35,95 @@ const (
 	p string = ".,?!:;\"'()[]{}<>"
 )
 
-// Function that returns false if the keyword is
-// an English language stop word, article, or preposition
-// and true otherwise
-func isKeyword(keyword string) bool {
-	// List of English language stop words, articles, and prepositions
-	stopWords := []string{"a", "about", "above", "across", "after", "afterwards", "again", "against",
-		"all", "almost", "alone", "along", "already", "also", "although", "always", "am", "among",
-		"amongst", "amongst", "amount", "an", "and", "another", "any", "anyhow", "anyone", "anything",
-		"anyway", "anywhere", "are", "around", "as", "at", "back", "be", "became", "because", "become",
-		"becomes", "becoming", "been", "before", "beforehand", "behind", "being", "below", "beside",
-		"besides", "between", "beyond", "bill", "both", "bottom", "but", "by", "call", "can",
-		"cannot", "can't", "co", "computer", "con", "could", "couldn't", "cry", "de", "describe",
-		"detail", "do", "doesn't", "done", "down", "due", "during", "each", "eg", "eight", "either", "eleven", "else",
-		"elsewhere", "empty", "enough", "etc", "even", "ever", "every", "everyone", "everything", "everywhere", "except", "few", "fifteen", "fifty",
-		"fill", "find", "fire", "first", "five", "for", "former", "formerly", "forty", "found", "four",
-		"from", "front", "full", "further", "get", "give", "go", "had", "has", "hasn't", "have",
-		"he", "hence", "her", "here", "hereafter", "hereby", "herein", "hereupon", "hers", "herself",
-		"him", "himself", "his", "how", "however", "hundred", "i", "ie", "if", "in", "inc", "indeed",
-		"interest", "into", "is", "it", "it's", "itself", "keep", "last", "latter", "latterly", "least",
-		"less", "ltd", "made", "many", "may", "me", "meanwhile", "might", "mill", "mine", "more",
-		"moreover", "most", "mostly", "move", "much", "must", "my", "myse", "name", "namely",
-		"neither", "never", "nevertheless", "next", "nine", "no", "nobody", "none", "noone", "nor",
-		"not", "nothing", "now", "nowhere", "of", "off", "often", "on", "once", "one", "only",
-		"onto", "or", "other", "others", "otherwise", "our", "ours", "ourselves", "out", "over",
-		"own", "part", "per", "perhaps", "please", "put", "rather", "re", "same", "see", "seem",
-		"seemed", "seeming", "seems", "serious", "several", "she", "should", "show", "side", "since",
-		"sincere", "six", "sixty", "so", "some", "somehow", "someone", "something", "sometime",
-		"sometimes", "somewhere", "still", "such", "system", "take", "ten", "than", "that", "the",
-		"their", "them", "themselves", "then", "thence", "there", "thereafter", "thereby",
-		"therefore", "therein", "thereupon", "these", "they", "thick", "thin", "third", "this",
-		"those", "though", "three", "through", "throughout", "thru", "thus", "to", "together",
-		"too", "top", "toward", "towards", "twelve", "twenty", "two", "un", "under", "until",
-		"up", "upon", "us", "very", "via", "was", "we", "well", "were", "what", "whatever",
-		"when", "whence", "whenever", "where", "whereafter", "whereas", "whereby", "wherein",
-		"whereupon", "wherever", "whether", "which", "while", "whither", "who", "whoever", "whole",
-		"whom", "whose", "why", "will", "with", "within", "without", "would", "yet", "you", "your",
-		"yours", "yourself", "yourselves", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "=", "-", "[", "]", "{", "}", "|", ";", ":", "'", "\"", ",", ".", "/", "<", ">", "?", "`", "~", "·", "！", "￥", "…", "（", "）", "—", "【", "】", "、", "；", "：", "‘", "’", "“", "”", "，", "。", "《", "》", "？", "·", "～", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", " ", "	", "\n", "\r", "\t", "　", " ", "	", "\n", "\r", "\t", "　", "||", "&&", "➤", "[];", "©"}
+var (
+	stopWords     map[string]map[string]struct{}
+	initStopWords sync.Once
+)
 
-	// Convert the keyword to lowercase
-	keyword = strings.ToLower(keyword) // Convert to lowercase
+// loadStopWords loads stop words from a JSON file into a map[string]map[string]struct{}
+func loadStopWords() {
+	stopWords = make(map[string]map[string]struct{}) // Initialize the outer map
 
-	// remove leading and trailing whitespace
-	keyword = strings.TrimSpace(keyword)
-
-	// remove trailing punctuation
-	keyword = strings.TrimRight(keyword, p)
-
-	// remove leading punctuation
-	keyword = strings.TrimLeft(keyword, p)
-
-	// basic checks:
-	if len(keyword) < 3 {
-		return false
+	// Get the current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to get current working directory: %v", err)
+		return
+	}
+	// If running tests, move two levels up
+	if filepath.Base(cwd) == "crawler" { // Adjust "crawler" to your module's directory name
+		cwd = filepath.Join(cwd, "../../")
 	}
 
-	// Check if the keyword is just a string of symbols
-	if strings.Trim(keyword, ".,?!:;\"'()[]{}<>=+-/\\_") == "" {
-		return false
-	}
+	// Construct the full path to stopWords.json
+	filePath := filepath.Join(cwd, "stopWords.json")
 
-	// Check if the keyword contains /* */ or <!-- -->
-	if keyword == "/*" || keyword == "*/" ||
-		keyword == "<!--" || keyword == "-->" {
-		return false
-	}
-
-	// Check if the keyword is in the stopWords list
-	for _, word := range stopWords {
-		if keyword == word {
-			return false
+	// Check if the file exists in the current directory or if it exists in the ./support directory
+	if _, err := os.Stat(filePath); err != nil {
+		filePath = filepath.Join(cwd, "support", "stopWords.json")
+		if _, err := os.Stat(filePath); err != nil {
+			fmt.Println("stopWords.json file not found")
+			cmn.DebugMsg(cmn.DbgLvlError, "stopWords.json file not found")
+			return // If the file does not exist, return
 		}
 	}
 
-	return true
+	// Open the stopWords.json file
+	file, err := os.Open(filePath) //nolint:gosec // We are not opening a file based on user input
+	if err != nil {
+		panic(fmt.Sprintf("Failed to open stopWords.json: %v", err))
+	}
+	defer file.Close() //nolint:errcheck // We cannot check for the returned value in a defer
+
+	// Decode the JSON into a temporary structure
+	temp := make(map[string][]string)
+	if err := json.NewDecoder(file).Decode(&temp); err != nil {
+		panic(fmt.Sprintf("Failed to decode stopWords.json: %v", err))
+	}
+
+	// Convert the temporary map to a map[string]map[string]struct{}
+	for lang, words := range temp {
+		stopWords[lang] = make(map[string]struct{}, len(words))
+		for _, word := range words {
+			stopWords[lang][word] = struct{}{}
+		}
+	}
+}
+
+// Function that returns false if the keyword is
+// an English language stop word, article, or preposition
+// and true otherwise
+func isKeyword(word, lang string) bool {
+	// Ensure stopWords is initialized
+	initStopWords.Do(loadStopWords)
+
+	if strings.TrimSpace(lang) == "" {
+		lang = "en" // Default to English
+	}
+
+	// Normalize the word: lowercase and trim spaces
+	word = strings.ToLower(strings.TrimSpace(word))
+
+	// Check basic conditions:
+	// 1. Word length should be at least 3
+	// 2. Word should not be a string of only symbols
+	// 3. Word should not contain comment markers
+	if len(word) < 3 ||
+		strings.Trim(word, ".,?!:;'\"()[]{}<>-=+/*\\_") == "" ||
+		word == "/*" || word == "*/" || word == "<!--" || word == "-->" {
+		return false
+	}
+
+	// Check if the language is supported
+	langWords, exists := stopWords[lang]
+	if !exists {
+		// If the language is not supported, treat all words as keywords
+		return true
+	}
+
+	// Check if the word is a stop word
+	_, isStopWord := langWords[word]
+	return !isStopWord
 }
 
 func extractFromMetaTag(metaTags map[string]string, tagName string) []string {
@@ -123,12 +143,20 @@ func extractFromMetaTag(metaTags map[string]string, tagName string) []string {
 			// remove leading and trailing whitespace
 			trimmedKeyword = strings.TrimSpace(trimmedKeyword)
 
+			if trimmedKeyword == "" {
+				// Skip empty keywords
+				continue
+			}
+
 			if len(trimmedKeyword) > 45 {
 				// Skip words that are too long
 				continue
 			}
 
-			if trimmedKeyword != "" && isKeyword(trimmedKeyword) {
+			// Check if a keyword starts with a # or a @ if so always store it
+			if strings.HasPrefix(trimmedKeyword, "#") || strings.HasPrefix(trimmedKeyword, "@") {
+				keywords = append(keywords, trimmedKeyword)
+			} else if isKeyword(trimmedKeyword, "") {
 				keywords = append(keywords, trimmedKeyword)
 			}
 		}
@@ -156,12 +184,19 @@ func extractContentKeywords(content string) []string {
 		// remove leading and trailing whitespace
 		trimmedWord = strings.TrimSpace(trimmedWord)
 
+		if trimmedWord == "" {
+			// Skip empty keywords
+			continue
+		}
+
 		if len(trimmedWord) > 45 {
 			// Skip words that are too long
 			continue
 		}
 
-		if trimmedWord != "" && isKeyword(trimmedWord) {
+		if strings.HasPrefix(trimmedWord, "#") || strings.HasPrefix(trimmedWord, "@") {
+			keywords = append(keywords, trimmedWord)
+		} else if isKeyword(trimmedWord, "") {
 			keywords = append(keywords, trimmedWord)
 		}
 	}
