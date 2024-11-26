@@ -63,6 +63,8 @@ type Crawler struct {
 	BrowsingMode          string        `json:"browsing_mode" yaml:"browsing_mode"`                     // Browsing type (e.g., "recursive", "human", "fuzzing")
 	MaxRetries            int           `json:"max_retries" yaml:"max_retries"`                         // Maximum number of retries
 	MaxRedirects          int           `json:"max_redirects" yaml:"max_redirects"`                     // Maximum number of redirects
+	MaxRequests           int           `json:"max_requests" yaml:"max_requests"`                       // Maximum number of requests
+	ResetCookiesPolicy    string        `json:"reset_cookies_policy" yaml:"reset_cookies_policy"`       // Cookies policy (e.g., "none", "on-request", "on-start", "when-done", "always")
 	CollectHTML           bool          `json:"collect_html" yaml:"collect_html"`                       // Whether to collect the HTML content or not
 	CollectImages         bool          `json:"collect_images" yaml:"collect_images"`                   // Whether to collect the images or not
 	CollectFiles          bool          `json:"collect_files" yaml:"collect_files"`                     // Whether to collect the files or not

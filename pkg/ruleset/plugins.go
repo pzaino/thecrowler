@@ -162,8 +162,10 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}) (
 
 	// Get the result
 	result, err := vm.Get("result")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+	if err != nil || !result.IsDefined() {
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		}
 		result = rval
 	}
 	resultMap, err := result.Export()
@@ -232,8 +234,16 @@ func setCrowlerJSAPI(vm *otto.Otto) error {
 	}
 
 	err = addJSAPIFetch(vm)
+	if err != nil {
+		return err
+	}
 
-	return err
+	err = addJSAPIConsoleLog(vm)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // addJSHTTPRequest adds the httpRequest function to the VM
@@ -528,6 +538,86 @@ func addJSAPIFetch(vm *otto.Otto) error {
 	})
 
 	return err
+}
+
+func addJSAPIConsoleLog(vm *otto.Otto) error {
+	// Implement the console object with log method
+	console, err := vm.Object(`console = {}`)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error creating console object:", err)
+		return err
+	}
+
+	// Implement console.log
+	err = console.Set("log", func(call otto.FunctionCall) otto.Value {
+		message := formatConsoleLog(extractArguments(call))
+		cmn.DebugMsg(cmn.DbgLvlInfo, message)
+		return otto.UndefinedValue()
+	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error setting console.log function:", err)
+		return err
+	}
+
+	// Implement console.error
+	err = console.Set("error", func(call otto.FunctionCall) otto.Value {
+		message := formatConsoleLog(extractArguments(call))
+		cmn.DebugMsg(cmn.DbgLvlError, message)
+		return otto.UndefinedValue()
+	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error setting console.error function:", err)
+		return err
+	}
+
+	// Optionally implement console.warn
+	err = console.Set("warn", func(call otto.FunctionCall) otto.Value {
+		message := formatConsoleLog(extractArguments(call))
+		cmn.DebugMsg(cmn.DbgLvlWarn, message)
+		return otto.UndefinedValue()
+	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error setting console.warn function:", err)
+		return err
+	}
+
+	return nil
+}
+
+// Helper function to extract arguments
+func extractArguments(call otto.FunctionCall) []interface{} {
+	var args []interface{}
+	for _, arg := range call.ArgumentList {
+		value, err := arg.Export()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error exporting argument:", err)
+			continue
+		}
+		args = append(args, value)
+	}
+	return args
+}
+
+// Helper function to format console messages
+func formatConsoleLog(args []interface{}) string {
+	var formattedArgs []string
+	for _, arg := range args {
+		var formattedArg string
+		switch v := arg.(type) {
+		case map[string]interface{}, []interface{}:
+			// Serialize objects and arrays to JSON
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				formattedArg = fmt.Sprintf("%v", v)
+			} else {
+				formattedArg = string(jsonBytes)
+			}
+		default:
+			formattedArg = fmt.Sprintf("%v", v)
+		}
+		formattedArgs = append(formattedArgs, formattedArg)
+	}
+	return strings.Join(formattedArgs, " ")
 }
 
 // String returns the Plugin as a string

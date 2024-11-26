@@ -186,6 +186,7 @@ func NewConfig() *Config {
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
+			ResetCookiesPolicy:    "never",
 			CollectHTML:           true,
 			CollectContent:        false,
 			CollectKeywords:       true,
@@ -579,6 +580,7 @@ func (c *Config) validateCrawler() {
 	c.setDefaultScreenshotMaxHeight()
 	c.setDefaultMaxRetries()
 	c.setDefaultMaxRedirects()
+	c.setDefaultResetCookiesPolicy()
 	c.setDefaultControl()
 }
 
@@ -663,6 +665,14 @@ func (c *Config) setDefaultMaxRetries() {
 func (c *Config) setDefaultMaxRedirects() {
 	if c.Crawler.MaxRedirects < 0 {
 		c.Crawler.MaxRedirects = 0
+	}
+}
+
+func (c *Config) setDefaultResetCookiesPolicy() {
+	if strings.TrimSpace(c.Crawler.ResetCookiesPolicy) == "" {
+		c.Crawler.ResetCookiesPolicy = "never"
+	} else {
+		c.Crawler.ResetCookiesPolicy = strings.ToLower(strings.TrimSpace(c.Crawler.ResetCookiesPolicy))
 	}
 }
 

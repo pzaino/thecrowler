@@ -327,6 +327,11 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 	}
 
+	if processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+		// Reset cookies after crawling
+		_ = processCtx.wd.DeleteAllCookies()
+	}
+
 	// Return the Selenium instance to the channel
 	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 
@@ -416,6 +421,13 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
+
+	if ctx.config.Crawler.ResetCookiesPolicy == "on_request" ||
+		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
+		ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		// Reset cookies on each request
+		_ = ctx.wd.DeleteAllCookies()
+	}
 
 	// Get the initial URL
 	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
@@ -1853,6 +1865,11 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			processCtx.Status.TotalDuplicates++
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
 			continue
+		}
+
+		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+			// Reset cookies on each request
+			_ = processCtx.wd.DeleteAllCookies()
 		}
 
 		// Process the job

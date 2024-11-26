@@ -368,6 +368,25 @@
             1000
           ]
         },
+        "reset_cookies_policy": {
+          "title": "CROWler Engine Reset Cookies Policy",
+          "description": "This is the policy that the CROWler Engine will use to reset cookies. For example, 'always' means the CROWler will reset cookies on every request and when done, 'never' means the CROWler will never reset cookies, 'on_start' means the CROWler will reset cookies only at the beginning of a crawling process.",
+          "type": "string",
+          "enum": [
+            "always",
+            "never",
+            "none",
+            "on_request",
+            "on_start",
+            "when_done",
+            ""
+          ],
+          "examples": [
+            "always",
+            "never",
+            "on_request"
+          ]
+        },
         "collect_html": {
           "title": "CROWler Engine Collect Page's HTML",
           "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source.",
