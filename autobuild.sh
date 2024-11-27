@@ -118,6 +118,22 @@ then
 fi
 
 if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "events" ] ||
+    [ "${build_objs}" == "" ];
+then
+    cmd_name="events"
+    CGO_ENABLED=0 go build ./services/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
+fi
+
+if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "healthCheck" ] ||
     [ "${build_objs}" == "ec" ] ||
     [ "${build_objs}" == "" ];

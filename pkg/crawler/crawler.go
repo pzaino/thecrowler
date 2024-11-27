@@ -2673,6 +2673,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 	default:
 		selectedLanguage = "['en-US', 'en']"
 	}
+
 	// Set the navigator properties
 	scripts := []string{
 		"Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
