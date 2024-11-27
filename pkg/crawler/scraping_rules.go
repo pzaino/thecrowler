@@ -65,6 +65,12 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url strin
 	data, err := executeScrapingRulesByURL(wd, ctx, url)
 	addScrapedDataToDocument(&scrapedDataDoc, data)
 
+	// Check if scrapedDataDOc already has "{" and "}" at the beginning and end
+	if strings.HasPrefix(scrapedDataDoc, "{") && strings.HasSuffix(scrapedDataDoc, "}") {
+		scrapedDataDoc = scrapedDataDoc[1:]
+		scrapedDataDoc = scrapedDataDoc[:len(scrapedDataDoc)-1]
+	}
+
 	return "{" + scrapedDataDoc + "}", err
 }
 
@@ -90,6 +96,11 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 			// Add the data to the document
 			data = strings.TrimSpace(data)
 			if data != "" && data != "{}" && data != strFalse && data != strTrue {
+				// Check if data has double "{{" and "}}" at the beginning and end
+				if strings.HasPrefix(data, "{{") && strings.HasSuffix(data, "}}") {
+					data = data[1:]
+					data = data[:len(data)-1]
+				}
 				addScrapedDataToDocument(&scrapedDataDoc, data)
 			}
 		}
@@ -182,8 +193,20 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		for _, step := range rg.PostProcessing {
 			ApplyPostProcessingStep(ctx, &step, &data)
 		}
+
+		// Check if data has double "{{" and "}}" at the beginning and end
+		if strings.HasPrefix(string(data), "{{") && strings.HasSuffix(string(data), "}}") {
+			data = data[1:]
+			data = data[:len(data)-1]
+		}
+
 		// Unmarshal the JSON data back into a map
-		err = json.Unmarshal(data, &scrapedDataDoc)
+		err = json.Unmarshal(data, &extractedData)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling JSON: %v, for JSON: %v", err, data)
+		}
+		// Convert the map back to JSON string
+		scrapedDataDoc = string(cmn.ConvertMapToJSON(extractedData))
 	}
 
 	// Reset the environment

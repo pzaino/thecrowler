@@ -85,3 +85,13 @@ func ConvertMapToJSON(input map[string]interface{}) []byte {
 	}
 	return output
 }
+
+// ConvertJSONToMap converts a JSON document to a map[string]interface{}
+func ConvertJSONToMap(input []byte) map[string]interface{} {
+	output := make(map[string]interface{})
+	err := json.Unmarshal(input, &output)
+	if err != nil {
+		DebugMsg(DbgLvlError, fmt.Sprintf("Error converting JSON to map: %s", err.Error()))
+	}
+	return output
+}

@@ -616,11 +616,16 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 		for _, step := range ruleGroup.PostProcessing {
 			ApplyPostProcessingStep(ctx, &step, &data)
 		}
-		// Unmarshal the JSON data back into a map
-		err := json.Unmarshal(data, &extractedData)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling collected data after post-processing: %v", err)
-			return extractedData, err
+
+		// Check if data has double "{{" and "}}" at the beginning and end
+		if strings.HasPrefix(string(data), "{{") && strings.HasSuffix(string(data), "}}") {
+			data = data[1:]
+			data = data[:len(data)-1]
+		}
+
+		// update the extractedData with the post-processed data
+		for k, v := range cmn.ConvertJSONToMap(data) {
+			extractedData[k] = v
 		}
 	}
 

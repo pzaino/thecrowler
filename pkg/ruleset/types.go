@@ -94,10 +94,11 @@ type EnvSetting struct {
 
 // EnvProperties represents the properties for the environment settings
 type EnvProperties struct {
-	Persistent bool   `json:"persistent" yaml:"persistent"`
-	Static     bool   `json:"static" yaml:"static"`
-	Type       string `json:"type" yaml:"type"`
-	Source     string `json:"source" yaml:"source"`
+	Persistent   bool   `json:"persistent" yaml:"persistent"`
+	Static       bool   `json:"static" yaml:"static"`
+	SessionValid bool   `json:"session_valid" yaml:"session_valid"`
+	Type         string `json:"type" yaml:"type"`
+	Source       string `json:"source" yaml:"source"`
 }
 
 // UnmarshalJSON implements custom unmarshaling logic for EnvSetting

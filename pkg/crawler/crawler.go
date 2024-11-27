@@ -127,6 +127,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.StartTime = time.Now()
 	processCtx.Status.PipelineRunning = 1
 	processCtx.SelInstance = sel
+	processCtx.CollectedCookies = make(map[string]interface{})
 
 	var err error
 	// Combine default configuration with the source configuration
@@ -329,7 +330,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 
 	if processCtx.config.Crawler.ResetCookiesPolicy == "always" {
 		// Reset cookies after crawling
-		_ = processCtx.wd.DeleteAllCookies()
+		_ = ResetSiteSession(processCtx)
 	}
 
 	// Return the Selenium instance to the channel
@@ -341,6 +342,9 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	// Pipeline has completed
 	processCtx.Status.EndTime = time.Now()
 	processCtx.Status.PipelineRunning = 2
+
+	// Clean up the KVStore for this session
+	cmn.KVStore.CleanSession(processCtx.GetContextID())
 
 	// Update the source state in the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
@@ -426,7 +430,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
 		ctx.config.Crawler.ResetCookiesPolicy == "always" {
 		// Reset cookies on each request
-		_ = ctx.wd.DeleteAllCookies()
+		_ = ResetSiteSession(ctx)
 	}
 
 	// Get the initial URL
@@ -1404,6 +1408,12 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
 	}
 
+	// Get Session Cookies
+	err := getCookies(ctx, &wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to get cookies: %v", err)
+	}
+
 	// Get the Mime Type of the page
 	docType := inferDocumentType(url, &wd)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
@@ -1419,7 +1429,28 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		processActionRules(&wd, ctx, url)
 	}
 
+	// Get Post-Actions Cookies (if any)
+	err = getCookies(ctx, &wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to get post-actions cookies: %v", err)
+	}
+
 	return wd, docType, nil
+}
+
+func getCookies(ctx *ProcessContext, wd *selenium.WebDriver) error {
+	// Get the cookies
+	cookies, err := (*wd).GetCookies()
+	if err != nil {
+		return fmt.Errorf("failed to get cookies: %v", err)
+	}
+
+	// Add new cookies to the context
+	for _, cookie := range cookies {
+		ctx.CollectedCookies[cookie.Name] = cookie.Value
+	}
+
+	return nil
 }
 
 func docTypeIsHTML(mime string) bool {
@@ -1869,7 +1900,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == "always" {
 			// Reset cookies on each request
-			_ = processCtx.wd.DeleteAllCookies()
+			_ = ResetSiteSession(processCtx)
 		}
 
 		// Process the job
@@ -2295,6 +2326,28 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	return err
 }
 
+// ResetSiteSession resets the site session by deleting all cookies and local storage
+func ResetSiteSession(ctx *ProcessContext) error {
+	// Clear cookies
+	for name := range ctx.CollectedCookies {
+		err := ctx.wd.DeleteCookie(name)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to delete cookie '%s': %v", name, err)
+		}
+	}
+
+	// Clear local storage
+	_, _ = ctx.wd.ExecuteScript("window.localStorage.clear();", nil)
+
+	// Clear session storage
+	_, _ = ctx.wd.ExecuteScript("window.sessionStorage.clear();", nil)
+
+	// Clear IndexedDB (if applicable)
+	_, _ = ctx.wd.ExecuteScript("indexedDB.databases().then(dbs => dbs.forEach(db => indexedDB.deleteDatabase(db.name)));", nil)
+
+	return nil
+}
+
 func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
@@ -2498,7 +2551,19 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
+		args = append(args, "--force-proxy-for-all")
 	}
+
+	// Avoid funny localizations/detections
+	args = append(args, "--disable-webrtc")
+	if browser == "chrome" || browser == "chromium" {
+		args = append(args, "--disable-geolocation")
+		args = append(args, "--disable-notifications")
+		args = append(args, "--disable-quic")
+		args = append(args, "--disable-blink-features=AutomationControlled")
+		args = append(args, "--disable-web-security")
+	}
+	args = append(args, "--disable-peer-to-peer")
 
 	args = append(args, "--disable-blink-features=AutomationControlled")
 
@@ -2508,8 +2573,10 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 
 	if browser == "chrome" || browser == "chromium" {
 		chromePrefs := map[string]interface{}{
-			"profile.default_content_settings.popups": 0,
 			"download.default_directory":              sel.Config.DownloadDir,
+			"download.prompt_for_download":            false, // Disable download prompt
+			"profile.default_content_settings.popups": 0,     // Suppress popups
+			"safebrowsing.enabled":                    true,  // Enable Safe Browsing
 		}
 		caps.AddChrome(chrome.Capabilities{
 			Args:  args,
@@ -2612,6 +2679,8 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 		"window.navigator.chrome = {runtime: {}}",
 		"Object.defineProperty(navigator, 'languages', {get: () => " + selectedLanguage + "})",
 		"Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
+		"Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})",        // Example device memory spoof
+		"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // Example cores
 	}
 	for _, script := range scripts {
 		_, err := (*wd).ExecuteScript(script, nil)

@@ -29,11 +29,12 @@ var KVStore *KeyValueStore
 
 // Properties defines the additional attributes for each key-value entry.
 type Properties struct {
-	Persistent bool   `yaml:"persistent"` // Whether the entry should be persistent
-	Static     bool   `yaml:"static"`     // Whether the entry should be static
-	Source     string `yaml:"source"`     // The source of the key-value entry
-	CtxID      string // Context ID for more specific identification
-	Type       string // The type of the stored value (e.g., "string", "[]string")
+	Persistent   bool   `yaml:"persistent"`    // Whether the entry should be persistent
+	Static       bool   `yaml:"static"`        // Whether the entry should be static
+	SessionValid bool   `yaml:"session_valid"` // Whether the entry should be valid for the session
+	Source       string `yaml:"source"`        // The source of the key-value entry
+	CtxID        string // Context ID for more specific identification
+	Type         string // The type of the stored value (e.g., "string", "[]string")
 }
 
 // Entry represents a key-value pair along with its properties.
@@ -56,13 +57,26 @@ func NewKeyValueStore() *KeyValueStore {
 }
 
 // NewKVStoreProperty initializes a new Properties object.
-func NewKVStoreProperty(persistent bool, static bool, source string, ctxID string, Type string) Properties {
+func NewKVStoreProperty(persistent bool, static bool, sessionValid bool, source string, ctxID string, Type string) Properties {
 	return Properties{
-		Persistent: persistent,
-		Static:     static,
-		Source:     source,
-		CtxID:      ctxID,
-		Type:       Type,
+		Persistent:   persistent,
+		Static:       static,
+		SessionValid: sessionValid,
+		Source:       source,
+		CtxID:        ctxID,
+		Type:         Type,
+	}
+}
+
+// NewKVStoreEmptyProperty initializes a new Properties object with default values.
+func NewKVStoreEmptyProperty() Properties {
+	return Properties{
+		Persistent:   false,
+		Static:       false,
+		SessionValid: true,
+		Source:       "",
+		CtxID:        "",
+		Type:         "",
 	}
 }
 
@@ -270,6 +284,34 @@ func (kv *KeyValueStore) DeleteAll() {
 	defer kv.mutex.Unlock()
 
 	kv.store = make(map[string]Entry)
+}
+
+// DeleteAllByCID clears all key-value pairs for a given context from the store.
+func (kv *KeyValueStore) DeleteAllByCID(ctxID string) {
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+	ctxID = strings.TrimSpace(ctxID)
+	for key := range kv.store {
+		if strings.HasSuffix(key, ":"+ctxID) {
+			delete(kv.store, key)
+		}
+	}
+}
+
+// CleanSession clears all key-value pairs that are session valid for the given CID.
+func (kv *KeyValueStore) CleanSession(ctxID string) {
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+	ctxID = strings.TrimSpace(ctxID)
+	for key := range kv.store {
+		if strings.HasSuffix(key, ":"+ctxID) && kv.store[key].Properties.SessionValid {
+			delete(kv.store, key)
+		}
+		// Clean up also the non-persistent entries that are not session valid
+		if strings.HasSuffix(key, ":"+ctxID) && !kv.store[key].Properties.Persistent && !kv.store[key].Properties.SessionValid {
+			delete(kv.store, key)
+		}
+	}
 }
 
 // AllKeys returns a slice of all keys (without the CIDs) in the store (ignoring context).
