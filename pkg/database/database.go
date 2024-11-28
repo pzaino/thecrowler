@@ -57,8 +57,9 @@ type Handler interface {
 // to interact with the database listener.
 type Listener interface {
 	Connect(c cfg.Config, minReconnectInterval, maxReconnectInterval time.Duration, eventCallback func(ev ListenerEventType, err error)) error
+	ConnectWithDBHandler(dbh *Handler, channel string) error
+	Ping() error
 	Close() error
-	NotifyChannel() <-chan Notification
 	Listen(channel string) error
 	Notify() <-chan Notification
 	UnlistenAll() error

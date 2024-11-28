@@ -1,7 +1,9 @@
 package common
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"math"
 )
 
@@ -32,4 +34,15 @@ func CalculateEntropy(data string) float64 {
 	}
 
 	return entropy
+}
+
+// GenerateSHA256 generates a SHA256 hash of the input string.
+func GenerateSHA256(data string) string {
+	// Generate SHA-256 hash
+	hash := sha256.Sum256([]byte(data))
+
+	// Convert hash to a hexadecimal string
+	hashString := hex.EncodeToString(hash[:])
+
+	return hashString
 }

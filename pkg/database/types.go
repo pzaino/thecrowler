@@ -54,6 +54,22 @@ type Source struct {
 	Status int
 }
 
+// Event represents the structure of the Events table
+type Event struct {
+	// ID is the unique identifier of the event.
+	ID string `json:"event_sha256"` // sha256 hash
+	// SourceID is the unique identifier of the source.
+	SourceID uint64 `json:"source_id"`
+	// Type is the type of the event.
+	Type string `json:"event_type"`
+	// Severity is the severity of the event.
+	Severity string `json:"event_severity"`
+	// Timestamp is the timestamp of the event.
+	Timestamp string `json:"event_timestamp"`
+	// Details is the details of the event.
+	Details map[string]interface{} `json:"details"`
+}
+
 // DefaultSourceCfgJSON is the default configuration for a source in JSON format.
 var DefaultSourceCfgJSON = []byte(`{"config":"default"}`)
 

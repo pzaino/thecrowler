@@ -172,9 +172,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
-	defer ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
-	defer UpdateSourceState(args.DB, args.Src.URL, err)
-	defer processCtx.WG.Done()
+	defer closeSession(processCtx, args, &sel, releaseSelenium, err)
 
 	// Crawl the initial URL and get the HTML content
 	var pageSource selenium.WebDriver
@@ -342,12 +340,89 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	// Pipeline has completed
 	processCtx.Status.EndTime = time.Now()
 	processCtx.Status.PipelineRunning = 2
+}
 
-	// Clean up the KVStore for this session
-	cmn.KVStore.CleanSession(processCtx.GetContextID())
+func closeSession(ctx *ProcessContext, args Pars, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance, err error) {
+	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
+	ctx.WG.Done()
 
-	// Update the source state in the database
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
+	// Log the end of the pipeline
+	ctx.Status.EndTime = time.Now()
+	UpdateSourceState(args.DB, args.Src.URL, err)
+
+	// Signal pipeline completion
+	if ctx.Status.PipelineRunning == 1 {
+		ctx.Status.PipelineRunning = 3
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
+	UpdateSourceState(args.DB, args.Src.URL, err)
+
+	// Create a database event to indicate the crawl has completed
+	if ctx.config.Crawler.CreateEventWhenDone {
+		err := CreateCrawlCompletedEvent(*ctx.db, ctx.source.ID, ctx.Status)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create crawl completed event in DB: %v", err)
+		}
+	}
+
+	// Optionally clean up session-specific data
+	cmn.KVStore.CleanSession(ctx.GetContextID())
+
+	// Close the Selenium WebDriver if still open
+	if ctx.wd != nil {
+		_ = ctx.wd.Close()
+	}
+
+	// Release other resources in ctx
+	ctx.linksMutex.Lock()
+	ctx.newLinks = nil         // Clear the slice to release memory
+	ctx.visitedLinks = nil     // Clear the map to release memory
+	ctx.CollectedCookies = nil // Clear cookies
+	ctx.linksMutex.Unlock()
+
+	// Set the context object to nil
+	*ctx = ProcessContext{} // Reset the struct
+	ctx = nil               // Signal that ctx is no longer needed
+}
+
+// CreateCrawlCompletedEvent creates a new event in the database to indicate that the crawl has completed
+func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) error {
+	// Convert Status into a JSON string
+	statusJSON, err := json.Marshal(status)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "marshalling status to JSON: %v", err)
+	}
+	var statusMap map[string]interface{}
+	err = json.Unmarshal(statusJSON, &statusMap)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling status to map: %v", err)
+	}
+
+	// Create a new event
+	event := cdb.Event{
+		SourceID: sourceID,
+		Type:     "crawl_completed",
+		Severity: "info",
+		Details:  statusMap,
+	}
+
+	// Generate a unique ID for the event
+	event.ID = cdb.GenerateEventUID(event)
+
+	// Use ctx.Status.EndTime for event_timestamp
+	eventTimestamp := status.EndTime
+
+	// Use PostgreSQL placeholders ($1, $2, etc.) and include event_timestamp
+	_, err = db.Exec(`
+		INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		event.ID, event.SourceID, event.Type, event.Severity, eventTimestamp, cmn.ConvertMapToString(event.Details))
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting event into database: %v", err)
+		return err
+	}
+
+	return err
 }
 
 // NewProcessContext creates a new process context

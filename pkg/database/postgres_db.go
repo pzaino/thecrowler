@@ -17,6 +17,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -225,6 +226,8 @@ type PostgresListener struct {
 	listener *pq.Listener
 	connStr  string
 	notify   chan Notification
+	conn     *sql.Conn
+	done     chan struct{}
 }
 
 // Connect connects to the database
@@ -276,27 +279,90 @@ func (l *PostgresListener) Connect(c cfg.Config, minReconnectInterval, maxReconn
 	return nil
 }
 
+// ConnectWithDBHandler connects to the database with a handler
+func (l *PostgresListener) ConnectWithDBHandler(handler *Handler, channel string) error {
+	postgresHandler, ok := (*handler).(*PostgresHandler)
+	if !ok {
+		return fmt.Errorf("failed to cast db handler to PostgresHandler")
+	}
+
+	// Obtain a connection from dbHandler
+	conn, err := postgresHandler.db.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to create connection for listener: %w", err)
+	}
+
+	// Save the connection for future use
+	l.conn = conn
+
+	// Execute LISTEN on the connection
+	_, err = conn.ExecContext(context.Background(), fmt.Sprintf("LISTEN %s", channel))
+	if err != nil {
+		return fmt.Errorf("failed to execute LISTEN on channel '%s': %w", channel, err)
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Listening on channel: %s", channel)
+
+	// Spawn a goroutine to monitor notifications
+	go l.pollNotifications()
+
+	return nil
+}
+
+// Ping checks if the database connection is still alive
+func (l *PostgresListener) Ping() error {
+	if l.conn != nil {
+		return l.conn.PingContext(context.Background())
+	}
+	if l.listener != nil {
+		return l.listener.Ping()
+	}
+
+	return fmt.Errorf("listener is not connected")
+}
+
+// pollNotifications continuously polls for notifications
+func (l *PostgresListener) pollNotifications() {
+	for {
+		select {
+		case <-l.done:
+			return
+		default:
+			// Use the connection to wait for notifications
+			if _, err := l.conn.ExecContext(context.Background(), "SELECT 1"); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+				continue
+			}
+
+			rows, err := l.conn.QueryContext(context.Background(), "SELECT pg_notification_queue_usage()")
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+				continue
+			}
+
+			defer rows.Close() //nolint:errcheck // We can't check returned error when using defer
+			for rows.Next() {
+				var channel, payload string
+				if err := rows.Scan(&channel, &payload); err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+					continue
+				}
+				l.notify <- &PostgresNotification{channel: channel, extra: payload}
+			}
+		}
+	}
+}
+
 // Close closes the database connection
 func (l *PostgresListener) Close() error {
+	close(l.done)
+	if l.conn != nil {
+		return l.conn.Close()
+	}
 	if l.listener != nil {
 		return l.listener.Close()
 	}
 	return nil
-}
-
-// NotifyChannel returns a channel to receive notifications
-func (l *PostgresListener) NotifyChannel() <-chan Notification {
-	notifyChan := make(chan Notification)
-	go func() {
-		for n := range l.listener.Notify {
-			notifyChan <- &PostgresNotification{
-				channel: n.Channel,
-				extra:   n.Extra,
-			}
-		}
-		close(notifyChan)
-	}()
-	return notifyChan
 }
 
 // Listen listens for notifications on a channel
@@ -315,7 +381,7 @@ func (l *PostgresListener) Listen(channel string) error {
 
 // Notify returns a channel to receive notifications
 func (l *PostgresListener) Notify() <-chan Notification {
-	return l.NotifyChannel()
+	return l.notify
 }
 
 // UnlistenAll unsubscribes from all channels

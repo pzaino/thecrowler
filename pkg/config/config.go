@@ -195,6 +195,8 @@ func NewConfig() *Config {
 			CollectImages:         false,
 			CollectPerfMetrics:    true,
 			CollectPageEvents:     true,
+			CollectLinks:          true,
+			CreateEventWhenDone:   false,
 			MaxRetries:            0,
 			MaxRedirects:          3,
 			ReportInterval:        1,

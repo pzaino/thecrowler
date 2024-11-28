@@ -1381,11 +1381,12 @@ BEGIN
     PERFORM pg_notify(
         'new_event',
         json_build_object(
-            'event_sha256', NEW.event_sha256,
-            'event_type', NEW.event_type,
-            'event_severity', NEW.event_severity,
-            'event_timestamp', NEW.event_timestamp,
-            'details', NEW.details
+            'event_sha256', COALESCE(NEW.event_sha256, ''),
+            'source_id', COALESCE(NEW.source_id, 0),
+            'event_type', COALESCE(NEW.event_type, ''),
+            'event_severity', COALESCE(NEW.event_severity, ''),
+            'event_timestamp', COALESCE(NEW.event_timestamp, NOW()),
+            'details', COALESCE(NEW.details, '{}'::jsonb)
         )::TEXT
     );
     RETURN NEW;
@@ -1885,3 +1886,9 @@ ALTER TABLE categories OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
+
+-- Grant permissions to the user on the pg_notify table
+GRANT USAGE ON SCHEMA public TO :CROWLER_DB_USER;
+GRANT SELECT ON pg_notify TO :CROWLER_DB_USER;
+GRANT INSERT, SELECT ON events TO :CROWLER_DB_USER;
+GRANT EXECUTE ON FUNCTION notify_new_event() TO :CROWLER_DB_USER;

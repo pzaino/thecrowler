@@ -427,6 +427,16 @@
           "description": "This is a flag that tells the CROWler to collect the events of a website. This is useful for Cybersecurity applications, given it collects all page's events, included JavaScript events like calling-back home etc. This collection is automatic and for each page of a Source.",
           "type": "boolean"
         },
+        "collect_links": {
+          "title": "CROWler Engine Collect Page's Links",
+          "description": "This is a flag that tells the CROWler to collect the links of a website. This is useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source.",
+          "type": "boolean"
+        },
+        "create_event_when_done": {
+          "title": "CROWler Engine Create Event When Done",
+          "description": "This is a flag that tells the CROWler to create an event when the crawling process is done. This is useful for monitoring purposes.",
+          "type": "boolean"
+        },
         "control": {
           "title": "CROWler Engine (internal) Control API Configuration",
           "description": "This is the CROWler's Control API configuration. The Control API is an internal management API that resides within the CROWler Engine. Its primary purpose is to allow internal tools, like health checks, to monitor and manage the operational status of the CROWler Engine (e.g., starting, stopping, or checking the status of crawls). It is used to control and manage engine-level operations. Important: The Control API has nothing to do with the General API (configured using the api section). The General API is an external-facing interface, exposed to interact with The CROWler to make data requests or post new sources. This section specifically configures the Control API, which operates within the CROWler Engine itself. Unlike the General API, which is designed for external interactions, the Control API is part of the CROWler’s Engine internal management system, and is not an external service.",

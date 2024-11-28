@@ -73,8 +73,10 @@ type Crawler struct {
 	CollectMetaTags       bool          `json:"collect_metatags" yaml:"collect_metatags"`               // Whether to collect the metatags or not
 	CollectPerfMetrics    bool          `json:"collect_performance" yaml:"collect_performance"`         // Whether to collect the performance metrics or not
 	CollectPageEvents     bool          `json:"collect_events" yaml:"collect_events"`                   // Whether to collect the page events or not
+	CollectLinks          bool          `json:"collect_links" yaml:"collect_links"`                     // Whether to collect the links or not
 	ReportInterval        int           `json:"report_time" yaml:"report_time"`                         // Time to wait before sending the report (in minutes)
 	CheckForRobots        bool          `json:"check_for_robots" yaml:"check_for_robots"`               // Whether to check for robots.txt or not
+	CreateEventWhenDone   bool          `json:"create_event_when_done" yaml:"create_event_when_done"`   // Whether to create an event when the crawling is done or not
 	Control               ControlConfig `json:"control" yaml:"control"`                                 // Control/COnsole internal API
 }
 

@@ -20,15 +20,6 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
-// Event struct to hold the event data
-type Event struct {
-	EventSHA256    string `json:"event_sha256"`
-	EventType      string `json:"event_type"`
-	EventSeverity  string `json:"event_severity"`
-	EventTimestamp string `json:"event_timestamp"`
-	Details        string `json:"details"`
-}
-
 var (
 	configFile  *string
 	config      cfg.Config
@@ -160,6 +151,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 func listenForEvents(db *cdb.Handler) {
 	// Listener for PostgreSQL notifications
 	listener := (*db).NewListener()
+
 	// _ = event
 	err := listener.Connect(cfg.Config{}, 10, 90, func(_ cdb.ListenerEventType, err error) {
 		if err != nil {
@@ -170,6 +162,14 @@ func listenForEvents(db *cdb.Handler) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to connect to the database listener: %v", err)
 		return
 	}
+	/*
+		// Connect using the new ConnectWithDBHandler method
+		err := listener.ConnectWithDBHandler(db, "new_event")
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to connect to the database listener: %v", err)
+			return
+		}
+	*/
 	defer listener.Close() //nolint:errcheck // We can't check returned error when using defer
 
 	err = listener.Listen("new_event")
@@ -178,6 +178,12 @@ func listenForEvents(db *cdb.Handler) {
 		return
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Listening for new events...")
+
+	// Verify connection
+	if err := listener.Ping(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to ping the listener: %v", err)
+		return
+	}
 
 	// Graceful shutdown on interrupt
 	stop := make(chan os.Signal, 1)
@@ -206,7 +212,7 @@ func listenForEvents(db *cdb.Handler) {
 
 // Handle the notification received
 func handleNotification(payload string) {
-	var event Event
+	var event cdb.Event
 	err := json.Unmarshal([]byte(payload), &event)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification payload: %v", err)
