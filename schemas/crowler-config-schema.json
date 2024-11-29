@@ -715,6 +715,70 @@
             "examples": [
               "http://proxy:port"
             ]
+          },
+          "sys_manager": {
+            "title": "CROWler VDI System Manager",
+            "description": "This configures the VDI System Manager API. It is the API that the CROWler will use to manage the VDI. This is used to configure system-wide proxy settings, manage the VDI's resources, and perform other system-level tasks.",
+            "type": "object",
+            "properties": {
+              "port": {
+                "title": "CROWler VDI System Manager Port",
+                "description": "This is the port that the VDI System Manager will use to communicate with the outside world.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "timeout": {
+                "title": "CROWler VDI System Manager Timeout",
+                "description": "This is the timeout for the VDI System Manager. It is the maximum amount of time that the CROWler will wait for the VDI System Manager to respond.",
+                "type": "integer",
+                "minimum": 10
+              },
+              "sslmode": {
+                "title": "CROWler VDI System Manager SSL Mode",
+                "description": "This is the sslmode switch for the VDI System Manager. Use 'enable' to make the VDI System Manager use HTTPS.",
+                "type": "string",
+                "enum": [
+                  "enable",
+                  "disable",
+                  ""
+                ],
+                "examples": [
+                  "enable",
+                  "disable"
+                ]
+              },
+              "cert_file": {
+                "title": "CROWler VDI System Manager Certificate File",
+                "description": "This is the certificate file for the VDI System Manager HTTPS protocol.",
+                "type": "string"
+              },
+              "key_file": {
+                "title": "CROWler VDI System Manager Key File",
+                "description": "This is the key file for the VDI System Manager HTTPS certificates.",
+                "type": "string"
+              },
+              "rate_limit": {
+                "title": "CROWler VDI System Manager Requests Rate Limit",
+                "description": "This is the rate limit for the VDI System Manager. It is the maximum number of requests that the CROWler VDI System Manager will accept per second. You can use the ExprTerpreter language to set the rate limit.",
+                "type": "string"
+              },
+              "readheader_timeout": {
+                "title": "CROWler VDI System Manager Readheader Timeout",
+                "type": "integer",
+                "minimum": 10,
+                "description": "This is the readheader timeout (in seconds) for the VDI System Manager. It is the maximum amount of time that the CROWler will wait for the VDI System Manager to respond.",
+                "examples": [
+                  30
+                ]
+              },
+              "write_timeout": {
+                "title": "CROWler VDI System Manager Write Timeout",
+                "type": "integer",
+                "minimum": 10,
+                "description": "This is the write timeout (in seconds) for the VDI System Manager. It is the maximum amount of time that the CROWler will wait for the VDI System Manager to respond."
+              }
+            }
           }
         },
         "additionalProperties": false,
@@ -744,6 +808,78 @@
         "type": "string",
         "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$"
       }
+    },
+
+    "events": {
+      "title": "CROWler Events Manager Configuration",
+      "description": "This is the Events Manager configuration section, it is used to configure the Events Manager",
+      "type": "object",
+      "properties": {
+        "host": {
+          "title": "CROWler Events Manager Host",
+          "description": "This is the host that the Events Manager will use to communicate with the outside world.",
+          "type": "string",
+          "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$"
+        },
+        "port": {
+          "title": "CROWler Events Manager Port",
+          "description": "This is the port that the Events Manager will use to communicate with the outside world.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "timeout": {
+          "title": "CROWler Events Manager Timeout",
+          "description": "This is the timeout for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond.",
+          "type": "integer",
+          "minimum": 10
+        },
+        "sslmode": {
+          "title": "CROWler Events Manager SSL Mode",
+          "description": "This is the sslmode switch for the Events Manager. Use 'enable' to make the Events Manager use HTTPS.",
+          "type": "string",
+          "enum": [
+            "enable",
+            "disable",
+            ""
+          ],
+          "examples": [
+            "enable",
+            "disable"
+          ]
+        },
+        "cert_file": {
+          "title": "CROWler Events Manager Certificate File",
+          "description": "This is the certificate file for the Events Manager HTTPS protocol.",
+          "type": "string"
+        },
+        "key_file": {
+          "title": "CROWler Events Manager Key File",
+          "description": "This is the key file for the Events Manager HTTPS certificates.",
+          "type": "string"
+        },
+        "rate_limit": {
+          "title": "CROWler Events Manager Requests Rate Limit",
+          "description": "This is the rate limit for the Events Manager. It is the maximum number of requests that the CROWler Events Manager will accept per second. You can use the ExprTerpreter language to set the rate limit.",
+          "type": "string"
+        },
+        "readheader_timeout": {
+          "title": "CROWler Events Manager Readheader Timeout",
+          "type": "integer",
+          "minimum": 10,
+          "description": "This is the readheader timeout (in seconds) for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond.",
+          "examples": [
+            30
+          ]
+        },
+        "write_timeout": {
+          "title": "CROWler Events Manager Write Timeout",
+          "type": "integer",
+          "minimum": 10,
+          "description": "This is the write timeout (in seconds) for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond."
+        }
+      },
+      "additionalProperties": false
     },
 
     "image_storage": {

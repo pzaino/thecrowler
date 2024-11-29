@@ -1,4 +1,5 @@
-package ruleset
+// Package plugin provides the plugin functionality for the CROWler.
+package plugin
 
 import (
 	"testing"

@@ -31,17 +31,13 @@ WORKDIR /app
 # Create a non-root user and switch to it
 RUN adduser -D apiuser
 
-COPY --from=builder /app/bin/api /app/
-COPY --from=builder /app/bin/addSource /app/
-COPY --from=builder /app/bin/removeSource /app/
+COPY --from=builder /app/bin/events /app/
 COPY --from=builder /app/bin/healthCheck /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 
 # Ensure the executables have correct permissions
 RUN chmod +x api
-RUN chmod +x addSource
-RUN chmod +x removeSource
 RUN chmod +x healthCheck
 
 # Create the data directory with appropriate permissions
@@ -56,4 +52,4 @@ EXPOSE 8080
 
 # Command to run the executable
 WORKDIR /app
-CMD ["./api"]
+CMD ["./events"]

@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
 // mockRuleset generates a basic Ruleset for testing purposes
@@ -959,8 +961,8 @@ func TestCountRules(t *testing.T) {
 func TestCountPlugins(t *testing.T) {
 	re := &RuleEngine{
 		Rulesets: []Ruleset{},
-		JSPlugins: JSPluginRegister{
-			registry: map[string]JSPlugin{
+		JSPlugins: plg.JSPluginRegister{
+			Registry: map[string]plg.JSPlugin{
 				"plugin1": {},
 				"plugin2": {},
 			},
@@ -977,8 +979,8 @@ func TestCountPlugins(t *testing.T) {
 func TestCountPluginsWithEmptyRegistry(t *testing.T) {
 	re := &RuleEngine{
 		Rulesets: []Ruleset{},
-		JSPlugins: JSPluginRegister{
-			registry: map[string]JSPlugin{},
+		JSPlugins: plg.JSPluginRegister{
+			Registry: map[string]plg.JSPlugin{},
 		},
 	}
 

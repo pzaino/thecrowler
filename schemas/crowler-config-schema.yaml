@@ -569,6 +569,57 @@ properties:
           description: "This is the proxy configuration for the VDI. It is the proxy that the VDI will use to connect to the internet. This is useful for bypassing firewalls or accessing websites that are blocked in your country."
           type: "string"
           examples: "http://proxy:8080"
+        sys_manager:
+          title: "CROWler VDI System Manager"
+          description: "This is the system manager for the VDI configuration. It tells the CROWler how to reach the VDI system manager."
+          type: "object"
+          properties:
+            port:
+              title: "CROWler VDI System Manager Port"
+              description: "This is the port that the VDI system manager will use to connect to the CROWler. It is the port that the VDI system manager will use to connect to the CROWler."
+              type: "integer"
+              minimum: "1"
+              maximum: "65535"
+            timeout:
+              title: "CROWler VDI System Manager Timeout"
+              description: "This is the timeout for the VDI system manager. It is the maximum amount of time that the CROWler will wait for the VDI system manager to respond."
+              type: "integer"
+              minimum: "10"
+            ssl_mode:
+              title: "CROWler VDI System Manager SSL Mode"
+              description: "This is the sslmode that the VDI system manager will use to connect to the CROWler. It is the sslmode that the VDI system manager will use to connect to the CROWler."
+              type: "string"
+              enum:
+              - "enable"
+              - "disable"
+              - ""
+              examples:
+              - "enable"
+              - "disable"
+            cert_file:
+              title: "CROWler VDI System Manager Certificate File"
+              description: "This is the certificate file for the VDI system manager HTTPS protocol."
+              type: "string"
+            key_file:
+              title: "CROWler VDI System Manager Key File"
+              description: "This is the key file for the VDI system manager HTTPS certificates."
+              type: "string"
+            rate_limit:
+              title: "CROWler VDI System Manager Requests Rate Limit"
+              description: "This is the rate limit for the VDI system manager. It is the maximum number of requests that the CROWler VDI system manager will accept per second. You can use the ExprTerpreter language to set the rate limit."
+              type: "string"
+            readheader_timeout:
+              title: "CROWler VDI System Manager Readheader Timeout"
+              type: "integer"
+              minimum: "10"
+              description: "This is the readheader timeout (in seconds) for the VDI system manager. It is the maximum amount of time that the CROWler will wait for the VDI system manager to respond."
+              examples:
+              - "30"
+            write_timeout:
+              title: "CROWler VDI System Manager Write Timeout"
+              type: "integer"
+              minimum: "10"
+              description: "This is the write timeout (in seconds) for the VDI system manager. It is the maximum amount of time that the CROWler will wait for the VDI system manager to respond."
       additionalProperties: "false"
       required:
       - "type"
@@ -601,6 +652,62 @@ properties:
         description: "This is the timeout for the Prometheus metrics exporter. It is the maximum amount of time that the CROWler will wait for the Prometheus metrics exporter to respond."
         type: "integer"
         minimum: "10"
+        examples:
+        - "30"
+
+  events:
+    title: "CROWler Events Manager Configuration"
+    description: "This is the Events Manager configuration section, it is used to configure the Events Manager"
+    type: "object"
+    properties:
+      host:
+        title: "CROWler Events Manager Host"
+        description: "This is the Events Manager host to which each CROWler engine instance will send their events."
+        type: "string"
+        pattern: "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$"
+      port:
+        title: "CROWler Events Manager Host Port"
+        description: "This is the port of the Events Manager host to which each CROWler engine instance will send their events."
+        type: "integer"
+        minimum: "1"
+        maximum: "65535"
+        examples:
+        - "9090"
+      timeout:
+        title: "CROWler Events Manager Timeout"
+        description: "This is the timeout for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond."
+        type: "integer"
+        minimum: "10"
+        examples:
+        - "30"
+      sslmode:
+        title: "CROWler Events Manager SSL Mode"
+        description: "This is the sslmode switch for the Events Manager. Use 'enable' to make the Events Manager use HTTPS."
+        type: "string"
+        enum:
+        - "enable"
+        - "disable"
+        - ""
+        examples:
+        - "enable"
+        - "disable"
+      cert_file:
+        title: "CROWler Events Manager Certificate File"
+        description: "This is the certificate file for the Events Manager HTTPS protocol."
+        type: "string"
+      key_file:
+        title: "CROWler Events Manager Key File"
+        description: "This is the key file for the Events Manager HTTPS certificates."
+        type: "string"
+      rate_limit:
+        title: "CROWler Events Manager Requests Rate Limit"
+        description: "This is the rate limit for the Events Manager. It is the maximum number of requests that the CROWler Events Manager will accept per second. You can use the ExprTerpreter language to set the rate limit."
+        type: "string"
+      readheader_timeout:
+        title: "CROWler Events Manager Readheader Timeout"
+        type: "integer"
+        minimum: "10"
+        description: "This is the readheader timeout (in seconds) for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond."
         examples:
         - "30"
 
@@ -665,6 +772,7 @@ properties:
     required:
     - "path"
     - "type"
+
   file_storage:
     title: "CROWler general Files Storage access Configuration"
     description: "This is the File Storage configuration section, it is used to tell the CROWler's Engine how and where to store collected files."
@@ -726,6 +834,7 @@ properties:
     required:
     - "path"
     - "type"
+
   http_headers:
     title: "CROWler HTTP Headers collection Configuration"
     description: "This is the HTTP Headers collection configuration section, it is used to tell the CROWler's Engine to collect HTTP headers and how when making requests to websites."
@@ -777,6 +886,7 @@ properties:
               type: "string"
           additionalItems: "false"
     additionalProperties: "false"
+
   network_info:
     title: "CROWler Network Information collection Configuration"
     description: "This is the network information collection configuration section, it is used to tell the CROWler's Engine how and what network information we want to collect for each discovered entity within the crawling of a Source. This section is also used to tell the CROWler if we want to detect network vulnerabilities, open ports, etc. Collect Whois information, DNS information, and more."
@@ -1080,12 +1190,14 @@ properties:
         required:
         - "enabled"
     additionalProperties: "false"
+
   rulesets_schema_path:
     title: "CROWler Ruleset JSON Schema location Configuration"
     description: "This is the path to the rulesets schema. It is the path to the schema that the CROWler will use to validate the rulesets."
     type: "string"
     examples:
     - "./schemas/rulesets.schema.json"
+
   rulesets:
     title: "CROWler Rulesets locations Configuration"
     description: "This is the rulesets load configuration section, it is used to tell the CROWler where and how to load all the Rulesets we want to use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl."
@@ -1164,6 +1276,7 @@ properties:
       - "type"
     minItems: "1"
     uniqueItems: "true"
+
   plugins:
     title: "CROWler Plugins locations Configuration"
     description: "This is the Plugins configuration section, it is used to tell the CROWler's Engine which plugins we want to use and provide the path to the plugins. Plugins are used to extend the CROWler's capabilities, for example, to detect phishing URLs, detect malware, detect network vulnerabilities, etc."
@@ -1245,6 +1358,7 @@ properties:
               type: "integer"
               minimum: "0"
           additionalProperties: "false"
+
   external_detection:
     title: "CROWler External Detection Services Configuration"
     description: "This is the External Detection configuration section, it is used to tell the CROWler's Engine which external detection services we want to use and provide credentials to access them. External detection services are provided by VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs. They can be accessed using the CROWler's Detection Rules."
@@ -1408,16 +1522,19 @@ properties:
         required:
         - "api_key"
     additionalProperties: "false"
+
   os:
     title: "CROWler (internal) Platform OS Configuration"
     description: "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually."
     type: "string"
+
   debug_level:
     title: "CROWler Debug Level Configuration"
     description: "This is the debug level for the CROWler. It is the level of debugging that the CROWler will use to log messages. The higher the level, the more messages will be logged. Don't set or use 0 for NO debug messages."
     type: "integer"
     examples:
     - "1"
+
 additionalProperties: "false"
 oneOf:
 - title: "Remote Configuration Mode"

@@ -545,7 +545,7 @@ func (re *RuleEngine) CountRules() int {
 
 // CountPlugins returns the number of loaded Plugins
 func (re *RuleEngine) CountPlugins() int {
-	return len(re.JSPlugins.registry)
+	return len(re.JSPlugins.Registry)
 }
 
 /// --- Searching --- ///

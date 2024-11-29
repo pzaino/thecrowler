@@ -30,6 +30,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 
 	"github.com/qri-io/jsonschema"
 	"gopkg.in/yaml.v2"
@@ -248,7 +249,7 @@ func LoadRulesFromFile(files []string) (*RuleEngine, error) {
 	return NewRuleEngine("", rules), nil
 }
 
-func loadPluginsFromConfig(pluginRegistry *JSPluginRegister,
+func loadPluginsFromConfig(pluginRegistry *plg.JSPluginRegister,
 	config cfg.PluginConfig) error {
 	if len(config.Path) == 0 {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Skipping Plugins loading: empty plugins path")
@@ -263,15 +264,15 @@ func loadPluginsFromConfig(pluginRegistry *JSPluginRegister,
 
 	// Register the plugins
 	for _, plugin := range plugins {
-		pluginRegistry.Register(plugin.name, *plugin)
+		pluginRegistry.Register(plugin.Name, *plugin)
 	}
 
 	return nil
 }
 
 // BulkLoadPlugins loads the plugins from the specified file and returns a pointer to the created JSPlugin.
-func BulkLoadPlugins(config cfg.PluginConfig) ([]*JSPlugin, error) {
-	var plugins []*JSPlugin
+func BulkLoadPlugins(config cfg.PluginConfig) ([]*plg.JSPlugin, error) {
+	var plugins []*plg.JSPlugin
 
 	// Construct the URL to download the plugins from
 	if config.Host == "" {
@@ -296,8 +297,8 @@ func BulkLoadPlugins(config cfg.PluginConfig) ([]*JSPlugin, error) {
 // loadPluginsFromRemote loads plugins from a distribution server either on the local net or the
 // internet.
 // TODO: This function needs improvements, it's not very efficient (a server call for each plugin)
-func loadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
-	var plugins []*JSPlugin
+func loadPluginsFromRemote(config cfg.PluginConfig) ([]*plg.JSPlugin, error) {
+	var plugins []*plg.JSPlugin
 
 	// Construct the URL to download the plugins from
 	for _, path := range config.Path {
@@ -316,7 +317,7 @@ func loadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 		// Extract plugin name
 		pluginName := getPluginName(string(pluginBody), path)
 
-		plugin := &JSPlugin{name: pluginName, script: pluginBody}
+		plugin := &plg.JSPlugin{Name: pluginName, Script: pluginBody}
 		plugins = append(plugins, plugin)
 	}
 
@@ -324,7 +325,7 @@ func loadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 }
 
 // LoadPluginFromLocal loads the plugin from the specified file and returns a pointer to the created JSPlugin.
-func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
+func LoadPluginFromLocal(path string) ([]*plg.JSPlugin, error) {
 	// Check if path is wild carded
 	var files []string
 	var err error
@@ -342,7 +343,7 @@ func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
 	}
 
 	// Load the plugins from the specified files list
-	var plugins []*JSPlugin
+	var plugins []*plg.JSPlugin
 	for _, file := range files {
 		// Check if the file exists
 		if _, err := os.Stat(file); os.IsNotExist(err) {
@@ -360,7 +361,7 @@ func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
 
 		// I am assuming that the response body is actually a plugin
 		// this may need reviewing later on.
-		plugin := &JSPlugin{name: pluginName, script: string(pluginBody)}
+		plugin := &plg.JSPlugin{Name: pluginName, Script: string(pluginBody)}
 		plugins = append(plugins, plugin)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Loaded plugin %s from file %s", pluginName, file)
 	}

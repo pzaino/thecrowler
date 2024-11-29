@@ -22,14 +22,16 @@ import (
 	"time"
 
 	"github.com/qri-io/jsonschema"
+
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
 // RuleEngine represents the top-level structure for the rule engine
 type RuleEngine struct {
-	Schema          *jsonschema.Schema `json:"schema" yaml:"schema"`
-	Rulesets        []Ruleset          `json:"rulesets" yaml:"rulesets"`
-	DetectionConfig DetectionConfig    `json:"detection_config" yaml:"detection_config"`
-	JSPlugins       JSPluginRegister   `json:"js_plugins" yaml:"js_plugins"`
+	Schema          *jsonschema.Schema   `json:"schema" yaml:"schema"`
+	Rulesets        []Ruleset            `json:"rulesets" yaml:"rulesets"`
+	DetectionConfig DetectionConfig      `json:"detection_config" yaml:"detection_config"`
+	JSPlugins       plg.JSPluginRegister `json:"js_plugins" yaml:"js_plugins"`
 
 	// Not available in the YAML file (for internal use only)
 	Cache Cache
@@ -485,16 +487,3 @@ type RuleParser interface {
 
 // DefaultRuleParser is the default implementation of the RuleParser interface.
 type DefaultRuleParser struct{}
-
-// JSPlugin struct to hold the JS plugin
-type JSPlugin struct {
-	name        string
-	description string
-	pType       string
-	script      string
-}
-
-// JSPluginRegister struct to hold the JS plugins
-type JSPluginRegister struct {
-	registry map[string]JSPlugin
-}

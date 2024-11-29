@@ -259,20 +259,48 @@ type API struct {
 
 // Selenium represents the CROWler VDI configuration
 type Selenium struct {
-	Name        string `yaml:"name"`         // Name of the Selenium instance
-	Location    string `yaml:"location"`     // Location of the Selenium executable
-	Path        string `yaml:"path"`         // Path to the Selenium executable
-	DriverPath  string `yaml:"driver_path"`  // Path to the Selenium driver executable
-	Type        string `yaml:"type"`         // Type of Selenium driver
-	ServiceType string `yaml:"service_type"` // Type of Selenium service (standalone, hub)
-	Port        int    `yaml:"port"`         // Port number for Selenium server
-	Host        string `yaml:"host"`         // Hostname of the Selenium server
-	Headless    bool   `yaml:"headless"`     // Whether to run Selenium in headless mode
-	UseService  bool   `yaml:"use_service"`  // Whether to use Selenium service as well or not
-	SSLMode     string `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
-	ProxyURL    string `yaml:"proxy_url"`    // Proxy URL for Selenium connection
-	DownloadDir string `yaml:"download_dir"` // Download directory for Selenium
-	Language    string `yaml:"language"`     // Language for Selenium
+	Name        string       `yaml:"name"`         // Name of the Selenium instance
+	Location    string       `yaml:"location"`     // Location of the Selenium executable
+	Path        string       `yaml:"path"`         // Path to the Selenium executable
+	DriverPath  string       `yaml:"driver_path"`  // Path to the Selenium driver executable
+	Type        string       `yaml:"type"`         // Type of Selenium driver
+	ServiceType string       `yaml:"service_type"` // Type of Selenium service (standalone, hub)
+	Port        int          `yaml:"port"`         // Port number for Selenium server
+	Host        string       `yaml:"host"`         // Hostname of the Selenium server
+	Headless    bool         `yaml:"headless"`     // Whether to run Selenium in headless mode
+	UseService  bool         `yaml:"use_service"`  // Whether to use Selenium service as well or not
+	SSLMode     string       `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
+	ProxyURL    string       `yaml:"proxy_url"`    // Proxy URL for Selenium connection
+	DownloadDir string       `yaml:"download_dir"` // Download directory for Selenium
+	Language    string       `yaml:"language"`     // Language for Selenium
+	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration
+}
+
+// SysMngConfig represents the system management configuration
+type SysMngConfig struct {
+	Port              int    `yaml:"port"`               // Port number of the system management server
+	Timeout           int    `yaml:"timeout"`            // Timeout for system management requests (in seconds)
+	SSLMode           string `yaml:"sslmode"`            // SSL mode for system management connection (e.g., "disable")
+	CertFile          string `yaml:"cert_file"`          // Path to the SSL certificate file
+	KeyFile           string `yaml:"key_file"`           // Path to the SSL key file
+	RateLimit         string `yaml:"rate_limit"`         // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout int    `yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
+}
+
+// EventsConfig represents the events handler service configuration
+type EventsConfig struct {
+	Host              string `yaml:"host"`               // Hostname of the events handler server
+	Port              int    `yaml:"port"`               // Port number of the events handler server
+	Timeout           int    `yaml:"timeout"`            // Timeout for events handler requests (in seconds)
+	SSLMode           string `yaml:"sslmode"`            // SSL mode for events handler connection (e.g., "disable")
+	CertFile          string `yaml:"cert_file"`          // Path to the SSL certificate file
+	KeyFile           string `yaml:"key_file"`           // Path to the SSL key file
+	RateLimit         string `yaml:"rate_limit"`         // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout int    `yaml:"readheader_timeout"` // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper
@@ -351,7 +379,11 @@ type Config struct {
 	// Selenium configuration
 	Selenium []Selenium `json:"selenium" yaml:"selenium"`
 
+	// Prometheus configuration
 	Prometheus PrometheusConfig `json:"prometheus" yaml:"prometheus"`
+
+	// Events configuration
+	Events EventsConfig `json:"events" yaml:"events"`
 
 	// Image storage API configuration (to store images on a separate server)
 	ImageStorageAPI FileStorageAPI `json:"image_storage" yaml:"image_storage"`
@@ -456,4 +488,14 @@ type Condition struct {
 // FileReader is an interface to read files
 type FileReader interface {
 	ReadFile(filename string) ([]byte, error)
+}
+
+// IsEmpty returns true if the SysMng is empty
+func (s *SysMngConfig) IsEmpty() bool {
+	return s.Port == 0 && s.Timeout == 0 && s.SSLMode == "" && s.CertFile == "" && s.KeyFile == "" && s.RateLimit == "" && s.ReadHeaderTimeout == 0 && s.ReadTimeout == 0 && s.WriteTimeout == 0
+}
+
+// IsEmpty returns true is the Selenium configuration is empty
+func (s *Selenium) IsEmpty() bool {
+	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty()
 }

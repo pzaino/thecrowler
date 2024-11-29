@@ -2637,6 +2637,15 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		args = append(args, "--disable-quic")
 		args = append(args, "--disable-blink-features=AutomationControlled")
 		args = append(args, "--disable-web-security")
+		args = append(args, "--override-hardware-concurrency=4")
+		args = append(args, "--override-device-memory=4")
+		args = append(args, "--disable-plugins-discovery")
+		args = append(args, "--disable-features=Battery")
+		args = append(args, "--disable-webrtc")
+		args = append(args, "--disable-peer-to-peer")
+		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
+		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
 	}
 	args = append(args, "--disable-peer-to-peer")
 
@@ -2646,9 +2655,14 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	args = append(args, "--enable-logging")
 	args = append(args, "--v=1")
 
+	downloadDir := strings.TrimSpace(sel.Config.DownloadDir)
+	if downloadDir == "" {
+		downloadDir = "/tmp"
+		sel.Config.DownloadDir = downloadDir
+	}
 	if browser == "chrome" || browser == "chromium" {
 		chromePrefs := map[string]interface{}{
-			"download.default_directory":              sel.Config.DownloadDir,
+			"download.default_directory":              downloadDir,
 			"download.prompt_for_download":            false, // Disable download prompt
 			"profile.default_content_settings.popups": 0,     // Suppress popups
 			"safebrowsing.enabled":                    true,  // Enable Safe Browsing
@@ -2661,7 +2675,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
-			"browser.download.dir":                      sel.Config.DownloadDir,
+			"browser.download.dir":                      downloadDir,
 			"browser.helperApps.neverAsk.saveToDisk":    "application/zip",
 			"browser.download.manager.showWhenStarting": false,
 		}
@@ -2686,7 +2700,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	}
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
-		sel.Config.Host = "crowler_vdi"
+		sel.Config.Host = "crowler_vdi_1"
 	}
 
 	// Connect to the WebDriver instance running remotely.
@@ -2713,12 +2727,12 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	}
 
 	// Post-connection settings
-	setNavigatorProperties(&wd, sel.Config.Language)
+	setNavigatorProperties(&wd, sel.Config.Language, userAgent)
 
 	return wd, err
 }
 
-func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
+func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	selectedLanguage := ""
 
@@ -2757,6 +2771,61 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 		"Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
 		"Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})",        // Example device memory spoof
 		"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // Example cores
+		// Disable geolocation API
+		"Object.defineProperty(navigator, 'geolocation', {get: () => null})",
+
+		// Mock `navigator.doNotTrack`
+		"Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'})", // User enables Do Not Track
+
+		// Mock `navigator.vendor` and `navigator.platform`
+		"Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'})",
+		"Object.defineProperty(navigator, 'platform', {get: () => 'Linux'})", // Mimic Linux platform
+
+		// Spoof `navigator.deviceMemory`
+		//"Object.defineProperty(navigator, 'deviceMemory', {get: () => 4})", // 4 GB memory
+
+		// Spoof `navigator.hardwareConcurrency`
+		//"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // 4 CPU cores
+
+		//"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
+
+		// Override screen width and height
+		"Object.defineProperty(screen, 'width', {get: () => 1920})",
+		"Object.defineProperty(screen, 'height', {get: () => 1080})",
+
+		// Override window inner and outer dimensions
+		"Object.defineProperty(window, 'innerWidth', {get: () => 1920})",
+		"Object.defineProperty(window, 'innerHeight', {get: () => 1080})",
+		"Object.defineProperty(window, 'outerWidth', {get: () => 1920})",
+		"Object.defineProperty(window, 'outerHeight', {get: () => 1080})",
+
+		// Mock `navigator.appVersion` and `navigator.userAgent`
+		fmt.Sprintf("Object.defineProperty(navigator, 'appVersion', {get: () => '%s'})", userAgent),
+		fmt.Sprintf("Object.defineProperty(navigator, 'userAgent', {get: () => '%s'})", userAgent),
+
+		"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
+
+		// Mock `navigator.connection`
+		"Object.defineProperty(navigator, 'connection', {get: () => ({type: 'wifi', downlink: 10.0})})", // Mimic WiFi connection
+
+		// Disable WebRTC APIs to prevent IP leakage
+		"Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});",
+		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
+		"Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});",
+		"Object.defineProperty(navigator, 'getUserMedia', {value: undefined});",
+		"Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {value: undefined});",
+		"Object.defineProperty(navigator.mediaDevices, {value: undefined});",
+
+		// Mock WebGL vendor and renderer
+		"const getParameter = WebGLRenderingContext.prototype.getParameter;" +
+			"WebGLRenderingContext.prototype.getParameter = function(parameter) {" +
+			"  if (parameter === 37445) return 'Intel Inc.';" + // Mock Vendor
+			"  if (parameter === 37446) return 'Intel Iris OpenGL';" + // Mock Renderer
+			"  return getParameter(parameter);" +
+			"};",
+
+		// Mock Canvas fingerprinting
+		"HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; }",
 	}
 	for _, script := range scripts {
 		_, err := (*wd).ExecuteScript(script, nil)

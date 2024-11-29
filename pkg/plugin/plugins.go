@@ -1,4 +1,5 @@
-package ruleset
+// Package plugin provides the plugin functionality for the CROWler.
+package plugin
 
 import (
 	"bytes"
@@ -14,6 +15,7 @@ import (
 	"github.com/tebeka/selenium"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
 const (
@@ -26,13 +28,16 @@ func NewJSPlugin(script string) *JSPlugin {
 	pNameRegEx := "^//\\s+[@]*name\\:?\\s+([^\n]+)"
 	pDescRegEx := "^//\\s+[@]*description\\:?\\s+([^\n]+)"
 	pTypeRegEx := "^//\\s+[@]*type\\:?\\s+([^\n]+)"
+	pEventTypeRegEx := "^//\\s+[@]*event_type\\:?\\s+([^\n]+)"
 	re1 := regexp.MustCompile(pNameRegEx)
 	re2 := regexp.MustCompile(pDescRegEx)
 	re3 := regexp.MustCompile(pTypeRegEx)
+	re4 := regexp.MustCompile(pEventTypeRegEx)
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
+	pEventType := ""
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
 		if re1.MatchString(line) {
@@ -44,13 +49,17 @@ func NewJSPlugin(script string) *JSPlugin {
 		if re3.MatchString(line) {
 			pType = strings.TrimSpace(re3.FindStringSubmatch(line)[1])
 		}
+		if re4.MatchString(line) {
+			pEventType = strings.ToLower(strings.TrimSpace(re4.FindStringSubmatch(line)[1]))
+		}
 	}
 
 	return &JSPlugin{
-		name:        pName,
-		description: pDesc,
-		pType:       pType,
-		script:      script,
+		Name:        pName,
+		Description: pDesc,
+		PType:       pType,
+		Script:      script,
+		EventType:   pEventType,
 	}
 }
 
@@ -62,32 +71,44 @@ func NewJSPluginRegister() *JSPluginRegister {
 // Register registers a new JS plugin
 func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 	// Check if the register is initialized
-	if reg.registry == nil {
-		reg.registry = make(map[string]JSPlugin)
+	if reg.Registry == nil {
+		reg.Registry = make(map[string]JSPlugin)
 	}
 
 	// Check if the name is empty
 	if strings.TrimSpace(name) == "" {
-		name = plugin.name
+		name = plugin.Name
 	}
 	name = strings.TrimSpace(name)
 
 	// Register the plugin
-	reg.registry[name] = plugin
+	reg.Registry[name] = plugin
 }
 
 // GetPlugin returns a JS plugin
 func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
-	plugin, exists := reg.registry[name]
+	plugin, exists := reg.Registry[name]
 	return plugin, exists
 }
 
+// GetPluginsByEventType returns a list of JS plugins to handle an event type
+func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin, bool) {
+	plugins := make([]JSPlugin, 0)
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	for _, plugin := range reg.Registry {
+		if plugin.EventType == eventType {
+			plugins = append(plugins, plugin)
+		}
+	}
+	return plugins, len(plugins) > 0
+}
+
 // Execute executes the JS plugin
-func (p *JSPlugin) Execute(wd *selenium.WebDriver, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
-	if p.pType == vdiPlugin {
+func (p *JSPlugin) Execute(wd *selenium.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+	if p.PType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
-	return execEnginePlugin(p, timeout, params)
+	return execEnginePlugin(p, timeout, params, db)
 }
 
 func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *selenium.WebDriver) (map[string]interface{}, error) {
@@ -109,7 +130,7 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	}
 
 	// Run the script wd.ExecuteScript(script, args)
-	result, err := (*wd).ExecuteScript(p.script, paramsArr)
+	result, err := (*wd).ExecuteScript(p.Script, paramsArr)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
@@ -121,11 +142,12 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	return resultMap, nil
 }
 
-func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler) (map[string]interface{}, error) {
 	// Consts
 	const (
 		errMsg01 = "Error getting result from JS plugin: %v"
 	)
+
 	// Create a new VM
 	vm := otto.New()
 	err := removeJSFunctions(vm)
@@ -134,7 +156,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}) (
 	}
 
 	// Add CROWler JSAPI to the VM
-	err = setCrowlerJSAPI(vm)
+	err = setCrowlerJSAPI(vm, db)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +177,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}) (
 	}(time.Duration(timeout))
 
 	// Run the script
-	rval, err := vm.Run(p.script)
+	rval, err := vm.Run(p.Script)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +243,7 @@ func removeJSFunctions(vm *otto.Otto) error {
 }
 
 // setCrowlerJSAPI sets the CROWler JS API functions
-func setCrowlerJSAPI(vm *otto.Otto) error {
+func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	// Add the CROWler JS API functions
 	err := addJSHTTPRequest(vm)
 	if err != nil {
@@ -239,6 +261,11 @@ func setCrowlerJSAPI(vm *otto.Otto) error {
 	}
 
 	err = addJSAPIConsoleLog(vm)
+	if err != nil {
+		return err
+	}
+
+	err = addJSAPIRunQuery(vm, db)
 	if err != nil {
 		return err
 	}
@@ -620,7 +647,91 @@ func formatConsoleLog(args []interface{}) string {
 	return strings.Join(formattedArgs, " ")
 }
 
+// adds a way for a plugin to run a DB query and get the results as a JSON document, for example:
+// let result = runQuery("SELECT * FROM users WHERE id = ?", [42]);
+// console.log(JSON.parse(result)); // Parses the JSON string into a JavaScript object
+func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
+	// Implement the runQuery function
+	err := vm.Set("runQuery", func(call otto.FunctionCall) otto.Value {
+		// Extract the query and arguments from the JavaScript call
+		query, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		argsArray := call.Argument(1) // Optional arguments for prepared statement
+		var args []interface{}
+		if argsArray.IsObject() {
+			argsObj, _ := argsArray.Export()
+			argsSlice, ok := argsObj.([]interface{})
+			if ok {
+				args = argsSlice
+			}
+		}
+
+		// Run the query using the provided db handler and arguments
+		rows, err := (*db).ExecuteQuery(query, args...)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		defer rows.Close() //nolint:errcheck // We can't check error here it's a defer
+
+		// Get the columns from the query result
+		columns, err := rows.Columns()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Prepare the result slice
+		result := make([]map[string]interface{}, 0)
+
+		// Iterate over the rows
+		for rows.Next() {
+			// Create a map for the row
+			row := make(map[string]interface{})
+			values := make([]interface{}, len(columns))
+			valuePtrs := make([]interface{}, len(columns))
+			for i := range columns {
+				valuePtrs[i] = &values[i]
+			}
+
+			// Scan the row into value pointers
+			if err := rows.Scan(valuePtrs...); err != nil {
+				return otto.UndefinedValue()
+			}
+
+			// Map the column names to values
+			for i, col := range columns {
+				val := values[i]
+				if b, ok := val.([]byte); ok {
+					row[col] = string(b)
+				} else {
+					row[col] = val
+				}
+			}
+
+			// Append the row to the result
+			result = append(result, row)
+		}
+
+		// Convert the result to JSON
+		jsonResult, err := json.Marshal(result)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Convert the JSON string to a JavaScript-compatible value
+		jsResult, err := vm.ToValue(string(jsonResult))
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		return jsResult
+	})
+	return err
+}
+
 // String returns the Plugin as a string
 func (p *JSPlugin) String() string {
-	return p.script
+	return p.Script
 }

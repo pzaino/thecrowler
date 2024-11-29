@@ -94,6 +94,7 @@ COPY --from=builder /app/support /app/support
 
 # Ensure the executable is runnable
 RUN chmod +x thecrowler
+RUN chmod +x healthCheck
 
 # Create the data directory and ensure correct permissions
 RUN mkdir -p /app/data/images && chown -R crowler:crowler /app
