@@ -406,17 +406,8 @@ func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) 
 		Details:  statusMap,
 	}
 
-	// Generate a unique ID for the event
-	event.ID = cdb.GenerateEventUID(event)
-
-	// Use ctx.Status.EndTime for event_timestamp
-	eventTimestamp := status.EndTime
-
 	// Use PostgreSQL placeholders ($1, $2, etc.) and include event_timestamp
-	_, err = db.Exec(`
-		INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		event.ID, event.SourceID, event.Type, event.Severity, eventTimestamp, cmn.ConvertMapToString(event.Details))
+	_, err = cdb.CreateEvent(&db, event)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting event into database: %v", err)
 		return err

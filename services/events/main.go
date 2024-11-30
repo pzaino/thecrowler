@@ -35,6 +35,9 @@ var (
 	limiter     *rate.Limiter
 
 	dbHandler cdb.Handler
+
+	// PluginRegister is the plugin register
+	PluginRegister *plg.JSPluginRegister
 )
 
 func main() {
@@ -182,6 +185,9 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	}
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
+	// Reload Plugins
+	PluginRegister = plg.NewJSPluginRegister().LoadPluginsFromConfig(config, "event_plugin")
+
 	// Initialize the database
 	connected := false
 	dbHandler, err = cdb.NewHandler(*config)
@@ -322,11 +328,11 @@ func handleNotification(payload string) {
 
 // Process the event
 func processEvent(event cdb.Event) {
-	p, exists := plg.NewJSPluginRegister().GetPluginsByEventType(event.Type)
+	p, exists := PluginRegister.GetPluginsByEventType(event.Type)
 
 	// Check if we have a Plugin for this event
 	if !exists {
-		cmn.DebugMsg(cmn.DbgLvlError, "No plugins found for event type: %s", event.Type)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No plugins found to handle event type '%s', ignoring event", event.Type)
 		return
 	}
 

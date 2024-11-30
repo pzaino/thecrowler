@@ -14,23 +14,3 @@
 
 // Package database is responsible for handling the database setup, configuration and abstraction.
 package database
-
-import (
-	"strconv"
-
-	cmn "github.com/pzaino/thecrowler/pkg/common"
-)
-
-// GenerateEventUID generates a unique identifier for the event.
-func GenerateEventUID(e Event) string {
-	// convert e.SourceID into a string
-	sID := strconv.FormatUint(e.SourceID, 10)
-
-	// Convert event's Details field from map[string]interface{} to a string
-	details := cmn.ConvertMapToString(e.Details)
-
-	// Concatenate all the event's fields and return the SHA256 hash
-	eStr := sID + e.Type + e.Severity + e.Timestamp + details
-
-	return cmn.GenerateSHA256(eStr)
-}

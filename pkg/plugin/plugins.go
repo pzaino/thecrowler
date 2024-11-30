@@ -487,6 +487,16 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 
+	err = addJSAPICreateEvent(vm, db)
+	if err != nil {
+		return err
+	}
+
+	err = addJSAPIScheduleEvent(vm, db)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -944,6 +954,154 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		return jsResult
+	})
+	return err
+}
+
+/*
+	 Example usage in JS
+		// Example of generating a "crawl_completed" event
+		let status = { pagesCrawled: 100, errors: 5 };
+		let result = createEvent(
+			"crawl_completed",    // Event type
+			12345,                // Source ID
+			"info",               // Severity
+			status                // Details
+		);
+		console.log(result); // Prints a JSON document with the event details
+*/
+func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
+	err := vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
+		// Extract arguments from JavaScript call
+		eventType, err := call.Argument(0).ToString()
+		if err != nil || strings.TrimSpace(eventType) == "" {
+			return otto.UndefinedValue() // Event type is mandatory
+		}
+
+		sourceIDraw, err := call.Argument(1).ToInteger()
+		if err != nil {
+			return otto.UndefinedValue() // Source ID is mandatory
+		}
+		sourceID := uint64(sourceIDraw) //nolint:gosec // We are not using end-user input here
+
+		severity, err := call.Argument(2).ToString()
+		if err != nil || strings.TrimSpace(severity) == "" {
+			severity = "info" // Default severity
+		}
+
+		detailsArg := call.Argument(3)
+		var details map[string]interface{}
+		if detailsArg.IsObject() {
+			detailsObj, err := detailsArg.Export()
+			if err == nil {
+				details, _ = detailsObj.(map[string]interface{})
+			}
+		}
+		if details == nil {
+			details = make(map[string]interface{}) // Default empty details
+		}
+
+		// Create a new event object
+		event := cdb.Event{
+			SourceID: sourceID,
+			Type:     eventType,
+			Severity: severity,
+			Details:  details,
+		}
+
+		// Insert the event into the database
+		eID, err := cdb.CreateEvent(db, event)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "inserting event into database: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		// Return success status
+		success, _ := vm.ToValue(map[string]interface{}{
+			"status":  "success",
+			"eventID": eID,
+		})
+		return success
+	})
+	return err
+}
+
+/*
+Example usage in JS
+// Schedule an event to occur 10 minutes from now
+let scheduleTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+let status = { pagesCrawled: 100, errors: 5 };
+let result = scheduleEvent(
+
+	"crawl_completed",    // Event type
+	12345,                // Source ID
+	"info",               // Severity
+	status,               // Details
+	scheduleTime          // When the event should occur
+
+);
+console.log(result); // Prints a JSON document with the scheduling status
+*/
+func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
+	err := vm.Set("scheduleEvent", func(call otto.FunctionCall) otto.Value {
+		// Extract arguments from JavaScript call
+		eventType, err := call.Argument(0).ToString()
+		if err != nil || strings.TrimSpace(eventType) == "" {
+			return otto.UndefinedValue() // Event type is mandatory
+		}
+
+		sourceIDraw, err := call.Argument(1).ToInteger()
+		if err != nil {
+			return otto.UndefinedValue() // Source ID is mandatory
+		}
+		sourceID := uint64(sourceIDraw) //nolint:gosec // We are not using end-user input here
+
+		severity, err := call.Argument(2).ToString()
+		if err != nil || strings.TrimSpace(severity) == "" {
+			severity = "info" // Default severity
+		}
+
+		detailsArg := call.Argument(3)
+		var details map[string]interface{}
+		if detailsArg.IsObject() {
+			detailsObj, err := detailsArg.Export()
+			if err == nil {
+				details, _ = detailsObj.(map[string]interface{})
+			}
+		}
+		if details == nil {
+			details = make(map[string]interface{}) // Default empty details
+		}
+
+		scheduleTimeArg, err := call.Argument(4).ToString()
+		if err != nil || strings.TrimSpace(scheduleTimeArg) == "" {
+			return otto.UndefinedValue() // Schedule time is mandatory
+		}
+
+		// Create the event when the timer fires
+		event := cdb.Event{
+			SourceID: sourceID,
+			Type:     eventType,
+			Severity: severity,
+			Details:  details,
+		}
+
+		// Schedule the event creation
+		scheduleTime, err := cdb.ScheduleEvent(db, event, scheduleTimeArg)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "scheduling event: %v", err)
+			// return the error
+			return otto.UndefinedValue()
+		}
+
+		// Return success status to the JS caller
+		success, _ := vm.ToValue(map[string]interface{}{
+			"status":       "scheduled",
+			"eventType":    eventType,
+			"scheduleTime": scheduleTime.Format(time.RFC3339),
+		})
+		return success
 	})
 	return err
 }
