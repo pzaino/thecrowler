@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -15,13 +17,268 @@ import (
 	"github.com/tebeka/selenium"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
 const (
 	httpMethodGet = "GET"
 	vdiPlugin     = "vdi_plugin"
+	enginePlugin  = "engine_plugin"
+	eventPlugin   = "event_plugin"
 )
+
+// NewJSPluginRegister returns a new JSPluginRegister
+func NewJSPluginRegister() *JSPluginRegister {
+	return &JSPluginRegister{}
+}
+
+// Register registers a new JS plugin
+func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
+	// Check if the register is initialized
+	if reg.Registry == nil {
+		reg.Registry = make(map[string]JSPlugin)
+	}
+
+	// Check if the name is empty
+	if strings.TrimSpace(name) == "" {
+		name = plugin.Name
+	}
+	name = strings.TrimSpace(name)
+
+	// Register the plugin
+	reg.Registry[name] = plugin
+}
+
+// GetPlugin returns a JS plugin
+func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
+	plugin, exists := reg.Registry[name]
+	return plugin, exists
+}
+
+// GetPluginsByEventType returns a list of JS plugins to handle an event type
+func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin, bool) {
+	plugins := make([]JSPlugin, 0)
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	for _, plugin := range reg.Registry {
+		if plugin.EventType == "" || plugin.EventType == "none" {
+			continue
+		}
+		if plugin.EventType == eventType || plugin.EventType == "all" {
+			plugins = append(plugins, plugin)
+		}
+	}
+	return plugins, len(plugins) > 0
+}
+
+// LoadPluginsFromConfig loads the plugins from the specified configuration.
+func (reg *JSPluginRegister) LoadPluginsFromConfig(config *cfg.Config, pType string) *JSPluginRegister {
+	for _, plugin := range config.Plugins.Plugins {
+		err := LoadPluginsFromConfig(reg, plugin, pType)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to load plugins from configuration: %v", err)
+		}
+	}
+	return reg
+}
+
+// LoadPluginsFromConfig loads the plugins from the specified configuration.
+func LoadPluginsFromConfig(pluginRegistry *JSPluginRegister,
+	config cfg.PluginConfig, pType string) error {
+	if len(config.Path) == 0 {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Skipping Plugins loading: empty plugins path")
+		return nil
+	}
+
+	// Ensure pType is set
+	pType = strings.ToLower(strings.TrimSpace(pType))
+
+	// Load the plugins from the specified file
+	plugins, err := BulkLoadPlugins(config, pType)
+	if err != nil {
+		return err
+	}
+
+	// Register the plugins
+	for _, plugin := range plugins {
+		pluginRegistry.Register(plugin.Name, *plugin)
+	}
+
+	return nil
+}
+
+// BulkLoadPlugins loads the plugins from the specified file and returns a pointer to the created JSPlugin.
+func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error) {
+	var pluginsSet []*JSPlugin
+
+	// Ensure pType is set
+	pType = strings.ToLower(strings.TrimSpace(pType))
+
+	// Construct the URL to download the plugins from
+	if config.Host == "" {
+		for _, path := range config.Path {
+			plugins, err := LoadPluginFromLocal(path)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load plugin from %s: %v", path, err)
+			}
+			if pType != "" {
+				for _, plugin := range plugins {
+					if pType == eventPlugin {
+						if plugin.EventType != "" || plugin.PType != eventPlugin {
+							pluginsSet = append(pluginsSet, plugin)
+						}
+					} else if pType == vdiPlugin {
+						if plugin.PType == vdiPlugin {
+							pluginsSet = append(pluginsSet, plugin)
+						}
+					} else if pType == enginePlugin {
+						if plugin.PType != vdiPlugin {
+							pluginsSet = append(pluginsSet, plugin)
+						}
+					}
+				}
+			} else {
+				pluginsSet = append(pluginsSet, plugins...)
+			}
+		}
+		return pluginsSet, nil
+	}
+	// Plugins are stored remotely
+	plugins, err := LoadPluginsFromRemote(config)
+	if err != nil {
+		return nil, err
+	}
+	if pType != "" {
+		for _, plugin := range plugins {
+			if pType == eventPlugin {
+				if plugin.EventType != "" || plugin.PType != eventPlugin {
+					pluginsSet = append(pluginsSet, plugin)
+				}
+			} else if pType == vdiPlugin {
+				if plugin.PType == vdiPlugin {
+					pluginsSet = append(pluginsSet, plugin)
+				}
+			} else if pType == enginePlugin {
+				if plugin.PType != vdiPlugin {
+					pluginsSet = append(pluginsSet, plugin)
+				}
+			}
+		}
+	} else {
+		pluginsSet = append(pluginsSet, plugins...)
+	}
+
+	return pluginsSet, nil
+}
+
+// LoadPluginsFromRemote loads plugins from a distribution server either on the local net or the
+// internet.
+// TODO: This function needs improvements, it's not very efficient (a server call for each plugin)
+func LoadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
+	var plugins []*JSPlugin
+
+	// Construct the URL to download the plugins from
+	for _, path := range config.Path {
+		fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
+		if fileType != "js" {
+			// Ignore unsupported file types
+			continue
+		}
+
+		url := fmt.Sprintf("http://%s/%s", config.Host, path)
+		pluginBody, err := cmn.FetchRemoteFile(url, config.Timeout, config.SSLMode)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plugin from %s: %v", url, err)
+		}
+
+		// Extract plugin name
+		pluginName := getPluginName(string(pluginBody), path)
+
+		plugin := NewJSPlugin(string(pluginBody))
+		if (*plugin).Name == "" {
+			(*plugin).Name = pluginName
+		}
+		plugins = append(plugins, plugin)
+	}
+
+	return plugins, nil
+}
+
+// LoadPluginFromLocal loads the plugin from the specified file and returns a pointer to the created JSPlugin.
+func LoadPluginFromLocal(path string) ([]*JSPlugin, error) {
+	// Check if path is wild carded
+	var files []string
+	var err error
+	if strings.Contains(path, "*") {
+		// Generate the list of files to load
+		files, err = filepath.Glob(path)
+		if err != nil {
+			return nil, err
+		}
+		if len(files) == 0 {
+			return nil, fmt.Errorf("no files found")
+		}
+	} else {
+		files = append(files, path)
+	}
+
+	// Load the plugins from the specified files list
+	var plugins []*JSPlugin
+	for _, file := range files {
+		// Check if the file exists
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			return nil, fmt.Errorf("file %s does not exist", file)
+		}
+
+		// Load the specified file
+		pluginBody, err := os.ReadFile(file) //nolint:gosec // We are not using end-user input here
+		if err != nil {
+			return nil, err
+		}
+
+		// Extract plugin name from the first line of the plugin file
+		pluginName := getPluginName(string(pluginBody), file)
+
+		// I am assuming that the response body is actually a plugin
+		// this may need reviewing later on.
+		plugin := NewJSPlugin(string(pluginBody))
+		if (*plugin).Name == "" {
+			(*plugin).Name = pluginName
+		}
+		plugins = append(plugins, plugin)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Loaded plugin %s from file %s", pluginName, file)
+	}
+
+	return plugins, nil
+}
+
+// getPluginName extracts the plugin name from the first line of the plugin file.
+func getPluginName(pluginBody, file string) string {
+	// Extract the first line of the plugin file
+	var line0 string
+	for _, line := range strings.Split(pluginBody, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			line0 = line
+			break
+		}
+	}
+
+	// Extract the plugin name from the first line
+	pluginName := ""
+	if strings.HasPrefix(line0, "//") {
+		line0 = strings.TrimSpace(line0[2:])
+		if strings.HasPrefix(strings.ToLower(line0), "name:") {
+			pluginName = strings.TrimSpace(line0[5:])
+		}
+	}
+	if strings.TrimSpace(pluginName) == "" {
+		// Extract the file name without the extension from the path
+		pluginName = strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+		pluginName = strings.TrimSpace(pluginName)
+	}
+	return pluginName
+}
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
@@ -61,46 +318,6 @@ func NewJSPlugin(script string) *JSPlugin {
 		Script:      script,
 		EventType:   pEventType,
 	}
-}
-
-// NewJSPluginRegister returns a new JSPluginRegister
-func NewJSPluginRegister() *JSPluginRegister {
-	return &JSPluginRegister{}
-}
-
-// Register registers a new JS plugin
-func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
-	// Check if the register is initialized
-	if reg.Registry == nil {
-		reg.Registry = make(map[string]JSPlugin)
-	}
-
-	// Check if the name is empty
-	if strings.TrimSpace(name) == "" {
-		name = plugin.Name
-	}
-	name = strings.TrimSpace(name)
-
-	// Register the plugin
-	reg.Registry[name] = plugin
-}
-
-// GetPlugin returns a JS plugin
-func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
-	plugin, exists := reg.Registry[name]
-	return plugin, exists
-}
-
-// GetPluginsByEventType returns a list of JS plugins to handle an event type
-func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin, bool) {
-	plugins := make([]JSPlugin, 0)
-	eventType = strings.ToLower(strings.TrimSpace(eventType))
-	for _, plugin := range reg.Registry {
-		if plugin.EventType == eventType {
-			plugins = append(plugins, plugin)
-		}
-	}
-	return plugins, len(plugins) > 0
 }
 
 // Execute executes the JS plugin

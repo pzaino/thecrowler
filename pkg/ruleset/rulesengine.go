@@ -28,6 +28,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
 ///// ------------------------ RULESENGINE ---------------------------------- /////
@@ -167,7 +168,7 @@ func (re *RuleEngine) LoadRulesFromFile(files []string) error {
 func (re *RuleEngine) LoadRulesFromConfig(config *cfg.Config) error {
 	// Load Plugins from the configuration
 	for _, plugin := range config.Plugins.Plugins {
-		err := loadPluginsFromConfig(&re.JSPlugins, plugin)
+		err := plg.LoadPluginsFromConfig(&re.JSPlugins, plugin, "")
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to load plugins from configuration: %v", err)
 		}

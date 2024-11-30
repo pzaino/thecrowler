@@ -30,7 +30,6 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	plg "github.com/pzaino/thecrowler/pkg/plugin"
 
 	"github.com/qri-io/jsonschema"
 	"gopkg.in/yaml.v2"
@@ -103,7 +102,7 @@ func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Loading rules from file: %s", file)
 
 		// Load the specified file
-		rulesFile, err := os.ReadFile(file)
+		rulesFile, err := os.ReadFile(file) //nolint:gosec // This is a read-only operation and we are not using end-user input
 		if err != nil {
 			return rulesets, err
 		}
@@ -249,154 +248,6 @@ func LoadRulesFromFile(files []string) (*RuleEngine, error) {
 	return NewRuleEngine("", rules), nil
 }
 
-func loadPluginsFromConfig(pluginRegistry *plg.JSPluginRegister,
-	config cfg.PluginConfig) error {
-	if len(config.Path) == 0 {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Skipping Plugins loading: empty plugins path")
-		return nil
-	}
-
-	// Load the plugins from the specified file
-	plugins, err := BulkLoadPlugins(config)
-	if err != nil {
-		return err
-	}
-
-	// Register the plugins
-	for _, plugin := range plugins {
-		pluginRegistry.Register(plugin.Name, *plugin)
-	}
-
-	return nil
-}
-
-// BulkLoadPlugins loads the plugins from the specified file and returns a pointer to the created JSPlugin.
-func BulkLoadPlugins(config cfg.PluginConfig) ([]*plg.JSPlugin, error) {
-	var plugins []*plg.JSPlugin
-
-	// Construct the URL to download the plugins from
-	if config.Host == "" {
-		for _, path := range config.Path {
-			plugin, err := LoadPluginFromLocal(path)
-			if err != nil {
-				return nil, fmt.Errorf("failed to load plugin from %s: %v", path, err)
-			}
-			plugins = append(plugins, plugin...)
-		}
-		return plugins, nil
-	}
-	// Plugins are stored remotely
-	plugins, err := loadPluginsFromRemote(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return plugins, nil
-}
-
-// loadPluginsFromRemote loads plugins from a distribution server either on the local net or the
-// internet.
-// TODO: This function needs improvements, it's not very efficient (a server call for each plugin)
-func loadPluginsFromRemote(config cfg.PluginConfig) ([]*plg.JSPlugin, error) {
-	var plugins []*plg.JSPlugin
-
-	// Construct the URL to download the plugins from
-	for _, path := range config.Path {
-		fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
-		if fileType != "js" {
-			// Ignore unsupported file types
-			continue
-		}
-
-		url := fmt.Sprintf("http://%s/%s", config.Host, path)
-		pluginBody, err := cmn.FetchRemoteFile(url, config.Timeout, config.SSLMode)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch plugin from %s: %v", url, err)
-		}
-
-		// Extract plugin name
-		pluginName := getPluginName(string(pluginBody), path)
-
-		plugin := &plg.JSPlugin{Name: pluginName, Script: pluginBody}
-		plugins = append(plugins, plugin)
-	}
-
-	return plugins, nil
-}
-
-// LoadPluginFromLocal loads the plugin from the specified file and returns a pointer to the created JSPlugin.
-func LoadPluginFromLocal(path string) ([]*plg.JSPlugin, error) {
-	// Check if path is wild carded
-	var files []string
-	var err error
-	if strings.Contains(path, "*") {
-		// Generate the list of files to load
-		files, err = filepath.Glob(path)
-		if err != nil {
-			return nil, err
-		}
-		if len(files) == 0 {
-			return nil, fmt.Errorf("no files found")
-		}
-	} else {
-		files = append(files, path)
-	}
-
-	// Load the plugins from the specified files list
-	var plugins []*plg.JSPlugin
-	for _, file := range files {
-		// Check if the file exists
-		if _, err := os.Stat(file); os.IsNotExist(err) {
-			return nil, fmt.Errorf("file %s does not exist", file)
-		}
-
-		// Load the specified file
-		pluginBody, err := os.ReadFile(file)
-		if err != nil {
-			return nil, err
-		}
-
-		// Extract plugin name from the first line of the plugin file
-		pluginName := getPluginName(string(pluginBody), file)
-
-		// I am assuming that the response body is actually a plugin
-		// this may need reviewing later on.
-		plugin := &plg.JSPlugin{Name: pluginName, Script: string(pluginBody)}
-		plugins = append(plugins, plugin)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Loaded plugin %s from file %s", pluginName, file)
-	}
-
-	return plugins, nil
-}
-
-// getPluginName extracts the plugin name from the first line of the plugin file.
-func getPluginName(pluginBody, file string) string {
-	// Extract the first line of the plugin file
-	var line0 string
-	for _, line := range strings.Split(pluginBody, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			line0 = line
-			break
-		}
-	}
-
-	// Extract the plugin name from the first line
-	pluginName := ""
-	if strings.HasPrefix(line0, "//") {
-		line0 = strings.TrimSpace(line0[2:])
-		if strings.HasPrefix(strings.ToLower(line0), "name:") {
-			pluginName = strings.TrimSpace(line0[5:])
-		}
-	}
-	if strings.TrimSpace(pluginName) == "" {
-		// Extract the file name without the extension from the path
-		pluginName = strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
-		pluginName = strings.TrimSpace(pluginName)
-	}
-	return pluginName
-}
-
 // loadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.
 func loadRulesFromConfig(schema *jsonschema.Schema, config cfg.RulesetConfig) (*[]Ruleset, error) {
 	if config.Path == nil {
@@ -486,7 +337,7 @@ func LoadSchema(schemaPath string) (*jsonschema.Schema, error) {
 	}
 
 	// Load JSON Schema
-	schemaData, err := os.ReadFile(schemaPath)
+	schemaData, err := os.ReadFile(schemaPath) //nolint:gosec // This is a read-only operation and we are not using end-user input
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to read ruleset's schema file: %v", err)
 		return nil, err

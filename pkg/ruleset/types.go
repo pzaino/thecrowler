@@ -26,6 +26,20 @@ import (
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
+const (
+	varTypeStr     = "string"
+	varTypeNum     = "number"
+	varTypeBool    = "boolean"
+	varTypeNull    = "null"
+	varTypeArr     = "array"
+	varTypeUnknown = "unknown"
+	arrTypeStr     = "[]string"
+	arrTypeNum     = "[]number"
+	arrTypeBool    = "[]bool"
+	arrTypeFloat64 = "[]float64"
+	arrTypeUnknown = "[]unknown"
+)
+
 // RuleEngine represents the top-level structure for the rule engine
 type RuleEngine struct {
 	Schema          *jsonschema.Schema   `json:"schema" yaml:"schema"`
@@ -128,21 +142,21 @@ func (e *EnvSetting) UnmarshalJSON(data []byte) error {
 	switch v := value.(type) {
 	case string:
 		e.Values = v
-		e.Properties.Type = "string"
+		e.Properties.Type = varTypeStr
 	case float64:
 		e.Values = v
-		e.Properties.Type = "number"
+		e.Properties.Type = varTypeNum
 	case bool:
 		e.Values = v
-		e.Properties.Type = "boolean"
+		e.Properties.Type = varTypeBool
 	case nil:
 		e.Values = v
-		e.Properties.Type = "null"
+		e.Properties.Type = varTypeNull
 	case []interface{}:
 		e.Values = processArray(v, e)
 	default:
 		e.Values = nil
-		e.Properties.Type = "unknown"
+		e.Properties.Type = varTypeUnknown
 	}
 
 	return nil
@@ -151,35 +165,35 @@ func (e *EnvSetting) UnmarshalJSON(data []byte) error {
 // Helper function to handle array processing and set the type in EnvProperties
 func processArray(arr []interface{}, e *EnvSetting) interface{} {
 	if len(arr) == 0 {
-		e.Properties.Type = "array"
+		e.Properties.Type = varTypeArr
 		return arr
 	}
 
 	// Check the type of the first element to guess the array type
 	switch arr[0].(type) {
 	case string:
-		e.Properties.Type = "[]string"
+		e.Properties.Type = arrTypeStr
 		var stringArray []string
 		for _, elem := range arr {
 			stringArray = append(stringArray, elem.(string))
 		}
 		return stringArray
 	case float64:
-		e.Properties.Type = "[]float64"
+		e.Properties.Type = arrTypeFloat64
 		var numberArray []float64
 		for _, elem := range arr {
 			numberArray = append(numberArray, elem.(float64))
 		}
 		return numberArray
 	case bool:
-		e.Properties.Type = "[]bool"
+		e.Properties.Type = arrTypeBool
 		var boolArray []bool
 		for _, elem := range arr {
 			boolArray = append(boolArray, elem.(bool))
 		}
 		return boolArray
 	default:
-		e.Properties.Type = "[]unknown"
+		e.Properties.Type = arrTypeUnknown
 		return arr
 	}
 }
@@ -327,21 +341,21 @@ func (e *PluginParams) UnmarshalJSON(data []byte) error {
 	switch v := value.(type) {
 	case string:
 		e.ArgValue = v
-		e.Properties.Type = "string"
+		e.Properties.Type = varTypeStr
 	case float64:
 		e.ArgValue = v
-		e.Properties.Type = "number"
+		e.Properties.Type = varTypeNum
 	case bool:
 		e.ArgValue = v
-		e.Properties.Type = "boolean"
+		e.Properties.Type = varTypeBool
 	case nil:
 		e.ArgValue = v
-		e.Properties.Type = "null"
+		e.Properties.Type = varTypeNull
 	case []interface{}:
 		e.ArgValue = processPlgArgArray(v, e)
 	default:
 		e.ArgValue = nil
-		e.Properties.Type = "unknown"
+		e.Properties.Type = varTypeUnknown
 	}
 
 	return nil
@@ -350,35 +364,35 @@ func (e *PluginParams) UnmarshalJSON(data []byte) error {
 // Helper function to handle array processing and set the type in PluginParamsProperties
 func processPlgArgArray(arr []interface{}, e *PluginParams) interface{} {
 	if len(arr) == 0 {
-		e.Properties.Type = "array"
+		e.Properties.Type = varTypeArr
 		return arr
 	}
 
 	// Check the type of the first element to guess the array type
 	switch arr[0].(type) {
 	case string:
-		e.Properties.Type = "[]string"
+		e.Properties.Type = arrTypeStr
 		var stringArray []string
 		for _, elem := range arr {
 			stringArray = append(stringArray, elem.(string))
 		}
 		return stringArray
 	case float64:
-		e.Properties.Type = "[]float64"
+		e.Properties.Type = arrTypeFloat64
 		var numberArray []float64
 		for _, elem := range arr {
 			numberArray = append(numberArray, elem.(float64))
 		}
 		return numberArray
 	case bool:
-		e.Properties.Type = "[]bool"
+		e.Properties.Type = arrTypeBool
 		var boolArray []bool
 		for _, elem := range arr {
 			boolArray = append(boolArray, elem.(bool))
 		}
 		return boolArray
 	default:
-		e.Properties.Type = "[]unknown"
+		e.Properties.Type = arrTypeUnknown
 		return arr
 	}
 }

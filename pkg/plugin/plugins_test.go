@@ -109,3 +109,57 @@ func TestJSPluginString(t *testing.T) {
 		t.Errorf("String() method returned incorrect result, expected: %s, got: %s", expected, actual)
 	}
 }
+
+func TestGetPluginName(t *testing.T) {
+	tests := []struct {
+		name       string
+		pluginBody string
+		file       string
+		want       string
+	}{
+		{
+			name:       "Extract name from comment",
+			pluginBody: "// name: TestPlugin\nconsole.log('Hello, World!');",
+			file:       "test-plugin.js",
+			want:       "TestPlugin",
+		},
+		{
+			name:       "Extract name from file name",
+			pluginBody: "console.log('Hello, World!');",
+			file:       "test-plugin.js",
+			want:       "test-plugin",
+		},
+		{
+			name:       "Extract name from comment without prefix",
+			pluginBody: "// TestPlugin\nconsole.log('Hello, World!');",
+			file:       "test-plugin.js",
+			want:       "test-plugin",
+		},
+		{
+			name:       "Empty plugin body",
+			pluginBody: "",
+			file:       "test-plugin.js",
+			want:       "test-plugin",
+		},
+		{
+			name:       "No name in comment",
+			pluginBody: "// This is a plugin\nconsole.log('Hello, World!');",
+			file:       "test-plugin.js",
+			want:       "test-plugin",
+		},
+		{
+			name:       "Name with extra spaces",
+			pluginBody: "// name:    TestPlugin   \nconsole.log('Hello, World!');",
+			file:       "test-plugin.js",
+			want:       "TestPlugin",
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getPluginName(tt.pluginBody, tt.file); got != tt.want {
+				t.Errorf("getPluginName() = %v, test n.%d want %v", got, i, tt.want)
+			}
+		})
+	}
+}
