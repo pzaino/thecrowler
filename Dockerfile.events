@@ -29,7 +29,7 @@ FROM alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238
 WORKDIR /app
 
 # Create a non-root user and switch to it
-RUN adduser -D apiuser
+RUN adduser -D eventsuser
 
 COPY --from=builder /app/bin/events /app/
 COPY --from=builder /app/bin/healthCheck /app/
@@ -37,15 +37,15 @@ COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 
 # Ensure the executables have correct permissions
-RUN chmod +x api
+RUN chmod +x events
 RUN chmod +x healthCheck
 
 # Create the data directory with appropriate permissions
 RUN mkdir /app/data
 RUN chmod 755 /app/data
-RUN chown -R apiuser:apiuser /app
+RUN chown -R eventsuser:eventsuser /app
 
-USER apiuser
+USER eventsuser
 
 # Expose port 8080 to the outside world
 EXPOSE 8080

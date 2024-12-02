@@ -46,7 +46,7 @@ cat << EOF > docker-compose.yml
 version: '3.8'
 services:
   crowler_db:
-    image: postgres:alpine3.20
+    image: postgres:15.10-bookworm
     ports:
       - "5432:5432"
     environment:
