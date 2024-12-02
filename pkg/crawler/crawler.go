@@ -1443,6 +1443,12 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
 func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessContext) (selenium.WebDriver, string, error) {
+	// Reinforce Browser Settings
+	err := reinforceBrowserSettings(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
+	}
+
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -1475,7 +1481,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	}
 
 	// Get Session Cookies
-	err := getCookies(ctx, &wd)
+	err = getCookies(ctx, &wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to get cookies: %v", err)
 	}
@@ -2632,11 +2638,15 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		args = append(args, "--override-device-memory=4")
 		args = append(args, "--disable-plugins-discovery")
 		args = append(args, "--disable-features=Battery")
-		args = append(args, "--disable-webrtc")
 		args = append(args, "--disable-peer-to-peer")
 		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
 		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
 		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
+		args = append(args, "--disable-webrtc-multiple-routes")
+		args = append(args, "--disable-webrtc-hw-encoding")
+		args = append(args, "--disable-webrtc-hw-decoding")
+		args = append(args, "--disable-webrtc-encryption")
+		args = append(args, "--disable-webrtc")
 	}
 	args = append(args, "--disable-peer-to-peer")
 
@@ -2720,7 +2730,124 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	// Post-connection settings
 	setNavigatorProperties(&wd, sel.Config.Language, userAgent)
 
+	// Retrieve Browser Configuration and display it for debugging purposes:
+	result, err := getBrowserConfiguration(&wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v\n", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
+	}
+
+	err = addLoadListener(&wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
+	}
+
 	return wd, err
+}
+
+func addLoadListener(wd *selenium.WebDriver) error {
+	script := `
+        window.addEventListener('load', () => {
+            try {
+                Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
+                Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
+                Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            } catch (err) {
+                console.error('Error applying browser settings on page load:', err);
+            }
+        });
+    `
+
+	_, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error adding load listener: %v", err)
+	}
+
+	return nil
+}
+
+func reinforceBrowserSettings(wd selenium.WebDriver) error {
+	script := `
+        // Reapply WebRTC and navigator spoofing settings
+        try {
+            Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
+            Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
+            Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+			Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
+        	Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
+        	Object.defineProperty(navigator.mediaDevices, {value: undefined});
+			Object.defineProperty(navigator, 'getUserMedia', {value: undefined});
+			Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});
+			HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; };
+			const getParameter = WebGLRenderingContext.prototype.getParameter;
+			WebGLRenderingContext.prototype.getParameter = function(parameter) {
+				if (parameter === 37445) return 'Intel Inc.'; // Mock Vendor
+				if (parameter === 37446) return 'Intel Iris OpenGL'; // Mock Renderer
+				return getParameter(parameter);
+			};
+        } catch (err) {
+            console.error('Error reinforcing browser settings:', err);
+        }
+    `
+
+	_, err := wd.ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error reinforcing browser settings: %v", err)
+	}
+
+	return nil
+}
+
+func getBrowserConfiguration(wd *selenium.WebDriver) (map[string]interface{}, error) {
+	script := `
+		return {
+			// WebRTC settings
+			RTCDataChannel: typeof RTCDataChannel,
+			RTCPeerConnection: typeof RTCPeerConnection,
+			getUserMedia: typeof navigator.mediaDevices?.getUserMedia,
+
+			// Navigator properties
+			userAgent: navigator.userAgent,
+			languages: navigator.languages,
+			deviceMemory: navigator.deviceMemory,
+			hardwareConcurrency: navigator.hardwareConcurrency,
+			webdriver: navigator.webdriver,
+			platform: navigator.platform,
+			plugins: navigator.plugins.length,
+
+			// Screen dimensions
+			screenWidth: window.screen.width,
+			screenHeight: window.screen.height,
+			innerWidth: window.innerWidth,
+			innerHeight: window.innerHeight,
+			outerWidth: window.outerWidth,
+			outerHeight: window.outerHeight
+		};
+	`
+
+	// Execute the script and get the result
+	result, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error executing browser configuration script: %v", err)
+	}
+
+	// Convert result to a Go map and return
+	config, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected result format: %v", result)
+	}
+
+	return config, nil
 }
 
 func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
@@ -2802,21 +2929,6 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 		// Disable WebRTC APIs to prevent IP leakage
 		"Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});",
 		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
-		"Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});",
-		"Object.defineProperty(navigator, 'getUserMedia', {value: undefined});",
-		"Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {value: undefined});",
-		"Object.defineProperty(navigator.mediaDevices, {value: undefined});",
-
-		// Mock WebGL vendor and renderer
-		"const getParameter = WebGLRenderingContext.prototype.getParameter;" +
-			"WebGLRenderingContext.prototype.getParameter = function(parameter) {" +
-			"  if (parameter === 37445) return 'Intel Inc.';" + // Mock Vendor
-			"  if (parameter === 37446) return 'Intel Iris OpenGL';" + // Mock Renderer
-			"  return getParameter(parameter);" +
-			"};",
-
-		// Mock Canvas fingerprinting
-		"HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; }",
 	}
 	for _, script := range scripts {
 		_, err := (*wd).ExecuteScript(script, nil)

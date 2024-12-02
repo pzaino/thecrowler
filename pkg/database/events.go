@@ -42,6 +42,7 @@ func GenerateEventUID(e Event) string {
 func CreateEvent(db *Handler, e Event) (string, error) {
 	// Generate a unique identifier for the event
 	uid := GenerateEventUID(e)
+	e.ID = uid
 
 	// get the current timestamp
 	e.Timestamp = time.Now().Format(time.RFC3339)
