@@ -3,6 +3,7 @@
 engine_count="$1"
 vdi_count="$2"
 prometheus="$3"
+postgres="$4"
 
 # If no arguments are provided, ask the user for the number of instances
 if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
@@ -14,6 +15,9 @@ if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
     # Ask the user if they want to include the Prometheus PushGateway
     # shellcheck disable=SC2162
     read -p "Do you want to include the Prometheus PushGateway? (yes/no): " prometheus
+    # Ask the user if they want to include the PostgreSQL database
+    # shellcheck disable=SC2162
+    read -p "Do you want to include the PostgreSQL database? (yes/no): " postgres
 fi
 
 # trim trail spaces in prometheus input and transform to lowercase
@@ -25,6 +29,18 @@ if [ -z "$prometheus" ]; then
 fi
 if [ "$prometheus" != "yes" ] && [ "$prometheus" != "no" ]; then
     echo "Invalid input. Please provide 'yes' or 'no' for the Prometheus PushGateway."
+    exit 1
+fi
+
+# trim trail spaces in postgres input and transform to lowercase
+postgres=$(echo "$postgres" | tr '[:upper:]' '[:lower:]' | xargs)
+
+# If no value is provided for postgres, set it to "yes"
+if [ -z "$postgres" ]; then
+    postgres="yes"
+fi
+if [ "$postgres" != "yes" ] && [ "$postgres" != "no" ]; then
+    echo "Invalid input. Please provide 'yes' or 'no' for the PostgreSQL database."
     exit 1
 fi
 
@@ -45,35 +61,6 @@ cat << EOF > docker-compose.yml
 ---
 version: '3.8'
 services:
-  crowler_db:
-    image: postgres:15.10-bookworm
-    ports:
-      - "5432:5432"
-    environment:
-      - COMPOSE_PROJECT_NAME=crowler_
-      - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
-      - POSTGRES_USER=\${DOCKER_POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
-      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./pkg/database/postgresql-setup-v1.5.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql
-    networks:
-      - crowler-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \$\${POSTGRES_USER}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    restart: always
-
   crowler_api:
     environment:
       - COMPOSE_PROJECT_NAME=crowler_
@@ -130,6 +117,43 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: always
+EOF
+
+
+# Add the crowler_db instance
+# shellcheck disable=SC2086
+if [ $postgres == "yes" ];
+then
+  cat << EOF >> docker-compose.yml
+
+  crowler_db:
+    image: postgres:15.10-bookworm
+    ports:
+      - "5432:5432"
+    environment:
+      - COMPOSE_PROJECT_NAME=crowler_
+      - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
+      - POSTGRES_USER=\${DOCKER_POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
+      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./pkg/database/postgresql-setup-v1.5.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql
+    networks:
+      - crowler-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \$\${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: always
 EOF
 
