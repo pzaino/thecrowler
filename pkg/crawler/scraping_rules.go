@@ -65,6 +65,12 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url strin
 	data, err := executeScrapingRulesByURL(wd, ctx, url)
 	addScrapedDataToDocument(&scrapedDataDoc, data)
 
+	// Check if scrapedDataDOc already has "{" and "}" at the beginning and end
+	if strings.HasPrefix(scrapedDataDoc, "{") && strings.HasSuffix(scrapedDataDoc, "}") {
+		scrapedDataDoc = scrapedDataDoc[1:]
+		scrapedDataDoc = scrapedDataDoc[:len(scrapedDataDoc)-1]
+	}
+
 	return "{" + scrapedDataDoc + "}", err
 }
 
@@ -78,37 +84,59 @@ func addScrapedDataToDocument(scrapedDataDoc *string, newScrapedData string) {
 
 func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url string) (string, error) {
 	scrapedDataDoc := ""
+	var errList []error
 
 	// Retrieve the rule group by URL
-	rg, err := ctx.re.GetRuleGroupByURL(url)
-	if err == nil && rg != nil {
-		// Execute all the rules in the rule group (the following function also set the Env and clears it)
-		var data string
-		data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd)
-		// Add the data to the document
-		data = strings.TrimSpace(data)
-		if data != "" && data != "{}" && data != strFalse && data != strTrue {
-			addScrapedDataToDocument(&scrapedDataDoc, data)
+	rgl, err := ctx.re.GetAllRulesGroupByURL(url)
+	if err == nil && len(rgl) != 0 {
+		for _, rg := range rgl {
+			// Execute all the rules in the rule group (the following function also set the Env and clears it)
+			var data string
+			data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd)
+			// Add the data to the document
+			data = strings.TrimSpace(data)
+			if data != "" && data != "{}" && data != strFalse && data != strTrue {
+				// Check if data has double "{{" and "}}" at the beginning and end
+				if strings.HasPrefix(data, "{{") && strings.HasSuffix(data, "}}") {
+					data = data[1:]
+					data = data[:len(data)-1]
+				}
+				addScrapedDataToDocument(&scrapedDataDoc, data)
+			}
 		}
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No rule group found for URL: %v", url)
 	}
 	if err != nil {
-		return scrapedDataDoc, fmt.Errorf("%v", err)
+		errList = append(errList, fmt.Errorf("%v", err))
 	}
 
 	// Retrieve the ruleset by URL
-	rs, err := ctx.re.GetRulesetByURL(url)
-	if err == nil && rs != nil {
-		// Execute all the rules in the ruleset
-		var data string
-		data, err = executeScrapingRulesInRuleset(ctx, rs, wd)
-		addScrapedDataToDocument(&scrapedDataDoc, data)
+	rsl, err := ctx.re.GetAllRulesetByURL(url)
+	if err == nil && len(rsl) != 0 {
+		for _, rs := range rsl {
+			// Execute all the rules in the ruleset
+			var data string
+			data, err = executeScrapingRulesInRuleset(ctx, rs, wd)
+			addScrapedDataToDocument(&scrapedDataDoc, data)
+		}
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "No ruleset found for URL: %v", url)
 	}
+	if err != nil {
+		errList = append(errList, fmt.Errorf("%v", err))
+	}
 
-	return scrapedDataDoc, err
+	// Join all errors
+	errStr := ""
+	for _, e := range errList {
+		errStr += e.Error() + "\n"
+	}
+	if errStr != "" {
+		return scrapedDataDoc, fmt.Errorf("%v", errStr)
+	}
+
+	return scrapedDataDoc, nil
 }
 
 func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *selenium.WebDriver) (string, error) {
@@ -148,6 +176,37 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		var scrapedData string
 		scrapedData, err = executeScrapingRule(ctx, &r, wd)
 		addScrapedDataToDocument(&scrapedDataDoc, scrapedData)
+	}
+
+	// Apply the post-processing steps to the extracted data
+	if len(rg.PostProcessing) != 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rulesgroup's post-processing steps to the extracted data")
+		// Convert the JSON data to a map
+		var extractedData map[string]interface{}
+		err = json.Unmarshal([]byte("{"+scrapedDataDoc+"}"), &extractedData)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling JSON: %v, for JSON: %v", err, scrapedDataDoc)
+			return scrapedDataDoc, fmt.Errorf("unmarshalling JSON: %v", err)
+		}
+		// Convert the map to JSON
+		data := cmn.ConvertMapToJSON(extractedData)
+		for _, step := range rg.PostProcessing {
+			ApplyPostProcessingStep(ctx, &step, &data)
+		}
+
+		// Check if data has double "{{" and "}}" at the beginning and end
+		if strings.HasPrefix(string(data), "{{") && strings.HasSuffix(string(data), "}}") {
+			data = data[1:]
+			data = data[:len(data)-1]
+		}
+
+		// Unmarshal the JSON data back into a map
+		err = json.Unmarshal(data, &extractedData)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling JSON: %v, for JSON: %v", err, data)
+		}
+		// Convert the map back to JSON string
+		scrapedDataDoc = string(cmn.ConvertMapToJSON(extractedData))
 	}
 
 	// Reset the environment

@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
 // mockRuleset generates a basic Ruleset for testing purposes
@@ -959,8 +961,8 @@ func TestCountRules(t *testing.T) {
 func TestCountPlugins(t *testing.T) {
 	re := &RuleEngine{
 		Rulesets: []Ruleset{},
-		JSPlugins: JSPluginRegister{
-			registry: map[string]JSPlugin{
+		JSPlugins: plg.JSPluginRegister{
+			Registry: map[string]plg.JSPlugin{
 				"plugin1": {},
 				"plugin2": {},
 			},
@@ -977,8 +979,8 @@ func TestCountPlugins(t *testing.T) {
 func TestCountPluginsWithEmptyRegistry(t *testing.T) {
 	re := &RuleEngine{
 		Rulesets: []Ruleset{},
-		JSPlugins: JSPluginRegister{
-			registry: map[string]JSPlugin{},
+		JSPlugins: plg.JSPluginRegister{
+			Registry: map[string]plg.JSPlugin{},
 		},
 	}
 
@@ -1058,7 +1060,7 @@ func TestGetRulesetByName(t *testing.T) {
 	}
 }
 
-func TestGetRuleGroupByURL(t *testing.T) {
+func TestGetRulesGroupByURL(t *testing.T) {
 	re := &RuleEngine{
 		Rulesets: []Ruleset{
 			{
@@ -1090,7 +1092,7 @@ func TestGetRuleGroupByURL(t *testing.T) {
 		GroupName: "http://example.com",
 		IsEnabled: true,
 	}
-	group1, err := re.GetRuleGroupByURL(url1)
+	group1, err := re.GetRulesGroupByURL(url1)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -1100,7 +1102,7 @@ func TestGetRuleGroupByURL(t *testing.T) {
 
 	// Test case 2: Valid URL with no matching rule group
 	url2 := "http://example.org"
-	_, err = re.GetRuleGroupByURL(url2)
+	_, err = re.GetRulesGroupByURL(url2)
 	if err == nil {
 		t.Error("Expected error, but got nil")
 	}
@@ -1111,7 +1113,7 @@ func TestGetRuleGroupByURL(t *testing.T) {
 
 	// Test case 3: Invalid URL
 	url3 := "invalid-url"
-	_, err = re.GetRuleGroupByURL(url3)
+	_, err = re.GetRulesGroupByURL(url3)
 	if err == nil {
 		t.Error("Expected error, but got nil")
 	}

@@ -132,6 +132,11 @@ func parseWHOISOutput(whoisOutput, domain string) (WHOISData, error) {
 		Entity: domain,
 	}
 
+	const (
+		private = "PRIVATE"
+		public  = "PUBLIC"
+	)
+
 	// check if domain contains an IPv4 or IPv6 address
 	ip := net.ParseIP(domain)
 	if ip != nil {
@@ -142,18 +147,18 @@ func parseWHOISOutput(whoisOutput, domain string) (WHOISData, error) {
 			data.EntityType = "IPv6"
 		}
 		if ip.IsPrivate() {
-			data.EntityStatus = "PRIVATE"
+			data.EntityStatus = private
 		} else {
-			data.EntityStatus = "PUBLIC"
+			data.EntityStatus = public
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "WHOIS Output for IP %s:\n%s", domain, whoisOutput)
 	} else {
 		data.EntityType = "DOMAIN"
 		// Check if the domain is public or private
 		if strings.Contains(whoisOutput, "This query returned 0 objects") {
-			data.EntityStatus = "PRIVATE"
+			data.EntityStatus = private
 		} else {
-			data.EntityStatus = "PUBLIC"
+			data.EntityStatus = public
 		}
 	}
 

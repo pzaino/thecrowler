@@ -127,6 +127,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.StartTime = time.Now()
 	processCtx.Status.PipelineRunning = 1
 	processCtx.SelInstance = sel
+	processCtx.CollectedCookies = make(map[string]interface{})
 
 	var err error
 	// Combine default configuration with the source configuration
@@ -171,9 +172,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
-	defer ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
-	defer UpdateSourceState(args.DB, args.Src.URL, err)
-	defer processCtx.WG.Done()
+	defer closeSession(processCtx, args, &sel, releaseSelenium, err)
 
 	// Crawl the initial URL and get the HTML content
 	var pageSource selenium.WebDriver
@@ -327,6 +326,11 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 	}
 
+	if processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+		// Reset cookies after crawling
+		_ = ResetSiteSession(processCtx)
+	}
+
 	// Return the Selenium instance to the channel
 	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 
@@ -336,9 +340,80 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	// Pipeline has completed
 	processCtx.Status.EndTime = time.Now()
 	processCtx.Status.PipelineRunning = 2
+}
 
-	// Update the source state in the database
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
+func closeSession(ctx *ProcessContext, args Pars, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance, err error) {
+	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
+	ctx.WG.Done()
+
+	// Log the end of the pipeline
+	ctx.Status.EndTime = time.Now()
+	UpdateSourceState(args.DB, args.Src.URL, err)
+
+	// Signal pipeline completion
+	if ctx.Status.PipelineRunning == 1 {
+		ctx.Status.PipelineRunning = 3
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
+	UpdateSourceState(args.DB, args.Src.URL, err)
+
+	// Create a database event to indicate the crawl has completed
+	if ctx.config.Crawler.CreateEventWhenDone {
+		err := CreateCrawlCompletedEvent(*ctx.db, ctx.source.ID, ctx.Status)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create crawl completed event in DB: %v", err)
+		}
+	}
+
+	// Optionally clean up session-specific data
+	cmn.KVStore.CleanSession(ctx.GetContextID())
+
+	// Close the Selenium WebDriver if still open
+	if ctx.wd != nil {
+		_ = ctx.wd.Close()
+	}
+
+	// Release other resources in ctx
+	ctx.linksMutex.Lock()
+	ctx.newLinks = nil         // Clear the slice to release memory
+	ctx.visitedLinks = nil     // Clear the map to release memory
+	ctx.CollectedCookies = nil // Clear cookies
+	ctx.linksMutex.Unlock()
+
+	// Set the context object to nil
+	*ctx = ProcessContext{} // Reset the struct
+	ctx = nil               // Signal that ctx is no longer needed
+}
+
+// CreateCrawlCompletedEvent creates a new event in the database to indicate that the crawl has completed
+func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) error {
+	// Convert Status into a JSON string
+	statusJSON, err := json.Marshal(status)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "marshalling status to JSON: %v", err)
+	}
+	var statusMap map[string]interface{}
+	err = json.Unmarshal(statusJSON, &statusMap)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling status to map: %v", err)
+	}
+
+	// Create a new event
+	event := cdb.Event{
+		SourceID: sourceID,
+		Type:     "crawl_completed",
+		Severity: "info",
+		Details:  statusMap,
+	}
+
+	// Use PostgreSQL placeholders ($1, $2, etc.) and include event_timestamp
+	_, err = cdb.CreateEvent(&db, event)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting event into database: %v", err)
+		return err
+	}
+
+	return err
 }
 
 // NewProcessContext creates a new process context
@@ -416,6 +491,13 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
+
+	if ctx.config.Crawler.ResetCookiesPolicy == "on_request" ||
+		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
+		ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		// Reset cookies on each request
+		_ = ResetSiteSession(ctx)
+	}
 
 	// Get the initial URL
 	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
@@ -1361,6 +1443,12 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
 func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessContext) (selenium.WebDriver, string, error) {
+	// Reinforce Browser Settings
+	err := reinforceBrowserSettings(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
+	}
+
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -1392,6 +1480,12 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
 	}
 
+	// Get Session Cookies
+	err = getCookies(ctx, &wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to get cookies: %v", err)
+	}
+
 	// Get the Mime Type of the page
 	docType := inferDocumentType(url, &wd)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
@@ -1407,7 +1501,28 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		processActionRules(&wd, ctx, url)
 	}
 
+	// Get Post-Actions Cookies (if any)
+	err = getCookies(ctx, &wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to get post-actions cookies: %v", err)
+	}
+
 	return wd, docType, nil
+}
+
+func getCookies(ctx *ProcessContext, wd *selenium.WebDriver) error {
+	// Get the cookies
+	cookies, err := (*wd).GetCookies()
+	if err != nil {
+		return fmt.Errorf("failed to get cookies: %v", err)
+	}
+
+	// Add new cookies to the context
+	for _, cookie := range cookies {
+		ctx.CollectedCookies[cookie.Name] = cookie.Value
+	}
+
+	return nil
 }
 
 func docTypeIsHTML(mime string) bool {
@@ -1855,6 +1970,11 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
+		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+			// Reset cookies on each request
+			_ = ResetSiteSession(processCtx)
+		}
+
 		// Process the job
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
 		var err error
@@ -2278,6 +2398,28 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	return err
 }
 
+// ResetSiteSession resets the site session by deleting all cookies and local storage
+func ResetSiteSession(ctx *ProcessContext) error {
+	// Clear cookies
+	for name := range ctx.CollectedCookies {
+		err := ctx.wd.DeleteCookie(name)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to delete cookie '%s': %v", name, err)
+		}
+	}
+
+	// Clear local storage
+	_, _ = ctx.wd.ExecuteScript("window.localStorage.clear();", nil)
+
+	// Clear session storage
+	_, _ = ctx.wd.ExecuteScript("window.sessionStorage.clear();", nil)
+
+	// Clear IndexedDB (if applicable)
+	_, _ = ctx.wd.ExecuteScript("indexedDB.databases().then(dbs => dbs.forEach(db => indexedDB.deleteDatabase(db.name)));", nil)
+
+	return nil
+}
+
 func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
@@ -2481,7 +2623,32 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
+		args = append(args, "--force-proxy-for-all")
 	}
+
+	// Avoid funny localizations/detections
+	args = append(args, "--disable-webrtc")
+	if browser == "chrome" || browser == "chromium" {
+		args = append(args, "--disable-geolocation")
+		args = append(args, "--disable-notifications")
+		args = append(args, "--disable-quic")
+		args = append(args, "--disable-blink-features=AutomationControlled")
+		args = append(args, "--disable-web-security")
+		args = append(args, "--override-hardware-concurrency=4")
+		args = append(args, "--override-device-memory=4")
+		args = append(args, "--disable-plugins-discovery")
+		args = append(args, "--disable-features=Battery")
+		args = append(args, "--disable-peer-to-peer")
+		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
+		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
+		args = append(args, "--disable-webrtc-multiple-routes")
+		args = append(args, "--disable-webrtc-hw-encoding")
+		args = append(args, "--disable-webrtc-hw-decoding")
+		args = append(args, "--disable-webrtc-encryption")
+		args = append(args, "--disable-webrtc")
+	}
+	args = append(args, "--disable-peer-to-peer")
 
 	args = append(args, "--disable-blink-features=AutomationControlled")
 
@@ -2489,10 +2656,17 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	args = append(args, "--enable-logging")
 	args = append(args, "--v=1")
 
+	downloadDir := strings.TrimSpace(sel.Config.DownloadDir)
+	if downloadDir == "" {
+		downloadDir = "/tmp"
+		sel.Config.DownloadDir = downloadDir
+	}
 	if browser == "chrome" || browser == "chromium" {
 		chromePrefs := map[string]interface{}{
-			"profile.default_content_settings.popups": 0,
-			"download.default_directory":              sel.Config.DownloadDir,
+			"download.default_directory":              downloadDir,
+			"download.prompt_for_download":            false, // Disable download prompt
+			"profile.default_content_settings.popups": 0,     // Suppress popups
+			"safebrowsing.enabled":                    true,  // Enable Safe Browsing
 		}
 		caps.AddChrome(chrome.Capabilities{
 			Args:  args,
@@ -2502,7 +2676,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
-			"browser.download.dir":                      sel.Config.DownloadDir,
+			"browser.download.dir":                      downloadDir,
 			"browser.helperApps.neverAsk.saveToDisk":    "application/zip",
 			"browser.download.manager.showWhenStarting": false,
 		}
@@ -2527,7 +2701,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	}
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
-		sel.Config.Host = "crowler_vdi"
+		sel.Config.Host = "crowler_vdi_1"
 	}
 
 	// Connect to the WebDriver instance running remotely.
@@ -2554,12 +2728,129 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	}
 
 	// Post-connection settings
-	setNavigatorProperties(&wd, sel.Config.Language)
+	setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+
+	// Retrieve Browser Configuration and display it for debugging purposes:
+	result, err := getBrowserConfiguration(&wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v\n", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
+	}
+
+	err = addLoadListener(&wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
+	}
 
 	return wd, err
 }
 
-func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
+func addLoadListener(wd *selenium.WebDriver) error {
+	script := `
+        window.addEventListener('load', () => {
+            try {
+                Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
+                Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
+                Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            } catch (err) {
+                console.error('Error applying browser settings on page load:', err);
+            }
+        });
+    `
+
+	_, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error adding load listener: %v", err)
+	}
+
+	return nil
+}
+
+func reinforceBrowserSettings(wd selenium.WebDriver) error {
+	script := `
+        // Reapply WebRTC and navigator spoofing settings
+        try {
+            Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
+            Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
+            Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+			Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
+        	Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
+        	Object.defineProperty(navigator.mediaDevices, {value: undefined});
+			Object.defineProperty(navigator, 'getUserMedia', {value: undefined});
+			Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});
+			HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; };
+			const getParameter = WebGLRenderingContext.prototype.getParameter;
+			WebGLRenderingContext.prototype.getParameter = function(parameter) {
+				if (parameter === 37445) return 'Intel Inc.'; // Mock Vendor
+				if (parameter === 37446) return 'Intel Iris OpenGL'; // Mock Renderer
+				return getParameter(parameter);
+			};
+        } catch (err) {
+            console.error('Error reinforcing browser settings:', err);
+        }
+    `
+
+	_, err := wd.ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error reinforcing browser settings: %v", err)
+	}
+
+	return nil
+}
+
+func getBrowserConfiguration(wd *selenium.WebDriver) (map[string]interface{}, error) {
+	script := `
+		return {
+			// WebRTC settings
+			RTCDataChannel: typeof RTCDataChannel,
+			RTCPeerConnection: typeof RTCPeerConnection,
+			getUserMedia: typeof navigator.mediaDevices?.getUserMedia,
+
+			// Navigator properties
+			userAgent: navigator.userAgent,
+			languages: navigator.languages,
+			deviceMemory: navigator.deviceMemory,
+			hardwareConcurrency: navigator.hardwareConcurrency,
+			webdriver: navigator.webdriver,
+			platform: navigator.platform,
+			plugins: navigator.plugins.length,
+
+			// Screen dimensions
+			screenWidth: window.screen.width,
+			screenHeight: window.screen.height,
+			innerWidth: window.innerWidth,
+			innerHeight: window.innerHeight,
+			outerWidth: window.outerWidth,
+			outerHeight: window.outerHeight
+		};
+	`
+
+	// Execute the script and get the result
+	result, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error executing browser configuration script: %v", err)
+	}
+
+	// Convert result to a Go map and return
+	config, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected result format: %v", result)
+	}
+
+	return config, nil
+}
+
+func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	selectedLanguage := ""
 
@@ -2589,12 +2880,55 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang string) {
 	default:
 		selectedLanguage = "['en-US', 'en']"
 	}
+
 	// Set the navigator properties
 	scripts := []string{
 		"Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
 		"window.navigator.chrome = {runtime: {}}",
 		"Object.defineProperty(navigator, 'languages', {get: () => " + selectedLanguage + "})",
 		"Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
+		"Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})",        // Example device memory spoof
+		"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // Example cores
+		// Disable geolocation API
+		"Object.defineProperty(navigator, 'geolocation', {get: () => null})",
+
+		// Mock `navigator.doNotTrack`
+		"Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'})", // User enables Do Not Track
+
+		// Mock `navigator.vendor` and `navigator.platform`
+		"Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'})",
+		"Object.defineProperty(navigator, 'platform', {get: () => 'Linux'})", // Mimic Linux platform
+
+		// Spoof `navigator.deviceMemory`
+		//"Object.defineProperty(navigator, 'deviceMemory', {get: () => 4})", // 4 GB memory
+
+		// Spoof `navigator.hardwareConcurrency`
+		//"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // 4 CPU cores
+
+		//"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
+
+		// Override screen width and height
+		"Object.defineProperty(screen, 'width', {get: () => 1920})",
+		"Object.defineProperty(screen, 'height', {get: () => 1080})",
+
+		// Override window inner and outer dimensions
+		"Object.defineProperty(window, 'innerWidth', {get: () => 1920})",
+		"Object.defineProperty(window, 'innerHeight', {get: () => 1080})",
+		"Object.defineProperty(window, 'outerWidth', {get: () => 1920})",
+		"Object.defineProperty(window, 'outerHeight', {get: () => 1080})",
+
+		// Mock `navigator.appVersion` and `navigator.userAgent`
+		fmt.Sprintf("Object.defineProperty(navigator, 'appVersion', {get: () => '%s'})", userAgent),
+		fmt.Sprintf("Object.defineProperty(navigator, 'userAgent', {get: () => '%s'})", userAgent),
+
+		"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
+
+		// Mock `navigator.connection`
+		"Object.defineProperty(navigator, 'connection', {get: () => ({type: 'wifi', downlink: 10.0})})", // Mimic WiFi connection
+
+		// Disable WebRTC APIs to prevent IP leakage
+		"Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});",
+		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
 	}
 	for _, script := range scripts {
 		_, err := (*wd).ExecuteScript(script, nil)

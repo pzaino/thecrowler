@@ -30,6 +30,10 @@ import (
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 )
 
+const (
+	darwinStr = "darwin"
+)
+
 // GetServiceScoutInfo returns the Nmap information for the provided URL
 func (ni *NetInfo) GetServiceScoutInfo(scanCfg *cfg.ServiceScoutConfig) error {
 	// Scan the hosts
@@ -148,7 +152,7 @@ func buildNmapOptions(cfg *cfg.ServiceScoutConfig,
 	options = append(options, nmap.WithDebugging(2))
 
 	// Privileged mode
-	if platform.OSName != "darwin" {
+	if platform.OSName != darwinStr {
 		options = append(options, nmap.WithPrivileged())
 	}
 
@@ -176,7 +180,7 @@ func appendScanTypes(options []nmap.Option, cfg *cfg.ServiceScoutConfig) []nmap.
 
 func appendDNSOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
 	platform *cfg.PlatformInfo) []nmap.Option {
-	if platform.OSName != "darwin" {
+	if platform.OSName != darwinStr {
 		if len(cfg.DNSServers) > 0 {
 			options = append(options, nmap.WithCustomDNSServers(cfg.DNSServers...))
 		} else {
@@ -246,7 +250,7 @@ func appendLowNosingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
 		options = append(options, nmap.WithMaxRetries(int(maxRetries)))
 	}
 	usingSS := false
-	if platform.OSName != "darwin" {
+	if platform.OSName != darwinStr {
 		if cfg.IPFragment {
 			options = append(options, nmap.WithFragmentPackets())
 			if cfg.UDPScan {
@@ -285,7 +289,7 @@ func appendLowNosingOptions(options []nmap.Option, cfg *cfg.ServiceScoutConfig,
 	}
 
 	// Traceroute
-	if platform.OSName != "darwin" {
+	if platform.OSName != darwinStr {
 		options = append(options, nmap.WithTraceRoute())
 	}
 

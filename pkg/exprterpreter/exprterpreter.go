@@ -169,23 +169,23 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 	}
 
 	// Convert arguments to integers
-	min, err := strconv.Atoi(minArg)
+	minVal, err := strconv.Atoi(minArg)
 	if err != nil {
 		return "", fmt.Errorf("invalid min argument for random: %s", minArg)
 	}
-	max, err := strconv.Atoi(maxArg)
+	maxVal, err := strconv.Atoi(maxArg)
 	if err != nil {
 		return "", fmt.Errorf("invalid max argument for random: %s", maxArg)
 	}
 
 	// Ensure min is less than max
-	if min >= max {
+	if minVal >= maxVal {
 		return "", fmt.Errorf("min argument must be less than max argument for random")
 	}
 
 	// Generate and return random value using crypto/rand for better randomness
 	// Compute the range (max - min + 1)
-	rangeInt := big.NewInt(int64(max - min + 1))
+	rangeInt := big.NewInt(int64(maxVal - minVal + 1))
 	// Generate a random number in [0, rangeInt)
 	n, err := rand.Int(rand.Reader, rangeInt)
 	if err != nil {
@@ -193,7 +193,7 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 	}
 
 	// Shift the number to [min, max]
-	result := int(n.Int64()) + min
+	result := int(n.Int64()) + minVal
 	return strconv.Itoa(result), nil
 }
 

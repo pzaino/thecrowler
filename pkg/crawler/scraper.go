@@ -610,16 +610,22 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 	}
 
 	// Apply the post-processing steps to the extracted data
-	if ruleGroup.PostProcessing != nil {
+	if len(ruleGroup.PostProcessing) != 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rulesgroup's post-processing steps to the extracted data")
 		data := cmn.ConvertMapToJSON(extractedData)
 		for _, step := range ruleGroup.PostProcessing {
 			ApplyPostProcessingStep(ctx, &step, &data)
 		}
-		// Unmarshal the JSON data back into a map
-		err := json.Unmarshal(data, &extractedData)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling collected data after post-processing: %v", err)
-			return extractedData, err
+
+		// Check if data has double "{{" and "}}" at the beginning and end
+		if strings.HasPrefix(string(data), "{{") && strings.HasSuffix(string(data), "}}") {
+			data = data[1:]
+			data = data[:len(data)-1]
+		}
+
+		// update the extractedData with the post-processed data
+		for k, v := range cmn.ConvertJSONToMap(data) {
+			extractedData[k] = v
 		}
 	}
 
@@ -891,7 +897,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	// Execute the plugin
 	var value interface{}
 	var err error
-	value, err = plugin.Execute(&ctx.wd, ctx.config.Plugins.PluginTimeout, params)
+	value, err = plugin.Execute(&ctx.wd, ctx.db, ctx.config.Plugins.PluginTimeout, params)
 	if err != nil {
 		return fmt.Errorf("error executing JS plugin: %v", err)
 	}

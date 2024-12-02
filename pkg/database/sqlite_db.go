@@ -111,6 +111,11 @@ func (handler *SQLiteHandler) CheckConnection(c cfg.Config) error {
 	return err
 }
 
+// NewListener returns a new Listener for the database
+func (handler *SQLiteHandler) NewListener() Listener {
+	return nil
+}
+
 // ---------------------------------------------------------------
 // Database abstraction layer
 // ---------------------------------------------------------------

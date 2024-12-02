@@ -182,15 +182,15 @@ func (rs *Ruleset) GetRuleGroupByName(name string) (RuleGroup, error) {
 	return RuleGroup{}, fmt.Errorf("%s", errRuleGroupNotFound)
 }
 
-// GetRuleGroupByURL returns the rule group for the specified URL.
-func (rs *Ruleset) GetRuleGroupByURL(urlStr string) (RuleGroup, error) {
+// GetRulesGroupByURL returns the rule group for the specified URL.
+func (rs *Ruleset) GetRulesGroupByURL(urlStr string) (RuleGroup, error) {
 	// Validate URL
 	parsedURL, err := PrepareURLForSearch(urlStr)
 	if err != nil {
 		return RuleGroup{}, err
 	}
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
-		if strings.ToLower(strings.TrimSpace(rg.GroupName)) == parsedURL {
+		if CheckURL(parsedURL, rg.GroupName) || CheckURL(parsedURL, rg.URL) {
 			return rg, nil
 		}
 	}

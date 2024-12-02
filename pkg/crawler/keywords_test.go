@@ -41,10 +41,10 @@ func TestIsKeyword(t *testing.T) {
 		{"test6", args{"afterwards"}, false},
 		{"test7", args{"again"}, false},
 	}
-	for _, tt := range tests {
+	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isKeyword(tt.args.keyword); got != tt.want {
-				t.Errorf("isKeyword() = %v, want %v", got, tt.want)
+			if got := isKeyword(tt.args.keyword, ""); got != tt.want {
+				t.Errorf("isKeyword() for test word %d = %v, want %v", i, got, tt.want)
 			}
 		})
 	}

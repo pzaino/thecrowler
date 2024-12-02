@@ -166,16 +166,16 @@ func (info *IPInfo) UpdateWithIPInfo(entity *ipExtraData) {
 
 // SetDefaults sets the default values for all IPInfo fields
 func (info *IPInfo) SetDefaults() {
-	info.ASN = "N/A"
-	info.CIDR = "N/A"
-	info.NetRange = "N/A"
-	info.NetName = "N/A"
-	info.NetHandle = "N/A"
-	info.NetParent = "N/A"
-	info.NetType = "N/A"
-	info.Country = "N/A"
-	info.CountryCode = "N/A"
-	info.City = "N/A"
+	info.ASN = naStr
+	info.CIDR = naStr
+	info.NetRange = naStr
+	info.NetName = naStr
+	info.NetHandle = naStr
+	info.NetParent = naStr
+	info.NetType = naStr
+	info.Country = naStr
+	info.CountryCode = naStr
+	info.City = naStr
 	// Assuming 0 is the default/unset value for Latitude and Longitude
 	info.Latitude = 0
 	info.Longitude = 0

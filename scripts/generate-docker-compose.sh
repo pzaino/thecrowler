@@ -46,7 +46,7 @@ cat << EOF > docker-compose.yml
 version: '3.8'
 services:
   crowler_db:
-    image: postgres:alpine3.20
+    image: postgres:15.10-bookworm
     ports:
       - "5432:5432"
     environment:
@@ -95,6 +95,35 @@ services:
     volumes:
       - api_data:/app/data
     user: apiuser
+    read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "healthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  crowler_events:
+    environment:
+      - COMPOSE_PROJECT_NAME=crowler_
+      - INSTANCE_ID=\${INSTANCE_ID:-1}
+      - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
+      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
+      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler_db}
+      - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    depends_on:
+      - crowler_db
+    build:
+      context: .
+      dockerfile: Dockerfile.events
+    ports:
+      - "8082:8082"
+    volumes:
+      - events_data:/app/data
+    user: eventsuser
     read_only: true
     healthcheck:
       test: ["CMD-SHELL", "healthCheck"]
@@ -200,6 +229,7 @@ networks:
 
 volumes:
   api_data:
+  events_data:
   db_data:
     driver: local
   engine_data:

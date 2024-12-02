@@ -17,6 +17,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -25,7 +26,12 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 
+	"github.com/lib/pq"
 	_ "github.com/lib/pq" // PostgreSQL driver
+)
+
+const (
+	optDisable = "disable"
 )
 
 // ---------------------------------------------------------------
@@ -34,13 +40,16 @@ import (
 
 // PostgresHandler is the implementation of the DatabaseHandler interface
 type PostgresHandler struct {
-	db   *sql.DB
-	dbms string
+	db      *sql.DB
+	dbms    string
+	connStr string
 }
 
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
+	handler.connStr = connectionString
+	handler.dbms = "PostgreSQL"
 
 	// Set a limit for retries
 	retryInterval := time.Duration(c.Database.RetryTime) * time.Second
@@ -134,12 +143,12 @@ func buildConnectionString(c cfg.Config) string {
 	}
 	var dbSSLMode string
 	if strings.TrimSpace(c.Database.SSLMode) == "" {
-		dbSSLMode = "disable"
+		dbSSLMode = optDisable
 	} else {
 		sslmode := strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
 		// Validate the SSL mode
-		if sslmode != "disable" && sslmode != "require" && sslmode != "verify-ca" && sslmode != "verify-full" {
-			sslmode = "disable"
+		if sslmode != optDisable && sslmode != "require" && sslmode != "verify-ca" && sslmode != "verify-full" {
+			sslmode = optDisable
 		}
 		dbSSLMode = sslmode
 	}
@@ -203,6 +212,206 @@ func (handler *PostgresHandler) CheckConnection(c cfg.Config) error {
 		err = handler.Connect(c)
 	}
 	return err
+}
+
+// NewListener creates a new listener
+func (handler *PostgresHandler) NewListener() Listener {
+	return &PostgresListener{
+		connStr: handler.connStr,
+	}
+}
+
+// PostgresListener is the implementation of the DatabaseListener interface
+type PostgresListener struct {
+	listener *pq.Listener
+	connStr  string
+	notify   chan Notification
+	conn     *sql.Conn
+	done     chan struct{}
+}
+
+// Connect connects to the database
+func (l *PostgresListener) Connect(c cfg.Config, minReconnectInterval, maxReconnectInterval time.Duration, eventCallback func(ev ListenerEventType, err error)) error {
+	// Extract connection details from Config and initialize pq.Listener
+	connStr := ""
+	if !c.IsEmpty() {
+		connStr = buildConnectionString(c)
+	} else {
+		connStr = l.connStr
+	}
+
+	l.listener = pq.NewListener(connStr, minReconnectInterval, maxReconnectInterval, func(ev pq.ListenerEventType, err error) {
+		// Map pq.ListenerEventType to ListenerEventType
+		var abstractEvent ListenerEventType
+		switch ev {
+		case pq.ListenerEventConnected:
+			abstractEvent = ListenerEventConnected
+		case pq.ListenerEventDisconnected:
+			abstractEvent = ListenerEventDisconnected
+		case pq.ListenerEventReconnected:
+			abstractEvent = ListenerEventReconnected
+		default:
+			abstractEvent = ListenerEventUnknown
+		}
+
+		// Call the provided callback with the abstract event type
+		eventCallback(abstractEvent, err)
+	})
+
+	if l.listener == nil {
+		return fmt.Errorf("failed to create listener")
+	}
+
+	// Create the notify channel
+	l.notify = make(chan Notification)
+
+	// Forward pq notifications to the notify channel
+	go func() {
+		for pqNotify := range l.listener.Notify {
+			l.notify <- &PostgresNotification{
+				channel: pqNotify.Channel,
+				extra:   pqNotify.Extra,
+			}
+		}
+		close(l.notify)
+	}()
+
+	return nil
+}
+
+// ConnectWithDBHandler connects to the database with a handler
+func (l *PostgresListener) ConnectWithDBHandler(handler *Handler, channel string) error {
+	postgresHandler, ok := (*handler).(*PostgresHandler)
+	if !ok {
+		return fmt.Errorf("failed to cast db handler to PostgresHandler")
+	}
+
+	// Obtain a connection from dbHandler
+	conn, err := postgresHandler.db.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to create connection for listener: %w", err)
+	}
+
+	// Save the connection for future use
+	l.conn = conn
+
+	// Execute LISTEN on the connection
+	_, err = conn.ExecContext(context.Background(), fmt.Sprintf("LISTEN %s", channel))
+	if err != nil {
+		return fmt.Errorf("failed to execute LISTEN on channel '%s': %w", channel, err)
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Listening on channel: %s", channel)
+
+	// Spawn a goroutine to monitor notifications
+	go l.pollNotifications()
+
+	return nil
+}
+
+// Ping checks if the database connection is still alive
+func (l *PostgresListener) Ping() error {
+	if l.conn != nil {
+		return l.conn.PingContext(context.Background())
+	}
+	if l.listener != nil {
+		return l.listener.Ping()
+	}
+
+	return fmt.Errorf("listener is not connected")
+}
+
+// pollNotifications continuously polls for notifications
+func (l *PostgresListener) pollNotifications() {
+	for {
+		select {
+		case <-l.done:
+			return
+		default:
+			// Use the connection to wait for notifications
+			if _, err := l.conn.ExecContext(context.Background(), "SELECT 1"); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+				continue
+			}
+
+			rows, err := l.conn.QueryContext(context.Background(), "SELECT pg_notification_queue_usage()")
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+				continue
+			}
+
+			defer rows.Close() //nolint:errcheck // We can't check returned error when using defer
+			for rows.Next() {
+				var channel, payload string
+				if err := rows.Scan(&channel, &payload); err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+					continue
+				}
+				l.notify <- &PostgresNotification{channel: channel, extra: payload}
+			}
+		}
+	}
+}
+
+// Close closes the database connection
+func (l *PostgresListener) Close() error {
+	close(l.done)
+	if l.conn != nil {
+		return l.conn.Close()
+	}
+	if l.listener != nil {
+		return l.listener.Close()
+	}
+	return nil
+}
+
+// Listen listens for notifications on a channel
+func (l *PostgresListener) Listen(channel string) error {
+	if l.listener == nil {
+		return fmt.Errorf("listener is not connected")
+	}
+
+	// Use the `Listen` method of pq.Listener to subscribe to the channel
+	if err := l.listener.Listen(channel); err != nil {
+		return fmt.Errorf("failed to listen to channel '%s': %w", channel, err)
+	}
+
+	return nil
+}
+
+// Notify returns a channel to receive notifications
+func (l *PostgresListener) Notify() <-chan Notification {
+	return l.notify
+}
+
+// UnlistenAll unsubscribes from all channels
+func (l *PostgresListener) UnlistenAll() error {
+	if l.listener == nil {
+		return fmt.Errorf("listener is not connected")
+	}
+
+	// Use the `UnlistenAll` method of pq.Listener to unsubscribe from all channels
+	if err := l.listener.UnlistenAll(); err != nil {
+		return fmt.Errorf("failed to unlisten all channels: %w", err)
+	}
+
+	return nil
+}
+
+// PostgresNotification is the implementation of the DatabaseNotification interface
+type PostgresNotification struct {
+	channel string
+	extra   string
+}
+
+// Channel returns the channel name
+func (n *PostgresNotification) Channel() string {
+	return n.channel
+}
+
+// Extra returns the notification payload
+func (n *PostgresNotification) Extra() string {
+	return n.extra
 }
 
 // ---------------------------------------------------------------

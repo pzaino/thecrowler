@@ -77,6 +77,11 @@
                         "description": "Flag to enable or disable the rule group.",
                         "type": "boolean"
                     },
+                    "url": {
+                        "title": "URL",
+                        "description": "Optional. The specific URL to which this rule group applies. Can be a regex pattern.",
+                        "type": "string"
+                    },
                     "scraping_rules": {
                         "title": "Scraping Rules",
                         "description": "A list of rules to extract data from web pages.",

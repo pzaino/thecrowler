@@ -66,6 +66,13 @@ properties:
           title: "Is Enabled"
           description: "Flag to enable or disable the rule group."
           type: "boolean"
+        url:
+          title: "URL Pattern"
+          description: "A regular expression pattern to match URLs for the rule group."
+          type: "string"
+          examples:
+            - "^https://example.com.*$"
+            - "^https://example"
         scraping_rules:
           title: "Scraping Rules"
           description: "A list of rules to extract data from web pages."

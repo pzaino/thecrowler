@@ -186,6 +186,7 @@ func NewConfig() *Config {
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
+			ResetCookiesPolicy:    "never",
 			CollectHTML:           true,
 			CollectContent:        false,
 			CollectKeywords:       true,
@@ -194,6 +195,8 @@ func NewConfig() *Config {
 			CollectImages:         false,
 			CollectPerfMetrics:    true,
 			CollectPageEvents:     true,
+			CollectLinks:          true,
+			CreateEventWhenDone:   false,
 			MaxRetries:            0,
 			MaxRedirects:          3,
 			ReportInterval:        1,
@@ -238,11 +241,34 @@ func NewConfig() *Config {
 				UseService:  false,
 				SSLMode:     "disable",
 				ProxyURL:    "",
+				SysMng: SysMngConfig{
+					Port:              4443,
+					SSLMode:           "disable",
+					Timeout:           60,
+					CertFile:          "",
+					KeyFile:           "",
+					RateLimit:         "10,10",
+					ReadHeaderTimeout: 15,
+					ReadTimeout:       15,
+					WriteTimeout:      30,
+				},
 			},
 		},
 		Prometheus: PrometheusConfig{
 			Enabled: false,
 			Port:    9091,
+		},
+		Events: EventsConfig{
+			Host:              "localhost",
+			Port:              8082,
+			SSLMode:           "disable",
+			Timeout:           60,
+			CertFile:          "",
+			KeyFile:           "",
+			RateLimit:         "10,10",
+			ReadHeaderTimeout: 15,
+			ReadTimeout:       15,
+			WriteTimeout:      30,
 		},
 		ImageStorageAPI: FileStorageAPI{
 			Host:    "",
@@ -579,6 +605,7 @@ func (c *Config) validateCrawler() {
 	c.setDefaultScreenshotMaxHeight()
 	c.setDefaultMaxRetries()
 	c.setDefaultMaxRedirects()
+	c.setDefaultResetCookiesPolicy()
 	c.setDefaultControl()
 }
 
@@ -663,6 +690,14 @@ func (c *Config) setDefaultMaxRetries() {
 func (c *Config) setDefaultMaxRedirects() {
 	if c.Crawler.MaxRedirects < 0 {
 		c.Crawler.MaxRedirects = 0
+	}
+}
+
+func (c *Config) setDefaultResetCookiesPolicy() {
+	if strings.TrimSpace(c.Crawler.ResetCookiesPolicy) == "" {
+		c.Crawler.ResetCookiesPolicy = "never"
+	} else {
+		c.Crawler.ResetCookiesPolicy = strings.ToLower(strings.TrimSpace(c.Crawler.ResetCookiesPolicy))
 	}
 }
 
