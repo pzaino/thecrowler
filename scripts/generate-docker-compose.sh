@@ -156,6 +156,7 @@ then
         max-file: "3"
     restart: always
 EOF
+fi
 
 # Add the crowler_engine instances
 # shellcheck disable=SC2086
@@ -202,8 +203,10 @@ done
 # shellcheck disable=SC2086
 for i in $(seq 1 $vdi_count); do
   # Calculate unique host port ranges for each instance to avoid conflicts
-  HOST_PORT_START=$((4442 + (i - 1) * 3))
-  HOST_PORT_END=$((4444 + (i - 1) * 3))
+  HOST_PORT_START1=$((4444 + (i - 1) * 3)) # Selenium Hub
+  HOST_PORT_END1=$((4445 + (i - 1) * 3))   # SysMng Port
+  HOST_PORT_START2=$((5900 + (i - 1) * 3)) # Selenium ARM VNC Port
+  HOST_PORT_START3=$((7900 + (i - 1) * 3)) # Selenium x86 VNC Port
 
 cat << EOF >> docker-compose.yml
 
@@ -215,7 +218,9 @@ cat << EOF >> docker-compose.yml
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
-      - "$HOST_PORT_START-$HOST_PORT_END:4442-4444"
+      - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
+      - "$HOST_PORT_START2:5900"
+      - "$HOST_PORT_START3:7900"
     networks:
       - crowler-net
     restart: always

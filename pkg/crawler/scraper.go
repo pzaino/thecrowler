@@ -445,9 +445,12 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 			if !exists {
 				continue
 			}
+
 			matchValue := strings.TrimSpace(selector.Attribute.Value)
 			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+				// Use regex for matching
+				re, err := regexp.Compile(matchValue)
+				if err == nil && re.MatchString(attrValue) {
 					matchL2 = true
 				}
 			} else {
@@ -456,6 +459,7 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 		} else {
 			matchL2 = true
 		}
+
 		matchL3 := false
 		if matchL2 && strings.TrimSpace(selector.Value) != "" {
 			if matchValue(ctx, e, selector) {
@@ -468,13 +472,16 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 		}
 		if matchL3 {
 			results = append(results, extractDataFromElement(ctx, e, selector)...)
-			break
+			if !all {
+				break // Stop after first match if not processing all
+			}
 		}
 	}
 
 	return results
 }
 
+// fallbackExtractByXPath extracts the content from the provided document using the provided XPath selector.
 func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
 	var results []string
 	items, err := htmlquery.QueryAll(doc.Nodes[0], selector.Selector)
@@ -492,7 +499,9 @@ func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector
 			attrValue := htmlquery.SelectAttr(item, strings.TrimSpace(selector.Attribute.Name))
 			matchValue := strings.TrimSpace(selector.Attribute.Value)
 			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				if strings.EqualFold(strings.TrimSpace(attrValue), matchValue) {
+				// Use regex for matching
+				re, err := regexp.Compile(matchValue)
+				if err == nil && re.MatchString(attrValue) {
 					matchL2 = true
 				}
 			} else {

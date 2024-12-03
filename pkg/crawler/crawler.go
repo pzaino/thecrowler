@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -1517,8 +1518,14 @@ func vdiSleep(ctx *ProcessContext, delay float64) error {
 		delay = 3
 	}
 
+	divider := math.Log10(delay+1) * 10 // Adjust multiplier as needed
+
+	if divider >= float64(ctx.config.Crawler.Timeout) {
+		divider = float64(ctx.config.Crawler.Timeout) - 1
+	}
+
 	waitDuration := time.Duration(delay) * time.Second
-	pollInterval := time.Duration(delay/10) * time.Second // Check every pollInterval seconds to keep alive
+	pollInterval := time.Duration(delay/divider) * time.Second // Check every pollInterval seconds to keep alive
 
 	startTime := time.Now()
 
@@ -2792,11 +2799,13 @@ func reinforceBrowserSettings(wd selenium.WebDriver) error {
 	script := `
         // Reapply WebRTC and navigator spoofing settings
         try {
+			delete window._Selenium_IDE_Recorder;
+			delete navigator.webdriver;
+			delete navigator.webdriver.chrome;
+			Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
             Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
             Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
             Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
             Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
             Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
@@ -2812,6 +2821,21 @@ func reinforceBrowserSettings(wd selenium.WebDriver) error {
 				if (parameter === 37446) return 'Intel Iris OpenGL'; // Mock Renderer
 				return getParameter(parameter);
 			};
+			Element.prototype.attachShadow = function() {
+    			return null; // Disable shadow DOM if necessary
+			};
+			const originalQuery = navigator.permissions.query;
+			navigator.permissions.query = (parameters) => (
+    			parameters.name === 'notifications'
+        		? Promise.resolve({ state: 'denied' })
+        		: originalQuery(parameters)
+			);
+			Object.defineProperty(navigator, 'webdriver', {
+    			get: () => undefined,
+    			configurable: true,
+			});
+			Object.defineProperty(document, 'selenium-evaluate', { value: undefined });
+			Error.stackTraceLimit = 0; // Limit error stack traces
         } catch (err) {
             console.error('Error reinforcing browser settings:', err);
         }
