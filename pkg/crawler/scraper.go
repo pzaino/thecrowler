@@ -529,11 +529,29 @@ func fallbackExtractByRegex(content string, pattern string, all bool) []string {
 	re := regexp.MustCompile(pattern)
 
 	if all {
-		return re.FindAllString(content, -1)
+		// Find all matches
+		matches := re.FindAllStringSubmatch(content, -1)
+		var results []string
+		for _, match := range matches {
+			if len(match) > 1 {
+				// Capture group found
+				results = append(results, match[1])
+			} else {
+				// No capture group, use the whole match
+				results = append(results, match[0])
+			}
+		}
+		return results
 	}
 
-	if match := re.FindString(content); match != "" {
-		return []string{match}
+	// Find the first match
+	if match := re.FindStringSubmatch(content); match != nil {
+		if len(match) > 1 {
+			// Return the capture group if present
+			return []string{match[1]}
+		}
+		// Otherwise, return the whole match
+		return []string{match[0]}
 	}
 
 	return []string{}

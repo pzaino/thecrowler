@@ -237,7 +237,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	// Crawl the website
 	allLinks := initialLinks // links extracted from the initial page
 	var currentDepth int
-	maxDepth := checkMaxDepth(config.Crawler.MaxDepth) // set a maximum depth for crawling
+	maxDepth := checkMaxDepth(processCtx.config.Crawler.MaxDepth) // set a maximum depth for crawling
 	newLinksFound := len(initialLinks)
 	processCtx.Status.TotalLinks = newLinksFound
 	if processCtx.source.Restricted != 0 {
@@ -320,7 +320,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 			// Increment the current depth
 			currentDepth++
 			processCtx.Status.CurrentDepth = currentDepth
-			if config.Crawler.MaxDepth == 0 {
+			if processCtx.config.Crawler.MaxDepth == 0 {
 				maxDepth = currentDepth + 1
 			}
 		}
@@ -570,10 +570,10 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	ctx.Status.TotalPages = 1
 
 	// Delay before processing the next job
-	if config.Crawler.Delay != "0" {
-		delay := exi.GetFloat(config.Crawler.Delay)
+	if ctx.config.Crawler.Delay != "0" {
+		delay := exi.GetFloat(ctx.config.Crawler.Delay)
 		ctx.Status.LastDelay = delay
-		time.Sleep(time.Duration(delay) * time.Second)
+		_ = vdiSleep(ctx, delay)
 	}
 
 	return pageSource, nil
@@ -687,9 +687,9 @@ func (ctx *ProcessContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 	tmpURL2 := strings.ToLower(strings.TrimSpace(ctx.source.URL))
 
 	if tmpURL1 == tmpURL2 {
-		takeScreenshot = config.Crawler.SourceScreenshot
+		takeScreenshot = ctx.config.Crawler.SourceScreenshot
 	} else {
-		takeScreenshot = config.Crawler.FullSiteScreenshot
+		takeScreenshot = ctx.config.Crawler.FullSiteScreenshot
 	}
 
 	if takeScreenshot {
@@ -1469,15 +1469,15 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	}
 
 	// Wait for Page to Load
-	delay := exi.GetFloat(config.Crawler.Interval)
+	delay := exi.GetFloat(ctx.config.Crawler.Interval)
 	if delay <= 0 {
 		delay = 3
 	}
 	ctx.Status.LastWait = delay
 	if level > 0 {
-		time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
+		_ = vdiSleep(ctx, delay) // Pause to let page load
 	} else {
-		time.Sleep(time.Second * time.Duration((delay + 5))) // Pause to let Home page load
+		_ = vdiSleep(ctx, (delay + 5)) // Pause to let Home page load
 	}
 
 	// Get Session Cookies
@@ -1508,6 +1508,32 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	}
 
 	return wd, docType, nil
+}
+
+func vdiSleep(ctx *ProcessContext, delay float64) error {
+	driver := ctx.wd
+
+	if delay < 3 {
+		delay = 3
+	}
+
+	waitDuration := time.Duration(delay) * time.Second
+	pollInterval := time.Duration(delay/10) * time.Second // Check every pollInterval seconds to keep alive
+
+	startTime := time.Now()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Waiting for %v seconds...", delay)
+	for time.Since(startTime) < waitDuration {
+		// Perform a lightweight interaction to keep the session alive
+		_, err := driver.Title()
+		if err != nil {
+			return err
+		}
+		time.Sleep(pollInterval)
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Waited for %v seconds", delay)
+
+	return nil
 }
 
 func getCookies(ctx *ProcessContext, wd *selenium.WebDriver) error {
@@ -2016,10 +2042,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		skippedURLs = nil
 
 		// Delay before processing the next job
-		if config.Crawler.Delay != "0" {
-			delay := exi.GetFloat(config.Crawler.Delay)
+		if processCtx.config.Crawler.Delay != "0" {
+			delay := exi.GetFloat(processCtx.config.Crawler.Delay)
 			processCtx.Status.LastDelay = delay
-			time.Sleep(time.Duration(delay) * time.Second)
+			_ = vdiSleep(processCtx, delay)
 		}
 		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
@@ -2098,11 +2124,8 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// Wait for the page to load (adjustable delay based on configuration)
-	delay := exi.GetFloat(config.Crawler.Interval)
-	if delay <= 0 {
-		delay = 3
-	}
-	time.Sleep(time.Second * time.Duration(delay))
+	delay := exi.GetFloat(processCtx.config.Crawler.Interval)
+	_ = vdiSleep(processCtx, delay)
 
 	// Check current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
@@ -2236,11 +2259,8 @@ func goBack(processCtx *ProcessContext) error {
 		return fmt.Errorf("Failed to navigate back: %v", err)
 	}
 	// Wait for the page to load after going back
-	delay := exi.GetFloat(config.Crawler.Interval)
-	if delay <= 0 {
-		delay = 3
-	}
-	time.Sleep(time.Second * time.Duration(delay))
+	delay := exi.GetFloat(processCtx.config.Crawler.Interval)
+	_ = vdiSleep(processCtx, delay)
 	return nil
 }
 
@@ -2274,11 +2294,8 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// Wait for Page to Load
-	delay := exi.GetFloat(config.Crawler.Interval)
-	if delay <= 0 {
-		delay = 3
-	}
-	time.Sleep(time.Second * time.Duration(delay)) // Pause to let page load
+	delay := exi.GetFloat(processCtx.config.Crawler.Interval)
+	_ = vdiSleep(processCtx, delay) // Pause to let page load
 
 	// Check current URL
 	currentURL, _ := processCtx.wd.CurrentURL()

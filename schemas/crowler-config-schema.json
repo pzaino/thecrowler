@@ -111,7 +111,7 @@
     },
 
     "database": {
-      "title": "CROWler DB Configuration",
+      "title": "CROWler DB Configuration CDBI",
       "description": "This is the database configuration section, it's used to tell the CROWler how to connect to the database to store collected data, which type of database we use and other options to optimize the database for a specific use case.",
       "type": "object",
       "properties": {
@@ -235,7 +235,7 @@
     },
 
     "crawler": {
-      "title": "CROWler Engine's crawling Configuration",
+      "title": "CROWler Engine's crawling Configuration CEI",
       "description": "This is the crawler (CROWler Engine) configuration section, it's used to tell the CROWler's engine how to behave. It is the configuration for the CROWler engine that the CROWler will use to crawl websites, spin workers and configure it's internal Control API.",
       "type": "object",
       "properties": {
@@ -434,7 +434,7 @@
         },
         "create_event_when_done": {
           "title": "CROWler Engine Create Event When Done",
-          "description": "This is a flag that tells the CROWler to create an event when the crawling process is done. This is useful for monitoring purposes.",
+          "description": "This is a flag that tells the CROWler to create an event when the crawling process is done. The event will be created with the event type `crawl_completed`. This is useful for monitoring purposes.",
           "type": "boolean"
         },
         "control": {
@@ -811,7 +811,7 @@
     },
 
     "events": {
-      "title": "CROWler Events Manager Configuration",
+      "title": "CROWler Events Manager Configuration (CEMI)",
       "description": "This is the Events Manager configuration section, it is used to configure the Events Manager",
       "type": "object",
       "properties": {
