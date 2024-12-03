@@ -90,7 +90,7 @@ type EnvValue struct {
 var (
 	// UsrAgentStrMap is a list of valid user agent strings.
 	UsrAgentStrMap = map[string]string{
-		"chrome-desktop01":   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.112 Safari/537.36",
+		"chrome-desktop01":   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.78 Safari/537.36",
 		"chrome-mobile01":    "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.112 Mobile Safari/537.36",
 		"firefox-desktop01":  "Mozilla/5.0 (X11; Linux x86_64; rv:85.0) Gecko/20100101 Firefox/85.0",
 		"firefox-mobile01":   "Mozilla/5.0 (Android 10; Mobile; rv:85.0) Gecko/20100101 Firefox/85.0",

@@ -747,36 +747,6 @@
                   "enable",
                   "disable"
                 ]
-              },
-              "cert_file": {
-                "title": "CROWler VDI System Manager Certificate File",
-                "description": "This is the certificate file for the VDI System Manager HTTPS protocol.",
-                "type": "string"
-              },
-              "key_file": {
-                "title": "CROWler VDI System Manager Key File",
-                "description": "This is the key file for the VDI System Manager HTTPS certificates.",
-                "type": "string"
-              },
-              "rate_limit": {
-                "title": "CROWler VDI System Manager Requests Rate Limit",
-                "description": "This is the rate limit for the VDI System Manager. It is the maximum number of requests that the CROWler VDI System Manager will accept per second. You can use the ExprTerpreter language to set the rate limit.",
-                "type": "string"
-              },
-              "readheader_timeout": {
-                "title": "CROWler VDI System Manager Readheader Timeout",
-                "type": "integer",
-                "minimum": 10,
-                "description": "This is the readheader timeout (in seconds) for the VDI System Manager. It is the maximum amount of time that the CROWler will wait for the VDI System Manager to respond.",
-                "examples": [
-                  30
-                ]
-              },
-              "write_timeout": {
-                "title": "CROWler VDI System Manager Write Timeout",
-                "type": "integer",
-                "minimum": 10,
-                "description": "This is the write timeout (in seconds) for the VDI System Manager. It is the maximum amount of time that the CROWler will wait for the VDI System Manager to respond."
               }
             }
           }

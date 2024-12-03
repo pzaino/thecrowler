@@ -259,18 +259,23 @@ type API struct {
 
 // Selenium represents the CROWler VDI configuration
 type Selenium struct {
-	Name        string       `yaml:"name"`         // Name of the Selenium instance
-	Location    string       `yaml:"location"`     // Location of the Selenium executable
-	Path        string       `yaml:"path"`         // Path to the Selenium executable
-	DriverPath  string       `yaml:"driver_path"`  // Path to the Selenium driver executable
-	Type        string       `yaml:"type"`         // Type of Selenium driver
-	ServiceType string       `yaml:"service_type"` // Type of Selenium service (standalone, hub)
-	Port        int          `yaml:"port"`         // Port number for Selenium server
-	Host        string       `yaml:"host"`         // Hostname of the Selenium server
-	Headless    bool         `yaml:"headless"`     // Whether to run Selenium in headless mode
-	UseService  bool         `yaml:"use_service"`  // Whether to use Selenium service as well or not
-	SSLMode     string       `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
-	ProxyURL    string       `yaml:"proxy_url"`    // Proxy URL for Selenium connection
+	Name        string `yaml:"name"`         // Name of the Selenium instance
+	Location    string `yaml:"location"`     // Location of the Selenium executable
+	Path        string `yaml:"path"`         // Path to the Selenium executable
+	DriverPath  string `yaml:"driver_path"`  // Path to the Selenium driver executable
+	Type        string `yaml:"type"`         // Type of Selenium driver
+	ServiceType string `yaml:"service_type"` // Type of Selenium service (standalone, hub)
+	Port        int    `yaml:"port"`         // Port number for Selenium server
+	Host        string `yaml:"host"`         // Hostname of the Selenium server
+	Headless    bool   `yaml:"headless"`     // Whether to run Selenium in headless mode
+	UseService  bool   `yaml:"use_service"`  // Whether to use Selenium service as well or not
+	SSLMode     string `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
+	ProxyURL    string `yaml:"proxy_url"`    // Proxy URL for Selenium connection
+	/*
+		ProxyUser   string       `yaml:"proxy_user"`   // Proxy username for Selenium connection
+		ProxyPass   string       `yaml:"proxy_pass"`   // Proxy password for Selenium connection
+		ProxyPort   int          `yaml:"proxy_port"`   // Proxy port for Selenium connection
+	*/
 	DownloadDir string       `yaml:"download_dir"` // Download directory for Selenium
 	Language    string       `yaml:"language"`     // Language for Selenium
 	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration

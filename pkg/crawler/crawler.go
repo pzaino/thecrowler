@@ -2612,12 +2612,36 @@ func StopSelenium(sel *selenium.Service) error {
 	return err
 }
 
+/*
+func getLocalNetworks() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return []string{}
+	}
+	var networks []string
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				networks = append(networks, ipnet.IP.String())
+			}
+		}
+	}
+	// Transform the networks to CIDR format
+	for i, network := range networks {
+		_, ipnet, _ := net.ParseCIDR(network + "/24")
+		networks[i] = ipnet.String()
+	}
+
+	return networks
+}
+*/
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {
-		browser = "chrome"
+		browser = BrowserChrome
 	}
 
 	// Connect to the WebDriver instance running locally.
@@ -2634,7 +2658,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	var args []string
 
 	// Populate the args slice based on the browser type
-	keys := []string{"WindowSize", "initialWindow", "sandbox", "gpu", "disableDevShm", "headless", "javascript", "incognito", "popups", "infoBars", "extensions"}
+	keys := []string{"WindowSize", "initialWindow", "gpu", "headless", "javascript", "incognito"}
 	for _, key := range keys {
 		if value, ok := browserSettingsMap[sel.Config.Type][key]; ok && value != "" {
 			args = append(args, value)
@@ -2648,16 +2672,57 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
+
+		/*
+			proxyURL, err := url.Parse(sel.Config.ProxyURL)
+			if err != nil {
+				return nil, err
+			}
+
+			// extract port number if available
+			if sel.Config.ProxyPort == 0 {
+				proxyPort, _ := strconv.Atoi(proxyURL.Port())
+				sel.Config.ProxyPort = proxyPort
+			}
+			proxyFQDN := proxyURL.Hostname()
+			// add port if any available in the original proxy URL
+			if proxyURL.Port() != "" {
+				proxyFQDN = fmt.Sprintf("%s:%s", proxyFQDN, proxyURL.Port())
+			}
+
+			// convert proxy URL to socks5h:// format
+			proxyURL.Scheme = "socks5h"
+			ProxySocksURL := "socks5h://" + proxyURL.Hostname()
+
+			// Set NoProxy []string to local host and networks
+			NoProxy := []string{"localhost"}
+			NoProxy = append(NoProxy, getLocalNetworks()...)
+
+			// Proxy settings
+			selProxy := selenium.Proxy{
+				Type:          "manual",
+				HTTP:          "http://" + proxyFQDN,
+				SSL:           "https://" + proxyFQDN,
+				SOCKS:         ProxySocksURL,
+				SOCKSVersion:  5,
+				SOCKSUsername: sel.Config.ProxyUser,
+				SOCKSPassword: sel.Config.ProxyPass,
+				SocksPort:     sel.Config.ProxyPort,
+				NoProxy:       NoProxy,
+			}
+			caps.AddProxy(selProxy)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Proxy settings: %v\n", selProxy)
+		*/
 	}
 
 	// Avoid funny localizations/detections
 	args = append(args, "--disable-webrtc")
-	if browser == "chrome" || browser == "chromium" {
+	if browser == BrowserChrome || browser == BrowserChromium {
 		args = append(args, "--disable-geolocation")
 		args = append(args, "--disable-notifications")
 		args = append(args, "--disable-quic")
 		args = append(args, "--disable-blink-features=AutomationControlled")
-		args = append(args, "--disable-web-security")
+		//args = append(args, "--disable-web-security") // STill thinking about this one, has it lowers the browser security a lot!
 		args = append(args, "--override-hardware-concurrency=4")
 		args = append(args, "--override-device-memory=4")
 		args = append(args, "--disable-plugins-discovery")
@@ -2671,10 +2736,15 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		args = append(args, "--disable-webrtc-hw-decoding")
 		args = append(args, "--disable-webrtc-encryption")
 		args = append(args, "--disable-webrtc")
+		args = append(args, "--disable-extensions")
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-infobars")
+		args = append(args, "--disable-peer-to-peer")
+		args = append(args, "--disable-dev-shm-usage")
+		args = append(args, "--disable-popup-blocking")
+		args = append(args, "--no-sandbox")
+		args = append(args, "--remote-debugging-port=0")
 	}
-	args = append(args, "--disable-peer-to-peer")
-
-	args = append(args, "--disable-blink-features=AutomationControlled")
 
 	// Append logging settings if available
 	args = append(args, "--enable-logging")
@@ -2685,12 +2755,15 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		downloadDir = "/tmp"
 		sel.Config.DownloadDir = downloadDir
 	}
-	if browser == "chrome" || browser == "chromium" {
+	if browser == BrowserChrome || browser == BrowserChromium {
 		chromePrefs := map[string]interface{}{
-			"download.default_directory":              downloadDir,
-			"download.prompt_for_download":            false, // Disable download prompt
-			"profile.default_content_settings.popups": 0,     // Suppress popups
-			"safebrowsing.enabled":                    true,  // Enable Safe Browsing
+			"download.default_directory":               downloadDir,
+			"download.prompt_for_download":             false, // Disable download prompt
+			"profile.default_content_settings.popups":  0,     // Suppress popups
+			"safebrowsing.enabled":                     true,  // Enable Safe Browsing
+			"safebrowsing.disable_download_protection": false,
+			"safebrowsing.disable_extension_blacklist": false,
+			"safebrowsing.disable_automatic_downloads": false,
 		}
 		caps.AddChrome(chrome.Capabilities{
 			Args:  args,
@@ -2796,49 +2869,91 @@ func addLoadListener(wd *selenium.WebDriver) error {
 }
 
 func reinforceBrowserSettings(wd selenium.WebDriver) error {
+	// Reapply WebRTC and navigator spoofing settings
 	script := `
-        // Reapply WebRTC and navigator spoofing settings
         try {
+			Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
 			delete window._Selenium_IDE_Recorder;
 			delete navigator.webdriver;
 			delete navigator.webdriver.chrome;
-			Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+			delete navigator.__proto__.webdriver;
+		} catch (err) {
+            console.error('Error reinforcing browser settings stage 1:', err);
+        }
+
+		try {
             Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
             Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
             Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
             Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
             Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
             Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-			Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
-        	Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
-        	Object.defineProperty(navigator.mediaDevices, {value: undefined});
 			Object.defineProperty(navigator, 'getUserMedia', {value: undefined});
 			Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});
+		} catch (err) {
+            console.error('Error reinforcing browser settings stage 2:', err);
+        }
+
+		try {
 			HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; };
+		} catch (err) {
+            console.error('Error reinforcing browser settings stage 3:', err);
+        }
+
+		try {
 			const getParameter = WebGLRenderingContext.prototype.getParameter;
 			WebGLRenderingContext.prototype.getParameter = function(parameter) {
 				if (parameter === 37445) return 'Intel Inc.'; // Mock Vendor
 				if (parameter === 37446) return 'Intel Iris OpenGL'; // Mock Renderer
 				return getParameter(parameter);
 			};
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 4:', err);
+		}
+
+		try {
 			Element.prototype.attachShadow = function() {
     			return null; // Disable shadow DOM if necessary
 			};
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 5:', err);
+		}
+
+		try {
 			const originalQuery = navigator.permissions.query;
 			navigator.permissions.query = (parameters) => (
     			parameters.name === 'notifications'
         		? Promise.resolve({ state: 'denied' })
         		: originalQuery(parameters)
 			);
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 6:', err);
+		}
+
+		try {
 			Object.defineProperty(navigator, 'webdriver', {
     			get: () => undefined,
     			configurable: true,
 			});
+
 			Object.defineProperty(document, 'selenium-evaluate', { value: undefined });
 			Error.stackTraceLimit = 0; // Limit error stack traces
         } catch (err) {
-            console.error('Error reinforcing browser settings:', err);
+            console.error('Error reinforcing browser settings stage 7:', err);
         }
+
+		try {
+			Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'}); // User enables Do Not Track
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 8:', err);
+		}
+
+		try {
+			// Clean IndexedDB
+            indexedDB.deleteDatabase('webdriver');
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 9:', err);
+		}
     `
 
 	_, err := wd.ExecuteScript(script, nil)
