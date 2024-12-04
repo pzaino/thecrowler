@@ -68,20 +68,21 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	}
 
 	// Retry pinging the database to establish a live connection
-	pingRetries := 15 // Limit ping retries
-	for pingRetries > 0 {
+	pingRetries := uint64(0)
+	for {
 		err = handler.db.Ping()
 		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database!")
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully connected to the database after %d retries", pingRetries)
 			break // Ping successful, stop retrying
 		}
+		if pingRetries%5 == 0 {
+			cmn.DebugMsg(cmn.DbgLvlError, "pinging the database: %v", err)
+		}
 		time.Sleep(pingInterval)
-		pingRetries--
-	}
-
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Ping retries exhausted. We are connected, but the DB is not responding: %v", err)
-		time.Sleep(retryInterval) // Give it one more wait before proceeding
+		pingRetries++
+		if (pingRetries % 10) == 0 {
+			cmn.DebugMsg(cmn.DbgLvlError, ": Failed to connect to the database after %d retries, I'll keep trying...", pingRetries)
+		}
 	}
 
 	// Set connection parameters (open and idle connections)
