@@ -230,19 +230,19 @@ done
 if [ "$prometheus" == "yes" ]; then
     cat << EOF >> docker-compose.yml
 
-    crowler-push-gateway:
-      image: prom/pushgateway
-      container_name: "crowler-push-gateway"
-      ports:
-        - "9091:9091"
-      networks:
-        - crowler-net
-      restart: always
-      logging:
-        driver: "json-file"
-        options:
-          max-size: "10m"
-          max-file: "3"
+  crowler-push-gateway:
+    image: prom/pushgateway
+    container_name: "crowler-push-gateway"
+    ports:
+      - "9091:9091"
+    networks:
+      - crowler-net
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 EOF
 fi
 
