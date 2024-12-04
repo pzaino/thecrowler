@@ -122,6 +122,7 @@ services:
 EOF
 
 # Add crowler-db
+# shellcheck disable=SC2086
 if [ "$postgres" == "yes" ]; then
     cat << EOF >> docker-compose.yml
 
@@ -135,6 +136,8 @@ if [ "$postgres" == "yes" ]; then
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - POSTGRES_USER=\${DOCKER_POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
+      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -146,11 +149,17 @@ if [ "$postgres" == "yes" ]; then
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: always
 EOF
 fi
 
 # Add crowler-engine instances
+# shellcheck disable=SC2086
 for i in $(seq 1 "$engine_count"); do
     cat << EOF >> docker-compose.yml
 
@@ -159,24 +168,58 @@ for i in $(seq 1 "$engine_count"); do
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
       - SELENIUM_HOST=\${DOCKER_SELENIUM_HOST:-crowler-vdi-$i}
+      - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
+      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
+      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
+      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
+      - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
+      - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    depends_on:
+      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
     networks:
       - crowler-net
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    stdin_open: true # For interactive terminal access (optional)
+    tty: true        # For interactive terminal access (optional)
+    volumes:
+      - engine_data:/app/data
+    user: crowler
+    healthcheck:
+      test: ["CMD-SHELL", "healthCheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: always
 EOF
 done
 
 # Add crowler-vdi instances
+# shellcheck disable=SC2086
 for i in $(seq 1 "$vdi_count"); do
-    HOST_PORT_START=$((4444 + (i - 1) * 10))
+    # Calculate unique host port ranges for each instance to avoid conflicts
+    HOST_PORT_START1=$((4444 + (i - 1) * 3)) # Selenium Hub
+    HOST_PORT_END1=$((4445 + (i - 1) * 3))   # SysMng Port
+    HOST_PORT_START2=$((5900 + (i - 1) * 3)) # Selenium ARM VNC Port
+    HOST_PORT_START3=$((7900 + (i - 1) * 3)) # Selenium x86 VNC Port
     cat << EOF >> docker-compose.yml
 
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
+    environment:
+      - COMPOSE_PROJECT_NAME=crowler-
+      - INSTANCE_ID=$i
+    image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
-      - "${HOST_PORT_START}:4444"
+      - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
+      - "$HOST_PORT_START2:5900"
+      - "$HOST_PORT_START3:7900"
     networks:
       - crowler-net
     restart: always
@@ -187,14 +230,19 @@ done
 if [ "$prometheus" == "yes" ]; then
     cat << EOF >> docker-compose.yml
 
-  crowler-push-gateway:
-    image: prom/pushgateway
-    container_name: "crowler-push-gateway"
-    ports:
-      - "9091:9091"
-    networks:
-      - crowler-net
-    restart: always
+    crowler-push-gateway:
+      image: prom/pushgateway
+      container_name: "crowler-push-gateway"
+      ports:
+        - "9091:9091"
+      networks:
+        - crowler-net
+      restart: always
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"
+          max-file: "3"
 EOF
 fi
 
@@ -209,6 +257,9 @@ volumes:
   api_data:
   events_data:
   db_data:
+    driver: local
+  engine_data:
+    driver: local
 EOF
 
 echo "docker-compose.yml has been successfully generated."
