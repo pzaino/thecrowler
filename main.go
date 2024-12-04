@@ -173,7 +173,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	// Execute the query within the transaction
 	// TODO: Add the intervals to the query to allow a user to decide how often to crawl a source etc.
 	//       replace the empty strings here with: last_ok_update, last_error, regular_crawling, processing_timeout
-	rows, err := tx.Query(query, config.Crawler.MaxSources, cmn.GetEngineID(), "", "", "", "")
+	rows, err := tx.Query(query, config.Crawler.MaxSources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {

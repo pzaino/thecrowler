@@ -65,6 +65,10 @@ type Crawler struct {
 	MaxRedirects          int           `json:"max_redirects" yaml:"max_redirects"`                     // Maximum number of redirects
 	MaxRequests           int           `json:"max_requests" yaml:"max_requests"`                       // Maximum number of requests
 	ResetCookiesPolicy    string        `json:"reset_cookies_policy" yaml:"reset_cookies_policy"`       // Cookies policy (e.g., "none", "on-request", "on-start", "when-done", "always")
+	CrawlingInterval      string        `json:"crawling_interval" yaml:"crawling_interval"`             // Time to wait before re-crawling a source
+	CrawlingIfError       string        `json:"crawling_if_error" yaml:"crawling_if_error"`             // Whether to re-crawl a source if an error occurs
+	CrawlingIfOk          string        `json:"crawling_if_ok" yaml:"crawling_if_ok"`                   // Whether to re-crawl a source if the crawling is successful
+	ProcessingTimeout     string        `json:"processing_timeout" yaml:"processing_timeout"`           // Timeout for processing the source
 	CollectHTML           bool          `json:"collect_html" yaml:"collect_html"`                       // Whether to collect the HTML content or not
 	CollectImages         bool          `json:"collect_images" yaml:"collect_images"`                   // Whether to collect the images or not
 	CollectFiles          bool          `json:"collect_files" yaml:"collect_files"`                     // Whether to collect the files or not

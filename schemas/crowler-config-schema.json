@@ -268,6 +268,46 @@
             30
           ]
         },
+        "crawling_interval": {
+          "title": "CROWler Engine Crawling Interval",
+          "description": "This is the interval at which the CROWler Engine will crawl websites. It is the interval at which the CROWler will crawl each given source. The default value is '3 days', e.g. '1 day' means crawl each source every day.",
+          "type": "string",
+          "examples": [
+            "3 days",
+            "1 hour",
+            "1 day",
+            "3 hours"
+          ]
+        },
+        "crawling_if_error": {
+          "title": "CROWler Engine Crawling If Error",
+          "description": "This is re-crawling-after in case of error during the original crawling. Default is 'retry after 15 minutes'. For example, '1 hour' means re-crawl after 1 hour.",
+          "type": "string",
+          "examples": [
+            "15 minutes",
+            "1 hour",
+            "1 day"
+          ]
+        },
+        "crawling_if_ok": {
+          "title": "CROWler Engine Crawling If OK",
+          "description": "This is re-crawling-after in case of success during the original crawling. Default is 'retry after 3 days'. For example, '1 hour' means re-crawl after 1 hour.",
+          "type": "string",
+          "examples": [
+            "3 days",
+            "1 hour",
+            "1 day"
+          ]
+        },
+        "processing_timeout": {
+          "title": "CROWler Engine Processing Timeout",
+          "description": "This is the timeout for the CROWler Engine to process a website. It is the maximum amount of time that the CROWler will wait for a website to be processed. If a source stays in processing for more than this time, the CROWler will re-schedule it for a new processing.",
+          "type": "string",
+          "examples": [
+            "1 day",
+            "3 days"
+          ]
+        },
         "maintenance": {
           "title": "CROWler Engine DB Maintenance Interval",
           "description": "This is the DB maintenance interval (in seconds) for the CROWler Engine. It is the interval at which the CROWler will perform automatic maintenance tasks, a value of 0 means NO automatic DB maintenance.",
