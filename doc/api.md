@@ -52,6 +52,7 @@ manage your sources via the API. The end-points added so far are:
 
 * [GET] `/v1/addsource`: This end-point will add a new source to the database.
   The source should be provided in JSON format.
+  [addsource](./api/addsource.md) detailed documentation.
 * [GET] `/v1/removesource`: This end-point will remove a source from the
   database. The source should be provided in JSON format.
 

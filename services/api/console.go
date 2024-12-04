@@ -53,7 +53,7 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 	}
 
 	if sqlParams.URL == "" {
-		return ConsoleResponse{Message: "Invalid URL"}, nil
+		return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("invalid URL")
 	}
 
 	// Perform the addSource operation
