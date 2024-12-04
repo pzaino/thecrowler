@@ -5,58 +5,56 @@ vdi_count="$2"
 prometheus="$3"
 postgres="$4"
 
-# If no arguments are provided, ask the user for the number of instances
-if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
-    # Ask the user for the number of instances
-    # shellcheck disable=SC2162
-    read -p "Enter the number of crowler-engine instances: " engine_count
-    # shellcheck disable=SC2162
-    read -p "Enter the number of crowler-vdi instances: " vdi_count
-    # Ask the user if they want to include the Prometheus PushGateway
-    # shellcheck disable=SC2162
-    read -p "Do you want to include the Prometheus PushGateway? (yes/no): " prometheus
-    # Ask the user if they want to include the PostgreSQL database
-    # shellcheck disable=SC2162
-    read -p "Do you want to include the PostgreSQL database? (yes/no): " postgres
+# Function to read and validate integer input
+read_integer_input() {
+    local prompt="$1"
+    local varname="$2"
+    local value
+    while :; do
+        # shellcheck disable=SC2162
+        read -p "$prompt" value
+        if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt 0 ]; then
+            eval "$varname=$value"
+            break
+        else
+            echo "Invalid input. Please provide a positive integer."
+        fi
+    done
+}
+
+# Function to read and validate yes/no input
+read_yes_no_input() {
+    local prompt="$1"
+    local varname="$2"
+    local value
+    while :; do
+        # shellcheck disable=SC2162
+        read -p "$prompt (yes/no): " value
+        value=$(echo "$value" | tr '[:upper:]' '[:lower:]' | xargs)
+        if [[ "$value" == "yes" || "$value" == "no" ]]; then
+            eval "$varname=$value"
+            break
+        else
+            echo "Invalid input. Please provide 'yes' or 'no'."
+        fi
+    done
+}
+
+# Prompt for missing arguments
+if [ -z "$engine_count" ]; then
+    read_integer_input "Enter the number of crowler-engine instances: " engine_count
 fi
-
-# trim trail spaces in prometheus input and transform to lowercase
-prometheus=$(echo "$prometheus" | tr '[:upper:]' '[:lower:]' | xargs)
-
-# If no value is provided for prometheus, set it to "no"
+if [ -z "$vdi_count" ]; then
+    read_integer_input "Enter the number of crowler-vdi instances: " vdi_count
+fi
 if [ -z "$prometheus" ]; then
-    prometheus="no"
+    read_yes_no_input "Do you want to include the Prometheus PushGateway?" prometheus
 fi
-if [ "$prometheus" != "yes" ] && [ "$prometheus" != "no" ]; then
-    echo "Invalid input. Please provide 'yes' or 'no' for the Prometheus PushGateway."
-    exit 1
-fi
-
-# trim trail spaces in postgres input and transform to lowercase
-postgres=$(echo "$postgres" | tr '[:upper:]' '[:lower:]' | xargs)
-
-# If no value is provided for postgres, set it to "yes"
 if [ -z "$postgres" ]; then
-    postgres="yes"
-fi
-if [ "$postgres" != "yes" ] && [ "$postgres" != "no" ]; then
-    echo "Invalid input. Please provide 'yes' or 'no' for the PostgreSQL database."
-    exit 1
+    read_yes_no_input "Do you want to include the PostgreSQL database?" postgres
 fi
 
-# Check if engine_count and vdi_count are provided
-if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
-    echo "Invalid input. Please provide the number of instances for both crowler-engine and crowler-vdi."
-    exit 1
-fi
-
-# Check if engine_count and vdi_count are integers and their value is bigger than 0
-if ! [[ "$engine_count" =~ ^[0-9]+$ ]] || ! [[ "$vdi_count" =~ ^[0-9]+$ ]] || [ "$engine_count" -le 0 ] || [ "$vdi_count" -le 0 ]; then
-    echo "Invalid input. Please provide a positive integer value for both crowler-engine and crowler-vdi."
-    exit 1
-fi
-
-# Start writing the docker-compose.generated.yml file
+# Generate docker-compose.yml
 cat << EOF > docker-compose.yml
 ---
 version: '3.8'
@@ -123,12 +121,9 @@ services:
     restart: always
 EOF
 
-
-# Add the crowler-db instance
-# shellcheck disable=SC2086
-if [ $postgres == "yes" ];
-then
-  cat << EOF >> docker-compose.yml
+# Add crowler-db
+if [ "$postgres" == "yes" ]; then
+    cat << EOF >> docker-compose.yml
 
   crowler-db:
     image: postgres:15.10-bookworm
@@ -140,8 +135,6 @@ then
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - POSTGRES_USER=\${DOCKER_POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
-      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -153,107 +146,59 @@ then
       interval: 10s
       timeout: 5s
       retries: 5
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
     restart: always
 EOF
 fi
 
-# Add the crowler-engine instances
-# shellcheck disable=SC2086
-for i in $(seq 1 $engine_count); do
-cat << EOF >> docker-compose.yml
+# Add crowler-engine instances
+for i in $(seq 1 "$engine_count"); do
+    cat << EOF >> docker-compose.yml
 
   crowler-engine-$i:
     environment:
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
       - SELENIUM_HOST=\${DOCKER_SELENIUM_HOST:-crowler-vdi-$i}
-      - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
-      - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
-      - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
-      - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
-      - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    depends_on:
-      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
     networks:
       - crowler-net
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    stdin_open: true # For interactive terminal access (optional)
-    tty: true        # For interactive terminal access (optional)
-    volumes:
-      - engine_data:/app/data
-    user: crowler
-    healthcheck:
-      test: ["CMD-SHELL", "healthCheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: always
 EOF
 done
 
-# Add the crowler-vdi instances
-# shellcheck disable=SC2086
-for i in $(seq 1 $vdi_count); do
-  # Calculate unique host port ranges for each instance to avoid conflicts
-  HOST_PORT_START1=$((4444 + (i - 1) * 3)) # Selenium Hub
-  HOST_PORT_END1=$((4445 + (i - 1) * 3))   # SysMng Port
-  HOST_PORT_START2=$((5900 + (i - 1) * 3)) # Selenium ARM VNC Port
-  HOST_PORT_START3=$((7900 + (i - 1) * 3)) # Selenium x86 VNC Port
-
-cat << EOF >> docker-compose.yml
+# Add crowler-vdi instances
+for i in $(seq 1 "$vdi_count"); do
+    HOST_PORT_START=$((4444 + (i - 1) * 10))
+    cat << EOF >> docker-compose.yml
 
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
-    environment:
-      - COMPOSE_PROJECT_NAME=crowler-
-      - INSTANCE_ID=$i
-    image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
-      - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
-      - "$HOST_PORT_START2:5900"
-      - "$HOST_PORT_START3:7900"
+      - "${HOST_PORT_START}:4444"
     networks:
       - crowler-net
     restart: always
 EOF
 done
 
-# Add the Prometheus PushGateway (if requested by the user)
-# shellcheck disable=SC2086
-if [ $prometheus == "yes" ];
-then
-  cat << EOF >> docker-compose.yml
+# Add Prometheus PushGateway
+if [ "$prometheus" == "yes" ]; then
+    cat << EOF >> docker-compose.yml
 
-    crowler-push-gateway:
-      image: prom/pushgateway
-      container_name: "crowler-push-gateway"
-      ports:
-        - "9091:9091"
-      networks:
-        - crowler-net
-      restart: always
-      logging:
-        driver: "json-file"
-        options:
-          max-size: "10m"
-          max-file: "3"
+  crowler-push-gateway:
+    image: prom/pushgateway
+    container_name: "crowler-push-gateway"
+    ports:
+      - "9091:9091"
+    networks:
+      - crowler-net
+    restart: always
 EOF
 fi
 
-# Add the networks and volumes
+# Add networks and volumes
 cat << EOF >> docker-compose.yml
 
 networks:
@@ -264,9 +209,6 @@ volumes:
   api_data:
   events_data:
   db_data:
-    driver: local
-  engine_data:
-    driver: local
 EOF
 
-echo "docker-compose.generated.yml has been generated with $engine_count crowler-engine instance(s) and $vdi_count crowler-vdi instance(s)."
+echo "docker-compose.yml has been successfully generated."
