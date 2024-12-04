@@ -338,7 +338,7 @@ func processEvent(event cdb.Event) {
 
 	// Convert the event struct to a map
 	eventMap := make(map[string]interface{})
-	eventMap["event"] = event
+	eventMap["jsonData"] = event
 
 	// Execute the plugin
 	for _, plugin := range p {

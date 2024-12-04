@@ -2742,7 +2742,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		args = append(args, "--disable-peer-to-peer")
 		args = append(args, "--disable-dev-shm-usage")
 		args = append(args, "--disable-popup-blocking")
-		args = append(args, "--no-sandbox")
+		// args = append(args, "--no-sandbox")
 		args = append(args, "--remote-debugging-port=0")
 	}
 
@@ -2764,6 +2764,8 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			"safebrowsing.disable_download_protection": false,
 			"safebrowsing.disable_extension_blacklist": false,
 			"safebrowsing.disable_automatic_downloads": false,
+			"useAutomationExtension":                   false,
+			"excludeSwitches":                          []string{"enable-automation"},
 		}
 		caps.AddChrome(chrome.Capabilities{
 			Args:  args,
