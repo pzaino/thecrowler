@@ -2800,7 +2800,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	}
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
-		sel.Config.Host = "crowler_vdi_1"
+		sel.Config.Host = "crowler-vdi-1"
 	}
 
 	// Connect to the WebDriver instance running remotely.
