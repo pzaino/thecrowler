@@ -9,9 +9,9 @@ postgres="$4"
 if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
     # Ask the user for the number of instances
     # shellcheck disable=SC2162
-    read -p "Enter the number of crowler_engine instances: " engine_count
+    read -p "Enter the number of crowler-engine instances: " engine_count
     # shellcheck disable=SC2162
-    read -p "Enter the number of crowler_vdi instances: " vdi_count
+    read -p "Enter the number of crowler-vdi instances: " vdi_count
     # Ask the user if they want to include the Prometheus PushGateway
     # shellcheck disable=SC2162
     read -p "Do you want to include the Prometheus PushGateway? (yes/no): " prometheus
@@ -46,13 +46,13 @@ fi
 
 # Check if engine_count and vdi_count are provided
 if [ -z "$engine_count" ] || [ -z "$vdi_count" ]; then
-    echo "Invalid input. Please provide the number of instances for both crowler_engine and crowler_vdi."
+    echo "Invalid input. Please provide the number of instances for both crowler-engine and crowler-vdi."
     exit 1
 fi
 
 # Check if engine_count and vdi_count are integers and their value is bigger than 0
 if ! [[ "$engine_count" =~ ^[0-9]+$ ]] || ! [[ "$vdi_count" =~ ^[0-9]+$ ]] || [ "$engine_count" -le 0 ] || [ "$vdi_count" -le 0 ]; then
-    echo "Invalid input. Please provide a positive integer value for both crowler_engine and crowler_vdi."
+    echo "Invalid input. Please provide a positive integer value for both crowler-engine and crowler-vdi."
     exit 1
 fi
 
@@ -61,19 +61,21 @@ cat << EOF > docker-compose.yml
 ---
 version: '3.8'
 services:
-  crowler_api:
+
+  crowler-api:
+    container_name: "crowler-api"
     environment:
-      - COMPOSE_PROJECT_NAME=crowler_
+      - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=\${INSTANCE_ID:-1}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler_db}
+      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     depends_on:
-      - crowler_db
+      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -90,19 +92,20 @@ services:
       retries: 5
     restart: always
 
-  crowler_events:
+  crowler-events:
+    container_name: "crowler-events"
     environment:
-      - COMPOSE_PROJECT_NAME=crowler_
+      - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=\${INSTANCE_ID:-1}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler_db}
+      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     depends_on:
-      - crowler_db
+      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -121,14 +124,15 @@ services:
 EOF
 
 
-# Add the crowler_db instance
+# Add the crowler-db instance
 # shellcheck disable=SC2086
 if [ $postgres == "yes" ];
 then
   cat << EOF >> docker-compose.yml
 
-  crowler_db:
+  crowler-db:
     image: postgres:15.10-bookworm
+    container_name: "crowler-db"
     ports:
       - "5432:5432"
     environment:
@@ -158,25 +162,25 @@ then
 EOF
 fi
 
-# Add the crowler_engine instances
+# Add the crowler-engine instances
 # shellcheck disable=SC2086
 for i in $(seq 1 $engine_count); do
 cat << EOF >> docker-compose.yml
 
-  crowler_engine_$i:
+  crowler-engine-$i:
     environment:
-      - COMPOSE_PROJECT_NAME=crowler_
+      - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
-      - SELENIUM_HOST=\${DOCKER_SELENIUM_HOST:-crowler_vdi_$i}
+      - SELENIUM_HOST=\${DOCKER_SELENIUM_HOST:-crowler-vdi-$i}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
-      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler_db}
+      - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     depends_on:
-      - crowler_db
+      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -199,7 +203,7 @@ cat << EOF >> docker-compose.yml
 EOF
 done
 
-# Add the crowler_vdi instances
+# Add the crowler-vdi instances
 # shellcheck disable=SC2086
 for i in $(seq 1 $vdi_count); do
   # Calculate unique host port ranges for each instance to avoid conflicts
@@ -210,10 +214,10 @@ for i in $(seq 1 $vdi_count); do
 
 cat << EOF >> docker-compose.yml
 
-  crowler_vdi_$i:
-    container_name: "crowler_vdi_$i"
+  crowler-vdi-$i:
+    container_name: "crowler-vdi-$i"
     environment:
-      - COMPOSE_PROJECT_NAME=crowler_
+      - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -233,9 +237,9 @@ if [ $prometheus == "yes" ];
 then
   cat << EOF >> docker-compose.yml
 
-    pushgateway:
+    crowler-push-gateway:
       image: prom/pushgateway
-      container_name: pushgateway
+      container_name: "crowler-push-gateway"
       ports:
         - "9091:9091"
       networks:
@@ -265,4 +269,4 @@ volumes:
     driver: local
 EOF
 
-echo "docker-compose.generated.yml has been generated with $engine_count crowler_engine instance(s) and $vdi_count crowler_vdi instance(s)."
+echo "docker-compose.generated.yml has been generated with $engine_count crowler-engine instance(s) and $vdi_count crowler-vdi instance(s)."

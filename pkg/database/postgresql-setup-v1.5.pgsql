@@ -49,8 +49,13 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- source is disabled.
     flags INTEGER DEFAULT 0 NOT NULL,           -- Bitwise flags for the source (used for various
                                                 -- purposes, included but not limited to the Rules).
-    config JSONB                                -- Stores JSON document with all details about
+    config JSONB,                               -- Stores JSON document with all details about
                                                 -- the source configuration for the crawler.
+    details JSONB                               -- Stores JSON document with all details about
+                                                -- the source. This is different than the config!
+                                                -- For instance, in here the CROWler itself stores
+                                                -- data like the stage of the crawling for multi-stage
+                                                -- crawls etc.
 );
 
 -- Owners table stores the information about the owners of the sources
