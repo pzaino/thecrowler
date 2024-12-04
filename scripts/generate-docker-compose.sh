@@ -164,6 +164,7 @@ for i in $(seq 1 "$engine_count"); do
     cat << EOF >> docker-compose.yml
 
   crowler-engine-$i:
+    container_name: "crowler-engine-$i"
     environment:
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
