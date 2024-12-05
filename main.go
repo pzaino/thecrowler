@@ -658,7 +658,9 @@ func main() {
 					closeResources(db, seleniumInstances) // Release resources
 					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
+				cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection re-established.")
 				configMutex.Unlock()
+				cmn.DebugMsg(cmn.DbgLvlInfo, "Configuration reloaded.")
 				//go checkSources(&db, seleniumInstances)
 			}
 		}
@@ -676,6 +678,7 @@ func main() {
 		closeResources(db, seleniumInstances) // Release resources
 		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established.")
 	defer closeResources(db, seleniumInstances)
 
 	// Start the checkSources function in a goroutine

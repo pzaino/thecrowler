@@ -109,6 +109,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 			}
 			connected = true
 		}
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
 
 	return nil
