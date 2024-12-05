@@ -137,6 +137,8 @@ services:
       dockerfile: Dockerfile.searchapi
     ports:
       - "8080:8080"
+    networks:
+      - crowler-net
     volumes:
       - api_data:/app/data
     user: apiuser
@@ -167,6 +169,8 @@ services:
       dockerfile: Dockerfile.events
     ports:
       - "8082:8082"
+    networks:
+      - crowler-net
     volumes:
       - events_data:/app/data
     user: eventsuser
