@@ -65,6 +65,10 @@ type Crawler struct {
 	MaxRedirects          int           `json:"max_redirects" yaml:"max_redirects"`                     // Maximum number of redirects
 	MaxRequests           int           `json:"max_requests" yaml:"max_requests"`                       // Maximum number of requests
 	ResetCookiesPolicy    string        `json:"reset_cookies_policy" yaml:"reset_cookies_policy"`       // Cookies policy (e.g., "none", "on-request", "on-start", "when-done", "always")
+	CrawlingInterval      string        `json:"crawling_interval" yaml:"crawling_interval"`             // Time to wait before re-crawling a source
+	CrawlingIfError       string        `json:"crawling_if_error" yaml:"crawling_if_error"`             // Whether to re-crawl a source if an error occurs
+	CrawlingIfOk          string        `json:"crawling_if_ok" yaml:"crawling_if_ok"`                   // Whether to re-crawl a source if the crawling is successful
+	ProcessingTimeout     string        `json:"processing_timeout" yaml:"processing_timeout"`           // Timeout for processing the source
 	CollectHTML           bool          `json:"collect_html" yaml:"collect_html"`                       // Whether to collect the HTML content or not
 	CollectImages         bool          `json:"collect_images" yaml:"collect_images"`                   // Whether to collect the images or not
 	CollectFiles          bool          `json:"collect_files" yaml:"collect_files"`                     // Whether to collect the files or not
@@ -259,18 +263,23 @@ type API struct {
 
 // Selenium represents the CROWler VDI configuration
 type Selenium struct {
-	Name        string       `yaml:"name"`         // Name of the Selenium instance
-	Location    string       `yaml:"location"`     // Location of the Selenium executable
-	Path        string       `yaml:"path"`         // Path to the Selenium executable
-	DriverPath  string       `yaml:"driver_path"`  // Path to the Selenium driver executable
-	Type        string       `yaml:"type"`         // Type of Selenium driver
-	ServiceType string       `yaml:"service_type"` // Type of Selenium service (standalone, hub)
-	Port        int          `yaml:"port"`         // Port number for Selenium server
-	Host        string       `yaml:"host"`         // Hostname of the Selenium server
-	Headless    bool         `yaml:"headless"`     // Whether to run Selenium in headless mode
-	UseService  bool         `yaml:"use_service"`  // Whether to use Selenium service as well or not
-	SSLMode     string       `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
-	ProxyURL    string       `yaml:"proxy_url"`    // Proxy URL for Selenium connection
+	Name        string `yaml:"name"`         // Name of the Selenium instance
+	Location    string `yaml:"location"`     // Location of the Selenium executable
+	Path        string `yaml:"path"`         // Path to the Selenium executable
+	DriverPath  string `yaml:"driver_path"`  // Path to the Selenium driver executable
+	Type        string `yaml:"type"`         // Type of Selenium driver
+	ServiceType string `yaml:"service_type"` // Type of Selenium service (standalone, hub)
+	Port        int    `yaml:"port"`         // Port number for Selenium server
+	Host        string `yaml:"host"`         // Hostname of the Selenium server
+	Headless    bool   `yaml:"headless"`     // Whether to run Selenium in headless mode
+	UseService  bool   `yaml:"use_service"`  // Whether to use Selenium service as well or not
+	SSLMode     string `yaml:"sslmode"`      // SSL mode for Selenium connection (e.g., "disable")
+	ProxyURL    string `yaml:"proxy_url"`    // Proxy URL for Selenium connection
+	/*
+		ProxyUser   string       `yaml:"proxy_user"`   // Proxy username for Selenium connection
+		ProxyPass   string       `yaml:"proxy_pass"`   // Proxy password for Selenium connection
+		ProxyPort   int          `yaml:"proxy_port"`   // Proxy port for Selenium connection
+	*/
 	DownloadDir string       `yaml:"download_dir"` // Download directory for Selenium
 	Language    string       `yaml:"language"`     // Language for Selenium
 	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration

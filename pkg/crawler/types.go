@@ -278,12 +278,19 @@ const (
 	browserInfoBarsDefault   = "--disable-infobars"
 	browserPopupsDefault     = "--disable-popup-blocking"
 	browserShmDefault        = "--disable-dev-shm-usage"
+
+	// BrowserChrome represents the Chrome browser
+	BrowserChrome = "chrome"
+	// BrowserFirefox represents the Firefox browser
+	BrowserFirefox = "firefox"
+	// BrowserChromium represents the Chromium browser
+	BrowserChromium = "chromium"
 )
 
 var (
 	browserSettingsMap = map[string]map[string]string{
-		"chrome": {
-			"browserName":   "chrome",
+		BrowserChrome: {
+			"browserName":   BrowserChrome,
 			"windowSize":    browserWindowSizeDefault, // Set the window size to 1920x1080
 			"initialWindow": browserStartMaxDefault,   // (--start-maximized) Start with a maximized window
 			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
@@ -296,8 +303,8 @@ var (
 			"incognito":     "",                       // Run in incognito mode
 			"disableDevShm": browserShmDefault,        // Disable /dev/shm use
 		},
-		"firefox": {
-			"browserName":   "firefox",
+		BrowserFirefox: {
+			"browserName":   BrowserFirefox,
 			"initialWindow": browserStartMaxDefault, // Start with a maximized window
 			//"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
 			//"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
@@ -306,8 +313,8 @@ var (
 			//"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
 			"javascript": browserJSDefault, // Enable JavaScript, which is typically enabled in real user browsers
 		},
-		"chromium": {
-			"browserName":   "chromium",
+		BrowserChromium: {
+			"browserName":   BrowserChromium,
 			"windowSize":    browserWindowSizeDefault, // Set the window size to 1920x1080
 			"initialWindow": browserStartMaxDefault,   // Start with a maximized window
 			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments

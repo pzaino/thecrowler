@@ -40,7 +40,7 @@ selenium:
     type: chrome
     path: ''
     port: 4444
-    host: crowler_vdi_1
+    host: crowler-vdi-1
     use_service: false
     sslmode: disable
 

@@ -55,7 +55,7 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url strin
 			addScrapedDataToDocument(&scrapedDataDoc, runDefaultScrapingRules(wd, ctx))
 		} else {
 			configStr := string((*ctx.source.Config))
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration: %v", configStr)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Source custom configuration detected: %v", configStr)
 		}
 	}
 

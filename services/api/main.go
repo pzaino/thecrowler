@@ -94,6 +94,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	dbSemaphore = make(chan struct{}, config.Database.MaxConns-3)
 
 	// Initialize the database
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database connection...")
 	connected := false
 	dbHandler, err = cdb.NewHandler(*config)
 	if err != nil {

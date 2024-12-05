@@ -445,9 +445,12 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 			if !exists {
 				continue
 			}
+
 			matchValue := strings.TrimSpace(selector.Attribute.Value)
 			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				if strings.EqualFold(strings.TrimSpace(attrValue), strings.TrimSpace(selector.Attribute.Value)) {
+				// Use regex for matching
+				re, err := regexp.Compile(matchValue)
+				if err == nil && re.MatchString(attrValue) {
 					matchL2 = true
 				}
 			} else {
@@ -456,6 +459,7 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 		} else {
 			matchL2 = true
 		}
+
 		matchL3 := false
 		if matchL2 && strings.TrimSpace(selector.Value) != "" {
 			if matchValue(ctx, e, selector) {
@@ -468,13 +472,16 @@ func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector r
 		}
 		if matchL3 {
 			results = append(results, extractDataFromElement(ctx, e, selector)...)
-			break
+			if !all {
+				break // Stop after first match if not processing all
+			}
 		}
 	}
 
 	return results
 }
 
+// fallbackExtractByXPath extracts the content from the provided document using the provided XPath selector.
 func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
 	var results []string
 	items, err := htmlquery.QueryAll(doc.Nodes[0], selector.Selector)
@@ -492,7 +499,9 @@ func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector
 			attrValue := htmlquery.SelectAttr(item, strings.TrimSpace(selector.Attribute.Name))
 			matchValue := strings.TrimSpace(selector.Attribute.Value)
 			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				if strings.EqualFold(strings.TrimSpace(attrValue), matchValue) {
+				// Use regex for matching
+				re, err := regexp.Compile(matchValue)
+				if err == nil && re.MatchString(attrValue) {
 					matchL2 = true
 				}
 			} else {
@@ -529,11 +538,29 @@ func fallbackExtractByRegex(content string, pattern string, all bool) []string {
 	re := regexp.MustCompile(pattern)
 
 	if all {
-		return re.FindAllString(content, -1)
+		// Find all matches
+		matches := re.FindAllStringSubmatch(content, -1)
+		var results []string
+		for _, match := range matches {
+			if len(match) > 1 {
+				// Capture group found
+				results = append(results, match[1])
+			} else {
+				// No capture group, use the whole match
+				results = append(results, match[0])
+			}
+		}
+		return results
 	}
 
-	if match := re.FindString(content); match != "" {
-		return []string{match}
+	// Find the first match
+	if match := re.FindStringSubmatch(content); match != nil {
+		if len(match) > 1 {
+			// Return the capture group if present
+			return []string{match[1]}
+		}
+		// Otherwise, return the whole match
+		return []string{match[0]}
 	}
 
 	return []string{}

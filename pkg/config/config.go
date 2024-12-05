@@ -183,6 +183,10 @@ func NewConfig() *Config {
 			FullSiteScreenshot:    false,
 			MaxDepth:              0,
 			MaxLinks:              0,
+			CrawlingInterval:      "",
+			CrawlingIfError:       "",
+			CrawlingIfOk:          "",
+			ProcessingTimeout:     "1 day",
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
@@ -596,6 +600,10 @@ func (c *Config) validateCrawler() {
 	c.setDefaultInterval()
 	c.setDefaultTimeout()
 	c.setDefaultMaintenance()
+	c.setDefaultCrawlingInterval()
+	c.setDefaultCrawlingIfError()
+	c.setDefaultCrawlingIfOk()
+	c.setProcessingTimeout()
 	c.setDefaultMaxDepth()
 	c.setDefaultDelay()
 	c.setDefaultBrowsingMode()
@@ -620,6 +628,38 @@ func (c *Config) setDefaultInterval() {
 		c.Crawler.Interval = "2"
 	} else {
 		c.Crawler.Interval = strings.TrimSpace(c.Crawler.Interval)
+	}
+}
+
+func (c *Config) setDefaultCrawlingInterval() {
+	if strings.TrimSpace(c.Crawler.CrawlingInterval) == "" {
+		c.Crawler.CrawlingInterval = ""
+	} else {
+		c.Crawler.CrawlingInterval = strings.ToLower(strings.TrimSpace(c.Crawler.CrawlingInterval))
+	}
+}
+
+func (c *Config) setDefaultCrawlingIfError() {
+	if strings.TrimSpace(c.Crawler.CrawlingIfError) == "" {
+		c.Crawler.CrawlingIfError = ""
+	} else {
+		c.Crawler.CrawlingIfError = strings.ToLower(strings.TrimSpace(c.Crawler.CrawlingIfError))
+	}
+}
+
+func (c *Config) setDefaultCrawlingIfOk() {
+	if strings.TrimSpace(c.Crawler.CrawlingIfOk) == "" {
+		c.Crawler.CrawlingIfOk = ""
+	} else {
+		c.Crawler.CrawlingIfOk = strings.ToLower(strings.TrimSpace(c.Crawler.CrawlingIfOk))
+	}
+}
+
+func (c *Config) setProcessingTimeout() {
+	if strings.TrimSpace(c.Crawler.ProcessingTimeout) == "" {
+		c.Crawler.ProcessingTimeout = "1 day"
+	} else {
+		c.Crawler.ProcessingTimeout = strings.TrimSpace(c.Crawler.ProcessingTimeout)
 	}
 }
 

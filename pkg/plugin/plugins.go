@@ -524,6 +524,40 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 }
 
 // addJSAPIClient adds the apiClient function to the VM
+/* Usage in javascript:
+	// Make a GET request to the specified URL
+   let response = apiClient("GET",
+   	"https://api.example.com/v1/resource",
+	{ "Authorization header": "Bearer token"},
+	{"key": "value"},
+	30000);
+   console.log(response.status);
+   console.log(response.headers);
+   console.log(response.body);
+
+	// Make a POST request to the specified URL
+	   let response = apiClient("POST",
+		"https://api.example.com/v1/resource",
+
+		// Headers
+		{
+			"Authorization header": " Bearer token",
+			"Content-Type": "application/json"
+		},
+
+		// Body
+		{
+			"key": "value"
+		},
+
+		// Timeout
+		30000
+	);
+	console.log(response.status);
+	console.log(response.headers);
+	console.log(response.body);
+
+*/
 func addJSAPIClient(vm *otto.Otto) error {
 	// Register the apiClient function
 	err := vm.Set("apiClient", func(call otto.FunctionCall) otto.Value {
@@ -630,6 +664,17 @@ func addJSAPIClient(vm *otto.Otto) error {
 }
 
 // addJSAPIFetch adds the fetch function to the VM
+/* Usage in javascript:
+// Make a GET request to the specified URL
+let response = fetch("https://api.example.com/v1/resource");
+console.log(response.ok);
+console.log(response.status);
+console.log(response.statusText);
+console.log(response.url);
+console.log(response.headers);
+response.text().then(text => console.log(text));
+response.json().then(json => console.log(json));
+*/
 func addJSAPIFetch(vm *otto.Otto) error {
 	// Implement the fetch function
 	err := vm.Set("fetch", func(call otto.FunctionCall) otto.Value {
