@@ -12,16 +12,16 @@ postgres=""
 
 # Function to display usage
 cmd_usage() {
-              echo "Usage: $0 [OPTIONS]"
-            echo "Options:"
-            echo "  --engine_count=<number>  Number of crowler-engine instances"
-            echo "  -e=<number>              Number of crowler-engine instances"
-            echo "  --vdi_count=<number>     Number of crowler-vdi instances"
-            echo "  -v=<number>              Number of crowler-vdi instances"
-            echo "  --prometheus=<yes/no>    Include Prometheus PushGateway"
-            echo "  --prom=<yes/no>          Include Prometheus PushGateway"
-            echo "  --postgres=<yes/no>      Include PostgreSQL database"
-            echo "  --pg=<yes/no>            Include PostgreSQL database"
+    echo "Usage: $0 [OPTIONS]"
+    echo "Options:"
+    echo "  --engine_count=<number>  Number of crowler-engine instances"
+    echo "  -e=<number>              Number of crowler-engine instances"
+    echo "  --vdi_count=<number>     Number of crowler-vdi instances"
+    echo "  -v=<number>              Number of crowler-vdi instances"
+    echo "  --prometheus=<yes/no>    Include Prometheus PushGateway"
+    echo "  --prom=<yes/no>          Include Prometheus PushGateway"
+    echo "  --postgres=<yes/no>      Include PostgreSQL database"
+    echo "  --pg=<yes/no>            Include PostgreSQL database"
 }
 
 # Function to read and validate integer input
