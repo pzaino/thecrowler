@@ -109,6 +109,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 			}
 			connected = true
 		}
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
 
 	return nil
@@ -210,6 +211,7 @@ func main() {
 	initAPIv1()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Awaiting for requests...")
 	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
 		log.Fatal(srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
 	}

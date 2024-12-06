@@ -45,11 +45,11 @@ The POST request should be in the following format:
 }
 ```
 
-Upon success (or failed) insertion the CROWler will return a status JSON document:
+Upon success (or failure) insertion the CROWler will return a status JSON document:
 
 ```json
 {
-  message: "website inserted successfully"
+  "message": "website inserted successfully"
 }
 ```
 

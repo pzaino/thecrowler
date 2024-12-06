@@ -1,9 +1,28 @@
 #!/bin/bash
 
-engine_count="$1"
-vdi_count="$2"
-prometheus="$3"
-postgres="$4"
+# Get arguments passed to the script
+# shellcheck disable=SC2124
+pars="$@"
+
+# Initialize variables
+engine_count=""
+vdi_count=""
+prometheus=""
+postgres=""
+
+# Function to display usage
+cmd_usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo "Options:"
+    echo "  --engine_count=<number>  Number of crowler-engine instances"
+    echo "  -e=<number>              Number of crowler-engine instances"
+    echo "  --vdi_count=<number>     Number of crowler-vdi instances"
+    echo "  -v=<number>              Number of crowler-vdi instances"
+    echo "  --prometheus=<yes/no>    Include Prometheus PushGateway"
+    echo "  --prom=<yes/no>          Include Prometheus PushGateway"
+    echo "  --postgres=<yes/no>      Include PostgreSQL database"
+    echo "  --pg=<yes/no>            Include PostgreSQL database"
+}
 
 # Function to read and validate integer input
 read_integer_input() {
@@ -39,6 +58,45 @@ read_yes_no_input() {
         fi
     done
 }
+
+# process the arguments in pars
+# shellcheck disable=SC2068
+for arg in ${pars}; do
+    case ${arg} in
+        --help)
+            cmd_usage
+            exit 0
+            ;;
+        -h)
+            cmd_usage
+            exit 0
+            ;;
+        --engine=*)
+            engine_count=${arg#--engine_count=}
+            ;;
+        -e=*)
+            engine_count=${arg#-e=}
+            ;;
+        --vdi=*)
+            vdi_count=${arg#--vdi_count=}
+            ;;
+        -v=*)
+            vdi_count=${arg#-v=}
+            ;;
+        --prometheus=*)
+            prometheus=${arg#--prometheus=}
+            ;;
+        --prom=*)
+            prometheus=${arg#--prom=}
+            ;;
+        --postgres=*)
+            postgres=${arg#--postgres=}
+            ;;
+        --pg=*)
+            postgres=${arg#--pg=}
+            ;;
+    esac
+done
 
 # Prompt for missing arguments
 if [ -z "$engine_count" ]; then
@@ -79,6 +137,8 @@ services:
       dockerfile: Dockerfile.searchapi
     ports:
       - "8080:8080"
+    networks:
+      - crowler-net
     volumes:
       - api_data:/app/data
     user: apiuser
@@ -109,6 +169,8 @@ services:
       dockerfile: Dockerfile.events
     ports:
       - "8082:8082"
+    networks:
+      - crowler-net
     volumes:
       - events_data:/app/data
     user: eventsuser

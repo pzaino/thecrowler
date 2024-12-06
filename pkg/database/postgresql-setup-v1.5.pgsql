@@ -1894,6 +1894,11 @@ SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
 
 -- Grant permissions to the user on the pg_notify table
 GRANT USAGE ON SCHEMA public TO :CROWLER_DB_USER;
-GRANT SELECT ON pg_notify TO :CROWLER_DB_USER;
-GRANT INSERT, SELECT ON events TO :CROWLER_DB_USER;
+--GRANT SELECT ON pg_notify TO :CROWLER_DB_USER;
+-- Ensure the user can execute the notify function
 GRANT EXECUTE ON FUNCTION notify_new_event() TO :CROWLER_DB_USER;
+
+-- Grant permissions on the schema and events table
+GRANT USAGE ON SCHEMA public TO :CROWLER_DB_USER;
+GRANT INSERT, SELECT ON events TO :CROWLER_DB_USER;
+
