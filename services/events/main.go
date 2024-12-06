@@ -216,10 +216,14 @@ func initAPIv1() {
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 
-	// Events
-	//eventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(eventsHandler)))
+	// Events API endpoints
+	createEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(createEventHandler)))
+	removeEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventHandler)))
+	listEventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(listEventsHandler)))
 
-	//http.Handle("/v1/events", eventsWithMiddlewares)
+	http.Handle("/v1/events/create", createEventWithMiddlewares)
+	http.Handle("/v1/events/remove", removeEventWithMiddlewares)
+	http.Handle("/v1/events/list", listEventsWithMiddlewares)
 
 }
 
@@ -311,6 +315,73 @@ func listenForEvents(db *cdb.Handler) {
 	<-stop // Wait for shutdown signal
 }
 
+func createEventHandler(w http.ResponseWriter, r *http.Request) {
+	var event cdb.Event
+	err := json.NewDecoder(r.Body).Decode(&event)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	uid, err := cdb.CreateEvent(&dbHandler, event)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create event: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]string{"message": "Event created successfully", "event_id": uid}
+	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
+}
+
+func removeEventHandler(w http.ResponseWriter, r *http.Request) {
+	eventID := r.URL.Query().Get("event_id")
+	if eventID == "" {
+		http.Error(w, "Missing event_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	_, err := dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to remove event: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]string{"message": "Event removed successfully"}
+	handleErrorAndRespond(w, nil, response, "Error removing event: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func listEventsHandler(w http.ResponseWriter, _ *http.Request) {
+	rows, err := dbHandler.ExecuteQuery(`SELECT event_sha256, created_at, last_updated_at, source_id, event_type, event_severity, event_timestamp, details FROM Events`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve events: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close() //nolint:errcheck // We can't check returned error when using defer
+
+	var events []cdb.Event
+	for rows.Next() {
+		var event cdb.Event
+		var details string
+
+		err := rows.Scan(&event.ID, &event.CreatedAt, &event.LastUpdatedAt, &event.SourceID, &event.Type, &event.Severity, &event.Timestamp, &details)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error scanning events: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert JSON details string back to map
+		event.Details = cmn.ConvertStringToMap(details)
+		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		http.Error(w, fmt.Sprintf("Error reading events: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	handleErrorAndRespond(w, nil, events, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
+}
+
 // Handle the notification received
 func handleNotification(payload string) {
 	var event cdb.Event
@@ -344,9 +415,36 @@ func processEvent(event cdb.Event) {
 	// Execute the plugin
 	for _, plugin := range p {
 		// Execute the plugin
-		_, err := plugin.Execute(nil, &dbHandler, 30, eventMap)
+		rval, err := plugin.Execute(nil, &dbHandler, 30, eventMap)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error executing plugin: %v", err)
 		}
+
+		// Parse the plugin response
+		rvalStr := cmn.ConvertMapToString(rval)
+		var pluginResp PluginResponse
+		err = json.Unmarshal([]byte(rvalStr), &pluginResp)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error parsing plugin response: %v", err)
+			continue
+		}
+
+		// Handle the parsed response
+		handlePluginResponse(pluginResp)
+	}
+}
+
+func handlePluginResponse(resp PluginResponse) {
+	if resp.Success {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Plugin executed successfully: %s", resp.Message)
+
+		// Optionally handle the API response if present
+		if resp.APIResponse != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "API response: %v", resp.APIResponse)
+			// Add any specific handling logic for APIResponse here
+		}
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "Plugin execution failed: %s", resp.Message)
+		// Add any error handling logic here, such as retries or reporting
 	}
 }

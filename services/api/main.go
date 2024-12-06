@@ -234,13 +234,13 @@ func initAPIv1() {
 	webCorrelatedSitesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webCorrelatedSitesHandler)))
 	webScrapedDataHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webScrapedDataHandler)))
 
-	http.Handle("/v1/search", searchHandlerWithMiddlewares)
-	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
-	http.Handle("/v1/httpinfo", httpInfoHandlerWithMiddlewares)
-	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
-	http.Handle("/v1/webobject", webObjectHandlerWithMiddlewares)
-	http.Handle("/v1/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
-	http.Handle("/v1/collected_data", webScrapedDataHandlerWithMiddlewares)
+	http.Handle("/v1/search/general", searchHandlerWithMiddlewares)
+	http.Handle("/v1/search/netinfo", netInfoHandlerWithMiddlewares)
+	http.Handle("/v1/search/httpinfo", httpInfoHandlerWithMiddlewares)
+	http.Handle("/v1/search/screenshot", scrImgSrchHandlerWithMiddlewares)
+	http.Handle("/v1/search/webobject", webObjectHandlerWithMiddlewares)
+	http.Handle("/v1/search/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
+	http.Handle("/v1/search/collected_data", webScrapedDataHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
@@ -248,10 +248,10 @@ func initAPIv1() {
 		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
 
-		http.Handle("/v1/add_source", addSourceHandlerWithMiddlewares)
-		http.Handle("/v1/remove_source", removeSourceHandlerWithMiddlewares)
-		http.Handle("/v1/get_source_status", singleURLstatusHandlerWithMiddlewares)
-		http.Handle("/v1/get_all_source_status", allURLstatusHandlerWithMiddlewares)
+		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
+		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 	}
 }
 

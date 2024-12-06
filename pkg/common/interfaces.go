@@ -100,3 +100,8 @@ func ConvertJSONToMap(input []byte) map[string]interface{} {
 func ConvertMapToString(input map[string]interface{}) string {
 	return string(ConvertMapToJSON(input))
 }
+
+// ConvertStringToMap converts a string to a map[string]interface{}
+func ConvertStringToMap(input string) map[string]interface{} {
+	return ConvertJSONToMap([]byte(input))
+}

@@ -389,7 +389,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	go func(timeout time.Duration) {
 		time.Sleep(timeout * time.Second) // Wait for the timeout
 		vm.Interrupt <- func() {
-			panic("JavaScript execution timeout")
+			cmn.DebugMsg(cmn.DbgLvlError, "JavaScript execution timeout")
 		}
 	}(time.Duration(timeout))
 
@@ -559,108 +559,79 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 
 */
 func addJSAPIClient(vm *otto.Otto) error {
-	// Register the apiClient function
-	err := vm.Set("apiClient", func(call otto.FunctionCall) otto.Value {
-		// Extract arguments
-		method, err := call.Argument(0).ToString() // HTTP method
+	apiClientObject, _ := vm.Object(`({})`)
+
+	// Define the "post" method
+	apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
+		method := "POST"
+		url, _ := call.Argument(0).ToString()
+		headersArg := call.Argument(1)
+		bodyArg := call.Argument(2)
+		timeoutMs, err := call.Argument(3).ToInteger()
 		if err != nil {
-			method = httpMethodGet
-		}
-		url, err := call.Argument(1).ToString() // URL
-		if err != nil {
-			return otto.Value{}
-		}
-		headersArg := call.Argument(2).Object()        // Headers (optional)
-		bodyArg := call.Argument(3).Object()           // Body (optional)
-		timeoutMs, err := call.Argument(4).ToInteger() // Timeout in milliseconds (optional)
-		if err != nil {
-			timeoutMs = 30
+			timeoutMs = 30000
 		}
 
-		// Set default timeout
 		timeout := time.Duration(timeoutMs) * time.Millisecond
-		if timeout <= 0 {
-			timeout = 30 * time.Second
-		}
+		client := &http.Client{Timeout: timeout}
 
-		client := &http.Client{
-			Timeout: timeout,
-		}
-
-		// Prepare the request body
 		var body io.Reader
-		if bodyArg.Value().IsDefined() {
-			goBody, err := bodyArg.Value().Export()
-			if err != nil {
-				// ottoErr := vm.MakeCustomError("TypeError", "Invalid body argument")
-				cmn.DebugMsg(cmn.DbgLvlError, "EngineJS: Error exporting apiClient request's body:", err)
+		if bodyArg.IsDefined() {
+			goBody, err := bodyArg.Export()
+			if err == nil {
+				bodyBytes, err := json.Marshal(goBody)
+				if err == nil {
+					body = bytes.NewReader(bodyBytes)
+				}
 			}
-			bodyBytes, err := json.Marshal(goBody)
-			if err != nil {
-				// ottoErr := vm.MakeCustomError("TypeError", "Error marshaling body to JSON")
-				cmn.DebugMsg(cmn.DbgLvlError, "EngineJS: Error marshaling apiClient request's body to JSON:", err)
-			}
-			body = bytes.NewReader(bodyBytes)
 		}
 
-		// Create the request
 		req, err := http.NewRequest(method, url, body)
 		if err != nil {
-			//ottoErr, _ := vm.MakeCustomError("RequestError", err.Error())
-			cmn.DebugMsg(cmn.DbgLvlError, "EngineJS: Error creating request:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "creating request:", err)
+			return otto.UndefinedValue()
 		}
 
-		// Set headers
-		if headersArg.Value().IsDefined() {
-			headersObj := headersArg.Value().Object()
+		if headersArg.IsDefined() {
+			headersObj := headersArg.Object()
 			for _, key := range headersObj.Keys() {
-				value, err := headersObj.Get(key)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "EngineJS: Error getting header value for key", key, ":", err)
-					continue
-				}
-				valueStr, err := value.ToString()
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "EngineJS: Header value for key", key, "is not a string:", err)
-					continue
-				}
-				req.Header.Set(key, valueStr)
+				value, _ := headersObj.Get(key)
+				valueStr, _ := value.ToString()
+				req.Header.Set(strings.TrimSpace(key), strings.TrimSpace(valueStr))
 			}
 		}
 
-		// Make the HTTP request
 		resp, err := client.Do(req)
 		if err != nil {
-			fmt.Println("Error making request:", err)
-			return otto.Value{}
+			cmn.DebugMsg(cmn.DbgLvlError, "making request:", err)
+			return otto.UndefinedValue()
 		}
 		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
 
-		// Read the response
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			fmt.Println("Error reading response body:", err)
-			return otto.Value{}
+			cmn.DebugMsg(cmn.DbgLvlError, "reading response body:", err)
+			return otto.UndefinedValue()
 		}
 
-		// Build a response object
 		respObject, _ := vm.Object(`({})`)
 		err = respObject.Set("status", resp.StatusCode)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error setting status:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "setting status:", err)
 		}
 		err = respObject.Set("headers", resp.Header)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error setting headers:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "setting headers:", err)
 		}
 		err = respObject.Set("body", string(respBody))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error setting body:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "setting body:", err)
 		}
 
 		return respObject.Value()
 	})
-	return err
+
+	return vm.Set("apiClient", apiClientObject)
 }
 
 // addJSAPIFetch adds the fetch function to the VM
@@ -928,22 +899,48 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		// Extract the query and arguments from the JavaScript call
 		query, err := call.Argument(0).ToString()
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "extracting query from JavaScript call:", err)
 			return otto.UndefinedValue()
 		}
 
-		argsArray := call.Argument(1) // Optional arguments for prepared statement
+		argsArray := call.Argument(1)
 		var args []interface{}
 		if argsArray.IsObject() {
-			argsObj, _ := argsArray.Export()
-			argsSlice, ok := argsObj.([]interface{})
-			if ok {
-				args = argsSlice
+			argsObj, err := argsArray.Export()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error exporting query arguments: %v", err)
+				return otto.UndefinedValue()
+			}
+
+			var argsSlice []interface{}
+			var ok bool
+			argsSlice, ok = argsObj.([]interface{})
+			if !ok {
+				// If the arguments are not an array, convert them to a slice
+				argsSlice = append(argsSlice, argsObj)
+			}
+
+			// Process arguments from the JavaScript array
+			for _, arg := range argsSlice {
+				switch v := arg.(type) {
+				case float64:
+					args = append(args, int64(v)) // Convert to int64
+				case []interface{}: // Handle nested slices
+					args = append(args, v...)
+				case []uint64: // Flatten uint64 slices
+					for _, nested := range v {
+						args = append(args, nested)
+					}
+				default:
+					args = append(args, v)
+				}
 			}
 		}
 
 		// Run the query using the provided db handler and arguments
 		rows, err := (*db).ExecuteQuery(query, args...)
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "executing query:", err)
 			return otto.UndefinedValue()
 		}
 		defer rows.Close() //nolint:errcheck // We can't check error here it's a defer
@@ -951,6 +948,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		// Get the columns from the query result
 		columns, err := rows.Columns()
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "getting columns from query result:", err)
 			return otto.UndefinedValue()
 		}
 
@@ -958,6 +956,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		result := make([]map[string]interface{}, 0)
 
 		// Iterate over the rows
+		var length uint64
 		for rows.Next() {
 			// Create a map for the row
 			row := make(map[string]interface{})
@@ -984,19 +983,25 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 
 			// Append the row to the result
 			result = append(result, row)
+			length++
 		}
+		// Let's add a field to the result to indicate the number of rows returned
+		result = append(result, map[string]interface{}{"rows": length})
 
 		// Convert the result to JSON
-		jsonResult, err := json.Marshal(result)
+		_, err = json.Marshal(result)
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "marshaling query result to JSON:", err)
 			return otto.UndefinedValue()
 		}
 
 		// Convert the JSON string to a JavaScript-compatible value
-		jsResult, err := vm.ToValue(string(jsonResult))
+		jsResult, err := vm.ToValue(result)
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "converting JSON result to JS value:", err)
 			return otto.UndefinedValue()
 		}
+		//cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %s", jsResult.String())
 
 		return jsResult
 	})
