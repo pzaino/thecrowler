@@ -417,7 +417,7 @@ func processEvent(event cdb.Event) {
 		// Execute the plugin
 		rval, err := plugin.Execute(nil, &dbHandler, 30, eventMap)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error executing plugin: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
 		}
 
 		// Parse the plugin response
@@ -425,18 +425,34 @@ func processEvent(event cdb.Event) {
 		var pluginResp PluginResponse
 		err = json.Unmarshal([]byte(rvalStr), &pluginResp)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error parsing plugin response: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin response: %v", err)
 			continue
 		}
 
 		// Handle the parsed response
 		handlePluginResponse(pluginResp)
+
+		// Remove the event if needed
+		if config.Events.EventRemoval == "" || config.Events.EventRemoval == "always" {
+			removeHandledEVent(event.ID)
+		} else if config.Events.EventRemoval == "on_success" && pluginResp.Success {
+			removeHandledEVent(event.ID)
+		} else if config.Events.EventRemoval == "on_failure" && !pluginResp.Success {
+			removeHandledEVent(event.ID)
+		}
+	}
+}
+
+func removeHandledEVent(eventID string) {
+	_, err := dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventID)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to remove event: %v", err)
 	}
 }
 
 func handlePluginResponse(resp PluginResponse) {
 	if resp.Success {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Plugin executed successfully: %s", resp.Message)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Plugin executed successfully: %s", resp.Message)
 
 		// Optionally handle the API response if present
 		if resp.APIResponse != nil {
@@ -444,7 +460,9 @@ func handlePluginResponse(resp PluginResponse) {
 			// Add any specific handling logic for APIResponse here
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlError, "Plugin execution failed: %s", resp.Message)
+		if resp.Message != "" {
+			cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %s", resp.Message)
+		}
 		// Add any error handling logic here, such as retries or reporting
 	}
 }

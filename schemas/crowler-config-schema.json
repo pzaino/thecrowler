@@ -887,6 +887,17 @@
           "type": "integer",
           "minimum": 10,
           "description": "This is the write timeout (in seconds) for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond."
+        },
+        "automatic_events_removal": {
+          "title": "CROWler Events Manager Automatic Events Removal",
+          "description": "This field help automating events removal from the database. It supports one fo the following values: always, failed, success, never or empty string. If set to always it means remove the event always, if set to on_failure it means remove the event only if the handling fails, if set to on_success it means remove the event only if the handling is successful, if set to never it means never remove the event, if set to empty string it means the default behavior (always).",
+          "enum": [
+            "always",
+            "on_failure",
+            "on_success",
+            "never",
+            ""
+          ]
         }
       },
       "additionalProperties": false
