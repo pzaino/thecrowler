@@ -37,6 +37,7 @@ const (
 	infoSourceRemoved = "Source and related data removed successfully"
 )
 
+// SourceFilter is a struct to filter sources based on URL and/or SourceID.
 type SourceFilter struct {
 	URL      string
 	SourceID int64
@@ -57,7 +58,6 @@ func getSourceID(filter SourceFilter, db *cdb.Handler) (uint64, error) {
 	if filter.SourceID > 0 {
 		whereClauses = append(whereClauses, "source_id = $"+fmt.Sprint(parID))
 		args = append(args, filter.SourceID)
-		parID++
 	}
 
 	if len(whereClauses) == 0 {
