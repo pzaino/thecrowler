@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -35,6 +36,51 @@ const (
 	//infoSourceStatus     = "Source status"
 	infoSourceRemoved = "Source and related data removed successfully"
 )
+
+type SourceFilter struct {
+	URL      string
+	SourceID int64
+}
+
+func getSourceID(filter SourceFilter, db *cdb.Handler) (uint64, error) {
+	var sourceID uint64
+	var whereClauses []string
+	var args []interface{}
+	parID := 1
+
+	// Dynamically build the WHERE clause based on the input struct
+	if filter.URL != "" {
+		whereClauses = append(whereClauses, "url = $"+fmt.Sprint(parID))
+		args = append(args, normalizeURL(filter.URL))
+		parID++
+	}
+	if filter.SourceID > 0 {
+		whereClauses = append(whereClauses, "source_id = $"+fmt.Sprint(parID))
+		args = append(args, filter.SourceID)
+		parID++
+	}
+
+	if len(whereClauses) == 0 {
+		return 0, fmt.Errorf("at least one filter (URL or SourceID) must be provided")
+	}
+
+	query := fmt.Sprintf(`
+        SELECT source_id
+        FROM Sources
+        WHERE %s
+        LIMIT 1
+    `, strings.Join(whereClauses, " AND "))
+
+	// Query the database
+	err := (*db).QueryRow(query, args...).Scan(&sourceID)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("no source found matching the provided filters")
+	} else if err != nil {
+		return 0, fmt.Errorf("error querying the source ID: %w", err)
+	}
+
+	return sourceID, nil
+}
 
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var sqlQuery string
@@ -211,7 +257,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	results.Message = "Failed to remove the source"
 
 	// First, get the source_id for the given URL to ensure it exists and to use in cascading deletes if necessary
-	var sourceID int64
+	var sourceID uint64
 	err := tx.QueryRow("SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
 	if err != nil {
 		return results, err
@@ -390,4 +436,117 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 	results.Message = infoAllSourcesStatus
 	results.Items = statuses
 	return results, nil
+}
+
+func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var sqlParams UpdateSourceRequest
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		sqlParams.URL = normalizeURL(query)
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &sqlParams)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid update request"}, fmt.Errorf("invalid JSON: %w", err)
+		}
+	}
+
+	// Resolve sourceID if only URL is provided
+	if sqlParams.SourceID == 0 && sqlParams.URL != "" {
+		sourceID, err := getSourceID(SourceFilter{URL: sqlParams.URL}, db)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+		sqlParams.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
+	} else if sqlParams.SourceID == 0 {
+		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
+	}
+
+	sqlQuery := `
+        UPDATE Sources
+        SET url = COALESCE($1, url),
+            status = COALESCE($2, status),
+            restricted = COALESCE($3, restricted),
+            disabled = COALESCE($4, disabled),
+            flags = COALESCE($5, flags),
+            config = COALESCE($6, config::jsonb),
+            details = COALESCE($7, details::jsonb)
+        WHERE source_id = $8
+    `
+
+	_, err := (*db).Exec(sqlQuery,
+		normalizeURL(sqlParams.URL),
+		sqlParams.Status,
+		sqlParams.Restricted,
+		sqlParams.Disabled,
+		sqlParams.Flags,
+		sqlParams.Config,
+		sqlParams.Details,
+		sqlParams.SourceID,
+	)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to update source"}, err
+	}
+
+	return ConsoleResponse{Message: "Source updated successfully"}, nil
+}
+
+func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var filter SourceFilter
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		filter.URL = normalizeURL(query)
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &filter)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid vacuum request"}, fmt.Errorf("invalid JSON: %w", err)
+		}
+	}
+
+	// Resolve sourceID if only URL is provided
+	if filter.SourceID == 0 && filter.URL != "" {
+		sourceID, err := getSourceID(filter, db)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+		filter.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
+	} else if filter.SourceID == 0 {
+		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to start transaction"}, err
+	}
+
+	// Deleting indexed data
+	queries := []string{
+		"DELETE FROM KeywordIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM MetaTagsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM WebObjectsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM NetInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM HTTPInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM SourceSearchIndex WHERE source_id = $1",
+	}
+
+	for _, query := range queries {
+		_, err := tx.Exec(query, filter.SourceID)
+		if err != nil {
+			err2 := tx.Rollback() // Rollback if any query fails
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to rollback transaction: %v", err2)
+			}
+			return ConsoleResponse{Message: "Failed to vacuum source data"}, err
+		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to commit transaction"}, err
+	}
+
+	return ConsoleResponse{Message: "Source vacuumed successfully"}, nil
 }

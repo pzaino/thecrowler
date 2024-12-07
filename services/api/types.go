@@ -481,3 +481,15 @@ const (
 	getQuery     = 1
 	jsonResponse = "application/json"
 )
+
+// UpdateSourceRequest represents the structure of the update source request
+type UpdateSourceRequest struct {
+	SourceID   int64           `json:"source_id,omitempty"`  // Optional, used if no URL is provided
+	URL        string          `json:"url,omitempty"`        // The URL of the source
+	Status     string          `json:"status,omitempty"`     // The status of the source (e.g., 'completed', 'pending')
+	Restricted int             `json:"restricted,omitempty"` // Restriction level (0-4)
+	Disabled   bool            `json:"disabled,omitempty"`   // Whether the source is disabled
+	Flags      int             `json:"flags,omitempty"`      // Bitwise flags for the source
+	Config     json.RawMessage `json:"config,omitempty"`     // JSON configuration for the source
+	Details    json.RawMessage `json:"details,omitempty"`    // JSON details about the source's internal state
+}

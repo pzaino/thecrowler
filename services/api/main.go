@@ -245,11 +245,15 @@ func initAPIv1() {
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
 		removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
+		updateSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateSourceHandler)))
+		vacuumSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(vacuumSourceHandler)))
 		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
 		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/update", updateSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/vacuum", vacuumSourceHandlerWithMiddlewares)
 		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 	}
@@ -654,6 +658,52 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performRemoveSource(query, getQTypeFromName(r.Method), &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+// updateSourceHandler handles the update of sources
+func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusNoContent
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+// vacuumSourceHandler handles the vacuum of sources
+func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusNoContent
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := performVacuumSource(query, getQTypeFromName(r.Method), &dbHandler)
 		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
