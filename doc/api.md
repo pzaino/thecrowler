@@ -60,6 +60,10 @@ manage your sources via the API. The end-points added so far are:
   [addsource](./api/addsource.md) detailed documentation.
 * [GET] `/v1/source/remove`: This end-point will remove a source from the
   database. The source should be provided in JSON format.
+* [GET] `/v1/source/update`: This end-point will update a source in the database.
+  The source should be provided in JSON format.
+* [GET] `/v1/source/vacuum`: This end-point will vacuum the source from all data
+  crawled and collected so far.
 
 There are equivalent end-points in [POST] for all the above end-points.
 
