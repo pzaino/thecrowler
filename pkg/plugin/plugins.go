@@ -562,7 +562,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 	apiClientObject, _ := vm.Object(`({})`)
 
 	// Define the "post" method
-	apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
+	apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value { //nolint:errcheck,gosec // We can't check error here
 		method := "POST"
 		url, _ := call.Argument(0).ToString()
 		headersArg := call.Argument(1)
@@ -1036,7 +1036,7 @@ func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
 
 		severity, err := call.Argument(2).ToString()
 		if err != nil || strings.TrimSpace(severity) == "" {
-			severity = "info" // Default severity
+			severity = cdb.EventSeverityInfo // Default severity
 		}
 
 		detailsArg := call.Argument(3)
@@ -1109,7 +1109,7 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 
 		severity, err := call.Argument(2).ToString()
 		if err != nil || strings.TrimSpace(severity) == "" {
-			severity = "info" // Default severity
+			severity = cdb.EventSeverityInfo // Default severity
 		}
 
 		detailsArg := call.Argument(3)

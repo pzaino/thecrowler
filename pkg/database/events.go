@@ -23,6 +23,15 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
+const (
+	// EventSeverityInfo represents an informational event.
+	EventSeverityInfo = "info"
+	// EventSeverityWarning represents a warning event.
+	EventSeverityWarning = "warning"
+	// EventSeverityError represents an error event.
+	EventSeverityError = "error"
+)
+
 // GenerateEventUID generates a unique identifier for the event.
 func GenerateEventUID(e Event) string {
 	// convert e.SourceID into a string

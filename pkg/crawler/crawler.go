@@ -403,7 +403,7 @@ func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) 
 	event := cdb.Event{
 		SourceID: sourceID,
 		Type:     "crawl_completed",
-		Severity: "info",
+		Severity: cdb.EventSeverityInfo,
 		Details:  statusMap,
 	}
 
