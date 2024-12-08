@@ -300,7 +300,7 @@ func analyzeResponse(resp *http.Response, info *HTTPDetails,
 
 	// Detect Entities on the page/site
 	sslInfoDetect := convertSSLInfoToSSLInfoDetect(sslInfo)
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		WD:           nil,
 		TargetURL:    info.URL,
 		Header:       header,

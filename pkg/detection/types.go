@@ -25,8 +25,8 @@ import (
 	"github.com/tebeka/selenium"
 )
 
-// DetectionContext is a struct to store the context of the detection process
-type DetectionContext struct {
+// DContext is a struct to store the context of the detection process
+type DContext struct {
 	CtxID        string              `json:"ctx_id"`     // (required) the ID of the detection context
 	TargetURL    string              `json:"target_url"` // (optional) the URL of the target website
 	TargetIP     string              `json:"target_ip"`  // (optional) the IP address of the target website

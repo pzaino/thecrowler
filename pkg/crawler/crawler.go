@@ -511,7 +511,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	var pageInfo PageInfo
 
 	// Detect technologies used on the page
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        ctx.GetContextID(),
 		TargetURL:    ctx.source.URL,
 		ResponseBody: nil,
@@ -2149,7 +2149,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        processCtx.GetContextID(),
 		TargetURL:    currentURL,
 		ResponseBody: nil,
@@ -2324,7 +2324,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        processCtx.GetContextID(),
 		TargetURL:    currentURL,
 		ResponseBody: nil,
@@ -2463,7 +2463,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        processCtx.GetContextID(),
 		TargetURL:    currentURL,
 		ResponseBody: nil,

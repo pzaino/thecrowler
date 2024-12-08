@@ -51,7 +51,7 @@ func (d detectionEntityDetails) IsEmpty() bool {
 }
 
 // DetectTechnologies detects technologies in the response body using the provided detection rules
-func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
+func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
 
 	// micro-signatures
