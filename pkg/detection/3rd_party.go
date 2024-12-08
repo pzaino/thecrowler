@@ -165,13 +165,15 @@ func ScanWithSSLLabs(url string) map[string]interface{} {
 }
 
 // ScanWithURLHaus scans a URL with URLHaus.
-func ScanWithURLHaus(url string) map[string]interface{} {
+func ScanWithURLHaus(apiKey, url string) map[string]interface{} {
 	reqBody := map[string]interface{}{"url": url}
 	reqInfo := &trdPRequest{
-		Provider: "URLHaus",
-		Method:   "POST",
-		URL:      "https://urlhaus-api.abuse.ch/v1/url/",
-		Body:     reqBody,
+		Provider:    "URLHaus",
+		Method:      "POST",
+		APIKeyLabel: "Auth-Key",
+		APIKey:      apiKey,
+		URL:         "https://urlhaus-api.abuse.ch/v1/url/",
+		Body:        reqBody,
 	}
 	return requestInfo(reqInfo)
 }

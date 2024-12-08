@@ -623,7 +623,7 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				result = ScanWithSSLLabs(url)
 			case "url_haus":
 				// URL Haus
-				result = ScanWithURLHaus(url)
+				result = ScanWithURLHaus(conf.ExternalDetection.URLHaus.APIKey, url)
 			case "threat_crowd":
 				// Threat Crowd
 				result = ScanWithThreatCrowd(url)
