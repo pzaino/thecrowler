@@ -59,11 +59,10 @@ manage your sources via the API. The end-points added so far are:
   The source should be provided in JSON format.
   [addsource](./api/addsource.md) detailed documentation.
 * [GET] `/v1/source/remove`: This end-point will remove a source from the
-  database. The source should be provided in JSON format.
+  database (and all the related crawled data).
 * [GET] `/v1/source/update`: This end-point will update a source in the database.
-  The source should be provided in JSON format.
 * [GET] `/v1/source/vacuum`: This end-point will vacuum the source from all data
-  crawled and collected so far.
+  crawled and collected so far (note: it does NOT remove the source, it's owners, categories etc., only crawled data).
 
 There are equivalent end-points in [POST] for all the above end-points.
 
@@ -74,3 +73,21 @@ CROWler engine and/or use the following console end-points:
   of all the crawling activities going on.
 * [GET] `/v1/source/status`: This end-point will return the status of the
   crawling activity of a specific source.
+
+To manage Owners and Categories, you can use the following end-points:
+
+* [GET] `/v1/owner/add`: This end-point will add a new owner to the database.
+  The owner should be provided in JSON format.
+* [GET] `/v1/owner/remove`: This end-point will remove an owner from the
+  database.
+* [GET] `/v1/owner/update`: This end-point will update an owner in the database.
+* [GET] `/v1/owner/list`: This end-point will list all the owners in the database.
+
+There are equivalent end-points in [POST] for all the above end-points.
+
+* [GET] `/v1/category/add`: This end-point will add a new category to the database.
+  The category should be provided in JSON format.
+* [GET] `/v1/category/remove`: This end-point will remove a category from the
+  database.
+* [GET] `/v1/category/update`: This end-point will update a category in the database.
+* [GET] `/v1/category/list`: This end-point will list all the categories in the database.

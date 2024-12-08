@@ -256,6 +256,16 @@ func initAPIv1() {
 		http.Handle("/v1/source/vacuum", vacuumSourceHandlerWithMiddlewares)
 		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
+
+		// Owner endpoints
+		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
+		http.Handle("/v1/owner/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateOwnerHandler))))
+		http.Handle("/v1/owner/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeOwnerHandler))))
+
+		// Category endpoints
+		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
+		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
+		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
 	}
 }
 
@@ -752,4 +762,40 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
+}
+
+func addOwnerHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performAddOwner(query, qType, db)
+	})
+}
+
+func updateOwnerHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performUpdateOwner(query, qType, db)
+	})
+}
+
+func removeOwnerHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performRemoveOwner(query, qType, db)
+	})
+}
+
+func addCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performAddCategory(query, qType, db)
+	})
+}
+
+func updateCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performUpdateCategory(query, qType, db)
+	})
+}
+
+func removeCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performRemoveCategory(query, qType, db)
+	})
 }

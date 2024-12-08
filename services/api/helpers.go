@@ -6,9 +6,33 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
+
+func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Invalid query", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
+
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
 
 // handleErrorAndRespond encapsulates common error handling and JSON response logic.
 func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}, errMsg string, errCode int, successCode int) {

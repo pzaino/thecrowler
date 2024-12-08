@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -549,4 +550,203 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	}
 
 	return ConsoleResponse{Message: "Source vacuumed successfully"}, nil
+}
+
+func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var owner OwnerRequest // Define a struct for owner if not already present
+
+	if qType == getQuery {
+		// Create a JSON document with the owner name
+		jDoc := fmt.Sprintf(`{"name": "%s"}`, strings.ReplaceAll(strings.TrimSpace(query), "\"", ""))
+		err := json.Unmarshal([]byte(jDoc), &owner.Details)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner name"}, fmt.Errorf("failed to parse owner name: %w", err)
+		}
+	} else {
+		// Parse POST request JSON
+		err := json.Unmarshal([]byte(query), &owner)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner data"}, fmt.Errorf("failed to parse owner data: %w", err)
+		}
+	}
+
+	// Insert owner into the database
+	queryStr := `
+		INSERT INTO Owners (parent_id, details)
+		VALUES ($1, $2)
+		RETURNING owner_id
+	`
+	var ownerID int64
+	err := (*db).QueryRow(queryStr, owner.Details).Scan(&ownerID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to add owner"}, fmt.Errorf("error adding owner: %w", err)
+	}
+
+	return ConsoleResponse{Message: fmt.Sprintf("Owner added successfully with ID %d", ownerID)}, nil
+}
+
+func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var category CategoryRequest // Define a struct for category if not already present
+
+	if qType == getQuery {
+		// For GET requests, assume `query` is a simple name
+		category.Name = strings.TrimSpace(query)
+		if category.Name == "" {
+			return ConsoleResponse{Message: "Invalid category name"}, fmt.Errorf("category name is required")
+		}
+	} else {
+		// Parse POST request JSON
+		err := json.Unmarshal([]byte(query), &category)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid category data"}, fmt.Errorf("failed to parse category data: %w", err)
+		}
+	}
+
+	// Insert category into the database
+	queryStr := `
+		INSERT INTO Categories (name, parent_id, description)
+		VALUES ($1, $2, $3)
+		RETURNING category_id
+	`
+	var categoryID int64
+	err := (*db).QueryRow(queryStr, category.Name, category.ParentID, category.Description).Scan(&categoryID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to add category"}, fmt.Errorf("error adding category: %w", err)
+	}
+
+	return ConsoleResponse{Message: fmt.Sprintf("Category added successfully with ID %d", categoryID)}, nil
+}
+
+func performUpdateOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var owner OwnerRequest
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		jDoc := fmt.Sprintf(`{"details": %s}`, strings.ReplaceAll(strings.TrimSpace(query), "\"", ""))
+		err := json.Unmarshal([]byte(jDoc), &owner)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner data"}, fmt.Errorf("failed to parse owner data: %w", err)
+		}
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &owner)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner data"}, fmt.Errorf("failed to parse owner data: %w", err)
+		}
+	}
+
+	if owner.OwnerID == 0 {
+		return ConsoleResponse{Message: "Owner ID must be provided"}, fmt.Errorf("missing Owner ID")
+	}
+
+	// Update owner in the database
+	queryStr := `
+		UPDATE Owners
+		SET parent_id = COALESCE($1, parent_id),
+		    details = COALESCE($2, details::jsonb)
+		WHERE owner_id = $3
+	`
+	_, err := (*db).Exec(queryStr, owner.DetailsHash, owner.Details, owner.OwnerID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to update owner"}, fmt.Errorf("error updating owner: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Owner updated successfully"}, nil
+}
+
+func performRemoveOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var ownerID int64
+
+	if qType == getQuery {
+		// Parse the query as a GET request
+		id, err := strconv.ParseInt(query, 10, 64)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner ID"}, fmt.Errorf("failed to parse owner ID: %w", err)
+		}
+		ownerID = id
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		var req map[string]int64
+		err := json.Unmarshal([]byte(query), &req)
+		if err != nil || req["owner_id"] == 0 {
+			return ConsoleResponse{Message: "Invalid owner ID"}, fmt.Errorf("missing or invalid owner ID")
+		}
+		ownerID = req["owner_id"]
+	}
+
+	// Remove owner from the database
+	queryStr := `DELETE FROM Owners WHERE owner_id = $1`
+	_, err := (*db).Exec(queryStr, ownerID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to remove owner"}, fmt.Errorf("error removing owner: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Owner removed successfully"}, nil
+}
+
+func performUpdateCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var category CategoryRequest
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		category.Name = strings.TrimSpace(query)
+		if category.Name == "" {
+			return ConsoleResponse{Message: "Invalid category name"}, fmt.Errorf("category name is required")
+		}
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &category)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid category data"}, fmt.Errorf("failed to parse category data: %w", err)
+		}
+	}
+
+	if category.CategoryID == 0 {
+		return ConsoleResponse{Message: "Category ID must be provided"}, fmt.Errorf("missing Category ID")
+	}
+
+	// Update category in the database
+	queryStr := `
+		UPDATE Categories
+		SET name = COALESCE($1, name),
+		    parent_id = COALESCE($2, parent_id),
+		    description = COALESCE($3, description)
+		WHERE category_id = $4
+	`
+	_, err := (*db).Exec(queryStr, category.Name, category.ParentID, category.Description, category.CategoryID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to update category"}, fmt.Errorf("error updating category: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Category updated successfully"}, nil
+}
+
+func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var categoryID int64
+
+	if qType == getQuery {
+		// Parse the query as a GET request
+		id, err := strconv.ParseInt(query, 10, 64)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid category ID"}, fmt.Errorf("failed to parse category ID: %w", err)
+		}
+		categoryID = id
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		var req map[string]int64
+		err := json.Unmarshal([]byte(query), &req)
+		if err != nil || req["category_id"] == 0 {
+			return ConsoleResponse{Message: "Invalid category ID"}, fmt.Errorf("missing or invalid category ID")
+		}
+		categoryID = req["category_id"]
+	}
+
+	// Remove category from the database
+	queryStr := `DELETE FROM Categories WHERE category_id = $1`
+	_, err := (*db).Exec(queryStr, categoryID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to remove category"}, fmt.Errorf("error removing category: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Category removed successfully"}, nil
 }
