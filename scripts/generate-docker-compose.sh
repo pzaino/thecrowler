@@ -123,7 +123,7 @@ services:
     env_file:
       - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=\${INSTANCE_ID:-1}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
@@ -157,7 +157,7 @@ services:
     env_file:
       - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=\${INSTANCE_ID:-1}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
@@ -200,7 +200,7 @@ if [ "$postgres" == "yes" ]; then
     env_file:
       - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler_
+      - COMPOSE_PROJECT_NAME=crowler
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - POSTGRES_USER=\${DOCKER_POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
@@ -236,7 +236,7 @@ for i in $(seq 1 "$engine_count"); do
     env_file:
       - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
       - SELENIUM_HOST=\${DOCKER_SELENIUM_HOST:-crowler-vdi-$i}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
@@ -285,7 +285,7 @@ for i in $(seq 1 "$vdi_count"); do
     env_file:
       - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -310,6 +310,8 @@ if [ "$prometheus" == "yes" ]; then
       - "9091:9091"
     env_file:
       - .env
+    environment:
+      - COMPOSE_PROJECT_NAME=crowler
     networks:
       - crowler-net
     restart: always
