@@ -120,6 +120,8 @@ services:
 
   crowler-api:
     container_name: "crowler-api"
+    env_file:
+      - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=\${INSTANCE_ID:-1}
@@ -152,6 +154,8 @@ services:
 
   crowler-events:
     container_name: "crowler-events"
+    env_file:
+      - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=\${INSTANCE_ID:-1}
@@ -193,6 +197,8 @@ if [ "$postgres" == "yes" ]; then
     container_name: "crowler-db"
     ports:
       - "5432:5432"
+    env_file:
+      - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler_
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
@@ -227,6 +233,8 @@ for i in $(seq 1 "$engine_count"); do
 
   crowler-engine-$i:
     container_name: "crowler-engine-$i"
+    env_file:
+      - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
@@ -274,6 +282,8 @@ for i in $(seq 1 "$vdi_count"); do
 
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
+    env_file:
+      - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler-
       - INSTANCE_ID=$i
@@ -298,6 +308,8 @@ if [ "$prometheus" == "yes" ]; then
     container_name: "crowler-push-gateway"
     ports:
       - "9091:9091"
+    env_file:
+      - .env
     networks:
       - crowler-net
     restart: always
