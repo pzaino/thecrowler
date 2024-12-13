@@ -352,8 +352,16 @@ cat << EOF >> docker-compose.yml
 volumes:
   api_data:
   events_data:
+EOF
+
+if [ "$postgres" == "yes" ]; then
+    cat << EOF >> docker-compose.yml
   db_data:
     driver: local
+EOF
+fi
+
+cat << EOF >> docker-compose.yml
   engine_data:
     driver: local
 EOF
