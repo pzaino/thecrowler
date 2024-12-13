@@ -2806,7 +2806,8 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	// Connect to the WebDriver instance running remotely.
 	var wd selenium.WebDriver
 	var err error
-	for {
+	max_retry := 5
+	for i := 0; i < max_retry; i++ {
 		urlType := "wd/hub"
 		/*
 			In theory Selenium standalone should be different than Selenium Grid
@@ -2819,11 +2820,16 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		*/
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
+			if i == 0 || (i%max_retry) == 0 {
+				cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
+			}
 			time.Sleep(5 * time.Second)
 		} else {
 			break
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Post-connection settings
