@@ -96,7 +96,7 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 		// Normalize the URL
 		sqlParams.URL = normalizeURL(sqlParams.URL)
 		// Prepare the SQL query
-		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)"
+		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8) RETURNING source_id;"
 	}
 
 	if sqlParams.URL == "" {
@@ -110,7 +110,8 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 		return results, err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Website inserted successfully: %s", query)
+	cmn.DebugMsg(cmn.DbgLvlInfo, results.Message)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Website inserted with: %s", query)
 	return results, nil
 }
 
@@ -176,12 +177,25 @@ func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (Conso
 	}
 
 	// Execute the SQL statement
-	_, err = (*db).Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
+	qResults, err := (*db).ExecuteQuery(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
 	if err != nil {
 		return results, err
 	}
 
-	results.Message = "Website inserted successfully"
+	// Get the ID of the inserted website
+	var id uint64
+	for qResults.Next() {
+		err = qResults.Scan(&id)
+		if err != nil {
+			results.Message = "Failed to get the ID of the inserted website"
+			return results, err
+		}
+	}
+
+	// Create the response message adding the id of the inserted source
+	msg := fmt.Sprintf("Website inserted successfully with ID: %d", id)
+
+	results.Message = msg
 	return results, nil
 }
 
