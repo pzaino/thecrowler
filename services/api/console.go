@@ -441,6 +441,8 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var sqlParams UpdateSourceRequest
+	var sourceConfig *string
+	var sourceDetails *string
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
@@ -464,33 +466,105 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
-	sqlQuery := `
+	// Retrieve existing data for the source
+	var existingData UpdateSourceRequest
+	selectQuery := `
+        SELECT url, status, restricted, disabled, flags, config, details
+        FROM Sources
+        WHERE source_id = $1
+    `
+	err := (*db).QueryRow(selectQuery, sqlParams.SourceID).Scan(
+		&existingData.URL,
+		&existingData.Status,
+		&existingData.Restricted,
+		&existingData.Disabled,
+		&existingData.Flags,
+		&sourceConfig,
+		&sourceDetails,
+	)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
+	}
+	if sourceConfig != nil {
+		existingData.Config = json.RawMessage(*sourceConfig)
+	} else {
+		existingData.Config = json.RawMessage("{}")
+	}
+	if sourceDetails != nil {
+		existingData.Details = json.RawMessage(*sourceDetails)
+	} else {
+		existingData.Details = json.RawMessage("{}")
+	}
+
+	// Merge existing data with provided updates
+	mergedData := UpdateSourceRequest{
+		SourceID:   sqlParams.SourceID,
+		URL:        coalesce(sqlParams.URL, existingData.URL),
+		Status:     coalesce(sqlParams.Status, existingData.Status),
+		Restricted: coalesceInt(sqlParams.Restricted, existingData.Restricted),
+		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
+		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
+		Config:     coalesceJSON(sqlParams.Config, existingData.Config),
+		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
+	}
+
+	// Perform the update
+	updateQuery := `
         UPDATE Sources
-        SET url = COALESCE($1, url),
-            status = COALESCE($2, status),
-            restricted = COALESCE($3, restricted),
-            disabled = COALESCE($4, disabled),
-            flags = COALESCE($5, flags),
-            config = COALESCE($6, config::jsonb),
-            details = COALESCE($7, details::jsonb)
+        SET url = $1,
+            status = $2,
+            restricted = $3,
+            disabled = $4,
+            flags = $5,
+            config = $6::jsonb,
+            details = $7::jsonb
         WHERE source_id = $8
     `
-
-	_, err := (*db).Exec(sqlQuery,
-		normalizeURL(sqlParams.URL),
-		sqlParams.Status,
-		sqlParams.Restricted,
-		sqlParams.Disabled,
-		sqlParams.Flags,
-		sqlParams.Config,
-		sqlParams.Details,
-		sqlParams.SourceID,
+	_, err = (*db).Exec(updateQuery,
+		normalizeURL(mergedData.URL),
+		mergedData.Status,
+		mergedData.Restricted,
+		mergedData.Disabled,
+		mergedData.Flags,
+		mergedData.Config,
+		mergedData.Details,
+		mergedData.SourceID,
 	)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to update source"}, err
 	}
 
 	return ConsoleResponse{Message: "Source updated successfully"}, nil
+}
+
+func coalesce(newValue, existingValue string) string {
+	if newValue != "" {
+		return newValue
+	}
+	return existingValue
+}
+
+func coalesceInt(newValue, existingValue int) int {
+	if newValue != 0 {
+		return newValue
+	}
+	return existingValue
+}
+
+func coalesceBool(newValue, existingValue bool) bool {
+	// In case of boolean, use a specific value (e.g., a pointer or extra logic)
+	// Here, assuming `false` is not a valid new value
+	if newValue {
+		return newValue
+	}
+	return existingValue
+}
+
+func coalesceJSON(newValue, existingValue json.RawMessage) json.RawMessage {
+	if len(newValue) > 0 {
+		return newValue
+	}
+	return existingValue
 }
 
 func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {

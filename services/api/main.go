@@ -691,7 +691,7 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
-		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",

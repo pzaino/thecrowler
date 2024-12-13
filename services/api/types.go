@@ -34,7 +34,7 @@ var (
 // ConsoleResponse represents the structure of the response
 // returned by the console API (addSource/removeSOurce etc.).
 type ConsoleResponse struct {
-	Message string `json:"message"`
+	Message string `json:"message" yaml:"message"`
 }
 
 // StatusResponse represents the structure of the status response
