@@ -159,10 +159,8 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
-		//releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
-		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
-		processCtx.WG.Done()
+		closeSession(processCtx, args, &sel, releaseSelenium, err)
 		return
 	}
 
@@ -173,10 +171,8 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
-		//releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
-		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
-		processCtx.WG.Done()
+		closeSession(processCtx, args, &sel, releaseSelenium, err)
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
@@ -191,8 +187,6 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
-		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
-		processCtx.WG.Done()
 		return
 	}
 
@@ -210,8 +204,6 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
-		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
-		processCtx.WG.Done()
 		return
 	}
 	initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
@@ -223,6 +215,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
+		processCtx.Status.LastError = err.Error()
 		return
 	}
 
@@ -364,18 +357,17 @@ func closeSession(ctx *ProcessContext,
 	args Pars, sel *SeleniumInstance,
 	releaseSelenium chan<- SeleniumInstance,
 	err error) {
+	// Release VDI connection
 	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
+	// Allow a new job to be processed (if any)
 	ctx.WG.Done()
-
-	// Log the end of the pipeline
-	ctx.Status.EndTime = time.Now()
-	UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Signal pipeline completion
 	if ctx.Status.PipelineRunning == 1 {
 		ctx.Status.PipelineRunning = 3
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
+	ctx.Status.EndTime = time.Now()
 	UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Create a database event to indicate the crawl has completed
@@ -498,7 +490,7 @@ func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
 			UpdateSourceState(*ctx.db, ctx.source.URL, err)
-			//(*ctx.sel) <- sel
+			(*ctx.sel) <- sel
 			cmn.DebugMsg(cmn.DbgLvlError, "re-"+selConnError, err)
 			return err
 		}
