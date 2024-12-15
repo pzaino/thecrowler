@@ -63,7 +63,7 @@ import (
 const (
 	dbConnCheckErr             = "checking database connection: %v\n"
 	dbConnTransErr             = "committing transaction: %v"
-	selConnError               = "connecting to Selenium: %v"
+	selConnError               = "connecting to the VDI: %v"
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
 	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
@@ -159,18 +159,24 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
-		releaseSelenium <- sel
+		//releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
+		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+		processCtx.WG.Done()
 		return
 	}
 
 	// Initialize the Selenium instance
 	if err = processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
-		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
-		releaseSelenium <- sel
+		processCtx.Status.TotalErrors++
+		processCtx.Status.LastError = err.Error()
+		//releaseSelenium <- sel
+		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
+		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+		processCtx.WG.Done()
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
@@ -184,7 +190,9 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
+		processCtx.Status.LastError = err.Error()
 		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+		processCtx.WG.Done()
 		return
 	}
 
@@ -203,12 +211,20 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
 		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+		processCtx.WG.Done()
 		return
 	}
 	initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
 
 	// Refresh the page
-	processCtx.RefreshSeleniumConnection(sel)
+	err = processCtx.RefreshSeleniumConnection(sel)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "refreshing Selenium connection: %v", err)
+		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.TotalErrors++
+		return
+	}
 
 	// Get network information
 	processCtx.wgNetInfo.Add(1)
@@ -344,7 +360,10 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.PipelineRunning = 2
 }
 
-func closeSession(ctx *ProcessContext, args Pars, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance, err error) {
+func closeSession(ctx *ProcessContext,
+	args Pars, sel *SeleniumInstance,
+	releaseSelenium chan<- SeleniumInstance,
+	err error) {
 	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
 	ctx.WG.Done()
 
@@ -463,8 +482,8 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
 	ctx.wd, err = ConnectVDI(sel, 0)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 		(*ctx.sel) <- sel
+		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 		return err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "Connected to Selenium WebDriver successfully.")
@@ -472,18 +491,19 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 }
 
 // RefreshSeleniumConnection is responsible for refreshing the Selenium connection
-func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) {
+func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error {
 	if err := ctx.wd.Refresh(); err != nil {
 		ctx.wd, err = ConnectVDI(sel, 0)
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
-			cmn.DebugMsg(cmn.DbgLvlError, "re-connecting to Selenium: %v", err)
-			(*ctx.sel) <- sel
 			UpdateSourceState(*ctx.db, ctx.source.URL, err)
-			return
+			//(*ctx.sel) <- sel
+			cmn.DebugMsg(cmn.DbgLvlError, "re-"+selConnError, err)
+			return err
 		}
 	}
+	return nil
 }
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
@@ -2807,8 +2827,8 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	// Connect to the WebDriver instance running remotely.
 	var wd selenium.WebDriver
 	var err error
-	max_retry := 5
-	for i := 0; i < max_retry; i++ {
+	maxRetry := 5
+	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
 		/*
 			In theory Selenium standalone should be different than Selenium Grid
@@ -2821,7 +2841,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		*/
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
-			if i == 0 || (i%max_retry) == 0 {
+			if i == 0 || (i%maxRetry) == 0 {
 				cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 			}
 			time.Sleep(5 * time.Second)
@@ -3105,6 +3125,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
 func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
@@ -3112,6 +3133,7 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 		}
 		(*pCtx).Status.CrawlingRunning = 2
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance returned.")
 }
 
 // QuitSelenium is responsible for quitting the Selenium server instance
