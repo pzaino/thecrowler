@@ -67,6 +67,7 @@ const (
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
 	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
+	errWorkerLog               = "Worker %d: Error indexing page %s: %v\n"
 
 	optDNSLookup = "dns_lookup"
 	optTCPConn   = "tcp_connection"
@@ -2236,7 +2237,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
 
 	// Mark the link as visited and add new links to the process context
@@ -2408,7 +2409,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
 	processCtx.visitedLinks[url.Link] = true
 
@@ -2513,7 +2514,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
 	processCtx.visitedLinks[url] = true
 
