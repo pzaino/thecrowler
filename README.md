@@ -19,7 +19,7 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
 [![Go Reference](https://pkg.go.dev/badge/github.com/pzaino/thecrowler.svg)](https://pkg.go.dev/github.com/pzaino/thecrowler)
 
-**Project status:** Still under active development! However, most of it is
+**Project status:** **Still under active development! (aka WIP)** However, most of it is
 already usable. Alpha testers welcome!
 Full stats on daily work [here](https://repo-tracker.com/r/gh/pzaino/thecrowler?utm_source=github-stats).
 
