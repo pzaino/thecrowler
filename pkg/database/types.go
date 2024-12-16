@@ -21,6 +21,15 @@ import (
 	"encoding/json"
 )
 
+const (
+	// DBPostgresStr represents the PostgreSQL label
+	DBPostgresStr = "postgres"
+	// DBSQLiteStr represents the SQLite label
+	DBSQLiteStr = "sqlite3"
+	// DBMySQLStr represents the MySQL label
+	DBMySQLStr = "mysql"
+)
+
 // TxHandler is a wrapper around the sql.Tx type.
 type TxHandler struct {
 	sql.Tx

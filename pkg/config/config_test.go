@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 const (
@@ -231,8 +233,8 @@ func TestValidateRemoteHost(t *testing.T) {
 	// Call the validateRemoteHost function
 	config.validateRemoteHost()
 
-	// Check if the Remote.Host is set to "localhost"
-	if config.Remote.Host != "localhost" {
+	// Check if the Remote.Host is set to LoalhostStr
+	if config.Remote.Host != cmn.LoalhostStr {
 		t.Errorf("Expected Remote.Host to be 'localhost', got %v", config.Remote.Host)
 	}
 
@@ -477,8 +479,8 @@ func TestValidateRemoteType(t *testing.T) {
 	// Call the validateRemoteType function
 	config.validateRemoteType()
 
-	// Check if the Remote.Type is set to "local"
-	if config.Remote.Type != "local" {
+	// Check if the Remote.Type is set to cmn.LocalStr
+	if config.Remote.Type != cmn.LocalStr {
 		t.Errorf("Expected Remote.Type to be 'local', got %v", config.Remote.Type)
 	}
 
@@ -510,8 +512,8 @@ func TestValidateRemoteSSLMode(t *testing.T) {
 	// Call the validateRemoteSSLMode function
 	config.validateRemoteSSLMode()
 
-	// Check if the Remote.SSLMode is set to "disable"
-	if config.Remote.SSLMode != "disable" {
+	// Check if the Remote.SSLMode is set to cmn.DisableStr
+	if config.Remote.SSLMode != cmn.DisableStr {
 		t.Errorf("Expected Remote.SSLMode to be 'disable', got %v", config.Remote.SSLMode)
 	}
 
@@ -582,8 +584,8 @@ func TestValidateDatabase(t *testing.T) {
 		t.Errorf("Expected Database.Type to be 'postgres', got %v", config.Database.Type)
 	}
 
-	// Check if the Database.Host is set to "localhost"
-	if config.Database.Host != "localhost" {
+	// Check if the Database.Host is set to cmn.LoalhostStr
+	if config.Database.Host != cmn.LoalhostStr {
 		t.Errorf("Expected Database.Host to be 'localhost', got %v", config.Database.Host)
 	}
 
@@ -720,7 +722,7 @@ func TestValidateSelenium(t *testing.T) {
 				ServiceType: "chromedriver",
 				Path:        "/path/to/chrome",
 				DriverPath:  "/path/to/chromedriver",
-				Host:        "localhost",
+				Host:        cmn.LoalhostStr,
 				Port:        4444,
 				ProxyURL:    "http://proxy.example.com",
 			},
@@ -729,7 +731,7 @@ func TestValidateSelenium(t *testing.T) {
 				ServiceType: "geckodriver",
 				Path:        "/path/to/firefox",
 				DriverPath:  "/path/to/geckodriver",
-				Host:        "localhost",
+				Host:        cmn.LoalhostStr,
 				Port:        4444,
 				ProxyURL:    "http://proxy.example.com",
 			},
@@ -828,8 +830,8 @@ func TestValidateSeleniumHost(t *testing.T) {
 	// Call the validateSeleniumHost function
 	config.validateSeleniumHost(&config.Selenium[0])
 
-	// Check if the Selenium.Host is set to "localhost"
-	if config.Selenium[0].Host != "localhost" {
+	// Check if the Selenium.Host is set to cmn.LoalhostStr
+	if config.Selenium[0].Host != cmn.LoalhostStr {
 		t.Errorf("Expected Selenium.Host to be 'localhost', got %v", config.Selenium[0].Host)
 	}
 
@@ -908,7 +910,7 @@ func TestValidateRulesets(t *testing.T) {
 	}
 
 	// Check if the first Ruleset Type is set to the default value
-	if config.Rulesets[0].Type != "local" {
+	if config.Rulesets[0].Type != cmn.LocalStr {
 		t.Errorf("Expected first Ruleset Type to be 'local', got %v", config.Rulesets[0].Type)
 	}
 
@@ -941,7 +943,7 @@ func TestValidateImageStorageAPI(t *testing.T) {
 	config.validateImageStorageAPI()
 
 	// Check if the ImageStorageAPI fields are set to their default values
-	if config.ImageStorageAPI.Type != "local" {
+	if config.ImageStorageAPI.Type != cmn.LocalStr {
 		t.Errorf("Expected ImageStorageAPI.Type to be 'local', got %v", config.ImageStorageAPI.Type)
 	}
 	if config.ImageStorageAPI.Host != "" {
@@ -953,7 +955,7 @@ func TestValidateImageStorageAPI(t *testing.T) {
 	if config.ImageStorageAPI.Port != 0 {
 		t.Errorf("Expected ImageStorageAPI.Port to be 0, got %v", config.ImageStorageAPI.Port)
 	}
-	if config.ImageStorageAPI.Region != "nowhere" {
+	if config.ImageStorageAPI.Region != cmn.NowhereStr {
 		t.Errorf("Expected ImageStorageAPI.Region to be 'nowhere', got %v", config.ImageStorageAPI.Region)
 	}
 	if config.ImageStorageAPI.Token != "" {
@@ -980,7 +982,7 @@ func TestValidateFileStorageAPI(t *testing.T) {
 	config.validateFileStorageAPI()
 
 	// Check if the FileStorageAPI fields are set to their default values
-	if config.FileStorageAPI.Type != "local" {
+	if config.FileStorageAPI.Type != cmn.LocalStr {
 		t.Errorf("Expected FileStorageAPI.Type to be 'local', got %v", config.FileStorageAPI.Type)
 	}
 	if config.FileStorageAPI.Host != "" {
@@ -992,7 +994,7 @@ func TestValidateFileStorageAPI(t *testing.T) {
 	if config.FileStorageAPI.Port != 0 {
 		t.Errorf("Expected FileStorageAPI.Port to be 0, got %v", config.FileStorageAPI.Port)
 	}
-	if config.FileStorageAPI.Region != "nowhere" {
+	if config.FileStorageAPI.Region != cmn.NowhereStr {
 		t.Errorf("Expected FileStorageAPI.Region to be 'nowhere', got %v", config.FileStorageAPI.Region)
 	}
 	if config.FileStorageAPI.Token != "" {
@@ -1713,7 +1715,7 @@ func TestLoadRemoteConfig(t *testing.T) {
 					Host:    testURL,
 					Path:    "config.yaml",
 					Timeout: 10,
-					SSLMode: "disable",
+					SSLMode: cmn.DisableStr,
 				},
 			},
 			mockBody:  "remote_content: valid",
@@ -1732,7 +1734,7 @@ func TestLoadRemoteConfig(t *testing.T) {
 					Host:    testURL,
 					Path:    "config.yaml",
 					Timeout: 10,
-					SSLMode: "disable",
+					SSLMode: cmn.DisableStr,
 				},
 			},
 			mockBody:  "",

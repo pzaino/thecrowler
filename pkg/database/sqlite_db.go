@@ -125,11 +125,11 @@ func (handler *SQLiteHandler) NewListener() Listener {
 func NewHandler(c cfg.Config) (Handler, error) {
 	dbms := strings.ToLower(strings.TrimSpace(c.Database.Type))
 	switch dbms {
-	case "postgres":
+	case DBPostgresStr:
 		handler := &PostgresHandler{}
 		handler.dbms = dbms
 		return handler, nil
-	case "sqlite":
+	case DBSQLiteStr:
 		handler := &SQLiteHandler{}
 		handler.dbms = dbms
 		return handler, nil

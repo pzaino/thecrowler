@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	optDisable = "disable"
+	optDisable = cmn.DisableStr
 )
 
 // ---------------------------------------------------------------
@@ -58,7 +58,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	var err error
 	for {
 		// Try to open the database connection
-		handler.db, err = sql.Open("postgres", connectionString)
+		handler.db, err = sql.Open(DBPostgresStr, connectionString)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error opening database connection: %v", err)
 			time.Sleep(retryInterval)
@@ -125,7 +125,7 @@ func buildConnectionString(c cfg.Config) string {
 	}
 	var dbHost string
 	if strings.TrimSpace(c.Database.Host) == "" {
-		dbHost = "localhost"
+		dbHost = cmn.LoalhostStr
 	} else {
 		dbHost = strings.TrimSpace(c.Database.Host)
 	}

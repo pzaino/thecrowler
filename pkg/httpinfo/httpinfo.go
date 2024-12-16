@@ -51,7 +51,7 @@ func validateURL(inputURL string) (bool, error) {
 	}
 
 	// Ensure the scheme is http or https
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+	if parsedURL.Scheme != cmn.HTTPStr && parsedURL.Scheme != cmn.HTTPSStr {
 		return false, fmt.Errorf("invalid URL scheme: %s", parsedURL.Scheme)
 	}
 
@@ -141,7 +141,7 @@ func getSSLInfo(config *Config) (*SSLInfo, error) {
 	url := strings.TrimSpace(config.URL)
 	port := ""
 	// first let's remove the scheme
-	if strings.HasPrefix(strings.ToLower(url), "http") {
+	if strings.HasPrefix(strings.ToLower(url), cmn.HTTPStr) {
 		url = strings.Replace(url, "http://", "", 1)
 		url = strings.Replace(url, "https://", "", 1)
 		port = "443"
@@ -265,7 +265,7 @@ func handleRedirect(req *http.Request, _ []*http.Request, config Config, transpo
 		return fmt.Errorf("error parsing redirect URL: %v", err)
 	}
 	lastDomain := lastURL.Hostname()
-	req.URL.Scheme = "https"
+	req.URL.Scheme = cmn.HTTPSStr
 	transport.TLSClientConfig.ServerName = lastDomain
 
 	return nil

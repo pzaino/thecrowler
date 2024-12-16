@@ -139,7 +139,7 @@ func main() {
 	initAPIv1()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
-	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == "enable" {
+	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServeTLS(config.Events.CertFile, config.Events.KeyFile))
 	}
 	cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
@@ -433,7 +433,7 @@ func processEvent(event cdb.Event) {
 		handlePluginResponse(pluginResp)
 
 		// Remove the event if needed
-		if config.Events.EventRemoval == "" || config.Events.EventRemoval == "always" {
+		if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
 			removeHandledEVent(event.ID)
 		} else if config.Events.EventRemoval == "on_success" && pluginResp.Success {
 			removeHandledEVent(event.ID)

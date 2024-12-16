@@ -98,7 +98,7 @@ func buildMySQLConnectionString(c cfg.Config) string {
 	}
 	var dbHost string
 	if strings.TrimSpace(c.Database.Host) == "" {
-		dbHost = "localhost"
+		dbHost = cmn.LoalhostStr
 	} else {
 		dbHost = strings.TrimSpace(c.Database.Host)
 	}

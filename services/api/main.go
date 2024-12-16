@@ -212,7 +212,7 @@ func main() {
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Awaiting for requests...")
-	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
+	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == cmn.EnableStr {
 		log.Fatal(srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
 	}
 	log.Fatal(srv.ListenAndServe())

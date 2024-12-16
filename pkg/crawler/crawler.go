@@ -337,7 +337,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 	}
 
-	if processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+	if processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 		// Reset cookies after crawling
 		_ = ResetSiteSession(processCtx)
 	}
@@ -508,7 +508,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 
 	if ctx.config.Crawler.ResetCookiesPolicy == "on_request" ||
 		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
-		ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		ctx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 		// Reset cookies on each request
 		_ = ResetSiteSession(ctx)
 	}
@@ -2016,7 +2016,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
-		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
 		}
@@ -2577,10 +2577,10 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	}
 
 	var protocol string
-	if c.SSLMode == "enable" {
-		protocol = "https"
+	if c.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
 	} else {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 	}
 
 	var err error
@@ -2708,7 +2708,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			ProxySocksURL := "socks5h://" + proxyURL.Hostname()
 
 			// Set NoProxy []string to local host and networks
-			NoProxy := []string{"localhost"}
+			NoProxy := []string{cmn.LoalhostStr}
 			NoProxy = append(NoProxy, getLocalNetworks()...)
 
 			// Proxy settings
@@ -2806,10 +2806,10 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	caps.AddLogging(logSel)
 
 	var protocol string
-	if sel.Config.SSLMode == "enable" {
-		protocol = "https"
+	if sel.Config.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
 	} else {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 	}
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
@@ -3340,7 +3340,7 @@ func saveScreenshot(filename string, screenshot []byte) (string, error) {
 
 		// Determine storage method and call appropriate function
 		switch config.ImageStorageAPI.Type {
-		case "http":
+		case cmn.HTTPStr:
 			return writeDataViaHTTP(filename, screenshot, saveCfg)
 		case "s3":
 			return writeDataToToS3(filename, screenshot, saveCfg)
@@ -3371,10 +3371,10 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	}
 
 	var protocol string
-	if saveCfg.SSLMode == "enable" {
-		protocol = "https"
+	if saveCfg.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
 	} else {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 	}
 
 	// Construct the API endpoint URL

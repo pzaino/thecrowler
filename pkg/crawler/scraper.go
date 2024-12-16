@@ -1014,16 +1014,16 @@ func validateAPIURL(step *rs.PostProcessingStep) error {
 func determineProtocolAndSSLMode(step *rs.PostProcessingStep) (string, string) {
 	var protocol string
 	var sslMode string
-	const dis1 = "disable"
+	const dis1 = cmn.DisableStr
 	if step.Details["ssl_mode"] == nil {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 		sslMode = dis1
 	} else {
 		sslMode = strings.ToLower(strings.TrimSpace(step.Details["ssl_mode"].(string)))
 		if sslMode == dis1 || sslMode == "disabled" {
-			protocol = "http"
+			protocol = cmn.HTTPStr
 		} else {
-			protocol = "https"
+			protocol = cmn.HTTPSStr
 		}
 	}
 	return protocol, sslMode

@@ -138,7 +138,7 @@ func (ssl *SSLInfo) CollectSSLData(url string, port string, c *Config) error {
 	url := config.URL
 	port := ""
 	// first let's remove the scheme
-	if strings.HasPrefix(url, "http") {
+	if strings.HasPrefix(url, cmn.HTTPStr) {
 		url = strings.Replace(url, "http://", "", 1)
 		url = strings.Replace(url, "https://", "", 1)
 		port = "443"

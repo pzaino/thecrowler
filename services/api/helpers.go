@@ -119,17 +119,6 @@ func getQTypeFromName(name string) int {
 	return getQuery
 }
 
-// normalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.
-func normalizeURL(url string) string {
-	// Trim spaces
-	url = strings.TrimSpace(url)
-	// Trim trailing slash
-	url = strings.TrimRight(url, "/")
-	// Convert to lowercase
-	url = strings.ToLower(url)
-	return url
-}
-
 // PrepareInput prepares the input string by removing all \" and trimming external quotes and spaces.
 func PrepareInput(input string) string {
 	// Remove all \" from the input

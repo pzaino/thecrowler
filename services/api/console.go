@@ -38,63 +38,18 @@ const (
 	infoSourceRemoved = "Source and related data removed successfully"
 )
 
-// SourceFilter is a struct to filter sources based on URL and/or SourceID.
-type SourceFilter struct {
-	URL      string
-	SourceID int64
-}
-
-func getSourceID(filter SourceFilter, db *cdb.Handler) (uint64, error) {
-	var sourceID uint64
-	var whereClauses []string
-	var args []interface{}
-	parID := 1
-
-	// Dynamically build the WHERE clause based on the input struct
-	if filter.URL != "" {
-		whereClauses = append(whereClauses, "url = $"+fmt.Sprint(parID))
-		args = append(args, normalizeURL(filter.URL))
-		parID++
-	}
-	if filter.SourceID > 0 {
-		whereClauses = append(whereClauses, "source_id = $"+fmt.Sprint(parID))
-		args = append(args, filter.SourceID)
-	}
-
-	if len(whereClauses) == 0 {
-		return 0, fmt.Errorf("at least one filter (URL or SourceID) must be provided")
-	}
-
-	query := fmt.Sprintf(`
-        SELECT source_id
-        FROM Sources
-        WHERE %s
-        LIMIT 1
-    `, strings.Join(whereClauses, " AND "))
-
-	// Query the database
-	err := (*db).QueryRow(query, args...).Scan(&sourceID)
-	if err == sql.ErrNoRows {
-		return 0, fmt.Errorf("no source found matching the provided filters")
-	} else if err != nil {
-		return 0, fmt.Errorf("error querying the source ID: %w", err)
-	}
-
-	return sourceID, nil
-}
-
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var sqlQuery string
 	var sqlParams addSourceRequest
 	if qType == getQuery {
-		sqlParams.URL = normalizeURL(query)
+		sqlParams.URL = cmn.NormalizeURL(query)
 		//sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, category_id, usr_id, status, restricted, disabled, flags, config) VALUES ($1, NULL, 0, 0, 'pending', 2, false, 0, '{}')"
 	} else {
 		// extract the parameters from the query
 		extractAddSourceParams(query, &sqlParams)
 		// Normalize the URL
-		sqlParams.URL = normalizeURL(sqlParams.URL)
+		sqlParams.URL = cmn.NormalizeURL(sqlParams.URL)
 		// Prepare the SQL query
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8) RETURNING source_id;"
 	}
@@ -346,7 +301,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get the status"
 
-	sourceURL = normalizeURL(sourceURL)
+	sourceURL = cmn.NormalizeURL(sourceURL)
 	sourceURL = fmt.Sprintf("%%%s%%", sourceURL)
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Source URL: %s", sourceURL)
 
@@ -454,13 +409,13 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 }
 
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var sqlParams UpdateSourceRequest
+	var sqlParams cdb.UpdateSourceRequest
 	var sourceConfig *string
 	var sourceDetails *string
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
-		sqlParams.URL = normalizeURL(query)
+		sqlParams.URL = cmn.NormalizeURL(query)
 	} else {
 		// Parse the query as a POST request (JSON payload)
 		err := json.Unmarshal([]byte(query), &sqlParams)
@@ -471,7 +426,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 
 	// Resolve sourceID if only URL is provided
 	if sqlParams.SourceID == 0 && sqlParams.URL != "" {
-		sourceID, err := getSourceID(SourceFilter{URL: sqlParams.URL}, db)
+		sourceID, err := cdb.GetSourceID(cdb.SourceFilter{URL: sqlParams.URL}, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
@@ -481,7 +436,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	}
 
 	// Retrieve existing data for the source
-	var existingData UpdateSourceRequest
+	var existingData cdb.UpdateSourceRequest
 	selectQuery := `
         SELECT url, status, restricted, disabled, flags, config, details
         FROM Sources
@@ -511,7 +466,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	}
 
 	// Merge existing data with provided updates
-	mergedData := UpdateSourceRequest{
+	mergedData := cdb.UpdateSourceRequest{
 		SourceID:   sqlParams.SourceID,
 		URL:        coalesce(sqlParams.URL, existingData.URL),
 		Status:     coalesce(sqlParams.Status, existingData.Status),
@@ -535,7 +490,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
         WHERE source_id = $8
     `
 	_, err = (*db).Exec(updateQuery,
-		normalizeURL(mergedData.URL),
+		cmn.NormalizeURL(mergedData.URL),
 		mergedData.Status,
 		mergedData.Restricted,
 		mergedData.Disabled,
@@ -582,11 +537,11 @@ func coalesceJSON(newValue, existingValue json.RawMessage) json.RawMessage {
 }
 
 func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var filter SourceFilter
+	var filter cdb.SourceFilter
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
-		filter.URL = normalizeURL(query)
+		filter.URL = cmn.NormalizeURL(query)
 	} else {
 		// Parse the query as a POST request (JSON payload)
 		err := json.Unmarshal([]byte(query), &filter)
@@ -597,7 +552,7 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 
 	// Resolve sourceID if only URL is provided
 	if filter.SourceID == 0 && filter.URL != "" {
-		sourceID, err := getSourceID(filter, db)
+		sourceID, err := cdb.GetSourceID(filter, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
@@ -641,7 +596,7 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 }
 
 func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var owner OwnerRequest // Define a struct for owner if not already present
+	var owner cdb.OwnerRequest // Define a struct for owner if not already present
 
 	if qType == getQuery {
 		// Create a JSON document with the owner name
@@ -674,7 +629,7 @@ func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse,
 }
 
 func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var category CategoryRequest // Define a struct for category if not already present
+	var category cdb.CategoryRequest // Define a struct for category if not already present
 
 	if qType == getQuery {
 		// For GET requests, assume `query` is a simple name
@@ -706,7 +661,7 @@ func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleRespon
 }
 
 func performUpdateOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var owner OwnerRequest
+	var owner cdb.OwnerRequest
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
@@ -773,7 +728,7 @@ func performRemoveOwner(query string, qType int, db *cdb.Handler) (ConsoleRespon
 }
 
 func performUpdateCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var category CategoryRequest
+	var category cdb.CategoryRequest
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
@@ -45,7 +46,7 @@ func genHealthURL(t serviceType) string {
 	switch t {
 	case crowler:
 		rval = fmt.Sprintf("%s:%d/v1/health", config.Crawler.Control.Host, config.Crawler.Control.Port)
-		if config.Crawler.Control.SSLMode == "enable" {
+		if config.Crawler.Control.SSLMode == cmn.EnableStr {
 			rval = fmt.Sprintf("https://%s", rval)
 		} else {
 			rval = fmt.Sprintf("http://%s", rval)
@@ -54,7 +55,7 @@ func genHealthURL(t serviceType) string {
 		//rval, err = fmt.Sprintf("%s:%d/v1/health", config.VDI.Host, config.VDI.Port)
 	case api:
 		rval = fmt.Sprintf("%s:%d/v1/health", config.API.Host, config.API.Port)
-		if config.API.SSLMode == "enable" {
+		if config.API.SSLMode == cmn.EnableStr {
 			rval = fmt.Sprintf("https://%s", rval)
 		} else {
 			rval = fmt.Sprintf("http://%s", rval)
