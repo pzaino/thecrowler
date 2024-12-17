@@ -687,7 +687,7 @@ func downloadFile(url, filename string) error {
 		return fmt.Errorf("failed to fetch the file: %s", resp.Status)
 	}
 
-	file, err := os.Create(filename)
+	file, err := os.Create(filename) //nolint:gosec // We are creating this file and the filepath is decided by us in the config.yaml (nowhere else)
 	if err != nil {
 		return err
 	}
@@ -736,7 +736,7 @@ func checkCertExpirationDate(cert *x509.Certificate) (bool, error) {
 
 // Verify the certificate chain
 func verifyCertFile(certFilePath string) ([]*x509.Certificate, error) {
-	certBytes, err := os.ReadFile(certFilePath)
+	certBytes, err := os.ReadFile(certFilePath) //nolint:gosec // The filepath is decided by us in the config.yaml (nowhere else)
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +756,7 @@ func verifyCertFile(certFilePath string) ([]*x509.Certificate, error) {
 	// Check for intermediate certificates
 	for i := 1; i < 10; i++ { // You can adjust the loop limit if needed
 		intermediateCertPath := certFilePath[:len(certFilePath)-len(".crt")] + fmt.Sprintf("-%d.crt", i)
-		intermediateCertBytes, err := os.ReadFile(intermediateCertPath)
+		intermediateCertBytes, err := os.ReadFile(intermediateCertPath) //nolint:gosec // The filepath is decided by us in the config.yaml (nowhere else)
 		if err != nil {
 			break // Intermediate certificate not found, break the loop
 		}
