@@ -447,6 +447,16 @@
           "description": "This is a flag that tells the CROWler to request scripts from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process, but can break a site functioning (so make sure you know what you're doing when you set it to false). Scripts are requested by default.",
           "type": "boolean"
         },
+        "request_plugins": {
+          "title": "CROWler Engine Request Plugins",
+          "description": "This is a flag that tells the CROWler to request plugins from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process, but can break a site functioning (so make sure you know what you're doing when you set it to false). Plugins are requested by default.",
+          "type": "boolean"
+        },
+        "request_frames": {
+          "title": "CROWler Engine Request Frames",
+          "description": "This is a flag that tells the CROWler to request frames from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process, but can break a site functioning (so make sure you know what you're doing when you set it to false). Frames are requested by default.",
+          "type": "boolean"
+        },
         "collect_html": {
           "title": "CROWler Engine Collect Page's HTML",
           "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source.",

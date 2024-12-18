@@ -2735,7 +2735,6 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-notifications")
 		args = append(args, "--disable-quic")
 		args = append(args, "--disable-blink-features=AutomationControlled")
-		//args = append(args, "--disable-web-security") // STill thinking about this one, has it lowers the browser security a lot!
 		args = append(args, "--override-hardware-concurrency=4")
 		args = append(args, "--override-device-memory=4")
 		args = append(args, "--disable-plugins-discovery")
@@ -2757,17 +2756,45 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-popup-blocking")
 		// args = append(args, "--no-sandbox")
 		args = append(args, "--remote-debugging-port=0")
+		if ctx.config.Crawler.RequestImages {
+			args = append(args, "--blink-settings=imagesEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=imagesEnabled=false")
+		}
+		if ctx.config.Crawler.RequestCSS {
+			args = append(args, "--blink-settings=CSSImagesEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=CSSImagesEnabled=false")
+		}
+		if ctx.config.Crawler.RequestScripts {
+			args = append(args, "--blink-settings=JavaScriptEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=JavaScriptEnabled=false")
+		}
+		if ctx.config.Crawler.RequestPlugins {
+			args = append(args, "--blink-settings=PluginsEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=PluginsEnabled=false")
+		}
+		if ctx.config.Crawler.ResetCookiesPolicy != "" && ctx.config.Crawler.ResetCookiesPolicy != "none" {
+			args = append(args, "--disable-site-isolation-trials")
+			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
+			args = append(args, "--disable-features=SameSiteByDefaultCookies")
+		}
 	}
 
 	// Append logging settings if available
 	args = append(args, "--enable-logging")
 	args = append(args, "--v=1")
 
+	// Configure the download directory
 	downloadDir := strings.TrimSpace(sel.Config.DownloadDir)
 	if downloadDir == "" {
 		downloadDir = "/tmp"
 		sel.Config.DownloadDir = downloadDir
 	}
+
+	// Configure the browser preferences
 	if browser == BrowserChrome || browser == BrowserChromium {
 		chromePrefs := map[string]interface{}{
 			"download.default_directory":               downloadDir,
@@ -2795,6 +2822,20 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		} else {
 			// Allow images and CSS (default behavior)
 			chromePrefs["profile.managed_default_content_settings.stylesheets"] = 1
+		}
+		if !ctx.config.Crawler.RequestScripts {
+			// Disable scripts
+			chromePrefs["profile.managed_default_content_settings.javascript"] = 2
+		} else {
+			// Allow scripts (default behavior)
+			chromePrefs["profile.managed_default_content_settings.javascript"] = 1
+		}
+		if !ctx.config.Crawler.RequestPlugins {
+			// Disable plugins
+			chromePrefs["profile.managed_default_content_settings.plugins"] = 2
+		} else {
+			// Allow plugins (default behavior)
+			chromePrefs["profile.managed_default_content_settings.plugins"] = 1
 		}
 
 		// Finalize the capabilities
@@ -2825,6 +2866,20 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		} else {
 			// Allow images and CSS (default behavior)
 			firefoxCaps["permissions.default.stylesheet"] = 1
+		}
+		if !ctx.config.Crawler.RequestScripts {
+			// Disable scripts
+			firefoxCaps["permissions.default.script"] = 2
+		} else {
+			// Allow scripts (default behavior)
+			firefoxCaps["permissions.default.script"] = 1
+		}
+		if !ctx.config.Crawler.RequestPlugins {
+			// Disable plugins
+			firefoxCaps["permissions.default.object"] = 2
+		} else {
+			// Allow plugins (default behavior)
+			firefoxCaps["permissions.default.object"] = 1
 		}
 
 		// Finalize the capabilities

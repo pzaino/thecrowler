@@ -73,6 +73,8 @@ type Crawler struct {
 	RequestImages         bool          `json:"request_images" yaml:"request_images"`                   // Whether to request the images or not
 	RequestCSS            bool          `json:"request_css" yaml:"request_css"`                         // Whether to request the CSS or not
 	RequestScripts        bool          `json:"request_scripts" yaml:"request_scripts"`                 // Whether to request the scripts or not
+	RequestPlugins        bool          `json:"request_plugins" yaml:"request_plugins"`                 // Whether to request the plugins or not
+	RequestFrames         bool          `json:"request_frames" yaml:"request_frames"`                   // Whether to request the frames or not
 	CollectHTML           bool          `json:"collect_html" yaml:"collect_html"`                       // Whether to collect the HTML content or not
 	CollectImages         bool          `json:"collect_images" yaml:"collect_images"`                   // Whether to collect the images or not
 	CollectFiles          bool          `json:"collect_files" yaml:"collect_files"`                     // Whether to collect the files or not

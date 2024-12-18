@@ -196,6 +196,8 @@ func NewConfig() *Config {
 			RequestImages:         true,
 			RequestCSS:            true,
 			RequestScripts:        true,
+			RequestPlugins:        true,
+			RequestFrames:         true,
 			CollectHTML:           true,
 			CollectContent:        false,
 			CollectKeywords:       true,
