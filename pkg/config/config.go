@@ -70,7 +70,7 @@ type OsFileReader struct{}
 
 // ReadFile reads a file using the os package.
 func (OsFileReader) ReadFile(filename string) ([]byte, error) {
-	return os.ReadFile(filename)
+	return os.ReadFile(filename) //nolint:gosec // This path is configured by the service owner
 }
 
 // fileExists checks if a file exists at the given filename.
@@ -125,7 +125,7 @@ func getConfigFile(confName string) (Config, error) {
 	}
 
 	// Read the configuration file
-	data, err := os.ReadFile(confName)
+	data, err := os.ReadFile(confName) //nolint:gosec // This path is configured by the service owner
 	if err != nil {
 		return Config{}, err
 	}
