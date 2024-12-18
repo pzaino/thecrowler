@@ -472,7 +472,7 @@ func resetPageInfo(p *PageInfo) {
 // ConnectToVDI is responsible for connecting to the CROWler VDI Instance
 func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
-	ctx.wd, err = ConnectVDI(sel, 0)
+	ctx.wd, err = ConnectVDI(ctx, sel, 0)
 	if err != nil {
 		(*ctx.sel) <- sel
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
@@ -485,7 +485,7 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 // RefreshSeleniumConnection is responsible for refreshing the Selenium connection
 func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error {
 	if err := ctx.wd.Refresh(); err != nil {
-		ctx.wd, err = ConnectVDI(sel, 0)
+		ctx.wd, err = ConnectVDI(ctx, sel, 0)
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
@@ -2650,7 +2650,7 @@ func getLocalNetworks() []string {
 */
 
 // ConnectVDI is responsible for connecting to the Selenium server instance
-func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
+func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {
@@ -2780,6 +2780,24 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			"useAutomationExtension":                   false,
 			"excludeSwitches":                          []string{"enable-automation"},
 		}
+
+		// Configure user content capabilities:
+		if !ctx.config.Crawler.RequestImages {
+			// Disable images
+			chromePrefs["profile.managed_default_content_settings.images"] = 2
+		} else {
+			// Allow images (default behavior)
+			chromePrefs["profile.managed_default_content_settings.images"] = 1
+		}
+		if !ctx.config.Crawler.RequestCSS {
+			// Disable images and CSS
+			chromePrefs["profile.managed_default_content_settings.stylesheets"] = 2
+		} else {
+			// Allow images and CSS (default behavior)
+			chromePrefs["profile.managed_default_content_settings.stylesheets"] = 1
+		}
+
+		// Finalize the capabilities
 		caps.AddChrome(chrome.Capabilities{
 			Args:  args,
 			W3C:   true,
@@ -2792,6 +2810,24 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			"browser.helperApps.neverAsk.saveToDisk":    "application/zip",
 			"browser.download.manager.showWhenStarting": false,
 		}
+
+		// Configure user content capabilities:
+		if !ctx.config.Crawler.RequestImages {
+			// Disable images
+			firefoxCaps["permissions.default.image"] = 2
+		} else {
+			// Allow images (default behavior)
+			firefoxCaps["permissions.default.image"] = 1
+		}
+		if !ctx.config.Crawler.RequestCSS {
+			// Disable images and CSS
+			firefoxCaps["permissions.default.stylesheet"] = 2
+		} else {
+			// Allow images and CSS (default behavior)
+			firefoxCaps["permissions.default.stylesheet"] = 1
+		}
+
+		// Finalize the capabilities
 		caps.AddFirefox(firefox.Capabilities{
 			Args:  args,
 			Prefs: firefoxCaps,
