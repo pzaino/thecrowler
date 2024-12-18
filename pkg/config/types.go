@@ -49,6 +49,7 @@ type Database struct {
 // Crawler represents the crawler configuration
 type Crawler struct {
 	Workers               int           `json:"workers" yaml:"workers"`                                 // Number of crawler workers
+	VDIName               string        `json:"vdi_name" yaml:"vdi_name"`                               // Name of the VDI to use (this is useful when using custom configurations per each source)
 	Interval              string        `json:"interval" yaml:"interval"`                               // Interval between crawler requests (in seconds)
 	Timeout               int           `json:"timeout" yaml:"timeout"`                                 // Timeout for crawler requests (in seconds)
 	Maintenance           int           `json:"maintenance" yaml:"maintenance"`                         // Interval between crawler maintenance tasks (in seconds)
@@ -69,6 +70,9 @@ type Crawler struct {
 	CrawlingIfError       string        `json:"crawling_if_error" yaml:"crawling_if_error"`             // Whether to re-crawl a source if an error occurs
 	CrawlingIfOk          string        `json:"crawling_if_ok" yaml:"crawling_if_ok"`                   // Whether to re-crawl a source if the crawling is successful
 	ProcessingTimeout     string        `json:"processing_timeout" yaml:"processing_timeout"`           // Timeout for processing the source
+	RequestImages         bool          `json:"request_images" yaml:"request_images"`                   // Whether to request the images or not
+	RequestCSS            bool          `json:"request_css" yaml:"request_css"`                         // Whether to request the CSS or not
+	RequestScripts        bool          `json:"request_scripts" yaml:"request_scripts"`                 // Whether to request the scripts or not
 	CollectHTML           bool          `json:"collect_html" yaml:"collect_html"`                       // Whether to collect the HTML content or not
 	CollectImages         bool          `json:"collect_images" yaml:"collect_images"`                   // Whether to collect the images or not
 	CollectFiles          bool          `json:"collect_files" yaml:"collect_files"`                     // Whether to collect the files or not

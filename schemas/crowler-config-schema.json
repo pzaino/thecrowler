@@ -249,6 +249,11 @@
             10
           ]
         },
+        "vdi_name": {
+          "title": "CROWler Engine VDI Name",
+          "description": "This is the name of the VDI that the CROWler Engine will use to crawl websites. This is useful when using custom configurations per each source. If you configure this in the main/default configuration, you'll prevent the engine from autoscaling over the VDIs.",
+          "type": "string"
+        },
         "interval": {
           "title": "CROWler Engine Page Rendering Interval",
           "description": "This is the interval at which the CROWler Engine will crawl websites. It is the part of the HBS, values are in seconds, e.g. '3' means 3 seconds. For the interval you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.",
@@ -426,6 +431,21 @@
             "never",
             "on_request"
           ]
+        },
+        "request_images": {
+          "title": "CROWler Engine Request Images",
+          "description": "This is a flag that tells the CROWler to request images from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process. Images are requested by default.",
+          "type": "boolean"
+        },
+        "request_css": {
+          "title": "CROWler Engine Request CSS",
+          "description": "This is a flag that tells the CROWler to request CSS from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process. CSS are requested by default.",
+          "type": "boolean"
+        },
+        "request_scripts": {
+          "title": "CROWler Engine Request Scripts",
+          "description": "This is a flag that tells the CROWler to request scripts from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process, but can break a site functioning (so make sure you know what you're doing when you set it to false). Scripts are requested by default.",
+          "type": "boolean"
         },
         "collect_html": {
           "title": "CROWler Engine Collect Page's HTML",

@@ -48,6 +48,8 @@ const (
 	SSDefaultTimeout = 3600
 	// SSDefaultDelayTime Default delay time for service scout
 	SSDefaultDelayTime = 100
+
+	stdRateLimit = "10,10"
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -191,6 +193,9 @@ func NewConfig() *Config {
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
 			ResetCookiesPolicy:    "never",
+			RequestImages:         true,
+			RequestCSS:            true,
+			RequestScripts:        true,
 			CollectHTML:           true,
 			CollectContent:        false,
 			CollectKeywords:       true,
@@ -212,7 +217,7 @@ func NewConfig() *Config {
 				Port:              8081,
 				SSLMode:           cmn.DisableStr,
 				Timeout:           15,
-				RateLimit:         "10,10",
+				RateLimit:         stdRateLimit,
 				ReadHeaderTimeout: 15,
 				ReadTimeout:       15,
 				WriteTimeout:      30,
@@ -227,7 +232,7 @@ func NewConfig() *Config {
 			SSLMode:           cmn.DisableStr,
 			CertFile:          "",
 			KeyFile:           "",
-			RateLimit:         "10,10",
+			RateLimit:         stdRateLimit,
 			EnableConsole:     false,
 			ReadHeaderTimeout: 15,
 			ReadTimeout:       15,
@@ -251,7 +256,7 @@ func NewConfig() *Config {
 					Timeout:           60,
 					CertFile:          "",
 					KeyFile:           "",
-					RateLimit:         "10,10",
+					RateLimit:         stdRateLimit,
 					ReadHeaderTimeout: 15,
 					ReadTimeout:       15,
 					WriteTimeout:      30,
@@ -269,7 +274,7 @@ func NewConfig() *Config {
 			Timeout:           60,
 			CertFile:          "",
 			KeyFile:           "",
-			RateLimit:         "10,10",
+			RateLimit:         stdRateLimit,
 			ReadHeaderTimeout: 15,
 			ReadTimeout:       15,
 			WriteTimeout:      30,
@@ -499,7 +504,7 @@ func (c *Config) Validate() error {
 	c.validateCrawler()
 	c.validateDatabase()
 	c.validateAPI()
-	c.validateSelenium()
+	c.validateVDI()
 	c.validatePrometheus()
 	c.validateImageStorageAPI()
 	c.validateFileStorageAPI()
@@ -597,6 +602,7 @@ func (c *Config) validateRemoteSSLMode() {
 
 func (c *Config) validateCrawler() {
 	c.setDefaultWorkers()
+	c.setDefaultVDIName()
 	c.setDefaultInterval()
 	c.setDefaultTimeout()
 	c.setDefaultMaintenance()
@@ -620,6 +626,14 @@ func (c *Config) validateCrawler() {
 func (c *Config) setDefaultWorkers() {
 	if c.Crawler.Workers < 1 {
 		c.Crawler.Workers = 1
+	}
+}
+
+func (c *Config) setDefaultVDIName() {
+	if strings.TrimSpace(c.Crawler.VDIName) == "" {
+		c.Crawler.VDIName = ""
+	} else {
+		c.Crawler.VDIName = strings.ToLower(strings.TrimSpace(c.Crawler.VDIName))
 	}
 }
 
@@ -751,7 +765,7 @@ func (c *Config) setDefaultControl() {
 		c.Crawler.Control.Host = strings.TrimSpace(c.Crawler.Control.Host)
 	}
 	if strings.TrimSpace(c.Crawler.Control.RateLimit) == "" {
-		c.Crawler.Control.RateLimit = "10,10"
+		c.Crawler.Control.RateLimit = stdRateLimit
 	} else {
 		c.Crawler.Control.RateLimit = strings.TrimSpace(c.Crawler.Control.RateLimit)
 	}
@@ -832,7 +846,7 @@ func (c *Config) validateAPI() {
 		c.API.Timeout = 60
 	}
 	if strings.TrimSpace(c.API.RateLimit) == "" {
-		c.API.RateLimit = "10,10"
+		c.API.RateLimit = stdRateLimit
 	} else {
 		c.API.RateLimit = strings.TrimSpace(c.API.RateLimit)
 	}
@@ -847,20 +861,29 @@ func (c *Config) validateAPI() {
 	}
 }
 
-func (c *Config) validateSelenium() {
+func (c *Config) validateVDI() {
 	// Check Selenium
 	for i := range c.Selenium {
-		c.validateSeleniumType(&c.Selenium[i])
-		c.validateSeleniumServiceType(&c.Selenium[i])
-		c.validateSeleniumPath(&c.Selenium[i])
-		c.validateSeleniumDriverPath(&c.Selenium[i])
-		c.validateSeleniumHost(&c.Selenium[i])
-		c.validateSeleniumPort(&c.Selenium[i])
-		c.validateSeleniumProxyURL(&c.Selenium[i])
+		c.validateVDIName(&c.Selenium[i])
+		c.validateVDIType(&c.Selenium[i])
+		c.validateVDIServiceType(&c.Selenium[i])
+		c.validateVDIPath(&c.Selenium[i])
+		c.validateVDIDriverPath(&c.Selenium[i])
+		c.validateVDIHost(&c.Selenium[i])
+		c.validateVDIPort(&c.Selenium[i])
+		c.validateVDIProxyURL(&c.Selenium[i])
 	}
 }
 
-func (c *Config) validateSeleniumType(selenium *Selenium) {
+func (c *Config) validateVDIName(selenium *Selenium) {
+	if strings.TrimSpace(selenium.Name) == "" {
+		selenium.Name = selenium.Host
+	} else {
+		selenium.Name = strings.ToLower(strings.TrimSpace(selenium.Name))
+	}
+}
+
+func (c *Config) validateVDIType(selenium *Selenium) {
 	if strings.TrimSpace(selenium.Type) == "" {
 		selenium.Type = "chrome"
 	} else {
@@ -868,7 +891,7 @@ func (c *Config) validateSeleniumType(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumServiceType(selenium *Selenium) {
+func (c *Config) validateVDIServiceType(selenium *Selenium) {
 	if strings.TrimSpace(selenium.ServiceType) == "" {
 		selenium.ServiceType = "standalone"
 	} else {
@@ -876,7 +899,7 @@ func (c *Config) validateSeleniumServiceType(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumPath(selenium *Selenium) {
+func (c *Config) validateVDIPath(selenium *Selenium) {
 	if strings.TrimSpace(selenium.Path) == "" {
 		selenium.Path = ""
 	} else {
@@ -884,7 +907,7 @@ func (c *Config) validateSeleniumPath(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumDriverPath(selenium *Selenium) {
+func (c *Config) validateVDIDriverPath(selenium *Selenium) {
 	if strings.TrimSpace(selenium.DriverPath) == "" {
 		selenium.DriverPath = ""
 	} else {
@@ -892,7 +915,7 @@ func (c *Config) validateSeleniumDriverPath(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumHost(selenium *Selenium) {
+func (c *Config) validateVDIHost(selenium *Selenium) {
 	if strings.TrimSpace(selenium.Host) == "" {
 		selenium.Host = cmn.LoalhostStr
 	} else {
@@ -900,13 +923,13 @@ func (c *Config) validateSeleniumHost(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumPort(selenium *Selenium) {
+func (c *Config) validateVDIPort(selenium *Selenium) {
 	if selenium.Port < 1 || selenium.Port > 65535 {
 		selenium.Port = 4444
 	}
 }
 
-func (c *Config) validateSeleniumProxyURL(selenium *Selenium) {
+func (c *Config) validateVDIProxyURL(selenium *Selenium) {
 	if selenium.ProxyURL == "" {
 		selenium.ProxyURL = ""
 	} else {
