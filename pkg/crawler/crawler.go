@@ -2781,6 +2781,8 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
 			args = append(args, "--disable-features=SameSiteByDefaultCookies")
 		}
+		// Disable video auto-play:
+		args = append(args, "--autoplay-policy=user-required")
 	}
 
 	// Append logging settings if available
