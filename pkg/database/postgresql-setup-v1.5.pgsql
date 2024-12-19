@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     last_crawled_at TIMESTAMP,                  -- The last time the source was crawled.
     last_error TEXT,                            -- Last error message that occurred during crawling.
     last_error_at TIMESTAMP,                    -- The date/time of the last error occurred.
-    restricted INTEGER DEFAULT 0 NOT NULL,      -- 0 = fully restricted (just this URL)
+    restricted INTEGER DEFAULT 0 NOT NULL,      -- 0 = fully restricted (just this URL - default)
                                                 -- 1 = l3 domain restricted (everything within this
                                                 --     URL l3 domain)
                                                 -- 2 = l2 domain restricted
