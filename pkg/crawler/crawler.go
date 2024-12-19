@@ -472,7 +472,11 @@ func resetPageInfo(p *PageInfo) {
 // ConnectToVDI is responsible for connecting to the CROWler VDI Instance
 func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
-	ctx.wd, err = ConnectVDI(ctx, sel, 0)
+	var browserType int
+	if ctx.config.Crawler.Platform == "mobile" {
+		browserType = 1
+	}
+	ctx.wd, err = ConnectVDI(ctx, sel, browserType)
 	if err != nil {
 		(*ctx.sel) <- sel
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
@@ -485,7 +489,11 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 // RefreshSeleniumConnection is responsible for refreshing the Selenium connection
 func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error {
 	if err := ctx.wd.Refresh(); err != nil {
-		ctx.wd, err = ConnectVDI(ctx, sel, 0)
+		var browserType int
+		if ctx.config.Crawler.Platform == "mobile" {
+			browserType = 1
+		}
+		ctx.wd, err = ConnectVDI(ctx, sel, browserType)
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
@@ -1463,6 +1471,14 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
 	}
 
+	// Change the User Agent (if needed)
+	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		err = changeUserAgent(&wd, ctx)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "changing User Agent: %v", err)
+		}
+	}
+
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -1522,6 +1538,42 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	}
 
 	return wd, docType, nil
+}
+
+func changeUserAgent(wd *selenium.WebDriver, ctx *ProcessContext) error {
+	var err error
+
+	// Get the User Agent
+	userAgent := cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, "linux", ctx.config.Selenium[ctx.SelID].Type)
+	if userAgent == "" {
+		if ctx.config.Crawler.Platform == "desktop" {
+			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-desktop01"]
+		} else {
+			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-mobile01"]
+		}
+	}
+
+	// JavaScript to override userAgent using an iframe trick
+	js := fmt.Sprintf(`
+		var iframe = document.createElement('iframe');
+		document.body.appendChild(iframe);
+		Object.defineProperty(iframe.contentWindow.navigator, 'userAgent', {
+			get: function() { return '%s'; }
+		});
+		// Replace global navigator with iframe's navigator
+		Object.defineProperty(window, 'navigator', {
+			get: function() { return iframe.contentWindow.navigator; }
+		});
+	`, userAgent)
+
+	// Execute the script in the browser
+	_, err = (*wd).ExecuteScript(js, nil)
+	if err != nil {
+		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed to: %s", userAgent)
+	return nil
 }
 
 func vdiSleep(ctx *ProcessContext, delay float64) error {
@@ -2657,15 +2709,30 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		browser = BrowserChrome
 	}
 
+	// If it's not being initialized yet, initialize the UserAgentsDB
+	if cmn.UADB.IsEmpty() {
+		err := cmn.UADB.InitUserAgentsDB()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to initialize UserAgentsDB: %v", err)
+		}
+	}
+
 	// Connect to the WebDriver instance running locally.
 	caps := selenium.Capabilities{"browserName": browser}
 
 	// Define the user agent string for a desktop Google Chrome browser
 	var userAgent string
-	if browseType == 0 {
-		userAgent = cmn.UsrAgentStrMap[browser+"-desktop01"]
-	} else if browseType == 1 {
-		userAgent = cmn.UsrAgentStrMap[browser+"-mobile01"]
+
+	// Get the user agent string from the UserAgentsDB
+	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, "linux", browser)
+
+	// Fallback in case the user agent is not found in the UserAgentsDB
+	if userAgent == "" {
+		if browseType == 0 {
+			userAgent = cmn.UsrAgentStrMap[browser+"-desktop01"]
+		} else if browseType == 1 {
+			userAgent = cmn.UsrAgentStrMap[browser+"-mobile01"]
+		}
 	}
 
 	var args []string
@@ -2855,18 +2922,9 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	// Connect to the WebDriver instance running remotely.
 	var wd selenium.WebDriver
 	var err error
-	maxRetry := 5
+	maxRetry := 10
 	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
-		/*
-			In theory Selenium standalone should be different than Selenium Grid
-			but in practice, it's not. So, we are using the same URL for both.
-			if sel.Config.ServiceType == "standalone" {
-				urlType = "wd"
-			} else {
-				urlType = "wd/hub"
-			}
-		*/
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
 			if i == 0 || (i%maxRetry) == 0 {
@@ -3181,6 +3239,7 @@ func QuitSelenium(wd *selenium.WebDriver) {
 			cmn.DebugMsg(cmn.DbgLvlError, "closing WebDriver: %v", err)
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
+			time.Sleep(1 * time.Second)
 		}
 	}
 }

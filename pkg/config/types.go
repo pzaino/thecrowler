@@ -50,6 +50,7 @@ type Database struct {
 type Crawler struct {
 	Workers               int           `json:"workers" yaml:"workers"`                                 // Number of crawler workers
 	VDIName               string        `json:"vdi_name" yaml:"vdi_name"`                               // Name of the VDI to use (this is useful when using custom configurations per each source)
+	Platform              string        `json:"platform" yaml:"platform"`                               // Platform to use (e.g., "desktop", "mobile")
 	Interval              string        `json:"interval" yaml:"interval"`                               // Interval between crawler requests (in seconds)
 	Timeout               int           `json:"timeout" yaml:"timeout"`                                 // Timeout for crawler requests (in seconds)
 	Maintenance           int           `json:"maintenance" yaml:"maintenance"`                         // Interval between crawler maintenance tasks (in seconds)

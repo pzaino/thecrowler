@@ -178,6 +178,8 @@ func NewConfig() *Config {
 		},
 		Crawler: Crawler{
 			Workers:               1,
+			VDIName:               "",
+			Platform:              "desktop",
 			Interval:              "2",
 			Timeout:               10,
 			Maintenance:           60,
@@ -603,6 +605,7 @@ func (c *Config) validateRemoteSSLMode() {
 func (c *Config) validateCrawler() {
 	c.setDefaultWorkers()
 	c.setDefaultVDIName()
+	c.setDefaultPlatform()
 	c.setDefaultInterval()
 	c.setDefaultTimeout()
 	c.setDefaultMaintenance()
@@ -634,6 +637,14 @@ func (c *Config) setDefaultVDIName() {
 		c.Crawler.VDIName = ""
 	} else {
 		c.Crawler.VDIName = strings.ToLower(strings.TrimSpace(c.Crawler.VDIName))
+	}
+}
+
+func (c *Config) setDefaultPlatform() {
+	if strings.TrimSpace(c.Crawler.Platform) == "" {
+		c.Crawler.Platform = "desktop"
+	} else {
+		c.Crawler.Platform = strings.ToLower(strings.TrimSpace(c.Crawler.Platform))
 	}
 }
 
