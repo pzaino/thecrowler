@@ -38,7 +38,7 @@ import (
 
 // ApplyRule applies the provided scraping rule to the provided web page.
 func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) (map[string]interface{}, error) {
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Applying scraping rule: %v", rule.RuleName)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
 	ErrorState := false
