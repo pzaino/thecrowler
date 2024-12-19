@@ -497,6 +497,11 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 
+	err = addJSAPIDebugLevel(vm)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1154,6 +1159,23 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 		return success
 	})
 	return err
+}
+
+// addJSAPIDebugLevel adds a method to fetch the current debug level to the VM
+func addJSAPIDebugLevel(vm *otto.Otto) error {
+	return vm.Set("getDebugLevel", func(_ otto.FunctionCall) otto.Value {
+		// Fetch the current debug level
+		debugLevel := cmn.GetDebugLevel()
+
+		// Convert the debug level to a JavaScript-compatible value
+		jsDebugLevel, err := vm.ToValue(debugLevel)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error converting debug level to JavaScript value: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		return jsDebugLevel
+	})
 }
 
 // String returns the Plugin as a string
