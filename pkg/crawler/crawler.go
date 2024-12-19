@@ -500,7 +500,8 @@ func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
 func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriver, error) {
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling Source: %d", ctx.source.ID)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling URL: %s", ctx.source.URL)
 
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
 	ctx.getURLMutex.Lock()
@@ -707,10 +708,11 @@ func (ctx *ProcessContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 	}
 
 	if takeScreenshot {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
 		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
 		sid := strconv.FormatUint(ctx.source.ID, 10)
 		imageName := "s" + sid + "-" + generateUniqueName(url, "-desktop")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Taking screenshot: %s", imageName)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Taking screenshot of %s...", url)
 		ss, err := TakeScreenshot(&wd, imageName, ctx.config.Crawler.ScreenshotMaxHeight)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "taking screenshot: %v", err)
@@ -792,7 +794,7 @@ func (ctx *ProcessContext) GetNetInfo(_ string) {
 	ctx.ni.Config = &c
 
 	// Call GetNetInfo to retrieve network information
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering network information for %s...", ctx.source.URL)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Gathering network information for %s...", ctx.source.URL)
 	err := ctx.ni.GetNetInfo(ctx.source.URL)
 	ctx.Status.NetInfoRunning = 2
 
