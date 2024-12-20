@@ -280,10 +280,11 @@ done
 # shellcheck disable=SC2086
 for i in $(seq 1 "$vdi_count"); do
     # Calculate unique host port ranges for each instance to avoid conflicts
-    HOST_PORT_START1=$((4444 + (i - 1) * 2)) # Selenium Hub
-    HOST_PORT_END1=$((4445 + (i - 1) * 2))   # SysMng Port
-    HOST_PORT_START2=$((5900 + (i - 1) * 1)) # Selenium ARM VNC Port
-    HOST_PORT_START3=$((7900 + (i - 1) * 1)) # Selenium x86 VNC Port
+    HOST_PORT_START1=$((4444 + (i - 1) * 2)) # VDI Selenium Hub
+    HOST_PORT_END1=$((4445 + (i - 1) * 2))   # VDI SysMng Port
+    HOST_PORT_START2=$((5900 + (i - 1) * 1)) # VDI VNC Port
+    HOST_PORT_START3=$((7900 + (i - 1) * 1)) # VDI noVNC Port
+    HOST_PORT_START4=$((9222 + (i - 1) * 1)) # VDI ChromeDP Port
     NETWORK_NAME="crowler-vdi-$i"
     cat << EOF >> docker-compose.yml
 
@@ -300,6 +301,7 @@ for i in $(seq 1 "$vdi_count"); do
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
       - "$HOST_PORT_START2:5900"
       - "$HOST_PORT_START3:7900"
+      - "$HOST_PORT_START4:9222"
     networks:
       - $NETWORK_NAME
     restart: unless-stopped

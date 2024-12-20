@@ -18,6 +18,7 @@ package crawler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -39,6 +40,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/abadojack/whatlanggo"
+	cdp "github.com/chromedp/chromedp"
+	"github.com/mailru/easyjson/jlexer"
+	"github.com/mailru/easyjson/jwriter"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -1575,22 +1579,82 @@ func changeUserAgent(wd *selenium.WebDriver, ctx *ProcessContext) error {
 	}
 
 	// Update user agent using CDP as well:
-	_, err = (*wd).ExecuteScript(fmt.Sprintf(`
-        const cdp = chrome.debugger;
-        cdp.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
-            cdp.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.setUserAgentOverride", {
-                userAgent: "%s",
-                acceptLanguage: "en-US,en;q=0.9",
-                platform: "Windows"
-            });
-        });
-    `, userAgent), nil)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
+	if ctx.config.Selenium[ctx.SelID].Type == "chrome" {
+		err = changeUserAgentCDP(wd, ctx, userAgent)
+		if err != nil {
+			return fmt.Errorf("failed to change User-Agent using CDP: %v", err)
+		}
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed to: %s", userAgent)
 	return nil
+}
+
+// Input for the Network.setUserAgentOverride command
+type setUserAgentOverrideParams struct {
+	UserAgent string `json:"userAgent"`
+}
+
+// Implement easyjson.Marshaler for the input
+func (p *setUserAgentOverrideParams) MarshalJSON() ([]byte, error) {
+	w := &jwriter.Writer{}
+	p.MarshalEasyJSON(w)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+func (p *setUserAgentOverrideParams) MarshalEasyJSON(w *jwriter.Writer) {
+	w.RawString(`{"userAgent":"`)
+	w.String(p.UserAgent)
+	w.RawString(`"}`)
+}
+
+// Empty response struct for the command (no response expected)
+type emptyResponse struct{}
+
+// Implement easyjson.Unmarshaler for the output
+func (r *emptyResponse) UnmarshalJSON(_ []byte) error {
+	return nil
+}
+
+// Implement easyjson.Unmarshaler for the output
+func (r *emptyResponse) UnmarshalEasyJSON(_ *jlexer.Lexer) {
+	// No-op since there is no data to unmarshal
+}
+
+func changeUserAgentCDP(_ *selenium.WebDriver, pctx *ProcessContext, userAgent string) error {
+	// Connect to the existing Chrome instance with CDP enabled
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Use cdp.NewRemoteAllocator to connect to the Chrome container
+	remoteAllocatorCtx, cancelRemoteAllocator := cdp.NewRemoteAllocator(ctx, "http://"+pctx.config.Selenium[pctx.SelID].Host+":9222")
+	defer cancelRemoteAllocator()
+
+	// Create a new browser context
+	browserCtx, cancelBrowser := cdp.NewContext(remoteAllocatorCtx)
+	defer cancelBrowser()
+
+	// Run CDP command to change the user-agent
+	params := &setUserAgentOverrideParams{
+		UserAgent: userAgent,
+	}
+
+	// Send the raw CDP command
+	err := cdp.Run(browserCtx,
+		cdp.ActionFunc(func(ctx context.Context) error {
+			return cdp.FromContext(ctx).Browser.Execute(
+				ctx,
+				"Network.setUserAgentOverride",
+				params,           // Input parameters
+				&emptyResponse{}, // Empty output since no response is expected
+			)
+		}),
+	)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
+	}
+
+	return err
 }
 
 func vdiSleep(ctx *ProcessContext, delay float64) error {
@@ -2769,14 +2833,11 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// Set the CDP port
-		args = append(args, "--remote-debugging-port=7900")
+		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
 		args = append(args, "--remote-debugging-address=0.0.0.0")
-		// Set the CDP version
-		args = append(args, "--remote-debugging-version=1.3")
-
-		// Hide CDP
-
+		// Ensure that the CDP is active
+		args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
 	}
 
