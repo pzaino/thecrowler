@@ -2823,6 +2823,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-peer-to-peer")
 		args = append(args, "--disable-dev-shm-usage")
 		args = append(args, "--disable-popup-blocking")
+		args = append(args, "--force-device-scale-factor=1")
 		// args = append(args, "--no-sandbox")
 		args = append(args, "--remote-debugging-port=0")
 		if ctx.config.Crawler.RequestImages {
@@ -3083,6 +3084,14 @@ func reinforceBrowserSettings(wd selenium.WebDriver) error {
 			};
 		} catch (err) {
 			console.error('Error reinforcing browser settings stage 4:', err);
+		}
+
+		try {
+			Object.defineProperty(window, 'devicePixelRatio', {
+				get: function() { return 1; }
+			});
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 5:', err);
 		}
 
 		try {
