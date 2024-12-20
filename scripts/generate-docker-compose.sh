@@ -223,6 +223,7 @@ EOF
 fi
 
 # Add crowler-engine instances
+if [ "$engine_count" != "0" ]; then
 # shellcheck disable=SC2086
 for i in $(seq 1 "$engine_count"); do
     ENGINE_NETWORKS=""
@@ -275,8 +276,10 @@ $ENGINE_NETWORKS
     restart: unless-stopped
 EOF
 done
+fi
 
 # Add crowler-vdi instances
+if [ "$vdi_count" != "0" ]; then
 # shellcheck disable=SC2086
 for i in $(seq 1 "$vdi_count"); do
     # Calculate unique host port ranges for each instance to avoid conflicts
@@ -307,6 +310,7 @@ for i in $(seq 1 "$vdi_count"); do
     restart: unless-stopped
 EOF
 done
+fi
 
 # Add Prometheus PushGateway
 if [ "$prometheus" == "yes" ]; then
