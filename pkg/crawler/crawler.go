@@ -2797,9 +2797,18 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		*/
 	}
 
+	// General settings
+	args = append(args, "--disable-software-rasterizer")
+	args = append(args, "--use-fake-ui-for-media-stream")
+
 	// Avoid funny localizations/detections
 	args = append(args, "--disable-webrtc")
 	if browser == BrowserChrome || browser == BrowserChromium {
+		// DNS over HTTPS (DoH) settings
+		args = append(args, "--dns-prefetch-disable")
+		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		args = append(args, "--host-resolver-rules=MAP *:443")
+
 		args = append(args, "--disable-geolocation")
 		args = append(args, "--disable-notifications")
 		args = append(args, "--disable-quic")
