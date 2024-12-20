@@ -1574,6 +1574,21 @@ func changeUserAgent(wd *selenium.WebDriver, ctx *ProcessContext) error {
 		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
 	}
 
+	// Update user agent using CDP as well:
+	_, err = (*wd).ExecuteScript(fmt.Sprintf(`
+        const cdp = chrome.debugger;
+        cdp.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
+            cdp.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.setUserAgentOverride", {
+                userAgent: "%s",
+                acceptLanguage: "en-US,en;q=0.9",
+                platform: "Windows"
+            });
+        });
+    `, userAgent), nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed to: %s", userAgent)
 	return nil
 }
@@ -2750,6 +2765,21 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
+	// CDP COnfig for Chrome/Chromium
+	var cdpActive bool
+	if browser == BrowserChrome || browser == BrowserChromium {
+		// Set the CDP port
+		args = append(args, "--remote-debugging-port=7900")
+		// Set the CDP host
+		args = append(args, "--remote-debugging-address=0.0.0.0")
+		// Set the CDP version
+		args = append(args, "--remote-debugging-version=1.3")
+
+		// Hide CDP
+
+		cdpActive = true
+	}
+
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
@@ -3022,6 +3052,26 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	err = addLoadListener(&wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
+	}
+
+	// Configure CDP
+	if cdpActive {
+		blockVideo := `chrome.debugger.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
+			chrome.debugger.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.enable");
+			chrome.debugger.onEvent.addListener((source, message) => {
+				if (message.method === "Network.requestIntercepted" && message.params.request.url.includes(".mp4")) {
+					chrome.debugger.sendCommand({tabId: source.tabId}, "Network.continueInterceptedRequest", {
+						interceptionId: message.params.interceptionId,
+						errorReason: "BlockedByClient"
+					});
+				}
+			});
+		});`
+
+		_, err2 := wd.ExecuteScript(blockVideo, nil)
+		if err2 != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err)
+		}
 	}
 
 	return wd, err
