@@ -21,6 +21,15 @@ import (
 	"encoding/json"
 )
 
+const (
+	// DBPostgresStr represents the PostgreSQL label
+	DBPostgresStr = "postgres"
+	// DBSQLiteStr represents the SQLite label
+	DBSQLiteStr = "sqlite3"
+	// DBMySQLStr represents the MySQL label
+	DBMySQLStr = "mysql"
+)
+
 // TxHandler is a wrapper around the sql.Tx type.
 type TxHandler struct {
 	sql.Tx
@@ -57,17 +66,21 @@ type Source struct {
 // Event represents the structure of the Events table
 type Event struct {
 	// ID is the unique identifier of the event.
-	ID string `json:"event_sha256"` // sha256 hash
+	ID string `json:"event_sha256" yaml:"event_sha256"` // sha256 hash
+	// CreatedAt is the creation timestamp of the event.
+	CreatedAt string `json:"event_created_at" yaml:"event_created_at"`
+	// LastUpdatedAt is the last update timestamp of the event.
+	LastUpdatedAt string `json:"event_last_updated_at" yaml:"event_last_updated_at"`
 	// SourceID is the unique identifier of the source.
-	SourceID uint64 `json:"source_id"`
+	SourceID uint64 `json:"source_id" yaml:"source_id"`
 	// Type is the type of the event.
-	Type string `json:"event_type"`
+	Type string `json:"event_type" yaml:"event_type"`
 	// Severity is the severity of the event.
-	Severity string `json:"event_severity"`
+	Severity string `json:"event_severity" yaml:"event_severity"`
 	// Timestamp is the timestamp of the event.
-	Timestamp string `json:"event_timestamp"`
+	Timestamp string `json:"event_timestamp" yaml:"event_timestamp"`
 	// Details is the details of the event.
-	Details map[string]interface{} `json:"details"`
+	Details map[string]interface{} `json:"details" yaml:"details"`
 }
 
 // DefaultSourceCfgJSON is the default configuration for a source in JSON format.

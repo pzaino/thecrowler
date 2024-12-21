@@ -390,7 +390,7 @@ func TestSafeTransport(t *testing.T) {
 		{
 			name:        testCase + "1",
 			timeout:     5,
-			sslmode:     "disable",
+			sslmode:     DisableStr,
 			expectedTLS: false,
 		},
 		{
@@ -498,7 +498,7 @@ func TestHostToIP(t *testing.T) {
 		},
 		{
 			name:     "HostToIP Test case 2",
-			host:     "localhost",
+			host:     LoalhostStr,
 			expected: []string{"::1", "127.0.0.1"},
 		},
 	}

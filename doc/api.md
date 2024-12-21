@@ -6,25 +6,30 @@ of end points to manage your sources (aka, add/remove etc sources).
 
 The end-points added so far are:
 
-* [GET] `/v1/search?q=<your query>`: This end-point will search the database
+* [GET] `/v1/search/general?q=<your query>`: This end-point will search the database
   for the query you provide and return the results in JSON format.
-* [GET] `/v1/netinfo?q=<your query>`: This end-point will search the database
+* [GET] `/v1/search/netinfo?q=<your query>`: This end-point will search the database
   for the query you provide and return the results in JSON format. The results
   will include the network information of the site.
-* [GET] `/v1/httpinfo?q=<your query>`: This end-point will search the database
+* [GET] `/v1/search/httpinfo?q=<your query>`: This end-point will search the database
   for the query you provide and return the results in JSON format. The results
   will include the HTTP information of the site, detected technologies and SSL
   Info.
-* [GET] `/v1/screenshot?q=<your query>`: This end-point will search the
+* [GET] `/v1/search/screenshot?q=<your query>`: This end-point will search the
   database for the query you provide and return the results in JSON format. The
   results will include the screenshot of the site.
-* [GET] `/v1/webobject?q=<your query>`: This end-point will search the database
+* [GET] `/v1/search/webobject?q=<your query>`: This end-point will search the database
   for the query you provide and return the results in JSON format. The results
   will include the web objects of the site.
-* [GET] `/v1/correlated_sites?q=<your query>`: This end-point will search the
+* [GET] `/v1/search/correlated_sites?q=<your query>`: This end-point will search the
   database for the query you provide and return the results in JSON format. The
   results will include all the correlated sites of the specified terms.
   Basically if you want to know how many sites are related to a specific term,
+  web site, company, etc, you can use this end-point.
+* [GET] `/v1/search/collected_data?q=<your query>`: This end-point will search the
+  database for the query you provide and return the results in JSON format. The
+  results will include all the collected data of the specified terms.
+  Basically if you want to know how many data are related to a specific term,
   web site, company, etc, you can use this end-point.
 
 There are equivalent end-points in [POST] for all the above end-points.
@@ -41,7 +46,7 @@ You can browse on the results by using the `offset` parameter.
 
 For example:
 
-`/v1/webobject?q=example.com&offset=1`
+`/v1/search/webobject?q=example.com&offset=1`
 
 This will return the second page of the results. The default limit is 10.
 
@@ -50,18 +55,39 @@ This will return the second page of the results. The default limit is 10.
 If you have enabled the console feature in your config.yaml, you can also
 manage your sources via the API. The end-points added so far are:
 
-* [GET] `/v1/addsource`: This end-point will add a new source to the database.
+* [GET] `/v1/source/add`: This end-point will add a new source to the database.
   The source should be provided in JSON format.
   [addsource](./api/addsource.md) detailed documentation.
-* [GET] `/v1/removesource`: This end-point will remove a source from the
-  database. The source should be provided in JSON format.
+* [GET] `/v1/source/remove`: This end-point will remove a source from the
+  database (and all the related crawled data).
+* [GET] `/v1/source/update`: This end-point will update a source in the database.
+* [GET] `/v1/source/vacuum`: This end-point will vacuum the source from all data
+  crawled and collected so far (note: it does NOT remove the source, it's owners, categories etc., only crawled data).
 
 There are equivalent end-points in [POST] for all the above end-points.
 
 You can also check what's going on with the crawler by checking the logs of the
 CROWler engine and/or use the following console end-points:
 
-* [GET] `/v1/get_all_source_status`: This end-point will return the status of the
+* [GET] `/v1/source/statuses`: This end-point will return the status of the
   of all the crawling activities going on.
-* [GET] `/v1/get_source_status`: This end-point will return the status of the
+* [GET] `/v1/source/status`: This end-point will return the status of the
   crawling activity of a specific source.
+
+To manage Owners and Categories, you can use the following end-points:
+
+* [GET] `/v1/owner/add`: This end-point will add a new owner to the database.
+  The owner should be provided in JSON format.
+* [GET] `/v1/owner/remove`: This end-point will remove an owner from the
+  database.
+* [GET] `/v1/owner/update`: This end-point will update an owner in the database.
+* [GET] `/v1/owner/list`: This end-point will list all the owners in the database.
+
+There are equivalent end-points in [POST] for all the above end-points.
+
+* [GET] `/v1/category/add`: This end-point will add a new category to the database.
+  The category should be provided in JSON format.
+* [GET] `/v1/category/remove`: This end-point will remove a category from the
+  database.
+* [GET] `/v1/category/update`: This end-point will update a category in the database.
+* [GET] `/v1/category/list`: This end-point will list all the categories in the database.

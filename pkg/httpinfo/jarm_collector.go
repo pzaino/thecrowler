@@ -34,13 +34,16 @@ import (
 )
 
 const (
-	sslV3         = "SSLv3"
-	tlsV10        = "TLS_1"
-	tlsV11        = "TLS_1.1"
-	tlsV12        = "TLS_1.2"
-	tlsV12Support = "1.2_SUPPORT"
-	tlsV13        = "TLS_1.3"
-	tlsV13Support = "1.3_SUPPORT"
+	sslV3          = "SSLv3"
+	tlsV10         = "TLS_1"
+	tlsV11         = "TLS_1.1"
+	tlsV12         = "TLS_1.2"
+	tlsV12Support  = "1.2_SUPPORT"
+	tlsV13         = "TLS_1.3"
+	tlsV13Support  = "1.3_SUPPORT"
+	detailsForward = "FORWARD"
+	detailsGrease  = "GREASE"
+	detailsPipes   = "|||"
 )
 
 // JARMCollector is a struct that collects JARM fingerprints
@@ -164,16 +167,16 @@ func PrintClientHelloDetails(packet []byte) {
 // Collect collects JARM fingerprint for a given host and port
 func (jc JARMCollector) Collect(host string, port string) (string, error) {
 	jarmDetails := [10][]string{
-		{host, port, tlsV12, "ALL", "FORWARD", "NO_GREASE", "APLN", tlsV12Support, "REVERSE"},
-		{host, port, tlsV12, "ALL", "REVERSE", "NO_GREASE", "APLN", tlsV12Support, "FORWARD"},
-		{host, port, tlsV12, "ALL", "TOP_HALF", "NO_GREASE", "APLN", "NO_SUPPORT", "FORWARD"},
-		{host, port, tlsV12, "ALL", "BOTTOM_HALF", "NO_GREASE", "RARE_APLN", "NO_SUPPORT", "FORWARD"},
-		{host, port, tlsV12, "ALL", "MIDDLE_OUT", "GREASE", "RARE_APLN", "NO_SUPPORT", "REVERSE"},
-		{host, port, tlsV11, "ALL", "FORWARD", "NO_GREASE", "APLN", "NO_SUPPORT", "FORWARD"},
-		{host, port, tlsV13, "ALL", "FORWARD", "NO_GREASE", "APLN", tlsV13Support, "REVERSE"},
-		{host, port, tlsV13, "ALL", "REVERSE", "NO_GREASE", "APLN", tlsV13Support, "FORWARD"},
-		{host, port, tlsV13, "NO1.3", "FORWARD", "NO_GREASE", "APLN", tlsV13Support, "FORWARD"},
-		{host, port, tlsV13, "ALL", "MIDDLE_OUT", "GREASE", "APLN", tlsV13Support, "REVERSE"},
+		{host, port, tlsV12, "ALL", detailsForward, "NO_GREASE", "APLN", tlsV12Support, "REVERSE"},
+		{host, port, tlsV12, "ALL", "REVERSE", "NO_GREASE", "APLN", tlsV12Support, detailsForward},
+		{host, port, tlsV12, "ALL", "TOP_HALF", "NO_GREASE", "APLN", "NO_SUPPORT", detailsForward},
+		{host, port, tlsV12, "ALL", "BOTTOM_HALF", "NO_GREASE", "RARE_APLN", "NO_SUPPORT", detailsForward},
+		{host, port, tlsV12, "ALL", "MIDDLE_OUT", detailsGrease, "RARE_APLN", "NO_SUPPORT", "REVERSE"},
+		{host, port, tlsV11, "ALL", detailsForward, "NO_GREASE", "APLN", "NO_SUPPORT", detailsForward},
+		{host, port, tlsV13, "ALL", detailsForward, "NO_GREASE", "APLN", tlsV13Support, "REVERSE"},
+		{host, port, tlsV13, "ALL", "REVERSE", "NO_GREASE", "APLN", tlsV13Support, detailsForward},
+		{host, port, tlsV13, "NO1.3", detailsForward, "NO_GREASE", "APLN", tlsV13Support, detailsForward},
+		{host, port, tlsV13, "ALL", "MIDDLE_OUT", detailsGrease, "APLN", tlsV13Support, "REVERSE"},
 	}
 
 	var jarmBuilder strings.Builder
@@ -305,11 +308,11 @@ func getCiphers(jarmDetails []string) []byte {
 		}
 	}
 
-	if jarmDetails[4] != "FORWARD" {
+	if jarmDetails[4] != detailsForward {
 		cipherList = cipherMung(cipherList, jarmDetails[4])
 	}
 
-	if jarmDetails[5] == "GREASE" {
+	if jarmDetails[5] == detailsGrease {
 		cipherList = append([][]byte{chooseGrease()}, cipherList...)
 	}
 
@@ -371,7 +374,7 @@ func getExtensions(jarmDetails []string) []byte {
 	grease := false
 
 	// GREASE
-	if jarmDetails[5] == "GREASE" {
+	if jarmDetails[5] == detailsGrease {
 		allExtensions = append(allExtensions, chooseGrease()...)
 		allExtensions = append(allExtensions, 0x00, 0x00)
 		grease = true
@@ -469,7 +472,7 @@ func appLayerProtoNegotiation(jarmDetails []string) []byte {
 		}
 	}
 
-	if jarmDetails[8] != "FORWARD" {
+	if jarmDetails[8] != detailsForward {
 		alpns = cipherMung(alpns, jarmDetails[8])
 	}
 
@@ -530,7 +533,7 @@ func supportedVersions(jarmDetails []string, grease bool) []byte {
 		}
 	}
 
-	if jarmDetails[8] != "FORWARD" {
+	if jarmDetails[8] != detailsForward {
 		versions = cipherMung(versions, jarmDetails[8])
 	}
 
@@ -611,12 +614,12 @@ func (jc JARMCollector) sendPacket(packet []byte, host string, port string) ([]b
 func readPacket(data []byte, _ []string) string {
 	// _ should be jarmDetails, but it is not used at the moment
 	if data == nil {
-		return "|||"
+		return detailsPipes
 	}
 	var jarm strings.Builder
 
 	if data[0] == 21 {
-		return "|||"
+		return detailsPipes
 	}
 
 	if data[0] == 22 && data[5] == 2 {
@@ -634,7 +637,7 @@ func readPacket(data []byte, _ []string) string {
 		return jarm.String()
 	}
 
-	return "|||"
+	return detailsPipes
 }
 
 // extractExtensionInfo extracts the extension information from the ServerHello message

@@ -212,7 +212,7 @@ func main() {
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Awaiting for requests...")
-	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == "enable" {
+	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == cmn.EnableStr {
 		log.Fatal(srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
 	}
 	log.Fatal(srv.ListenAndServe())
@@ -234,24 +234,38 @@ func initAPIv1() {
 	webCorrelatedSitesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webCorrelatedSitesHandler)))
 	webScrapedDataHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webScrapedDataHandler)))
 
-	http.Handle("/v1/search", searchHandlerWithMiddlewares)
-	http.Handle("/v1/netinfo", netInfoHandlerWithMiddlewares)
-	http.Handle("/v1/httpinfo", httpInfoHandlerWithMiddlewares)
-	http.Handle("/v1/screenshot", scrImgSrchHandlerWithMiddlewares)
-	http.Handle("/v1/webobject", webObjectHandlerWithMiddlewares)
-	http.Handle("/v1/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
-	http.Handle("/v1/collected_data", webScrapedDataHandlerWithMiddlewares)
+	http.Handle("/v1/search/general", searchHandlerWithMiddlewares)
+	http.Handle("/v1/search/netinfo", netInfoHandlerWithMiddlewares)
+	http.Handle("/v1/search/httpinfo", httpInfoHandlerWithMiddlewares)
+	http.Handle("/v1/search/screenshot", scrImgSrchHandlerWithMiddlewares)
+	http.Handle("/v1/search/webobject", webObjectHandlerWithMiddlewares)
+	http.Handle("/v1/search/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
+	http.Handle("/v1/search/collected_data", webScrapedDataHandlerWithMiddlewares)
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
 		removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
+		updateSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateSourceHandler)))
+		vacuumSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(vacuumSourceHandler)))
 		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
 
-		http.Handle("/v1/add_source", addSourceHandlerWithMiddlewares)
-		http.Handle("/v1/remove_source", removeSourceHandlerWithMiddlewares)
-		http.Handle("/v1/get_source_status", singleURLstatusHandlerWithMiddlewares)
-		http.Handle("/v1/get_all_source_status", allURLstatusHandlerWithMiddlewares)
+		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/update", updateSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/vacuum", vacuumSourceHandlerWithMiddlewares)
+		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
+		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
+
+		// Owner endpoints
+		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
+		http.Handle("/v1/owner/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateOwnerHandler))))
+		http.Handle("/v1/owner/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeOwnerHandler))))
+
+		// Category endpoints
+		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
+		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
+		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
 	}
 }
 
@@ -663,6 +677,52 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// updateSourceHandler handles the update of sources
+func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusNoContent
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", http.StatusInternalServerError, successCode)
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+// vacuumSourceHandler handles the vacuum of sources
+func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusNoContent
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := performVacuumSource(query, getQTypeFromName(r.Method), &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
 // singleURLstatusHandler handles the status requests
 func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 	select {
@@ -702,4 +762,40 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
+}
+
+func addOwnerHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performAddOwner(query, qType, db)
+	})
+}
+
+func updateOwnerHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performUpdateOwner(query, qType, db)
+	})
+}
+
+func removeOwnerHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performRemoveOwner(query, qType, db)
+	})
+}
+
+func addCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performAddCategory(query, qType, db)
+	})
+}
+
+func updateCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performUpdateCategory(query, qType, db)
+	})
+}
+
+func removeCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performRemoveCategory(query, qType, db)
+	})
 }

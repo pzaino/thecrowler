@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 const (
@@ -231,8 +233,8 @@ func TestValidateRemoteHost(t *testing.T) {
 	// Call the validateRemoteHost function
 	config.validateRemoteHost()
 
-	// Check if the Remote.Host is set to "localhost"
-	if config.Remote.Host != "localhost" {
+	// Check if the Remote.Host is set to LoalhostStr
+	if config.Remote.Host != cmn.LoalhostStr {
 		t.Errorf("Expected Remote.Host to be 'localhost', got %v", config.Remote.Host)
 	}
 
@@ -477,8 +479,8 @@ func TestValidateRemoteType(t *testing.T) {
 	// Call the validateRemoteType function
 	config.validateRemoteType()
 
-	// Check if the Remote.Type is set to "local"
-	if config.Remote.Type != "local" {
+	// Check if the Remote.Type is set to cmn.LocalStr
+	if config.Remote.Type != cmn.LocalStr {
 		t.Errorf("Expected Remote.Type to be 'local', got %v", config.Remote.Type)
 	}
 
@@ -510,8 +512,8 @@ func TestValidateRemoteSSLMode(t *testing.T) {
 	// Call the validateRemoteSSLMode function
 	config.validateRemoteSSLMode()
 
-	// Check if the Remote.SSLMode is set to "disable"
-	if config.Remote.SSLMode != "disable" {
+	// Check if the Remote.SSLMode is set to cmn.DisableStr
+	if config.Remote.SSLMode != cmn.DisableStr {
 		t.Errorf("Expected Remote.SSLMode to be 'disable', got %v", config.Remote.SSLMode)
 	}
 
@@ -582,8 +584,8 @@ func TestValidateDatabase(t *testing.T) {
 		t.Errorf("Expected Database.Type to be 'postgres', got %v", config.Database.Type)
 	}
 
-	// Check if the Database.Host is set to "localhost"
-	if config.Database.Host != "localhost" {
+	// Check if the Database.Host is set to cmn.LoalhostStr
+	if config.Database.Host != cmn.LoalhostStr {
 		t.Errorf("Expected Database.Host to be 'localhost', got %v", config.Database.Host)
 	}
 
@@ -710,8 +712,8 @@ func TestValidateAPI(t *testing.T) {
 	}
 }
 
-// Test validateSelenium
-func TestValidateSelenium(t *testing.T) {
+// Test validateVDI
+func TestValidateVDI(t *testing.T) {
 	// Create a config instance with some Selenium configurations
 	config := &Config{
 		Selenium: []Selenium{
@@ -720,7 +722,7 @@ func TestValidateSelenium(t *testing.T) {
 				ServiceType: "chromedriver",
 				Path:        "/path/to/chrome",
 				DriverPath:  "/path/to/chromedriver",
-				Host:        "localhost",
+				Host:        cmn.LoalhostStr,
 				Port:        4444,
 				ProxyURL:    "http://proxy.example.com",
 			},
@@ -729,31 +731,31 @@ func TestValidateSelenium(t *testing.T) {
 				ServiceType: "geckodriver",
 				Path:        "/path/to/firefox",
 				DriverPath:  "/path/to/geckodriver",
-				Host:        "localhost",
+				Host:        cmn.LoalhostStr,
 				Port:        4444,
 				ProxyURL:    "http://proxy.example.com",
 			},
 		},
 	}
 
-	// Call the validateSelenium function
-	config.validateSelenium()
+	// Call the validateVDI function
+	config.validateVDI()
 
 	// Add assertions to check if the validations are successful
 	for _, selenium := range config.Selenium {
 		// Add assertions for each validation function
-		// Example assertion for validateSeleniumType
+		// Example assertion for validateVDIType
 		if selenium.Type != "chrome" && selenium.Type != "firefox" {
 			t.Errorf("Invalid Selenium type: %s", selenium.Type)
 		}
 
 		// Add assertions for other validation functions
-		// validateSeleniumServiceType, validateSeleniumPath, etc.
+		// validateVDIServiceType, validateVDIPath, etc.
 	}
 }
 
-// Test validateSeleniumType
-func TestValidateSeleniumType(t *testing.T) {
+// Test validateVDIType
+func TestValidateVDIType(t *testing.T) {
 	// Create a config instance
 	config := &Config{}
 
@@ -762,8 +764,8 @@ func TestValidateSeleniumType(t *testing.T) {
 		Type: "",
 	}
 
-	// Call the validateSeleniumType function
-	config.validateSeleniumType(selenium)
+	// Call the validateVDIType function
+	config.validateVDIType(selenium)
 
 	// Check if the Type is set to "chrome"
 	if selenium.Type != "chrome" {
@@ -775,8 +777,8 @@ func TestValidateSeleniumType(t *testing.T) {
 		Type: "firefox",
 	}
 
-	// Call the validateSeleniumType function
-	config.validateSeleniumType(selenium)
+	// Call the validateVDIType function
+	config.validateVDIType(selenium)
 
 	// Check if the Type is trimmed and unchanged
 	if selenium.Type != "firefox" {
@@ -784,8 +786,8 @@ func TestValidateSeleniumType(t *testing.T) {
 	}
 }
 
-// Test validateSeleniumServiceType
-func TestValidateSeleniumServiceType(t *testing.T) {
+// Test validateVDIServiceType
+func TestValidateVDIServiceType(t *testing.T) {
 	// Create a config instance with a Selenium struct
 	config := &Config{
 		Selenium: []Selenium{
@@ -798,9 +800,9 @@ func TestValidateSeleniumServiceType(t *testing.T) {
 		},
 	}
 
-	// Call the validateSeleniumServiceType function for each Selenium struct
+	// Call the validateVDIServiceType function for each Selenium struct
 	for i := range config.Selenium {
-		config.validateSeleniumServiceType(&config.Selenium[i])
+		config.validateVDIServiceType(&config.Selenium[i])
 	}
 
 	// Check if the ServiceType is set to "standalone" for the first Selenium struct
@@ -814,8 +816,8 @@ func TestValidateSeleniumServiceType(t *testing.T) {
 	}
 }
 
-// Test validateSeleniumHost
-func TestValidateSeleniumHost(t *testing.T) {
+// Test validateVDIHost
+func TestValidateVDIHost(t *testing.T) {
 	// Create a config instance with an empty Selenium.Host
 	config := &Config{
 		Selenium: []Selenium{
@@ -825,11 +827,11 @@ func TestValidateSeleniumHost(t *testing.T) {
 		},
 	}
 
-	// Call the validateSeleniumHost function
-	config.validateSeleniumHost(&config.Selenium[0])
+	// Call the validateVDIHost function
+	config.validateVDIHost(&config.Selenium[0])
 
-	// Check if the Selenium.Host is set to "localhost"
-	if config.Selenium[0].Host != "localhost" {
+	// Check if the Selenium.Host is set to cmn.LoalhostStr
+	if config.Selenium[0].Host != cmn.LoalhostStr {
 		t.Errorf("Expected Selenium.Host to be 'localhost', got %v", config.Selenium[0].Host)
 	}
 
@@ -842,8 +844,8 @@ func TestValidateSeleniumHost(t *testing.T) {
 		},
 	}
 
-	// Call the validateSeleniumHost function
-	config.validateSeleniumHost(&config.Selenium[0])
+	// Call the validateVDIHost function
+	config.validateVDIHost(&config.Selenium[0])
 
 	// Check if the Selenium.Host is trimmed and unchanged
 	if config.Selenium[0].Host != testURL {
@@ -851,8 +853,8 @@ func TestValidateSeleniumHost(t *testing.T) {
 	}
 }
 
-// Test validateSeleniumPort
-func TestValidateSeleniumPort(t *testing.T) {
+// Test validateVDIPort
+func TestValidateVDIPort(t *testing.T) {
 	// Create a config instance with a Selenium struct
 	config := &Config{
 		Selenium: []Selenium{
@@ -868,9 +870,9 @@ func TestValidateSeleniumPort(t *testing.T) {
 		},
 	}
 
-	// Call the validateSeleniumPort function for each Selenium struct
+	// Call the validateVDIPort function for each Selenium struct
 	for i := range config.Selenium {
-		config.validateSeleniumPort(&config.Selenium[i])
+		config.validateVDIPort(&config.Selenium[i])
 	}
 
 	// Check if the Selenium ports are validated correctly
@@ -908,7 +910,7 @@ func TestValidateRulesets(t *testing.T) {
 	}
 
 	// Check if the first Ruleset Type is set to the default value
-	if config.Rulesets[0].Type != "local" {
+	if config.Rulesets[0].Type != cmn.LocalStr {
 		t.Errorf("Expected first Ruleset Type to be 'local', got %v", config.Rulesets[0].Type)
 	}
 
@@ -941,7 +943,7 @@ func TestValidateImageStorageAPI(t *testing.T) {
 	config.validateImageStorageAPI()
 
 	// Check if the ImageStorageAPI fields are set to their default values
-	if config.ImageStorageAPI.Type != "local" {
+	if config.ImageStorageAPI.Type != cmn.LocalStr {
 		t.Errorf("Expected ImageStorageAPI.Type to be 'local', got %v", config.ImageStorageAPI.Type)
 	}
 	if config.ImageStorageAPI.Host != "" {
@@ -953,7 +955,7 @@ func TestValidateImageStorageAPI(t *testing.T) {
 	if config.ImageStorageAPI.Port != 0 {
 		t.Errorf("Expected ImageStorageAPI.Port to be 0, got %v", config.ImageStorageAPI.Port)
 	}
-	if config.ImageStorageAPI.Region != "nowhere" {
+	if config.ImageStorageAPI.Region != cmn.NowhereStr {
 		t.Errorf("Expected ImageStorageAPI.Region to be 'nowhere', got %v", config.ImageStorageAPI.Region)
 	}
 	if config.ImageStorageAPI.Token != "" {
@@ -980,7 +982,7 @@ func TestValidateFileStorageAPI(t *testing.T) {
 	config.validateFileStorageAPI()
 
 	// Check if the FileStorageAPI fields are set to their default values
-	if config.FileStorageAPI.Type != "local" {
+	if config.FileStorageAPI.Type != cmn.LocalStr {
 		t.Errorf("Expected FileStorageAPI.Type to be 'local', got %v", config.FileStorageAPI.Type)
 	}
 	if config.FileStorageAPI.Host != "" {
@@ -992,7 +994,7 @@ func TestValidateFileStorageAPI(t *testing.T) {
 	if config.FileStorageAPI.Port != 0 {
 		t.Errorf("Expected FileStorageAPI.Port to be 0, got %v", config.FileStorageAPI.Port)
 	}
-	if config.FileStorageAPI.Region != "nowhere" {
+	if config.FileStorageAPI.Region != cmn.NowhereStr {
 		t.Errorf("Expected FileStorageAPI.Region to be 'nowhere', got %v", config.FileStorageAPI.Region)
 	}
 	if config.FileStorageAPI.Token != "" {
@@ -1204,7 +1206,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0  0 0 false false 0 0 0 0 0   0 0 0      false false false false false false false false false 0 false false { 0 0     0 0 0}}, API: { 0 0 false false     false 0 0 0 false}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0    0 0 false false 0 0 0 0 0   0 0 0      false false false false false false false false false false false false false false 0 false false { 0 0     0 0 0}}, API: { 0 0 false false     false 0 0 0 false}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()
@@ -1713,7 +1715,7 @@ func TestLoadRemoteConfig(t *testing.T) {
 					Host:    testURL,
 					Path:    "config.yaml",
 					Timeout: 10,
-					SSLMode: "disable",
+					SSLMode: cmn.DisableStr,
 				},
 			},
 			mockBody:  "remote_content: valid",
@@ -1732,7 +1734,7 @@ func TestLoadRemoteConfig(t *testing.T) {
 					Host:    testURL,
 					Path:    "config.yaml",
 					Timeout: 10,
-					SSLMode: "disable",
+					SSLMode: cmn.DisableStr,
 				},
 			},
 			mockBody:  "",

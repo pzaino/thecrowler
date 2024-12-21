@@ -23,6 +23,15 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
+const (
+	// EventSeverityInfo represents an informational event.
+	EventSeverityInfo = "info"
+	// EventSeverityWarning represents a warning event.
+	EventSeverityWarning = "warning"
+	// EventSeverityError represents an error event.
+	EventSeverityError = "error"
+)
+
 // GenerateEventUID generates a unique identifier for the event.
 func GenerateEventUID(e Event) string {
 	// convert e.SourceID into a string
@@ -93,4 +102,343 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error)
 	}(e, schedTime)
 
 	return schedTime, nil
+}
+
+// RemoveEvent removes an event from the database.
+// It receives in input an Event UID and returns an error if the operation fails.
+func RemoveEvent(db *Handler, eventUID string) error {
+	// Execute the query
+	_, err := (*db).Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventUID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetEvent retrieves an event from the database.
+// It receives in input an Event UID and returns the Event struct and an error if the operation fails.
+func GetEvent(db *Handler, eventUID string) (Event, error) {
+	var e Event
+
+	// Execute the query
+	row := (*db).QueryRow(`SELECT * FROM Events WHERE event_sha256 = $1`, eventUID)
+	err := row.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+	if err != nil {
+		return e, err
+	}
+
+	return e, nil
+}
+
+// GetEvents retrieves all the events from the database.
+// It returns a slice of Event structs and an error if the operation fails.
+func GetEvents(db *Handler) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events`)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySource retrieves all the events related to a specific source from the database.
+// It receives in input a Source ID and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySource(db *Handler, sourceID uint64) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE source_id = $1`, sourceID)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsByType retrieves all the events of a specific type from the database.
+// It receives in input an event type and returns a slice of Event structs and an error if the operation fails.
+func GetEventsByType(db *Handler, eventType string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE event_type = $1`, eventType)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySeverity retrieves all the events of a specific severity from the database.
+// It receives in input an event severity and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySeverity(db *Handler, eventSeverity string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE event_severity = $1`, eventSeverity)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsByTime retrieves all the events that occurred in a specific time frame from the database.
+// It receives in input a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsByTime(db *Handler, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE event_timestamp BETWEEN $1 AND $2`, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySeverityAndTime retrieves all the events of a specific severity that occurred in a specific time frame from the database.
+// It receives in input an event severity, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySeverityAndTime(db *Handler, eventSeverity, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE event_severity = $1 AND event_timestamp BETWEEN $2 AND $3`, eventSeverity, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsByTypeAndTime retrieves all the events of a specific type that occurred in a specific time frame from the database.
+// It receives in input an event type, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsByTypeAndTime(db *Handler, eventType, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE event_type = $1 AND event_timestamp BETWEEN $2 AND $3`, eventType, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsByTypeSeverityAndTime retrieves all the events of a specific type and severity that occurred in a specific time frame from the database.
+// It receives in input an event type, severity, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsByTypeSeverityAndTime(db *Handler, eventType, eventSeverity, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE event_type = $1 AND event_severity = $2 AND event_timestamp BETWEEN $3 AND $4`, eventType, eventSeverity, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySourceAndTime retrieves all the events related to a specific source that occurred in a specific time frame from the database.
+// It receives in input a Source ID, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySourceAndTime(db *Handler, sourceID uint64, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE source_id = $1 AND event_timestamp BETWEEN $2 AND $3`, sourceID, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySourceSeverityAndTime retrieves all the events related to a specific source and severity that occurred in a specific time frame from the database.
+// It receives in input a Source ID, an event severity, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySourceSeverityAndTime(db *Handler, sourceID uint64, eventSeverity, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE source_id = $1 AND event_severity = $2 AND event_timestamp BETWEEN $3 AND $4`, sourceID, eventSeverity, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySourceTypeAndTime retrieves all the events related to a specific source and type that occurred in a specific time frame from the database.
+// It receives in input a Source ID, an event type, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySourceTypeAndTime(db *Handler, sourceID uint64, eventType, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE source_id = $1 AND event_type = $2 AND event_timestamp BETWEEN $3 AND $4`, sourceID, eventType, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// GetEventsBySourceTypeSeverityAndTime retrieves all the events related to a specific source, type and severity that occurred in a specific time frame from the database.
+// It receives in input a Source ID, an event type, severity, a start and end time and returns a slice of Event structs and an error if the operation fails.
+func GetEventsBySourceTypeSeverityAndTime(db *Handler, sourceID uint64, eventType, eventSeverity, startTime, endTime string) ([]Event, error) {
+	var events []Event
+
+	// Execute the query
+	rows, err := (*db).ExecuteQuery(`SELECT * FROM Events WHERE source_id = $1 AND event_type = $2 AND event_severity = $3 AND event_timestamp BETWEEN $4 AND $5`, sourceID, eventType, eventSeverity, startTime, endTime)
+	if err != nil {
+		return events, err
+	}
+	defer rows.Close() //nolint:errcheck // We can't check the error here
+
+	// Iterate over the rows
+	for rows.Next() {
+		var e Event
+		err = rows.Scan(&e.ID, &e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+		if err != nil {
+			return events, err
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
 }

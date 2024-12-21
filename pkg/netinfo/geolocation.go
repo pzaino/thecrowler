@@ -35,7 +35,7 @@ func DetectLocation(ipAddress string, cfg config.GeoLookupConfig) (*DetectedLoca
 	}
 	glType := strings.ToLower(strings.TrimSpace(cfg.Type))
 	switch glType {
-	case "maxmind", "local":
+	case "maxmind", cmn.LocalStr:
 		return detectLocationMaxMind(ipAddress, cfg.DBPath)
 	case "ip2location", "remote":
 		return detectLocationIP2Location(ipAddress, cfg.APIKey, cfg.Timeout, cfg.SSLMode)

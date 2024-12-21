@@ -44,7 +44,7 @@ func GetEngineID() string {
 	// Retrieve default network address
 	hostname, err := os.Hostname()
 	if err != nil {
-		hostname = "localhost"
+		hostname = LoalhostStr
 	}
 
 	// create process instance name: <hostname>:<pid>:<ppid>
@@ -215,7 +215,7 @@ func SafeTransport(timeout int, sslmode string) *http.Transport {
 	// Apply the TLS handshake timeout and DialTLS only if SSL is not disabled
 	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
 	if sslmode != "ignore" {
-		if sslmode != "disable" && sslmode != "disabled" {
+		if sslmode != DisableStr && sslmode != "disabled" {
 			transport.DialTLSContext = dialTLSWithIPCheck(time.Second * time.Duration(timeout))
 			transport.TLSHandshakeTimeout = time.Second * time.Duration(timeout)
 		}

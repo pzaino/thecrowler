@@ -60,7 +60,7 @@ func TestNewHandler(t *testing.T) {
 			name: "Test case 1: Postgres",
 			config: cfg.Config{
 				Database: cfg.Database{
-					Type: "postgres",
+					Type: DBPostgresStr,
 				},
 			},
 			expectedType: &PostgresHandler{},
@@ -70,7 +70,7 @@ func TestNewHandler(t *testing.T) {
 			name: "Test case 2: SQLite",
 			config: cfg.Config{
 				Database: cfg.Database{
-					Type: "sqlite",
+					Type: DBSQLiteStr,
 				},
 			},
 			expectedType: &SQLiteHandler{},

@@ -57,7 +57,7 @@ func postgresDBExists(db *sql.DB, dbName string) bool {
 func dbExists(db *sql.DB, dbms, dbName string) bool {
 	// Check if the database exists
 	var exists bool
-	if dbms == "postgres" {
+	if dbms == DBPostgresStr {
 		exists = postgresDBExists(db, dbName)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Unsupported database management system: %s", dbms)
@@ -78,7 +78,7 @@ func dbExists(db *sql.DB, dbms, dbName string) bool {
 func executeSQLFile(db *sql.DB, dbms, dbName string) {
 	// Get the path to the right SQL file
 	filePath := ""
-	if dbms == "postgres" {
+	if dbms == DBPostgresStr {
 		filePath = fmt.Sprintf("./postgresql-%s.pgsql", dbName)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Unsupported database management system: %s", dbms)

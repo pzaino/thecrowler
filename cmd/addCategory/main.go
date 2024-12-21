@@ -11,6 +11,7 @@ import (
 	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 	"github.com/qri-io/jsonschema"
 
 	"github.com/jmoiron/sqlx"
@@ -81,7 +82,7 @@ func main() {
 		config.Database.User, config.Database.Password, config.Database.DBName)
 
 	// Connect to the database
-	db, err := sqlx.Connect("postgres", psqlInfo)
+	db, err := sqlx.Connect(cdb.DBPostgresStr, psqlInfo)
 	if err != nil {
 		fmt.Printf("Error connecting to database: %v\n", err)
 		return

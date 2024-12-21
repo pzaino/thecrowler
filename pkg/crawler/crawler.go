@@ -18,6 +18,7 @@ package crawler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -39,6 +40,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/abadojack/whatlanggo"
+	cdp "github.com/chromedp/chromedp"
+	"github.com/mailru/easyjson/jlexer"
+	"github.com/mailru/easyjson/jwriter"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -63,10 +67,11 @@ import (
 const (
 	dbConnCheckErr             = "checking database connection: %v\n"
 	dbConnTransErr             = "committing transaction: %v"
-	selConnError               = "connecting to Selenium: %v"
+	selConnError               = "connecting to the VDI: %v"
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
 	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
+	errWorkerLog               = "Worker %d: Error indexing page %s: %v\n"
 
 	optDNSLookup = "dns_lookup"
 	optTCPConn   = "tcp_connection"
@@ -158,18 +163,20 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
-		releaseSelenium <- sel
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
+		closeSession(processCtx, args, &sel, releaseSelenium, err)
 		return
 	}
 
 	// Initialize the Selenium instance
 	if err = processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
-		cmn.DebugMsg(cmn.DbgLvlInfo, selConnError, err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
-		releaseSelenium <- sel
+		processCtx.Status.TotalErrors++
+		processCtx.Status.LastError = err.Error()
+		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
+		closeSession(processCtx, args, &sel, releaseSelenium, err)
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
@@ -183,7 +190,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
-		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+		processCtx.Status.LastError = err.Error()
 		return
 	}
 
@@ -201,13 +208,20 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
-		ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
 		return
 	}
 	initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
 
 	// Refresh the page
-	processCtx.RefreshSeleniumConnection(sel)
+	err = processCtx.RefreshSeleniumConnection(sel)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "refreshing Selenium connection: %v", err)
+		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.TotalErrors++
+		processCtx.Status.LastError = err.Error()
+		return
+	}
 
 	// Get network information
 	processCtx.wgNetInfo.Add(1)
@@ -327,7 +341,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		}
 	}
 
-	if processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+	if processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 		// Reset cookies after crawling
 		_ = ResetSiteSession(processCtx)
 	}
@@ -343,19 +357,21 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.PipelineRunning = 2
 }
 
-func closeSession(ctx *ProcessContext, args Pars, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance, err error) {
+func closeSession(ctx *ProcessContext,
+	args Pars, sel *SeleniumInstance,
+	releaseSelenium chan<- SeleniumInstance,
+	err error) {
+	// Release VDI connection
 	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
+	// Allow a new job to be processed (if any)
 	ctx.WG.Done()
-
-	// Log the end of the pipeline
-	ctx.Status.EndTime = time.Now()
-	UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Signal pipeline completion
 	if ctx.Status.PipelineRunning == 1 {
 		ctx.Status.PipelineRunning = 3
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
+	ctx.Status.EndTime = time.Now()
 	UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Create a database event to indicate the crawl has completed
@@ -403,7 +419,7 @@ func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) 
 	event := cdb.Event{
 		SourceID: sourceID,
 		Type:     "crawl_completed",
-		Severity: "info",
+		Severity: cdb.EventSeverityInfo,
 		Details:  statusMap,
 	}
 
@@ -460,10 +476,14 @@ func resetPageInfo(p *PageInfo) {
 // ConnectToVDI is responsible for connecting to the CROWler VDI Instance
 func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
-	ctx.wd, err = ConnectVDI(sel, 0)
+	var browserType int
+	if ctx.config.Crawler.Platform == "mobile" {
+		browserType = 1
+	}
+	ctx.wd, err = ConnectVDI(ctx, sel, browserType)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 		(*ctx.sel) <- sel
+		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
 		return err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "Connected to Selenium WebDriver successfully.")
@@ -471,23 +491,29 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 }
 
 // RefreshSeleniumConnection is responsible for refreshing the Selenium connection
-func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) {
+func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error {
 	if err := ctx.wd.Refresh(); err != nil {
-		ctx.wd, err = ConnectVDI(sel, 0)
+		var browserType int
+		if ctx.config.Crawler.Platform == "mobile" {
+			browserType = 1
+		}
+		ctx.wd, err = ConnectVDI(ctx, sel, browserType)
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
-			cmn.DebugMsg(cmn.DbgLvlError, "re-connecting to Selenium: %v", err)
-			(*ctx.sel) <- sel
 			UpdateSourceState(*ctx.db, ctx.source.URL, err)
-			return
+			(*ctx.sel) <- sel
+			cmn.DebugMsg(cmn.DbgLvlError, "re-"+selConnError, err)
+			return err
 		}
 	}
+	return nil
 }
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
 func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriver, error) {
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling URL: %s", ctx.source.URL)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling Source: %d", ctx.source.ID)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling URL: %s", ctx.source.URL)
 
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
 	ctx.getURLMutex.Lock()
@@ -495,7 +521,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 
 	if ctx.config.Crawler.ResetCookiesPolicy == "on_request" ||
 		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
-		ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		ctx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 		// Reset cookies on each request
 		_ = ResetSiteSession(ctx)
 	}
@@ -511,7 +537,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	var pageInfo PageInfo
 
 	// Detect technologies used on the page
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        ctx.GetContextID(),
 		TargetURL:    ctx.source.URL,
 		ResponseBody: nil,
@@ -694,10 +720,11 @@ func (ctx *ProcessContext) TakeScreenshot(wd selenium.WebDriver, url string, ind
 	}
 
 	if takeScreenshot {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Taking screenshot of %s...", url)
 		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
 		sid := strconv.FormatUint(ctx.source.ID, 10)
 		imageName := "s" + sid + "-" + generateUniqueName(url, "-desktop")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Taking screenshot: %s", imageName)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Taking screenshot of %s...", url)
 		ss, err := TakeScreenshot(&wd, imageName, ctx.config.Crawler.ScreenshotMaxHeight)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "taking screenshot: %v", err)
@@ -779,7 +806,7 @@ func (ctx *ProcessContext) GetNetInfo(_ string) {
 	ctx.ni.Config = &c
 
 	// Call GetNetInfo to retrieve network information
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering network information for %s...", ctx.source.URL)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Gathering network information for %s...", ctx.source.URL)
 	err := ctx.ni.GetNetInfo(ctx.source.URL)
 	ctx.Status.NetInfoRunning = 2
 
@@ -1450,6 +1477,14 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
 	}
 
+	// Change the User Agent (if needed)
+	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		err = changeUserAgent(&wd, ctx)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "changing User Agent: %v", err)
+		}
+	}
+
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -1509,6 +1544,117 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	}
 
 	return wd, docType, nil
+}
+
+func changeUserAgent(wd *selenium.WebDriver, ctx *ProcessContext) error {
+	var err error
+
+	// Get the User Agent
+	userAgent := cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, "linux", ctx.config.Selenium[ctx.SelID].Type)
+	if userAgent == "" {
+		if ctx.config.Crawler.Platform == "desktop" {
+			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-desktop01"]
+		} else {
+			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-mobile01"]
+		}
+	}
+
+	// JavaScript to override userAgent using an iframe trick
+	js := fmt.Sprintf(`
+		var iframe = document.createElement('iframe');
+		document.body.appendChild(iframe);
+		Object.defineProperty(iframe.contentWindow.navigator, 'userAgent', {
+			get: function() { return '%s'; }
+		});
+		// Replace global navigator with iframe's navigator
+		Object.defineProperty(window, 'navigator', {
+			get: function() { return iframe.contentWindow.navigator; }
+		});
+	`, userAgent)
+
+	// Execute the script in the browser
+	_, err = (*wd).ExecuteScript(js, nil)
+	if err != nil {
+		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
+	}
+
+	// Update user agent using CDP as well:
+	if ctx.config.Selenium[ctx.SelID].Type == "chrome" {
+		err = changeUserAgentCDP(wd, ctx, userAgent)
+		if err != nil {
+			return fmt.Errorf("failed to change User-Agent using CDP: %v", err)
+		}
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed to: %s", userAgent)
+	return nil
+}
+
+// Input for the Network.setUserAgentOverride command
+type setUserAgentOverrideParams struct {
+	UserAgent string `json:"userAgent"`
+}
+
+// Implement easyjson.Marshaler for the input
+func (p *setUserAgentOverrideParams) MarshalJSON() ([]byte, error) {
+	w := &jwriter.Writer{}
+	p.MarshalEasyJSON(w)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+func (p *setUserAgentOverrideParams) MarshalEasyJSON(w *jwriter.Writer) {
+	w.RawString(`{"userAgent":"`)
+	w.String(p.UserAgent)
+	w.RawString(`"}`)
+}
+
+// Empty response struct for the command (no response expected)
+type emptyResponse struct{}
+
+// Implement easyjson.Unmarshaler for the output
+func (r *emptyResponse) UnmarshalJSON(_ []byte) error {
+	return nil
+}
+
+// Implement easyjson.Unmarshaler for the output
+func (r *emptyResponse) UnmarshalEasyJSON(_ *jlexer.Lexer) {
+	// No-op since there is no data to unmarshal
+}
+
+func changeUserAgentCDP(_ *selenium.WebDriver, pctx *ProcessContext, userAgent string) error {
+	// Connect to the existing Chrome instance with CDP enabled
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Use cdp.NewRemoteAllocator to connect to the Chrome container
+	remoteAllocatorCtx, cancelRemoteAllocator := cdp.NewRemoteAllocator(ctx, "http://"+pctx.config.Selenium[pctx.SelID].Host+":9222")
+	defer cancelRemoteAllocator()
+
+	// Create a new browser context
+	browserCtx, cancelBrowser := cdp.NewContext(remoteAllocatorCtx)
+	defer cancelBrowser()
+
+	// Run CDP command to change the user-agent
+	params := &setUserAgentOverrideParams{
+		UserAgent: userAgent,
+	}
+
+	// Send the raw CDP command
+	err := cdp.Run(browserCtx,
+		cdp.ActionFunc(func(ctx context.Context) error {
+			return cdp.FromContext(ctx).Browser.Execute(
+				ctx,
+				"Network.setUserAgentOverride",
+				params,           // Input parameters
+				&emptyResponse{}, // Empty output since no response is expected
+			)
+		}),
+	)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
+	}
+
+	return err
 }
 
 func vdiSleep(ctx *ProcessContext, delay float64) error {
@@ -2003,7 +2149,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
-		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == "always" {
+		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
 		}
@@ -2075,6 +2221,12 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
+	// Check if the URL is the same as the Source URL (in which case skip it)
+	if url == processCtx.source.URL {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' as it is the same as the source URL\n", id, url)
+		return true
+	}
+
 	return false
 }
 
@@ -2149,7 +2301,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        processCtx.GetContextID(),
 		TargetURL:    currentURL,
 		ResponseBody: nil,
@@ -2236,7 +2388,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
 
 	// Mark the link as visited and add new links to the process context
@@ -2324,7 +2476,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        processCtx.GetContextID(),
 		TargetURL:    currentURL,
 		ResponseBody: nil,
@@ -2408,7 +2560,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url.Link, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
 	processCtx.visitedLinks[url.Link] = true
 
@@ -2463,7 +2615,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache := PageInfo{}
 
 	// Collect Detected Technologies
-	detectCtx := detect.DetectionContext{
+	detectCtx := detect.DContext{
 		CtxID:        processCtx.GetContextID(),
 		TargetURL:    currentURL,
 		ResponseBody: nil,
@@ -2513,7 +2665,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error indexing page %s: %v\n", id, url, err)
+		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
 	processCtx.visitedLinks[url] = true
 
@@ -2564,10 +2716,10 @@ func NewSeleniumService(c cfg.Selenium) (*selenium.Service, error) {
 	}
 
 	var protocol string
-	if c.SSLMode == "enable" {
-		protocol = "https"
+	if c.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
 	} else {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 	}
 
 	var err error
@@ -2637,11 +2789,19 @@ func getLocalNetworks() []string {
 */
 
 // ConnectVDI is responsible for connecting to the Selenium server instance
-func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
+func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (selenium.WebDriver, error) {
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {
 		browser = BrowserChrome
+	}
+
+	// If it's not being initialized yet, initialize the UserAgentsDB
+	if cmn.UADB.IsEmpty() {
+		err := cmn.UADB.InitUserAgentsDB()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to initialize UserAgentsDB: %v", err)
+		}
 	}
 
 	// Connect to the WebDriver instance running locally.
@@ -2649,10 +2809,17 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 
 	// Define the user agent string for a desktop Google Chrome browser
 	var userAgent string
-	if browseType == 0 {
-		userAgent = cmn.UsrAgentStrMap[browser+"-desktop01"]
-	} else if browseType == 1 {
-		userAgent = cmn.UsrAgentStrMap[browser+"-mobile01"]
+
+	// Get the user agent string from the UserAgentsDB
+	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, "linux", browser)
+
+	// Fallback in case the user agent is not found in the UserAgentsDB
+	if userAgent == "" {
+		if browseType == 0 {
+			userAgent = cmn.UsrAgentStrMap[browser+"-desktop01"]
+		} else if browseType == 1 {
+			userAgent = cmn.UsrAgentStrMap[browser+"-mobile01"]
+		}
 	}
 
 	var args []string
@@ -2667,6 +2834,18 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
+
+	// CDP COnfig for Chrome/Chromium
+	var cdpActive bool
+	if browser == BrowserChrome || browser == BrowserChromium {
+		// Set the CDP port
+		args = append(args, "--remote-debugging-port=9222")
+		// Set the CDP host
+		args = append(args, "--remote-debugging-address=0.0.0.0")
+		// Ensure that the CDP is active
+		args = append(args, "--auto-open-devtools-for-tabs")
+		cdpActive = true
+	}
 
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
@@ -2695,7 +2874,7 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			ProxySocksURL := "socks5h://" + proxyURL.Hostname()
 
 			// Set NoProxy []string to local host and networks
-			NoProxy := []string{"localhost"}
+			NoProxy := []string{cmn.LoalhostStr}
 			NoProxy = append(NoProxy, getLocalNetworks()...)
 
 			// Proxy settings
@@ -2715,14 +2894,22 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		*/
 	}
 
+	// General settings
+	args = append(args, "--disable-software-rasterizer")
+	args = append(args, "--use-fake-ui-for-media-stream")
+
 	// Avoid funny localizations/detections
 	args = append(args, "--disable-webrtc")
 	if browser == BrowserChrome || browser == BrowserChromium {
+		// DNS over HTTPS (DoH) settings
+		args = append(args, "--dns-prefetch-disable")
+		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		args = append(args, "--host-resolver-rules=MAP *:443")
+
 		args = append(args, "--disable-geolocation")
 		args = append(args, "--disable-notifications")
 		args = append(args, "--disable-quic")
 		args = append(args, "--disable-blink-features=AutomationControlled")
-		//args = append(args, "--disable-web-security") // STill thinking about this one, has it lowers the browser security a lot!
 		args = append(args, "--override-hardware-concurrency=4")
 		args = append(args, "--override-device-memory=4")
 		args = append(args, "--disable-plugins-discovery")
@@ -2742,19 +2929,49 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 		args = append(args, "--disable-peer-to-peer")
 		args = append(args, "--disable-dev-shm-usage")
 		args = append(args, "--disable-popup-blocking")
+		args = append(args, "--force-device-scale-factor=1")
 		// args = append(args, "--no-sandbox")
-		args = append(args, "--remote-debugging-port=0")
+		if ctx.config.Crawler.RequestImages {
+			args = append(args, "--blink-settings=imagesEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=imagesEnabled=false")
+		}
+		if ctx.config.Crawler.RequestCSS {
+			args = append(args, "--blink-settings=CSSImagesEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=CSSImagesEnabled=false")
+		}
+		if ctx.config.Crawler.RequestScripts {
+			args = append(args, "--blink-settings=JavaScriptEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=JavaScriptEnabled=false")
+		}
+		if ctx.config.Crawler.RequestPlugins {
+			args = append(args, "--blink-settings=PluginsEnabled=true")
+		} else {
+			args = append(args, "--blink-settings=PluginsEnabled=false")
+		}
+		if ctx.config.Crawler.ResetCookiesPolicy != "" && ctx.config.Crawler.ResetCookiesPolicy != "none" {
+			args = append(args, "--disable-site-isolation-trials")
+			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
+			args = append(args, "--disable-features=SameSiteByDefaultCookies")
+		}
+		// Disable video auto-play:
+		args = append(args, "--autoplay-policy=user-required")
 	}
 
 	// Append logging settings if available
 	args = append(args, "--enable-logging")
 	args = append(args, "--v=1")
 
+	// Configure the download directory
 	downloadDir := strings.TrimSpace(sel.Config.DownloadDir)
 	if downloadDir == "" {
 		downloadDir = "/tmp"
 		sel.Config.DownloadDir = downloadDir
 	}
+
+	// Configure the browser preferences
 	if browser == BrowserChrome || browser == BrowserChromium {
 		chromePrefs := map[string]interface{}{
 			"download.default_directory":               downloadDir,
@@ -2767,6 +2984,38 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			"useAutomationExtension":                   false,
 			"excludeSwitches":                          []string{"enable-automation"},
 		}
+
+		// Configure user content capabilities:
+		if !ctx.config.Crawler.RequestImages {
+			// Disable images
+			chromePrefs["profile.managed_default_content_settings.images"] = 2
+		} else {
+			// Allow images (default behavior)
+			chromePrefs["profile.managed_default_content_settings.images"] = 1
+		}
+		if !ctx.config.Crawler.RequestCSS {
+			// Disable images and CSS
+			chromePrefs["profile.managed_default_content_settings.stylesheets"] = 2
+		} else {
+			// Allow images and CSS (default behavior)
+			chromePrefs["profile.managed_default_content_settings.stylesheets"] = 1
+		}
+		if !ctx.config.Crawler.RequestScripts {
+			// Disable scripts
+			chromePrefs["profile.managed_default_content_settings.javascript"] = 2
+		} else {
+			// Allow scripts (default behavior)
+			chromePrefs["profile.managed_default_content_settings.javascript"] = 1
+		}
+		if !ctx.config.Crawler.RequestPlugins {
+			// Disable plugins
+			chromePrefs["profile.managed_default_content_settings.plugins"] = 2
+		} else {
+			// Allow plugins (default behavior)
+			chromePrefs["profile.managed_default_content_settings.plugins"] = 1
+		}
+
+		// Finalize the capabilities
 		caps.AddChrome(chrome.Capabilities{
 			Args:  args,
 			W3C:   true,
@@ -2779,6 +3028,38 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 			"browser.helperApps.neverAsk.saveToDisk":    "application/zip",
 			"browser.download.manager.showWhenStarting": false,
 		}
+
+		// Configure user content capabilities:
+		if !ctx.config.Crawler.RequestImages {
+			// Disable images
+			firefoxCaps["permissions.default.image"] = 2
+		} else {
+			// Allow images (default behavior)
+			firefoxCaps["permissions.default.image"] = 1
+		}
+		if !ctx.config.Crawler.RequestCSS {
+			// Disable images and CSS
+			firefoxCaps["permissions.default.stylesheet"] = 2
+		} else {
+			// Allow images and CSS (default behavior)
+			firefoxCaps["permissions.default.stylesheet"] = 1
+		}
+		if !ctx.config.Crawler.RequestScripts {
+			// Disable scripts
+			firefoxCaps["permissions.default.script"] = 2
+		} else {
+			// Allow scripts (default behavior)
+			firefoxCaps["permissions.default.script"] = 1
+		}
+		if !ctx.config.Crawler.RequestPlugins {
+			// Disable plugins
+			firefoxCaps["permissions.default.object"] = 2
+		} else {
+			// Allow plugins (default behavior)
+			firefoxCaps["permissions.default.object"] = 1
+		}
+
+		// Finalize the capabilities
 		caps.AddFirefox(firefox.Capabilities{
 			Args:  args,
 			Prefs: firefoxCaps,
@@ -2793,10 +3074,10 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	caps.AddLogging(logSel)
 
 	var protocol string
-	if sel.Config.SSLMode == "enable" {
-		protocol = "https"
+	if sel.Config.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
 	} else {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 	}
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
@@ -2806,24 +3087,21 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	// Connect to the WebDriver instance running remotely.
 	var wd selenium.WebDriver
 	var err error
-	for {
+	maxRetry := 10
+	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
-		/*
-			In theory Selenium standalone should be different than Selenium Grid
-			but in practice, it's not. So, we are using the same URL for both.
-			if sel.Config.ServiceType == "standalone" {
-				urlType = "wd"
-			} else {
-				urlType = "wd/hub"
-			}
-		*/
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
+			if i == 0 || (i%maxRetry) == 0 {
+				cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
+			}
 			time.Sleep(5 * time.Second)
 		} else {
 			break
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Post-connection settings
@@ -2840,6 +3118,26 @@ func ConnectVDI(sel SeleniumInstance, browseType int) (selenium.WebDriver, error
 	err = addLoadListener(&wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
+	}
+
+	// Configure CDP
+	if cdpActive {
+		blockVideo := `chrome.debugger.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
+			chrome.debugger.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.enable");
+			chrome.debugger.onEvent.addListener((source, message) => {
+				if (message.method === "Network.requestIntercepted" && message.params.request.url.includes(".mp4")) {
+					chrome.debugger.sendCommand({tabId: source.tabId}, "Network.continueInterceptedRequest", {
+						interceptionId: message.params.interceptionId,
+						errorReason: "BlockedByClient"
+					});
+				}
+			});
+		});`
+
+		_, err2 := wd.ExecuteScript(blockVideo, nil)
+		if err2 != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err)
+		}
 	}
 
 	return wd, err
@@ -2911,6 +3209,14 @@ func reinforceBrowserSettings(wd selenium.WebDriver) error {
 			};
 		} catch (err) {
 			console.error('Error reinforcing browser settings stage 4:', err);
+		}
+
+		try {
+			Object.defineProperty(window, 'devicePixelRatio', {
+				get: function() { return 1; }
+			});
+		} catch (err) {
+			console.error('Error reinforcing browser settings stage 5:', err);
 		}
 
 		try {
@@ -3098,6 +3404,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
 func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
@@ -3105,6 +3412,7 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 		}
 		(*pCtx).Status.CrawlingRunning = 2
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance returned.")
 }
 
 // QuitSelenium is responsible for quitting the Selenium server instance
@@ -3124,6 +3432,7 @@ func QuitSelenium(wd *selenium.WebDriver) {
 			cmn.DebugMsg(cmn.DbgLvlError, "closing WebDriver: %v", err)
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -3319,7 +3628,7 @@ func saveScreenshot(filename string, screenshot []byte) (string, error) {
 
 		// Determine storage method and call appropriate function
 		switch config.ImageStorageAPI.Type {
-		case "http":
+		case cmn.HTTPStr:
 			return writeDataViaHTTP(filename, screenshot, saveCfg)
 		case "s3":
 			return writeDataToToS3(filename, screenshot, saveCfg)
@@ -3350,10 +3659,10 @@ func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) 
 	}
 
 	var protocol string
-	if saveCfg.SSLMode == "enable" {
-		protocol = "https"
+	if saveCfg.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
 	} else {
-		protocol = "http"
+		protocol = cmn.HTTPStr
 	}
 
 	// Construct the API endpoint URL

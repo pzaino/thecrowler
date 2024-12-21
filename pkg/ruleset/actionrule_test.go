@@ -19,11 +19,13 @@ package ruleset
 import (
 	"reflect"
 	"testing"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 func TestActionRuleGetActionType(t *testing.T) {
 	ar := ActionRule{ActionType: " Click "}
-	expected := "click"
+	expected := cmn.ClickStr
 	if got := ar.GetActionType(); got != expected {
 		t.Errorf("GetActionType() = %v, want %v", got, expected)
 	}

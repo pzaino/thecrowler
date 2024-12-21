@@ -14,6 +14,7 @@ COPY ./go.sum .
 COPY ./main.go .
 COPY ./config.yaml .
 COPY ./schemas/ ./schemas
+COPY ./plugins/ ./plugins
 COPY ./autobuild.sh .
 
 # Ensure the script has correct permissions and check its presence
@@ -35,6 +36,7 @@ COPY --from=builder /app/bin/events /app/
 COPY --from=builder /app/bin/healthCheck /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
+COPY --from=builder /app/plugins /app/plugins
 
 # Ensure the executables have correct permissions
 RUN chmod +x events

@@ -3,13 +3,13 @@
 To add a new entity to the list of entities, the CROWler requires such an entity to be presented with a RESTFul request to the following end-point:
 
 ```http
-http(s)://<crowler-api-ip>:8080/v1/addsource
+http(s)://<crowler-api-ip>:8080/v1/source/add
 ```
 
 The GET request should be in the following format:
 
 ```http
-GET /v1/addsource?url=https://example.com&category_id=1&usr_id=1&status=string&restricted=1&disabled=false&flags=0&config={"format_version":"1.0.0","source_name":"Example","custom":{"crawler":{"browsing_mode":"recursive","max_depth":2,"max_links":15}}}
+GET /v1/source/add?url=https://example.com&category_id=1&usr_id=1&status=string&restricted=1&disabled=false&flags=0&config={"format_version":"1.0.0","source_name":"Example","custom":{"crawler":{"browsing_mode":"recursive","max_depth":2,"max_links":15}}}
 ```
 
 Given that the above may be a bit hard to handle in a GET request, the CROWler also accepts POST requests to the same end-point.

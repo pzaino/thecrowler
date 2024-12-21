@@ -19,6 +19,8 @@ package ruleset
 import (
 	"testing"
 	"time"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // Helper function to create a RuleGroup for testing
@@ -74,7 +76,7 @@ func TestRuleGroupIsValid(t *testing.T) {
 
 // Example test for GetActionRules
 func TestRuleGroupGetActionRules(t *testing.T) {
-	expectedActionRule := ActionRule{RuleName: "ClickLoginButton", ActionType: "click"}
+	expectedActionRule := ActionRule{RuleName: "ClickLoginButton", ActionType: cmn.ClickStr}
 	ruleGroup := RuleGroup{
 		ActionRules: []ActionRule{expectedActionRule},
 	}
@@ -88,7 +90,7 @@ func TestRuleGroupGetActionRules(t *testing.T) {
 // Example test for GetActionRuleByName
 func TestRuleGroupGetActionRuleByName(t *testing.T) {
 	actionRuleName := "ClickLoginButton"
-	expectedActionRule := ActionRule{RuleName: actionRuleName, ActionType: "click"}
+	expectedActionRule := ActionRule{RuleName: actionRuleName, ActionType: cmn.ClickStr}
 	ruleGroup := RuleGroup{
 		ActionRules: []ActionRule{expectedActionRule},
 	}

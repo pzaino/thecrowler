@@ -120,8 +120,10 @@ services:
 
   crowler-api:
     container_name: "crowler-api"
+    env_file:
+      - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=\${INSTANCE_ID:-1}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
@@ -130,8 +132,6 @@ services:
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    depends_on:
-      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -148,12 +148,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: always
+    restart: unless-stopped
 
   crowler-events:
     container_name: "crowler-events"
+    env_file:
+      - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=\${INSTANCE_ID:-1}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
@@ -162,8 +164,6 @@ services:
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    depends_on:
-      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -180,7 +180,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: always
+    restart: unless-stopped
 EOF
 
 # Add crowler-db
@@ -193,8 +193,10 @@ if [ "$postgres" == "yes" ]; then
     container_name: "crowler-db"
     ports:
       - "5432:5432"
+    env_file:
+      - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler_
+      - COMPOSE_PROJECT_NAME=crowler
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
       - POSTGRES_USER=\${DOCKER_POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
@@ -216,19 +218,33 @@ if [ "$postgres" == "yes" ]; then
       options:
         max-size: "10m"
         max-file: "3"
-    restart: always
+    restart: unless-stopped
 EOF
 fi
 
 # Add crowler-engine instances
+if [ "$engine_count" != "0" ]; then
 # shellcheck disable=SC2086
 for i in $(seq 1 "$engine_count"); do
+    ENGINE_NETWORKS=""
+    for j in $(seq 1 "$vdi_count"); do
+      if [ -z "$ENGINE_NETWORKS" ]; then
+        ENGINE_NETWORKS="      - crowler-vdi-$j"
+      else
+        ENGINE_NETWORKS="$ENGINE_NETWORKS\n      - crowler-vdi-$j"
+      fi
+    done
+    # Ensure proper YAML formatting
+    ENGINE_NETWORKS=$(echo -e "$ENGINE_NETWORKS")
+
     cat << EOF >> docker-compose.yml
 
   crowler-engine-$i:
     container_name: "crowler-engine-$i"
+    env_file:
+      - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
       - SELENIUM_HOST=\${DOCKER_SELENIUM_HOST:-crowler-vdi-$i}
       - POSTGRES_DB=\${DOCKER_POSTGRES_DB_NAME:-SitesIndex}
@@ -238,13 +254,12 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    depends_on:
-      - crowler-db
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
     networks:
       - crowler-net
+$ENGINE_NETWORKS
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -258,24 +273,30 @@ for i in $(seq 1 "$engine_count"); do
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: always
+    restart: unless-stopped
 EOF
 done
+fi
 
 # Add crowler-vdi instances
+if [ "$vdi_count" != "0" ]; then
 # shellcheck disable=SC2086
 for i in $(seq 1 "$vdi_count"); do
     # Calculate unique host port ranges for each instance to avoid conflicts
-    HOST_PORT_START1=$((4444 + (i - 1) * 2)) # Selenium Hub
-    HOST_PORT_END1=$((4445 + (i - 1) * 2))   # SysMng Port
-    HOST_PORT_START2=$((5900 + (i - 1) * 1)) # Selenium ARM VNC Port
-    HOST_PORT_START3=$((7900 + (i - 1) * 1)) # Selenium x86 VNC Port
+    HOST_PORT_START1=$((4444 + (i - 1) * 2)) # VDI Selenium Hub
+    HOST_PORT_END1=$((4445 + (i - 1) * 2))   # VDI SysMng Port
+    HOST_PORT_START2=$((5900 + (i - 1) * 1)) # VDI VNC Port
+    HOST_PORT_START3=$((7900 + (i - 1) * 1)) # VDI noVNC Port
+    HOST_PORT_START4=$((9222 + (i - 1) * 1)) # VDI ChromeDP Port
+    NETWORK_NAME="crowler-vdi-$i"
     cat << EOF >> docker-compose.yml
 
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
+    env_file:
+      - .env
     environment:
-      - COMPOSE_PROJECT_NAME=crowler-
+      - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
@@ -283,11 +304,13 @@ for i in $(seq 1 "$vdi_count"); do
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
       - "$HOST_PORT_START2:5900"
       - "$HOST_PORT_START3:7900"
+      - "$HOST_PORT_START4:9222"
     networks:
-      - crowler-net
-    restart: always
+      - $NETWORK_NAME
+    restart: unless-stopped
 EOF
 done
+fi
 
 # Add Prometheus PushGateway
 if [ "$prometheus" == "yes" ]; then
@@ -298,9 +321,13 @@ if [ "$prometheus" == "yes" ]; then
     container_name: "crowler-push-gateway"
     ports:
       - "9091:9091"
+    env_file:
+      - .env
+    environment:
+      - COMPOSE_PROJECT_NAME=crowler
     networks:
       - crowler-net
-    restart: always
+    restart: unless-stopped
     logging:
       driver: "json-file"
       options:
@@ -315,12 +342,32 @@ cat << EOF >> docker-compose.yml
 networks:
   crowler-net:
     driver: bridge
+EOF
+
+# Add all dynamically created networks for VDIs
+for i in $(seq 1 "$vdi_count"); do
+    cat << EOF >> docker-compose.yml
+  crowler-vdi-$i:
+    driver: bridge
+EOF
+done
+
+# Add Static Volumes
+cat << EOF >> docker-compose.yml
 
 volumes:
   api_data:
   events_data:
+EOF
+
+if [ "$postgres" == "yes" ]; then
+    cat << EOF >> docker-compose.yml
   db_data:
     driver: local
+EOF
+fi
+
+cat << EOF >> docker-compose.yml
   engine_data:
     driver: local
 EOF

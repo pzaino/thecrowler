@@ -107,14 +107,14 @@ type HealthCheck struct {
 // This function is responsible for performing database maintenance
 // to keep it lean and fast. Note: it's specific for PostgreSQL.
 func performDBMaintenance(db cdb.Handler) error {
-	if db.DBMS() == "sqlite" {
+	if db.DBMS() == cdb.DBSQLiteStr {
 		return nil
 	}
 
 	// Define the maintenance commands
 	var maintenanceCommands []string
 
-	if db.DBMS() == "postgres" {
+	if db.DBMS() == cdb.DBPostgresStr {
 		maintenanceCommands = []string{
 			"VACUUM Keywords",
 			"VACUUM MetaTags",
@@ -726,7 +726,7 @@ func main() {
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Crawler.Control.Host, config.Crawler.Control.Port)
 	var rStatus error
-	if strings.ToLower(strings.TrimSpace(config.Crawler.Control.SSLMode)) == "enable" {
+	if strings.ToLower(strings.TrimSpace(config.Crawler.Control.SSLMode)) == cmn.EnableStr {
 		rStatus = srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile)
 	} else {
 		rStatus = srv.ListenAndServe()

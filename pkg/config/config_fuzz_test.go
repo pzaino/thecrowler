@@ -4,7 +4,9 @@
 // Package config contains the configuration file parsing logic.
 package config
 
-import "testing"
+import (
+	"testing"
+)
 
 func FuzzParseConfig(f *testing.F) {
 	// Add some initial seed inputs to start the fuzzing process

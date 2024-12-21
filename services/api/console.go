@@ -19,6 +19,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -40,16 +42,16 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 	var sqlQuery string
 	var sqlParams addSourceRequest
 	if qType == getQuery {
-		sqlParams.URL = normalizeURL(query)
+		sqlParams.URL = cmn.NormalizeURL(query)
 		//sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
 		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, category_id, usr_id, status, restricted, disabled, flags, config) VALUES ($1, NULL, 0, 0, 'pending', 2, false, 0, '{}')"
 	} else {
 		// extract the parameters from the query
 		extractAddSourceParams(query, &sqlParams)
 		// Normalize the URL
-		sqlParams.URL = normalizeURL(sqlParams.URL)
+		sqlParams.URL = cmn.NormalizeURL(sqlParams.URL)
 		// Prepare the SQL query
-		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)"
+		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8) RETURNING source_id;"
 	}
 
 	if sqlParams.URL == "" {
@@ -63,7 +65,8 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 		return results, err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Website inserted successfully: %s", query)
+	cmn.DebugMsg(cmn.DbgLvlInfo, results.Message)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Website inserted with: %s", query)
 	return results, nil
 }
 
@@ -129,12 +132,25 @@ func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (Conso
 	}
 
 	// Execute the SQL statement
-	_, err = (*db).Exec(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
+	qResults, err := (*db).ExecuteQuery(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
 	if err != nil {
 		return results, err
 	}
 
-	results.Message = "Website inserted successfully"
+	// Get the ID of the inserted website
+	var id uint64
+	for qResults.Next() {
+		err = qResults.Scan(&id)
+		if err != nil {
+			results.Message = "Failed to get the ID of the inserted website"
+			return results, err
+		}
+	}
+
+	// Create the response message adding the id of the inserted source
+	msg := fmt.Sprintf("Website inserted successfully with ID: %d", id)
+
+	results.Message = msg
 	return results, nil
 }
 
@@ -211,7 +227,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	results.Message = "Failed to remove the source"
 
 	// First, get the source_id for the given URL to ensure it exists and to use in cascading deletes if necessary
-	var sourceID int64
+	var sourceID uint64
 	err := tx.QueryRow("SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
 	if err != nil {
 		return results, err
@@ -285,7 +301,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get the status"
 
-	sourceURL = normalizeURL(sourceURL)
+	sourceURL = cmn.NormalizeURL(sourceURL)
 	sourceURL = fmt.Sprintf("%%%s%%", sourceURL)
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Source URL: %s", sourceURL)
 
@@ -390,4 +406,390 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 	results.Message = infoAllSourcesStatus
 	results.Items = statuses
 	return results, nil
+}
+
+func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var sqlParams cdb.UpdateSourceRequest
+	var sourceConfig *string
+	var sourceDetails *string
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		sqlParams.URL = cmn.NormalizeURL(query)
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &sqlParams)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid update request"}, fmt.Errorf("invalid JSON: %w", err)
+		}
+	}
+
+	// Resolve sourceID if only URL is provided
+	if sqlParams.SourceID == 0 && sqlParams.URL != "" {
+		sourceID, err := cdb.GetSourceID(cdb.SourceFilter{URL: sqlParams.URL}, db)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+		sqlParams.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
+	} else if sqlParams.SourceID == 0 {
+		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
+	}
+
+	// Retrieve existing data for the source
+	var existingData cdb.UpdateSourceRequest
+	selectQuery := `
+        SELECT url, status, restricted, disabled, flags, config, details
+        FROM Sources
+        WHERE source_id = $1
+    `
+	err := (*db).QueryRow(selectQuery, sqlParams.SourceID).Scan(
+		&existingData.URL,
+		&existingData.Status,
+		&existingData.Restricted,
+		&existingData.Disabled,
+		&existingData.Flags,
+		&sourceConfig,
+		&sourceDetails,
+	)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
+	}
+	if sourceConfig != nil {
+		existingData.Config = json.RawMessage(*sourceConfig)
+	} else {
+		existingData.Config = json.RawMessage("{}")
+	}
+	if sourceDetails != nil {
+		existingData.Details = json.RawMessage(*sourceDetails)
+	} else {
+		existingData.Details = json.RawMessage("{}")
+	}
+
+	// Merge existing data with provided updates
+	mergedData := cdb.UpdateSourceRequest{
+		SourceID:   sqlParams.SourceID,
+		URL:        coalesce(sqlParams.URL, existingData.URL),
+		Status:     coalesce(sqlParams.Status, existingData.Status),
+		Restricted: coalesceInt(sqlParams.Restricted, existingData.Restricted),
+		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
+		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
+		Config:     coalesceJSON(sqlParams.Config, existingData.Config),
+		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
+	}
+
+	// Perform the update
+	updateQuery := `
+        UPDATE Sources
+        SET url = $1,
+            status = $2,
+            restricted = $3,
+            disabled = $4,
+            flags = $5,
+            config = $6::jsonb,
+            details = $7::jsonb
+        WHERE source_id = $8
+    `
+	_, err = (*db).Exec(updateQuery,
+		cmn.NormalizeURL(mergedData.URL),
+		mergedData.Status,
+		mergedData.Restricted,
+		mergedData.Disabled,
+		mergedData.Flags,
+		mergedData.Config,
+		mergedData.Details,
+		mergedData.SourceID,
+	)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to update source"}, err
+	}
+
+	return ConsoleResponse{Message: "Source updated successfully"}, nil
+}
+
+func coalesce(newValue, existingValue string) string {
+	if newValue != "" {
+		return newValue
+	}
+	return existingValue
+}
+
+func coalesceInt(newValue, existingValue int) int {
+	if newValue != 0 {
+		return newValue
+	}
+	return existingValue
+}
+
+func coalesceBool(newValue, existingValue bool) bool {
+	// In case of boolean, use a specific value (e.g., a pointer or extra logic)
+	// Here, assuming `false` is not a valid new value
+	if newValue {
+		return newValue
+	}
+	return existingValue
+}
+
+func coalesceJSON(newValue, existingValue json.RawMessage) json.RawMessage {
+	if len(newValue) > 0 {
+		return newValue
+	}
+	return existingValue
+}
+
+func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var filter cdb.SourceFilter
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		filter.URL = cmn.NormalizeURL(query)
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &filter)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid vacuum request"}, fmt.Errorf("invalid JSON: %w", err)
+		}
+	}
+
+	// Resolve sourceID if only URL is provided
+	if filter.SourceID == 0 && filter.URL != "" {
+		sourceID, err := cdb.GetSourceID(filter, db)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+		filter.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
+	} else if filter.SourceID == 0 {
+		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to start transaction"}, err
+	}
+
+	// Deleting indexed data
+	queries := []string{
+		"DELETE FROM KeywordIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM MetaTagsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM WebObjectsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM NetInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM HTTPInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM SourceSearchIndex WHERE source_id = $1",
+	}
+
+	for _, query := range queries {
+		_, err := tx.Exec(query, filter.SourceID)
+		if err != nil {
+			err2 := tx.Rollback() // Rollback if any query fails
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to rollback transaction: %v", err2)
+			}
+			return ConsoleResponse{Message: "Failed to vacuum source data"}, err
+		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to commit transaction"}, err
+	}
+
+	return ConsoleResponse{Message: "Source vacuumed successfully"}, nil
+}
+
+func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var owner cdb.OwnerRequest // Define a struct for owner if not already present
+
+	if qType == getQuery {
+		// Create a JSON document with the owner name
+		jDoc := fmt.Sprintf(`{"name": "%s"}`, strings.ReplaceAll(strings.TrimSpace(query), "\"", ""))
+		err := json.Unmarshal([]byte(jDoc), &owner.Details)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner name"}, fmt.Errorf("failed to parse owner name: %w", err)
+		}
+	} else {
+		// Parse POST request JSON
+		err := json.Unmarshal([]byte(query), &owner)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner data"}, fmt.Errorf("failed to parse owner data: %w", err)
+		}
+	}
+
+	// Insert owner into the database
+	queryStr := `
+		INSERT INTO Owners (parent_id, details)
+		VALUES ($1, $2)
+		RETURNING owner_id
+	`
+	var ownerID int64
+	err := (*db).QueryRow(queryStr, owner.Details).Scan(&ownerID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to add owner"}, fmt.Errorf("error adding owner: %w", err)
+	}
+
+	return ConsoleResponse{Message: fmt.Sprintf("Owner added successfully with ID %d", ownerID)}, nil
+}
+
+func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var category cdb.CategoryRequest // Define a struct for category if not already present
+
+	if qType == getQuery {
+		// For GET requests, assume `query` is a simple name
+		category.Name = strings.TrimSpace(query)
+		if category.Name == "" {
+			return ConsoleResponse{Message: "Invalid category name"}, fmt.Errorf("category name is required")
+		}
+	} else {
+		// Parse POST request JSON
+		err := json.Unmarshal([]byte(query), &category)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid category data"}, fmt.Errorf("failed to parse category data: %w", err)
+		}
+	}
+
+	// Insert category into the database
+	queryStr := `
+		INSERT INTO Categories (name, parent_id, description)
+		VALUES ($1, $2, $3)
+		RETURNING category_id
+	`
+	var categoryID int64
+	err := (*db).QueryRow(queryStr, category.Name, category.ParentID, category.Description).Scan(&categoryID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to add category"}, fmt.Errorf("error adding category: %w", err)
+	}
+
+	return ConsoleResponse{Message: fmt.Sprintf("Category added successfully with ID %d", categoryID)}, nil
+}
+
+func performUpdateOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var owner cdb.OwnerRequest
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		jDoc := fmt.Sprintf(`{"details": %s}`, strings.ReplaceAll(strings.TrimSpace(query), "\"", ""))
+		err := json.Unmarshal([]byte(jDoc), &owner)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner data"}, fmt.Errorf("failed to parse owner data: %w", err)
+		}
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &owner)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner data"}, fmt.Errorf("failed to parse owner data: %w", err)
+		}
+	}
+
+	if owner.OwnerID == 0 {
+		return ConsoleResponse{Message: "Owner ID must be provided"}, fmt.Errorf("missing Owner ID")
+	}
+
+	// Update owner in the database
+	queryStr := `
+		UPDATE Owners
+		SET parent_id = COALESCE($1, parent_id),
+		    details = COALESCE($2, details::jsonb)
+		WHERE owner_id = $3
+	`
+	_, err := (*db).Exec(queryStr, owner.DetailsHash, owner.Details, owner.OwnerID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to update owner"}, fmt.Errorf("error updating owner: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Owner updated successfully"}, nil
+}
+
+func performRemoveOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var ownerID int64
+
+	if qType == getQuery {
+		// Parse the query as a GET request
+		id, err := strconv.ParseInt(query, 10, 64)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid owner ID"}, fmt.Errorf("failed to parse owner ID: %w", err)
+		}
+		ownerID = id
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		var req map[string]int64
+		err := json.Unmarshal([]byte(query), &req)
+		if err != nil || req["owner_id"] == 0 {
+			return ConsoleResponse{Message: "Invalid owner ID"}, fmt.Errorf("missing or invalid owner ID")
+		}
+		ownerID = req["owner_id"]
+	}
+
+	// Remove owner from the database
+	queryStr := `DELETE FROM Owners WHERE owner_id = $1`
+	_, err := (*db).Exec(queryStr, ownerID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to remove owner"}, fmt.Errorf("error removing owner: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Owner removed successfully"}, nil
+}
+
+func performUpdateCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var category cdb.CategoryRequest
+
+	if qType == getQuery {
+		// Parse the query as a GET request (direct parameters)
+		category.Name = strings.TrimSpace(query)
+		if category.Name == "" {
+			return ConsoleResponse{Message: "Invalid category name"}, fmt.Errorf("category name is required")
+		}
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		err := json.Unmarshal([]byte(query), &category)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid category data"}, fmt.Errorf("failed to parse category data: %w", err)
+		}
+	}
+
+	if category.CategoryID == 0 {
+		return ConsoleResponse{Message: "Category ID must be provided"}, fmt.Errorf("missing Category ID")
+	}
+
+	// Update category in the database
+	queryStr := `
+		UPDATE Categories
+		SET name = COALESCE($1, name),
+		    parent_id = COALESCE($2, parent_id),
+		    description = COALESCE($3, description)
+		WHERE category_id = $4
+	`
+	_, err := (*db).Exec(queryStr, category.Name, category.ParentID, category.Description, category.CategoryID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to update category"}, fmt.Errorf("error updating category: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Category updated successfully"}, nil
+}
+
+func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	var categoryID int64
+
+	if qType == getQuery {
+		// Parse the query as a GET request
+		id, err := strconv.ParseInt(query, 10, 64)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid category ID"}, fmt.Errorf("failed to parse category ID: %w", err)
+		}
+		categoryID = id
+	} else {
+		// Parse the query as a POST request (JSON payload)
+		var req map[string]int64
+		err := json.Unmarshal([]byte(query), &req)
+		if err != nil || req["category_id"] == 0 {
+			return ConsoleResponse{Message: "Invalid category ID"}, fmt.Errorf("missing or invalid category ID")
+		}
+		categoryID = req["category_id"]
+	}
+
+	// Remove category from the database
+	queryStr := `DELETE FROM Categories WHERE category_id = $1`
+	_, err := (*db).Exec(queryStr, categoryID)
+	if err != nil {
+		return ConsoleResponse{Message: "Failed to remove category"}, fmt.Errorf("error removing category: %w", err)
+	}
+
+	return ConsoleResponse{Message: "Category removed successfully"}, nil
 }

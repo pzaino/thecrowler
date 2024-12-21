@@ -149,9 +149,9 @@ func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.We
 	// Execute the action based on the ActionType
 	if (len(r.Conditions) == 0) || checkActionConditions(ctx, r.Conditions, wd) {
 		switch strings.ToLower(strings.TrimSpace(r.ActionType)) {
-		case "click", "left_click":
+		case cmn.ClickStr, cmn.LClickStr:
 			return executeActionClick(ctx, r, wd, 0)
-		case "right_click":
+		case cmn.RClickStr:
 			return executeActionClick(ctx, r, wd, 2)
 		case "scroll":
 			return executeActionScroll(r, wd)
@@ -456,9 +456,9 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 	// Set correct button for click
 	var buttonName string
 	if button == 2 {
-		buttonName = "right_click"
+		buttonName = cmn.RClickStr
 	} else {
-		buttonName = "click"
+		buttonName = cmn.ClickStr
 	}
 
 	// If the element is found, attempt to move the mouse and click using Rbee

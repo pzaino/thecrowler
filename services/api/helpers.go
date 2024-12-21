@@ -6,23 +6,76 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
+
+func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Invalid query", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
+
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
 
 // handleErrorAndRespond encapsulates common error handling and JSON response logic.
 func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}, errMsg string, errCode int, successCode int) {
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
-		http.Error(w, err.Error(), errCode)
-		return
+	var response interface{}
+
+	if successCode == 0 {
+		successCode = http.StatusOK
+	} else if successCode == 204 {
+		successCode = http.StatusOK
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(successCode) // Explicitly set the success status code
-	if err := json.NewEncoder(w).Encode(results); err != nil {
-		// Log the error and send a generic error message to the client
+
+	if err != nil {
+		// Log the error and prepare an error response
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
+		response = map[string]interface{}{
+			"error":   err.Error(),
+			"message": errMsg,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(errCode) // Send the error code
+	} else {
+		// Prepare a success response
+		if resp, ok := results.(ConsoleResponse); ok {
+			if resp.Message == "" {
+				resp.Message = "Success"
+			}
+			response = resp
+		} else {
+			response = results
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(successCode) // Send the success code
+	}
+
+	// Encode the response as JSON (always include a body)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Log the error and send a fallback error response
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON response: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Original Results: %+v", results)
+
+		fallbackResponse := map[string]string{"error": "Internal Server Error"}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(fallbackResponse)
 	}
 }
 
@@ -64,17 +117,6 @@ func getQTypeFromName(name string) int {
 		return postQuery
 	}
 	return getQuery
-}
-
-// normalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.
-func normalizeURL(url string) string {
-	// Trim spaces
-	url = strings.TrimSpace(url)
-	// Trim trailing slash
-	url = strings.TrimRight(url, "/")
-	// Convert to lowercase
-	url = strings.ToLower(url)
-	return url
 }
 
 // PrepareInput prepares the input string by removing all \" and trimming external quotes and spaces.

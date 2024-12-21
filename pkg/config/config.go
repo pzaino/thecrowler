@@ -48,6 +48,8 @@ const (
 	SSDefaultTimeout = 3600
 	// SSDefaultDelayTime Default delay time for service scout
 	SSDefaultDelayTime = 100
+
+	stdRateLimit = "10,10"
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -68,7 +70,7 @@ type OsFileReader struct{}
 
 // ReadFile reads a file using the os package.
 func (OsFileReader) ReadFile(filename string) ([]byte, error) {
-	return os.ReadFile(filename)
+	return os.ReadFile(filename) //nolint:gosec // This path is configured by the service owner
 }
 
 // fileExists checks if a file exists at the given filename.
@@ -123,7 +125,7 @@ func getConfigFile(confName string) (Config, error) {
 	}
 
 	// Read the configuration file
-	data, err := os.ReadFile(confName)
+	data, err := os.ReadFile(confName) //nolint:gosec // This path is configured by the service owner
 	if err != nil {
 		return Config{}, err
 	}
@@ -150,32 +152,34 @@ func getConfigFile(confName string) (Config, error) {
 func NewConfig() *Config {
 	return &Config{
 		Remote: Remote{
-			Host:    "localhost",
+			Host:    cmn.LoalhostStr,
 			Path:    "/",
 			Port:    0,
-			Region:  "nowhere",
+			Region:  cmn.NowhereStr,
 			Token:   "",
 			Secret:  "",
 			Timeout: 15,
-			Type:    "local",
-			SSLMode: "disable",
+			Type:    cmn.LocalStr,
+			SSLMode: cmn.DisableStr,
 		},
 		Database: Database{
 			Type:         "postgres",
-			Host:         "localhost",
+			Host:         cmn.LoalhostStr,
 			Port:         5432,
 			User:         "postgres",
 			Password:     "",
 			DBName:       "SitesIndex",
 			RetryTime:    5,
 			PingTime:     5,
-			SSLMode:      "disable",
+			SSLMode:      cmn.DisableStr,
 			OptimizeFor:  "",
 			MaxConns:     100,
 			MaxIdleConns: 75,
 		},
 		Crawler: Crawler{
 			Workers:               1,
+			VDIName:               "",
+			Platform:              "desktop",
 			Interval:              "2",
 			Timeout:               10,
 			Maintenance:           60,
@@ -191,6 +195,11 @@ func NewConfig() *Config {
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
 			ResetCookiesPolicy:    "never",
+			RequestImages:         true,
+			RequestCSS:            true,
+			RequestScripts:        true,
+			RequestPlugins:        true,
+			RequestFrames:         true,
 			CollectHTML:           true,
 			CollectContent:        false,
 			CollectKeywords:       true,
@@ -208,26 +217,26 @@ func NewConfig() *Config {
 			ScreenshotSectionWait: 2,
 			CheckForRobots:        false,
 			Control: ControlConfig{
-				Host:              "localhost",
+				Host:              cmn.LoalhostStr,
 				Port:              8081,
-				SSLMode:           "disable",
+				SSLMode:           cmn.DisableStr,
 				Timeout:           15,
-				RateLimit:         "10,10",
+				RateLimit:         stdRateLimit,
 				ReadHeaderTimeout: 15,
 				ReadTimeout:       15,
 				WriteTimeout:      30,
 			},
 		},
 		API: API{
-			Host:              "localhost",
+			Host:              cmn.LoalhostStr,
 			Port:              8080,
 			Timeout:           60,
 			ContentSearch:     false,
 			ReturnContent:     false,
-			SSLMode:           "disable",
+			SSLMode:           cmn.DisableStr,
 			CertFile:          "",
 			KeyFile:           "",
-			RateLimit:         "10,10",
+			RateLimit:         stdRateLimit,
 			EnableConsole:     false,
 			ReadHeaderTimeout: 15,
 			ReadTimeout:       15,
@@ -240,18 +249,18 @@ func NewConfig() *Config {
 				Type:        "chrome",
 				ServiceType: "standalone",
 				Port:        4444,
-				Host:        "localhost",
+				Host:        cmn.LoalhostStr,
 				Headless:    true,
 				UseService:  false,
-				SSLMode:     "disable",
+				SSLMode:     cmn.DisableStr,
 				ProxyURL:    "",
 				SysMng: SysMngConfig{
 					Port:              4443,
-					SSLMode:           "disable",
+					SSLMode:           cmn.DisableStr,
 					Timeout:           60,
 					CertFile:          "",
 					KeyFile:           "",
-					RateLimit:         "10,10",
+					RateLimit:         stdRateLimit,
 					ReadHeaderTimeout: 15,
 					ReadTimeout:       15,
 					WriteTimeout:      30,
@@ -263,13 +272,13 @@ func NewConfig() *Config {
 			Port:    9091,
 		},
 		Events: EventsConfig{
-			Host:              "localhost",
+			Host:              cmn.LoalhostStr,
 			Port:              8082,
-			SSLMode:           "disable",
+			SSLMode:           cmn.DisableStr,
 			Timeout:           60,
 			CertFile:          "",
 			KeyFile:           "",
-			RateLimit:         "10,10",
+			RateLimit:         stdRateLimit,
 			ReadHeaderTimeout: 15,
 			ReadTimeout:       15,
 			WriteTimeout:      30,
@@ -278,23 +287,23 @@ func NewConfig() *Config {
 			Host:    "",
 			Path:    DataDefaultPath,
 			Port:    0,
-			Region:  "nowhere",
+			Region:  cmn.NowhereStr,
 			Token:   "",
 			Secret:  "",
 			Timeout: 15,
-			Type:    "local",
-			SSLMode: "disable",
+			Type:    cmn.LocalStr,
+			SSLMode: cmn.DisableStr,
 		},
 		FileStorageAPI: FileStorageAPI{
 			Host:    "",
 			Path:    DataDefaultPath,
 			Port:    0,
-			Region:  "nowhere",
+			Region:  cmn.NowhereStr,
 			Token:   "",
 			Secret:  "",
 			Timeout: 15,
-			Type:    "local",
-			SSLMode: "disable",
+			Type:    cmn.LocalStr,
+			SSLMode: cmn.DisableStr,
 		},
 		HTTPHeaders: HTTPConfig{
 			Enabled: true,
@@ -363,7 +372,7 @@ func NewConfig() *Config {
 		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
 		Rulesets: []RulesetConfig{
 			{
-				Type: "local",
+				Type: cmn.LocalStr,
 				Path: []string{
 					JSONRulesDefaultPath,
 					YAMLRulesDefaultPath1,
@@ -374,7 +383,7 @@ func NewConfig() *Config {
 		Plugins: PluginsConfig{
 			PluginTimeout: 15,
 			Plugins: []PluginConfig{{
-				Type: "local",
+				Type: cmn.LocalStr,
 				Path: []string{
 					PluginsDefaultPath,
 				}},
@@ -499,7 +508,7 @@ func (c *Config) Validate() error {
 	c.validateCrawler()
 	c.validateDatabase()
 	c.validateAPI()
-	c.validateSelenium()
+	c.validateVDI()
 	c.validatePrometheus()
 	c.validateImageStorageAPI()
 	c.validateFileStorageAPI()
@@ -529,7 +538,7 @@ func (c *Config) validateRemote() error {
 
 func (c *Config) validateRemoteHost() {
 	if strings.TrimSpace(c.Remote.Host) == "" {
-		c.Remote.Host = "localhost"
+		c.Remote.Host = cmn.LoalhostStr
 	} else {
 		c.Remote.Host = strings.TrimSpace(c.Remote.Host)
 	}
@@ -581,7 +590,7 @@ func (c *Config) validateRemoteTimeout() {
 
 func (c *Config) validateRemoteType() {
 	if strings.TrimSpace(c.Remote.Type) == "" {
-		c.Remote.Type = "local"
+		c.Remote.Type = cmn.LocalStr
 	} else {
 		c.Remote.Type = strings.TrimSpace(c.Remote.Type)
 	}
@@ -589,7 +598,7 @@ func (c *Config) validateRemoteType() {
 
 func (c *Config) validateRemoteSSLMode() {
 	if strings.TrimSpace(c.Remote.SSLMode) == "" {
-		c.Remote.SSLMode = "disable"
+		c.Remote.SSLMode = cmn.DisableStr
 	} else {
 		c.Remote.SSLMode = strings.ToLower(strings.TrimSpace(c.Remote.SSLMode))
 	}
@@ -597,6 +606,8 @@ func (c *Config) validateRemoteSSLMode() {
 
 func (c *Config) validateCrawler() {
 	c.setDefaultWorkers()
+	c.setDefaultVDIName()
+	c.setDefaultPlatform()
 	c.setDefaultInterval()
 	c.setDefaultTimeout()
 	c.setDefaultMaintenance()
@@ -620,6 +631,22 @@ func (c *Config) validateCrawler() {
 func (c *Config) setDefaultWorkers() {
 	if c.Crawler.Workers < 1 {
 		c.Crawler.Workers = 1
+	}
+}
+
+func (c *Config) setDefaultVDIName() {
+	if strings.TrimSpace(c.Crawler.VDIName) == "" {
+		c.Crawler.VDIName = ""
+	} else {
+		c.Crawler.VDIName = strings.ToLower(strings.TrimSpace(c.Crawler.VDIName))
+	}
+}
+
+func (c *Config) setDefaultPlatform() {
+	if strings.TrimSpace(c.Crawler.Platform) == "" {
+		c.Crawler.Platform = "desktop"
+	} else {
+		c.Crawler.Platform = strings.ToLower(strings.TrimSpace(c.Crawler.Platform))
 	}
 }
 
@@ -746,12 +773,12 @@ func (c *Config) setDefaultControl() {
 		c.Crawler.Control.Port = 8081
 	}
 	if strings.TrimSpace(c.Crawler.Control.Host) == "" {
-		c.Crawler.Control.Host = "localhost"
+		c.Crawler.Control.Host = cmn.LoalhostStr
 	} else {
 		c.Crawler.Control.Host = strings.TrimSpace(c.Crawler.Control.Host)
 	}
 	if strings.TrimSpace(c.Crawler.Control.RateLimit) == "" {
-		c.Crawler.Control.RateLimit = "10,10"
+		c.Crawler.Control.RateLimit = stdRateLimit
 	} else {
 		c.Crawler.Control.RateLimit = strings.TrimSpace(c.Crawler.Control.RateLimit)
 	}
@@ -777,7 +804,7 @@ func (c *Config) validateDatabase() {
 		c.Database.Type = strings.TrimSpace(c.Database.Type)
 	}
 	if strings.TrimSpace(c.Database.Host) == "" {
-		c.Database.Host = "localhost"
+		c.Database.Host = cmn.LoalhostStr
 	} else {
 		c.Database.Host = strings.TrimSpace(c.Database.Host)
 	}
@@ -801,7 +828,7 @@ func (c *Config) validateDatabase() {
 		c.Database.PingTime = 5
 	}
 	if strings.TrimSpace(c.Database.SSLMode) == "" {
-		c.Database.SSLMode = "disable"
+		c.Database.SSLMode = cmn.DisableStr
 	} else {
 		c.Database.SSLMode = strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
 	}
@@ -832,7 +859,7 @@ func (c *Config) validateAPI() {
 		c.API.Timeout = 60
 	}
 	if strings.TrimSpace(c.API.RateLimit) == "" {
-		c.API.RateLimit = "10,10"
+		c.API.RateLimit = stdRateLimit
 	} else {
 		c.API.RateLimit = strings.TrimSpace(c.API.RateLimit)
 	}
@@ -847,20 +874,29 @@ func (c *Config) validateAPI() {
 	}
 }
 
-func (c *Config) validateSelenium() {
+func (c *Config) validateVDI() {
 	// Check Selenium
 	for i := range c.Selenium {
-		c.validateSeleniumType(&c.Selenium[i])
-		c.validateSeleniumServiceType(&c.Selenium[i])
-		c.validateSeleniumPath(&c.Selenium[i])
-		c.validateSeleniumDriverPath(&c.Selenium[i])
-		c.validateSeleniumHost(&c.Selenium[i])
-		c.validateSeleniumPort(&c.Selenium[i])
-		c.validateSeleniumProxyURL(&c.Selenium[i])
+		c.validateVDIName(&c.Selenium[i])
+		c.validateVDIType(&c.Selenium[i])
+		c.validateVDIServiceType(&c.Selenium[i])
+		c.validateVDIPath(&c.Selenium[i])
+		c.validateVDIDriverPath(&c.Selenium[i])
+		c.validateVDIHost(&c.Selenium[i])
+		c.validateVDIPort(&c.Selenium[i])
+		c.validateVDIProxyURL(&c.Selenium[i])
 	}
 }
 
-func (c *Config) validateSeleniumType(selenium *Selenium) {
+func (c *Config) validateVDIName(selenium *Selenium) {
+	if strings.TrimSpace(selenium.Name) == "" {
+		selenium.Name = selenium.Host
+	} else {
+		selenium.Name = strings.ToLower(strings.TrimSpace(selenium.Name))
+	}
+}
+
+func (c *Config) validateVDIType(selenium *Selenium) {
 	if strings.TrimSpace(selenium.Type) == "" {
 		selenium.Type = "chrome"
 	} else {
@@ -868,7 +904,7 @@ func (c *Config) validateSeleniumType(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumServiceType(selenium *Selenium) {
+func (c *Config) validateVDIServiceType(selenium *Selenium) {
 	if strings.TrimSpace(selenium.ServiceType) == "" {
 		selenium.ServiceType = "standalone"
 	} else {
@@ -876,7 +912,7 @@ func (c *Config) validateSeleniumServiceType(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumPath(selenium *Selenium) {
+func (c *Config) validateVDIPath(selenium *Selenium) {
 	if strings.TrimSpace(selenium.Path) == "" {
 		selenium.Path = ""
 	} else {
@@ -884,7 +920,7 @@ func (c *Config) validateSeleniumPath(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumDriverPath(selenium *Selenium) {
+func (c *Config) validateVDIDriverPath(selenium *Selenium) {
 	if strings.TrimSpace(selenium.DriverPath) == "" {
 		selenium.DriverPath = ""
 	} else {
@@ -892,21 +928,21 @@ func (c *Config) validateSeleniumDriverPath(selenium *Selenium) {
 	}
 }
 
-func (c *Config) validateSeleniumHost(selenium *Selenium) {
+func (c *Config) validateVDIHost(selenium *Selenium) {
 	if strings.TrimSpace(selenium.Host) == "" {
-		selenium.Host = "localhost"
+		selenium.Host = cmn.LoalhostStr
 	} else {
 		selenium.Host = strings.TrimSpace(selenium.Host)
 	}
 }
 
-func (c *Config) validateSeleniumPort(selenium *Selenium) {
+func (c *Config) validateVDIPort(selenium *Selenium) {
 	if selenium.Port < 1 || selenium.Port > 65535 {
 		selenium.Port = 4444
 	}
 }
 
-func (c *Config) validateSeleniumProxyURL(selenium *Selenium) {
+func (c *Config) validateVDIProxyURL(selenium *Selenium) {
 	if selenium.ProxyURL == "" {
 		selenium.ProxyURL = ""
 	} else {
@@ -920,7 +956,7 @@ func (c *Config) validatePrometheus() {
 		c.Prometheus.Port = 9090
 	}
 	if strings.TrimSpace(c.Prometheus.Host) == "" {
-		c.Prometheus.Host = "localhost"
+		c.Prometheus.Host = cmn.LoalhostStr
 	} else {
 		c.Prometheus.Host = strings.TrimSpace(c.Prometheus.Host)
 	}
@@ -935,7 +971,7 @@ func (c *Config) validateRulesets() {
 	}
 	for i := range c.Rulesets {
 		if strings.TrimSpace(c.Rulesets[i].Type) == "" {
-			c.Rulesets[i].Type = "local"
+			c.Rulesets[i].Type = cmn.LocalStr
 		} else {
 			c.Rulesets[i].Type = strings.TrimSpace(c.Rulesets[i].Type)
 		}
@@ -959,11 +995,11 @@ func (c *Config) validatePlugins() {
 	}
 	for i := range c.Plugins.Plugins {
 		if strings.TrimSpace(c.Plugins.Plugins[i].Type) == "" {
-			c.Plugins.Plugins[i].Type = "local"
+			c.Plugins.Plugins[i].Type = cmn.LocalStr
 		} else {
 			c.Plugins.Plugins[i].Type = strings.TrimSpace(c.Plugins.Plugins[i].Type)
 		}
-		if len(c.Plugins.Plugins[i].Path) == 0 && c.Plugins.Plugins[i].Type == "local" {
+		if len(c.Plugins.Plugins[i].Path) == 0 && c.Plugins.Plugins[i].Type == cmn.LocalStr {
 			c.Plugins.Plugins[i].Path = []string{PluginsDefaultPath}
 		}
 	}
@@ -993,7 +1029,7 @@ func (c *Config) validateExternalDetection() {
 func (c *Config) validateImageStorageAPI() {
 	// Check ImageStorageAPI
 	if strings.TrimSpace(c.ImageStorageAPI.Type) == "" {
-		c.ImageStorageAPI.Type = "local"
+		c.ImageStorageAPI.Type = cmn.LocalStr
 	} else {
 		c.ImageStorageAPI.Type = strings.TrimSpace(c.ImageStorageAPI.Type)
 	}
@@ -1011,7 +1047,7 @@ func (c *Config) validateImageStorageAPI() {
 		c.ImageStorageAPI.Port = 0
 	}
 	if strings.TrimSpace(c.ImageStorageAPI.Region) == "" {
-		c.ImageStorageAPI.Region = "nowhere"
+		c.ImageStorageAPI.Region = cmn.NowhereStr
 	} else {
 		c.ImageStorageAPI.Region = strings.TrimSpace(c.ImageStorageAPI.Region)
 	}
@@ -1033,7 +1069,7 @@ func (c *Config) validateImageStorageAPI() {
 func (c *Config) validateFileStorageAPI() {
 	// Check FileStorageAPI
 	if strings.TrimSpace(c.FileStorageAPI.Type) == "" {
-		c.FileStorageAPI.Type = "local"
+		c.FileStorageAPI.Type = cmn.LocalStr
 	} else {
 		c.FileStorageAPI.Type = strings.TrimSpace(c.FileStorageAPI.Type)
 	}
@@ -1051,7 +1087,7 @@ func (c *Config) validateFileStorageAPI() {
 		c.FileStorageAPI.Port = 0
 	}
 	if strings.TrimSpace(c.FileStorageAPI.Region) == "" {
-		c.FileStorageAPI.Region = "nowhere"
+		c.FileStorageAPI.Region = cmn.NowhereStr
 	} else {
 		c.FileStorageAPI.Region = strings.TrimSpace(c.FileStorageAPI.Region)
 	}

@@ -51,7 +51,7 @@ func (d detectionEntityDetails) IsEmpty() bool {
 }
 
 // DetectTechnologies detects technologies in the response body using the provided detection rules
-func DetectTechnologies(dtCtx *DetectionContext) *map[string]DetectedEntity {
+func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
 
 	// micro-signatures
@@ -623,7 +623,7 @@ func detectTechnologiesByExternalDetection(url string, conf *cfg.Config, Externa
 				result = ScanWithSSLLabs(url)
 			case "url_haus":
 				// URL Haus
-				result = ScanWithURLHaus(url)
+				result = ScanWithURLHaus(conf.ExternalDetection.URLHaus.APIKey, url)
 			case "threat_crowd":
 				// Threat Crowd
 				result = ScanWithThreatCrowd(url)
