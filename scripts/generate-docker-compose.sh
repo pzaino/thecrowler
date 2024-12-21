@@ -305,6 +305,10 @@ for i in $(seq 1 "$vdi_count"); do
       - "$HOST_PORT_START2:5900"
       - "$HOST_PORT_START3:7900"
       - "$HOST_PORT_START4:9222"
+    volumes:
+      - /dev/shm:/dev/shm
+    expose:
+      - "$HOST_PORT_START4"
     networks:
       - $NETWORK_NAME
     restart: unless-stopped

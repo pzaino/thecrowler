@@ -2843,7 +2843,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		// Set the CDP host
 		args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
-		args = append(args, "--auto-open-devtools-for-tabs")
+		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
 	}
 
@@ -2927,7 +2927,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-plugins")
 		args = append(args, "--disable-infobars")
 		args = append(args, "--disable-peer-to-peer")
-		args = append(args, "--disable-dev-shm-usage")
+		//args = append(args, "--disable-dev-shm-usage")
 		args = append(args, "--disable-popup-blocking")
 		args = append(args, "--force-device-scale-factor=1")
 		// args = append(args, "--no-sandbox")
