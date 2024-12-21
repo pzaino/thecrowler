@@ -2221,6 +2221,12 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
+	// Check if the URL is the same as the Source URL (in which case skip it)
+	if url == processCtx.source.URL {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' as it is the same as the source URL\n", id, url)
+		return true
+	}
+
 	return false
 }
 
