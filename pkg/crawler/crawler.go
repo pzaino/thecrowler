@@ -2931,7 +2931,6 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-popup-blocking")
 		args = append(args, "--force-device-scale-factor=1")
 		// args = append(args, "--no-sandbox")
-		args = append(args, "--remote-debugging-port=0")
 		if ctx.config.Crawler.RequestImages {
 			args = append(args, "--blink-settings=imagesEnabled=true")
 		} else {
