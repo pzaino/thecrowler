@@ -3,8 +3,11 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: '\.patch$'
       - id: end-of-file-fixer
+        exclude: '\.patch$'
       - id: check-yaml
+        exclude: '\.patch$'
       - id: check-added-large-files
       #  args: ['--maxkb=2048']
   - repo: https://github.com/dnephin/pre-commit-golang
