@@ -2839,9 +2839,9 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// Set the CDP port
-		args = append(args, "--remote-debugging-port=9222")
+		//args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		args = append(args, "--remote-debugging-address=0.0.0.0")
+		//args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
 		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
@@ -2850,7 +2850,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
-		args = append(args, "--force-proxy-for-all")
+		//args = append(args, "--force-proxy-for-all")
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -2902,9 +2902,9 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	args = append(args, "--disable-webrtc")
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// DNS over HTTPS (DoH) settings
-		args = append(args, "--dns-prefetch-disable")
-		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
-		args = append(args, "--host-resolver-rules=MAP *:443")
+		//args = append(args, "--dns-prefetch-disable")
+		//args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		//args = append(args, "--host-resolver-rules=MAP *:443")
 
 		args = append(args, "--disable-geolocation")
 		args = append(args, "--disable-notifications")
@@ -2927,7 +2927,8 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-plugins")
 		args = append(args, "--disable-infobars")
 		args = append(args, "--disable-peer-to-peer")
-		//args = append(args, "--disable-dev-shm-usage")
+		args = append(args, "--no-sandbox")
+		args = append(args, "--disable-dev-shm-usage")
 		args = append(args, "--disable-popup-blocking")
 		args = append(args, "--force-device-scale-factor=1")
 		// args = append(args, "--no-sandbox")
@@ -3021,6 +3022,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 			W3C:   true,
 			Prefs: chromePrefs,
 		})
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Chrome capabilities: %v\n", caps)
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
@@ -3064,6 +3066,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 			Args:  args,
 			Prefs: firefoxCaps,
 		})
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Firefox capabilities: %v\n", caps)
 	}
 
 	// Enable logging

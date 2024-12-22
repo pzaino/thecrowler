@@ -79,14 +79,17 @@ POSTGRES_IMAGE=""
 #export SELENIUM_VER_NUM="4.20.0"
 #export SELENIUM_BUILDID="20240425"
 # Tested through 4.21.0
-export SELENIUM_VER_NUM="4.21.0"
-export SELENIUM_BUILDID="20240522"
+#export SELENIUM_VER_NUM="4.21.0"
+#export SELENIUM_BUILDID="20240522"
 # (Not yet working!) 4.23.1
 #export SELENIUM_VER_NUM="4.23.1"
 #export SELENIUM_BUILDID="20240813"
 # (Not yet working!) 4.24.0
 #export SELENIUM_VER_NUM="4.24.0"
 #export SELENIUM_BUILDID="20240830"
+# (Not yet working!) 4.27.0
+export SELENIUM_VER_NUM="4.27.0"
+export SELENIUM_BUILDID="20241204"
 
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
@@ -108,9 +111,12 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     POSTGRES_IMAGE="arm64v8/"
     #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
     #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
-    SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
-    #SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELESE}"
     SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
+
+    # Historical note: The CROWler project supports Chromium/Chrome on ARM64 since version 4.21.0
+    # so if the user decides to use an older version of Selenium, we will use the Firefox image instead.
     TARGET_VER_INT=$(version_to_integer "4.21.0")
     # shellcheck disable=SC2086
     if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
@@ -150,8 +156,12 @@ git pull origin "${SELENIUM_RELEASE}"
 if [ -d "../selenium-patches/${SELENIUM_VER_NUM}" ];
 then
     echo "Found patches for Selenium version ${SELENIUM_VER_NUM}"
-    # patch Selenium Dockefile and start-selenium-standalone.sh files:
-    cp ../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile ./Standalone/Dockerfile
+    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile" ];
+    then
+        # patch Selenium Dockefile and start-selenium-standalone.sh files:
+        cp ../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile ./Standalone/Dockerfile
+    fi
+
     # Check if there is a Makefile patch
     if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch" ];
     then
@@ -173,6 +183,43 @@ then
             echo "Base patch applied successfully."
         else
             echo "Failed to apply Base patch."
+            exit 1
+        fi
+        popd || exit 1
+    else
+        # We have no noarch patch (for this version),
+        # check if we have an architecture specific patch then
+        if [ "$PLATFORM" == "linux/arm64/v8" ];
+        then
+            # We need to patch the Dockerfile_Base file for ARM64
+            patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
+            echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
+            if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+            then
+                pushd ./Base || exit 1
+                cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
+                if patch Dockerfile ./${patch_file}; then
+                    echo "Patch applied successfully."
+                else
+                    echo "Failed to apply patch."
+                    exit 1
+                fi
+                popd || exit 1
+            else
+                echo "No architecture patch file found for ${patch_file}, skipping patching."
+            fi
+        fi
+    fi
+
+    # check if there is a `multi-platform` patch for Standalone:
+    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" ];
+    then
+        pushd ./Standalone || exit 1
+        cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Standalone.patch"
+        if patch Dockerfile ./Dockerfile_Standalone.patch; then
+            echo "Standalone patch applied successfully."
+        else
+            echo "Standalone to apply Base patch."
             exit 1
         fi
         popd || exit 1
@@ -229,6 +276,10 @@ fi
 # Add Rbee to the Selenium image
 cp -r ../Rbee ./Standalone/
 cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomation.conf
+
+# Add crowler-vdi-bg
+mkdir -p ./Standalone/images
+cp -r ../images/crowler-vdi-bg.png ./Standalone/images/
 
 # build Selenium image
 if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then

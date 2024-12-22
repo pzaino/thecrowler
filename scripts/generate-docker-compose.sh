@@ -136,6 +136,8 @@ services:
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     image: crowler-api
     pull_policy: never
+    stdin_open: true # For interactive terminal access (optional)
+    tty: true        # For interactive terminal access (optional)
     ports:
       - "8080:8080"
     networks:
@@ -170,6 +172,8 @@ services:
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     image: crowler-events
     pull_policy: never
+    stdin_open: true # For interactive terminal access (optional)
+    tty: true        # For interactive terminal access (optional)
     ports:
       - "8082:8082"
     networks:
