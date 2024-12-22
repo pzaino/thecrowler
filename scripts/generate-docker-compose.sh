@@ -115,7 +115,6 @@ fi
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
 ---
-version: '3.8'
 services:
 
   crowler-api:
@@ -131,10 +130,12 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.searchapi
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    image: crowler-api
+    pull_policy: never
     ports:
       - "8080:8080"
     networks:
@@ -163,10 +164,12 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.events
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    image: crowler-events
+    pull_policy: never
     ports:
       - "8082:8082"
     networks:
@@ -202,6 +205,7 @@ if [ "$postgres" == "yes" ]; then
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -253,10 +257,12 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    image: crowler-engine-$i
+    pull_policy: never
     networks:
       - crowler-net
 $ENGINE_NETWORKS
@@ -299,6 +305,7 @@ for i in $(seq 1 "$vdi_count"); do
       - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
+    pull_policy: never
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
@@ -329,6 +336,7 @@ if [ "$prometheus" == "yes" ]; then
       - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     networks:
       - crowler-net
     restart: unless-stopped

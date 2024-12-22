@@ -108,8 +108,8 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     POSTGRES_IMAGE="arm64v8/"
     #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
     #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
-    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
-    SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    #SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELESE}"
     SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
     TARGET_VER_INT=$(version_to_integer "4.21.0")
     # shellcheck disable=SC2086
