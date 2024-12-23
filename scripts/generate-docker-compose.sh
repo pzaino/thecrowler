@@ -308,6 +308,13 @@ for i in $(seq 1 "$vdi_count"); do
     environment:
       - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+      - SE_SCREEN_DEPTH=24
+      - SE_ROLE=standalone
+      - SE_REJECT_UNSUPPORTED_CAPS=true
+      - SE_NODE_ENABLE_CDP=true
+    shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
     pull_policy: never
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}

@@ -2839,9 +2839,9 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// Set the CDP port
-		//args = append(args, "--remote-debugging-port=9222")
+		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		//args = append(args, "--remote-debugging-address=0.0.0.0")
+		args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
 		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
@@ -2850,7 +2850,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
-		//args = append(args, "--force-proxy-for-all")
+		args = append(args, "--force-proxy-for-all")
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -2895,26 +2895,39 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	}
 
 	// General settings
-	args = append(args, "--disable-software-rasterizer")
-	args = append(args, "--use-fake-ui-for-media-stream")
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--disable-software-rasterizer")
+		args = append(args, "--use-fake-ui-for-media-stream")
+	}
 
 	// Avoid funny localizations/detections
-	args = append(args, "--disable-webrtc")
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// DNS over HTTPS (DoH) settings
-		//args = append(args, "--dns-prefetch-disable")
-		//args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
-		//args = append(args, "--host-resolver-rules=MAP *:443")
+		args = append(args, "--dns-prefetch-disable")
+		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		args = append(args, "--host-resolver-rules=MAP *:443")
 
+		// Reduce geolocation leaks
 		args = append(args, "--disable-geolocation")
 		args = append(args, "--disable-notifications")
 		args = append(args, "--disable-quic")
 		args = append(args, "--disable-blink-features=AutomationControlled")
+
+		// Reduce Hardware fingerprinting
 		args = append(args, "--override-hardware-concurrency=4")
 		args = append(args, "--override-device-memory=4")
-		args = append(args, "--disable-plugins-discovery")
 		args = append(args, "--disable-features=Battery")
+
+		// Reduce Browser fingerprinting
+		args = append(args, "--disable-infobars")
+		args = append(args, "--disable-extensions")
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-plugins-discovery")
 		args = append(args, "--disable-peer-to-peer")
+
+		// Disable WebRTC
+		args = append(args, "--disable-rtc-smoothness-algorithm")
+		args = append(args, "--disable-webrtc")
 		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
 		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
 		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
@@ -2923,15 +2936,20 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-webrtc-hw-decoding")
 		args = append(args, "--disable-webrtc-encryption")
 		args = append(args, "--disable-webrtc")
-		args = append(args, "--disable-extensions")
-		args = append(args, "--disable-plugins")
-		args = append(args, "--disable-infobars")
-		args = append(args, "--disable-peer-to-peer")
-		args = append(args, "--no-sandbox")
-		args = append(args, "--disable-dev-shm-usage")
+
+		// Disable Snadboxing
+		/*
+			args = append(args, "--no-sandbox")
+			args = append(args, "--disable-dev-shm-usage")
+		*/
+
 		args = append(args, "--disable-popup-blocking")
+
+		// Ensure Screen Resolution is correct
 		args = append(args, "--force-device-scale-factor=1")
-		// args = append(args, "--no-sandbox")
+
+		// Enable/Disable JavaScript, Images, CSS, and Plugins requests
+		// based on user's configuration
 		if ctx.config.Crawler.RequestImages {
 			args = append(args, "--blink-settings=imagesEnabled=true")
 		} else {
@@ -2952,13 +2970,16 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		} else {
 			args = append(args, "--blink-settings=PluginsEnabled=false")
 		}
+
+		// Reduce Cookie based tracking
 		if ctx.config.Crawler.ResetCookiesPolicy != "" && ctx.config.Crawler.ResetCookiesPolicy != "none" {
 			args = append(args, "--disable-site-isolation-trials")
 			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
 			args = append(args, "--disable-features=SameSiteByDefaultCookies")
 		}
+
 		// Disable video auto-play:
-		args = append(args, "--autoplay-policy=user-required")
+		//args = append(args, "--autoplay-policy=user-required") // this option does't work and cause chrome/chromium to crash
 	}
 
 	// Append logging settings if available
