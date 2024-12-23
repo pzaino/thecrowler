@@ -593,7 +593,8 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 	}
 	resetPageInfo(&pageInfo) // Reset the PageInfo struct
-	ctx.visitedLinks[ctx.source.URL] = true
+	fURL := cmn.NormalizeURL(ctx.source.URL)
+	ctx.visitedLinks[fURL] = true
 	ctx.Status.TotalPages = 1
 
 	// Delay before processing the next job
@@ -2135,14 +2136,20 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			break
 		}
 
+		// Recursive Mode
+		urlLink := url.Link
+		if strings.HasPrefix(url.Link, "/") {
+			urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
+		}
+
 		// Check if the URL should be skipped
-		skip := skipURL(processCtx, id, url.Link)
+		skip := skipURL(processCtx, id, urlLink)
 		if skip {
 			processCtx.Status.TotalSkipped++
 			skippedURLs = append(skippedURLs, url)
 			continue
 		}
-		if processCtx.visitedLinks[url.Link] {
+		if processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] {
 			// URL already visited
 			processCtx.Status.TotalDuplicates++
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
@@ -2158,11 +2165,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
 		var err error
 		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
-			// Recursive Mode
-			urlLink := url.Link
-			if strings.HasPrefix(url.Link, "/") {
-				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
-			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRCRecu {
 			// Right Click Recursive Mode
@@ -2174,12 +2176,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		} else {
 			// Fuzzing Mode
 			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
-			urlLink := url.Link
-			if strings.HasPrefix(url.Link, "/") {
-				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
-			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		}
+		processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] = true
+
 		if err == nil {
 			processCtx.Status.TotalPages++
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
@@ -2289,7 +2289,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Check current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab and opened: %s\n", id, url.Link, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab were we had: %s\n", id, url.Link, currentURL)
 
 	// Execute any action rules after the link is opened
 	processActionRules(&processCtx.wd, processCtx, currentURL)
@@ -2392,8 +2392,8 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// Mark the link as visited and add new links to the process context
-	processCtx.visitedLinks[url.Link] = true
-	processCtx.visitedLinks[currentURL] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(url.Link)] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(currentURL)] = true
 
 	// Add new links to the process context
 	if len(pageCache.Links) > 0 {
@@ -2562,7 +2562,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
-	processCtx.visitedLinks[url.Link] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(url.Link)] = true
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
@@ -2667,7 +2667,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
-	processCtx.visitedLinks[url] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
