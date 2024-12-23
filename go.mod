@@ -29,7 +29,7 @@ require (
 require golang.org/x/sync v0.10.0 // indirect
 
 require (
-	github.com/antchfx/xpath v1.3.2 // indirect
+	github.com/antchfx/xpath v1.3.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chromedp/cdproto v0.0.0-20241208230723-d1c7de7e5dd2 // indirect
@@ -50,7 +50,7 @@ require (
 )
 
 require (
-	github.com/antchfx/htmlquery v1.3.3
+	github.com/antchfx/htmlquery v1.3.4
 	github.com/chromedp/chromedp v0.11.2
 	github.com/mailru/easyjson v0.9.0
 	github.com/prometheus/client_golang v1.20.5
