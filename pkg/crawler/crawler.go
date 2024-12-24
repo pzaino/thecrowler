@@ -593,7 +593,8 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 	}
 	resetPageInfo(&pageInfo) // Reset the PageInfo struct
-	ctx.visitedLinks[ctx.source.URL] = true
+	fURL := cmn.NormalizeURL(ctx.source.URL)
+	ctx.visitedLinks[fURL] = true
 	ctx.Status.TotalPages = 1
 
 	// Delay before processing the next job
@@ -2135,14 +2136,20 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			break
 		}
 
+		// Recursive Mode
+		urlLink := url.Link
+		if strings.HasPrefix(url.Link, "/") {
+			urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
+		}
+
 		// Check if the URL should be skipped
-		skip := skipURL(processCtx, id, url.Link)
+		skip := skipURL(processCtx, id, urlLink)
 		if skip {
 			processCtx.Status.TotalSkipped++
 			skippedURLs = append(skippedURLs, url)
 			continue
 		}
-		if processCtx.visitedLinks[url.Link] {
+		if processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] {
 			// URL already visited
 			processCtx.Status.TotalDuplicates++
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
@@ -2158,11 +2165,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
 		var err error
 		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
-			// Recursive Mode
-			urlLink := url.Link
-			if strings.HasPrefix(url.Link, "/") {
-				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
-			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRCRecu {
 			// Right Click Recursive Mode
@@ -2174,12 +2176,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		} else {
 			// Fuzzing Mode
 			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
-			urlLink := url.Link
-			if strings.HasPrefix(url.Link, "/") {
-				urlLink, _ = combineURLs(processCtx.source.URL, url.Link)
-			}
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		}
+		processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] = true
+
 		if err == nil {
 			processCtx.Status.TotalPages++
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
@@ -2289,7 +2289,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Check current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab and opened: %s\n", id, url.Link, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab were we had: %s\n", id, url.Link, currentURL)
 
 	// Execute any action rules after the link is opened
 	processActionRules(&processCtx.wd, processCtx, currentURL)
@@ -2392,8 +2392,8 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// Mark the link as visited and add new links to the process context
-	processCtx.visitedLinks[url.Link] = true
-	processCtx.visitedLinks[currentURL] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(url.Link)] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(currentURL)] = true
 
 	// Add new links to the process context
 	if len(pageCache.Links) > 0 {
@@ -2562,7 +2562,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
-	processCtx.visitedLinks[url.Link] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(url.Link)] = true
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
@@ -2667,7 +2667,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
-	processCtx.visitedLinks[url] = true
+	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
@@ -2843,7 +2843,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		// Set the CDP host
 		args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
-		args = append(args, "--auto-open-devtools-for-tabs")
+		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
 	}
 
@@ -2895,26 +2895,39 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	}
 
 	// General settings
-	args = append(args, "--disable-software-rasterizer")
-	args = append(args, "--use-fake-ui-for-media-stream")
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--disable-software-rasterizer")
+		args = append(args, "--use-fake-ui-for-media-stream")
+	}
 
 	// Avoid funny localizations/detections
-	args = append(args, "--disable-webrtc")
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// DNS over HTTPS (DoH) settings
 		args = append(args, "--dns-prefetch-disable")
 		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
 		args = append(args, "--host-resolver-rules=MAP *:443")
 
+		// Reduce geolocation leaks
 		args = append(args, "--disable-geolocation")
 		args = append(args, "--disable-notifications")
 		args = append(args, "--disable-quic")
 		args = append(args, "--disable-blink-features=AutomationControlled")
+
+		// Reduce Hardware fingerprinting
 		args = append(args, "--override-hardware-concurrency=4")
 		args = append(args, "--override-device-memory=4")
-		args = append(args, "--disable-plugins-discovery")
 		args = append(args, "--disable-features=Battery")
+
+		// Reduce Browser fingerprinting
+		args = append(args, "--disable-infobars")
+		args = append(args, "--disable-extensions")
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-plugins-discovery")
 		args = append(args, "--disable-peer-to-peer")
+
+		// Disable WebRTC
+		args = append(args, "--disable-rtc-smoothness-algorithm")
+		args = append(args, "--disable-webrtc")
 		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
 		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
 		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
@@ -2923,14 +2936,20 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-webrtc-hw-decoding")
 		args = append(args, "--disable-webrtc-encryption")
 		args = append(args, "--disable-webrtc")
-		args = append(args, "--disable-extensions")
-		args = append(args, "--disable-plugins")
-		args = append(args, "--disable-infobars")
-		args = append(args, "--disable-peer-to-peer")
-		args = append(args, "--disable-dev-shm-usage")
+
+		// Disable Snadboxing
+		/*
+			args = append(args, "--no-sandbox")
+			args = append(args, "--disable-dev-shm-usage")
+		*/
+
 		args = append(args, "--disable-popup-blocking")
+
+		// Ensure Screen Resolution is correct
 		args = append(args, "--force-device-scale-factor=1")
-		// args = append(args, "--no-sandbox")
+
+		// Enable/Disable JavaScript, Images, CSS, and Plugins requests
+		// based on user's configuration
 		if ctx.config.Crawler.RequestImages {
 			args = append(args, "--blink-settings=imagesEnabled=true")
 		} else {
@@ -2951,13 +2970,16 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		} else {
 			args = append(args, "--blink-settings=PluginsEnabled=false")
 		}
+
+		// Reduce Cookie based tracking
 		if ctx.config.Crawler.ResetCookiesPolicy != "" && ctx.config.Crawler.ResetCookiesPolicy != "none" {
 			args = append(args, "--disable-site-isolation-trials")
 			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
 			args = append(args, "--disable-features=SameSiteByDefaultCookies")
 		}
+
 		// Disable video auto-play:
-		args = append(args, "--autoplay-policy=user-required")
+		//args = append(args, "--autoplay-policy=user-required") // this option does't work and cause chrome/chromium to crash
 	}
 
 	// Append logging settings if available
@@ -3021,6 +3043,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 			W3C:   true,
 			Prefs: chromePrefs,
 		})
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Chrome capabilities: %v\n", caps)
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
@@ -3064,6 +3087,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 			Args:  args,
 			Prefs: firefoxCaps,
 		})
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Firefox capabilities: %v\n", caps)
 	}
 
 	// Enable logging

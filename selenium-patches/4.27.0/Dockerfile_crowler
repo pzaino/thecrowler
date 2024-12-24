@@ -1,0 +1,150 @@
+ARG NAMESPACE=selenium
+ARG VERSION=latest
+ARG BASE=node-base
+ARG AUTHORS="ZFPSystems"
+
+# Build the extra browser Automation for the CROWler
+FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder
+LABEL authors=${AUTHORS}
+
+USER root
+
+#====================================
+# Install go lang to build "Rbee" for the CROWler
+#====================================
+# Add the PPA for up-to-date Go versions and install Go
+RUN apt-get update \
+    && apt-get install -y software-properties-common \
+    && apt-get install -y wget \
+    && apt-get install -y git \
+    && apt-get install -y unzip \
+    && apt-get install -y apt-utils
+
+#RUN sudo add-apt-repository ppa:longsleep/golang-backports \
+#    && apt-get update \
+#    && apt-get install -y golang-go
+
+#RUN apt-get update \
+#    && apt-get install -y golang
+
+# Choose the Go version you want
+ENV GOLANG_VERSION=1.23.4
+RUN apt-get update && apt-get install -y wget ca-certificates
+
+# Download the official tarball from go.dev, verify, then install
+# Docker automatically sets TARGETARCH to "amd64" or "arm64"
+ARG TARGETARCH
+
+# We'll construct a URL that matches how Go tarballs are named:
+#   - "linux-amd64" for x86_64
+#   - "linux-arm64" for arm64
+RUN apt-get update && apt-get install -y wget ca-certificates && rm -rf /var/lib/apt/lists/* \
+    && case "${TARGETARCH}" in \
+        "amd64")  GOARCH="amd64" ;; \
+        "arm64")  GOARCH="arm64" ;; \
+        *) echo "Unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+    esac \
+    && wget "https://go.dev/dl/go${GOLANG_VERSION}.linux-${GOARCH}.tar.gz" -O /tmp/go.tgz \
+    && rm -rf /usr/local/go \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm /tmp/go.tgz
+
+# Make sure /usr/local/go/bin is on the PATH
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Check Go version to ensure correct installation
+RUN go version
+
+RUN dpkg-divert --list \
+    | grep usr-is-merged \
+    | while read -r divert_line; do \
+        # Extract the original path from "diversion of /<path> to /.<path>.usr-is-merged"
+        path="$(echo "$divert_line" | sed -E 's/diversion of ([^ ]+) to .*/\1/')" ; \
+        echo "Removing diversion for $path..." ; \
+        dpkg-divert --rename --remove "$path" || true ; \
+      done
+
+#     && apt-get dist-upgrade -y \
+# Install dependecies for the Go project
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       libx11-dev libxtst-dev libxext-dev \
+       build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install D-Bus
+RUN apt-get update \
+  && apt-get install -y dbus \
+  && rm -rf /var/lib/apt/lists/*
+
+# Make sure D-Bus run directory exists
+RUN mkdir -p /var/run/dbus
+
+# Generate a machine-id if one isn’t present
+RUN dbus-uuidgen > /etc/machine-id
+
+# Copy and build your Go project
+WORKDIR /src
+COPY ./Rbee/cmd ./cmd
+COPY ./Rbee/pkg ./pkg
+COPY ./Rbee/go.mod .
+COPY ./Rbee/go.sum .
+COPY ./Rbee/autobuild.sh .
+COPY ./Rbee/browserAutomation.conf .
+COPY ./images/crowler-vdi-bg.png .
+RUN chmod +x autobuild.sh
+
+WORKDIR /src
+RUN ./autobuild.sh rb
+
+FROM ${NAMESPACE}/${BASE}:${VERSION}
+ARG AUTHORS
+LABEL authors=${AUTHORS}
+
+USER root
+
+RUN sudo apt-get update && apt-get install -y feh
+COPY --from=builder /src/crowler-vdi-bg.png /usr/share/images/fluxbox/ubuntu-light.png
+
+RUN mkdir -p /home/${SEL_UID}/.fluxbox \
+ && chown -R ${SEL_UID}:${SEL_GID} /home/${SEL_UID}/.fluxbox
+
+RUN echo "feh --bg-scale /usr/share/images/fluxbox/ubuntu-light.png" \
+    >> /home/${SEL_UID}/.fluxbox/startup
+
+# fix ownership
+RUN chown ${SEL_UID}:${SEL_GID} /home/${SEL_UID}/.fluxbox/startup
+
+USER ${SEL_UID}
+
+#====================================
+# Configure CROWler Rbee
+#====================================
+COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/bin/rbee /opt/bin/rbee
+COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/browserAutomation.conf /etc/supervisor/conf.d/browserAutomation.conf
+
+#====================================
+# Scripts to run Selenium Standalone
+#====================================
+COPY --chown="${SEL_UID}:${SEL_GID}" start-selenium-standalone.sh /opt/bin/start-selenium-standalone.sh
+
+#==============================
+# Supervisor configuration file
+#==============================
+COPY selenium.conf /etc/supervisor/conf.d/
+
+# Copying configuration script generator
+COPY --chown="${SEL_UID}:${SEL_GID}" generate_config /opt/bin/generate_config
+
+# In seconds, maps to "--session-request-timeout"
+ENV SE_SESSION_REQUEST_TIMEOUT=300 \
+# In seconds, maps to "--session-retry-interval"
+    SE_SESSION_RETRY_INTERVAL=15 \
+# In seconds, maps to "--healthcheck-interval"
+    SE_HEALTHCHECK_INTERVAL=120 \
+# Boolean value, maps "--relax-checks"
+    SE_RELAX_CHECKS=true \
+    SE_REJECT_UNSUPPORTED_CAPS=true \
+    SE_OTEL_SERVICE_NAME="selenium-standalone"
+
+EXPOSE 4444
