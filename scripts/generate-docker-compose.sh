@@ -320,7 +320,7 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_REJECT_UNSUPPORTED_CAPS=true
       - SE_NODE_ENABLE_CDP=true
     shm_size: "2g"
-    image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.27.0-$(get_date)}
+    image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
