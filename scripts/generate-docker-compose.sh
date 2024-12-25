@@ -59,6 +59,11 @@ read_yes_no_input() {
     done
 }
 
+# Function that returns today's date as yyyymmdd number
+get_date() {
+    date +"%Y%m%d"
+}
+
 # process the arguments in pars
 # shellcheck disable=SC2068
 for arg in ${pars}; do
@@ -115,7 +120,6 @@ fi
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
 ---
-version: '3.8'
 services:
 
   crowler-api:
@@ -131,10 +135,14 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.searchapi
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    image: crowler-api
+    pull_policy: never
+    stdin_open: true # For interactive terminal access (optional)
+    tty: true        # For interactive terminal access (optional)
     ports:
       - "8080:8080"
     networks:
@@ -163,10 +171,14 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.events
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    image: crowler-events
+    pull_policy: never
+    stdin_open: true # For interactive terminal access (optional)
+    tty: true        # For interactive terminal access (optional)
     ports:
       - "8082:8082"
     networks:
@@ -202,6 +214,7 @@ if [ "$postgres" == "yes" ]; then
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -253,10 +266,12 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    image: crowler-engine-$i
+    pull_policy: never
     networks:
       - crowler-net
 $ENGINE_NETWORKS
@@ -298,13 +313,25 @@ for i in $(seq 1 "$vdi_count"); do
     environment:
       - COMPOSE_PROJECT_NAME=crowler
       - INSTANCE_ID=$i
-    image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chrome:4.18.1-20240224}
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+      - SE_SCREEN_DEPTH=24
+      - SE_ROLE=standalone
+      - SE_REJECT_UNSUPPORTED_CAPS=true
+      - SE_NODE_ENABLE_CDP=true
+    shm_size: "2g"
+    image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
+    pull_policy: never
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     ports:
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
       - "$HOST_PORT_START2:5900"
       - "$HOST_PORT_START3:7900"
       - "$HOST_PORT_START4:9222"
+    volumes:
+      - /dev/shm:/dev/shm
+    expose:
+      - "$HOST_PORT_START4"
     networks:
       - $NETWORK_NAME
     restart: unless-stopped
@@ -325,6 +352,7 @@ if [ "$prometheus" == "yes" ]; then
       - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     networks:
       - crowler-net
     restart: unless-stopped

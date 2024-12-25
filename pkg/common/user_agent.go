@@ -52,6 +52,7 @@ type UserAgentsDB struct {
 	UserAgentsGroups []UserAgentGroup
 }
 
+// UADB is the global user agents database.
 var UADB UserAgentsDB
 
 // InitUserAgentsDB initializes the user agents database.

@@ -22,7 +22,7 @@ and configuring the build appropriately.
 
   To see the full list of ENV vars you can set, see [here](doc/env_vars.md).
 
-  There are 3 ENV vars **you must set**, otherwise the CROWler won't build or
+  There are 4 ENV vars **you must set**, otherwise the CROWler won't build or
   work:
 
   - `DOCKER_CROWLER_DB_PASSWORD`, this is the password for the CROWler user in
@@ -32,6 +32,20 @@ and configuring the build appropriately.
   - `DOCKER_DB_HOST`, this is the hostname, IP or FQDN of the Postgres database.
     You normally set this one with the IP of the host where you're running the
     Postgres container.
+  - `DOCKER_SELENIUM_IMAGE`, this should always be set to:
+  `"selenium/standalone-chromium:4.27.0-<date-you-build-vdi-image>"`. For
+  example:
+  `"DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:4.27.0-20241223"`.
+  The default value is `"selenium/standalone-chromium:4.27.0-(today)"`.
+  Where (today) is the date (in yyyyMMdd format) of the day you generated the
+  docker-compose.yml file.
+
+  If you are building the CROWler on an CPU architecture that is not `x86_64`,
+   then you **must** add the following ENV var:
+
+  - `DOCKER_DEFAULT_PLATFORM`, this is the architecture of the CPU you are
+   building the CROWler on. For example `"linux/arm64"` for ARM64 and
+   `"linux/amd64"` for x86_64.
 
   **Note**: If you rebuild the CROWler docker images often, you might want to
   set these ENV vars in your shell file called config.sh, and then source it
