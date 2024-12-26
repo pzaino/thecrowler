@@ -620,6 +620,9 @@ func addJSAPIClient(vm *otto.Otto) error {
 			}
 		}
 
+		// output the object for debugging purposes:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Request object:", req)
+
 		resp, err := client.Do(req)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "making request:", err)
