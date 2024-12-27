@@ -600,6 +600,10 @@ func addJSAPIClient(vm *otto.Otto) error {
 			if err == nil {
 				// If goBody is already a string, treat it as a raw JSON body
 				if jsonString, ok := goBody.(string); ok {
+					// Check if jsonString starts with an "[" and ends with an "]", in which case remove both
+					if strings.HasPrefix(jsonString, "[") && strings.HasSuffix(jsonString, "]") {
+						jsonString = jsonString[1 : len(jsonString)-1]
+					}
 					body = strings.NewReader(jsonString)
 				} else {
 					// Otherwise, marshal the Go object into JSON
