@@ -681,6 +681,9 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established.")
 	defer closeResources(db, seleniumInstances)
 
+	// Start events listener
+	go cdb.ListenForEvents(&db, handleNotification)
+
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
 	go checkSources(&db, &seleniumInstances, &GRulesEngine)
@@ -736,6 +739,90 @@ func main() {
 		statusMsg = fmt.Sprintf("Server stopped with error: %v", rStatus)
 	}
 	cmn.DebugMsg(cmn.DbgLvlFatal, statusMsg)
+}
+
+func handleNotification(payload string) {
+	var event cdb.Event
+	err := json.Unmarshal([]byte(payload), &event)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification payload: %v", err)
+		return
+	}
+
+	// Log the event for debug purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received: %+v", event)
+
+	// Process the Event
+	processEvent(event)
+}
+
+func processEvent(event cdb.Event) {
+	switch strings.ToLower(strings.TrimSpace(event.Type)) {
+	case "system_event":
+		// System event
+		processSystemEvent(event)
+	default:
+		// Ignore event
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, not interested in this type: %s", event.Type)
+	}
+}
+
+func processSystemEvent(event cdb.Event) {
+	// check if event.Details contains a tag "action" and process it
+	if event.Details["action"] == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, no action specified.")
+		return
+	}
+
+	action := event.Details["action"].(string)
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "update_debug_level":
+		// Check if there is a tag "level" and process it
+		if event.Details["level"] == nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, no level specified.")
+			return
+		}
+		// Update the debug level
+		newLevel := event.Details["level"].(string)
+		// Convert newLevel to a DebugLevel
+		newLevel = strings.ToLower(newLevel)
+		go updateDebugLevel(newLevel)
+	default:
+		// Ignore event
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, not interested in this action: %s", action)
+	}
+}
+
+func updateDebugLevel(newLevel string) {
+	// Get configuration lock
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	var dbgLvl cmn.DbgLevel
+	switch newLevel {
+	case "debug":
+		config.DebugLevel = 1
+	case "debug1":
+		config.DebugLevel = 1
+	case "debug2":
+		config.DebugLevel = 2
+	case "debug3":
+		config.DebugLevel = 3
+	case "debug4":
+		config.DebugLevel = 4
+	case "debug5":
+		config.DebugLevel = 5
+	case "info":
+		config.DebugLevel = 0
+	default:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, invalid debug level specified: %s", newLevel)
+		return
+	}
+
+	// Update the debug level
+	dbgLvl = cmn.DbgLevel(config.DebugLevel)
+	cmn.SetDebugLevel(dbgLvl)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Debug level updated to: %d", cmn.GetDebugLevel())
 }
 
 // initAPIv1 initializes the API v1 handlers

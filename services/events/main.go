@@ -96,7 +96,8 @@ func main() {
 	}
 
 	// Start the event listener (on a separate go routine)
-	go listenForEvents(&dbHandler)
+	//go listenForEvents(&dbHandler)
+	go cdb.ListenForEvents(&dbHandler, handleNotification)
 
 	srv := &http.Server{
 		Addr: config.Events.Host + ":" + fmt.Sprintf("%d", config.Events.Port),
@@ -259,60 +260,6 @@ func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 
 	// Respond with the health status
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
-}
-
-func listenForEvents(db *cdb.Handler) {
-	// Listener for PostgreSQL notifications
-	listener := (*db).NewListener()
-
-	// _ = event
-	err := listener.Connect(cfg.Config{}, 10, 90, func(_ cdb.ListenerEventType, err error) {
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Listener error: %v", err)
-		}
-	})
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to connect to the database listener: %v", err)
-		return
-	}
-	defer listener.Close() //nolint:errcheck // We can't check returned error when using defer
-
-	err = listener.Listen("new_event")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to listen on 'new_event': %v", err)
-		return
-	}
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Listening for new events...")
-
-	// Verify connection
-	if err := listener.Ping(); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to ping the listener: %v", err)
-		return
-	}
-
-	// Graceful shutdown on interrupt
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		for {
-			select {
-			case n := <-listener.Notify():
-				if n != nil {
-					handleNotification(n.Extra())
-				}
-			case <-stop:
-				cmn.DebugMsg(cmn.DbgLvlInfo, "Shutting down the events handler...")
-				err = listener.UnlistenAll()
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Failed to unlisten: %v", err)
-				}
-				return
-			}
-		}
-	}()
-
-	<-stop // Wait for shutdown signal
 }
 
 func createEventHandler(w http.ResponseWriter, r *http.Request) {
