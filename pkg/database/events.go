@@ -17,10 +17,14 @@ package database
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 const (
@@ -441,4 +445,61 @@ func GetEventsBySourceTypeSeverityAndTime(db *Handler, sourceID uint64, eventTyp
 	}
 
 	return events, nil
+}
+
+// ListenForEvents listens for new events in the database and calls the handleNotification function when a new event is received.
+func ListenForEvents(db *Handler, handleNotification func(string)) {
+	listener := (*db).NewListener()
+	if listener == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create a new listener")
+		return
+	}
+
+	defer func() {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Closing listener...")
+		listener.Close()
+	}()
+
+	err := listener.Connect(cfg.Config{}, 10, 90, func(_ ListenerEventType, err error) {
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Listener error: %v", err)
+		}
+	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to connect to the database listener: %v", err)
+		return
+	}
+
+	err = listener.Listen("new_event")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to listen on 'new_event': %v", err)
+		return
+	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		for {
+			select {
+			case n, ok := <-listener.Notify():
+				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlInfo, "Notification channel closed")
+					return
+				}
+				if n != nil {
+					handleNotification(n.Extra())
+				}
+			case <-stop:
+				cmn.DebugMsg(cmn.DbgLvlInfo, "Shutting down the events handler...")
+				err = listener.UnlistenAll()
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Failed to unlisten: %v", err)
+				}
+				return
+			}
+		}
+	}()
+
+	<-stop // Wait for shutdown signal
 }

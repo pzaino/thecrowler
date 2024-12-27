@@ -33,6 +33,12 @@ const (
 	errIPNotAllowed = "ip address is not allowed"
 )
 
+var (
+	// DebugLevel is the debug level for logging
+	debugLevel   DbgLevel
+	loggerPrefix string
+)
+
 // GetEngineID returns the engine ID
 func GetEngineID() string {
 	// Retrieve process PID
@@ -92,6 +98,14 @@ func UpdateLoggerConfig(logType string) {
 
 // SetDebugLevel allows to set the current debug level
 func SetDebugLevel(dbgLvl DbgLevel) {
+	if dbgLvl > DbgLvlDebug5 {
+		debugLevel = DbgLvlDebug5
+		return
+	}
+	if dbgLvl < DbgLvlFatal {
+		debugLevel = DbgLvlFatal
+		return
+	}
 	debugLevel = dbgLvl
 }
 

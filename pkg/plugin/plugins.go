@@ -613,11 +613,20 @@ func addJSAPIClient(vm *otto.Otto) error {
 
 		if headersArg.IsDefined() {
 			headersObj := headersArg.Object()
+			var contentTypeSet bool
 			for _, key := range headersObj.Keys() {
 				value, _ := headersObj.Get(key)
+				if strings.ToLower(strings.TrimSpace(key)) == "content-type" {
+					contentTypeSet = true
+				}
 				valueStr, _ := value.ToString()
 				req.Header.Set(strings.TrimSpace(key), strings.TrimSpace(valueStr))
 			}
+			if !contentTypeSet {
+				req.Header.Set("Content-Type", "application/json")
+			}
+		} else {
+			req.Header.Set("Content-Type", "application/json")
 		}
 
 		// output the object for debugging purposes:

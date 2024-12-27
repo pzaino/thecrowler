@@ -71,12 +71,6 @@ const (
 	DbgLvlFatal = -3
 )
 
-var (
-	// DebugLevel is the debug level for logging
-	debugLevel   DbgLevel
-	loggerPrefix string
-)
-
 // EnvValue is a struct to represent an environment variable
 type EnvValue struct {
 	// Name is the name of the environment variable
