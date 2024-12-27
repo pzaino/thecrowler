@@ -457,7 +457,10 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 
 	defer func() {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Closing listener...")
-		listener.Close()
+		err := listener.Close()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to close the listener: %v", err)
+		}
 	}()
 
 	err := listener.Connect(cfg.Config{}, 10, 90, func(_ ListenerEventType, err error) {
