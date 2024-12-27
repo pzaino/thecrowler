@@ -598,10 +598,20 @@ func addJSAPIClient(vm *otto.Otto) error {
 		if bodyArg.IsDefined() {
 			goBody, err := bodyArg.Export()
 			if err == nil {
-				bodyBytes, err := json.Marshal(goBody)
-				if err == nil {
-					body = bytes.NewReader(bodyBytes)
+				// If goBody is already a string, treat it as a raw JSON body
+				if jsonString, ok := goBody.(string); ok {
+					body = strings.NewReader(jsonString)
+				} else {
+					// Otherwise, marshal the Go object into JSON
+					bodyBytes, err := json.Marshal(goBody)
+					if err == nil {
+						body = bytes.NewReader(bodyBytes)
+					} else {
+						cmn.DebugMsg(cmn.DbgLvlError, "Failed to marshal JSON body:", err)
+					}
 				}
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to export body:", err)
 			}
 		}
 
