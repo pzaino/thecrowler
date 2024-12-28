@@ -581,66 +581,76 @@ func addJSAPIClient(vm *otto.Otto) error {
 	apiClientObject, _ := vm.Object(`({})`)
 
 	// Define the "post" method
-	apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value { //nolint:errcheck,gosec // We can't check error here
-		method := "POST"
+	apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
+		// Get the URL (first argument)
 		url, _ := call.Argument(0).ToString()
-		headersArg := call.Argument(1)
-		bodyArg := call.Argument(2)
-		timeoutMs, err := call.Argument(3).ToInteger()
-		if err != nil {
-			timeoutMs = 30000
-		}
 
-		timeout := time.Duration(timeoutMs) * time.Millisecond
-		client := &http.Client{Timeout: timeout}
-
-		var body io.Reader
-		if bodyArg.IsDefined() {
-			goBody, err := bodyArg.Export()
-			if err == nil {
-				// If goBody is already a string, treat it as a raw JSON body
-				if jsonString, ok := goBody.(string); ok {
-					// Check if jsonString starts with an "[" and ends with an "]", in which case remove both
-					if strings.HasPrefix(jsonString, "[") && strings.HasSuffix(jsonString, "]") {
-						jsonString = jsonString[1 : len(jsonString)-1]
-					}
-					body = strings.NewReader(jsonString)
-				} else {
-					// Otherwise, marshal the Go object into JSON
-					bodyBytes, err := json.Marshal(goBody)
-					if err == nil {
-						body = bytes.NewReader(bodyBytes)
-					} else {
-						cmn.DebugMsg(cmn.DbgLvlError, "Failed to marshal JSON body:", err)
-					}
-				}
-			} else {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to export body:", err)
-			}
-		}
-
-		req, err := http.NewRequest(method, url, body)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "creating request:", err)
+		// Get the request object (second argument)
+		requestArg := call.Argument(1)
+		if !requestArg.IsDefined() {
+			fmt.Println("Request argument is undefined.")
 			return otto.UndefinedValue()
 		}
 
-		if headersArg.IsDefined() {
-			headersObj := headersArg.Object()
-			var contentTypeSet bool
-			for _, key := range headersObj.Keys() {
-				value, _ := headersObj.Get(key)
-				if strings.ToLower(strings.TrimSpace(key)) == "content-type" {
-					contentTypeSet = true
+		// Export the request object
+		request, err := requestArg.Export()
+		if err != nil {
+			fmt.Printf("Error exporting request object: %v\n", err)
+			return otto.UndefinedValue()
+		}
+
+		// Type assert the exported request as a map
+		reqMap, ok := request.(map[string]interface{})
+		if !ok {
+			fmt.Println("Request object is not a valid map.")
+			return otto.UndefinedValue()
+		}
+
+		// Extract headers, body, and timeout from the request object
+		var headers map[string]interface{}
+		if h, exists := reqMap["headers"]; exists {
+			headers, _ = h.(map[string]interface{}) // Type assert headers
+		}
+
+		var body io.Reader
+		if b, exists := reqMap["body"]; exists {
+			if bodyString, ok := b.(string); ok {
+				body = strings.NewReader(bodyString) // Handle as pre-serialized JSON
+			} else {
+				bodyBytes, err := json.Marshal(b) // Serialize object to JSON
+				if err != nil {
+					fmt.Printf("Error marshaling body: %v\n", err)
+					return otto.UndefinedValue()
 				}
-				valueStr, _ := value.ToString()
-				req.Header.Set(strings.TrimSpace(key), strings.TrimSpace(valueStr))
+				body = bytes.NewReader(bodyBytes)
 			}
-			if !contentTypeSet {
-				req.Header.Set("Content-Type", "application/json")
+		}
+
+		var timeoutMs int64 = 30000 // Default timeout
+		if t, exists := reqMap["timeout"]; exists {
+			if timeoutFloat, ok := t.(float64); ok { // Otto exports numbers as float64
+				timeoutMs = int64(timeoutFloat)
 			}
-		} else {
-			req.Header.Set("Content-Type", "application/json")
+		}
+		timeout := time.Duration(timeoutMs) * time.Millisecond
+
+		// Set up HTTP client with timeout
+		client := &http.Client{Timeout: timeout}
+
+		// Create the HTTP request
+		req, err := http.NewRequest("POST", url, body)
+		if err != nil {
+			fmt.Printf("Error creating request: %v\n", err)
+			return otto.UndefinedValue()
+		}
+
+		// Add headers to the request
+		if headers != nil {
+			for key, value := range headers {
+				if headerValue, ok := value.(string); ok {
+					req.Header.Set(key, headerValue)
+				}
+			}
 		}
 
 		// output the object for debugging purposes:
