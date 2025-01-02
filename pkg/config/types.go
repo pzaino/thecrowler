@@ -343,6 +343,20 @@ type Remote struct {
 	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
 
+// AgentsConfig represents the configuration section to tell the CROWler where to find the agents definitions
+type AgentsConfig struct {
+	Path    []string `yaml:"path"`    // Path to the agents definition files
+	Host    string   `yaml:"host"`    // Hostname of the API server
+	Port    int      `yaml:"port"`    // Port number of the API server
+	Region  string   `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token   string   `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret  string   `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
+	Timeout int      `yaml:"timeout"` // Timeout for API requests (in seconds)
+	Type    string   `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode string   `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
+	Refresh int      `yaml:"refresh"` // Refresh interval for the ruleset (in seconds)
+}
+
 // RulesetConfig represents the top-level structure of the rules YAML file
 type RulesetConfig struct {
 	SchemaPath string   `yaml:"schema_path"` // Path to the JSON schema file
@@ -417,6 +431,9 @@ type Config struct {
 	// Rules configuration
 	RulesetsSchemaPath string          `json:"rulesets_schema_path" yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
 	Rulesets           []RulesetConfig `json:"rulesets" yaml:"rulesets"`
+
+	// Agents configuration
+	Agents []AgentsConfig `json:"agents" yaml:"agents"`
 
 	Plugins PluginsConfig `json:"plugins" yaml:"plugins"` // Plugins configuration
 

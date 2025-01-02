@@ -85,6 +85,21 @@ func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin
 	return plugins, len(plugins) > 0
 }
 
+// GetPluginsByAgentName returns a list of JS plugins related to the specified agent name
+func (reg *JSPluginRegister) GetPluginsByAgentName(agentName string) ([]JSPlugin, bool) {
+	plugins := make([]JSPlugin, 0)
+	agentName = strings.ToLower(strings.TrimSpace(agentName))
+	for _, plugin := range reg.Registry {
+		if plugin.EventType == "" || plugin.EventType == "none" {
+			continue
+		}
+		if plugin.EventType == agentName || plugin.EventType == "all" {
+			plugins = append(plugins, plugin)
+		}
+	}
+	return plugins, len(plugins) > 0
+}
+
 // LoadPluginsFromConfig loads the plugins from the specified configuration.
 func (reg *JSPluginRegister) LoadPluginsFromConfig(config *cfg.Config, pType string) *JSPluginRegister {
 	for _, plugin := range config.Plugins.Plugins {
