@@ -27,3 +27,35 @@ func NormalizeURL(url string) string {
 	url = strings.ToLower(url)
 	return url
 }
+
+// IsURLValid checks if a URL is valid.
+func IsURLValid(url string) bool {
+	// Check if the URL is empty
+	if url == "" {
+		return false
+	}
+	tURL := strings.ToLower(strings.TrimSpace(url))
+
+	// Check if the URL starts with http:// or https://
+	if !strings.HasPrefix(tURL, "http://") &&
+		!strings.HasPrefix(tURL, "https://") &&
+		!strings.HasPrefix(tURL, "ws://") &&
+		!strings.HasPrefix(tURL, "wss://") &&
+		!strings.HasPrefix(tURL, "ftp://") &&
+		!strings.HasPrefix(tURL, "ftps://") {
+		return false
+	}
+
+	// Check if the URL has a valid domain
+	if strings.Contains(tURL, " ") || strings.Contains(tURL, "\n") || strings.Contains(tURL, "\t") {
+		return false
+	}
+
+	// Check if the URL has a valid TLD
+	if !strings.Contains(tURL, ".") {
+		return false
+	}
+
+	// Looks like a valid URL
+	return true
+}
