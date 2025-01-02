@@ -46,12 +46,17 @@ type RetryConfig struct {
 
 // Initialize initializes the agent engine
 func Initialize() {
-	AgentsEngine = NewJobEngine()
+	if AgentsEngine == nil {
+		AgentsEngine = NewJobEngine() // Ensure `AgentsEngine` is not nil
+	}
 	RegisterActions(AgentsEngine)
 }
 
 // RegisterActions registers all available actions with the engine
 func RegisterActions(engine *JobEngine) {
+	if engine == nil {
+		engine = NewJobEngine()
+	}
 	engine.RegisterAction(&APIRequestAction{})
 	engine.RegisterAction(&CreateEventAction{})
 	engine.RegisterAction(&RunCommandAction{})
