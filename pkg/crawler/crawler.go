@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,6 +113,7 @@ type ProcessContext struct {
 	re               *rules.RuleEngine      // The rule engine
 	getURLMutex      sync.Mutex             // Mutex to protect the getURLContent function
 	visitedLinks     map[string]bool        // Map to keep track of visited links
+	userURLPatterns  []string               // User-defined URL patterns
 	Status           *Status                // Status of the crawling process
 	CollectedCookies map[string]interface{} // Collected cookies
 }
@@ -181,6 +183,24 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 	processCtx.Status.CrawlingRunning = 1
 	defer closeSession(processCtx, args, &sel, releaseSelenium, err)
+
+	// Extract custom configuration from the source
+	sourceConfig := make(map[string]interface{})
+	if processCtx.source.Config != nil {
+		// Convert the source configuration to a map[string]interface{}
+		sourceConfig = cmn.ConvertInfToMap(*processCtx.source.Config)
+	}
+
+	// Extract URLs patterns the user wants to include/exclude
+	processCtx.userURLPatterns = make([]string, 0)
+	if sourceConfig["conditions"] != nil {
+		// Extract the conditions from the source configuration
+		conditions := sourceConfig["conditions"].(map[string]interface{})
+		// Extract the include and exclude patterns
+		if conditions["url_patterns"] != nil {
+			processCtx.userURLPatterns = conditions["url_patterns"].([]string)
+		}
+	}
 
 	// Crawl the initial URL and get the HTML content
 	var pageSource selenium.WebDriver
@@ -2210,24 +2230,64 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 }
 
 func skipURL(processCtx *ProcessContext, id int, url string) bool {
+	// Check if the URL is empty
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return true
 	}
+
+	// Check if the URL is absolute or relative
 	if strings.HasPrefix(url, "/") {
 		url, _ = combineURLs(processCtx.source.URL, url)
 	}
+
+	// Check if the URL is valid (aka if it's within the allowed restricted boundaries)
 	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
+
 	// Check if the URL is the same as the Source URL (in which case skip it)
 	if url == processCtx.source.URL {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' as it is the same as the source URL\n", id, url)
 		return true
 	}
 
+	// Check if the URL matches user defined patterns (negative or positive)
+	if len(processCtx.userURLPatterns) > 0 {
+		// Flag to track whether the URL should be skipped
+		shouldSkip := false
+
+		for _, pattern := range processCtx.userURLPatterns {
+			re := regexp.MustCompile(pattern)
+			if re.MatchString(url) {
+				// Determine if this is a "negative" or "positive" pattern
+				if isNegativePattern(pattern) {
+					// Negative pattern found, skip the URL
+					shouldSkip = true
+					break
+				}
+				// Positive pattern found, do not skip
+				shouldSkip = false
+				break
+			}
+		}
+
+		// If we decided to skip based on negative pattern, return true
+		if shouldSkip {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to user-defined pattern\n", id, url)
+			return true
+		}
+	}
+
+	// If none of the conditions matched, do not skip
 	return false
+}
+
+// Function to determine if a pattern is negative (e.g., begins with a "!" or other logic you define)
+func isNegativePattern(pattern string) bool {
+	// For example, assume negative patterns start with "!".
+	return strings.HasPrefix(pattern, "!")
 }
 
 // rightClick simulates right-clicking on a link and opening it in the current tab using custom JavaScript
