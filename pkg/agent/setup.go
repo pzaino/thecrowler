@@ -305,9 +305,8 @@ jobs:
       - action: "PluginExecution"
         params:
           plugin: ["example_plugin"]
-          config:
-            pluginRegister: "plugin_register"
-            dbHandler: "db_handler"
+
+
 
 
 */

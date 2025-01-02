@@ -22,6 +22,9 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 - [User Interface and Console](#features-group-15-user-interface-and-console)
 - [Cybersecurity Features](#features-group-16-cybersecurity-features)
 - [Containerization](#features-group-17-containerization)
+- [Event-Driven Architecture](#features-group-18-event-driven-architecture)
+- [AI and traditional Agents](#features-group-19-ai-and-traditional-agents)
+- [3rd party services Data Integration](#features-group-20-3rd-party-services-data-integration)
 
 ## (Features Group 1) Web Crawling
 
@@ -57,6 +60,18 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 
 - **Source Categorization**: Allows users to define categories for sources (URLs), which can be used to filter and prioritize crawling operations, as well as for marketing and security operations.
   - *Benefits*: Enables category-based correlation and analysis of data.
+
+- **Each VDI is remotely accessible via VNC and noVNC**: Each Virtual Desktop Image (VDI) can be accessed remotely via VNC and noVNC, allowing users to monitor and interact with the crawling process.
+  - *Benefits*: Provides visibility and control over the crawling process.
+
+- **User can customize which requests the browser makes**: Users can customize the requests made by the browser, including images, CSS, plugins, objects etc. This is extremely useful to users who wish to reduce Proxy bandwidth during data crawling and collection.
+  - *Benefits*: Allows users to optimize the crawling process by controlling the types of requests made by the browser.
+
+- **User can customize the browser's User-Agent**: Users can customize the User-Agent string sent by the browser to mimic different browsers or devices.
+  - *Benefits*: Helps avoid detection by anti-bot systems and ensures compatibility with various websites.
+
+- **The CROWler uses a real browser**: The CROWler uses a real browser (Chromium, Chrome and Firefox) to render and interact with web pages, enabling access to dynamic content and JavaScript-driven features.
+  - *Benefits*: Ensures accurate rendering of web pages and access to dynamic content.
 
 ## (Features Group 2) Powerful API-Based Search Engine
 
@@ -248,5 +263,83 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 
 - **Docker Support**: Can be easily containerized and deployed in containerized environments.
   - *Benefits*: Simplifies deployment and management in container orchestration platforms.
+
+## (Features Group 18) Event-Driven Architecture
+
+- **Event-Driven Processing**: Utilizes an event-driven architecture for handling asynchronous tasks and processing data in real-time.
+  - *Benefits*: Improves performance and scalability by decoupling components and processing tasks in parallel.
+
+- **Events can also be scheduled**: Events can be scheduled to run at specific times or intervals.
+  - *Benefits*: Enables automation of tasks and data collection at predefined times.
+
+- **Custom Events**: Users can define custom events to trigger specific actions or workflows.
+  - *Benefits*: Provides flexibility to create custom workflows and automate tasks based on specific conditions.
+
+- **Event-based plugins execution**: Plugins can be executed based on events, allowing for custom processing and integration with external systems.
+  - *Benefits*: Enables extensibility and customization of CROWler's functionality.
+
+## (Features Group 19) AI and Traditional Agents
+
+- **AI Integration**: Supports integration with AI models for data analysis, entity recognition, and other tasks.
+  - *Benefits*: Enhances data processing capabilities and enables advanced analysis of web content.
+
+- **AI Agents**: Supports AI agents for performing complex tasks like natural language processing, image recognition, and sentiment analysis.
+  - *Benefits*: Enables advanced data processing and analysis using AI techniques.
+
+- **Traditional Agents**: Supports traditional agents for executing predefined tasks and workflows.
+  - *Benefits*: Provides flexibility to choose between AI and traditional agents based on the requirements of the task.
+
+- **Event-Driven AI Processing**: Utilizes an event-driven architecture for AI Agents processing to handle asynchronous tasks efficiently.
+  - *Benefits*: Improves performance and scalability of AI processing tasks.
+
+- **Agent-based plugins execution**: Plugins can be executed by AI or traditional agents, allowing for custom processing and integration with external systems.
+  - *Benefits*: Enables extensibility and customization of CROWler's functionality based on the type of agent used.
+
+- **Pre-Deployed AI models into containers**: AI models can be pre-deployed into containers (both with CUDA and non-CUDA accelerated) for best performance, easy integration and execution.
+  - *Benefits*: Simplifies the deployment and management of AI models within CROWler.
+
+- **Commercially available Multi-model AI Agents**: CROWler comes with commercially available multi-model AI agents for various tasks like NLP, Image Recognition, Sentiment Analysis, etc.
+  - *Benefits*: Provides out-of-the-box AI capabilities for advanced data processing and analysis.
+
+## (Features Group 20) 3rd party services Data Integration
+
+- **Integration with 3rd party services**: CROWler can be integrated with 3rd party services like Shodan, VirusTotal, etc. to gather additional information about web assets.
+  - *Benefits*: Provides access to external threat intelligence and security data.
+
+- **Data Enrichment with 3rd party services**: CROWler can enrich scraped data with additional information from external services.
+
+- **Custom 3rd party integration**: CROWler can be extended to integrate with custom 3rd party services APIs using plugins.
+  - *Benefits*: Enables access to a wide range of external data sources for data enrichment and analysis.
+
+- **3rd party Cybersecurity service native support**: For Cybersecurity applications the CROWler can be integrated with 3rd party services like Shodan, VirusTotal, etc. to gather additional information about web assets using the native support for t
+  - *Benefits*: Provides access to external threat intelligence and security data.
+  - List of 3rd party services natively supported in the CROWler:
+
+  ### IP Scanners
+
+  AbuseIPDB
+  IPVoid
+  Censys
+  Shodan
+
+  ### URL Scanners
+
+  SSL Labs
+  URLHaus
+  ThreatCrowd
+  Cuckoo
+  VirusTotal
+  PhishTank
+  Google Safe Browsing
+  OpenPhish
+  Hybrid Analysis
+  Cisco Umbrella
+  AlienVault
+
+  ### File Scanners
+
+  VirusTotal (File)
+  Hybrid Analysis (File)
+  Cuckoo (File)
 
 ---
