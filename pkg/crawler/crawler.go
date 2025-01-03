@@ -187,18 +187,38 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	// Extract custom configuration from the source
 	sourceConfig := make(map[string]interface{})
 	if processCtx.source.Config != nil {
-		// Convert the source configuration to a map[string]interface{}
-		sourceConfig = cmn.ConvertInfToMap(*processCtx.source.Config)
+		// Unmarshal the JSON RawMessage into a map[string]interface{}
+		err := json.Unmarshal(*processCtx.source.Config, &sourceConfig)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling source configuration: %v", err)
+		}
 	}
 
 	// Extract URLs patterns the user wants to include/exclude
 	processCtx.userURLPatterns = make([]string, 0)
-	if sourceConfig["conditions"] != nil {
-		// Extract the conditions from the source configuration
-		conditions := sourceConfig["conditions"].(map[string]interface{})
-		// Extract the include and exclude patterns
-		if conditions["url_patterns"] != nil {
-			processCtx.userURLPatterns = conditions["url_patterns"].([]string)
+
+	// Navigate the hierarchy: execution_plan -> conditions -> url_patterns
+	if executionPlanRaw, ok := sourceConfig["execution_plan"]; ok {
+		if executionPlan, ok := executionPlanRaw.([]interface{}); ok {
+			for _, planRaw := range executionPlan {
+				if plan, ok := planRaw.(map[string]interface{}); ok {
+					if conditionsRaw, ok := plan["conditions"]; ok {
+						if conditions, ok := conditionsRaw.(map[string]interface{}); ok {
+							// Extract the include and exclude patterns
+							if urlPatternsRaw, ok := conditions["url_patterns"]; ok {
+								if urlPatterns, ok := urlPatternsRaw.([]interface{}); ok {
+									// Convert []interface{} to []string
+									for _, pattern := range urlPatterns {
+										if strPattern, ok := pattern.(string); ok {
+											processCtx.userURLPatterns = append(processCtx.userURLPatterns, strPattern)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -2257,10 +2277,14 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 	if len(processCtx.userURLPatterns) > 0 {
 		// Flag to track whether the URL should be skipped
 		shouldSkip := false
+		matches := 0
 
 		for _, pattern := range processCtx.userURLPatterns {
 			re := regexp.MustCompile(pattern)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
 			if re.MatchString(url) {
+				matches++
+
 				// Determine if this is a "negative" or "positive" pattern
 				if isNegativePattern(pattern) {
 					// Negative pattern found, skip the URL
@@ -2276,6 +2300,12 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 		// If we decided to skip based on negative pattern, return true
 		if shouldSkip {
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to user-defined pattern\n", id, url)
+			return true
+		}
+
+		// If we did not find any matches, skip the URL
+		if matches == 0 {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
 			return true
 		}
 	}
@@ -2964,7 +2994,8 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// DNS over HTTPS (DoH) settings
 		args = append(args, "--dns-prefetch-disable")
-		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		//args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		args = append(args, "--host-resolver-rules=MAP * 1.1.1.1")
 		args = append(args, "--host-resolver-rules=MAP *:443")
 
 		// Reduce geolocation leaks
@@ -3035,7 +3066,9 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		if ctx.config.Crawler.ResetCookiesPolicy != "" && ctx.config.Crawler.ResetCookiesPolicy != "none" {
 			args = append(args, "--disable-site-isolation-trials")
 			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
-			args = append(args, "--disable-features=SameSiteByDefaultCookies")
+			if ctx.config.Crawler.NoThirdPartyCookies {
+				args = append(args, "--disable-features=SameSiteByDefaultCookies")
+			}
 		}
 
 		// Disable video auto-play:

@@ -446,6 +446,11 @@
             "on_request"
           ]
         },
+        "no_third_party_cookies": {
+          "title": "CROWler Engine No Third Party Cookies",
+          "description": "This is a flag that tells the CROWler Engine to not allow third-party cookies. This is useful for privacy reasons.",
+          "type": "boolean"
+        },
         "request_images": {
           "title": "CROWler Engine Request Images",
           "description": "This is a flag that tells the CROWler to request images from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process. Images are requested by default.",
