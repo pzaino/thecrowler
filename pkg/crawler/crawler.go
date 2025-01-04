@@ -84,6 +84,8 @@ const (
 	optBrowsingAuto   = "auto"
 	optBrowsingRecu   = "recursive"
 	optBrowsingRCRecu = "right_click_recursive"
+	optBrowsingMobile = "mobile"
+	optCookiesOnReq   = "on_request"
 )
 
 var (
@@ -517,7 +519,7 @@ func resetPageInfo(p *PageInfo) {
 func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
 	var browserType int
-	if ctx.config.Crawler.Platform == "mobile" {
+	if ctx.config.Crawler.Platform == optBrowsingMobile {
 		browserType = 1
 	}
 	ctx.wd, err = ConnectVDI(ctx, sel, browserType)
@@ -534,7 +536,7 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error {
 	if err := ctx.wd.Refresh(); err != nil {
 		var browserType int
-		if ctx.config.Crawler.Platform == "mobile" {
+		if ctx.config.Crawler.Platform == optBrowsingMobile {
 			browserType = 1
 		}
 		ctx.wd, err = ConnectVDI(ctx, sel, browserType)
@@ -559,7 +561,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
 
-	if ctx.config.Crawler.ResetCookiesPolicy == "on_request" ||
+	if ctx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
 		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
 		ctx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 		// Reset cookies on each request
@@ -2196,7 +2198,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
-		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
+		if processCtx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
 		}
@@ -3028,7 +3030,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-webrtc-encryption")
 		args = append(args, "--disable-webrtc")
 
-		// Disable Snadboxing
+		// Disable Sandboxing
 		/*
 			args = append(args, "--no-sandbox")
 			args = append(args, "--disable-dev-shm-usage")
@@ -3831,7 +3833,7 @@ func writeToFile(filename string, data []byte) (string, error) {
 // writeDataToFile is responsible for writing data to a file
 func writeDataToFile(filename string, data []byte) error {
 	// open file using READ & WRITE permission
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, cmn.DefaultFilePerms)
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, cmn.DefaultFilePerms) //nolint:gosec // filename and path here is provided by the admin
 	if err != nil {
 		return err
 	}
