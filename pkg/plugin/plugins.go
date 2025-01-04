@@ -1199,6 +1199,11 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 			return otto.UndefinedValue() // Schedule time is mandatory
 		}
 
+		recurrenceArg, err := call.Argument(5).ToString()
+		if err != nil {
+			recurrenceArg = "" // Default empty recurrence
+		}
+
 		// Create the event when the timer fires
 		event := cdb.Event{
 			SourceID: sourceID,
@@ -1208,7 +1213,7 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Schedule the event creation
-		scheduleTime, err := cdb.ScheduleEvent(db, event, scheduleTimeArg)
+		scheduleTime, err := cdb.ScheduleEvent(db, event, scheduleTimeArg, recurrenceArg)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "scheduling event: %v", err)
 			// return the error
