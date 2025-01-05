@@ -38,7 +38,36 @@ const (
 var (
 	stopWords     map[string]map[string]struct{}
 	initStopWords sync.Once
+	specialTags   map[string]bool
 )
+
+// Setup specialTags
+func initSpecialTags() {
+	specialTags = map[string]bool{
+		"span":    true,
+		"a":       true,
+		"strong":  true,
+		"em":      true,
+		"b":       true,
+		"i":       true,
+		"u":       true,
+		"code":    true,
+		"mark":    true,
+		"small":   true,
+		"del":     true,
+		"ins":     true,
+		"sub":     true,
+		"sup":     true,
+		"time":    true,
+		"abbr":    true,
+		"acronym": true,
+		"cite":    true,
+		"dfn":     true,
+		"kbd":     true,
+		"samp":    true,
+		"var":     true,
+	}
+}
 
 // loadStopWords loads stop words from a JSON file into a map[string]map[string]struct{}
 func loadStopWords() {
@@ -70,7 +99,8 @@ func loadStopWords() {
 	// Open the stopWords.json file
 	file, err := os.Open(filePath) //nolint:gosec // We are not opening a file based on user input
 	if err != nil {
-		panic(fmt.Sprintf("Failed to open stopWords.json: %v", err))
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to open stopWords.json: %v", err)
+		return
 	}
 	defer file.Close() //nolint:errcheck // We cannot check for the returned value in a defer
 
@@ -201,7 +231,11 @@ func extractContentKeywords(content string) []string {
 func unique(strSlice []string) []string {
 	keys := make(map[string]bool)
 	list := []string{}
-	for _, entry := range strSlice {
+	for i := 0; i < len(strSlice); i++ {
+		entry := strings.ToLower(strings.TrimSpace(strSlice[i]))
+		if entry == "" {
+			continue
+		}
 		if _, value := keys[entry]; !value {
 			keys[entry] = true
 			list = append(list, entry)
@@ -213,6 +247,10 @@ func unique(strSlice []string) []string {
 func extractKeywords(pageInfo PageInfo) []string {
 	var keywords []string
 
+	if len(specialTags) == 0 {
+		initSpecialTags()
+	}
+
 	// Load the HTML document
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(pageInfo.BodyText))
 	if err != nil {
@@ -221,17 +259,31 @@ func extractKeywords(pageInfo PageInfo) []string {
 	}
 
 	// Remove script, style tags, and other non-relevant elements
-	doc.Find("script, style").Remove()
+	doc.Find("script, style").Each(func(_ int, s *goquery.Selection) {
+		// Add a space before and after removing the tag
+		if s.Prev().Length() > 0 {
+			s.Prev().AfterHtml(" ")
+		}
+		if s.Next().Length() > 0 {
+			s.Next().BeforeHtml(" ")
+		}
+		s.Remove()
+	})
 
 	// Extract and normalize text content
 	var contentBuilder strings.Builder
 	doc.Find("body").Contents().Each(func(_ int, s *goquery.Selection) {
-		if goquery.NodeName(s) == "#text" {
-			// Append text directly if it's a text node
+		nodeName := goquery.NodeName(s)
+
+		if nodeName == "#text" {
 			contentBuilder.WriteString(s.Text())
-			contentBuilder.WriteString(" ") // Add space after text nodes
+			contentBuilder.WriteString(" ") // Space after text nodes
+		} else if specialTags[nodeName] {
+			// Handle inline elements explicitly
+			contentBuilder.WriteString(s.Text())
+			contentBuilder.WriteString(" ") // Add space for inline content
 		} else {
-			// Add space for non-text nodes (block elements)
+			// Add space for block elements
 			contentBuilder.WriteString(" ")
 		}
 	})

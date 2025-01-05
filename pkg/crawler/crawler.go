@@ -3034,6 +3034,16 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-webrtc-encryption")
 		args = append(args, "--disable-webrtc")
 
+		// Disable WebUSB
+		args = append(args, "--disable-webusb")
+
+		// Disable WebBluetooth
+		args = append(args, "--disable-web-bluetooth")
+
+		// Disable Plugins
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-extensions")
+
 		// Disable Sandboxing
 		/*
 			args = append(args, "--no-sandbox")
