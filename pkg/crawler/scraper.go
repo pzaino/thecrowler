@@ -41,6 +41,8 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
+	errContainer := []error{}
+
 	ErrorState := false
 	ErrorMsg := ""
 
@@ -64,9 +66,6 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 					case string:
 						// Directly append string values
 						allExtracted = append(allExtracted, v)
-						if !getAllOccurrences {
-							break
-						}
 
 					case map[string]interface{}:
 						// Directly append map values (as sub-documents)
@@ -74,12 +73,9 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 						jsonStr, err := json.Marshal(v)
 						if err != nil {
 							cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
-							return extractedData, err
+							errContainer = append(errContainer, err)
 						}
 						allExtracted = append(allExtracted, string(jsonStr))
-						if !getAllOccurrences {
-							break
-						}
 
 					case []interface{}:
 						// Append all elements of the array
@@ -92,21 +88,20 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 								jsonStr, err := json.Marshal(item)
 								if err != nil {
 									cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
-									return extractedData, err
+									errContainer = append(errContainer, err)
 								}
 								allExtracted = append(allExtracted, string(jsonStr))
 							default:
 								// Log unexpected types and skip them
 								cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", item)
+								errContainer = append(errContainer, errors.New("unexpected type in extracted content"))
 							}
-						}
-						if !getAllOccurrences {
-							break
 						}
 
 					default:
 						// Log unexpected types and skip them
 						cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
+						errContainer = append(errContainer, errors.New("unexpected type in extracted content"))
 					}
 
 					// Break early if not extracting all occurrences or using a plugin_call selector
@@ -118,7 +113,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 			} else if rule.Elements[e].Critical {
 				ErrorState = true
 				ErrorMsg = "element not found, with " + errCriticalError + " flag set"
-				cmn.DebugMsg(cmn.DbgLvlError, "element not found "+errCriticalError+": %v", selectors[i].Selector)
+				cmn.DebugMsg(cmn.DbgLvlError, "element not found "+errCriticalError+": `%v`", selectors[i].Selector)
 			}
 		}
 
@@ -138,7 +133,20 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 		extractedData["js_files"] = jsFiles
 	}
 
+	// Log the full scraped content for debugging purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Full scraped content (at ApplyRule level): %v", extractedData)
+
 	if ErrorState {
+		// If there was a (critical) error, return the error message
+		extraErrors := ""
+		if len(errContainer) > 0 {
+			// Append other errors to the error message
+			extraErrors = "\n Other issues (if any): "
+			for _, err := range errContainer {
+				extraErrors += err.Error() + ", "
+			}
+		}
+		ErrorMsg += extraErrors
 		return extractedData, errors.New(ErrorMsg)
 	}
 
@@ -626,11 +634,16 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 		// Apply the rule to the web page
 		data, err := ApplyRule(ctx, &rule, webPage)
 		// Add the extracted data to the map
-		if err == nil {
-			for k, v := range data {
+		for k, v := range data {
+			// Check if the key already exists in the map
+			if _, exists := extractedData[k]; exists {
+				// If the key already exists, append the new value to the existing one
+				extractedData[k] = append(extractedData[k].([]interface{}), v)
+			} else {
 				extractedData[k] = v
 			}
-		} else {
+		}
+		if err != nil {
 			cmn.KVStore.DeleteByCID(ctx.GetContextID())
 			return extractedData, err
 		}
@@ -652,7 +665,13 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 
 		// update the extractedData with the post-processed data
 		for k, v := range cmn.ConvertJSONToMap(data) {
-			extractedData[k] = v
+			// Check if the key already exists in the map
+			if _, exists := extractedData[k]; exists {
+				// If the key already exists, append the new value to the existing one
+				extractedData[k] = append(extractedData[k].([]interface{}), v)
+			} else {
+				extractedData[k] = v
+			}
 		}
 	}
 

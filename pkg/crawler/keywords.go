@@ -43,6 +43,7 @@ var (
 
 // Setup specialTags
 func initSpecialTags() {
+	specialTags = make(map[string]bool)
 	specialTags = map[string]bool{
 		"span":    true,
 		"a":       true,

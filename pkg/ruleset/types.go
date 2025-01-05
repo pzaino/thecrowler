@@ -251,8 +251,9 @@ type Element struct {
 
 // Selector represents a single selector
 type Selector struct {
-	SelectorType string `json:"selector_type" yaml:"selector_type"`
-	Selector     string `json:"selector" yaml:"selector"`
+	SelectorType string              `json:"selector_type" yaml:"selector_type"`
+	Selector     string              `json:"selector" yaml:"selector"`
+	SelectorAttr []SelectorAttribute `json:"selector_attributes,omitempty" yaml:"selector_attributes,omitempty"`
 	Attribute    struct {
 		Name  string `json:"name" yaml:"name"`
 		Value string `json:"value" yaml:"value"`
@@ -262,6 +263,12 @@ type Selector struct {
 	ExtractAllOccurrences bool          `json:"extract_all_occurrences" yaml:"extract_all_occurrences"`
 	// Not available in the YAML file (for internal use only)
 	ResolvedValue string
+}
+
+// SelectorAttribute represents a single attribute of a selector
+type SelectorAttribute struct {
+	Name  string      `json:"name" yaml:"name"`
+	Value interface{} `json:"value" yaml:"value"`
 }
 
 // ItemToExtract represents the item to extract from the selector

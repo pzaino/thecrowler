@@ -181,6 +181,18 @@
                                                             "type": "string",
                                                             "description": "The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'."
                                                         },
+                                                        "selector_attributes": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "name": {
+                                                                    "type": "string"
+                                                                },
+                                                                "value": {
+                                                                    "type": ["string", "number", "boolean"]
+                                                                }
+                                                            },
+                                                            "description": "Optional. Attributes specific to each selector type. CHeck the documentation for the specific selector type to see which attributes are supported."
+                                                        },
                                                         "attribute": {
                                                             "type": "object",
                                                             "properties": {

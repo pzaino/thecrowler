@@ -71,6 +71,9 @@ func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url strin
 		scrapedDataDoc = scrapedDataDoc[:len(scrapedDataDoc)-1]
 	}
 
+	// log scraped data for debugging purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Scraped data (at processScrapingRules level): {%v}", scrapedDataDoc)
+
 	return "{" + scrapedDataDoc + "}", err
 }
 
@@ -126,6 +129,9 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 	if err != nil {
 		errList = append(errList, fmt.Errorf("%v", err))
 	}
+
+	// log scraped data for debugging purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Scraped data (at executeScrapingRulesByURL level): {%v}", scrapedDataDoc)
 
 	// Join all errors
 	errStr := ""
@@ -327,39 +333,74 @@ func shouldExecuteScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) bo
 func processExtractedData(extractedData map[string]interface{}) map[string]interface{} {
 	processedData := make(map[string]interface{})
 
+	// Log extractedData for debugging purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Extracted data (at processExtractedData level): %v", extractedData)
+
 	for key, data := range extractedData {
-		if key == "" || key == strFalse || key == strTrue {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing key: '%v'", key)
+
+		// Skip reserved keys
+		if key == strFalse || key == strTrue {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Not allowed key in extracted content: %v", key)
 			continue
 		}
+
+		// if key is empty, then this must be an array of data so return it as is
+		if key == "" {
+			// return data as a map
+			processedData = extractedData
+			return processedData
+		}
+
 		switch v := data.(type) {
 		case string:
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing string: '%v'", v)
 			// Check if the string is valid JSON
 			if json.Valid([]byte(v)) {
 				var jsonData interface{}
 				if err := json.Unmarshal([]byte(v), &jsonData); err == nil {
-					processedData[key] = jsonData
+					// If the JSON is valid, store it directly
+
+					// Check if the key is already in the map
+					if _, exists := processedData[key]; exists {
+						// Append the data to the existing key
+						processedData[key] = append(processedData[key].([]interface{}), jsonData)
+					} else {
+						processedData[key] = jsonData
+					}
 					continue
 				}
 			}
 
 			// Check if the string is HTML
+			processedEntity := v
 			if StrIsHTML(v) {
 				jsonData, err := ProcessHTMLToJSON(v)
 				if err == nil {
-					processedData[key] = jsonData
-				} else {
-					processedData[key] = v // Store as raw string
+					processedEntity = jsonData
 				}
+			}
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]string), processedEntity)
 			} else {
-				processedData[key] = v // Store as plain string
+				processedData[key] = processedEntity
 			}
 
 		case map[string]interface{}:
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing map: %v", v)
 			// If the data is already a map, store it directly
-			processedData[key] = v
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]map[string]interface{}), processExtractedData(v))
+			} else {
+				processedData[key] = processExtractedData(v)
+			}
 
 		case []interface{}:
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing array: %v", v)
 			// Process each item in the array
 			var processedArray []interface{}
 			for _, item := range v {
@@ -367,22 +408,43 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 				case map[string]interface{}:
 					processedArray = append(processedArray, processExtractedData(item))
 				default:
-					// Skip unsupported types
+					processedArray = append(processedArray, item)
 					continue
 				}
 			}
-			processedData[key] = processedArray
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]interface{}), processedArray...)
+			} else {
+				processedData[key] = processedArray
+			}
 
 		case bool:
 			// Handle boolean values and ensure they're keyed
-			processedData[key] = v
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]interface{}), v)
+			} else {
+				processedData[key] = v
+			}
 
 		default:
 			// Fallback for unexpected types
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
-			processedData[key] = v
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]interface{}), v)
+			} else {
+				processedData[key] = v
+			}
 		}
 	}
+
+	// log the processed data for debugging purposes
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Processed data (at processExtractedData level): %v", processedData)
 
 	return processedData
 }
