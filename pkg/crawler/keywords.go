@@ -62,7 +62,6 @@ func loadStopWords() {
 	if _, err := os.Stat(filePath); err != nil {
 		filePath = filepath.Join(cwd, "support", "stopWords.json")
 		if _, err := os.Stat(filePath); err != nil {
-			fmt.Println("stopWords.json file not found")
 			cmn.DebugMsg(cmn.DbgLvlError, "stopWords.json file not found")
 			return // If the file does not exist, return
 		}
@@ -88,6 +87,14 @@ func loadStopWords() {
 			stopWords[lang][word] = struct{}{}
 		}
 	}
+}
+
+// Function that normalizes a keyword by converting it to lowercase
+func normalizeKeyword(word string) string {
+	word = strings.ToLower(strings.TrimSpace(word))
+	word = strings.Trim(word, p)
+	word = strings.TrimSpace(word)
+	return word
 }
 
 // Function that returns false if the keyword is
@@ -126,38 +133,34 @@ func isKeyword(word, lang string) bool {
 	return !isStopWord
 }
 
-func extractFromMetaTag(metaTags map[string]string, tagName string) []string {
+func extractFromMetaTag(metaTags []MetaTag, tagName string) []string {
 	var keywords []string
-	if content, ok := metaTags[tagName]; ok {
-		for _, keyword := range strings.Split(content, ",") {
-			trimmedKeyword := strings.TrimSpace(keyword)
-			// Convert the keyword to lowercase
-			trimmedKeyword = strings.ToLower(trimmedKeyword) // Convert to lowercase
+	tagName = strings.ToLower(strings.TrimSpace(tagName))
+	for _, metaTag := range metaTags {
+		if strings.ToLower(strings.TrimSpace(metaTag.Name)) == tagName {
+			content := metaTag.Content
 
-			// remove trailing punctuation
-			trimmedKeyword = strings.TrimRight(trimmedKeyword, p)
+			// Split the content by spaces, commas, and other punctuation
+			words := strings.FieldsFunc(content, func(r rune) bool {
+				return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) || strings.ContainsRune(p, r)
+			})
 
-			// remove leading punctuation
-			trimmedKeyword = strings.TrimLeft(trimmedKeyword, p)
+			// Process each word
+			for _, word := range words {
+				trimmedKeyword := normalizeKeyword(word)
 
-			// remove leading and trailing whitespace
-			trimmedKeyword = strings.TrimSpace(trimmedKeyword)
+				if trimmedKeyword == "" || len(trimmedKeyword) > 45 {
+					// Skip empty or too long keywords
+					continue
+				}
 
-			if trimmedKeyword == "" {
-				// Skip empty keywords
-				continue
-			}
-
-			if len(trimmedKeyword) > 45 {
-				// Skip words that are too long
-				continue
-			}
-
-			// Check if a keyword starts with a # or a @ if so always store it
-			if strings.HasPrefix(trimmedKeyword, "#") || strings.HasPrefix(trimmedKeyword, "@") {
-				keywords = append(keywords, trimmedKeyword)
-			} else if isKeyword(trimmedKeyword, "") {
-				keywords = append(keywords, trimmedKeyword)
+				// Always store if the keyword starts with # or @
+				if strings.HasPrefix(trimmedKeyword, "#") || strings.HasPrefix(trimmedKeyword, "@") {
+					keywords = append(keywords, trimmedKeyword)
+				} else if isKeyword(trimmedKeyword, "") {
+					// Check if it is a valid keyword
+					keywords = append(keywords, trimmedKeyword)
+				}
 			}
 		}
 	}
@@ -165,32 +168,24 @@ func extractFromMetaTag(metaTags map[string]string, tagName string) []string {
 }
 
 func extractContentKeywords(content string) []string {
-	// Basic implementation: split words and filter
-	// More advanced implementation might use NLP techniques
-	var keywords []string
-	words := strings.Fields(content) // Split into words
+	// Split the content by spaces, commas, and other punctuation
+	// to extract individual keywords
+	words := []string{}
+
+	// Split the content by spaces, commas, and other punctuation
+	words = append(words, strings.FieldsFunc(content, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) || strings.ContainsRune(p, r)
+	})...)
+
+	keywords := []string{}
 	for _, word := range words {
-		trimmedWord := strings.TrimSpace(word)
+		trimmedWord := normalizeKeyword(word)
 
-		// Convert the keyword to lowercase
-		trimmedWord = strings.ToLower(trimmedWord) // Convert to lowercase
+		// Remove punctuation
+		//trimmedWord = strings.TrimSpace(removePunctuation(trimmedWord))
 
-		// remove trailing punctuation
-		trimmedWord = strings.TrimRight(trimmedWord, p)
-
-		// remove leading punctuation
-		trimmedWord = strings.TrimLeft(trimmedWord, p)
-
-		// remove leading and trailing whitespace
-		trimmedWord = strings.TrimSpace(trimmedWord)
-
-		if trimmedWord == "" {
-			// Skip empty keywords
-			continue
-		}
-
-		if len(trimmedWord) > 45 {
-			// Skip words that are too long
+		if trimmedWord == "" || len(trimmedWord) > 45 {
+			// Skip empty (or too long) keywords
 			continue
 		}
 
@@ -228,15 +223,28 @@ func extractKeywords(pageInfo PageInfo) []string {
 	// Remove script, style tags, and other non-relevant elements
 	doc.Find("script, style").Remove()
 
-	content := normalizeText(doc.Text())
-
-	// Extract from meta tags (keywords and description)
-	keywords = append(keywords, extractFromMetaTag(pageInfo.Keywords, "keywords")...)
-	keywords = append(keywords, extractFromMetaTag(pageInfo.Keywords, "description")...)
+	// Extract text content with proper spacing
+	content := ""
+	doc.Find("body").Contents().Each(func(i int, s *goquery.Selection) {
+		if goquery.NodeName(s) == "#text" {
+			// Append text directly if it's a text node
+			content += s.Text() + " "
+		} else {
+			// Add a space for non-text nodes (block elements)
+			content += " "
+		}
+	})
+	content = normalizeText(content)
+	content = strings.ReplaceAll(content, "\n", " ")
+	content = strings.Join(strings.Fields(content), " ") // Normalize spacing
 
 	// Extract from main content
 	contentKeywords := extractContentKeywords(content)
 	keywords = append(keywords, contentKeywords...)
+
+	// Extract from meta tags (keywords and description)
+	keywords = append(keywords, extractFromMetaTag(pageInfo.MetaTags, "keywords")...)
+	keywords = append(keywords, extractFromMetaTag(pageInfo.MetaTags, "description")...)
 
 	return unique(keywords) // Remove duplicates and return
 }
@@ -247,22 +255,25 @@ func normalizeText(text string) string {
 	text = re.ReplaceAllString(text, " ")
 
 	// Remove inline JavaScript and CSS remnants
-	// Adjust the regex as needed to catch any patterns of leftovers
 	re = regexp.MustCompile(`(?i)<script.*?\/script>|<style.*?\/style>`)
+	text = re.ReplaceAllString(text, " ")
+
+	// Replace punctuation with spaces
+	re = regexp.MustCompile(`[.,?!:;'\"(){}<>\-]`)
 	text = re.ReplaceAllString(text, " ")
 
 	// Convert to lowercase
 	text = strings.ToLower(text)
 
-	// Remove punctuation and non-letter characters
-	text = removePunctuation(text)
-
 	// Normalize whitespace
-	text = strings.Join(strings.Fields(text), " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	text = strings.Join(strings.Fields(text), " ") // Collapse multiple spaces
 
 	return text
 }
 
+/*
 func removePunctuation(text string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsPunct(r) || unicode.IsSymbol(r) {
@@ -271,3 +282,4 @@ func removePunctuation(text string) string {
 		return r
 	}, text)
 }
+*/

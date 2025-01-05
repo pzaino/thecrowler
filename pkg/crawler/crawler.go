@@ -607,6 +607,8 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
+	// Generate Keywords from the page content
+	pageInfo.Keywords = extractKeywords(pageInfo)
 
 	// Collect Navigation Timing metrics
 	if ctx.config.Crawler.CollectPerfMetrics {
@@ -1433,7 +1435,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
 func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
-	for _, keyword := range extractKeywords(*pageInfo) {
+	for _, keyword := range pageInfo.Keywords {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
 			return err
@@ -2733,6 +2735,8 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
+	// Generate Keywords
+	pageCache.Keywords = extractKeywords(pageCache)
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
