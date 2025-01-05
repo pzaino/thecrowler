@@ -15,6 +15,7 @@
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the information seed.
     usr_id BIGINT DEFAULT 0 NOT NULL,           -- The user that created the information seed
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP,
     usr_id BIGINT DEFAULT 0 NOT NULL,           -- The user that created the source.
     category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the source.
@@ -62,6 +64,7 @@ CREATE TABLE IF NOT EXISTS Sources (
 CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     usr_id BIGINT NOT NULL,                     -- The user that created the owner
     details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
@@ -74,6 +77,7 @@ CREATE TABLE IF NOT EXISTS Owners (
 CREATE TABLE IF NOT EXISTS Sessions (
     session_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     hash VARCHAR(64) UNIQUE NOT NULL,           -- SHA256 hash of the session for fast comparison
                                                 -- and uniqueness.
@@ -87,6 +91,7 @@ CREATE TABLE IF NOT EXISTS Sessions (
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     page_url TEXT NOT NULL UNIQUE,              -- Using TEXT for long URLs
     title VARCHAR(255),                         -- Page title might be NULL
@@ -99,10 +104,12 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
 CREATE TABLE IF NOT EXISTS Categories (
     category_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     name VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
     parent_id BIGINT,
+    details JSONB,
     CONSTRAINT fk_parent
         FOREIGN KEY(parent_id)
         REFERENCES Categories(category_id)
@@ -113,6 +120,7 @@ CREATE TABLE IF NOT EXISTS Categories (
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
                                                 -- and uniqueness.
@@ -123,6 +131,7 @@ CREATE TABLE IF NOT EXISTS NetInfo (
 CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     details_hash VARCHAR(64) UNIQUE NOT NULL,   -- SHA256 hash of the details for fast comparison
                                                 -- and uniqueness
@@ -134,6 +143,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_id BIGSERIAL PRIMARY KEY,
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     type VARCHAR(10) NOT NULL DEFAULT 'desktop',
     screenshot_link TEXT NOT NULL,
@@ -152,6 +162,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
 CREATE TABLE IF NOT EXISTS WebObjects (
     object_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     object_link TEXT NOT NULL DEFAULT 'db',     -- The link to where the object is stored if not
                                                 -- in the DB.
@@ -169,6 +180,9 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     name VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
@@ -178,20 +192,38 @@ CREATE TABLE IF NOT EXISTS MetaTags (
 CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    keyword VARCHAR(256) NOT NULL UNIQUE
+    keyword VARCHAR(256) NOT NULL UNIQUE      -- The keyword found in the indexed page
 );
 
 -- Events table stores the events generated by the system
 CREATE TABLE IF NOT EXISTS Events (
-    event_sha256 CHAR(64) PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     source_id BIGINT REFERENCES Sources(source_id) ON DELETE CASCADE,
+    event_sha256 CHAR(64) PRIMARY KEY,
+    event_counter BIGINT DEFAULT 1,
+    event_name VARCHAR(128),
     event_type VARCHAR(255) NOT NULL,
     event_severity VARCHAR(50) NOT NULL,
     event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    event_recurrence VARCHAR(64),
     details JSONB NOT NULL
+);
+
+-- EventSchedules table stores the schedules for the events
+CREATE TABLE IF NOT EXISTS EventSchedules (
+    schedule_id CHAR(64) PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    event_id CHAR(64) NOT NULL REFERENCES Events(event_sha256) ON DELETE CASCADE,
+    recurrence_interval VARCHAR(50),
+    next_run TIMESTAMP NOT NULL,
+    last_run TIMESTAMP,
+    active BOOLEAN DEFAULT TRUE
 );
 
 ----------------------------------------
@@ -203,6 +235,7 @@ CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
     source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
     information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, information_seed_id)
 );
@@ -213,6 +246,7 @@ CREATE TABLE IF NOT EXISTS SourceOwnerIndex (
     source_id BIGINT NOT NULL,
     owner_id BIGINT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
         FOREIGN KEY(source_id)
@@ -235,6 +269,7 @@ CREATE TABLE IF NOT EXISTS OwnerRelationships (
     child_owner_id BIGINT NOT NULL,
     relationship_type VARCHAR(255) NOT NULL DEFAULT 'ownership', -- To define types of relationships
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_parent_owner
         FOREIGN KEY(parent_owner_id)
@@ -253,6 +288,7 @@ CREATE TABLE IF NOT EXISTS SourceSessionIndex (
     source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
     session_id BIGINT NOT NULL REFERENCES Sessions(session_id) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, session_id),
     FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
@@ -265,6 +301,7 @@ CREATE TABLE IF NOT EXISTS SourceSearchIndex (
     source_id BIGINT NOT NULL,
     index_id BIGINT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
         FOREIGN KEY(source_id)
@@ -286,6 +323,7 @@ CREATE TABLE IF NOT EXISTS SourceCategoryIndex (
     source_id BIGINT NOT NULL,
     category_id BIGINT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_source
         FOREIGN KEY(source_id)
@@ -304,6 +342,7 @@ CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
     object_id BIGINT NOT NULL REFERENCES WebObjects(object_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(index_id, object_id),                -- Ensures that the same object is not linked
                                                 -- multiple times to the same page.
@@ -317,6 +356,8 @@ CREATE TABLE IF NOT EXISTS MetaTagsIndex (
     index_id BIGINT NOT NULL REFERENCES SearchIndex(index_id),
     metatag_id BIGINT NOT NULL REFERENCES MetaTags(metatag_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(index_id, metatag_id),               -- Prevents duplicate associations
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (metatag_id) REFERENCES MetaTags(metatag_id) ON DELETE CASCADE
@@ -328,6 +369,7 @@ CREATE TABLE IF NOT EXISTS KeywordIndex (
     keyword_id BIGINT REFERENCES Keywords(keyword_id),
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     occurrences INTEGER,
     UNIQUE(keyword_id, index_id),               -- Ensures unique combinations of keyword_id
@@ -342,6 +384,7 @@ CREATE TABLE IF NOT EXISTS NetInfoIndex (
     netinfo_id BIGINT REFERENCES NetInfo(netinfo_id),
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(netinfo_id, index_id),               -- Ensures unique combinations of netinfo_id
                                                 -- and index_id
@@ -355,6 +398,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
     httpinfo_id BIGINT REFERENCES HTTPInfo(httpinfo_id),
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(httpinfo_id, index_id),              -- Ensures unique combinations of httpinfo_id
                                                 -- and index_id
@@ -913,7 +957,7 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywords_keyword_lower') THEN
-        CREATE INDEX idx_keywords_keyword_lower ON Keywords (LOWER(keyword));
+        CREATE UNIQUE INDEX idx_keywords_keyword_lower_unique ON Keywords (LOWER(keyword));
     END IF;
 END
 $$;
@@ -1027,7 +1071,7 @@ BEGIN
 END
 $$;
 
--- Creates a Composite index for HTTPInfo between detaius_hash and created_at
+-- Creates a Composite index for HTTPInfo between details_hash and created_at
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_combined') THEN

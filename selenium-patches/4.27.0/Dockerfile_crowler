@@ -65,7 +65,7 @@ RUN dpkg-divert --list \
       done
 
 #     && apt-get dist-upgrade -y \
-# Install dependecies for the Go project
+# Install dependencies for the Go project
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        libx11-dev libxtst-dev libxext-dev \

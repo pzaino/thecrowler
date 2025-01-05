@@ -77,8 +77,7 @@
               "url_patterns": {
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "format": "uri-template"
+                  "type": "string"
                 }
               }
             },

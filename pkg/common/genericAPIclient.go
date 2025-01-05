@@ -16,9 +16,11 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // FetchRemoteFile fetches a remote file and returns the contents as a string.
@@ -42,4 +44,85 @@ func FetchRemoteFile(url string, timeout int, sslmode string) (string, error) {
 	}
 
 	return string(body), nil
+}
+
+// APIResponse is a generic API response.
+type APIResponse struct {
+	StatusCode int    `json:"status_code" yaml:"status_code"`
+	Body       string `json:"body" yaml:"body"`
+}
+
+// GenericAPIRequest is a generic API request. (it uses passed params to determine the request)
+func GenericAPIRequest(params map[string]string) (string, error) {
+	// Prepare the API request
+	var response string
+
+	// Check if the URL is valid
+	if !IsURLValid(params["url"]) {
+		return "", fmt.Errorf("invalid URL: %s", params["url"])
+	}
+
+	// Scan params for request authentication and headers
+	headers := make(map[string]string)
+	for key, value := range params {
+		if key == "auth" {
+			// Set authentication
+			headers["Authorization"] = value
+		} else if key == "headers" {
+			// Set headers
+			headers["headers"] = value
+		}
+	}
+
+	// Extract the request method
+	method, ok := params["method"]
+	if !ok {
+		method = "GET"
+	}
+
+	// Extract the request body
+	var body io.Reader
+	if params["body"] != "" {
+		body = io.NopCloser(strings.NewReader(params["body"]))
+	}
+
+	// Create the request
+	req, err := http.NewRequest(method, params["url"], body)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Add headers
+	for key, value := range headers {
+		req.Header.Add(key, value)
+	}
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
+	// Read the response
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	// prepare the response
+	rs := APIResponse{
+		StatusCode: resp.StatusCode,
+		Body:       string(responseBody),
+	}
+
+	// Transform rs into a JSON string
+	resByte, err := json.Marshal(rs)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %v", err)
+	}
+
+	response = string(resByte)
+	return response, nil
 }

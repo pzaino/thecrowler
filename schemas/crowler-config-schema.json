@@ -446,6 +446,11 @@
             "on_request"
           ]
         },
+        "no_third_party_cookies": {
+          "title": "CROWler Engine No Third Party Cookies",
+          "description": "This is a flag that tells the CROWler Engine to not allow third-party cookies. This is useful for privacy reasons.",
+          "type": "boolean"
+        },
         "request_images": {
           "title": "CROWler Engine Request Images",
           "description": "This is a flag that tells the CROWler to request images from a website. This can be useful to reduce bandwidth usage (if set to false) and speed up the crawling process. Images are requested by default.",
@@ -1653,6 +1658,106 @@
           "refresh": {
             "title": "CROWler Rulesets Automatic Refresh Interval",
             "description": "This is the refresh interval in seconds for the CROWler to fetch the ruleset (refresh it).",
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "type"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+
+    "agents": {
+      "title": "CROWler Agents Configuration and locations",
+      "description": "This is the CROWler Agents configuration section. The Agents are used to process Data, Events and more. They are used to extend the CROWler's capabilities, without coding. Agents can be AI based or simple sets of actions, plugins and/or both. Each Agent is defined using YAML or JSON files.",
+      "type": "array",
+      "items": {
+        "title": "CROWler Agents Configuration parameters",
+        "type": "object",
+        "properties": {
+          "path": {
+            "title": "CROWler Agents load paths",
+            "description": "This is the path that the CROWler will use to fetch the yaml or json file that defines one or more agents. You can use wildcard to fetch multiple files. for example './agents/*.yaml'.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "examples": [
+              [
+                "./agents/*.yaml"
+              ]
+            ]
+          },
+          "host": {
+            "title": "CROWler Agents Host",
+            "description": "This is the host that the CROWler will use to fetch the agents.",
+            "type": "string",
+            "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$"
+          },
+          "port": {
+            "title": "CROWler Agents Host Port",
+            "description": "This is the port that the CROWler will use to fetch the agents.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "examples": [
+              443
+            ]
+          },
+          "region": {
+            "title": "CROWler Agents Host Region",
+            "description": "This is the region that the CROWler will use to fetch the agents (for example, if you're hosting your agents on an AWS S3 bucket).",
+            "type": "string"
+          },
+          "token": {
+            "title": "CROWler Agents Host access Token",
+            "description": "This is the token that the CROWler will use to connect to the distribution server to download the agents.",
+            "type": "string"
+          },
+          "secret": {
+            "title": "CROWler Agents Host access Secret",
+            "description": "This is the secret that the CROWler will use to connect to the distribution server to download the agents.",
+            "type": "string"
+          },
+          "timeout": {
+            "title": "CROWler Agents Host Timeout",
+            "description": "This is the timeout in seconds for the CROWler to fetch the agents.",
+            "type": "integer",
+            "minimum": 10
+          },
+          "type": {
+            "title": "CROWler Agents Host Type",
+            "description": "This is the type of the distribution server that the CROWler will use to fetch the agents. For example, s3, http or local. (local is default)",
+            "type": "string",
+            "enum": [
+              "s3",
+              "http",
+              "local",
+              ""
+            ]
+          },
+          "sslmode": {
+            "title": "CROWler Agents Host SSL Mode",
+            "description": "This is the sslmode that the CROWler will use to connect to the distribution server to fetch the agents. Use 'enable' to force https over http.",
+            "type": "string",
+            "enum": [
+              "enable",
+              "disable",
+              ""
+            ],
+            "examples": [
+              "enable",
+              "disable"
+            ]
+          },
+          "refresh": {
+            "title": "CROWler Agents Automatic Refresh Interval",
+            "description": "This is the refresh interval in seconds for the CROWler to fetch the agents (refresh them).",
             "type": "integer",
             "minimum": 0
           }

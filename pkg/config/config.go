@@ -195,6 +195,7 @@ func NewConfig() *Config {
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
 			ResetCookiesPolicy:    "never",
+			NoThirdPartyCookies:   false,
 			RequestImages:         true,
 			RequestCSS:            true,
 			RequestScripts:        true,
@@ -1665,6 +1666,36 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 	if srcCfg["max_redirects"] != nil {
 		if val, ok := srcCfg["max_redirects"].(float64); ok {
 			dstCfg.MaxRedirects = int(val)
+		}
+	}
+	if srcCfg["reset_cookies_policy"] != nil {
+		if val, ok := srcCfg["reset_cookies_policy"].(string); ok {
+			dstCfg.ResetCookiesPolicy = val
+		}
+	}
+	if srcCfg["no_third_party_cookies"] != nil {
+		if val, ok := srcCfg["no_third_party_cookies"].(bool); ok {
+			dstCfg.NoThirdPartyCookies = val
+		}
+	}
+	if srcCfg["request_images"] != nil {
+		if val, ok := srcCfg["request_images"].(bool); ok {
+			dstCfg.RequestImages = val
+		}
+	}
+	if srcCfg["request_css"] != nil {
+		if val, ok := srcCfg["request_css"].(bool); ok {
+			dstCfg.RequestCSS = val
+		}
+	}
+	if srcCfg["request_plugins"] != nil {
+		if val, ok := srcCfg["request_plugins"].(bool); ok {
+			dstCfg.RequestPlugins = val
+		}
+	}
+	if srcCfg["create_event_when_done"] != nil {
+		if val, ok := srcCfg["create_event_when_done"].(bool); ok {
+			dstCfg.CreateEventWhenDone = val
 		}
 	}
 	if srcCfg["collect_html"] != nil {

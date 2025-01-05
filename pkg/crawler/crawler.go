@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,8 @@ const (
 	optBrowsingAuto   = "auto"
 	optBrowsingRecu   = "recursive"
 	optBrowsingRCRecu = "right_click_recursive"
+	optBrowsingMobile = "mobile"
+	optCookiesOnReq   = "on_request"
 )
 
 var (
@@ -112,6 +115,7 @@ type ProcessContext struct {
 	re               *rules.RuleEngine      // The rule engine
 	getURLMutex      sync.Mutex             // Mutex to protect the getURLContent function
 	visitedLinks     map[string]bool        // Map to keep track of visited links
+	userURLPatterns  []string               // User-defined URL patterns
 	Status           *Status                // Status of the crawling process
 	CollectedCookies map[string]interface{} // Collected cookies
 }
@@ -181,6 +185,44 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 	processCtx.Status.CrawlingRunning = 1
 	defer closeSession(processCtx, args, &sel, releaseSelenium, err)
+
+	// Extract custom configuration from the source
+	sourceConfig := make(map[string]interface{})
+	if processCtx.source.Config != nil {
+		// Unmarshal the JSON RawMessage into a map[string]interface{}
+		err := json.Unmarshal(*processCtx.source.Config, &sourceConfig)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling source configuration: %v", err)
+		}
+	}
+
+	// Extract URLs patterns the user wants to include/exclude
+	processCtx.userURLPatterns = make([]string, 0)
+
+	// Navigate the hierarchy: execution_plan -> conditions -> url_patterns
+	if executionPlanRaw, ok := sourceConfig["execution_plan"]; ok {
+		if executionPlan, ok := executionPlanRaw.([]interface{}); ok {
+			for _, planRaw := range executionPlan {
+				if plan, ok := planRaw.(map[string]interface{}); ok {
+					if conditionsRaw, ok := plan["conditions"]; ok {
+						if conditions, ok := conditionsRaw.(map[string]interface{}); ok {
+							// Extract the include and exclude patterns
+							if urlPatternsRaw, ok := conditions["url_patterns"]; ok {
+								if urlPatterns, ok := urlPatternsRaw.([]interface{}); ok {
+									// Convert []interface{} to []string
+									for _, pattern := range urlPatterns {
+										if strPattern, ok := pattern.(string); ok {
+											processCtx.userURLPatterns = append(processCtx.userURLPatterns, strPattern)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Crawl the initial URL and get the HTML content
 	var pageSource selenium.WebDriver
@@ -477,7 +519,7 @@ func resetPageInfo(p *PageInfo) {
 func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 	var err error
 	var browserType int
-	if ctx.config.Crawler.Platform == "mobile" {
+	if ctx.config.Crawler.Platform == optBrowsingMobile {
 		browserType = 1
 	}
 	ctx.wd, err = ConnectVDI(ctx, sel, browserType)
@@ -494,7 +536,7 @@ func (ctx *ProcessContext) ConnectToVDI(sel SeleniumInstance) error {
 func (ctx *ProcessContext) RefreshSeleniumConnection(sel SeleniumInstance) error {
 	if err := ctx.wd.Refresh(); err != nil {
 		var browserType int
-		if ctx.config.Crawler.Platform == "mobile" {
+		if ctx.config.Crawler.Platform == optBrowsingMobile {
 			browserType = 1
 		}
 		ctx.wd, err = ConnectVDI(ctx, sel, browserType)
@@ -519,7 +561,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
 
-	if ctx.config.Crawler.ResetCookiesPolicy == "on_request" ||
+	if ctx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
 		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
 		ctx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 		// Reset cookies on each request
@@ -565,6 +607,8 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
+	// Generate Keywords from the page content
+	pageInfo.Keywords = extractKeywords(pageInfo)
 
 	// Collect Navigation Timing metrics
 	if ctx.config.Crawler.CollectPerfMetrics {
@@ -1391,7 +1435,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
 func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
-	for _, keyword := range extractKeywords(*pageInfo) {
+	for _, keyword := range pageInfo.Keywords {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
 			return err
@@ -2156,7 +2200,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
-		if processCtx.config.Crawler.ResetCookiesPolicy == "on_request" || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
+		if processCtx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
 		}
@@ -2210,24 +2254,74 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 }
 
 func skipURL(processCtx *ProcessContext, id int, url string) bool {
+	// Check if the URL is empty
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return true
 	}
+
+	// Check if the URL is absolute or relative
 	if strings.HasPrefix(url, "/") {
 		url, _ = combineURLs(processCtx.source.URL, url)
 	}
+
+	// Check if the URL is valid (aka if it's within the allowed restricted boundaries)
 	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
+
 	// Check if the URL is the same as the Source URL (in which case skip it)
 	if url == processCtx.source.URL {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' as it is the same as the source URL\n", id, url)
 		return true
 	}
 
+	// Check if the URL matches user defined patterns (negative or positive)
+	if len(processCtx.userURLPatterns) > 0 {
+		// Flag to track whether the URL should be skipped
+		shouldSkip := false
+		matches := 0
+
+		for _, pattern := range processCtx.userURLPatterns {
+			re := regexp.MustCompile(pattern)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
+			if re.MatchString(url) {
+				matches++
+
+				// Determine if this is a "negative" or "positive" pattern
+				if isNegativePattern(pattern) {
+					// Negative pattern found, skip the URL
+					shouldSkip = true
+					break
+				}
+				// Positive pattern found, do not skip
+				shouldSkip = false
+				break
+			}
+		}
+
+		// If we decided to skip based on negative pattern, return true
+		if shouldSkip {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to user-defined pattern\n", id, url)
+			return true
+		}
+
+		// If we did not find any matches, skip the URL
+		if matches == 0 {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
+			return true
+		}
+	}
+
+	// If none of the conditions matched, do not skip
 	return false
+}
+
+// Function to determine if a pattern is negative (e.g., begins with a "!" or other logic you define)
+func isNegativePattern(pattern string) bool {
+	// For example, assume negative patterns start with "!".
+	return strings.HasPrefix(pattern, "!")
 }
 
 // rightClick simulates right-clicking on a link and opening it in the current tab using custom JavaScript
@@ -2641,6 +2735,8 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
+	// Generate Keywords
+	pageCache.Keywords = extractKeywords(pageCache)
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
@@ -2904,7 +3000,8 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	if browser == BrowserChrome || browser == BrowserChromium {
 		// DNS over HTTPS (DoH) settings
 		args = append(args, "--dns-prefetch-disable")
-		args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		//args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
+		args = append(args, "--host-resolver-rules=MAP * 1.1.1.1")
 		args = append(args, "--host-resolver-rules=MAP *:443")
 
 		// Reduce geolocation leaks
@@ -2937,7 +3034,17 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		args = append(args, "--disable-webrtc-encryption")
 		args = append(args, "--disable-webrtc")
 
-		// Disable Snadboxing
+		// Disable WebUSB
+		args = append(args, "--disable-webusb")
+
+		// Disable WebBluetooth
+		args = append(args, "--disable-web-bluetooth")
+
+		// Disable Plugins
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-extensions")
+
+		// Disable Sandboxing
 		/*
 			args = append(args, "--no-sandbox")
 			args = append(args, "--disable-dev-shm-usage")
@@ -2975,7 +3082,9 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		if ctx.config.Crawler.ResetCookiesPolicy != "" && ctx.config.Crawler.ResetCookiesPolicy != "none" {
 			args = append(args, "--disable-site-isolation-trials")
 			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
-			args = append(args, "--disable-features=SameSiteByDefaultCookies")
+			if ctx.config.Crawler.NoThirdPartyCookies {
+				args = append(args, "--disable-features=SameSiteByDefaultCookies")
+			}
 		}
 
 		// Disable video auto-play:
@@ -3738,7 +3847,7 @@ func writeToFile(filename string, data []byte) (string, error) {
 // writeDataToFile is responsible for writing data to a file
 func writeDataToFile(filename string, data []byte) error {
 	// open file using READ & WRITE permission
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, cmn.DefaultFilePerms)
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, cmn.DefaultFilePerms) //nolint:gosec // filename and path here is provided by the admin
 	if err != nil {
 		return err
 	}

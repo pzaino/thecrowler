@@ -84,8 +84,9 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 		params.Status = "pending"
 	}
 	if params.Restricted < 0 || params.Restricted > 4 {
-		params.Restricted = 2
+		params.Restricted = 0
 	}
+
 	if !params.Config.IsEmpty() {
 		// Validate and potentially reformat the existing Config JSON
 		// First, marshal the params.Config struct to JSON

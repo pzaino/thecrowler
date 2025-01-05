@@ -91,7 +91,7 @@ type PageInfo struct {
 	BodyText                string                           `json:"body_text"`                  // The main body text of the web page.
 	HTML                    string                           `json:"html"`                       // The HTML content of the web page.
 	MetaTags                []MetaTag                        `json:"meta_tags"`                  // The meta tags of the web page.
-	Keywords                map[string]string                `json:"keywords"`                   // The keywords of the web page.
+	Keywords                []string                         `json:"keywords"`                   // The keywords of the web page.
 	DetectedType            string                           `json:"detected_type"`              // The detected document type of the web page.
 	DetectedLang            string                           `json:"detected_lang"`              // The detected language of the web page.
 	NetInfo                 *neti.NetInfo                    `json:"net_info"`                   // The network information of the web page.

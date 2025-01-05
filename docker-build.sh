@@ -95,7 +95,7 @@ export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
 # Generate a Docker image name for today's build (that we are about to do)
 CURRENT_DATE=$(date +%Y%m%d)
-export SELENIUM_PROD_RELESE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
+export SELENIUM_PROD_RELEASE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
 
 # Set the Selenium default port
 if [ "$SELENIUM_PORT" == "" ];
@@ -105,14 +105,14 @@ fi
 
 # Set the platform for the host architecture
 PLATFORM="linux/amd64"
-SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELESE}"
+SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELEASE}"
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     PLATFORM="linux/arm64/v8"
     POSTGRES_IMAGE="arm64v8/"
-    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
-    #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
-    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELESE}"
-    SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELESE}"
+    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELEASE}"
+    #SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELEASE}"
+    #SELENIUM_IMAGE="seleniarm/standalone-chromium:${SELENIUM_PROD_RELEASE}"
+    SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
     SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
 
     # Historical note: The CROWler project supports Chromium/Chrome on ARM64 since version 4.21.0
@@ -120,14 +120,14 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     TARGET_VER_INT=$(version_to_integer "4.21.0")
     # shellcheck disable=SC2086
     if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
-        SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELESE}"
+        SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELEASE}"
     fi
 fi
 export PLATFORMS=$PLATFORM
 
 # Export platform as an environment variable
 export DOCKER_DEFAULT_PLATFORM=$PLATFORM
-export DOCKER_POSTRGESS_IMAGE=$POSTGRES_IMAGE
+export DOCKER_POSTRGES_IMAGE=$POSTGRES_IMAGE
 export DOCKER_SELENIUM_IMAGE=$SELENIUM_IMAGE
 
 # Build custom Selenium image

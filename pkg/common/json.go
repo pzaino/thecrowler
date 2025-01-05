@@ -78,3 +78,15 @@ func JSONStrToMap(s string) (map[string]interface{}, error) {
 	err := json.Unmarshal([]byte(s), &js)
 	return js, err
 }
+
+// MapToJSONStr converts a map to a JSON string
+func MapToJSONStr(m map[string]interface{}) (string, error) {
+	js, err := json.Marshal(m)
+	return string(js), err
+}
+
+// MapStrToJSONStr converts a map[string]string to a JSON string
+func MapStrToJSONStr(m map[string]string) (string, error) {
+	js, err := json.Marshal(m)
+	return string(js), err
+}

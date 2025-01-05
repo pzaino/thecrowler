@@ -40,6 +40,8 @@ const (
 	vdiPlugin     = "vdi_plugin"
 	enginePlugin  = "engine_plugin"
 	eventPlugin   = "event_plugin"
+	none          = "none"
+	all           = "all"
 )
 
 // NewJSPluginRegister returns a new JSPluginRegister
@@ -75,10 +77,25 @@ func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin
 	plugins := make([]JSPlugin, 0)
 	eventType = strings.ToLower(strings.TrimSpace(eventType))
 	for _, plugin := range reg.Registry {
-		if plugin.EventType == "" || plugin.EventType == "none" {
+		if plugin.EventType == "" || plugin.EventType == none {
 			continue
 		}
-		if plugin.EventType == eventType || plugin.EventType == "all" {
+		if plugin.EventType == eventType || plugin.EventType == all {
+			plugins = append(plugins, plugin)
+		}
+	}
+	return plugins, len(plugins) > 0
+}
+
+// GetPluginsByAgentName returns a list of JS plugins related to the specified agent name
+func (reg *JSPluginRegister) GetPluginsByAgentName(agentName string) ([]JSPlugin, bool) {
+	plugins := make([]JSPlugin, 0)
+	agentName = strings.ToLower(strings.TrimSpace(agentName))
+	for _, plugin := range reg.Registry {
+		if plugin.EventType == "" || plugin.EventType == none {
+			continue
+		}
+		if plugin.EventType == agentName || plugin.EventType == all {
 			plugins = append(plugins, plugin)
 		}
 	}
@@ -581,7 +598,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 	apiClientObject, _ := vm.Object(`({})`)
 
 	// Define the "post" method
-	apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
+	err := apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
 		// Get the URL (first argument)
 		url, _ := call.Argument(0).ToString()
 
@@ -645,7 +662,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 		}
 
 		// Add headers to the request
-		if headers != nil {
+		if len(headers) > 0 {
 			for key, value := range headers {
 				if headerValue, ok := value.(string); ok {
 					req.Header.Set(key, headerValue)
@@ -685,6 +702,9 @@ func addJSAPIClient(vm *otto.Otto) error {
 
 		return respObject.Value()
 	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "setting post method:", err)
+	}
 
 	return vm.Set("apiClient", apiClientObject)
 }
@@ -1184,6 +1204,11 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 			return otto.UndefinedValue() // Schedule time is mandatory
 		}
 
+		recurrenceArg, err := call.Argument(5).ToString()
+		if err != nil {
+			recurrenceArg = "" // Default empty recurrence
+		}
+
 		// Create the event when the timer fires
 		event := cdb.Event{
 			SourceID: sourceID,
@@ -1193,7 +1218,7 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Schedule the event creation
-		scheduleTime, err := cdb.ScheduleEvent(db, event, scheduleTimeArg)
+		scheduleTime, err := cdb.ScheduleEvent(db, event, scheduleTimeArg, recurrenceArg)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "scheduling event: %v", err)
 			// return the error

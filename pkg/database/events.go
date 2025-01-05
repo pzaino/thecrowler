@@ -36,6 +36,10 @@ const (
 	EventSeverityError = "error"
 )
 
+var (
+	eventsSchedulerInitialize bool
+)
+
 // GenerateEventUID generates a unique identifier for the event.
 func GenerateEventUID(e Event) string {
 	// convert e.SourceID into a string
@@ -48,6 +52,14 @@ func GenerateEventUID(e Event) string {
 	eStr := sID + e.Type + e.Severity + e.Timestamp + details
 
 	return cmn.GenerateSHA256(eStr)
+}
+
+// InitializeScheduler initializes the centralized scheduler during application startup.
+func InitializeScheduler(db *Handler) {
+	eventsSchedulerInitialize = false
+	go StartScheduler(db)
+	eventsSchedulerInitialize = true
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Event scheduler started")
 }
 
 // CreateEvent creates a new event in the database.
@@ -72,6 +84,7 @@ func CreateEvent(db *Handler, e Event) (string, error) {
 	return uid, nil
 }
 
+/*
 // ScheduleEvent schedules a new event in the database. Like CreateEvent, it receives an Event struct, but it also needs a scheduling time and returns the Event UID and an error if the operation fails.
 func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error) {
 	// Parse the schedule time
@@ -105,6 +118,44 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Scheduled event successfully created:", event.ID)
 	}(e, schedTime)
 
+	return schedTime, nil
+}
+*/
+
+// ScheduleEvent schedules a new event using the centralized scheduler.
+func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string) (time.Time, error) {
+	if !eventsSchedulerInitialize {
+		InitializeScheduler(db)
+	}
+
+	// Parse the schedule time
+	schedTime, err := time.Parse(time.RFC3339, scheduleTime)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing schedule time: %v", err)
+		return time.Now(), err
+	}
+
+	// Ensure the schedule time is not in the past
+	if schedTime.Before(time.Now()) {
+		return schedTime, fmt.Errorf("schedule time is in the past")
+	}
+
+	// Generate a unique identifier for the event
+	e.ID = GenerateEventUID(e)
+
+	// Insert the scheduled event into the EventSchedules table
+	_, err = (*db).Exec(`
+        INSERT INTO EventSchedules (event_id, next_run, recurrence_interval, active)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (event_id) DO UPDATE
+        SET next_run = $2, recurrence_interval = $3, active = $4`,
+		e.ID, schedTime, recurrence, true)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error scheduling event in DB: %v", err)
+		return schedTime, err
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Scheduled event %s at %s with recurrence %s", e.ID, schedTime, recurrence)
 	return schedTime, nil
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	agt "github.com/pzaino/thecrowler/pkg/agent"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -38,6 +39,9 @@ var (
 
 	// PluginRegister is the plugin register
 	PluginRegister *plg.JSPluginRegister
+
+	// AgentsEngine is the agent engine
+	AgentsEngine *agt.JobEngine
 )
 
 func main() {
@@ -188,6 +192,16 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 
 	// Reload Plugins
 	PluginRegister = plg.NewJSPluginRegister().LoadPluginsFromConfig(config, "event_plugin")
+
+	// Initialize the Agents Engine
+	agt.AgentsEngine = agt.NewJobEngine()
+	agt.RegisterActions(agt.AgentsEngine) // Use the initialized `agt.AgentsEngine`
+	agtCfg := config.Agents
+	agt.AgentsRegistry = agt.NewJobConfig()
+	err = agt.AgentsRegistry.LoadConfig(agtCfg)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error loading agents configuration: %v", err)
+	}
 
 	// Initialize the database
 	connected := false
@@ -347,45 +361,74 @@ func handleNotification(payload string) {
 
 // Process the event
 func processEvent(event cdb.Event) {
-	p, exists := PluginRegister.GetPluginsByEventType(event.Type)
+	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
+
+	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 
 	// Check if we have a Plugin for this event
-	if !exists {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No plugins found to handle event type '%s', ignoring event", event.Type)
+	if !pExists && !aExists {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
 		return
 	}
 
-	// Convert the event struct to a map
-	eventMap := make(map[string]interface{})
-	eventMap["jsonData"] = event
+	if pExists {
+		// Convert the event struct to a map
+		eventMap := make(map[string]interface{})
+		eventMap["jsonData"] = event
 
-	// Execute the plugin
-	for _, plugin := range p {
 		// Execute the plugin
-		rval, err := plugin.Execute(nil, &dbHandler, 30, eventMap)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
+		for _, plugin := range p {
+			// Execute the plugin
+			rval, err := plugin.Execute(nil, &dbHandler, 30, eventMap)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
+			}
+
+			// Parse the plugin response
+			rvalStr := cmn.ConvertMapToString(rval)
+			var pluginResp PluginResponse
+			err = json.Unmarshal([]byte(rvalStr), &pluginResp)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin response: %v", err)
+				continue
+			}
+
+			// Handle the parsed response
+			handlePluginResponse(pluginResp)
+
+			// Remove the event if needed
+			if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
+				removeHandledEVent(event.ID)
+			} else if config.Events.EventRemoval == "on_success" && pluginResp.Success {
+				removeHandledEVent(event.ID)
+			} else if config.Events.EventRemoval == "on_failure" && !pluginResp.Success {
+				removeHandledEVent(event.ID)
+			}
 		}
+	}
 
-		// Parse the plugin response
-		rvalStr := cmn.ConvertMapToString(rval)
-		var pluginResp PluginResponse
-		err = json.Unmarshal([]byte(rvalStr), &pluginResp)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin response: %v", err)
-			continue
-		}
+	if aExists {
+		// generate the minimal iCfg
+		iCfg := make(map[string]interface{})
+		iCfg["wd"] = nil
+		iCfg["dbHandler"] = dbHandler
+		iCfg["event"] = event
 
-		// Handle the parsed response
-		handlePluginResponse(pluginResp)
-
-		// Remove the event if needed
-		if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
-			removeHandledEVent(event.ID)
-		} else if config.Events.EventRemoval == "on_success" && pluginResp.Success {
-			removeHandledEVent(event.ID)
-		} else if config.Events.EventRemoval == "on_failure" && !pluginResp.Success {
-			removeHandledEVent(event.ID)
+		for _, ac := range a {
+			// Execute the agents
+			err := agt.AgentsEngine.ExecuteJobs(ac, iCfg)
+			if err != nil {
+				// retrieve ac.Jobs names list:
+				var jobs string
+				for _, job := range ac.Jobs {
+					if jobs != "" {
+						jobs += ", " + strings.TrimSpace(job.Name)
+					} else {
+						jobs = strings.TrimSpace(job.Name)
+					}
+				}
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to execute agent '%s': %v", jobs, err)
+			}
 		}
 	}
 }
