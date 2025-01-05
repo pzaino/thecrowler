@@ -223,20 +223,21 @@ func extractKeywords(pageInfo PageInfo) []string {
 	// Remove script, style tags, and other non-relevant elements
 	doc.Find("script, style").Remove()
 
-	// Extract text content with proper spacing
-	content := ""
-	doc.Find("body").Contents().Each(func(i int, s *goquery.Selection) {
+	// Extract and normalize text content
+	var contentBuilder strings.Builder
+	doc.Find("body").Contents().Each(func(_ int, s *goquery.Selection) {
 		if goquery.NodeName(s) == "#text" {
 			// Append text directly if it's a text node
-			content += s.Text() + " "
+			contentBuilder.WriteString(s.Text())
+			contentBuilder.WriteString(" ") // Add space after text nodes
 		} else {
-			// Add a space for non-text nodes (block elements)
-			content += " "
+			// Add space for non-text nodes (block elements)
+			contentBuilder.WriteString(" ")
 		}
 	})
-	content = normalizeText(content)
-	content = strings.ReplaceAll(content, "\n", " ")
-	content = strings.Join(strings.Fields(content), " ") // Normalize spacing
+
+	// Normalize content
+	content := normalizeText(contentBuilder.String())
 
 	// Extract from main content
 	contentKeywords := extractContentKeywords(content)
@@ -266,8 +267,6 @@ func normalizeText(text string) string {
 	text = strings.ToLower(text)
 
 	// Normalize whitespace
-	text = strings.ReplaceAll(text, "\n", " ")
-	text = strings.ReplaceAll(text, "\t", " ")
 	text = strings.Join(strings.Fields(text), " ") // Collapse multiple spaces
 
 	return text
