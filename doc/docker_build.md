@@ -193,3 +193,13 @@ code) the CROWler docker images from scratch, run the following command:
 
 Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
 the images are built from scratch.
+
+If, when you REbuild, you want to preserve your previous data (for example, the
+database), you can run the following command:
+
+```bash
+./docker_rebuild.sh build --volumes
+```
+
+This will ensure that the volumes are preserved when you rebuild the CROWler.
+The configuration will still be updated and so will plugins, rules, etc.
