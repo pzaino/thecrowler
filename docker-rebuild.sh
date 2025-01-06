@@ -24,7 +24,7 @@ echo "Cleaning up..."
 if [ "${preserve_volumes}" -eq 1 ]; then
     echo "Preserving volumes"
     # Stop and remove containers, networks, and volumes
-    docker-compose down --remove-orphans
+    docker compose down --remove-orphans
     # remove crowler network
     docker network rm crowler-net
     docker network rm thecrowler_crowler-net
@@ -33,7 +33,7 @@ if [ "${preserve_volumes}" -eq 1 ]; then
 else
     echo "Removing volumes"
     # Stop and remove containers, networks, and volumes
-    docker-compose down -v --remove-orphans
+    docker compose down -v --remove-orphans
     # remove crowler network
     docker network rm crowler-net
     docker network rm thecrowler_crowler-net
