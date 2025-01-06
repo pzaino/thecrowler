@@ -706,6 +706,90 @@ func addJSAPIClient(vm *otto.Otto) error {
 		cmn.DebugMsg(cmn.DbgLvlError, "setting post method:", err)
 	}
 
+	// Define the "get" method
+	err = apiClientObject.Set("get", func(call otto.FunctionCall) otto.Value {
+		// Get the URL (first argument)
+		url, _ := call.Argument(0).ToString()
+
+		// Get the request options object (second argument)
+		requestArg := call.Argument(1)
+		var headers map[string]string
+		var timeoutMs int64 = 30000 // Default timeout
+
+		if requestArg.IsDefined() {
+			reqMap, err := requestArg.Export()
+			if err == nil {
+				// Extract headers
+				if h, exists := reqMap.(map[string]interface{})["headers"]; exists {
+					headersInterface, _ := h.(map[string]interface{})
+					headers = make(map[string]string)
+					for k, v := range headersInterface {
+						if vStr, ok := v.(string); ok {
+							headers[k] = vStr
+						}
+					}
+				}
+				// Extract timeout
+				if t, exists := reqMap.(map[string]interface{})["timeout"]; exists {
+					if timeoutFloat, ok := t.(float64); ok { // Otto exports numbers as float64
+						timeoutMs = int64(timeoutFloat)
+					}
+				}
+			}
+		}
+
+		// Set up HTTP client with timeout
+		timeout := time.Duration(timeoutMs) * time.Millisecond
+		client := &http.Client{Timeout: timeout}
+
+		// Create the HTTP request
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error creating GET request:", err)
+			return otto.UndefinedValue()
+		}
+
+		// Add headers to the request
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
+
+		// Execute the request
+		resp, err := client.Do(req)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error executing GET request:", err)
+			return otto.UndefinedValue()
+		}
+		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
+
+		// Read response body
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error reading GET response body:", err)
+			return otto.UndefinedValue()
+		}
+
+		// Create response object for JavaScript
+		respObject, _ := vm.Object(`({})`)
+		err = respObject.Set("status", resp.StatusCode)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error setting status in response object:", err)
+		}
+		err = respObject.Set("headers", resp.Header)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error setting headers in response object:", err)
+		}
+		err = respObject.Set("body", string(respBody))
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error setting body in response object:", err)
+		}
+
+		return respObject.Value()
+	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "setting get method:", err)
+	}
+
 	return vm.Set("apiClient", apiClientObject)
 }
 

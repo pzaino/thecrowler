@@ -298,7 +298,7 @@ fi
 
 # Run Docker Compose
 # shellcheck disable=SC2086
-docker-compose ${pars}
+docker compose ${pars}
 rval=$?
 if [ $rval -ne 0 ]; then
     echo "Failed to build the Docker containers"
