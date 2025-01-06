@@ -128,7 +128,7 @@ Once you've completed the steps above, follow the procedure below:
   **Please note (2):** On some Linux Distros (or if you do not have your user
   in the docker group), you may need to run the above command with `sudo`.
 
-  **Please note (3):** If you are using BuildKit and has a build container
+  **Please note (3):** If you are using BuildKit and it has a build container
   running using the 'docker-container' or 'cloud' engines to perform docker
   container builds, you may need to add the argument `--load` to the command
   above to load the images into the docker daemon. (thanks @mort666 for the
