@@ -19,7 +19,7 @@ require (
 )
 
 require (
-	github.com/Ullaakut/nmap/v3 v3.0.4
+	github.com/Ullaakut/nmap/v3 v3.0.5
 	github.com/evanw/esbuild v0.24.2
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
