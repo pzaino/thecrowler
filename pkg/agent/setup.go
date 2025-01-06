@@ -66,6 +66,12 @@ func RegisterActions(engine *JobEngine) {
 	engine.RegisterAction(&DecisionAction{})
 }
 
+// GetAction returns an action by name
+func (je *JobEngine) GetAction(name string) (Action, bool) {
+	action, exists := je.actions[name]
+	return action, exists
+}
+
 // JobConfig represents the structure of a job configuration file
 type JobConfig struct {
 	Jobs []struct {
