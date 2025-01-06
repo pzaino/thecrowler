@@ -152,7 +152,7 @@ procedure (it's the same), and replace Step 6 with executing the following
 command instead of the previous syntax for `docker-build`:
 
 ```bash
-./docker-build up --build
+./docker-build.sh up --build
 ```
 
 This command will build the CROWler docker images and then run them all into 3
@@ -165,7 +165,7 @@ To build the CROWler docker images and run them in detached mode, follow the
 the same, and instead of Step 6, run the following command:
 
 ```bash
-./docker-build up --build -d
+./docker-build.sh up --build -d
 ```
 
 This command will build the CROWler docker images and tag them with the
@@ -188,7 +188,7 @@ To rebuild (for example after you've downloaded a new version of the CROWler
 code) the CROWler docker images from scratch, run the following command:
 
 ```bash
-./docker_rebuild build --no-cache
+./docker_rebuild.sh build --no-cache
 ```
 
 Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
