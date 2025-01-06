@@ -29,17 +29,24 @@ Please use this one for any new development.
 
 ## What is it?
 
-The CROWler is an open-source, feature-rich web crawler designed with a unique
-philosophy at its core: to be as gentle and low-noise as possible. In other
-words, The CROWler tries to stand out by ensuring minimal impact on the
-websites it crawls while maximizing convenience for its users.
+The CROWler is an open-source, feature-rich web crawler and Content Discovery
+Development Platform, designed with a unique philosophy at its core: to be as
+gentle and low-noise as possible. In other words, The CROWler tries to stand
+out by ensuring minimal impact on the websites it crawls while maximizing
+convenience for its users.
 
-Additionally, the system is equipped with an API, providing a streamlined
-interface for data queries. This feature ensures easy integration and
-access to indexed data for various applications.
+Additionally, the system is equipped with an powerful search API, providing
+a streamlined interface for data queries. This feature ensures easy
+integration and access to indexed data for various applications.
 
 The CROWler is designed to be micro-services based, so it can be easily
 deployed in a containerized environment.
+
+As a Content Discovery Development Platform, The CROWler integrates a wide
+range of technologies and features, including Plugins, Rulesets, Agents,
+Events and more. These components work together to provide a comprehensive
+platform to develop your own solutions for content discovery, data extraction,
+and more.
 
 ## Table of contents
 
