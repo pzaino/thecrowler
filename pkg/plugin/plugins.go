@@ -760,7 +760,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error executing GET request:", err)
 			return otto.UndefinedValue()
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
 
 		// Read response body
 		respBody, err := io.ReadAll(resp.Body)
