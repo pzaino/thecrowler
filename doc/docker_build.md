@@ -24,7 +24,7 @@ and configuring the build appropriately.
   As for the minimal requirements for the machine you are building the CROWler:
   - 4GB of RAM
   - 2 CPU cores
-  - 20GB of disk space
+  - 30GB of disk space
 
   **Note**: The above are the minimal requirements, you can run the CROWler on
   a machine with less resources, but you might experience performance issues.
