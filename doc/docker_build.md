@@ -28,6 +28,8 @@ and configuring the build appropriately.
 
   **Note**: The above are the minimal requirements, you can run the CROWler on
   a machine with less resources, but you might experience performance issues.
+  Also, please note that the CROWler can collect an impressive amount of data,
+  so you might want to have more disk space available.
 
 - **Step B** There are a bunch of ENV variables you can set to
   customize the CROWler deployment. These ENV vars allow you to set up your
