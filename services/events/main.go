@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -233,12 +234,18 @@ func initAPIv1() {
 
 	// Events API endpoints
 	createEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(createEventHandler)))
+	checkEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(checkEventHandler)))
+	updateEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateEventHandler)))
 	removeEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventHandler)))
 	listEventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(listEventsHandler)))
 
-	http.Handle("/v1/events/create", createEventWithMiddlewares)
-	http.Handle("/v1/events/remove", removeEventWithMiddlewares)
-	http.Handle("/v1/events/list", listEventsWithMiddlewares)
+	baseAPI := "/v1/event"
+
+	http.Handle(baseAPI+"/create", createEventWithMiddlewares)
+	http.Handle(baseAPI+"/status", checkEventWithMiddlewares)
+	http.Handle(baseAPI+"/update", updateEventWithMiddlewares)
+	http.Handle(baseAPI+"/remove", removeEventWithMiddlewares)
+	http.Handle(baseAPI+"/list", listEventsWithMiddlewares)
 
 }
 
@@ -280,13 +287,13 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	var event cdb.Event
 	err := json.NewDecoder(r.Body).Decode(&event)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Invalid request body: ", http.StatusBadRequest, http.StatusOK)
 		return
 	}
 
 	uid, err := cdb.CreateEvent(&dbHandler, event)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create event: %v", err), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Failed to create event: ", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
 
@@ -297,13 +304,13 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 	eventID := r.URL.Query().Get("event_id")
 	if eventID == "" {
-		http.Error(w, "Missing event_id parameter", http.StatusBadRequest)
+		handleErrorAndRespond(w, errors.New("No event ID"), nil, "Missing event_id parameter: ", http.StatusBadRequest, http.StatusOK)
 		return
 	}
 
 	_, err := dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to remove event: %v", err), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Failed to remove event: ", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
 
@@ -314,7 +321,7 @@ func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 func listEventsHandler(w http.ResponseWriter, _ *http.Request) {
 	rows, err := dbHandler.ExecuteQuery(`SELECT event_sha256, created_at, last_updated_at, source_id, event_type, event_severity, event_timestamp, details FROM Events`)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to retrieve events: %v", err), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, nil, "Failed to retrieve events: ", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
 	defer rows.Close() //nolint:errcheck // We can't check returned error when using defer
@@ -326,7 +333,7 @@ func listEventsHandler(w http.ResponseWriter, _ *http.Request) {
 
 		err := rows.Scan(&event.ID, &event.CreatedAt, &event.LastUpdatedAt, &event.SourceID, &event.Type, &event.Severity, &event.Timestamp, &details)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error scanning events: %v", err), http.StatusInternalServerError)
+			handleErrorAndRespond(w, err, events, "Error scanning events: ", http.StatusInternalServerError, http.StatusOK)
 			return
 		}
 
@@ -336,11 +343,69 @@ func listEventsHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		http.Error(w, fmt.Sprintf("Error reading events: %v", err), http.StatusInternalServerError)
+		handleErrorAndRespond(w, err, events, "Error reading events: ", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
 
 	handleErrorAndRespond(w, nil, events, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func checkEventHandler(w http.ResponseWriter, r *http.Request) {
+	eventID := r.URL.Query().Get("event_id")
+	if eventID == "" {
+		handleErrorAndRespond(w, errors.New("No event ID"), nil, "Missing event_id parameter: ", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	rows, err := dbHandler.ExecuteQuery(`SELECT event_sha256, created_at, last_updated_at, source_id, event_type, event_severity, event_timestamp, details FROM Events WHERE event_sha256 = $1`, eventID)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to retrieve events: ", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+	defer rows.Close() //nolint:errcheck // We can't check returned error when using defer
+
+	var events []cdb.Event
+	for rows.Next() {
+		var event cdb.Event
+		var details string
+
+		err := rows.Scan(&event.ID, &event.CreatedAt, &event.LastUpdatedAt, &event.SourceID, &event.Type, &event.Severity, &event.Timestamp, &details)
+		if err != nil {
+			handleErrorAndRespond(w, err, events, "Error scanning events: ", http.StatusInternalServerError, http.StatusOK)
+			return
+		}
+
+		// Convert JSON details string back to map
+		event.Details = cmn.ConvertStringToMap(details)
+		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		handleErrorAndRespond(w, err, events, "Error reading events: ", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	handleErrorAndRespond(w, nil, events, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func updateEventHandler(w http.ResponseWriter, r *http.Request) {
+	eventID := r.URL.Query().Get("event_id")
+	if eventID == "" {
+		handleErrorAndRespond(w, errors.New("Missing event_id parameter"), nil, "Invalid request: ", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	// Update the event details
+	var event cdb.Event
+	err := json.NewDecoder(r.Body).Decode(&event)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid request body: ", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	_, err = dbHandler.Exec(`UPDATE Events SET event_type = $1, event_severity = $2, event_timestamp = $3, details = $4 WHERE event_sha256 = $5`, event.Type, event.Severity, event.Timestamp, cmn.ConvertMapToString(event.Details), eventID)
+
+	handleErrorAndRespond(w, err, nil, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 // Handle the notification received
