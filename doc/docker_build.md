@@ -24,10 +24,12 @@ and configuring the build appropriately.
   As for the minimal requirements for the machine you are building the CROWler:
   - 4GB of RAM
   - 2 CPU cores
-  - 20GB of disk space
+  - 30GB of disk space
 
   **Note**: The above are the minimal requirements, you can run the CROWler on
   a machine with less resources, but you might experience performance issues.
+  Also, please note that the CROWler can collect an impressive amount of data,
+  so you might want to have more disk space available.
 
 - **Step B** There are a bunch of ENV variables you can set to
   customize the CROWler deployment. These ENV vars allow you to set up your
@@ -139,9 +141,10 @@ Once you've completed the steps above, follow the procedure below:
 
   The following images will be built:
 
-  - `crowler/crowler-engine`: The base image for the CROWler docker images.
-  - `crowler/crowler-api`: The CROWler API image.
-  - `crowler/crowler-vdi`: The CROWler Virtual Desktop Image.
+  - `crowler-engine-x`: The base image for the CROWler docker images.
+  - `crowler-api`: The CROWler API image.
+  - `crowler-vdi-x`: The CROWler Virtual Desktop Image.
+  - `crowler-events`: The CROWler Events Manager image.
 
   Plus a set of "support" images, that are used to build the main images.
 

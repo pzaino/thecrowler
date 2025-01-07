@@ -567,6 +567,7 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 	{ "Authorization header": "Bearer token"},
 	{"key": "value"},
 	30000);
+
    console.log(response.status);
    console.log(response.headers);
    console.log(response.body);
