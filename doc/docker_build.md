@@ -139,9 +139,10 @@ Once you've completed the steps above, follow the procedure below:
 
   The following images will be built:
 
-  - `crowler/crowler-engine`: The base image for the CROWler docker images.
-  - `crowler/crowler-api`: The CROWler API image.
-  - `crowler/crowler-vdi`: The CROWler Virtual Desktop Image.
+  - `crowler-engine-x`: The base image for the CROWler docker images.
+  - `crowler-api`: The CROWler API image.
+  - `crowler-vdi-x`: The CROWler Virtual Desktop Image.
+  - `crowler-events`: The CROWler Events Manager image.
 
   Plus a set of "support" images, that are used to build the main images.
 
