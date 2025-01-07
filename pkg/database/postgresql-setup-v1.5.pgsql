@@ -1782,18 +1782,17 @@ BEGIN
     END IF;
 END
 $$;
+
 CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER, p_engineID VARCHAR, p_last_ok_update VARCHAR, p_last_error VARCHAR, p_regular_crawling VARCHAR, p_processing_timeout VARCHAR)
 RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
 $$
 BEGIN
-    IF p_last_ok_update = '' THEN
-        p_last_ok_update := '3 days';
-    END IF;
+    p_last_ok_update := COALESCE(TRIM(p_last_ok_update));
+    p_regular_crawling := COALESCE(TRIM(p_regular_crawling));
+    p_last_error := COALESCE(TRIM(p_last_error));
+    p_processing_timeout := COALESCE(TRIM(p_processing_timeout));
     IF p_last_error = '' THEN
         p_last_error := '15 minutes';
-    END IF;
-    IF p_regular_crawling = '' THEN
-        p_regular_crawling := '1 week';
     END IF;
     IF p_processing_timeout = '' THEN
         p_processing_timeout := '1 day';  -- Default to 1 day if not provided
@@ -1804,14 +1803,19 @@ BEGIN
         FROM Sources AS s
         WHERE s.disabled = FALSE
           AND (
-               (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL)
-            OR (LOWER(TRIM(s.status)) = 'error' AND s.last_updated_at < NOW() - p_last_error::INTERVAL)
-            OR (LOWER(TRIM(s.status)) = 'completed' AND s.last_updated_at < NOW() - p_regular_crawling::INTERVAL)
-            OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
-            OR LOWER(TRIM(s.status)) = 'pending'
-            OR LOWER(TRIM(s.status)) = 'new'
-            OR s.status IS NULL
-          )
+                -- Handle cases where p_last_ok_update is provided
+                (p_last_ok_update <> '' AND (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL))
+                OR
+                -- Handle cases where p_regular_crawling is provided
+                (p_regular_crawling <> '' AND LOWER(TRIM(s.status)) = 'completed' AND s.last_updated_at < NOW() - p_regular_crawling::INTERVAL)
+                OR
+                -- Handle other statuses and conditions
+                (LOWER(TRIM(s.status)) = 'error' AND s.last_updated_at < NOW() - p_last_error::INTERVAL)
+                OR LOWER(TRIM(s.status)) = 'pending'
+                OR LOWER(TRIM(s.status)) = 'new'
+                OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
+                OR s.status IS NULL
+              )
         FOR UPDATE
         LIMIT limit_val
     )
