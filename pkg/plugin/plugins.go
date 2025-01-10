@@ -17,6 +17,8 @@ package plugin
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -529,6 +531,11 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	}
 
 	err = addJSAPIDebugLevel(vm)
+	if err != nil {
+		return err
+	}
+
+	err = addJSAPICrypto(vm) // Add Crypto API
 	if err != nil {
 		return err
 	}
@@ -1336,6 +1343,38 @@ func addJSAPIDebugLevel(vm *otto.Otto) error {
 
 		return jsDebugLevel
 	})
+}
+
+// addJSAPICrypto adds hashing functions like sha256 and sha1 to the VM
+func addJSAPICrypto(vm *otto.Otto) error {
+	cryptoObj, err := vm.Object(`crypto = {}`)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error creating crypto object:", err)
+		return err
+	}
+
+	// Define sha256 function
+	err = cryptoObj.Set("sha256", func(call otto.FunctionCall) otto.Value {
+		input, err := call.Argument(0).ToString()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error converting argument to string:", err)
+			return otto.UndefinedValue()
+		}
+
+		hash := sha256.Sum256([]byte(input))
+		hashString := hex.EncodeToString(hash[:])
+		result, err := vm.ToValue(hashString)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error converting sha256 hash to value:", err)
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error setting sha256 function:", err)
+	}
+
+	return nil
 }
 
 // String returns the Plugin as a string
