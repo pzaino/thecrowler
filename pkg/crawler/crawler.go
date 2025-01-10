@@ -2947,7 +2947,13 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	if sel.Config.ProxyURL != "" {
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
-		args = append(args, "--proxy-bypass-list=localhost")
+		// Get local network:
+		localNet, err := cmn.DetectLocalNetwork()
+		if err == nil {
+			args = append(args, "--proxy-bypass-list=localhost,"+localNet)
+		} else {
+			args = append(args, "--proxy-bypass-list=localhost")
+		}
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)

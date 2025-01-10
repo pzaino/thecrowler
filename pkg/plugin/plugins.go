@@ -1346,6 +1346,8 @@ func addJSAPIDebugLevel(vm *otto.Otto) error {
 }
 
 // addJSAPICrypto adds hashing functions like sha256 and sha1 to the VM
+// Usage in JS:
+// let hash = crypto.sha256("Hello, World!");
 func addJSAPICrypto(vm *otto.Otto) error {
 	cryptoObj, err := vm.Object(`crypto = {}`)
 	if err != nil {
