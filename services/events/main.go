@@ -441,6 +441,9 @@ func processEvent(event cdb.Event) {
 		eventMap := make(map[string]interface{})
 		eventMap["jsonData"] = event
 
+		// leave it blank for now
+		eventMap["currentURL"] = ""
+
 		// Execute the plugin
 		for _, plugin := range p {
 			// Execute the plugin
