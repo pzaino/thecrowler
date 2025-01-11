@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
+
 	"github.com/qri-io/jsonschema"
 )
 
@@ -736,6 +738,41 @@ func TestRulesetGetAllEnabledActionRules(t *testing.T) {
 	for i, expected := range expectedActionRules {
 		if !reflect.DeepEqual(actualActionRules[i], expected) {
 			t.Errorf("Expected action rule %v, but got %v", expected, actualActionRules[i])
+		}
+	}
+}
+
+func TestRulesetSetEnv(t *testing.T) {
+	ruleset := NewRuleset("Test Ruleset")
+	ruleGroups := []RuleGroup{
+		{
+			GroupName: "Group1",
+			IsEnabled: true,
+			Env: []EnvSetting{
+				{
+					Key:    "key1",
+					Values: "value1",
+				},
+				{
+					Key:    "key2",
+					Values: "value2",
+				},
+			},
+		},
+		{
+			GroupName: "Group2",
+			IsEnabled: true,
+		},
+	}
+	ruleset.RuleGroups = ruleGroups
+
+	CtxID := "test-context-id"
+	cmn.KVStore = cmn.NewKeyValueStore()
+	ruleset.SetEnv(CtxID)
+
+	for _, kve := range cmn.KVStore.Keys(CtxID) {
+		if kve != "key1" && kve != "key2" {
+			t.Errorf("Expected CtxID to be %s, but got %s", CtxID, kve)
 		}
 	}
 }

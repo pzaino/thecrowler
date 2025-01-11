@@ -323,7 +323,7 @@ type PluginParamsProperties struct {
 	Type string `yaml:"type"`
 }
 
-// UnmarshalJSON implements custom unmarshaling logic for EnvSetting
+// UnmarshalJSON implements custom unmarshaling logic for PluginParams
 func (e *PluginParams) UnmarshalJSON(data []byte) error {
 	type Alias PluginParams
 	aux := &struct {
