@@ -171,6 +171,18 @@ func RemoveEvent(db *Handler, eventUID string) error {
 	return nil
 }
 
+// RemoveEventsBeforeTime removes all events that occurred before a specific time from the database.
+// It receives in input a time and returns an error if the operation fails.
+func RemoveEventsBeforeTime(db *Handler, time string) error {
+	// Execute the query
+	_, err := (*db).Exec(`DELETE FROM Events WHERE event_timestamp < $1`, time)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // GetEvent retrieves an event from the database.
 // It receives in input an Event UID and returns the Event struct and an error if the operation fails.
 func GetEvent(db *Handler, eventUID string) (Event, error) {

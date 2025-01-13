@@ -237,6 +237,7 @@ func initAPIv1() {
 	checkEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(checkEventHandler)))
 	updateEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateEventHandler)))
 	removeEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventHandler)))
+	removeEventsBeforeWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventsBeforeHandler)))
 	listEventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(listEventsHandler)))
 
 	baseAPI := "/v1/event"
@@ -245,6 +246,7 @@ func initAPIv1() {
 	http.Handle(baseAPI+"/status", checkEventWithMiddlewares)
 	http.Handle(baseAPI+"/update", updateEventWithMiddlewares)
 	http.Handle(baseAPI+"/remove", removeEventWithMiddlewares)
+	http.Handle(baseAPI+"/remove_before", removeEventsBeforeWithMiddlewares)
 	http.Handle(baseAPI+"/list", listEventsWithMiddlewares)
 
 }
@@ -316,6 +318,43 @@ func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{"message": "Event removed successfully"}
 	handleErrorAndRespond(w, nil, response, "Error removing event: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func removeEventsBeforeHandler(w http.ResponseWriter, r *http.Request) {
+	before := r.URL.Query().Get("before")
+	if before == "" {
+		handleErrorAndRespond(w, errors.New("No 'before' parameter"), nil, "Missing 'before' parameter: ", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	// Ensure that the 'before' parameter is a valid timestamp
+	parsedTime, err := time.Parse(time.RFC3339, before)
+	if err != nil {
+		// Try parsing as a simple date (YYYY-MM-DD)
+		parsedTime, err = time.Parse("2006-01-02", before)
+		if err != nil {
+			// Try to transform before into a valid timestamp
+			beforeInt, err := strconv.ParseInt(before, 10, 64)
+			if err != nil {
+				handleErrorAndRespond(w, err, nil, "Invalid 'before' parameter: ", http.StatusBadRequest, http.StatusOK)
+				return
+			}
+			// Convert the timestamp to a valid RFC3339 format
+			parsedTime = time.Unix(beforeInt, 0)
+		}
+	}
+
+	// Convert parsed time to RFC3339 for consistency
+	before = parsedTime.Format(time.RFC3339)
+
+	err = cdb.RemoveEventsBeforeTime(&dbHandler, before)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to remove events: ", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	response := map[string]string{"message": "Events removed successfully"}
+	handleErrorAndRespond(w, nil, response, "Error removing events: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 func listEventsHandler(w http.ResponseWriter, _ *http.Request) {
