@@ -184,7 +184,21 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 		// this is the "base" configuration that will be passed to all steps
 		// and contains things like *wd and *dbHandler
 		if len(jobGroup.Steps) > 0 {
-			jobGroup.Steps[0]["config"] = iCfg
+			// Check if the first step already has a params field
+			if _, ok := jobGroup.Steps[0]["params"]; !ok {
+				// If not, add the params field
+				jobGroup.Steps[0]["params"] = nil
+			}
+			// Next check if the params field has a config field
+			if _, ok := jobGroup.Steps[0]["params"].(map[string]interface{})["config"]; !ok {
+				// If not, add the config field
+				jobGroup.Steps[0]["params"].(map[string]interface{})["config"] = iCfg
+			} else {
+				// If yes, merge the two maps
+				for k, v := range iCfg {
+					jobGroup.Steps[0]["params"].(map[string]interface{})["config"].(map[string]interface{})[k] = v
+				}
+			}
 		}
 
 		// Check if the group should run in parallel
@@ -220,7 +234,10 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 	lastResult := make(map[string]interface{})
 
 	// Execute each job in the group
-	for _, step := range steps {
+	for i := 0; i < len(steps); i++ {
+		step := steps[i]
+
+		// Get the action name
 		actionName, ok := step["action"].(string)
 		if !ok {
 			return fmt.Errorf("missing 'action' field in job step")

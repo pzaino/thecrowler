@@ -46,6 +46,20 @@ func (je *JobEngine) RegisterAction(action Action) {
 
 // ExecuteJob runs a sequence of actions as defined in the job
 func (je *JobEngine) ExecuteJob(job []map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
+	// Check if the job is empty
+	if len(job) == 0 {
+		rval["status"] = "error"
+		rval["message"] = "empty job"
+		return rval, fmt.Errorf("empty job")
+	}
+
+	// Check if the first step is a config step
+
+	// Execute each step in the job
 	lastResult := make(map[string]interface{})
 
 	for _, step := range job {
@@ -104,36 +118,52 @@ func (a *APIRequestAction) Name() string {
 
 // Execute performs the API request
 func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
 	config, err := getConfig(params)
 	if err != nil {
-		return nil, err
+		rval["status"] = "error"
+		rval["message"] = "empty plugin response"
+		return rval, err
 	}
+	rval["config"] = config
 
 	url, ok := config["url"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'url' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'url' parameter"
+		return rval, fmt.Errorf("missing 'url' parameter")
 	}
 
 	if !cmn.IsURLValid(url) {
-		return nil, fmt.Errorf("invalid URL: %s", url)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("invalid URL: %s", url)
+		return rval, fmt.Errorf("invalid URL: %s", url)
 	}
 
 	response, err := cmn.GenericAPIRequest(map[string]string{
 		"url": url,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("API request failed: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("API request failed: %v", err)
+		return rval, fmt.Errorf("API request failed: %v", err)
 	}
 
 	responseMap, err := cmn.JSONStrToMap(response)
 	if err != nil {
-		return nil, fmt.Errorf("could not parse response: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("could not parse response: %v", err)
+		return rval, fmt.Errorf("could not parse response: %v", err)
 	}
 
-	return map[string]interface{}{
-		"response": responseMap,
-		"config":   config,
-	}, nil
+	rval["response"] = responseMap
+	rval["status"] = "success"
+	rval["message"] = "API request successful"
+
+	return rval, nil
 }
 
 // CreateEventAction creates a database event
@@ -146,30 +176,44 @@ func (e *CreateEventAction) Name() string {
 
 // Execute creates a database event
 func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
 	config, err := getConfig(params)
 	if err != nil {
-		return nil, err
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, err
 	}
+	rval["config"] = config
 
 	dbHandler, ok := config["db_handler"].(cdb.Handler)
 	if !ok {
-		return nil, fmt.Errorf("missing 'dbHandler' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'dbHandler' parameter"
+		return rval, fmt.Errorf("missing 'dbHandler' parameter")
 	}
 
 	query, ok := config["query"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'query' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'query' parameter"
+		return rval, fmt.Errorf("missing 'query' parameter")
 	}
 
 	result, err := dbHandler.ExecuteQuery(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("failed to execute query: %v", err)
+		return rval, fmt.Errorf("failed to execute query: %v", err)
 	}
 
-	return map[string]interface{}{
-		"response": result,
-		"config":   config,
-	}, nil
+	rval["response"] = result
+	rval["status"] = "success"
+	rval["message"] = "event created successfully"
+
+	return rval, nil
 }
 
 // RunCommandAction executes local commands
@@ -182,26 +226,38 @@ func (r *RunCommandAction) Name() string {
 
 // Execute runs a shell command
 func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
 	config, err := getConfig(params)
 	if err != nil {
-		return nil, err
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, err
 	}
+	rval["config"] = config
 
 	command, ok := config["command"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'command' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'command' parameter"
+		return rval, fmt.Errorf("missing 'command' parameter")
 	}
 
 	cmd := exec.Command("sh", "-c", command) //nolint:gosec // This is a controlled command execution
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("command execution failed: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("command execution failed: %v", err)
+		return rval, fmt.Errorf("command execution failed: %v", err)
 	}
 
-	return map[string]interface{}{
-		"response": string(output),
-		"config":   config,
-	}, nil
+	rval["response"] = string(output)
+	rval["status"] = "success"
+	rval["message"] = "command executed successfully"
+
+	return rval, nil
 }
 
 // AIInteractionAction interacts with an AI API
@@ -214,14 +270,23 @@ func (a *AIInteractionAction) Name() string {
 
 // Execute sends a request to an AI API
 func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
 	config, err := getConfig(params)
 	if err != nil {
-		return nil, err
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, err
 	}
+	rval["config"] = config
 
 	prompt, ok := config["prompt"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'prompt' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'prompt' parameter"
+		return rval, fmt.Errorf("missing 'prompt' parameter")
 	}
 
 	response, err := cmn.GenericAPIRequest(map[string]string{
@@ -230,18 +295,23 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		"api_key": config["api_key"].(string),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("AI interaction failed: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("AI interaction failed: %v", err)
+		return rval, fmt.Errorf("AI interaction failed: %v", err)
 	}
 
 	responseMap, err := cmn.JSONStrToMap(response)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse AI response: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("failed to parse AI response: %v", err)
+		return rval, fmt.Errorf("failed to parse AI response: %v", err)
 	}
 
-	return map[string]interface{}{
-		"response": responseMap,
-		"config":   config,
-	}, nil
+	rval["response"] = responseMap
+	rval["status"] = "success"
+	rval["message"] = "AI interaction successful"
+
+	return rval, nil
 }
 
 // DBQueryAction performs database queries or operations
@@ -254,28 +324,41 @@ func (d *DBQueryAction) Name() string {
 
 // Execute runs a database query or operation
 func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
 	// Check if params has a field called config
 	config, err := getConfig(params)
 	if err != nil {
-		return nil, err
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, err
 	}
+	rval["config"] = config
 
 	// Extract dbHandler from config
 	dbHandler, ok := config["db_handler"].(cdb.Handler)
 	if !ok {
-		return nil, fmt.Errorf("missing 'dbHandler' in config")
+		rval["status"] = "error"
+		rval["message"] = "missing 'dbHandler' in config"
+		return rval, fmt.Errorf("missing 'dbHandler' in config")
 	}
 
 	// Extract query type (e.g., "select", "insert", "update", etc.)
 	queryType, ok := params["type"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'type' parameter for DB operation")
+		rval["status"] = "error"
+		rval["message"] = "missing 'type' parameter for DB operation"
+		return rval, fmt.Errorf("missing 'type' parameter for DB operation")
 	}
 
 	// Extract query string
 	query, ok := params["query"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'query' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'query' parameter"
+		return rval, fmt.Errorf("missing 'query' parameter")
 	}
 
 	// Execute the query based on type
@@ -295,13 +378,15 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("database operation failed: %v", err)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("database operation failed: %v", err)
+		return rval, fmt.Errorf("database operation failed: %v", err)
 	}
 
 	// Return the result
-	rval := make(map[string]interface{})
 	rval["response"] = result
-	rval["config"] = config
+	rval["status"] = "success"
+	rval["message"] = "database operation successful"
 
 	return rval, nil
 }
@@ -316,28 +401,41 @@ func (p *PluginAction) Name() string {
 
 // Execute runs a plugin using the CROWler plugin system
 func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
 	// Check if params has a field called config
 	config, err := getConfig(params)
 	if err != nil {
-		return nil, err
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, err
 	}
+	rval["config"] = config
 
 	// Extract the Plugin library pointer from the config
 	plugin, ok := config["plugins_register"].(*plg.JSPluginRegister)
 	if !ok {
-		return nil, fmt.Errorf("missing 'pluginRegister' in config")
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("missing 'pluginRegister' in config")
+		return rval, fmt.Errorf("missing 'pluginRegister' in config")
 	}
 
 	// Extract plugin's names from params
 	plgName, ok := params["plugin_name"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'plugin' parameter")
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("missing 'plugin_name' parameter")
+		return rval, fmt.Errorf("missing 'plugin' parameter")
 	}
 
 	// Retrieve the plugin
 	plg, exists := plugin.GetPlugin(plgName)
 	if !exists {
-		return nil, fmt.Errorf("plugin '%s' not found", plgName)
+		rval["status"] = "error"
+		rval["message"] = fmt.Sprintf("plugin '%s' not found", plgName)
+		return rval, fmt.Errorf("plugin '%s' not found", plgName)
 	}
 
 	// Prepare the plugin parameters
@@ -366,13 +464,17 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	// Execute the plugin
 	pRval, err := plg.Execute(wd, &dbHandler, 30, plgParams)
 	if err != nil {
-		return nil, fmt.Errorf("executing plugin '%s': %v", plgName, err)
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, fmt.Errorf("executing plugin '%s': %v", plgName, err)
 	}
 
 	// Parse the plugin response
 	pRvalStr := string(cmn.ConvertMapToJSON(pRval))
 	if pRvalStr == "" {
-		return nil, fmt.Errorf("empty plugin response")
+		rval["status"] = "error"
+		rval["message"] = "empty plugin response"
+		return rval, fmt.Errorf("empty plugin response")
 	}
 
 	// Handle plugin response (e.g., storing or logging results)
@@ -383,9 +485,9 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	})
 
 	// Return the aggregated plugin execution results
-	rval := make(map[string]interface{})
 	rval["response"] = results
-	rval["config"] = config
+	rval["status"] = "success"
+	rval["message"] = "plugin executed successfully"
 
 	return rval, nil
 }
@@ -400,22 +502,42 @@ func (d *DecisionAction) Name() string {
 
 // Execute evaluates conditions and executes steps
 func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	rval := make(map[string]interface{})
+	rval["response"] = nil
+	rval["config"] = nil
+
+	// Check if params has a field called config
+	config, err := getConfig(params)
+	if err != nil {
+		rval["status"] = "error"
+		rval["message"] = err.Error()
+		return rval, err
+	}
+	rval["config"] = config
+
 	condition, ok := params["condition"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing 'condition' parameter")
+		rval["status"] = "error"
+		rval["message"] = "missing 'condition' parameter"
+		return rval, fmt.Errorf("missing 'condition' parameter")
 	}
 
 	if evaluateCondition(condition, params) {
 		if steps, ok := params["on_true"].([]map[string]interface{}); ok {
 			return AgentsEngine.ExecuteJob(steps)
 		}
-		return nil, fmt.Errorf("missing 'on_true' steps")
+		rval["status"] = "error"
+		rval["message"] = "missing 'on_true' steps"
+		return rval, fmt.Errorf("missing 'on_true' steps")
 	}
 
 	if steps, ok := params["on_false"].([]map[string]interface{}); ok {
 		return AgentsEngine.ExecuteJob(steps)
 	}
-	return nil, fmt.Errorf("missing 'on_false' steps")
+
+	rval["status"] = "error"
+	rval["message"] = "missing 'on_false' steps"
+	return rval, fmt.Errorf("missing 'on_false' steps")
 }
 
 func evaluateCondition(condition string, params map[string]interface{}) bool {
