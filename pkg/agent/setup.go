@@ -147,6 +147,11 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 	return nil
 }
 
+// RegisterAgent registers an agent with the JobConfig
+func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
+	jc.Jobs = append(jc.Jobs, agent.Jobs...)
+}
+
 // GetAgentsByEventType returns all agents that are triggered by a specific event type
 func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
 	var agents []*JobConfig

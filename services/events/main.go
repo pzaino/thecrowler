@@ -6,9 +6,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+	"gopkg.in/yaml.v2"
 
 	agt "github.com/pzaino/thecrowler/pkg/agent"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -240,14 +243,26 @@ func initAPIv1() {
 	removeEventsBeforeWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventsBeforeHandler)))
 	listEventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(listEventsHandler)))
 
-	baseAPI := "/v1/event"
+	baseAPI := "/v1/event/"
 
-	http.Handle(baseAPI+"/create", createEventWithMiddlewares)
-	http.Handle(baseAPI+"/status", checkEventWithMiddlewares)
-	http.Handle(baseAPI+"/update", updateEventWithMiddlewares)
-	http.Handle(baseAPI+"/remove", removeEventWithMiddlewares)
-	http.Handle(baseAPI+"/remove_before", removeEventsBeforeWithMiddlewares)
-	http.Handle(baseAPI+"/list", listEventsWithMiddlewares)
+	http.Handle(baseAPI+"create", createEventWithMiddlewares)
+	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
+	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
+	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
+	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
+	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
+
+	// Handle uploads
+
+	uploadRulesetHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadRulesetHandler)))
+	uploadPluginHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadPluginHandler)))
+	uploadAgentHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadAgentHandler)))
+
+	baseAPI = "/v1/upload/"
+
+	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
+	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
+	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
 
 }
 
@@ -321,9 +336,9 @@ func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func removeEventsBeforeHandler(w http.ResponseWriter, r *http.Request) {
-	before := r.URL.Query().Get("before")
+	before := r.URL.Query().Get("timestamp")
 	if before == "" {
-		handleErrorAndRespond(w, errors.New("No 'before' parameter"), nil, "Missing 'before' parameter: ", http.StatusBadRequest, http.StatusOK)
+		handleErrorAndRespond(w, errors.New("No 'before' parameter"), nil, "Missing 'timestamp' parameter: ", http.StatusBadRequest, http.StatusOK)
 		return
 	}
 
@@ -505,11 +520,11 @@ func processEvent(event cdb.Event) {
 
 			// Remove the event if needed
 			if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
-				removeHandledEVent(event.ID)
+				removeHandledEvent(event.ID)
 			} else if config.Events.EventRemoval == "on_success" && pluginResp.Success {
-				removeHandledEVent(event.ID)
+				removeHandledEvent(event.ID)
 			} else if config.Events.EventRemoval == "on_failure" && !pluginResp.Success {
-				removeHandledEVent(event.ID)
+				removeHandledEvent(event.ID)
 			}
 		}
 	}
@@ -540,7 +555,7 @@ func processEvent(event cdb.Event) {
 	}
 }
 
-func removeHandledEVent(eventID string) {
+func removeHandledEvent(eventID string) {
 	_, err := dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventID)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to remove event: %v", err)
@@ -562,4 +577,209 @@ func handlePluginResponse(resp PluginResponse) {
 		}
 		// Add any error handling logic here, such as retries or reporting
 	}
+}
+
+// Uploads Handlers
+
+// Escape JSON string to avoid issues when embedding text in JSON
+func escapeJSON(input string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		"\"", "\\\"",
+		"\n", "\\n",
+		"\r", "\\r",
+		"\t", "\\t",
+	)
+	return replacer.Replace(input)
+}
+
+// Handler to upload a ruleset
+func uploadRulesetHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		handleErrorAndRespond(w, errors.New("Invalid request method"), nil, "Invalid request method", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+
+	file, header, err := r.FormFile("ruleset")
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
+	// Check if header.Filename is empty, or if it has weird and insecure paths
+	if header.Filename == "" || strings.Contains(header.Filename, "/") || strings.Contains(header.Filename, "\\") {
+		handleErrorAndRespond(w, errors.New("Invalid filename"), nil, "Invalid filename", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	filename := filepath.Join("./rulesets", header.Filename)
+	data, err := io.ReadAll(file)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	if err := validateRuleset(data); err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid ruleset", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil { //nolint:gosec // The path here is handled by the service not an end-user
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	// Generate and broadcast event with file content in details
+	event := cdb.Event{
+		Type: "new_ruleset",
+		Details: map[string]interface{}{
+			"filename": header.Filename,
+			"type":     "ruleset",
+			"content":  escapeJSON(string(data)),
+		},
+	}
+	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	handleErrorAndRespond(w, nil, map[string]string{"message": "Ruleset uploaded and event created successfully"}, "", http.StatusInternalServerError, http.StatusCreated)
+}
+
+func validateRuleset(data []byte) error {
+	var ruleset map[string]interface{}
+	if err := yaml.Unmarshal(data, &ruleset); err != nil {
+		return err
+	}
+	// Validate against schema if necessary
+	return nil
+}
+
+// Handler to upload a plugin
+func uploadPluginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		handleErrorAndRespond(w, errors.New("Invalid request method"), nil, "Invalid request method", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+
+	file, header, err := r.FormFile("plugin")
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
+	// Check if header.Filename is empty, or if it has weird and insecure paths
+	if header.Filename == "" || strings.Contains(header.Filename, "/") || strings.Contains(header.Filename, "\\") {
+		handleErrorAndRespond(w, errors.New("Invalid filename"), nil, "Invalid filename", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	filename := filepath.Join("./plugins", header.Filename)
+	data, err := io.ReadAll(file)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil { //nolint:gosec // The path here is handled by the service not an end-user
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	// convert data to a string
+	plgSrc := string(data)
+	// convert plgSrc to a plugin
+	plgObj := plg.NewJSPlugin(plgSrc)
+
+	// Optionally validate plugin syntax or structure
+	PluginRegister.Register(header.Filename, *plgObj)
+
+	// Generate and broadcast event with file content in details
+	event := cdb.Event{
+		Type: "new_plugin",
+		Details: map[string]interface{}{
+			"filename": header.Filename,
+			"type":     "plugin",
+			"content":  escapeJSON(string(data)),
+		},
+	}
+	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	handleErrorAndRespond(w, nil, map[string]string{"message": "Plugin uploaded and event created successfully"}, "", http.StatusInternalServerError, http.StatusCreated)
+}
+
+// Handler to upload an agent
+func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		handleErrorAndRespond(w, errors.New("Invalid request method"), nil, "Invalid request method", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+
+	file, header, err := r.FormFile("agent")
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
+	// Check if header.Filename is empty, or if it has weird and insecure paths
+	if header.Filename == "" || strings.Contains(header.Filename, "/") || strings.Contains(header.Filename, "\\") {
+		handleErrorAndRespond(w, errors.New("Invalid filename"), nil, "Invalid filename", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	filename := filepath.Join("./agents", header.Filename)
+	data, err := io.ReadAll(file)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	if err := validateAgent(data); err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid agent configuration", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil { //nolint:gosec // The path here is handled by the service not an end-user
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	// Register the agent
+	agentConfig := agt.NewJobConfig()
+	if err := yaml.Unmarshal(data, agentConfig); err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to parse agent configuration", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+	agt.AgentsRegistry.RegisterAgent(agentConfig) // Register the agent
+
+	// Generate and broadcast event with file content in details
+	event := cdb.Event{
+		Type: "new_agent",
+		Details: map[string]interface{}{
+			"filename": header.Filename,
+			"type":     "agent",
+			"content":  escapeJSON(string(data)),
+		},
+	}
+	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	handleErrorAndRespond(w, nil, map[string]string{"message": "Agent uploaded and event created successfully"}, "", http.StatusInternalServerError, http.StatusCreated)
+}
+
+func validateAgent(data []byte) error {
+	var agent map[string]interface{}
+	if err := yaml.Unmarshal(data, &agent); err != nil {
+		return err
+	}
+	// Validate against schema if necessary
+	return nil
 }
