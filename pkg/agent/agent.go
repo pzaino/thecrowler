@@ -18,6 +18,8 @@ package agent
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -149,7 +151,7 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		return nil, err
 	}
 
-	dbHandler, ok := config["dbHandler"].(cdb.Handler)
+	dbHandler, ok := config["db_handler"].(cdb.Handler)
 	if !ok {
 		return nil, fmt.Errorf("missing 'dbHandler' parameter")
 	}
@@ -259,7 +261,7 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 	}
 
 	// Extract dbHandler from config
-	dbHandler, ok := config["dbHandler"].(cdb.Handler)
+	dbHandler, ok := config["db_handler"].(cdb.Handler)
 	if !ok {
 		return nil, fmt.Errorf("missing 'dbHandler' in config")
 	}
@@ -321,60 +323,64 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	}
 
 	// Extract the Plugin library pointer from the config
-	plugin, ok := config["pluginRegister"].(*plg.JSPluginRegister)
+	plugin, ok := config["plugins_register"].(*plg.JSPluginRegister)
 	if !ok {
 		return nil, fmt.Errorf("missing 'pluginRegister' in config")
 	}
 
 	// Extract plugin's names from params
-	plgNameList, ok := params["plugin"].([]string)
+	plgName, ok := params["plugin_name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing 'plugin' parameter")
 	}
 
-	// Execute all retrieved plugins
-	var results []map[string]interface{}
-	for _, plgName := range plgNameList {
-		// Retrieve the plugin
-		plg, exists := plugin.GetPlugin(plgName)
-		if !exists {
-			return nil, fmt.Errorf("plugin '%s' not found", plgName)
-		}
-		// Prepare the plugin parameters
-		dbHandler, ok := config["dbHandler"].(cdb.Handler)
-		if !ok {
-			dbHandler = nil
-		}
-		wd, ok := config["vdi_hook"].(*selenium.WebDriver)
-		if !ok {
-			wd = nil
-		}
-		plgParams := make(map[string]interface{})
-		if params != nil {
-			// Check if params have a response field
-			if params["response"] != nil {
-				plgParams["jsonData"] = params["response"]
-			}
-		}
-
-		// Execute the plugin
-		rval, err := plg.Execute(wd, &dbHandler, 30, plgParams)
-		if err != nil {
-			return nil, fmt.Errorf("executing plugin '%s': %v", plgName, err)
-		}
-
-		// Parse the plugin response
-		rvalStr := string(cmn.ConvertMapToJSON(rval))
-		if rvalStr == "" {
-			return nil, fmt.Errorf("empty plugin response")
-		}
-
-		// Handle plugin response (e.g., storing or logging results)
-		results = append(results, map[string]interface{}{
-			"plugin_name": plgName,
-			"response":    rval,
-		})
+	// Retrieve the plugin
+	plg, exists := plugin.GetPlugin(plgName)
+	if !exists {
+		return nil, fmt.Errorf("plugin '%s' not found", plgName)
 	}
+
+	// Prepare the plugin parameters
+	dbHandler, ok := config["db_handler"].(cdb.Handler)
+	if !ok {
+		dbHandler = nil
+	}
+	wd, ok := config["vdi_hook"].(*selenium.WebDriver)
+	if !ok {
+		wd = nil
+	}
+	plgParams := make(map[string]interface{})
+	if params != nil {
+		// Check if we have an event field
+		if config["event"] != nil {
+			plgParams["event"] = config["event"]
+		} else {
+			plgParams["event"] = nil
+		}
+		// Check if params have a response field
+		if params["response"] != nil {
+			plgParams["jsonData"] = params["response"]
+		}
+	}
+
+	// Execute the plugin
+	pRval, err := plg.Execute(wd, &dbHandler, 30, plgParams)
+	if err != nil {
+		return nil, fmt.Errorf("executing plugin '%s': %v", plgName, err)
+	}
+
+	// Parse the plugin response
+	pRvalStr := string(cmn.ConvertMapToJSON(pRval))
+	if pRvalStr == "" {
+		return nil, fmt.Errorf("empty plugin response")
+	}
+
+	// Handle plugin response (e.g., storing or logging results)
+	var results []map[string]interface{}
+	results = append(results, map[string]interface{}{
+		"plugin_name": plgName,
+		"response":    pRval,
+	})
 
 	// Return the aggregated plugin execution results
 	rval := make(map[string]interface{})
@@ -413,5 +419,134 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 }
 
 func evaluateCondition(condition string, params map[string]interface{}) bool {
+	// Check which condition to evaluate (agents usually support `if` and `switch` type conditions)
+	condition = strings.ToLower(strings.TrimSpace(condition))
+
+	// Check if the condition is a simple `if` condition
+	if condition == "if" {
+		// Extract the condition to evaluate
+		cond, ok := params["expr"].(string)
+		if !ok {
+			cond, ok = params["expression"].(string)
+			if !ok {
+				return false
+			}
+		}
+
+		// Evaluate the condition
+		return evaluateIfCondition(cond, params)
+	}
+
+	// Check if the condition is a `switch` condition
+	if condition == "switch" {
+		// Extract the switch condition
+		cond, ok := params["expr"].(string)
+		if !ok {
+			cond, ok = params["expression"].(string)
+			if !ok {
+				return false
+			}
+		}
+
+		// Evaluate the switch condition
+		return evaluateSwitchCondition(cond, params)
+	}
+
 	return params[condition] != nil
+}
+
+// evaluateIfCondition evaluates a boolean condition based on the given expression and parameters.
+func evaluateIfCondition(expression string, params map[string]interface{}) bool {
+	// Parse the expression (basic implementation)
+	// Example expressions: "response.success == true", "value > 10", "status == 'active'"
+	parts := strings.Fields(expression)
+
+	if len(parts) < 3 {
+		fmt.Printf("Invalid if condition: %s\n", expression)
+		return false
+	}
+
+	leftOperand := parts[0]
+	operator := parts[1]
+	rightOperand := strings.Join(parts[2:], " ")
+
+	// Get the left operand value from params
+	leftValue, exists := params[leftOperand]
+	if !exists {
+		fmt.Printf("Missing parameter for if condition: %s\n", leftOperand)
+		return false
+	}
+
+	// Perform the comparison
+	switch operator {
+	case "==":
+		return fmt.Sprintf("%v", leftValue) == strings.Trim(rightOperand, "'\"")
+	case "!=":
+		return fmt.Sprintf("%v", leftValue) != strings.Trim(rightOperand, "'\"")
+	case ">":
+		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a > b })
+	case "<":
+		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a < b })
+	case ">=":
+		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a >= b })
+	case "<=":
+		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a <= b })
+	default:
+		fmt.Printf("Unsupported operator: %s\n", operator)
+		return false
+	}
+}
+
+// evaluateSwitchCondition evaluates a switch-like condition based on the given expression and cases.
+func evaluateSwitchCondition(expression string, params map[string]interface{}) bool {
+	// Check if the expression exists in the params
+	value, exists := params[expression]
+	if !exists {
+		fmt.Printf("Missing parameter for switch condition: %s\n", expression)
+		return false
+	}
+
+	// Look for matching cases in params
+	cases, ok := params["cases"].(map[string]interface{})
+	if !ok {
+		fmt.Printf("Invalid 'cases' for switch condition\n")
+		return false
+	}
+
+	valueStr := fmt.Sprintf("%v", value)
+	if _, match := cases[valueStr]; match {
+		return true
+	}
+
+	// Fallback to 'default' case if defined
+	if _, defaultExists := cases["default"]; defaultExists {
+		return true
+	}
+
+	return false
+}
+
+// compareNumeric performs numeric comparison with a custom comparator function.
+func compareNumeric(left interface{}, right string, comparator func(a, b float64) bool) bool {
+	leftFloat, ok1 := toFloat(left)
+	rightFloat, ok2 := toFloat(right)
+	if ok1 && ok2 {
+		return comparator(leftFloat, rightFloat)
+	}
+	return false
+}
+
+// toFloat attempts to convert a value to a float64.
+func toFloat(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case float64:
+		return v, true
+	case string:
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
 }

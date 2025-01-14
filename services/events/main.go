@@ -532,8 +532,9 @@ func processEvent(event cdb.Event) {
 	if aExists {
 		// generate the minimal iCfg
 		iCfg := make(map[string]interface{})
-		iCfg["wd"] = nil
-		iCfg["dbHandler"] = dbHandler
+		iCfg["vdi_hook"] = nil
+		iCfg["db_handler"] = dbHandler
+		iCfg["plugins_register"] = PluginRegister
 		iCfg["event"] = event
 
 		for _, ac := range a {
