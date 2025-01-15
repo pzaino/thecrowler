@@ -143,9 +143,8 @@ func TestRunCommandAction_Execute(t *testing.T) {
 		{
 			name: "ValidCommand",
 			params: map[string]interface{}{
-				"config": map[string]interface{}{
-					"command": "echo Hello, World!",
-				},
+				"config": map[string]interface{}{},
+				"input":  "echo Hello, World!",
 			},
 			expectedError: "",
 		},
@@ -154,14 +153,12 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			params: map[string]interface{}{
 				"config": map[string]interface{}{},
 			},
-			expectedError: "missing 'command' parameter",
+			expectedError: "missing 'input' parameter",
 		},
 		{
 			name: "InvalidCommand",
 			params: map[string]interface{}{
-				"config": map[string]interface{}{
-					"command": "invalidcommand",
-				},
+				"input": "invalidcommand",
 			},
 			expectedError: "command execution failed",
 		},

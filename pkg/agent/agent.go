@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -47,6 +48,9 @@ const (
 	StrResponse = "output"
 	// StrRequest is the string representation of the input field
 	StrRequest = "input"
+
+	// jsonAppType is the application type for JSON
+	jsonAppType = "application/json"
 )
 
 // JobEngine executes a sequence of actions
@@ -157,6 +161,26 @@ func getConfig(params map[string]interface{}) (map[string]interface{}, error) {
 	return config, nil
 }
 
+func getInput(params map[string]interface{}) (map[string]interface{}, error) {
+	input := make(map[string]interface{})
+	if params[StrRequest] == nil {
+		// Check if there is an event in "config" instead
+		if params[StrConfig] != nil {
+			config, ok := params[StrConfig].(map[string]interface{})
+			if !ok {
+				return input, fmt.Errorf("missing '%s' parameter", StrRequest)
+			}
+			if config["event"] != nil {
+				input["input"] = config["event"]
+				return input, nil
+			}
+		}
+		return nil, fmt.Errorf("missing '%s' parameter", StrRequest)
+	}
+	input[StrRequest] = params[StrRequest]
+	return input, nil
+}
+
 // Action interface for generic actions
 type Action interface {
 	Name() string
@@ -185,7 +209,7 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	}
 	rval[StrConfig] = config
 
-	url, ok := config["url"].(string)
+	url, ok := params["url"].(string)
 	if !ok {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = "missing 'url' parameter"
@@ -198,9 +222,37 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 		return rval, fmt.Errorf("invalid URL: %s", url)
 	}
 
-	response, err := cmn.GenericAPIRequest(map[string]string{
+	// Create request object
+	request := map[string]string{
 		"url": url,
-	})
+	}
+
+	// Create requestBody
+	requestBody, err := getInput(params)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+	request["body"] = requestBody[StrRequest].(string)
+
+	// Create RequestHeaders
+	requestHeaders := make(map[string]interface{})
+	requestHeaders["Content-Type"] = jsonAppType
+	if params["auth"] != nil {
+		requestHeaders["Authorization"] = config["auth"].(string)
+	}
+	if params["headers"] != nil {
+		headers, ok := params["headers"].(map[string]interface{})
+		if ok {
+			for k, v := range headers {
+				requestHeaders[k] = v
+			}
+		}
+	}
+	request["headers"] = string(cmn.ConvertMapToJSON(requestHeaders))
+
+	response, err := cmn.GenericAPIRequest(request)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("API request failed: %v", err)
@@ -250,18 +302,31 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		return rval, fmt.Errorf("missing 'db_handler' parameter")
 	}
 
-	query, ok := config["query"].(string)
-	if !ok {
-		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'query' parameter in config section"
-		return rval, errors.New("missing 'query' parameter")
-	}
-
-	result, err := dbHandler.ExecuteQuery(query)
+	eventRaw, err := getInput(params)
 	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = fmt.Sprintf("failed to execute query: %v", err)
-		return rval, fmt.Errorf("failed to execute query: %v", err)
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+
+	// Transform eventRaw into an event struct
+	event := cdb.Event{}
+	event.Details = eventRaw
+	if params["type"] != nil {
+		event.Type = params["type"].(string)
+	}
+	if params["source"] != nil {
+		event.SourceID = params["source"].(uint64)
+	} else {
+		event.SourceID = 0
+	}
+	event.Timestamp = string(time.Now().Format("2006-01-02 15:04:05"))
+
+	result, err := cdb.CreateEvent(&dbHandler, event)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = fmt.Sprintf("failed to create event: %v", err)
+		return rval, fmt.Errorf("failed to create event: %v", err)
 	}
 
 	rval[StrResponse] = result
@@ -293,12 +358,13 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 	}
 	rval[StrConfig] = config
 
-	command, ok := config["command"].(string)
-	if !ok {
+	commandRaw, err := getInput(params)
+	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'command' parameter"
-		return rval, fmt.Errorf("missing 'command' parameter")
+		rval[StrMessage] = err.Error()
+		return rval, err
 	}
+	command := commandRaw[StrRequest].(string)
 
 	cmd := exec.Command("sh", "-c", command) //nolint:gosec // This is a controlled command execution
 	output, err := cmd.CombinedOutput()
@@ -337,18 +403,58 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 	}
 	rval[StrConfig] = config
 
-	prompt, ok := config["prompt"].(string)
-	if !ok {
+	promptRaw, err := getInput(params)
+	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'prompt' parameter"
-		return rval, fmt.Errorf("missing 'prompt' parameter")
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+	prompt := promptRaw[StrRequest].(string)
+
+	// Generate the API request based on the input and parameters
+	request := map[string]string{
+		"url": config["url"].(string),
 	}
 
-	response, err := cmn.GenericAPIRequest(map[string]string{
-		"url":     config["url"].(string),
-		"prompt":  prompt,
-		"api_key": config["api_key"].(string),
-	})
+	// Prepare request body
+	requestBody := map[string]interface{}{
+		"prompt": prompt,
+	}
+	// Check if we have additional parameters for AI in params like temperature, max_tokens, etc.
+	if params["temperature"] != nil {
+		// Temperature should be a float value between 0 and 1
+		value, ok := params["temperature"].(float64)
+		if ok {
+			requestBody["temperature"] = value
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("temperature '%v' parameter doesn't appear to be a valid float", config["temperature"])
+			return rval, fmt.Errorf("temperature '%v' parameter doesn't appear to be a valid float", config["temperature"])
+		}
+	}
+	if params["max_tokens"] != nil {
+		value, ok := params["max_tokens"].(float64)
+		if ok {
+			// Max tokens should be an integer value
+			requestBody["max_tokens"] = int(value)
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("max_tokens '%v' parameter doesn't appear to be a valid integer", config["max_tokens"])
+			return rval, fmt.Errorf("max_tokens '%v' parameter doesn't appear to be a valid integer", config["max_tokens"])
+		}
+	}
+	request["body"] = string(cmn.ConvertMapToJSON(requestBody))
+
+	// Prepare request headers
+	requestHeaders := make(map[string]interface{})
+	// Add JSON document type
+	requestHeaders["Content-Type"] = jsonAppType
+	if config["auth"] != nil {
+		requestHeaders["Authorization"] = config["auth"].(string)
+	}
+	request["headers"] = string(cmn.ConvertMapToJSON(requestHeaders))
+
+	response, err := cmn.GenericAPIRequest(request)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("AI interaction failed: %v", err)
@@ -409,12 +515,13 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 	}
 
 	// Extract query string
-	query, ok := params["query"].(string)
-	if !ok {
+	queryRaw, err := getInput(params)
+	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'query' parameter"
-		return rval, fmt.Errorf("missing 'query' parameter")
+		rval[StrMessage] = err.Error()
+		return rval, err
 	}
+	query := queryRaw[StrRequest].(string)
 
 	// Execute the query based on type
 	var result interface{}
@@ -511,8 +618,8 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 			plgParams["event"] = nil
 		}
 		// Check if params have a response field
-		if params[StrResponse] != nil {
-			plgParams["jsonData"] = params[StrResponse]
+		if params[StrRequest] != nil {
+			plgParams["jsonData"] = params[StrRequest]
 		}
 	}
 
@@ -602,12 +709,9 @@ func evaluateCondition(condition string, params map[string]interface{}) bool {
 	// Check if the condition is a simple `if` condition
 	if condition == "if" {
 		// Extract the condition to evaluate
-		cond, ok := params["expr"].(string)
+		cond, ok := params[StrRequest].(string)
 		if !ok {
-			cond, ok = params["expression"].(string)
-			if !ok {
-				return false
-			}
+			return false
 		}
 
 		// Evaluate the condition
@@ -617,12 +721,9 @@ func evaluateCondition(condition string, params map[string]interface{}) bool {
 	// Check if the condition is a `switch` condition
 	if condition == "switch" {
 		// Extract the switch condition
-		cond, ok := params["expr"].(string)
+		cond, ok := params[StrRequest].(string)
 		if !ok {
-			cond, ok = params["expression"].(string)
-			if !ok {
-				return false
-			}
+			return false
 		}
 
 		// Evaluate the switch condition
