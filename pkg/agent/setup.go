@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -92,33 +93,30 @@ func NewJobConfig() *JobConfig {
 // LoadConfig loads a YAML or JSON configuration file
 // TODO: implement also remote loading of Agents Definitions
 func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
-	var err error
-
 	// iterate over all the configuration options
 	for _, agtConfig := range agtConfigs {
 		paths := agtConfig.Path
+		if len(paths) == 0 {
+			paths = []string{"./agents/*.yaml"}
+		}
 		for _, path := range paths {
 			// Check if the path is wildcard
-			var files []os.DirEntry
-			if strings.Contains(path, "*") {
-				// Get all files in the directory
-				files, err = os.ReadDir(path)
-				if err != nil {
-					return fmt.Errorf("failed to read directory: %v", err)
-				}
+			files, err := filepath.Glob(path)
+			if err != nil {
+				fmt.Println("Error finding rule files:", err)
+				return err
 			}
-			if len(files) == 0 {
-				// Get all files in the directory
-				files, err = os.ReadDir("./agents/*.yaml")
-				if err != nil {
-					return fmt.Errorf("failed to read directory: %v", err)
-				}
-			}
+
+			// Process all files in the directory
 			if len(files) > 0 {
 				// Iterate over all files in the directory
-				for _, fileP := range files {
-					filePath := fileP.Name()
-					cmn.DebugMsg(cmn.DbgLvlDebug, "Loading Agents definition file: %s", filePath)
+				for _, filePath := range files {
+					fileType := cmn.GetFileExt(filePath)
+					if (fileType != "yaml") && (fileType != "json") && (fileType != "") && (fileType != "yml") {
+						// Ignore unsupported file types
+						continue
+					}
+					cmn.DebugMsg(cmn.DbgLvlDebug, "Loading agents definition file: %s", filePath)
 
 					// Load the configuration file
 					file, err := os.Open(filePath) //nolint:gosec // The path here is handled by the service not an end-user

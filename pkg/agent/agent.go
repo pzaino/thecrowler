@@ -53,6 +53,14 @@ const (
 	jsonAppType = "application/json"
 )
 
+// DecisionTrace represents a decision trace for human readable explanations
+type DecisionTrace struct {
+	Action      string                 `json:"action"`
+	Conditions  map[string]bool        `json:"conditions"` // Condition evaluated and result
+	Parameters  map[string]interface{} `json:"parameters"`
+	Explanation string                 `json:"explanation"` // Human-readable explanation
+}
+
 // JobEngine executes a sequence of actions
 type JobEngine struct {
 	actions map[string]Action
@@ -828,3 +836,17 @@ func toFloat(value interface{}) (float64, bool) {
 	}
 	return 0, false
 }
+
+/*
+// LearningSystem is a system to learn/store from historical data
+type LearningSystem struct {
+	historyDB cdb.Handler // Database to store and analyze historical data
+}
+
+// Learn stores the result of an action in the learning system
+// Update learning model with new action outcomes
+func (ls *LearningSystem) Learn(action Action, result map[string]interface{}) {
+	// Log the result into the database
+	// Analyze and update parameters for the action
+}
+*/

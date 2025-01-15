@@ -195,19 +195,22 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reload Plugins
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Reloading plugins...")
 	PluginRegister = plg.NewJSPluginRegister().LoadPluginsFromConfig(config, "event_plugin")
 
 	// Initialize the Agents Engine
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing agents engine...")
 	agt.AgentsEngine = agt.NewJobEngine()
 	agt.RegisterActions(agt.AgentsEngine) // Use the initialized `agt.AgentsEngine`
 	agtCfg := config.Agents
 	agt.AgentsRegistry = agt.NewJobConfig()
 	err = agt.AgentsRegistry.LoadConfig(agtCfg)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error loading agents configuration: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "loading agents configuration: %v", err)
 	}
 
 	// Initialize the database
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database...")
 	connected := false
 	dbHandler, err = cdb.NewHandler(*config)
 	if err != nil {
