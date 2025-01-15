@@ -258,8 +258,25 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 		}
 		params, _ := step["params"].(map[string]interface{})
 
+		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
+		if i > 0 {
+			if _, ok := params[StrRequest]; !ok {
+				params[StrRequest] = lastResult[StrResponse]
+			} else {
+				// If yes, merge the two maps
+				for k, v := range lastResult[StrResponse].(map[string]interface{}) {
+					params[StrRequest].(map[string]interface{})[k] = v
+				}
+			}
+		}
+
 		// Inject previous result into current params (if needed)
 		for k, v := range lastResult {
+			// Skip key response, we have already converted it to input
+			if k == StrResponse {
+				continue
+			}
+
 			// Check if k == config, if so, merge the two maps
 			if k == StrConfig {
 				// Check if the params field has a config field

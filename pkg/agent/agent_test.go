@@ -189,9 +189,9 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			}
 
 			if tt.expectedError == "" {
-				response, ok := result["response"].(string)
+				response, ok := result[StrResponse].(string)
 				if !ok {
-					t.Fatalf("Expected response to be a string, got %T", result["response"])
+					t.Fatalf("Expected response to be a string, got %T", result[StrResponse])
 				}
 				if response == "" {
 					t.Fatalf("Expected non-empty response, got empty string")

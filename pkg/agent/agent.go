@@ -43,8 +43,10 @@ const (
 	StrStatus = "status"
 	// StrMessage is the string representation of the message field
 	StrMessage = "message"
-	// StrResponse is the string representation of the response field
-	StrResponse = "response"
+	// StrResponse is the string representation of the output field
+	StrResponse = "output"
+	// StrRequest is the string representation of the input field
+	StrRequest = "input"
 )
 
 // JobEngine executes a sequence of actions
