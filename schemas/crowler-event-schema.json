@@ -1,0 +1,36 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Event",
+    "type": "object",
+    "properties": {
+        "source_id": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The unique identifier of the source. 0 for no source"
+        },
+        "event_type": {
+            "type": "string",
+            "description": "The type of the event."
+        },
+        "event_severity": {
+            "type": "string",
+            "description": "The severity of the event. Generally 'high', 'medium', 'low' but a user can also use custom values"
+        },
+        "event_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The user's timestamp of the event. The time on the system who has generated the event"
+        },
+        "details": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The details of the event. Custom JSON for the user to send to the plugins and/or Agents designed to handle the event"
+        }
+    },
+    "required": [
+        "source_id",
+        "event_type",
+        "details"
+    ],
+    "additionalProperties": false
+}

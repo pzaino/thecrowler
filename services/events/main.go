@@ -490,6 +490,29 @@ func processEvent(event cdb.Event) {
 		return
 	}
 
+	// Set a shared state for the event processing
+	//processingStatus := "processing"
+	processingResult := []string{}
+
+	// Check if the event is associated with a source_id > 0
+	metaData := make(map[string]interface{})
+	if event.SourceID > 0 {
+		// Retrieve the source details
+		source, err := cdb.GetSourceByID(&dbHandler, event.SourceID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v", err)
+		} else {
+			// extract the source details -> meta_data
+			var configMap map[string]interface{}
+			if err := json.Unmarshal(*source.Config, &configMap); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling config: %v", err)
+				metaData = nil
+			} else {
+				metaData = configMap["meta_data"].(map[string]interface{})
+			}
+		}
+	}
+
 	if pExists {
 		// Convert the event struct to a map
 		eventMap := make(map[string]interface{})
@@ -497,6 +520,9 @@ func processEvent(event cdb.Event) {
 
 		// leave it blank for now
 		eventMap["currentURL"] = ""
+
+		// Add the source metadata to the event map
+		eventMap["metaData"] = metaData
 
 		// Execute the plugin
 		for _, plugin := range p {
@@ -518,13 +544,11 @@ func processEvent(event cdb.Event) {
 			// Handle the parsed response
 			handlePluginResponse(pluginResp)
 
-			// Remove the event if needed
-			if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
-				removeHandledEvent(event.ID)
-			} else if config.Events.EventRemoval == "on_success" && pluginResp.Success {
-				removeHandledEvent(event.ID)
-			} else if config.Events.EventRemoval == "on_failure" && !pluginResp.Success {
-				removeHandledEvent(event.ID)
+			// Set the processing status and result
+			if pluginResp.Success {
+				processingResult = append(processingResult, "success")
+			} else {
+				processingResult = append(processingResult, "failure")
 			}
 		}
 	}
@@ -536,11 +560,13 @@ func processEvent(event cdb.Event) {
 		iCfg["db_handler"] = dbHandler
 		iCfg["plugins_register"] = PluginRegister
 		iCfg["event"] = event
+		iCfg["meta_data"] = metaData
 
 		for _, ac := range a {
 			// Execute the agents
 			err := agt.AgentsEngine.ExecuteJobs(ac, iCfg)
 			if err != nil {
+				processingResult = append(processingResult, "failure")
 				// retrieve ac.Jobs names list:
 				var jobs string
 				for _, job := range ac.Jobs {
@@ -551,8 +577,37 @@ func processEvent(event cdb.Event) {
 					}
 				}
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to execute agent '%s': %v", jobs, err)
+			} else {
+				processingResult = append(processingResult, "success")
 			}
 		}
+	}
+
+	// Set the event as processed
+	//processingStatus = "processed"
+	/*
+		_, err := dbHandler.Exec(`UPDATE Events SET event_status = $1, event_result = $2 WHERE event_sha256 = $3`, processingStatus, processingResult, event.ID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to update event status: %v", err)
+		}
+	*/
+
+	// Determine the global processing status
+	processingSuccess := true
+	for _, result := range processingResult {
+		if result == "failure" {
+			processingSuccess = false
+			break
+		}
+	}
+
+	// Remove the event if needed
+	if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
+		removeHandledEvent(event.ID)
+	} else if config.Events.EventRemoval == "on_success" && processingSuccess {
+		removeHandledEvent(event.ID)
+	} else if config.Events.EventRemoval == "on_failure" && !processingSuccess {
+		removeHandledEvent(event.ID)
 	}
 }
 

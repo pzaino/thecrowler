@@ -18,6 +18,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -126,12 +127,25 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					}
 					defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
+					// Transform file into a string for interpolation
+					fileStr, err := io.ReadAll(file)
+					if err != nil {
+						return fmt.Errorf("failed to read config file: %v", err)
+					}
+
+					// Interpolate environment variables and process includes
+					interpolatedData := cmn.InterpolateEnvVars(string(fileStr))
+
+					// transform the string back into a reader
+					readCloser := io.NopCloser(strings.NewReader(interpolatedData))
+					defer readCloser.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
 					// Decode the configuration file
 					var agtConfigStorage JobConfig
 					if strings.HasSuffix(filePath, ".yaml") || strings.HasSuffix(filePath, ".yml") {
-						err = yaml.NewDecoder(file).Decode(&agtConfigStorage)
+						err = yaml.NewDecoder(readCloser).Decode(&agtConfigStorage)
 					} else if strings.HasSuffix(filePath, ".json") {
-						err = json.NewDecoder(file).Decode(&agtConfigStorage)
+						err = json.NewDecoder(readCloser).Decode(&agtConfigStorage)
 					} else {
 						return fmt.Errorf("unsupported file format: %s", filePath)
 					}
@@ -156,15 +170,15 @@ func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
 func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
 	var agents []*JobConfig
 
-	for _, agent := range jc.Jobs {
-		if strings.ToLower(strings.TrimSpace(agent.TriggerType)) == "event" && strings.TrimSpace(agent.TriggerName) == eventType {
+	for i := 0; i < len(jc.Jobs); i++ {
+		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == "event" && strings.TrimSpace(jc.Jobs[i].TriggerName) == eventType {
 			agents = append(agents, &JobConfig{Jobs: []struct {
 				Name        string                   `yaml:"name" json:"name"`
 				Process     string                   `yaml:"process" json:"process"`
 				TriggerType string                   `yaml:"trigger_type" json:"trigger_type"`
 				TriggerName string                   `yaml:"trigger_name" json:"trigger_name"`
 				Steps       []map[string]interface{} `yaml:"steps" json:"steps"`
-			}{agent}})
+			}{jc.Jobs[i]}})
 		}
 	}
 
@@ -180,7 +194,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 	for _, jobGroup := range j.Jobs {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing Job Group: %s", jobGroup.Name)
 
-		// Add iCfg to the first step as "config" field
+		// Add iCfg to the first step as StrConfig field
 		// this is the "base" configuration that will be passed to all steps
 		// and contains things like *wd and *dbHandler
 		if len(jobGroup.Steps) > 0 {
@@ -190,13 +204,13 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 				jobGroup.Steps[0]["params"] = nil
 			}
 			// Next check if the params field has a config field
-			if _, ok := jobGroup.Steps[0]["params"].(map[string]interface{})["config"]; !ok {
+			if _, ok := jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig]; !ok {
 				// If not, add the config field
-				jobGroup.Steps[0]["params"].(map[string]interface{})["config"] = iCfg
+				jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig] = iCfg
 			} else {
 				// If yes, merge the two maps
 				for k, v := range iCfg {
-					jobGroup.Steps[0]["params"].(map[string]interface{})["config"].(map[string]interface{})[k] = v
+					jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig].(map[string]interface{})[k] = v
 				}
 			}
 		}
@@ -246,7 +260,31 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 
 		// Inject previous result into current params (if needed)
 		for k, v := range lastResult {
-			params[k] = v
+			// Check if k == config, if so, merge the two maps
+			if k == StrConfig {
+				// Check if the params field has a config field
+				if _, ok := params[StrConfig]; !ok {
+					// If not, add the config field
+					params[StrConfig] = v
+					continue
+				}
+				// If yes, merge the two maps
+				for k, v := range v.(map[string]interface{}) {
+					params[StrConfig].(map[string]interface{})[k] = v
+				}
+				continue
+			}
+
+			// Check if the params field has a k field
+			if _, ok := params[k]; !ok {
+				// If not, add the k field
+				params[k] = v
+			} else {
+				// If yes, merge the two maps
+				for k, v := range v.(map[string]interface{}) {
+					params[k] = v
+				}
+			}
 		}
 
 		action, exists := je.actions[actionName]

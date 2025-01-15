@@ -926,6 +926,17 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		}
 	}
 
+	// Get JSON object "meta_data" from ctx.source.Config raw JSON object (*json.RawMessage)
+	var configMap map[string]interface{}
+	var metaData map[string]interface{}
+	if err := json.Unmarshal(*ctx.source.Config, &configMap); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling config: %v", err)
+		metaData = nil
+	} else {
+		metaData = configMap["meta_data"].(map[string]interface{})
+	}
+	params["metaData"] = metaData
+
 	// Safely extract and add "parameters" from Details map
 	if parametersRaw, ok := step.Details["parameters"]; ok {
 		if parametersMap, isMap := parametersRaw.(map[string]interface{}); isMap {

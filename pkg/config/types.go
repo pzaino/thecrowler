@@ -498,6 +498,7 @@ type SourceConfig struct {
 	CrawlingConfig CrawlingConfig         `json:"crawling_config" yaml:"crawling_config" validate:"required"`
 	ExecutionPlan  []ExecutionPlanItem    `json:"execution_plan,omitempty" yaml:"execution_plan,omitempty"`
 	Custom         map[string]interface{} `json:"custom,omitempty" yaml:"custom,omitempty"` // Flexible custom configuration
+	MetaData       map[string]interface{} `json:"meta_data,omitempty" yaml:"meta_data,omitempty"`
 }
 
 // CrawlingConfig represents the crawling configuration for a source
