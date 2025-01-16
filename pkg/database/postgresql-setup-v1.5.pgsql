@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
-    source_uid VARCHAR(64) UNIQUE NOT NULL,     -- Unique identifier for the source
+    --source_uid VARCHAR(64) UNIQUE NOT NULL,     -- Unique identifier for the source
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS Sources (
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
-    owner_uid VARCHAR(64) UNIQUE NOT NULL,      -- Unique identifier for the owner
+    --owner_uid VARCHAR(64) UNIQUE NOT NULL,      -- Unique identifier for the owner
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS Owners (
 -- Sessions table stores all collected web sessions information to be reused for future crawling
 CREATE TABLE IF NOT EXISTS Sessions (
     session_id BIGSERIAL PRIMARY KEY,
-    session_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the session
+    --session_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the session
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS Sessions (
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
-    index_uid VARCHAR(64) UNIQUE NOT NULL,      -- Unique identifier for the index
+    --index_uid VARCHAR(64) UNIQUE NOT NULL,      -- Unique identifier for the index
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
 -- Categories table stores the categories (and subcategories) for the sources
 CREATE TABLE IF NOT EXISTS Categories (
     category_id BIGSERIAL PRIMARY KEY,
-    category_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the category
+    --category_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the category
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS Categories (
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
-    netinfo_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the network information
+    --netinfo_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the network information
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS NetInfo (
 -- HTTPInfo table stores the HTTP header information retrieved from the sources
 CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
-    httpinfo_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the HTTP information
+    --httpinfo_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the HTTP information
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
 -- Screenshots table stores the screenshots details of the indexed pages
 CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_id BIGSERIAL PRIMARY KEY,
-    screenshot_uid VARCHAR(64) UNIQUE NOT NULL, -- Unique identifier for the screenshot
+    --screenshot_uid VARCHAR(64) UNIQUE NOT NULL, -- Unique identifier for the screenshot
     index_id BIGINT REFERENCES SearchIndex(index_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
 -- This includes scripts, styles, images, iframes, HTML etc.
 CREATE TABLE IF NOT EXISTS WebObjects (
     object_id BIGSERIAL PRIMARY KEY,
-    object_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the object
+    --object_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the object
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
-    metatag_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the meta tag
+    --metatag_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the meta tag
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
 -- Keywords table stores all the found keywords during an indexing
 CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id BIGSERIAL PRIMARY KEY,
-    keyword_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the keyword
+    --keyword_uid VARCHAR(64) UNIQUE NOT NULL,    -- Unique identifier for the keyword
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
