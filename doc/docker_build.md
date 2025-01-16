@@ -12,7 +12,7 @@ and configuring the build appropriately.
 
 ## Before you start
 
-- **Step A** Make sure you have `git`, `make`, `docker` and `docker-compose`
+- **Step A** Make sure you have `git`, `make`, `docker` and `docker-compose-plugin`
   are installed on your machine, these are ALL required to build the images.
 
   As for which releases of the above:

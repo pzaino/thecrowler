@@ -390,6 +390,13 @@ func NewConfig() *Config {
 				}},
 			},
 		},
+		Agents: []AgentsConfig{
+			{
+				Path: []string{
+					"./agents/*.yaml",
+				},
+			},
+		},
 		ExternalDetection: ExternalDetectionConfig{},
 		OS:                runtime.GOOS,
 		DebugLevel:        0,

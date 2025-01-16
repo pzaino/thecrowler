@@ -904,16 +904,38 @@ func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingS
 	}
 */
 func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) error {
+	var err error
+
 	// Convert the jsonData byte slice to a map
 	jsonData := *data
 	var jsonDataMap map[string]interface{}
-	if err := json.Unmarshal(jsonData, &jsonDataMap); err != nil {
+	if err = json.Unmarshal(jsonData, &jsonDataMap); err != nil {
 		return fmt.Errorf("error unmarshalling jsonData: %v", err)
 	}
 
 	// Prepare script parameters
 	params := make(map[string]interface{})
 	params["jsonData"] = jsonDataMap
+
+	// Check if we have a valid webdriver
+	params["currentURL"] = ""
+	if ctx.wd != nil {
+		params["currentURL"], err = ctx.wd.CurrentURL()
+		if err != nil {
+			params["currentURL"] = ""
+		}
+	}
+
+	// Get JSON object "meta_data" from ctx.source.Config raw JSON object (*json.RawMessage)
+	var configMap map[string]interface{}
+	var metaData map[string]interface{}
+	if err := json.Unmarshal(*ctx.source.Config, &configMap); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling config: %v", err)
+		metaData = nil
+	} else {
+		metaData = configMap["meta_data"].(map[string]interface{})
+	}
+	params["metaData"] = metaData
 
 	// Safely extract and add "parameters" from Details map
 	if parametersRaw, ok := step.Details["parameters"]; ok {
@@ -942,7 +964,6 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 
 	// Execute the plugin
 	var value interface{}
-	var err error
 	value, err = plugin.Execute(&ctx.wd, ctx.db, ctx.config.Plugins.PluginTimeout, params)
 	if err != nil {
 		return fmt.Errorf("error executing JS plugin: %v", err)

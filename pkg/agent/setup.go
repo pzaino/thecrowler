@@ -18,8 +18,10 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -91,33 +93,30 @@ func NewJobConfig() *JobConfig {
 // LoadConfig loads a YAML or JSON configuration file
 // TODO: implement also remote loading of Agents Definitions
 func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
-	var err error
-
 	// iterate over all the configuration options
 	for _, agtConfig := range agtConfigs {
 		paths := agtConfig.Path
+		if len(paths) == 0 {
+			paths = []string{"./agents/*.yaml"}
+		}
 		for _, path := range paths {
 			// Check if the path is wildcard
-			var files []os.DirEntry
-			if strings.Contains(path, "*") {
-				// Get all files in the directory
-				files, err = os.ReadDir(path)
-				if err != nil {
-					return fmt.Errorf("failed to read directory: %v", err)
-				}
+			files, err := filepath.Glob(path)
+			if err != nil {
+				fmt.Println("Error finding rule files:", err)
+				return err
 			}
-			if len(files) == 0 {
-				// Get all files in the directory
-				files, err = os.ReadDir("./agents/*.yaml")
-				if err != nil {
-					return fmt.Errorf("failed to read directory: %v", err)
-				}
-			}
+
+			// Process all files in the directory
 			if len(files) > 0 {
 				// Iterate over all files in the directory
-				for _, fileP := range files {
-					filePath := fileP.Name()
-					cmn.DebugMsg(cmn.DbgLvlDebug, "Loading Agents definition file: %s", filePath)
+				for _, filePath := range files {
+					fileType := cmn.GetFileExt(filePath)
+					if (fileType != "yaml") && (fileType != "json") && (fileType != "") && (fileType != "yml") {
+						// Ignore unsupported file types
+						continue
+					}
+					cmn.DebugMsg(cmn.DbgLvlDebug, "Loading agents definition file: %s", filePath)
 
 					// Load the configuration file
 					file, err := os.Open(filePath) //nolint:gosec // The path here is handled by the service not an end-user
@@ -126,12 +125,25 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					}
 					defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
+					// Transform file into a string for interpolation
+					fileStr, err := io.ReadAll(file)
+					if err != nil {
+						return fmt.Errorf("failed to read config file: %v", err)
+					}
+
+					// Interpolate environment variables and process includes
+					interpolatedData := cmn.InterpolateEnvVars(string(fileStr))
+
+					// transform the string back into a reader
+					readCloser := io.NopCloser(strings.NewReader(interpolatedData))
+					defer readCloser.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
 					// Decode the configuration file
 					var agtConfigStorage JobConfig
 					if strings.HasSuffix(filePath, ".yaml") || strings.HasSuffix(filePath, ".yml") {
-						err = yaml.NewDecoder(file).Decode(&agtConfigStorage)
+						err = yaml.NewDecoder(readCloser).Decode(&agtConfigStorage)
 					} else if strings.HasSuffix(filePath, ".json") {
-						err = json.NewDecoder(file).Decode(&agtConfigStorage)
+						err = json.NewDecoder(readCloser).Decode(&agtConfigStorage)
 					} else {
 						return fmt.Errorf("unsupported file format: %s", filePath)
 					}
@@ -147,19 +159,24 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 	return nil
 }
 
+// RegisterAgent registers an agent with the JobConfig
+func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
+	jc.Jobs = append(jc.Jobs, agent.Jobs...)
+}
+
 // GetAgentsByEventType returns all agents that are triggered by a specific event type
 func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
 	var agents []*JobConfig
 
-	for _, agent := range jc.Jobs {
-		if strings.ToLower(strings.TrimSpace(agent.TriggerType)) == "event" && strings.TrimSpace(agent.TriggerName) == eventType {
+	for i := 0; i < len(jc.Jobs); i++ {
+		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == "event" && strings.TrimSpace(jc.Jobs[i].TriggerName) == eventType {
 			agents = append(agents, &JobConfig{Jobs: []struct {
 				Name        string                   `yaml:"name" json:"name"`
 				Process     string                   `yaml:"process" json:"process"`
 				TriggerType string                   `yaml:"trigger_type" json:"trigger_type"`
 				TriggerName string                   `yaml:"trigger_name" json:"trigger_name"`
 				Steps       []map[string]interface{} `yaml:"steps" json:"steps"`
-			}{agent}})
+			}{jc.Jobs[i]}})
 		}
 	}
 
@@ -175,11 +192,25 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 	for _, jobGroup := range j.Jobs {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing Job Group: %s", jobGroup.Name)
 
-		// Add iCfg to the first step as "config" field
+		// Add iCfg to the first step as StrConfig field
 		// this is the "base" configuration that will be passed to all steps
 		// and contains things like *wd and *dbHandler
 		if len(jobGroup.Steps) > 0 {
-			jobGroup.Steps[0]["config"] = iCfg
+			// Check if the first step already has a params field
+			if _, ok := jobGroup.Steps[0]["params"]; !ok {
+				// If not, add the params field
+				jobGroup.Steps[0]["params"] = nil
+			}
+			// Next check if the params field has a config field
+			if _, ok := jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig]; !ok {
+				// If not, add the config field
+				jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig] = iCfg
+			} else {
+				// If yes, merge the two maps
+				for k, v := range iCfg {
+					jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig].(map[string]interface{})[k] = v
+				}
+			}
 		}
 
 		// Check if the group should run in parallel
@@ -215,16 +246,60 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 	lastResult := make(map[string]interface{})
 
 	// Execute each job in the group
-	for _, step := range steps {
+	for i := 0; i < len(steps); i++ {
+		step := steps[i]
+
+		// Get the action name
 		actionName, ok := step["action"].(string)
 		if !ok {
 			return fmt.Errorf("missing 'action' field in job step")
 		}
 		params, _ := step["params"].(map[string]interface{})
 
+		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
+		if i > 0 {
+			if _, ok := params[StrRequest]; !ok {
+				params[StrRequest] = lastResult[StrResponse]
+			} else {
+				// If yes, merge the two maps
+				for k, v := range lastResult[StrResponse].(map[string]interface{}) {
+					params[StrRequest].(map[string]interface{})[k] = v
+				}
+			}
+		}
+
 		// Inject previous result into current params (if needed)
 		for k, v := range lastResult {
-			params[k] = v
+			// Skip key response, we have already converted it to input
+			if k == StrResponse {
+				continue
+			}
+
+			// Check if k == config, if so, merge the two maps
+			if k == StrConfig {
+				// Check if the params field has a config field
+				if _, ok := params[StrConfig]; !ok {
+					// If not, add the config field
+					params[StrConfig] = v
+					continue
+				}
+				// If yes, merge the two maps
+				for k, v := range v.(map[string]interface{}) {
+					params[StrConfig].(map[string]interface{})[k] = v
+				}
+				continue
+			}
+
+			// Check if the params field has a k field
+			if _, ok := params[k]; !ok {
+				// If not, add the k field
+				params[k] = v
+			} else {
+				// If yes, merge the two maps
+				for k, v := range v.(map[string]interface{}) {
+					params[k] = v
+				}
+			}
 		}
 
 		action, exists := je.actions[actionName]

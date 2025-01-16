@@ -143,9 +143,8 @@ func TestRunCommandAction_Execute(t *testing.T) {
 		{
 			name: "ValidCommand",
 			params: map[string]interface{}{
-				"config": map[string]interface{}{
-					"command": "echo Hello, World!",
-				},
+				"config": map[string]interface{}{},
+				"input":  "echo Hello, World!",
 			},
 			expectedError: "",
 		},
@@ -154,14 +153,12 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			params: map[string]interface{}{
 				"config": map[string]interface{}{},
 			},
-			expectedError: "missing 'command' parameter",
+			expectedError: "missing 'input' parameter",
 		},
 		{
 			name: "InvalidCommand",
 			params: map[string]interface{}{
-				"config": map[string]interface{}{
-					"command": "invalidcommand",
-				},
+				"input": "invalidcommand",
 			},
 			expectedError: "command execution failed",
 		},
@@ -189,9 +186,9 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			}
 
 			if tt.expectedError == "" {
-				response, ok := result["response"].(string)
+				response, ok := result[StrResponse].(string)
 				if !ok {
-					t.Fatalf("Expected response to be a string, got %T", result["response"])
+					t.Fatalf("Expected response to be a string, got %T", result[StrResponse])
 				}
 				if response == "" {
 					t.Fatalf("Expected non-empty response, got empty string")

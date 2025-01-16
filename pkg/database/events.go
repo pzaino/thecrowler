@@ -65,12 +65,12 @@ func InitializeScheduler(db *Handler) {
 // CreateEvent creates a new event in the database.
 // It receives in input an Event struct and returns the Event UID and an error if the operation fails.
 func CreateEvent(db *Handler, e Event) (string, error) {
+	// get the current timestamp
+	e.Timestamp = time.Now().Format(time.RFC3339)
+
 	// Generate a unique identifier for the event
 	uid := GenerateEventUID(e)
 	e.ID = uid
-
-	// get the current timestamp
-	e.Timestamp = time.Now().Format(time.RFC3339)
 
 	// Execute the query
 	_, err := (*db).Exec(`
@@ -164,6 +164,18 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 func RemoveEvent(db *Handler, eventUID string) error {
 	// Execute the query
 	_, err := (*db).Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventUID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RemoveEventsBeforeTime removes all events that occurred before a specific time from the database.
+// It receives in input a time and returns an error if the operation fails.
+func RemoveEventsBeforeTime(db *Handler, time string) error {
+	// Execute the query
+	_, err := (*db).Exec(`DELETE FROM Events WHERE event_timestamp < $1`, time)
 	if err != nil {
 		return err
 	}
