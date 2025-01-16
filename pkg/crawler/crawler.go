@@ -3248,14 +3248,14 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	setNavigatorProperties(&wd, sel.Config.Language, userAgent)
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
-	result, err := getBrowserConfiguration(&wd)
-	if err != nil {
+	result, err2 := getBrowserConfiguration(&wd)
+	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v\n", err)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
 	}
 
-	err2 := addLoadListener(&wd)
+	err2 = addLoadListener(&wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
 	}
