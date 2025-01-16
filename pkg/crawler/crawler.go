@@ -3255,8 +3255,8 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
 	}
 
-	err = addLoadListener(&wd)
-	if err != nil {
+	err2 := addLoadListener(&wd)
+	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
 	}
 
