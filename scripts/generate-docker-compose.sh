@@ -32,7 +32,7 @@ read_integer_input() {
     while :; do
         # shellcheck disable=SC2162
         read -p "$prompt" value
-        if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt 0 ]; then
+        if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 0 ]; then
             eval "$varname=$value"
             break
         else
