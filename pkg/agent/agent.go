@@ -618,18 +618,24 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 		wd = nil
 	}
 	plgParams := make(map[string]interface{})
-	if params != nil {
-		// Check if we have an event field
-		if config["event"] != nil {
-			plgParams["event"] = config["event"]
+	// Check if we have an event field
+	// Add event from config if available
+	if event, exists := config["event"]; exists {
+		plgParams["event"] = event
+	} else {
+		if event, exists := params["event"]; exists {
+			plgParams["event"] = event
 		} else {
 			plgParams["event"] = nil
 		}
-		// Check if params have a response field
-		if params[StrRequest] != nil {
-			plgParams["jsonData"] = params[StrRequest]
-		}
 	}
+	// Check if params have a response field
+	if params[StrRequest] != nil {
+		plgParams["jsonData"] = params[StrRequest]
+	}
+
+	// log plgParams
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Plugin plgParams: %v", plgParams)
 
 	// Execute the plugin
 	pRval, err := plg.Execute(wd, &dbHandler, 30, plgParams)

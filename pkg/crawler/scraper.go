@@ -933,7 +933,9 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling config: %v", err)
 		metaData = nil
 	} else {
-		metaData = configMap["meta_data"].(map[string]interface{})
+		if configMap["meta_data"] != nil {
+			metaData = configMap["meta_data"].(map[string]interface{})
+		}
 	}
 	params["metaData"] = metaData
 

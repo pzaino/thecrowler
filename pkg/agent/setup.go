@@ -196,22 +196,30 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 		// this is the "base" configuration that will be passed to all steps
 		// and contains things like *wd and *dbHandler
 		if len(jobGroup.Steps) > 0 {
-			// Check if the first step already has a params field
-			if _, ok := jobGroup.Steps[0]["params"]; !ok {
-				// If not, add the params field
-				jobGroup.Steps[0]["params"] = nil
-			}
-			// Next check if the params field has a config field
-			if _, ok := jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig]; !ok {
-				// If not, add the config field
-				jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig] = iCfg
+			params, ok := jobGroup.Steps[0]["params"]
+			if !ok {
+				jobGroup.Steps[0]["params"] = make(map[string]interface{})
 			} else {
-				// If yes, merge the two maps
-				for k, v := range iCfg {
-					jobGroup.Steps[0]["params"].(map[string]interface{})[StrConfig].(map[string]interface{})[k] = v
-				}
+				jobGroup.Steps[0]["params"] = cmn.ConvertMapIIToSI(params)
+			}
+
+			paramsMap := jobGroup.Steps[0]["params"].(map[string]interface{})
+
+			// Ensure "StrConfig" exists within "params" and is a map[string]interface{}
+			if _, ok := paramsMap[StrConfig]; !ok || paramsMap[StrConfig] == nil {
+				paramsMap[StrConfig] = make(map[string]interface{})
+			}
+
+			configMap := paramsMap[StrConfig].(map[string]interface{})
+
+			// Merge iCfg into configMap
+			for k, v := range iCfg {
+				configMap[k] = v
 			}
 		}
+
+		// log the configuration for debugging purposes
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Job Group Configuration: %v", jobGroup)
 
 		// Check if the group should run in parallel
 		if strings.ToLower(strings.TrimSpace(jobGroup.Process)) == "parallel" {

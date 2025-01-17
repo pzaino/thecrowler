@@ -105,3 +105,21 @@ func ConvertMapToString(input map[string]interface{}) string {
 func ConvertStringToMap(input string) map[string]interface{} {
 	return ConvertJSONToMap([]byte(input))
 }
+
+// ConvertMap converts a map[interface{}]interface{} to a map[string]interface{}
+func ConvertMapIIToSI(m interface{}) interface{} {
+	switch v := m.(type) {
+	case map[interface{}]interface{}:
+		converted := make(map[string]interface{})
+		for key, value := range v {
+			strKey := fmt.Sprintf("%v", key) // Convert key to string
+			converted[strKey] = ConvertMapIIToSI(value)
+		}
+		return converted
+	case []interface{}:
+		for i, value := range v {
+			v[i] = ConvertMapIIToSI(value)
+		}
+	}
+	return m
+}

@@ -341,7 +341,7 @@ func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 func removeEventsBeforeHandler(w http.ResponseWriter, r *http.Request) {
 	before := r.URL.Query().Get("timestamp")
 	if before == "" {
-		handleErrorAndRespond(w, errors.New("No 'before' parameter"), nil, "Missing 'timestamp' parameter: ", http.StatusBadRequest, http.StatusOK)
+		handleErrorAndRespond(w, errors.New("No 'timestamp' parameter"), nil, "Missing 'timestamp' parameter: ", http.StatusBadRequest, http.StatusOK)
 		return
 	}
 
