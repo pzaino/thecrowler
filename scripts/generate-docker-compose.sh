@@ -135,6 +135,7 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
+      - TZ=\${TZ:-UTC}
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -171,6 +172,7 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
+      - TZ=\${TZ:-UTC}
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -214,6 +216,7 @@ if [ "$postgres" == "yes" ]; then
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
+      - TZ=\${TZ:-UTC}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     volumes:
       - db_data:/var/lib/postgresql/data
@@ -266,6 +269,7 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
+      - TZ=\${TZ:-UTC}
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -319,6 +323,7 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_ROLE=standalone
       - SE_REJECT_UNSUPPORTED_CAPS=true
       - SE_NODE_ENABLE_CDP=true
+      - TZ=\${TZ:-UTC}
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
