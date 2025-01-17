@@ -118,6 +118,47 @@ func DeleteSource(db *Handler, sourceID uint64) error {
 	return nil
 }
 
+// VacuumSource performs a VACUUM operation for the collected data associated with a given Source ID.
+func VacuumSource(db *Handler, sourceID uint64) error {
+	if sourceID == 0 {
+		return fmt.Errorf("sourceID must be provided")
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	// List of SQL queries to remove associated indexed data for the given source
+	queries := []string{
+		"DELETE FROM KeywordIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM MetaTagsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM WebObjectsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM NetInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM HTTPInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM SourceSearchIndex WHERE source_id = $1",
+	}
+
+	// Execute each query in the list
+	for _, query := range queries {
+		_, err := tx.Exec(query, sourceID)
+		if err != nil {
+			rollbackErr := tx.Rollback() // Rollback the transaction on error
+			if rollbackErr != nil {
+				return fmt.Errorf("failed to rollback transaction: %w (original error: %v)", rollbackErr, err)
+			}
+			return fmt.Errorf("failed to execute query: %w", err)
+		}
+	}
+
+	// Commit the transaction if all queries succeed
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // ListSources retrieves all sources from the database with optional filters.
 func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, error) {
 	sources := []Source{}

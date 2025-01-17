@@ -547,6 +547,16 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 
+	err = addJSAPIRemoveSource(vm, db) // Add removeSource API
+	if err != nil {
+		return err
+	}
+
+	err = addJSAPIVacuumSource(vm, db) // Add vacuumSource API
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1516,6 +1526,58 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		return result
 	})
 
+	return err
+}
+
+func addJSAPIRemoveSource(vm *otto.Otto, db *cdb.Handler) error {
+	// Implement the `removeSource` function
+	err := vm.Set("removeSource", func(call otto.FunctionCall) otto.Value {
+		sourceIDRaw, err := call.Argument(0).ToInteger()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Invalid source ID: %v", err)
+			return otto.UndefinedValue()
+		}
+		sourceID := uint64(sourceIDRaw) //nolint:gosec // We are not using end-user input here
+
+		// Call DeleteSource from cdb
+		err = cdb.DeleteSource(db, sourceID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to delete source: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		success, _ := vm.ToValue(map[string]interface{}{
+			"status":   "success",
+			"sourceID": sourceID,
+		})
+		return success
+	})
+	return err
+}
+
+func addJSAPIVacuumSource(vm *otto.Otto, db *cdb.Handler) error {
+	// Implement the `vacuumSource` function
+	err := vm.Set("vacuumSource", func(call otto.FunctionCall) otto.Value {
+		sourceIDRaw, err := call.Argument(0).ToInteger()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Invalid source ID: %v", err)
+			return otto.UndefinedValue()
+		}
+		sourceID := uint64(sourceIDRaw) //nolint:gosec // We are not using end-user input here
+
+		// Call VacuumSource from cdb (to be implemented)
+		err = cdb.VacuumSource(db, sourceID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to vacuum source: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		success, _ := vm.ToValue(map[string]interface{}{
+			"status":   "success",
+			"sourceID": sourceID,
+		})
+		return success
+	})
 	return err
 }
 
