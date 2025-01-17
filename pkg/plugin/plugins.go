@@ -535,7 +535,14 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 
-	err = addJSAPICrypto(vm) // Add Crypto API
+	// Add Crypto API functions
+	err = addJSAPICrypto(vm)
+	if err != nil {
+		return err
+	}
+
+	// CROWler API functions
+	err = addJSAPICreateSource(vm, db)
 	if err != nil {
 		return err
 	}
@@ -1377,6 +1384,139 @@ func addJSAPICrypto(vm *otto.Otto) error {
 	}
 
 	return nil
+}
+
+// CROWler specific API
+
+/*
+	 example usage:
+		let source = {
+			"url": "https://example.com",
+			"name": "Example",
+			"category_id": 1,
+			"usr_id": 1,
+			"restricted": 0,
+			"flags": 0
+		};
+
+		let config = {
+			version: "1.0.0",
+			format_version: "1.0.0",
+			source_name: sourceName,
+			crawling_config: {
+				site: "Example",
+			},
+			execution_plan: [
+				{
+					label: "Default Plan",
+					conditions: {
+						url_patterns: ".*"
+					}
+				}
+			],
+			custom: {
+				crawler: {
+					max_depth: 1,
+					max_links: 1,
+				}
+			},
+			meta_data: {
+				"key": "value"
+			}
+		};
+
+		let sourceID = createSource(source, config);
+
+		console.log(sourceID);
+*/
+func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
+	// Implement the `createSource` function
+	err := vm.Set("createSource", func(call otto.FunctionCall) otto.Value {
+		// Extract the source details from the plugin call
+		sourceArg := call.Argument(0)
+		if !sourceArg.IsObject() {
+			cmn.DebugMsg(cmn.DbgLvlError, "Invalid argument: Expected a source object")
+			return otto.UndefinedValue()
+		}
+
+		sourceMap, err := sourceArg.Export()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to export source argument: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		sourceData, ok := sourceMap.(map[string]interface{})
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "Invalid source argument structure")
+			return otto.UndefinedValue()
+		}
+
+		// Map sourceData to the Source struct
+		var source cdb.Source
+		if url, ok := sourceData["url"].(string); ok {
+			source.URL = url
+		}
+		if name, ok := sourceData["name"].(string); ok {
+			source.Name = name
+		}
+		if categoryID, ok := sourceData["category_id"].(float64); ok {
+			source.CategoryID = uint64(categoryID)
+		}
+		if usrID, ok := sourceData["usr_id"].(float64); ok {
+			source.UsrID = uint64(usrID)
+		}
+		if restricted, ok := sourceData["restricted"].(float64); ok {
+			source.Restricted = uint(restricted)
+		}
+		if flags, ok := sourceData["flags"].(float64); ok {
+			source.Flags = uint(flags)
+		}
+
+		// Extract the config object
+		configArg := call.Argument(1)
+		if !configArg.IsObject() {
+			cmn.DebugMsg(cmn.DbgLvlError, "Invalid configuration argument")
+			return otto.UndefinedValue()
+		}
+
+		configMap, err := configArg.Export()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to export config argument: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		// Marshal configMap to JSON
+		configJSON, err := json.Marshal(configMap)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to marshal config JSON: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		var config cfg.SourceConfig
+		err = json.Unmarshal(configJSON, &config)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Invalid configuration format: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		// Call CreateSource
+		sourceID, err := cdb.CreateSource(db, &source, config)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create source: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		// Return the source ID to the JS environment
+		result, err := vm.ToValue(sourceID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to convert source ID to JavaScript value: %v", err)
+			return otto.UndefinedValue()
+		}
+
+		return result
+	})
+
+	return err
 }
 
 // String returns the Plugin as a string
