@@ -1477,6 +1477,8 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		}
 		if restricted, ok := sourceData["restricted"].(float64); ok {
 			source.Restricted = uint(restricted)
+		} else {
+			source.Restricted = 1 // Default to restricted
 		}
 		if flags, ok := sourceData["flags"].(float64); ok {
 			source.Flags = uint(flags)
