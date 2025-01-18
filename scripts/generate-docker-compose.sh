@@ -297,6 +297,29 @@ EOF
 done
 fi
 
+# Add Jaeger service if required
+if [ "$vdi_count" != "0" ]; then
+    cat << EOF >> docker-compose.yml
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    container_name: "crowler-jaeger"
+    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317"   # OpenTelemetry gRPC endpoint
+    networks:
+      - crowler-net
+EOF
+
+    # Add Jaeger networks dynamically for all VDIs
+    for i in $(seq 1 "$vdi_count"); do
+        cat << EOF >> docker-compose.yml
+      - crowler-vdi-$i
+EOF
+    done
+fi
+
 # Add crowler-vdi instances
 if [ "$vdi_count" != "0" ]; then
 # shellcheck disable=SC2086
@@ -323,8 +346,10 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_ROLE=standalone
       - SE_REJECT_UNSUPPORTED_CAPS=true
       - SE_NODE_ENABLE_CDP=true
-      - SE_ENABLE_TRACING=false
-      - SE_OPENTELEMETRY_ENABLED=false
+      - SE_ENABLE_TRACING=\${SE_ENABLE_TRACING:-true}
+      - SE_OTEL_TRACES_EXPORTER=otlp
+      - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://jaeger:4317}
+      - SEL_PASSWD=\${SEL_PASSWD:-secret}
       - TZ=\${TZ:-UTC}
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
