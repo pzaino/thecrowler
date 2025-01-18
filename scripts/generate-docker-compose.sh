@@ -348,7 +348,7 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_NODE_ENABLE_CDP=true
       - SE_ENABLE_TRACING=\${SE_ENABLE_TRACING:-true}
       - SE_OTEL_TRACES_EXPORTER=otlp
-      - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://jaeger:4317}
+      - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://crowler-jaeger:4317}
       - SEL_PASSWD=\${SEL_PASSWD:-secret}
       - TZ=\${TZ:-UTC}
     shm_size: "2g"
