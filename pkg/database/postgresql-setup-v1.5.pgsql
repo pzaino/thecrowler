@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
-    --source_uid VARCHAR(64) UNIQUE NOT NULL,     -- Unique identifier for the source
+    --source_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the source
+    name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     last_updated_at TIMESTAMP,

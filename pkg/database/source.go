@@ -29,7 +29,7 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 	source := &Source{}
 
 	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, url, name, category_id, usr_id, restricted, flags, details FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	err := (*db).QueryRow(`SELECT source_id, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
 	}
@@ -53,7 +53,7 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 
 	var sourceID uint64
 	query := `
-        INSERT INTO Sources (url, name, category_id, usr_id, restricted, flags, details)
+        INSERT INTO Sources (url, name, category_id, usr_id, restricted, flags, config)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING source_id
     `
@@ -98,7 +98,7 @@ func validateURL(site string) error {
 func UpdateSource(db *Handler, source *Source) error {
 	query := `
         UPDATE Sources
-        SET url = $1, name = $2, category_id = $3, usr_id = $4, restricted = $5, flags = $6, details = $7, last_updated_at = NOW()
+        SET url = $1, name = $2, category_id = $3, usr_id = $4, restricted = $5, flags = $6, config = $7, last_updated_at = NOW()
         WHERE source_id = $8
     `
 	_, err := (*db).Exec(query, source.URL, source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
@@ -118,10 +118,51 @@ func DeleteSource(db *Handler, sourceID uint64) error {
 	return nil
 }
 
+// VacuumSource performs a VACUUM operation for the collected data associated with a given Source ID.
+func VacuumSource(db *Handler, sourceID uint64) error {
+	if sourceID == 0 {
+		return fmt.Errorf("sourceID must be provided")
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	// List of SQL queries to remove associated indexed data for the given source
+	queries := []string{
+		"DELETE FROM KeywordIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM MetaTagsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM WebObjectsIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM NetInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM HTTPInfoIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
+		"DELETE FROM SourceSearchIndex WHERE source_id = $1",
+	}
+
+	// Execute each query in the list
+	for _, query := range queries {
+		_, err := tx.Exec(query, sourceID)
+		if err != nil {
+			rollbackErr := tx.Rollback() // Rollback the transaction on error
+			if rollbackErr != nil {
+				return fmt.Errorf("failed to rollback transaction: %w (original error: %v)", rollbackErr, err)
+			}
+			return fmt.Errorf("failed to execute query: %w", err)
+		}
+	}
+
+	// Commit the transaction if all queries succeed
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // ListSources retrieves all sources from the database with optional filters.
 func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, error) {
 	sources := []Source{}
-	query := `SELECT source_id, url, name, category_id, usr_id, restricted, flags, details FROM Sources`
+	query := `SELECT source_id, url, name, category_id, usr_id, restricted, flags, config FROM Sources`
 	var args []interface{}
 	var conditions []string
 
@@ -157,7 +198,7 @@ func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, err
 func GetSourcesByStatus(db *Handler, status string) ([]Source, error) {
 	sources := []Source{}
 	query := `
-        SELECT source_id, url, name, category_id, usr_id, restricted, flags, details
+        SELECT source_id, url, name, category_id, usr_id, restricted, flags, config
         FROM Sources
         WHERE status = $1
     `
