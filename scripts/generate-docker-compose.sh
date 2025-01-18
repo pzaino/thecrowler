@@ -323,6 +323,8 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_ROLE=standalone
       - SE_REJECT_UNSUPPORTED_CAPS=true
       - SE_NODE_ENABLE_CDP=true
+      - SE_ENABLE_TRACING=false
+      - SE_OPENTELEMETRY_ENABLED=false
       - TZ=\${TZ:-UTC}
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
