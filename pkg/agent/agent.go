@@ -18,9 +18,10 @@ package agent
 import (
 	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -352,7 +353,64 @@ func (r *RunCommandAction) Name() string {
 	return "RunCommand"
 }
 
-// Execute runs a shell command
+func executeIsolatedCommand(command string, args []string, chrootDir string, uid, gid int) (string, error) {
+	// Prepare attributes for syscall.ForkExec
+	attr := &syscall.ProcAttr{
+		Env:   []string{"PATH=/usr/bin:/bin"},
+		Files: []uintptr{os.Stdin.Fd(), os.Stdout.Fd(), os.Stderr.Fd()},
+	}
+
+	// If chrootDir is specified, set it
+	if chrootDir != "" {
+		attr.Dir = "/"
+		err := syscall.Chroot(chrootDir)
+		if err != nil {
+			return "", fmt.Errorf("failed to chroot to %s: %w", chrootDir, err)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Chrooted to: %s", chrootDir)
+	}
+
+	// Drop privileges if UID and GID are specified
+	if uid != 0 {
+		err := syscall.Setuid(uid)
+		if err != nil {
+			return "", fmt.Errorf("failed to set UID: %w", err)
+		}
+	}
+	if gid != 0 {
+		err := syscall.Setgid(gid)
+		if err != nil {
+			return "", fmt.Errorf("failed to set GID: %w", err)
+		}
+	}
+	if uid != 0 || gid != 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Privileges dropped to UID: %d, GID: %d", uid, gid)
+	}
+
+	fmt.Printf("Executing command: %s %v\n", command, args)
+
+	// Execute the command
+	pid, err := syscall.ForkExec(command, args, attr) //nolint:gosec // This is a controlled environment
+	if err != nil {
+		return "", fmt.Errorf("failed to execute command: %w", err)
+	}
+
+	// Wait for the process to finish
+	var ws syscall.WaitStatus
+	_, err = syscall.Wait4(pid, &ws, 0, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to wait for process: %w", err)
+	}
+
+	// Check exit status
+	if ws.ExitStatus() != 0 {
+		return "", fmt.Errorf("command exited with status %d", ws.ExitStatus())
+	}
+
+	return "Command executed successfully", nil
+}
+
+// Execute runs a command in ch-rooted and/or with dropped privileges
 func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
 	rval := make(map[string]interface{})
 	rval[StrResponse] = nil
@@ -372,17 +430,46 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
-	command := commandRaw[StrRequest].(string)
 
-	cmd := exec.Command("sh", "-c", command) //nolint:gosec // This is a controlled command execution
-	output, err := cmd.CombinedOutput()
+	command := commandRaw[StrRequest].(string)
+	args := strings.Fields(command)
+	if len(args) == 0 {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "empty command"
+		return rval, fmt.Errorf("empty command")
+	}
+
+	argsList := []string{}
+	argsList = append(argsList, "")
+	argsList = append(argsList, strings.Join(args[1:], " "))
+
+	// Retrieve chrootDir and privileges from parameters
+	chrootDir := ""
+	if params["chroot_dir"] != nil {
+		chrootDir = params["chroot_dir"].(string)
+	}
+	// Check if we have UID and GID
+	uid := 0
+	gid := 0
+	if params["uid"] != nil {
+		uid = params["uid"].(int)
+	}
+	if params["gid"] != nil {
+		gid = params["gid"].(int)
+	}
+
+	// Log execution
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Executing command: %s %v", args[0], argsList)
+
+	// Execute the command in isolation
+	output, err := executeIsolatedCommand(args[0], argsList, chrootDir, uid, gid)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("command execution failed: %v", err)
-		return rval, fmt.Errorf("command execution failed: %v", err)
+		return rval, err
 	}
 
-	rval[StrResponse] = string(output)
+	rval[StrResponse] = output
 	rval[StrStatus] = StatusSuccess
 	rval[StrMessage] = "command executed successfully"
 
