@@ -144,7 +144,7 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			name: "ValidCommand",
 			params: map[string]interface{}{
 				"config": map[string]interface{}{},
-				"input":  "echo Hello, World!",
+				"input":  "/bin/echo Hello, World!",
 			},
 			expectedError: "",
 		},
@@ -160,7 +160,7 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			params: map[string]interface{}{
 				"input": "invalidcommand",
 			},
-			expectedError: "command execution failed",
+			expectedError: "o such file or directory",
 		},
 	}
 
