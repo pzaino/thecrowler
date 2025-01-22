@@ -1516,6 +1516,17 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a WebDriver object
 func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessContext) (selenium.WebDriver, string, error) {
+	// Check if the WebDriver is still alive
+	if wd == nil {
+		return nil, "", errors.New("WebDriver is nil")
+	}
+
+	// Check if the URL is empty
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil, "", errors.New("URL is empty")
+	}
+
 	// Reinforce Browser Settings
 	err := reinforceBrowserSettings(wd)
 	if err != nil {
