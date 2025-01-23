@@ -21,7 +21,7 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 
 **Project status:** **Still under active development! (aka WIP)** However, most of it is
 already usable. Alpha testers welcome!
-Full stats on daily work [here](https://repo-tracker.com/r/gh/pzaino/thecrowler?utm_source=github-stats).
+Full stats on daily work [here](https://githubtracker.com/pzaino/thecrowler).
 
 **Please Note**: This is the new official repo for the project, the old C++
 and Rust repositories are now closed and no longer available/maintained.
