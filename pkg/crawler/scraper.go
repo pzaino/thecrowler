@@ -943,12 +943,16 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	params["metaData"] = metaData
 
 	// Safely extract and add "parameters" from Details map
-	if parametersRaw, ok := step.Details["parameters"]; ok {
-		if parametersMap, isMap := parametersRaw.(map[string]interface{}); isMap {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", step.Details["parameters"])
-			for k, v := range parametersMap {
-				if k != "" {
-					params[k] = v
+	if step.Details != nil {
+		if step.Details["parameters"] != nil {
+			parametersRaw := step.Details["parameters"] // Extract parameters from Details
+			// Check if parametersRaw is a map
+			if parametersMap, isMap := parametersRaw.(map[string]interface{}); isMap {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", step.Details["parameters"])
+				for k, v := range parametersMap {
+					if k != "" {
+						params[k] = v
+					}
 				}
 			}
 		}
