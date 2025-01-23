@@ -946,8 +946,9 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	if step.Details != nil {
 		if step.Details["parameters"] != nil {
 			parametersRaw := step.Details["parameters"] // Extract parameters from Details
-			// Check if parametersRaw is a map
-			if parametersMap, isMap := parametersRaw.(map[string]interface{}); isMap {
+			// transform parametersRaw to a map[string]interface{}
+			parametersMap := cmn.ConvertInfToMap(parametersRaw)
+			if parametersMap != nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", step.Details["parameters"])
 				for k, v := range parametersMap {
 					if k != "" {
