@@ -10,6 +10,9 @@ transparent as possible, whether it's:
 - Proposing new features
 - Becoming a maintainer
 
+To check daily updates, you can follow the project on github or click on
+[here](https://githubtracker.com/pzaino/thecrowler).
+
 ## We Develop with Github
 
 We use GitHub to host code, to track issues and feature requests, as well as
