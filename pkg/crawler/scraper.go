@@ -918,10 +918,14 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	params["jsonData"] = jsonDataMap
 
 	// Parse step's params if any
-	if step.Details["parameters"] != nil {
-		paramsRaw := step.Details["parameters"].(map[string]interface{})
-		for k, v := range paramsRaw {
-			params[k] = v
+	if step.Details != nil {
+		if step.Details["parameters"] != nil {
+			paramsRaw := step.Details["parameters"].(map[string]interface{})
+			for k, v := range paramsRaw {
+				if k != "" {
+					params[k] = v
+				}
+			}
 		}
 	}
 
