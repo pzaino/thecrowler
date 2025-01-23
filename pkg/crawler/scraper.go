@@ -920,6 +920,8 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	// Check if we have a valid webdriver
 	params["currentURL"] = ""
 	if ctx.wd != nil {
+		// Get the current URL
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Getting current URL for custom JS")
 		params["currentURL"], err = ctx.wd.CurrentURL()
 		if err != nil {
 			params["currentURL"] = ""
@@ -934,16 +936,25 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		metaData = nil
 	} else {
 		if configMap["meta_data"] != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with meta_data: %v", configMap["meta_data"])
 			metaData = configMap["meta_data"].(map[string]interface{})
 		}
 	}
 	params["metaData"] = metaData
 
 	// Safely extract and add "parameters" from Details map
-	if parametersRaw, ok := step.Details["parameters"]; ok {
-		if parametersMap, isMap := parametersRaw.(map[string]interface{}); isMap {
-			for k, v := range parametersMap {
-				params[k] = v
+	if step.Details != nil {
+		if step.Details["parameters"] != nil {
+			parametersRaw := step.Details["parameters"] // Extract parameters from Details
+			// transform parametersRaw to a map[string]interface{}
+			parametersMap := cmn.ConvertInfToMap(parametersRaw)
+			if parametersMap != nil {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", step.Details["parameters"])
+				for k, v := range parametersMap {
+					if k != "" {
+						params[k] = v
+					}
+				}
 			}
 		}
 	}
