@@ -920,6 +920,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	// Parse step's params if any
 	if step.Details != nil {
 		if step.Details["parameters"] != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", step.Details["parameters"])
 			paramsRaw := step.Details["parameters"].(map[string]interface{})
 			for k, v := range paramsRaw {
 				if k != "" {
