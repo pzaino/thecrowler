@@ -2945,6 +2945,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	// CDP COnfig for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
 		// Set the CDP port
 		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
@@ -2956,6 +2957,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Proxy...")
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
 		// Get local network:
@@ -2965,6 +2967,8 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 		} else {
 			args = append(args, "--proxy-bypass-list=localhost")
 		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s'", sel.Config.ProxyURL, "localhost"+localNet)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
