@@ -216,7 +216,8 @@ if [ "$postgres" == "yes" ]; then
       - POSTGRES_PASSWORD=\${DOCKER_POSTGRES_PASSWORD}
       - CROWLER_DB_USER=\${DOCKER_CROWLER_DB_USER:-crowler}
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
-      - TZ=\${TZ:-UTC}
+      - PROXY_SERVICE=\${VDI_PROXY_SERVICE:-}
+      - TZ=\${VDI_TZ:-UTC}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     volumes:
       - db_data:/var/lib/postgresql/data
