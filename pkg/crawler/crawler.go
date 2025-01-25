@@ -2968,7 +2968,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 			args = append(args, "--proxy-bypass-list=localhost")
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s'", sel.Config.ProxyURL, "localhost"+localNet)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s'", sel.Config.ProxyURL, "localhost,"+localNet)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
