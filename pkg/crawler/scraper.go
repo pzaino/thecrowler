@@ -951,16 +951,20 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 			if parametersMap != nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", step.Details["parameters"])
 				for k, v := range parametersMap {
-					// Check if the value is a request to the KVStore (aka check if the value is between {{ and }})
-					if strings.HasPrefix(v.(string), "{{") && strings.HasSuffix(v.(string), "}}") {
-						// Extract the key from the value
-						key := v.(string)[2 : len(v.(string))-2]
-						key = strings.TrimSpace(key)
-						// Get the value from the KVStore
-						v, _, err = cmn.KVStore.Get(key, ctx.GetContextID())
-						if err != nil {
-							cmn.DebugMsg(cmn.DbgLvlError, "Error getting value from KVStore: %v", err)
-							v = ""
+					// Check if v is a string first:
+					if str, ok := v.(string); ok {
+						str = strings.TrimSpace(str)
+						// Check if the value is a request to the KVStore (aka check if the value is between {{ and }})
+						if strings.HasPrefix(str, "{{") && strings.HasSuffix(str, "}}") {
+							// Extract the key from the value
+							key := str[2 : len(str)-2]
+							key = strings.TrimSpace(key)
+							// Get the value from the KVStore
+							v, _, err = cmn.KVStore.Get(key, ctx.GetContextID())
+							if err != nil {
+								cmn.DebugMsg(cmn.DbgLvlError, "Error getting value from KVStore: %v", err)
+								v = ""
+							}
 						}
 					}
 					if k != "" {
