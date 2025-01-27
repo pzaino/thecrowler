@@ -1521,6 +1521,19 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		return nil, "", errors.New("WebDriver is nil")
 	}
 
+	// check if webdriver session is still good, if not open a new one
+	_, err := wd.CurrentURL()
+	if err != nil {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
+			// If the session is not found, create a new one
+			err = ctx.ConnectToVDI((*ctx).SelInstance)
+			wd = ctx.wd
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+			}
+		}
+	}
+
 	// Check if the URL is empty
 	url = strings.TrimSpace(url)
 	if url == "" {
@@ -1528,7 +1541,7 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 	}
 
 	// Reinforce Browser Settings
-	err := reinforceBrowserSettings(wd)
+	err = reinforceBrowserSettings(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
 	}
