@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -966,6 +967,17 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 								v = ""
 							} else {
 								cmn.DebugMsg(cmn.DbgLvlDebug5, "Value from KVStore for '%s': %v", k, v)
+							}
+						} else if strings.HasPrefix(str, "${") && strings.HasSuffix(str, "}") {
+							// We need to interpolate the value (it's an ENV variable)
+							key := str[2 : len(str)-1]
+							key = strings.TrimSpace(key)
+							// Get the value of the ENV variable
+							v = os.Getenv(key)
+							if v == "" {
+								cmn.DebugMsg(cmn.DbgLvlError, "ENV variable '%s' not found", key)
+							} else {
+								cmn.DebugMsg(cmn.DbgLvlDebug5, "Value from ENV for '%s': %v", k, v)
 							}
 						}
 					}
