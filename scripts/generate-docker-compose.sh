@@ -428,9 +428,11 @@ if [ "$postgres" == "yes" ]; then
 EOF
 fi
 
+if [ "$engine_count" != "0" ]; then
 cat << EOF >> docker-compose.yml
   engine_data:
     driver: local
 EOF
+fi
 
 echo "docker-compose.yml has been successfully generated."
