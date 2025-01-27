@@ -2681,6 +2681,11 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 
 // ResetSiteSession resets the site session by deleting all cookies and local storage
 func ResetSiteSession(ctx *ProcessContext) error {
+	// Check if session is still valid
+	if ctx.wd == nil {
+		return errors.New("Data Collection Session is nil")
+	}
+
 	// Clear cookies
 	for name := range ctx.CollectedCookies {
 		err := ctx.wd.DeleteCookie(name)
