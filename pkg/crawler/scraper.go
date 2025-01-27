@@ -964,6 +964,8 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 							if err != nil {
 								cmn.DebugMsg(cmn.DbgLvlError, "Error getting value from KVStore: %v", err)
 								v = ""
+							} else {
+								cmn.DebugMsg(cmn.DbgLvlDebug5, "Value from KVStore for '%s': %v", k, v)
 							}
 						}
 					}
