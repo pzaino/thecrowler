@@ -194,6 +194,27 @@ contributors and maintainers pledge to making participation in our project and
 By contributing, you agree that your contributions will be licensed under its
  Apache 2.0 License.
 
+## Contribution F.A.Q
+
+### Does the CROWler project and team assume any liability for the code I contribute?
+
+No, the CROWler project and team do not assume any liability for the code you
+
+### Can I contribute to the CROWler project if I am not a developer?
+
+Yes, you can contribute to the CROWler project even if you are not a developer.
+
+### Can I contribute to the CROWler project if I am not a Go developer?
+
+Yes, you can contribute to the CROWler project even if you are not a Go developer.
+
+### Does the CROWler project and the development team assure backward compatibility?
+
+No, the CROWler project and the development team do not assure backward compatibility.
+While I try to maintain backward compatibility, it is not always possible and the main goal
+is to ensure the CROWler is always effective and efficient in its tasks. BAckward compatibility
+comes after these two goals, especially until release 1.0.0 is reached.
+
 ## References
 
 This document was adapted from the open-source contribution guidelines for
