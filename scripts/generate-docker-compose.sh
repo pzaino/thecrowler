@@ -135,7 +135,7 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-      - TZ=\${TZ:-UTC}
+      - TZ=\${VDI_TZ:-UTC}
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -172,7 +172,7 @@ services:
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-      - TZ=\${TZ:-UTC}
+      - TZ=\${VDI_TZ:-UTC}
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -270,7 +270,7 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_HOST=\${DOCKER_DB_HOST:-crowler-db}
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
-      - TZ=\${TZ:-UTC}
+      - TZ=\${VDI_TZ:-UTC}
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -351,7 +351,7 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_OTEL_TRACES_EXPORTER=otlp
       - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://crowler-jaeger:4317}
       - SEL_PASSWD=\${SEL_PASSWD:-secret}
-      - TZ=\${TZ:-UTC}
+      - TZ=\${VDI_TZ:-UTC}
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
@@ -428,9 +428,11 @@ if [ "$postgres" == "yes" ]; then
 EOF
 fi
 
+if [ "$engine_count" != "0" ]; then
 cat << EOF >> docker-compose.yml
   engine_data:
     driver: local
 EOF
+fi
 
 echo "docker-compose.yml has been successfully generated."
