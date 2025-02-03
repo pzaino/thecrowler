@@ -95,8 +95,16 @@ Once you've completed the steps above, follow the procedure below:
 - **Step 4**: Run the following command to generate your specific
  Docker-compose file:
 
+On Linux, macOS and BSD:
+
   ```bash
   ./scripts/generate-docker-compose.sh 1 1
+  ```
+
+On Microsoft Windows:
+
+  ```powershell
+  .\scripts\wn-generate-docker-compose.ps1 1 1
   ```
 
   This script will generate a docker-compose file that will be used to build
