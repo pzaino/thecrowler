@@ -230,7 +230,7 @@ if ([int]$engine_count -ne 0) {
         $ENGINE_NETWORKS = $engineNetworksLines -join "`n"
 
         $composeLines += ''
-        $composeLines += "  crowler-engine-$i:"
+        $composeLines += "  crowler-engine-$i`:"
         # Use backticks to output literal double quotes where needed.
         $composeLines += "    container_name: `"crowler-engine-$i`""
         $composeLines += "    env_file:"
@@ -304,11 +304,11 @@ if ([int]$vdi_count -ne 0) {
         $NETWORK_NAME     = "crowler-vdi-$i"
 
         $composeLines += ''
-        $composeLines += "  crowler-vdi-$i:"
-        $composeLines += "    container_name: `"crowler-vdi-$i`""
-        $composeLines += "    env_file:"
+        $composeLines += "  crowler-vdi-$i`:"
+        $composeLines += "    container_name`: `"crowler-vdi-$i`""
+        $composeLines += "    env_file`:"
         $composeLines += "      - .env"
-        $composeLines += "    environment:"
+        $composeLines += "    environment`:"
         $composeLines += "      - COMPOSE_PROJECT_NAME=crowler"
         $composeLines += "      - INSTANCE_ID=$i"
         $composeLines += "      - SE_SCREEN_WIDTH=1920"
@@ -328,17 +328,17 @@ if ([int]$vdi_count -ne 0) {
         $composeLines += "    pull_policy: never"
         $composeLines += "    platform: `${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
         $composeLines += "    ports:"
-        $composeLines += "      - `"$HOST_PORT_START1-$HOST_PORT_END1:4444-4445`""
-        $composeLines += "      - `"$HOST_PORT_START2:5900`""
-        $composeLines += "      - `"$HOST_PORT_START3:7900`""
-        $composeLines += "      - `"$HOST_PORT_START4:9222`""
-        $composeLines += "    volumes:"
+        $composeLines += "      - `"`$HOST_PORT_START1-`$HOST_PORT_END1:4444-4445`""
+        $composeLines += "      - `"`$HOST_PORT_START2:5900`""
+        $composeLines += "      - `"`$HOST_PORT_START3:7900`""
+        $composeLines += "      - `"`$HOST_PORT_START4:9222`""
+        $composeLines += "    volumes`:"
         $composeLines += "      - /dev/shm:/dev/shm"
-        $composeLines += "    expose:"
+        $composeLines += "    expose`:"
         $composeLines += "      - `"$HOST_PORT_START4`""
-        $composeLines += "    networks:"
+        $composeLines += "    networks`:"
         $composeLines += "      - $NETWORK_NAME"
-        $composeLines += "    restart: unless-stopped"
+        $composeLines += "    restart`: unless-stopped"
     }
 }
 
@@ -354,7 +354,7 @@ if ($prometheus -eq "yes") {
     $composeLines += '      - .env'
     $composeLines += '    environment:'
     $composeLines += '      - COMPOSE_PROJECT_NAME=crowler'
-    $composeLines += "    platform: `(${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+    $composeLines += "    platform`: `${DOCKER_DEFAULT_PLATFORM`:-linux/amd64}"
     $composeLines += '    networks:'
     $composeLines += '      - crowler-net'
     $composeLines += '    restart: unless-stopped'
@@ -373,7 +373,7 @@ $composeLines += '    driver: bridge'
 
 # Add all dynamically created VDI networks
 for ($i = 1; $i -le [int]$vdi_count; $i++) {
-    $composeLines += "  crowler-vdi-$i:"
+    $composeLines += "  crowler-vdi-$i`:"
     $composeLines += "    driver: bridge"
 }
 
