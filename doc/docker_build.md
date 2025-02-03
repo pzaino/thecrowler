@@ -12,7 +12,7 @@ and configuring the build appropriately.
 
 ## Before you start
 
-- **Step A** Make sure you have `git`, `make`, `docker` and `docker-compose-plugin`
+- **Step A** Make sure you have `git`, `make`, `patch`, `docker` and `docker-compose-plugin`
   are installed on your machine, these are ALL required to build the images.
 
   As for which releases of the above:
@@ -20,6 +20,10 @@ and configuring the build appropriately.
   - Docker-compose >= 2.27.0
   - Git >= 2.20.0
   - GNU Make >= 4.2.1
+
+  **Please Note**: If you are building on **Microsoft Windows**, you may wish to
+  install first Cygwim or WSL2 to have a Unix-like environment to build the
+  CROWler containers.
 
   As for the minimal requirements for the machine you are building the CROWler:
   - 4GB of RAM
@@ -55,6 +59,11 @@ and configuring the build appropriately.
   The default value is `"selenium/standalone-chromium:4.27.0-(today)"`.
   Where (today) is the date (in yyyyMMdd format) of the day you generated the
   docker-compose.yml file.
+
+  **Please Note**: On some platforms (namely Linux on x86_64 and Windows on
+  x86_64) it requires not only to change the `-<date>` to when you build the
+  image, but also the browser name from `chromium` to `chrome` for the
+  `DOCKER_SELENIUM_IMAGE` variable.
 
   If you are building the CROWler on an CPU architecture that is not `x86_64`,
    then you **must** add the following ENV var:
