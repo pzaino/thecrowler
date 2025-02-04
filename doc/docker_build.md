@@ -197,7 +197,7 @@ detached mode.
 To stop the CROWler docker containers, run the following command:
 
 ```bash
-./docker-compose down
+docker compose down
 ```
 
 This command will stop and remove the CROWler docker containers.
@@ -208,7 +208,7 @@ To rebuild (for example after you've downloaded a new version of the CROWler
 code) the CROWler docker images from scratch, run the following command:
 
 ```bash
-./docker_rebuild.sh build --no-cache
+./docker-rebuild.sh build --no-cache
 ```
 
 Please note: `docker_rebuild` instead of `docker-build` is used to ensure that
@@ -218,7 +218,7 @@ If, when you REbuild, you want to preserve your previous data (for example, the
 database), you can run the following command:
 
 ```bash
-./docker_rebuild.sh build --volumes
+./docker-rebuild.sh build --volumes
 ```
 
 This will ensure that the volumes are preserved when you rebuild the CROWler.
