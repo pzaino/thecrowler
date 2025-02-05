@@ -366,6 +366,11 @@ func crawlSources(wb *WorkBlock) {
 	}
 
 	wg.Wait() // Block until all goroutines have decremented the counter
+
+	// Reset all Pipelines status
+	for idx := uint64(0); idx < maxSrc; idx++ {
+		(*wb.PipelineStatus)[idx].PipelineRunning = 0
+	}
 }
 
 func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Source, idx uint64) {
