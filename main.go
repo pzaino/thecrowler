@@ -388,27 +388,27 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 			//defer wg.Done()
 
 			// Acquire a Selenium instance
-			seleniumInstance := <-*args.Sel
+			vdiInstance := <-*args.Sel
 
 			// Channel to release the Selenium instance
-			releaseSelenium := make(chan crowler.SeleniumInstance)
+			releaseVDI := make(chan crowler.SeleniumInstance)
 
 			// Start crawling the website synchronously
-			go crowler.CrawlWebsite(args, seleniumInstance, releaseSelenium)
+			go crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
 
 			// Release the Selenium instance when done
-			*args.Sel <- <-releaseSelenium
+			*args.Sel <- <-releaseVDI
 
 		}(args)
 	*/
 	go func(args crowler.Pars) {
-		seleniumInstance := <-*args.Sel
-		releaseSelenium := make(chan crowler.SeleniumInstance, 1)
+		vdiInstance := <-*args.Sel
+		releaseVDI := make(chan crowler.SeleniumInstance, 1)
 
-		go crowler.CrawlWebsite(args, seleniumInstance, releaseSelenium)
+		go crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
 
 		// Ensure the instance is put back
-		recoveredInstance := <-releaseSelenium
+		recoveredInstance := <-releaseVDI
 		*args.Sel <- recoveredInstance
 	}(args)
 }
@@ -523,7 +523,7 @@ func StatusStr(condition int) string {
 }
 
 func initAll(configFile *string, config *cfg.Config,
-	db *cdb.Handler, seleniumInstances *chan crowler.SeleniumInstance,
+	db *cdb.Handler, vdiInstances *chan crowler.SeleniumInstance,
 	RulesEngine *rules.RuleEngine, lmt **rate.Limiter) error {
 	var err error
 
@@ -569,14 +569,14 @@ func initAll(configFile *string, config *cfg.Config,
 	}
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
-	// Reinitialize the Selenium services
-	*seleniumInstances = make(chan crowler.SeleniumInstance, len(config.Selenium))
+	// Reinitialize the VDI instances available to this engine
+	*vdiInstances = make(chan crowler.SeleniumInstance, len(config.Selenium))
 	for _, seleniumConfig := range config.Selenium {
 		selService, err := crowler.NewSeleniumService(seleniumConfig)
 		if err != nil {
 			return fmt.Errorf("creating Selenium Instances: %s", err)
 		}
-		*seleniumInstances <- crowler.SeleniumInstance{
+		*vdiInstances <- crowler.SeleniumInstance{
 			Service: selService,
 			Config:  seleniumConfig,
 		}
@@ -624,7 +624,7 @@ func main() {
 	var db cdb.Handler
 
 	// Define sel before we set signal handlers
-	seleniumInstances := make(chan crowler.SeleniumInstance)
+	var vdiInstances chan crowler.SeleniumInstance
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -639,26 +639,26 @@ func main() {
 			case syscall.SIGINT:
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
-				closeResources(db, seleniumInstances) // Release resources
+				closeResources(db, vdiInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGTERM:
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
-				closeResources(db, seleniumInstances) // Release resources
+				closeResources(db, vdiInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
-				closeResources(db, seleniumInstances) // Release resources
+				closeResources(db, vdiInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGHUP:
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
-				err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine, &limiter)
+				err := initAll(configFile, &config, &db, &vdiInstances, &GRulesEngine, &limiter)
 				if err != nil {
 					configMutex.Unlock()
 					cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
@@ -667,19 +667,19 @@ func main() {
 				err = db.Connect(config)
 				if err != nil {
 					configMutex.Unlock()
-					closeResources(db, seleniumInstances) // Release resources
+					closeResources(db, vdiInstances) // Release resources
 					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection re-established.")
 				configMutex.Unlock()
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Configuration reloaded.")
-				//go checkSources(&db, seleniumInstances)
+				//go checkSources(&db, vdiInstances)
 			}
 		}
 	}()
 
 	// Initialize the crawler
-	err := initAll(configFile, &config, &db, &seleniumInstances, &GRulesEngine, &limiter)
+	err := initAll(configFile, &config, &db, &vdiInstances, &GRulesEngine, &limiter)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 	}
@@ -687,18 +687,18 @@ func main() {
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		closeResources(db, seleniumInstances) // Release resources
+		closeResources(db, vdiInstances) // Release resources
 		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established.")
-	defer closeResources(db, seleniumInstances)
+	defer closeResources(db, vdiInstances)
 
 	// Start events listener
 	go cdb.ListenForEvents(&db, handleNotification)
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	go checkSources(&db, &seleniumInstances, &GRulesEngine)
+	go checkSources(&db, &vdiInstances, &GRulesEngine)
 
 	// Start the internal/control API server
 	srv := &http.Server{
@@ -920,7 +920,9 @@ func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
 		}
 	}
 	// Stop the Selenium services
-	close(sel)
+	if sel != nil {
+		close(sel)
+	}
 	for seleniumInstance := range sel {
 		if seleniumInstance.Service != nil {
 			err := seleniumInstance.Service.Stop()
