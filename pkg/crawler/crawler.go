@@ -168,7 +168,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
-		closeSession(processCtx, args, &sel, releaseSelenium, err)
+		closeSession(processCtx, args, &sel, &releaseSelenium, err)
 		return
 	}
 
@@ -180,11 +180,11 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
-		closeSession(processCtx, args, &sel, releaseSelenium, err)
+		closeSession(processCtx, args, &sel, &releaseSelenium, err)
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
-	defer closeSession(processCtx, args, &sel, releaseSelenium, err)
+	defer closeSession(processCtx, args, &sel, &releaseSelenium, err)
 
 	// Extract custom configuration from the source
 	sourceConfig := make(map[string]interface{})
@@ -389,7 +389,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 
 	// Return the Selenium instance to the channel
-	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+	ReturnSeleniumInstance(args.WG, processCtx, &sel, &releaseSelenium)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -401,7 +401,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 
 func closeSession(ctx *ProcessContext,
 	args Pars, sel *SeleniumInstance,
-	releaseSelenium chan<- SeleniumInstance,
+	releaseSelenium *chan<- SeleniumInstance,
 	err error) {
 	// Release VDI connection
 	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
@@ -3576,12 +3576,12 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium *chan<- SeleniumInstance) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
 	if (*pCtx).Status.CrawlingRunning == 1 {
 		QuitSelenium((&(*pCtx).wd))
 		if *(*pCtx).sel != nil {
-			releaseSelenium <- (*sel)
+			*releaseSelenium <- (*sel)
 		}
 		(*pCtx).Status.CrawlingRunning = 2
 	}

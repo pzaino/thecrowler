@@ -383,21 +383,33 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 	}
 
 	// Start a goroutine to crawl the website
+	/*
+		go func(args crowler.Pars) {
+			//defer wg.Done()
+
+			// Acquire a Selenium instance
+			seleniumInstance := <-*args.Sel
+
+			// Channel to release the Selenium instance
+			releaseSelenium := make(chan crowler.SeleniumInstance)
+
+			// Start crawling the website synchronously
+			go crowler.CrawlWebsite(args, seleniumInstance, releaseSelenium)
+
+			// Release the Selenium instance when done
+			*args.Sel <- <-releaseSelenium
+
+		}(args)
+	*/
 	go func(args crowler.Pars) {
-		//defer wg.Done()
-
-		// Acquire a Selenium instance
 		seleniumInstance := <-*args.Sel
+		releaseSelenium := make(chan crowler.SeleniumInstance, 1)
 
-		// Channel to release the Selenium instance
-		releaseSelenium := make(chan crowler.SeleniumInstance)
-
-		// Start crawling the website synchronously
 		go crowler.CrawlWebsite(args, seleniumInstance, releaseSelenium)
 
-		// Release the Selenium instance when done
-		*args.Sel <- <-releaseSelenium
-
+		// Ensure the instance is put back
+		recoveredInstance := <-releaseSelenium
+		*args.Sel <- recoveredInstance
 	}(args)
 }
 
