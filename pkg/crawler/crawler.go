@@ -118,6 +118,7 @@ type ProcessContext struct {
 	userURLPatterns  []string               // User-defined URL patterns
 	Status           *Status                // Status of the crawling process
 	CollectedCookies map[string]interface{} // Collected cookies
+	VDIReturned      bool                   // Flag to indicate if the VDI instance was returned
 }
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -138,6 +139,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	processCtx.Status.PipelineRunning = 1
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
+	processCtx.VDIReturned = false
 
 	var err error
 	// Combine default configuration with the source configuration
@@ -168,7 +170,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
-		closeSession(processCtx, args, &sel, releaseSelenium, err)
+		closeSession(processCtx, args, &sel, &releaseSelenium, err)
 		return
 	}
 
@@ -180,11 +182,15 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
-		closeSession(processCtx, args, &sel, releaseSelenium, err)
+		closeSession(processCtx, args, &sel, &releaseSelenium, err)
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
-	defer closeSession(processCtx, args, &sel, releaseSelenium, err)
+	defer func() {
+		if processCtx.Status.PipelineRunning != 3 { // Avoid redundant calls on error
+			closeSession(processCtx, args, &sel, &releaseSelenium, err)
+		}
+	}()
 
 	// Extract custom configuration from the source
 	sourceConfig := make(map[string]interface{})
@@ -389,7 +395,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 
 	// Return the Selenium instance to the channel
-	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseSelenium)
+	ReturnSeleniumInstance(args.WG, processCtx, &sel, &releaseSelenium)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -401,10 +407,12 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 
 func closeSession(ctx *ProcessContext,
 	args Pars, sel *SeleniumInstance,
-	releaseSelenium chan<- SeleniumInstance,
+	releaseSelenium *chan<- SeleniumInstance,
 	err error) {
 	// Release VDI connection
+	// ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
 	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
+
 	// Allow a new job to be processed (if any)
 	ctx.WG.Done()
 
@@ -1521,6 +1529,11 @@ func getURLContent(url string, wd selenium.WebDriver, level int, ctx *ProcessCon
 		return nil, "", errors.New("WebDriver is nil")
 	}
 
+	if ctx.VDIReturned {
+		// If the VDI session is returned, return the WebDriver
+		return wd, "", nil
+	}
+
 	// check if webdriver session is still good, if not open a new one
 	_, err := wd.CurrentURL()
 	if err != nil {
@@ -1784,6 +1797,11 @@ func docTypeIsHTML(mime string) bool {
 // In the future we may want to expand this function to extract more information
 // from the page, such as images, videos, etc. and do a better job at screen scraping.
 func extractPageInfo(webPage *selenium.WebDriver, ctx *ProcessContext, docType string, PageCache *PageInfo) error {
+	if ctx.VDIReturned {
+		// If the VDI session is returned, stop the process
+		return nil
+	}
+
 	currentURL, _ := (*webPage).CurrentURL()
 
 	// Detect Object Type
@@ -2354,6 +2372,11 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
 
+	if processCtx.wd == nil || processCtx.VDIReturned {
+		// If the VDI has returned, stop the worker
+		return nil
+	}
+
 	var err error
 
 	// Check if we are on the right page that should contain url.Link:
@@ -2546,6 +2569,11 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
 
+	if processCtx.VDIReturned {
+		// If the VDI has returned, we need to stop the worker
+		return nil
+	}
+
 	// Check if we are on the right page that should contain url.Link:
 	pageURL, err := processCtx.wd.CurrentURL()
 	if err != nil {
@@ -2723,6 +2751,11 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Set getURLMutex to ensure only one goroutine is accessing the WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
+
+	if processCtx.VDIReturned {
+		// If the VDI session has been returned we need to stop the worker
+		return nil
+	}
 
 	// Get the HTML content of the page
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx)
@@ -3576,33 +3609,54 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, _ *chan<- SeleniumInstance) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
-	if (*pCtx).Status.CrawlingRunning == 1 {
-		QuitSelenium((&(*pCtx).wd))
-		if *(*pCtx).sel != nil {
-			releaseSelenium <- (*sel)
-		}
-		(*pCtx).Status.CrawlingRunning = 2
+
+	if pCtx == nil || sel == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Invalid parameters: ProcessContext or VDIInstance is nil")
+		return
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance returned.")
+
+	// Prevent multiple return attempts
+	if pCtx.VDIReturned {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "VDI session already returned, skipping duplicate return.")
+		return
+	}
+	pCtx.VDIReturned = true
+
+	// Quit Selenium WebDriver session BEFORE returning it to the pool
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting VDI session before returning instance...")
+	QuitSelenium(&pCtx.wd)
+
+	// Ensure it is returned to the correct queue
+	if pCtx.sel != nil {
+		//*selQueue <- *sel // no need to return sel, it's returned by the caller of CrawlWebsite
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance successfully returned.")
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to return a nil VDI instance!")
+	}
+
+	// Mark as returned to prevent duplicate calls
+	pCtx.Status.CrawlingRunning = 2 // Mark crawling as completed
 }
 
 // QuitSelenium is responsible for quitting the Selenium server instance
 func QuitSelenium(wd *selenium.WebDriver) {
-	// Close the WebDriver
 	if wd != nil {
-		// Attempt a simple operation to check if the session is still valid
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Checking WebDriver session before quitting...")
+
+		// Ensure we aren't quitting an already-closed session
 		_, err := (*wd).CurrentURL()
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session may have already ended: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session already invalid: %v", err)
 			return
 		}
 
-		// Close the WebDriver if the session is still active
+		// Force quit session before returning instance
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting WebDriver session now...")
 		err = (*wd).Quit()
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "closing WebDriver: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to close WebDriver: %v", err)
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
 			time.Sleep(1 * time.Second)
