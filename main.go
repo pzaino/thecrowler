@@ -285,6 +285,13 @@ func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngi
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.Unlock()
 		sourcesToCrawl = []cdb.Source{} // Reset the sources
+		// Return all instances to sel *chan crowler.SeleniumInstance
+		for i := 0; i < len(config.Selenium); i++ {
+			*sel <- crowler.SeleniumInstance{
+				Service: nil,
+				Config:  config.Selenium[i],
+			}
+		}
 	}
 }
 
@@ -407,14 +414,26 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 		}(args)
 	*/
 	go func(args crowler.Pars) {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for available VDI instance...")
+
+		// Fetch the next available Selenium instance (VDI)
 		vdiInstance := <-*args.Sel
-		releaseVDI := make(chan crowler.SeleniumInstance, 1)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Acquired VDI instance: %v", vdiInstance.Config.Host)
 
-		go crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
+		// Local channel to signal crawl completion
+		releaseVDI := make(chan crowler.SeleniumInstance)
 
-		// Ensure the instance is put back
-		recoveredInstance := <-releaseVDI
-		*args.Sel <- recoveredInstance
+		go func() {
+			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
+			close(releaseVDI) // Signal that crawling is complete
+		}()
+
+		// Wait for crawling to finish
+		<-releaseVDI
+
+		// Now safely return the instance to the pool
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Returning VDI instance: %v to the pool", vdiInstance.Config.Host)
+		*args.Sel <- vdiInstance
 	}(args)
 }
 

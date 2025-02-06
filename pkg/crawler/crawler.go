@@ -3609,7 +3609,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseSelenium *chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, _ *chan<- SeleniumInstance) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
 
 	if pCtx == nil || sel == nil {
@@ -3628,9 +3628,9 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting VDI session before returning instance...")
 	QuitSelenium(&pCtx.wd)
 
-	// Ensure it is returned to the pool
+	// Ensure it is returned to the correct queue
 	if pCtx.sel != nil {
-		*releaseSelenium <- *sel
+		//*selQueue <- *sel // no need to return sel, it's returned by the caller of CrawlWebsite
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance successfully returned.")
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to return a nil VDI instance!")
