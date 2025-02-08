@@ -130,7 +130,7 @@ func (ctx *ProcessContext) GetContextID() string {
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- SeleniumInstance) {
+func CrawlWebsite(args Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumInstance) {
 	// Initialize the process context
 	processCtx := NewProcessContext(args)
 
@@ -170,7 +170,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
-		closeSession(processCtx, args, &sel, &releaseSelenium, err)
+		closeSession(processCtx, args, &sel, releaseVDI, err)
 		return
 	}
 
@@ -182,13 +182,13 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, selConnError, err)
-		closeSession(processCtx, args, &sel, &releaseSelenium, err)
+		closeSession(processCtx, args, &sel, releaseVDI, err)
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
 	defer func() {
 		if processCtx.Status.PipelineRunning != 3 { // Avoid redundant calls on error
-			closeSession(processCtx, args, &sel, &releaseSelenium, err)
+			closeSession(processCtx, args, &sel, releaseVDI, err)
 		}
 	}()
 
@@ -395,7 +395,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 	}
 
 	// Return the Selenium instance to the channel
-	ReturnSeleniumInstance(args.WG, processCtx, &sel, &releaseSelenium)
+	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseVDI)
 
 	// Index the network information
 	processCtx.wgNetInfo.Wait()
@@ -407,11 +407,11 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseSelenium chan<- Seleni
 
 func closeSession(ctx *ProcessContext,
 	args Pars, sel *SeleniumInstance,
-	releaseSelenium *chan<- SeleniumInstance,
+	releaseVDI chan<- SeleniumInstance,
 	err error) {
 	// Release VDI connection
 	// ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
-	ReturnSeleniumInstance(args.WG, ctx, sel, releaseSelenium)
+	ReturnSeleniumInstance(args.WG, ctx, sel, releaseVDI)
 
 	// Allow a new job to be processed (if any)
 	ctx.WG.Done()
@@ -3609,7 +3609,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseVDI *chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, releaseVDI chan<- SeleniumInstance) {
 	if pCtx == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Invalid parameters: ProcessContext is nil")
 		return
@@ -3634,7 +3634,7 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 
 	// Ensure it is returned to the correct queue
 	if pCtx.sel != nil {
-		*releaseVDI <- *sel // no need to return sel, it's returned by the caller of CrawlWebsite
+		releaseVDI <- (*sel) // no need to return sel, it's returned by the caller of CrawlWebsite
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance successfully returned.")
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to return a nil VDI instance!")
