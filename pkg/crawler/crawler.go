@@ -431,11 +431,6 @@ func closeSession(ctx *ProcessContext,
 	// Optionally clean up session-specific data
 	cmn.KVStore.CleanSession(ctx.GetContextID())
 
-	// Close the Selenium WebDriver if still open
-	if ctx.wd != nil {
-		_ = ctx.wd.Close()
-	}
-
 	// Release other resources in ctx
 	ctx.linksMutex.Lock()
 	ctx.newLinks = nil         // Clear the slice to release memory
@@ -3635,9 +3630,6 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to return a nil VDI instance!")
 	}
-
-	// Mark as returned to prevent duplicate calls
-	pCtx.Status.CrawlingRunning = 2 // Mark crawling as completed
 }
 
 // QuitSelenium is responsible for quitting the Selenium server instance
@@ -3662,7 +3654,13 @@ func QuitSelenium(wd *selenium.WebDriver) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to close WebDriver: %v", err)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
-		time.Sleep(5 * time.Second)
+		time.Sleep(1 * time.Second)
+		err = (*wd).Close()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to close WebDriver: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
+		}
 	}
 }
 
