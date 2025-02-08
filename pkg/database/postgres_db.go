@@ -268,13 +268,18 @@ func (l *PostgresListener) Connect(c cfg.Config, minReconnectInterval, maxReconn
 
 	// Forward pq notifications to the notify channel
 	go func() {
+		defer close(l.notify)
+
+		if l.listener == nil {
+			return // Avoid nil pointer dereference
+		}
+
 		for pqNotify := range l.listener.Notify {
 			l.notify <- &PostgresNotification{
 				channel: pqNotify.Channel,
 				extra:   pqNotify.Extra,
 			}
 		}
-		close(l.notify)
 	}()
 
 	return nil
