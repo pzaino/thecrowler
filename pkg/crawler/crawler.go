@@ -186,11 +186,7 @@ func CrawlWebsite(args Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumIns
 		return
 	}
 	processCtx.Status.CrawlingRunning = 1
-	defer func() {
-		if processCtx.Status.PipelineRunning != 3 { // Avoid redundant calls on error
-			closeSession(processCtx, args, &sel, releaseVDI, err)
-		}
-	}()
+	defer closeSession(processCtx, args, &sel, releaseVDI, err)
 
 	// Extract custom configuration from the source
 	sourceConfig := make(map[string]interface{})
