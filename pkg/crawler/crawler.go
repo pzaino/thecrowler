@@ -3642,25 +3642,27 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 
 // QuitSelenium is responsible for quitting the Selenium server instance
 func QuitSelenium(wd *selenium.WebDriver) {
-	if wd != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Checking WebDriver session before quitting...")
+	if wd == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to quit nil WebDriver session!")
+		return
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Checking WebDriver session before quitting...")
 
-		// Ensure we aren't quitting an already-closed session
-		_, err := (*wd).CurrentURL()
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session already invalid: %v", err)
-			return
-		}
+	// Ensure we aren't quitting an already-closed session
+	_, err := (*wd).CurrentURL()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session already invalid: %v", err)
+		return
+	}
 
-		// Force quit session before returning instance
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting WebDriver session now...")
-		err = (*wd).Quit()
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to close WebDriver: %v", err)
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
-			time.Sleep(1 * time.Second)
-		}
+	// Force quit session before returning instance
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting WebDriver session now...")
+	err = (*wd).Quit()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to close WebDriver: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
+		time.Sleep(5 * time.Second)
 	}
 }
 
