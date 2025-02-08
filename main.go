@@ -395,47 +395,50 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 	}
 
 	// Start a goroutine to crawl the website
-	/*
-		go func(args crowler.Pars) {
-			//defer wg.Done()
-
-			// Acquire a Selenium instance
-			vdiInstance := <-*args.Sel
-
-			// Channel to release the Selenium instance
-			releaseVDI := make(chan crowler.SeleniumInstance)
-
-			// Start crawling the website synchronously
-			go crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
-
-			// Release the Selenium instance when done
-			*args.Sel <- <-releaseVDI
-
-		}(args)
-	*/
 	go func(args crowler.Pars) {
+		//defer wg.Done()
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for available VDI instance...")
 
-		// Fetch the next available Selenium instance (VDI)
+		// Acquire a Selenium instance
 		vdiInstance := <-*args.Sel
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Acquired VDI instance: %v", vdiInstance.Config.Host)
 
-		// Local channel to signal crawl completion
+		// Channel to release the Selenium instance
 		releaseVDI := make(chan crowler.SeleniumInstance)
 
-		go func() {
-			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
-			close(releaseVDI) // Signal that crawling is complete
-		}()
+		// Start crawling the website synchronously
+		go crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
 
-		// Wait for crawling to finish
-		<-releaseVDI
-
-		// Now safely return the instance to the pool
+		// Release the Selenium instance when done
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Returning VDI instance: %v to the pool", vdiInstance.Config.Host)
-		*args.Sel <- vdiInstance
+		*args.Sel <- <-releaseVDI
 		cmn.DebugMsg(cmn.DbgLvlDebug, "VDI instance: %v returned to the pool", vdiInstance.Config.Host)
 	}(args)
+	/*
+		go func(args crowler.Pars) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for available VDI instance...")
+
+			// Fetch the next available Selenium instance (VDI)
+			vdiInstance := <-*args.Sel
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Acquired VDI instance: %v", vdiInstance.Config.Host)
+
+			// Local channel to signal crawl completion
+			releaseVDI := make(chan crowler.SeleniumInstance)
+
+			go func() {
+				crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
+				close(releaseVDI) // Signal that crawling is complete
+			}()
+
+			// Wait for crawling to finish
+			<-releaseVDI
+
+			// Now safely return the instance to the pool
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Returning VDI instance: %v to the pool", vdiInstance.Config.Host)
+			*args.Sel <- vdiInstance
+			cmn.DebugMsg(cmn.DbgLvlDebug, "VDI instance: %v returned to the pool", vdiInstance.Config.Host)
+		}(args)
+	*/
 }
 
 func logStatus(PipelineStatus *[]crowler.Status) {

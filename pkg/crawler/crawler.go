@@ -3609,7 +3609,7 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 }
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
-func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, _ *chan<- SeleniumInstance) {
+func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, selQueue *chan<- SeleniumInstance) {
 	if pCtx == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Invalid parameters: ProcessContext is nil")
 		return
@@ -3634,7 +3634,7 @@ func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *Seleni
 
 	// Ensure it is returned to the correct queue
 	if pCtx.sel != nil {
-		//*selQueue <- *sel // no need to return sel, it's returned by the caller of CrawlWebsite
+		*selQueue <- *sel // no need to return sel, it's returned by the caller of CrawlWebsite
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI object instance successfully returned.")
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to return a nil VDI instance!")
