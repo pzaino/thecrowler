@@ -434,6 +434,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 		// Now safely return the instance to the pool
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Returning VDI instance: %v to the pool", vdiInstance.Config.Host)
 		*args.Sel <- vdiInstance
+		cmn.DebugMsg(cmn.DbgLvlDebug, "VDI instance: %v returned to the pool", vdiInstance.Config.Host)
 	}(args)
 }
 

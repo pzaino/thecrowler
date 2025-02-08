@@ -3610,19 +3610,23 @@ func setNavigatorProperties(wd *selenium.WebDriver, lang, userAgent string) {
 
 // ReturnSeleniumInstance is responsible for returning the Selenium server instance
 func ReturnSeleniumInstance(_ *sync.WaitGroup, pCtx *ProcessContext, sel *SeleniumInstance, _ *chan<- SeleniumInstance) {
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
-
-	if pCtx == nil || sel == nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Invalid parameters: ProcessContext or VDIInstance is nil")
+	if pCtx == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Invalid parameters: ProcessContext is nil")
 		return
 	}
-
 	// Prevent multiple return attempts
 	if pCtx.VDIReturned {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "VDI session already returned, skipping duplicate return.")
 		return
 	}
 	pCtx.VDIReturned = true
+
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning VDI object instance...")
+
+	if sel == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Invalid parameters: VDIInstance is nil")
+		return
+	}
 
 	// Quit Selenium WebDriver session BEFORE returning it to the pool
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting VDI session before returning instance...")
