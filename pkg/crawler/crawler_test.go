@@ -29,7 +29,7 @@ func TestExtractLinks(t *testing.T) {
 		RE:     nil,
 		Status: nil,
 	}
-	ctx := NewProcessContext(testArgs)
+	ctx := NewProcessContext(&testArgs)
 	type args struct {
 		htmlContent string
 	}
