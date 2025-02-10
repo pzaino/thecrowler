@@ -234,6 +234,7 @@ func CrawlWebsite(args *Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumIn
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.CrawlingRunning = 3
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
@@ -251,6 +252,7 @@ func CrawlWebsite(args *Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumIn
 		// and update the source state in the database
 		cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
 		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.CrawlingRunning = 3
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
@@ -263,6 +265,7 @@ func CrawlWebsite(args *Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumIn
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "refreshing Selenium connection: %v", err)
 		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.CrawlingRunning = 3
 		processCtx.Status.PipelineRunning = 3
 		processCtx.Status.TotalErrors++
 		processCtx.Status.LastError = err.Error()
@@ -344,6 +347,7 @@ func CrawlWebsite(args *Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumIn
 					if strings.Contains(err.Error(), errCriticalError) {
 						// Update source with error state
 						processCtx.Status.EndTime = time.Now()
+						processCtx.Status.CrawlingRunning = 3
 						processCtx.Status.PipelineRunning = 3
 						processCtx.Status.TotalErrors++
 						processCtx.Status.LastError = err.Error()
@@ -393,6 +397,7 @@ func CrawlWebsite(args *Pars, sel SeleniumInstance, releaseVDI chan<- SeleniumIn
 	}
 
 	// Return the Selenium instance to the channel
+	processCtx.Status.CrawlingRunning = 2
 	ReturnSeleniumInstance(args.WG, processCtx, &sel, releaseVDI)
 
 	// Index the network information
@@ -416,7 +421,7 @@ func closeSession(ctx *ProcessContext,
 	ctx.WG.Done()
 
 	// Signal pipeline completion
-	if ctx.Status.PipelineRunning == 1 {
+	if ctx.Status.PipelineRunning == 1 || err != nil {
 		ctx.Status.PipelineRunning = 3
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
