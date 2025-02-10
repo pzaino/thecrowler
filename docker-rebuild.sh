@@ -25,9 +25,22 @@ if [ "${preserve_volumes}" -eq 1 ]; then
     echo "Preserving volumes"
     # Stop and remove containers, networks, and volumes
     docker compose down --remove-orphans
-    # remove crowler network
-    docker network rm crowler-net
-    docker network rm thecrowler_crowler-net
+    echo "Stopping all crowler-* containers..."
+    docker ps -a --format '{{.ID}} {{.Names}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker stop
+
+    echo "Removing all crowler-* containers..."
+    docker ps -a --format '{{.ID}} {{.Names}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker rm -f
+
+    echo "Removing all crowler-* networks..."
+    docker network ls --format '{{.ID}} {{.Name}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker network rm
+
+    echo "Removing all crowler-* volumes..."
+    docker volume ls --format '{{.Name}}' | awk '$1 ~ /^crowler-/ {print $1}' | xargs -r docker volume rm
+
+    echo "Removing all crowler-* images..."
+    docker images --format '{{.ID}} {{.Repository}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker rmi -f
+
+    echo "Cleanup complete! All crowler-* resources have been removed."
     # Prune dangling images matching the naming pattern "crowler-*"
     docker images | grep -E "crowler-|selenium/" | awk '{print $3}' | xargs docker rmi
 else
@@ -35,11 +48,19 @@ else
     # Stop and remove containers, networks, and volumes
     docker compose down -v --remove-orphans
     # remove crowler network
-    docker network rm crowler-net
-    docker network rm thecrowler_crowler-net
-    # Remove all unused images
-    #docker image prune -a -f
-    docker images | grep -E "crowler-|selenium/" | awk '{print $3}' | xargs docker rmi
+    echo "Stopping all crowler-* containers..."
+    docker ps -a --format '{{.ID}} {{.Names}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker stop
+
+    echo "Removing all crowler-* containers..."
+    docker ps -a --format '{{.ID}} {{.Names}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker rm -f
+
+    echo "Removing all crowler-* networks..."
+    docker network ls --format '{{.ID}} {{.Name}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker network rm
+
+    echo "Removing all crowler-* images..."
+    docker images --format '{{.ID}} {{.Repository}}' | awk '$2 ~ /^crowler-/ {print $1}' | xargs -r docker rmi -f
+
+    echo "Cleanup complete! All crowler-* resources have been removed."
 fi
 
 

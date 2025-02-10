@@ -504,7 +504,17 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
-	prompt := promptRaw[StrRequest].(string)
+	// Combine the prompt with the request
+	var prompt string
+	if params["prompt"] != nil {
+		prompt = params["prompt"].(string)
+	}
+	if promptRaw[StrRequest] != nil {
+		if prompt != "" {
+			prompt = prompt + " "
+		}
+		prompt = prompt + promptRaw[StrRequest].(string)
+	}
 
 	// Generate the API request based on the input and parameters
 	request := map[string]string{

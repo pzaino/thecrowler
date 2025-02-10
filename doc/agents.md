@@ -32,7 +32,7 @@ jobs:
             url: "http://example.com/api/data"
       - action: "AIInteraction"
         params:
-          prompt: "Summarize the following data: $response"
+          prompt: "Summarize the following data:"
           config:
             url: "https://api.openai.com/v1/completions"
             api_key: "your_api_key"
