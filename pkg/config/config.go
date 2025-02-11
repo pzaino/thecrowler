@@ -180,6 +180,7 @@ func NewConfig() *Config {
 			Workers:               1,
 			VDIName:               "",
 			Platform:              "desktop",
+			BrowserPlatform:       "linux",
 			Interval:              "2",
 			Timeout:               10,
 			Maintenance:           60,
@@ -655,6 +656,12 @@ func (c *Config) setDefaultPlatform() {
 		c.Crawler.Platform = "desktop"
 	} else {
 		c.Crawler.Platform = strings.ToLower(strings.TrimSpace(c.Crawler.Platform))
+	}
+	// Check also BrowserPlatform
+	if strings.TrimSpace(c.Crawler.BrowserPlatform) == "" {
+		c.Crawler.BrowserPlatform = "linux"
+	} else {
+		c.Crawler.BrowserPlatform = strings.ToLower(strings.TrimSpace(c.Crawler.BrowserPlatform))
 	}
 }
 

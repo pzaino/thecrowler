@@ -2969,7 +2969,7 @@ func ConnectVDI(ctx *ProcessContext, sel SeleniumInstance, browseType int) (sele
 	var userAgent string
 
 	// Get the user agent string from the UserAgentsDB
-	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, "linux", browser)
+	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, ctx.config.Crawler.BrowserPlatform, browser)
 
 	// Fallback in case the user agent is not found in the UserAgentsDB
 	if userAgent == "" {
