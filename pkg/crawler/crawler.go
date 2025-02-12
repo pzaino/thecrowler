@@ -628,6 +628,11 @@ func (ctx *ProcessContext) CrawlInitialURL(_ SeleniumInstance) (selenium.WebDriv
 		collectPageLogs(&pageSource, &pageInfo)
 	}
 
+	// Collect XHR
+	if ctx.config.Crawler.CollectXHR {
+		collectXHR(ctx, &pageInfo)
+	}
+
 	if !ctx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
 		pageInfo.HTML = ""
@@ -703,6 +708,47 @@ func collectNavigationMetrics(wd *selenium.WebDriver, pageInfo *PageInfo) {
 			pageInfo.PerfInfo.PageLoad = value.(float64)
 		}
 	}
+}
+
+// CollectXHR collects the XHR requests from the browser
+func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
+	// Retrieve XHR requests and responses from the browser logs
+	logs, err := ctx.wd.Log("performance")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
+		return
+	}
+
+	// Create a map to store the XHR requests
+	var xhrData []map[string]interface{}
+
+	// Process the logs
+	for _, entry := range logs {
+		var log PerformanceLogEntry
+		err := json.Unmarshal([]byte(entry.Message), &log)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
+			continue
+		}
+
+		// Collect XHR requests into the map
+		if log.Message.Method == "Network.requestWillBeSent" {
+			xhrData = append(xhrData, map[string]interface{}{
+				"request":  log.Message.Params.RequestInfo,
+				"response": log.Message.Params.ResponseInfo,
+			})
+		}
+	}
+
+	// Create an xhr container for all the collected logs
+	xhr := make(map[string]interface{})
+	xhr["xhr"] = xhrData
+
+	// If in debug > 4 log the xhr data
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data: %v", xhr)
+
+	// Add the XHR data to the PageInfo struct in ScrapedData
+	pageInfo.ScrapedData = append(pageInfo.ScrapedData, xhr)
 }
 
 // Collects the page logs from the browser

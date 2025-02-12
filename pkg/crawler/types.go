@@ -150,6 +150,7 @@ type LogMessage struct {
 
 // LogParams represents the parameters of a log message
 type LogParams struct {
+	RequestInfo  LogRequestInfo  `json:"request"`        // The extra information of the request.
 	ResponseInfo LogResponseInfo `json:"response"`       // The extra information of the response.
 	TimeStamp    float64         `json:"timestamp"`      // The timestamp of the log message.
 	Type         string          `json:"type,omitempty"` // The type of the log message.
@@ -172,6 +173,27 @@ type LogResponseInfo struct {
 	SecurityState          string             `json:"securityState,omitempty"`          // Security state of the response.
 	Timing                 LogResponseTiming  `json:"timing,omitempty"`                 // Timing information.
 	URL                    string             `json:"url"`                              // The URL of the response.
+	Body                   string             `json:"body,omitempty"`                   // The body of the request.
+}
+
+// LogRequestInfo represents additional information about a request in network logs.
+type LogRequestInfo struct {
+	BlockedCookies         []BlockedCookie    `json:"blockedCookies,omitempty"`         // The blocked cookies.
+	Headers                map[string]string  `json:"headers,omitempty"`                // The headers of the response.
+	RequestID              string             `json:"requestId"`                        // The ID of the request.
+	ResourceIPAddressSpace string             `json:"resourceIPAddressSpace,omitempty"` // The IP address space of the resource.
+	StatusCode             int                `json:"statusCode"`                       // The status code of the response.
+	StatusText             string             `json:"statusText"`                       // The status text of the response.
+	MimeType               string             `json:"mimeType,omitempty"`               // The MIME type of the response.
+	Protocol               string             `json:"protocol,omitempty"`               // The protocol of the response.
+	RemoteIPAddress        string             `json:"remoteIPAddress,omitempty"`        // The remote IP address.
+	RemotePort             int                `json:"remotePort,omitempty"`             // The remote port.
+	ResponseTime           float64            `json:"responseTime,omitempty"`           // The response time.
+	SecurityDetails        LogSecurityDetails `json:"securityDetails,omitempty"`        // Security details of the response.
+	SecurityState          string             `json:"securityState,omitempty"`          // Security state of the response.
+	Timing                 LogResponseTiming  `json:"timing,omitempty"`                 // Timing information.
+	URL                    string             `json:"url"`                              // The URL of the response.
+	Body                   string             `json:"body,omitempty"`                   // The body of the request.
 }
 
 // LogSecurityDetails holds detailed security information from the network logs.
