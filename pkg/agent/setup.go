@@ -95,6 +95,10 @@ func NewJobConfig() *JobConfig {
 func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 	// iterate over all the configuration options
 	for _, agtConfig := range agtConfigs {
+		// Extract the GlobalParameters for this entry
+		globalParams := agtConfig.GlobalParameters
+
+		// Load the configuration from the file
 		paths := agtConfig.Path
 		if len(paths) == 0 {
 			paths = []string{"./agents/*.yaml"}
@@ -150,6 +154,25 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					if err != nil {
 						return fmt.Errorf("failed to parse config file: %v", err)
 					}
+
+					// Add the global parameters to the configuration
+					if len(globalParams) > 0 {
+						for i := 0; i < len(agtConfigStorage.Jobs); i++ {
+							// Add the global parameters to the configuration
+							for k, v := range globalParams {
+								// Check if the params field has a k field
+								if _, ok := agtConfigStorage.Jobs[i].Steps[0]["params"]; !ok {
+									// If not, add the k field
+									agtConfigStorage.Jobs[i].Steps[0]["params"] = make(map[string]interface{})
+								} else {
+									// If yes, merge the two maps
+									agtConfigStorage.Jobs[i].Steps[0]["params"].(map[string]interface{})[k] = v
+								}
+							}
+						}
+					}
+
+					// Add the configuration to the list
 					jc.Jobs = append(jc.Jobs, agtConfigStorage.Jobs...)
 				}
 			}

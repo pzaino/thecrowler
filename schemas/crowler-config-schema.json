@@ -1702,6 +1702,14 @@
         "title": "CROWler Agents Configuration parameters",
         "type": "object",
         "properties": {
+          "global_parameters": {
+            "title": "CROWler Agents Global Parameters",
+            "description": "This is the global parameters that the CROWler will pass to each agent in this batch load.",
+            "type": "object",
+            "properties": {
+            },
+            "additionalProperties": true
+          },
           "path": {
             "title": "CROWler Agents load paths",
             "description": "This is the path that the CROWler will use to fetch the yaml or json file that defines one or more agents. You can use wildcard to fetch multiple files. for example './agents/*.yaml'.",
