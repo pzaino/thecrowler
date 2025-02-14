@@ -29,7 +29,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
 
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const (
@@ -504,7 +504,7 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 
 // detectTechnologiesWithPlugins runs plugins in the browser and collects the results
 // to detect technologies
-func detectTechnologiesWithPlugins(wd *selenium.WebDriver, re *ruleset.RuleEngine, plugins *map[string][]ruleset.PluginCall, detectedTech *map[string]detectionEntityDetails) {
+func detectTechnologiesWithPlugins(wd *vdi.WebDriver, re *ruleset.RuleEngine, plugins *map[string][]ruleset.PluginCall, detectedTech *map[string]detectionEntityDetails) {
 	// Iterate through all the plugins and check for possible technologies
 	for ObjName := range *plugins {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running plugins for: %s", ObjName)

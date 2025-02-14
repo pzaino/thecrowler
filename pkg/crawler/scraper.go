@@ -32,13 +32,13 @@ import (
 	"github.com/evanw/esbuild/pkg/api"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 
 	"golang.org/x/net/html"
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
-func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.WebDriver) (map[string]interface{}, error) {
+func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDriver) (map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
@@ -156,7 +156,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *selenium.Web
 }
 
 // extractJSFiles extracts the JavaScript files from the current page.
-func extractJSFiles(wd *selenium.WebDriver) []CollectedScript {
+func extractJSFiles(wd *vdi.WebDriver) []CollectedScript {
 	var jsFiles []CollectedScript
 
 	const script = `
@@ -302,9 +302,9 @@ func lintScript(scriptContent string) []string {
 }
 
 // extractContent extracts the content from the provided document using the provided CSS selector.
-func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Selector, all bool) []interface{} {
+func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector, all bool) []interface{} {
 	var results []interface{}
-	var elements []selenium.WebElement
+	var elements []vdi.WebElement
 	var err error
 	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
 
@@ -375,7 +375,7 @@ func extractContent(ctx *ProcessContext, wd *selenium.WebDriver, selector rs.Sel
 
 func extractDataFromElement(_ *ProcessContext, item interface{}, selector rs.Selector) []string {
 	// Check if item is a WebElement
-	tmp1, ok := item.(selenium.WebElement)
+	tmp1, ok := item.(vdi.WebElement)
 	var tmp2 *goquery.Selection
 	if !ok {
 		tmp1 = nil
@@ -575,7 +575,7 @@ func fallbackExtractByRegex(content string, pattern string, all bool) []string {
 	return []string{}
 }
 
-func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector string) []interface{} {
+func extractByPlugin(ctx *ProcessContext, wd *vdi.WebDriver, selector string) []interface{} {
 	// Retrieve the JS plugin
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(selector)
 	if !exists {
@@ -623,7 +623,7 @@ func extractByPlugin(ctx *ProcessContext, wd *selenium.WebDriver, selector strin
 }
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
-func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, webPage *selenium.WebDriver) (map[string]interface{}, error) {
+func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, webPage *vdi.WebDriver) (map[string]interface{}, error) {
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 

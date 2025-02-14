@@ -27,7 +27,7 @@ import (
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 // Pars type to pass parameters to the goroutine
@@ -35,7 +35,7 @@ type Pars struct {
 	WG      *sync.WaitGroup
 	DB      cdb.Handler
 	Src     cdb.Source
-	Sel     *chan SeleniumInstance
+	Sel     *chan vdi.SeleniumInstance
 	SelIdx  int
 	RE      *rules.RuleEngine
 	Sources *[]cdb.Source
@@ -67,13 +67,6 @@ type Status struct {
 	HTTPInfoRunning int // Flag to check if HTTP info is already gathered
 	PipelineRunning int // Flag to check if site info is already gathered
 	CrawlingRunning int // Flag to check if crawling is still running
-}
-
-// SeleniumInstance holds a Selenium service and its configuration
-type SeleniumInstance struct {
-	Service *selenium.Service
-	Config  cfg.Selenium
-	Mutex   *sync.Mutex
 }
 
 // MetaTag represents a single meta tag, including its name and content.

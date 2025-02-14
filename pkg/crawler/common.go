@@ -28,44 +28,44 @@ import (
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 	"golang.org/x/net/html"
 )
 
 // FindElementByType finds an element by the provided selector type
 // and returns it if found, otherwise it returns an error.
-func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rules.Selector) (selenium.WebElement, error) {
-	var elements []selenium.WebElement
+func FindElementByType(ctx *ProcessContext, wd *vdi.WebDriver, selector rules.Selector) (vdi.WebElement, error) {
+	var elements []vdi.WebElement
 	var err error
 	selectorType := strings.TrimSpace(selector.SelectorType)
 	switch strings.ToLower(selectorType) {
 	case strCSS:
-		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByCSSSelector, selector.Selector)
 	case "id":
-		elements, err = (*wd).FindElements(selenium.ByID, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByID, selector.Selector)
 	case strName:
-		elements, err = (*wd).FindElements(selenium.ByName, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByName, selector.Selector)
 	case strLinkText1, strLinkText2:
-		elements, err = (*wd).FindElements(selenium.ByLinkText, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByLinkText, selector.Selector)
 	case strPartialLinkText1, strPartialLinkText2:
-		elements, err = (*wd).FindElements(selenium.ByPartialLinkText, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByPartialLinkText, selector.Selector)
 	case strTagName1, strTagName2, strTagName3, strTagName4:
-		elements, err = (*wd).FindElements(selenium.ByTagName, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByTagName, selector.Selector)
 	case strClassName1, strClassName2, strClassName3:
-		elements, err = (*wd).FindElements(selenium.ByClassName, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByClassName, selector.Selector)
 	case strJSPath:
 		js := fmt.Sprintf("return document.querySelector(\"%s\");", selector.Selector)
 		res, err := (*wd).ExecuteScript(js, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error executing JavaScript: %v", err)
 		}
-		if element, ok := res.(selenium.WebElement); ok {
+		if element, ok := res.(vdi.WebElement); ok {
 			elements = append(elements, element)
 		} else {
 			return nil, fmt.Errorf("no element found for JS Path: %s", selector.Selector)
 		}
 	case strXPath:
-		elements, err = (*wd).FindElements(selenium.ByXPATH, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByXPATH, selector.Selector)
 	default:
 		return nil, fmt.Errorf("unsupported selector type: %s", selectorType)
 	}
@@ -74,7 +74,7 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 	}
 
 	// Check for the Value if provided
-	var element selenium.WebElement
+	var element vdi.WebElement
 	for _, e := range elements {
 		matchL2 := false
 		if strings.TrimSpace(selector.Attribute.Name) != "" {
@@ -118,32 +118,32 @@ func FindElementByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rul
 
 // FindElementsByType finds all elements by the provided selector type
 // and returns them, otherwise it returns an error.
-func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector rules.Selector) ([]selenium.WebElement, error) {
-	var elements []selenium.WebElement
+func FindElementsByType(ctx *ProcessContext, wd *vdi.WebDriver, selector rules.Selector) ([]vdi.WebElement, error) {
+	var elements []vdi.WebElement
 	var err error
 
 	switch strings.ToLower(strings.TrimSpace(selector.SelectorType)) {
 	case strCSS:
-		elements, err = (*wd).FindElements(selenium.ByCSSSelector, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByCSSSelector, selector.Selector)
 	case "id":
-		elements, err = (*wd).FindElements(selenium.ByID, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByID, selector.Selector)
 	case strName:
-		elements, err = (*wd).FindElements(selenium.ByName, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByName, selector.Selector)
 	case strLinkText1, strLinkText2:
-		elements, err = (*wd).FindElements(selenium.ByLinkText, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByLinkText, selector.Selector)
 	case strPartialLinkText1, strPartialLinkText2:
-		elements, err = (*wd).FindElements(selenium.ByPartialLinkText, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByPartialLinkText, selector.Selector)
 	case strTagName1, strTagName2, strTagName3, strTagName4:
-		elements, err = (*wd).FindElements(selenium.ByTagName, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByTagName, selector.Selector)
 	case strClassName1, strClassName2, strClassName3:
-		elements, err = (*wd).FindElements(selenium.ByClassName, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByClassName, selector.Selector)
 	case strJSPath:
 		js := fmt.Sprintf("return document.querySelector(\"%s\");", selector.Selector)
 		res, err := (*wd).ExecuteScript(js, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error executing JavaScript: %v", err)
 		}
-		if element, ok := res.(selenium.WebElement); ok {
+		if element, ok := res.(vdi.WebElement); ok {
 			elements = append(elements, element)
 		} else {
 			return nil, fmt.Errorf("no element found for JS Path: %s", selector.Selector)
@@ -162,11 +162,11 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 		}
 		// result should contain the elements, but it's an interface{} so we need to convert it
 		var ok bool
-		if elements, ok = result.([]selenium.WebElement); !ok {
+		if elements, ok = result.([]vdi.WebElement); !ok {
 			return nil, fmt.Errorf("plugin did not return a list of elements")
 		}
 	case strXPath:
-		elements, err = (*wd).FindElements(selenium.ByXPATH, selector.Selector)
+		elements, err = (*wd).FindElements(vdi.ByXPATH, selector.Selector)
 	default:
 		return nil, fmt.Errorf("unsupported selector type: %s", selector.SelectorType)
 	}
@@ -218,7 +218,7 @@ func FindElementsByType(ctx *ProcessContext, wd *selenium.WebDriver, selector ru
 func matchValue(ctx *ProcessContext, item interface{}, selector rules.Selector) bool {
 	var wdfText string
 	var err error
-	if tmp1, ok := item.(selenium.WebElement); ok { // Check if the wdf is a WebElement
+	if tmp1, ok := item.(vdi.WebElement); ok { // Check if the wdf is a WebElement
 		// Get the element Text
 		wdfText, err = tmp1.Text()
 		if err != nil {
@@ -275,7 +275,7 @@ func matchValue(ctx *ProcessContext, item interface{}, selector rules.Selector) 
 }
 
 // WaitForCondition waits for a condition to be met before continuing.
-func WaitForCondition(ctx *ProcessContext, wd *selenium.WebDriver, r rs.WaitCondition) error {
+func WaitForCondition(ctx *ProcessContext, wd *vdi.WebDriver, r rs.WaitCondition) error {
 	// Execute the wait condition
 	switch strings.ToLower(strings.TrimSpace(r.ConditionType)) {
 	case "element":

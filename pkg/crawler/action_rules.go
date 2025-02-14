@@ -24,7 +24,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 	errFailedToGetLoc = "failed to get element location: %v"
 )
 
-func processActionRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
+func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Action rules...")
 	// Run Action Rules if any
 	if ctx.source.Config != nil {
@@ -53,7 +53,7 @@ func processActionRules(wd *selenium.WebDriver, ctx *ProcessContext, url string)
 
 }
 
-func processURLRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
+func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 	// Find all the rulesets that match the URL
 	rsl, err := ctx.re.GetAllRulesetByURL(url)
 	if err == nil && len(rsl) != 0 {
@@ -83,7 +83,7 @@ func processURLRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) {
 }
 
 func executeActionRules(ctx *ProcessContext,
-	rules []rules.ActionRule, wd *selenium.WebDriver) {
+	rules []rules.ActionRule, wd *vdi.WebDriver) {
 	// Extract each rule and execute it
 	for _, r := range rules {
 		executeRule(ctx, &r, wd)
@@ -91,7 +91,7 @@ func executeActionRules(ctx *ProcessContext,
 	}
 }
 
-func executeRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) {
+func executeRule(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) {
 	// Execute the rule
 	err := executeActionRule(ctx, r, wd)
 	if err != nil {
@@ -117,7 +117,7 @@ func executeRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDrive
 	}
 }
 
-func executeActionPostProcessingStep(ctx *ProcessContext, pp rules.PostProcessingStep, wd *selenium.WebDriver) {
+func executeActionPostProcessingStep(ctx *ProcessContext, pp rules.PostProcessingStep, wd *vdi.WebDriver) {
 	// Execute the post processing step
 	if pp.Type == "collect_cookies" {
 		cookies, err := retrieveCookies(wd)
@@ -135,7 +135,7 @@ func executeActionPostProcessingStep(ctx *ProcessContext, pp rules.PostProcessin
 }
 
 // executeActionRule executes a single ActionRule
-func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
 		for _, wc := range r.WaitConditions {
@@ -195,11 +195,11 @@ func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.We
 	return nil
 }
 
-func executeActionNavigateToURL(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionNavigateToURL(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	return (*wd).Get(r.GetValue())
 }
 
-func executeActionClickAndHold(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionClickAndHold(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
@@ -235,8 +235,8 @@ func executeActionClickAndHold(ctx *ProcessContext, r *rules.ActionRule, wd *sel
 	return err
 }
 
-func executeActionRelease(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
-	var element selenium.WebElement
+func executeActionRelease(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
+	var element vdi.WebElement
 	if r.Selectors != nil {
 		element, _, _ = findElementBySelectorType(ctx, wd, r.Selectors)
 	}
@@ -280,7 +280,7 @@ func executeActionRelease(ctx *ProcessContext, r *rules.ActionRule, wd *selenium
 	return err
 }
 
-func executeActionClear(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionClear(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
@@ -293,7 +293,7 @@ func executeActionClear(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 // r.Value contains the filename of the screenshot and the max height of the screenshot
 // (optional, if not provided the screenshot will be taken of the entire page)
 // rValue syntax is: "maxHeight,fileName"
-func executeActionScreenshot(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionScreenshot(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	// Check if the rule contains also a max height
 	val := r.GetValue()
 	hVal := ""
@@ -311,31 +311,31 @@ func executeActionScreenshot(r *rules.ActionRule, wd *selenium.WebDriver) error 
 	return err
 }
 
-func executeActionKeyDown(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionKeyDown(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	return (*wd).KeyDown(r.Value)
 }
 
-func executeActionKeyUp(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionKeyUp(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	return (*wd).KeyUp(r.Value)
 }
 
-func executeActionMouseHover(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionMouseHover(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	return executeMoveToElement(ctx, r, wd)
 }
 
-func executeActionForward(wd *selenium.WebDriver) error {
+func executeActionForward(wd *vdi.WebDriver) error {
 	return (*wd).Forward()
 }
 
-func executeActionBack(wd *selenium.WebDriver) error {
+func executeActionBack(wd *vdi.WebDriver) error {
 	return (*wd).Back()
 }
 
-func executeActionRefresh(wd *selenium.WebDriver) error {
+func executeActionRefresh(wd *vdi.WebDriver) error {
 	return (*wd).Refresh()
 }
 
-func executeActionSwitchFrame(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionSwitchFrame(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
@@ -343,12 +343,12 @@ func executeActionSwitchFrame(ctx *ProcessContext, r *rules.ActionRule, wd *sele
 	return (*wd).SwitchFrame(wdf)
 }
 
-func executeActionSwitchWindow(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionSwitchWindow(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	return (*wd).SwitchWindow(r.Value)
 }
 
 // executeActionScrollToElement is responsible for executing a "scroll to element" action
-func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
@@ -435,7 +435,7 @@ func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *
 	return err
 }
 
-func executeActionScrollByAmount(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionScrollByAmount(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	y := cmn.StringToInt(r.Value)
 	scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
 	_, err := (*wd).ExecuteScript(scrollScript, nil)
@@ -443,7 +443,7 @@ func executeActionScrollByAmount(r *rules.ActionRule, wd *selenium.WebDriver) er
 }
 
 // executeActionClick is responsible for executing a "click" action
-func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver, button int) error {
+func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver, button int) error {
 	var err error
 
 	// Find the element
@@ -549,7 +549,7 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 	return err
 }
 
-func executeMoveToElement(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeMoveToElement(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
 		return err
@@ -629,7 +629,7 @@ func executeMoveToElement(ctx *ProcessContext, r *rules.ActionRule, wd *selenium
 }
 
 // executeActionScroll is responsible for executing a "scroll" action
-func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionScroll(r *rules.ActionRule, wd *vdi.WebDriver) error {
 	// Get Selectors list
 	value := r.Value
 
@@ -679,7 +679,7 @@ func executeActionScroll(r *rules.ActionRule, wd *selenium.WebDriver) error {
 }
 
 // executeActionJS is responsible for executing a "execute_javascript" action
-func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	for _, selector := range r.Selectors {
 		if selector.SelectorType == "plugin_call" {
 			// retrieve the JavaScript from the plugins registry using the value as the key
@@ -709,7 +709,7 @@ func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebD
 // clicks (generating a system level event) on it, and then inputs
 // the text using Rbee. 'cause that's what us human do and tools like
 // Selenium don't.
-func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.WebDriver) error {
+func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	var err error
 
 	// Find the element
@@ -821,8 +821,8 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *selenium.W
 
 // findElementBySelectorType is responsible for finding an element in the WebDriver
 // using the appropriate selector type. It returns the first element found and an error.
-func findElementBySelectorType(ctx *ProcessContext, wd *selenium.WebDriver, selectors []rules.Selector) (selenium.WebElement, rules.Selector, error) {
-	var wdf selenium.WebElement
+func findElementBySelectorType(ctx *ProcessContext, wd *vdi.WebDriver, selectors []rules.Selector) (vdi.WebElement, rules.Selector, error) {
+	var wdf vdi.WebElement
 	var err error
 	var selector rules.Selector
 	for _, selector = range selectors {
@@ -858,7 +858,7 @@ func DefaultActionConfig(url string) cfg.SourceConfig {
 	}
 }
 
-func runDefaultActionRules(wd *selenium.WebDriver, ctx *ProcessContext) {
+func runDefaultActionRules(wd *vdi.WebDriver, ctx *ProcessContext) {
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default action rules...")
 
@@ -916,14 +916,14 @@ func checkActionPreConditions(conditions cfg.Condition, url string) bool {
 // checkActionConditions checks all types of conditions: Action and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
-func checkActionConditions(ctx *ProcessContext, conditions map[string]interface{}, wd *selenium.WebDriver) bool {
+func checkActionConditions(ctx *ProcessContext, conditions map[string]interface{}, wd *vdi.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
 	if len(conditions) > 0 {
 		// Check if the page contains a specific element
 		if _, ok := conditions["element"]; ok {
 			// Check if the element is present
-			_, err := (*wd).FindElement(selenium.ByCSSSelector, conditions["element"].(string))
+			_, err := (*wd).FindElement(vdi.ByCSSSelector, conditions["element"].(string))
 			if err != nil {
 				canProceed = false
 			}
@@ -968,7 +968,7 @@ func checkActionConditions(ctx *ProcessContext, conditions map[string]interface{
 }
 
 // executePlannedRules executes the rules in the execution plan
-func executePlannedRules(wd *selenium.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
+func executePlannedRules(wd *vdi.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
 	// Execute the rules in the execution plan
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rules...")
 	// Get the rule
@@ -980,7 +980,7 @@ func executePlannedRules(wd *selenium.WebDriver, ctx *ProcessContext, planned cf
 	}
 }
 
-func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *ProcessContext) {
+func executeActionRuleByName(ruleName string, wd *vdi.WebDriver, ctx *ProcessContext) {
 	rule, err := ctx.re.GetActionRuleByName(ruleName)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "getting action rule: %v", err)
@@ -1006,7 +1006,7 @@ func executeActionRuleByName(ruleName string, wd *selenium.WebDriver, ctx *Proce
 }
 
 // executePlannedRuleGroups executes the rule groups in the execution plan
-func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
+func executePlannedRuleGroups(wd *vdi.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
 	// Execute the rule groups in the execution plan
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rule groups...")
 	// Get the rule group
@@ -1026,7 +1026,7 @@ func executePlannedRuleGroups(wd *selenium.WebDriver, ctx *ProcessContext, plann
 }
 
 // executePlannedRulesets executes the rulesets in the execution plan
-func executePlannedRulesets(wd *selenium.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
+func executePlannedRulesets(wd *vdi.WebDriver, ctx *ProcessContext, planned cfg.ExecutionPlanItem) {
 	// Execute the rulesets in the execution plan
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing planned rulesets...")
 	// Get the ruleset
@@ -1047,7 +1047,7 @@ func executePlannedRulesets(wd *selenium.WebDriver, ctx *ProcessContext, planned
 }
 
 // Retrieve cookies after an action rule has been executed
-func retrieveCookies(wd *selenium.WebDriver) (map[string]interface{}, error) {
+func retrieveCookies(wd *vdi.WebDriver) (map[string]interface{}, error) {
 	cookies, err := (*wd).GetCookies()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "retrieving cookies: %v", err)

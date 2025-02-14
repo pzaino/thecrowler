@@ -30,11 +30,11 @@ import (
 	"time"
 
 	"github.com/robertkrimen/otto"
-	"github.com/tebeka/selenium"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const (
@@ -354,14 +354,14 @@ func NewJSPlugin(script string) *JSPlugin {
 }
 
 // Execute executes the JS plugin
-func (p *JSPlugin) Execute(wd *selenium.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
 	if p.PType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
 	return execEnginePlugin(p, timeout, params, db)
 }
 
-func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *selenium.WebDriver) (map[string]interface{}, error) {
+func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *vdi.WebDriver) (map[string]interface{}, error) {
 	// Consts
 	const (
 		errMsg01 = "Error getting result from JS plugin: %v"

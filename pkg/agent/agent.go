@@ -27,7 +27,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const (
@@ -710,7 +710,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	if !ok {
 		dbHandler = nil
 	}
-	wd, ok := config["vdi_hook"].(*selenium.WebDriver)
+	wd, ok := config["vdi_hook"].(*vdi.WebDriver)
 	if !ok {
 		wd = nil
 	}
