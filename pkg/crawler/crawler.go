@@ -1603,7 +1603,7 @@ func addXHRHook(wd vdi.WebDriver) error {
 
 			console.log("[XCAP] Hook activated.");
 
-			// ✅ Obfuscate function names
+			// Obfuscate function names
 			const _originalFetch = window.fetch;
 			window.fetch = async function(..._args) {
 				const [_url, _options] = _args;
@@ -1637,7 +1637,7 @@ func addXHRHook(wd vdi.WebDriver) error {
 				}
 			};
 
-			// ✅ Obfuscate XMLHttpRequest Hook
+			// Obfuscate XMLHttpRequest Hook
 			const _originalXHR = window.XMLHttpRequest;
 			window.XMLHttpRequest = function() {
 				const _xhr = new _originalXHR();
@@ -1697,7 +1697,7 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 		return err
 	}
 
-	// ✅ Disable caching to prevent early response disposal
+	// Disable caching to prevent early response disposal
 	_, err = wd.ExecuteChromeDPCommand("Network.setCacheDisabled", map[string]interface{}{
 		"cacheDisabled": true,
 	})
@@ -1737,14 +1737,14 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 		}
 	*/
 
-	// ✅ Enable Log domain
+	// Enable Log domain
 	_, err = wd.ExecuteChromeDPCommand("Log.enable", map[string]interface{}{})
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Log domain: %v", err)
 		return err
 	}
 
-	// ✅ Enable Page Events (for iframe tracking)
+	// Enable Page Events (for iframe tracking)
 	_, err = wd.ExecuteChromeDPCommand("Page.enable", map[string]interface{}{})
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Page domain: %v", err)
@@ -1762,11 +1762,11 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 	for {
 		select {
 		case <-ctx.Done():
-			// ✅ Stop listening when context is cancelled
+			// Stop listening when context is cancelled
 			cmn.DebugMsg(cmn.DbgLvlDebug5, "Stopping CDP event listener.")
 			return
 		default:
-			// ✅ Fetch CDP Events
+			// Fetch CDP Events
 			//events, err := wd.ExecuteChromeDPCommand("Log.entryAdded", map[string]interface{}{})
 			logs, err := wd.Log("performance")
 			if err != nil {
@@ -1774,7 +1774,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 				continue
 			}
 
-			// ✅ Process Each Event
+			// Process Each Event
 			for _, entry := range logs {
 				var logEntry map[string]interface{}
 				if err := json.Unmarshal([]byte(entry.Message), &logEntry); err != nil {
@@ -1792,7 +1792,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 				}
 
 				switch method {
-				// ✅ Capture Request Events
+				// Capture Request Events
 				case "Network.requestWillBeSent":
 					params := message["params"].(map[string]interface{})
 					request := params["request"].(map[string]interface{})
@@ -1806,7 +1806,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 						continue
 					}
 
-					// ✅ Store Request Data
+					// Store Request Data
 					*collectedRequests = append(*collectedRequests, map[string]interface{}{
 						"object_type":  "request",
 						"requestId":    requestID,
@@ -1817,7 +1817,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 						"request_body": postDataDecoded,
 					})
 
-				// ✅ Capture Response Metadata
+				// Capture Response Metadata
 				case "Network.responseReceived":
 					params := message["params"].(map[string]interface{})
 					response := params["response"].(map[string]interface{})
@@ -1833,7 +1833,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 						continue
 					}
 
-					// ✅ Store Response Metadata
+					// Store Response Metadata
 					for i := range *collectedRequests {
 						if (*collectedRequests)[i]["requestId"] == requestID {
 							(*collectedRequests)[i]["url"] = url
@@ -1843,22 +1843,22 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 						}
 					}
 
-				// ✅ Capture Response Body When Fully Loaded
+				// Capture Response Body When Fully Loaded
 				case "Network.loadingFinished":
 					params := message["params"].(map[string]interface{})
 					requestID, _ := params["requestId"].(string)
 
-					// ✅ Fetch Response Body
+					// Fetch Response Body
 					responseBody, isBase64 := fetchResponseBody(wd, requestID)
 					if responseBody == "" {
 						cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to get response body for requestId %s: %v", requestID, err)
 						continue
 					}
 
-					// ✅ Decode Response Body (if Base64)
+					// Decode Response Body (if Base64)
 					decodedBody := decodeBodyContent(responseBody, isBase64)
 
-					// ✅ Store Response Body
+					// Store Response Body
 					for i := range *collectedRequests {
 						if (*collectedRequests)[i]["requestId"] == requestID {
 							(*collectedRequests)[i]["response_body"] = decodedBody
@@ -1868,7 +1868,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 				}
 			}
 
-			time.Sleep(250 * time.Millisecond) // ✅ Prevents 100% CPU usage
+			time.Sleep(250 * time.Millisecond) // Prevents 100% CPU usage
 		}
 	}
 }
@@ -1896,16 +1896,16 @@ func isJavaScript(contentType string) bool {
 }
 
 func startCDPLogging(wd vdi.WebDriver) (context.CancelFunc, *[]map[string]interface{}) {
-	// ✅ Store Collected Data
+	// Store Collected Data
 	var collectedRequests []map[string]interface{}
 
-	// ✅ Create a Context with a Cancel Function
+	// Create a Context with a Cancel Function
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// ✅ Start Listening (Runs in a Goroutine)
+	// Start Listening (Runs in a Goroutine)
 	go listenForCDPEvents(ctx, wd, &collectedRequests)
 
-	// ✅ Return cancel function & collected data reference
+	// Return cancel function & collected data reference
 	return cancel, &collectedRequests
 }
 
@@ -1946,7 +1946,7 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 				respStatus, _ := resp["status"].(float64)
 				responseBody, _ := resp["response_body"].(string)
 
-				// ✅ Match method, status, and normalized URL
+				// Match method, status, and normalized URL
 				if method == respMethod && status == respStatus && cmn.NormalizeURL(url) == cmn.NormalizeURL(respURL) {
 					// Merge request with response
 					logEntry["response_body"] = responseBody
@@ -1974,7 +1974,7 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 	return matchedXHR, nil
 }
 
-// ✅ **Collect All Requests**
+// Collect All Requests
 func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 	logs, err := wd.Log("performance")
 	if err != nil {
@@ -1986,7 +1986,7 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 	var collectedResponses []map[string]interface{}
 	responseBodies := make(map[string]interface{}) // Store response metadata
 
-	// ✅ Process logs
+	// Process logs
 	for _, entry := range logs {
 		var logEntry map[string]interface{}
 		if err := json.Unmarshal([]byte(entry.Message), &logEntry); err != nil {
@@ -1994,7 +1994,7 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 			continue
 		}
 
-		// ✅ Extract method
+		// Extract method
 		message, ok := logEntry["message"].(map[string]interface{})
 		if !ok {
 			continue
@@ -2004,7 +2004,7 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 			continue
 		}
 
-		// ✅ **Capture Requests**
+		// Capture Requests
 		if method == "Network.requestWillBeSent" {
 			request := extractRequest(message)
 			if request == nil {
@@ -2018,30 +2018,30 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 			responseBodies[reqID] = request
 		}
 
-		// ✅ **Capture Responses (Metadata Only)**
+		// Capture Responses (Metadata Only)
 		if method == "Network.responseReceived" {
 			storeResponseMetadata(message, responseBodies, &collectedResponses)
 		}
 	}
 
-	// ✅ **Fetch Response Bodies & Attach Them**
+	// Fetch Response Bodies & Attach Them
 	collectResponses(wd, responseBodies)
 
-	// ✅ Collect XHR logs
+	// Collect XHR logs
 	xhrLogs, err := collectXHRLogs(wd, collectedResponses)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to collect XHR logs: %v", err)
 		return collectedRequests, err
 	}
 
-	// ✅ Append XHR logs to the network logs
+	// Append XHR logs to the network logs
 	collectedRequests = append(collectedRequests, xhrLogs...)
 
-	// ✅ Return all collected requests (with response bodies inside)
+	// Return all collected requests (with response bodies inside)
 	return collectedRequests, nil
 }
 
-// ✅ **Extract Request Data**
+// Extract Request Data
 func extractRequest(message map[string]interface{}) map[string]interface{} {
 	params := message["params"].(map[string]interface{})
 	request := params["request"].(map[string]interface{})
@@ -2053,7 +2053,7 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 	postData, _ := request["postData"].(string)
 	postDataDecoded := decodeBodyContent(postData, false)
 
-	// ✅ Ignore non-relevant request types (CSS, images, etc.)
+	// Ignore non-relevant request types (CSS, images, etc.)
 	urlNormalized := strings.ToLower(strings.TrimSpace(url))
 	if strings.HasSuffix(urlNormalized, ".js") || strings.HasSuffix(urlNormalized, ".js?") ||
 		strings.HasSuffix(urlNormalized, ".css") || strings.HasSuffix(urlNormalized, ".css?") ||
@@ -2074,11 +2074,11 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 		"method":              methodType,
 		"headers":             headers,
 		"request_body":        postDataDecoded,
-		"response_body":       "", // ✅ Placeholder for response
+		"response_body":       "", // Placeholder for response
 	}
 }
 
-// ✅ **Store Response Metadata (For Later Retrieval)**
+// Store Response Metadata (For Later Retrieval)
 func storeResponseMetadata(message map[string]interface{}, responseBodies map[string]interface{}, collectedResponses *[]map[string]interface{}) {
 	params := message["params"].(map[string]interface{})
 	response, _ := params["response"].(map[string]interface{})
@@ -2101,9 +2101,9 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 		"response_body": respBody,
 	})
 
-	// ✅ Check if we already have a request stored for this response
+	// Check if we already have a request stored for this response
 	if request, exists := responseBodies[requestID]; exists {
-		// ✅ Ensure it's JSON, HTML, or Form Data
+		// Ensure it's JSON, HTML, or Form Data
 		/*
 			if strings.Contains(strings.ToLower(contentType), "application/json") ||
 				strings.Contains(strings.ToLower(contentType), "text/html") ||
@@ -2115,30 +2115,30 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 	}
 }
 
-// ✅ **Fetch & Attach Response Bodies**
+// Fetch & Attach Response Bodies
 func collectResponses(wd vdi.WebDriver, responseBodies map[string]interface{}) {
 	for requestID, request := range responseBodies {
 		time.Sleep(100 * time.Millisecond) // Small delay
 
-		// ✅ Fetch Response Body
+		// Fetch Response Body
 		body, isBase64 := fetchResponseBody(wd, requestID)
 
-		// ✅ Decode if necessary
+		// Decode if necessary
 		decodedBody := decodeBodyContent(body, isBase64)
 
-		// ✅ Store response body inside the original request
+		// Store response body inside the original request
 		requestMap := request.(map[string]interface{})
 		requestMap["response_body"] = decodedBody
 	}
 }
 
-// ✅ **Fetch Response Body from ChromeDP**
+// Fetch Response Body from ChromeDP
 func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 	responseBodyArgs := map[string]interface{}{
 		"requestId": requestID,
 	}
 
-	// ✅ Try fetching response body (Retry if empty)
+	// Try fetching response body (Retry if empty)
 	var responseInf interface{}
 	var err error
 	for i := 0; i < 5; i++ { // Retry up to 3 times
@@ -2149,7 +2149,7 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 		time.Sleep(200 * time.Millisecond) // Wait before retrying
 	}
 
-	// ✅ Convert response to map
+	// Convert response to map
 	bodyData, ok := responseInf.(map[string]interface{})
 	if !ok || bodyData["body"] == nil {
 		return "", false
@@ -2164,21 +2164,20 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 		return "", false
 	}
 
-	// ✅ Check if it's Base64 encoded
+	// Check if it's Base64 encoded
 	bodyText, _ := bodyData["body"].(string)
 	isBase64, _ := bodyData["base64Encoded"].(bool)
 
 	return bodyText, isBase64
 }
 
-// ✅ **Decode Base64 & Parse JSON Responses**
+// Decode Base64 & Parse JSON Responses
 func decodeBodyContent(body string, isBase64 bool) interface{} {
-	// ✅ Return early if empty
 	if strings.TrimSpace(body) == "" {
-		return body // ✅ Return early if empty
+		return body
 	}
 
-	// ✅ Decode Base64 if needed
+	// Decode Base64 if needed
 	if isBase64 {
 		decoded, err := base64.StdEncoding.DecodeString(body)
 		if err == nil {
@@ -2191,16 +2190,16 @@ func decodeBodyContent(body string, isBase64 bool) interface{} {
 	// Create a copy of body we can manipulate
 	bodyStr := strings.TrimSpace(body)
 
-	// ✅ Strip potential anti-XSSI prefixes
+	// Strip potential anti-XSSI prefixes
 	bodyStr = strings.TrimPrefix(bodyStr, "for (;;);")
 
-	// ✅ Attempt to parse as JSON (even without Content-Type check)
+	// Attempt to parse as JSON (even without Content-Type check)
 	var jsonBody map[string]interface{}
 	if err := json.Unmarshal([]byte(bodyStr), &jsonBody); err == nil {
-		return jsonBody // ✅ JSON detected, store as structured object
+		return jsonBody
 	}
 
-	// ✅ Return raw body if not JSON
+	// Return raw body if not JSON
 	return body
 }
 
