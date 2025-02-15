@@ -111,6 +111,11 @@ func TestRuleEngineMarshalJSON(t *testing.T) {
 	}
 
 	expectedJSON := `{
+          "detection_config": {
+            "noise_threshold": 1,
+            "maybe_threshold": 5,
+            "detected_threshold": 10
+          },
           "rulesets": [
             {
               "format_version": "",
@@ -126,6 +131,8 @@ func TestRuleEngineMarshalJSON(t *testing.T) {
 
 	got := strings.ReplaceAll(string(jsonData), " ", "")
 	want := strings.ReplaceAll(expectedJSON, " ", "")
+	got = strings.ReplaceAll(got, "\n", "")
+	want = strings.ReplaceAll(want, "\n", "")
 	if got != want {
 		t.Errorf("Expected JSON: %s, got: %s", expectedJSON, string(jsonData))
 	}
@@ -1597,5 +1604,51 @@ func TestFindRulesForSite(t *testing.T) {
 	}
 	if ruleset != expectedRuleset {
 		t.Errorf("Expected ruleset to be nil, but got %v", ruleset)
+	}
+}
+
+func TestGetAllRulesetByURL(t *testing.T) {
+	re := &RuleEngine{
+		Rulesets: []Ruleset{
+			{
+				Name: "http://example.com",
+			},
+			{
+				Name: "http://example.org",
+			},
+			{
+				Name: "http://example.com/test",
+			},
+		},
+	}
+
+	// Test case 1: Matching URL
+	url1 := "http://example.com"
+	rulesets1, err := re.GetAllRulesetByURL(url1)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(rulesets1) != 1 {
+		t.Errorf("Expected 1 rulesets, got %d", len(rulesets1))
+	}
+
+	// Test case 2: Non-matching URL
+	url2 := "http://nonexistent.com"
+	rulesets2, err := re.GetAllRulesetByURL(url2)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(rulesets2) != 0 {
+		t.Errorf("Expected 0 rulesets, got %d", len(rulesets2))
+	}
+
+	// Test case 3: Invalid URL
+	url3 := "invalid-url"
+	results, err := re.GetAllRulesetByURL(url3)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("Expected 0 rules, got %d", len(results))
 	}
 }

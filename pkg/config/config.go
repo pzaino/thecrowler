@@ -1623,6 +1623,12 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
 
+	combineCrawlerBasicSettings(dstCfg, srcCfg)
+	combineCrawlerRequestSettings(dstCfg, srcCfg)
+	combineCrawlerCollectSettings(dstCfg, srcCfg)
+}
+
+func combineCrawlerBasicSettings(dstCfg *Crawler, srcCfg map[string]interface{}) {
 	if srcCfg["workers"] != nil {
 		if val, ok := srcCfg["workers"].(float64); ok {
 			dstCfg.Workers = int(val)
@@ -1693,6 +1699,9 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 			dstCfg.ResetCookiesPolicy = val
 		}
 	}
+}
+
+func combineCrawlerRequestSettings(dstCfg *Crawler, srcCfg map[string]interface{}) {
 	if srcCfg["no_third_party_cookies"] != nil {
 		if val, ok := srcCfg["no_third_party_cookies"].(bool); ok {
 			dstCfg.NoThirdPartyCookies = val
@@ -1718,6 +1727,9 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 			dstCfg.CreateEventWhenDone = val
 		}
 	}
+}
+
+func combineCrawlerCollectSettings(dstCfg *Crawler, srcCfg map[string]interface{}) {
 	if srcCfg["collect_html"] != nil {
 		if val, ok := srcCfg["collect_html"].(bool); ok {
 			dstCfg.CollectHTML = val
@@ -1932,6 +1944,11 @@ func combineNINetLookupCfg(dstCfg *NetLookupConfig, srcCfgIface interface{}) {
 func combineNIServiceScoutCfg(dstCfg *ServiceScoutConfig, srcCfgIface interface{}) {
 	srcCfg := srcCfgIface.(map[string]interface{})
 
+	combineNIServiceScoutCfgBasic(dstCfg, srcCfg)
+	combineNIServiceScoutCfgAdvanced(dstCfg, srcCfg)
+}
+
+func combineNIServiceScoutCfgBasic(dstCfg *ServiceScoutConfig, srcCfg map[string]interface{}) {
 	if srcCfg["aggressive_scan"] != nil {
 		if val, ok := srcCfg["aggressive_scan"].(bool); ok {
 			dstCfg.AggressiveScan = val
@@ -2024,6 +2041,9 @@ func combineNIServiceScoutCfg(dstCfg *ServiceScoutConfig, srcCfgIface interface{
 			dstCfg.PingScan = val
 		}
 	}
+}
+
+func combineNIServiceScoutCfgAdvanced(dstCfg *ServiceScoutConfig, srcCfg map[string]interface{}) {
 	if srcCfg["proxies"] != nil {
 		if val, ok := srcCfg["proxies"].([]interface{}); ok {
 			proxies := make([]string, len(val))

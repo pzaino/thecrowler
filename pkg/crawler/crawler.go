@@ -1801,7 +1801,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					headers, _ := request["headers"].(map[string]interface{})
 					methodType, _ := request["method"].(string)
 					postData, _ := request["postData"].(string)
-					postDataDecoded := decodeBodyContent(postData, false)
+					postDataDecoded, detectedType := decodeBodyContent(postData, false)
 					if isStaticFile(url) {
 						continue
 					}
@@ -1815,6 +1815,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 						"method":       methodType,
 						"headers":      headers,
 						"request_body": postDataDecoded,
+						"request_type": detectedType,
 					})
 
 				// Capture Response Metadata
@@ -1856,12 +1857,13 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					}
 
 					// Decode Response Body (if Base64)
-					decodedBody := decodeBodyContent(responseBody, isBase64)
+					decodedBody, detectedType := decodeBodyContent(responseBody, isBase64)
 
 					// Store Response Body
 					for i := range *collectedRequests {
 						if (*collectedRequests)[i]["requestId"] == requestID {
 							(*collectedRequests)[i]["response_body"] = decodedBody
+							(*collectedRequests)[i]["response_type"] = detectedType
 							break
 						}
 					}
@@ -2051,7 +2053,7 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 	contentType, _ := headers["Content-Type"].(string)
 	methodType, _ := request["method"].(string)
 	postData, _ := request["postData"].(string)
-	postDataDecoded := decodeBodyContent(postData, false)
+	postDataDecoded, detectedType := decodeBodyContent(postData, false)
 
 	// Ignore non-relevant request types (CSS, images, etc.)
 	urlNormalized := strings.ToLower(strings.TrimSpace(url))
@@ -2074,7 +2076,9 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 		"method":              methodType,
 		"headers":             headers,
 		"request_body":        postDataDecoded,
+		"request_type":        detectedType,
 		"response_body":       "", // Placeholder for response
+		"response_type":       "", // Placeholder for response
 	}
 }
 
@@ -2124,11 +2128,12 @@ func collectResponses(wd vdi.WebDriver, responseBodies map[string]interface{}) {
 		body, isBase64 := fetchResponseBody(wd, requestID)
 
 		// Decode if necessary
-		decodedBody := decodeBodyContent(body, isBase64)
+		decodedBody, detectedType := decodeBodyContent(body, isBase64)
 
 		// Store response body inside the original request
 		requestMap := request.(map[string]interface{})
 		requestMap["response_body"] = decodedBody
+		requestMap["response_type"] = detectedType
 	}
 }
 
@@ -2172,9 +2177,9 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 }
 
 // Decode Base64 & Parse JSON Responses
-func decodeBodyContent(body string, isBase64 bool) interface{} {
+func decodeBodyContent(body string, isBase64 bool) (interface{}, string) {
 	if strings.TrimSpace(body) == "" {
-		return body
+		return body, "text/plain"
 	}
 
 	// Decode Base64 if needed
@@ -2196,11 +2201,67 @@ func decodeBodyContent(body string, isBase64 bool) interface{} {
 	// Attempt to parse as JSON (even without Content-Type check)
 	var jsonBody map[string]interface{}
 	if err := json.Unmarshal([]byte(bodyStr), &jsonBody); err == nil {
-		return jsonBody
+		jsonBody = deepConvertJSONFields(jsonBody)
+		return jsonBody, "application/json"
+	}
+
+	// ✅ Attempt to parse as HTML
+	if isHTML(body) {
+		return body, "text/html" // ✅ HTML detected
 	}
 
 	// Return raw body if not JSON
-	return body
+	return body, "unknown"
+}
+
+func isHTML(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	return strings.HasPrefix(trimmed, "<!DOCTYPE html") || strings.HasPrefix(trimmed, "<html") || strings.Contains(trimmed, "<head>")
+}
+
+func deepConvertJSONFields(data map[string]interface{}) map[string]interface{} {
+	for key, value := range data {
+		// ✅ If the value is a string, check if it contains JSON
+		if strVal, ok := value.(string); ok {
+			var nestedJSON interface{}
+			if err := json.Unmarshal([]byte(strVal), &nestedJSON); err == nil {
+				// ✅ If parsing succeeds, store the converted JSON structure
+				data[key] = deepConvertJSON(nestedJSON)
+			}
+		} else if nestedMap, ok := value.(map[string]interface{}); ok {
+			// ✅ Recursively process nested maps
+			data[key] = deepConvertJSONFields(nestedMap)
+		} else if nestedArray, ok := value.([]interface{}); ok {
+			// ✅ Recursively process arrays
+			for i, item := range nestedArray {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					nestedArray[i] = deepConvertJSONFields(itemMap)
+				} else if itemStr, ok := item.(string); ok {
+					var arrayJSON interface{}
+					if err := json.Unmarshal([]byte(itemStr), &arrayJSON); err == nil {
+						nestedArray[i] = deepConvertJSON(arrayJSON)
+					}
+				}
+			}
+			data[key] = nestedArray
+		}
+	}
+	return data
+}
+
+// ✅ Helper function to deeply process JSON-converted values
+func deepConvertJSON(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return deepConvertJSONFields(v) // Recursively process nested objects
+	case []interface{}:
+		for i, item := range v {
+			v[i] = deepConvertJSON(item) // Recursively process array elements
+		}
+		return v
+	default:
+		return v // Return the original value if it's not JSON
+	}
 }
 
 // getURLContent is responsible for retrieving the HTML content of a page

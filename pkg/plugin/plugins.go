@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -66,6 +67,34 @@ func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 
 	// Register the plugin
 	reg.Registry[name] = plugin
+
+	// Add the plugin name to the order list
+	reg.Order = append(reg.Order, name)
+}
+
+// Remove removes a registered plugin from the registry
+func (reg *JSPluginRegister) Remove(name string) {
+	// Check if the register is initialized
+	if reg.Registry == nil {
+		return
+	}
+
+	// Check if the name is empty
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+
+	// Remove the plugin
+	delete(reg.Registry, name)
+
+	// Remove the plugin name from the order list
+	for i, n := range reg.Order {
+		if n == name {
+			reg.Order = append(reg.Order[:i], reg.Order[i+1:]...)
+			break
+		}
+	}
 }
 
 // GetPlugin returns a JS plugin
@@ -78,8 +107,14 @@ func (reg *JSPluginRegister) GetPlugin(name string) (JSPlugin, bool) {
 func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin, bool) {
 	plugins := make([]JSPlugin, 0)
 	eventType = strings.ToLower(strings.TrimSpace(eventType))
-	for _, plugin := range reg.Registry {
-		if plugin.EventType == "" || plugin.EventType == none {
+	if eventType == "" {
+		return plugins, false
+	}
+	// Browse the registry in order of registration
+	for i := 0; i < len(reg.Order); i++ {
+		plugin := reg.Registry[reg.Order[i]]
+		if plugin.EventType == "" ||
+			plugin.EventType == none {
 			continue
 		}
 		if plugin.EventType == eventType || plugin.EventType == all {
@@ -93,11 +128,17 @@ func (reg *JSPluginRegister) GetPluginsByEventType(eventType string) ([]JSPlugin
 func (reg *JSPluginRegister) GetPluginsByAgentName(agentName string) ([]JSPlugin, bool) {
 	plugins := make([]JSPlugin, 0)
 	agentName = strings.ToLower(strings.TrimSpace(agentName))
-	for _, plugin := range reg.Registry {
-		if plugin.EventType == "" || plugin.EventType == none {
+	if agentName == "" {
+		return plugins, false
+	}
+	for i := 0; i < len(reg.Order); i++ {
+		plugin := reg.Registry[reg.Order[i]]
+		if plugin.EventType == "" ||
+			plugin.EventType == none {
 			continue
 		}
-		if plugin.EventType == agentName || plugin.EventType == all {
+		if plugin.EventType == agentName ||
+			plugin.EventType == all {
 			plugins = append(plugins, plugin)
 		}
 	}
@@ -1044,6 +1085,40 @@ func addJSAPIConsoleLog(vm *otto.Otto) error {
 	}
 
 	return nil
+}
+
+// NormalizeValues normalizes the values to be exported to JavaScript
+func NormalizeValues(value interface{}) interface{} {
+	switch v := value.(type) {
+	case nil:
+		return []interface{}{} // Ensure nil is treated as an empty slice
+
+	case []interface{}:
+		// Recursively normalize slice elements
+		for i, item := range v {
+			v[i] = NormalizeValues(item)
+		}
+		return v
+
+	case []int, []int64, []float64:
+		// Convert any number slice into a []interface{} slice
+		var ifaceSlice []interface{}
+		s := reflect.ValueOf(value)
+		for i := 0; i < s.Len(); i++ {
+			ifaceSlice = append(ifaceSlice, NormalizeValues(s.Index(i).Interface()))
+		}
+		return ifaceSlice
+
+	case map[string]interface{}:
+		// Recursively normalize maps
+		for key, item := range v {
+			v[key] = NormalizeValues(item)
+		}
+		return v
+
+	default:
+		return v
+	}
 }
 
 // Helper function to extract arguments

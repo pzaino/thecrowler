@@ -27,5 +27,6 @@ type JSPlugin struct {
 
 // JSPluginRegister struct to hold the JS plugins
 type JSPluginRegister struct {
-	Registry map[string]JSPlugin
+	Registry map[string]JSPlugin // Registry of JS plugins
+	Order    []string            // Order of the plugins in registration order
 }

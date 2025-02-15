@@ -108,3 +108,25 @@ func TestFuzzingParameterGetPattern(t *testing.T) {
 		t.Errorf("GetPattern() = %v, want %v", got, expected)
 	}
 }
+
+func TestTargetElementGetSelector2(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		expected string
+	}{
+		{"Trim spaces", " #submit ", "#submit"},
+		{"No spaces", "#submit", "#submit"},
+		{"Empty string", " ", ""},
+		{"Special characters", " @submit ", "@submit"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			te := TargetElement{Selector: tt.selector}
+			if got := te.GetSelector(); got != tt.expected {
+				t.Errorf("GetSelector() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}

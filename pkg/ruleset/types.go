@@ -420,7 +420,15 @@ func (e *PluginParams) MarshalJSON() ([]byte, error) {
 
 // ExternalDetection represents a call to an external detection service
 type ExternalDetection struct {
-	Provider string `yaml:"provider"`
+	Name            string            `yaml:"name"`
+	Provider        string            `yaml:"provider"`
+	DetectionParams []DetectionParams `yaml:"detection_params"`
+}
+
+// DetectionParams represents the parameters for an external detection service
+type DetectionParams struct {
+	ParamName  string      `yaml:"param_name"`
+	ParamValue interface{} `yaml:"param_value"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
