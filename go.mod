@@ -3,7 +3,7 @@ module github.com/pzaino/thecrowler
 go 1.23.5
 
 require (
-	github.com/PuerkitoBio/goquery v1.10.1
+	github.com/PuerkitoBio/goquery v1.10.2
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/lib/pq v1.10.9
 	github.com/tebeka/selenium v0.9.9
@@ -23,10 +23,10 @@ require (
 	github.com/evanw/esbuild v0.24.2
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.32.0
+	golang.org/x/crypto v0.33.0
 )
 
-require golang.org/x/sync v0.10.0 // indirect
+require golang.org/x/sync v0.11.0 // indirect
 
 require (
 	github.com/antchfx/xpath v1.3.3 // indirect
@@ -60,13 +60,13 @@ require (
 
 require (
 	github.com/google/go-cmp v0.6.0
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
 )
 
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.34.0
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/net v0.35.0
+	golang.org/x/text v0.22.0 // indirect
 )
