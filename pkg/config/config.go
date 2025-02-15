@@ -210,7 +210,7 @@ func NewConfig() *Config {
 			CollectImages:         false,
 			CollectPerfMetrics:    true,
 			CollectPageEvents:     true,
-			CollectXHR:            true,
+			CollectXHR:            false,
 			CollectLinks:          true,
 			CreateEventWhenDone:   false,
 			MaxRetries:            0,
