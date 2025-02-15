@@ -159,6 +159,26 @@ func TestGetExternalDetections(t *testing.T) {
 	}
 }
 
+func TestHTTPHeaderFieldGetAllValues(t *testing.T) {
+	h := HTTPHeaderField{Value: []string{
+		" application/json ",
+		" text/html ",
+		" text/plain ",
+	}}
+	expected := []string{"application/json", "text/html", "text/plain"}
+	if got := h.GetAllValues(); !equalStringSlices(got, expected) {
+		t.Errorf("GetAllValues() = %v, want %v", got, expected)
+	}
+}
+
+func TestHTTPHeaderFieldGetConfidence(t *testing.T) {
+	h := HTTPHeaderField{Confidence: 0.85}
+	expected := float32(0.85)
+	if got := h.GetConfidence(); got != expected {
+		t.Errorf("GetConfidence() = %v, want %v", got, expected)
+	}
+}
+
 // Helper function to compare two ExternalDetection structs
 func equalExternalDetection(a, b ExternalDetection) bool {
 	if a.Name != b.Name {

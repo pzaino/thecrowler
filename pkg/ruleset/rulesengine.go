@@ -219,8 +219,9 @@ func (re *RuleEngine) ValidateRuleset(ruleset Ruleset) error {
 func (re *RuleEngine) MarshalJSON() ([]byte, error) {
 	// transform the RuleEngine to JSON
 	jsonDocument := map[string]interface{}{
-		"schema":   re.Schema,
-		"rulesets": re.Rulesets,
+		"schema":           re.Schema,
+		"rulesets":         re.Rulesets,
+		"detection_config": re.DetectionConfig,
 	}
 	jsonData, err := json.MarshalIndent(jsonDocument, "", "  ")
 	if err != nil {
