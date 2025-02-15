@@ -682,7 +682,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	rval[StrConfig] = config
 
 	// Extract the Plugin library pointer from the config
-	plugin, ok := config["plugins_register"].(*plg.JSPluginRegister)
+	plugins, ok := config["plugins_register"].(*plg.JSPluginRegister)
 	if !ok {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = "missing 'pluginRegister' in config section"
@@ -696,9 +696,10 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 		rval[StrMessage] = "missing 'plugin_name' in parameters section"
 		return rval, errors.New("missing 'plugin' parameter")
 	}
+	plgName = strings.TrimSpace(plgName)
 
 	// Retrieve the plugin
-	plg, exists := plugin.GetPlugin(plgName)
+	plg, exists := plugins.GetPlugin(plgName)
 	if !exists {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("plugin '%s' not found", plgName)

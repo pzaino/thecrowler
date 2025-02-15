@@ -135,6 +135,7 @@ func LoadPluginsFromConfig(pluginRegistry *JSPluginRegister,
 	// Register the plugins
 	for _, plugin := range plugins {
 		pluginRegistry.Register(plugin.Name, *plugin)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Registered plugin '%s' of type '%s' for events: '%s'", plugin.Name, plugin.PType, plugin.EventType)
 	}
 
 	return nil

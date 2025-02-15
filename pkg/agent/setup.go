@@ -158,6 +158,18 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					// Add the global parameters to the configuration
 					if len(globalParams) > 0 {
 						for i := 0; i < len(agtConfigStorage.Jobs); i++ {
+							for j := 0; j < len(agtConfigStorage.Jobs[i].Steps); j++ {
+								// Check if each Job's step has a params field
+								if _, ok := agtConfigStorage.Jobs[i].Steps[0]["params"]; !ok {
+									// If not, create the "params" key with an empty map[interface{}]interface{}
+									agtConfigStorage.Jobs[i].Steps[0]["params"] = make(map[interface{}]interface{})
+								}
+								// Check if each job's step has a "config" field in params, if not add it
+								if _, ok := agtConfigStorage.Jobs[i].Steps[j]["params"].(map[interface{}]interface{})[StrConfig]; !ok {
+									agtConfigStorage.Jobs[i].Steps[j]["params"].(map[interface{}]interface{})[StrConfig] = make(map[interface{}]interface{})
+								}
+							}
+
 							// Add the global parameters to the configuration
 							for j := 0; j < len(agtConfigStorage.Jobs[i].Steps); j++ {
 								for k, v := range globalParams {
