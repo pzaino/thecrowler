@@ -1,0 +1,81 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "title": "JobConfig Schema",
+    "properties": {
+        "jobs": {
+            "type": "array",
+            "description": "List of jobs in the configuration.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the job."
+                    },
+                    "process": {
+                        "type": "string",
+                        "description": "The process type, either 'serial' or 'parallel'.",
+                        "enum": [
+                            "serial",
+                            "parallel"
+                        ]
+                    },
+                    "trigger_type": {
+                        "type": "string",
+                        "description": "The type of trigger for the job.",
+                        "enum": [
+                            "interval",
+                            "event",
+                            "manual",
+                            "agent"
+                        ]
+                    },
+                    "trigger_name": {
+                        "type": "string",
+                        "description": "The name of the trigger associated with the job."
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "List of steps in the job, each defined by an action and parameters.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "description": "The action to be performed in this step.",
+                                    "enum": [
+                                        "APIRequest",
+                                        "AIInteraction",
+                                        "DBQuery",
+                                        "RunCommand",
+                                        "PluginExecution"
+                                    ]
+                                },
+                                "params": {
+                                    "type": "object",
+                                    "description": "Parameters for the action.",
+                                    "additionalProperties": true
+                                }
+                            },
+                            "required": [
+                                "action",
+                                "params"
+                            ]
+                        }
+                    }
+                },
+                "required": [
+                    "name",
+                    "process",
+                    "trigger_type",
+                    "trigger_name",
+                    "steps"
+                ]
+            }
+        }
+    },
+    "required": [
+        "jobs"
+    ]
+}
