@@ -268,6 +268,23 @@
             "mobile"
           ]
         },
+        "browser_platform": {
+          "title": "CROWler Engine Browser Platform",
+          "description": "This is the browser platform id. The CROWler Engine will use it to select the user-agent string to use to configure the session. For example, 'darwin', 'window', 'random' or 'linux'.",
+          "type": "string",
+          "enum": [
+            "darwin",
+            "windows",
+            "linux",
+            "random",
+            ""
+          ],
+          "examples": [
+            "darwin",
+            "windows",
+            "linux"
+          ]
+        },
         "interval": {
           "title": "CROWler Engine Page Rendering Interval",
           "description": "This is the interval at which the CROWler Engine will crawl websites. It is the part of the HBS, values are in seconds, e.g. '3' means 3 seconds. For the interval you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.",
@@ -514,6 +531,11 @@
         "collect_events": {
           "title": "CROWler Engine Collect Page's Events",
           "description": "This is a flag that tells the CROWler to collect the events of a website. This is useful for Cybersecurity applications, given it collects all page's events, included JavaScript events like calling-back home etc. This collection is automatic and for each page of a Source.",
+          "type": "boolean"
+        },
+        "collect_xhr": {
+          "title": "CROWler Engine Collect Page's XHR",
+          "description": "This is a flag that tells the CROWler to collect the XHR of a website. This is useful for Cybersecurity applications, given it collects all page's XHR requests. This collection is automatic and for each page of a Source.",
           "type": "boolean"
         },
         "collect_links": {
@@ -1680,6 +1702,14 @@
         "title": "CROWler Agents Configuration parameters",
         "type": "object",
         "properties": {
+          "global_parameters": {
+            "title": "CROWler Agents Global Parameters",
+            "description": "This is the global parameters that the CROWler will pass to each agent in this batch load.",
+            "type": "object",
+            "properties": {
+            },
+            "additionalProperties": true
+          },
           "path": {
             "title": "CROWler Agents load paths",
             "description": "This is the path that the CROWler will use to fetch the yaml or json file that defines one or more agents. You can use wildcard to fetch multiple files. for example './agents/*.yaml'.",

@@ -30,11 +30,11 @@ import (
 	"time"
 
 	"github.com/robertkrimen/otto"
-	"github.com/tebeka/selenium"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const (
@@ -135,6 +135,7 @@ func LoadPluginsFromConfig(pluginRegistry *JSPluginRegister,
 	// Register the plugins
 	for _, plugin := range plugins {
 		pluginRegistry.Register(plugin.Name, *plugin)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Registered plugin '%s' of type '%s' for events: '%s'", plugin.Name, plugin.PType, plugin.EventType)
 	}
 
 	return nil
@@ -315,19 +316,22 @@ func getPluginName(pluginBody, file string) string {
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
-	pNameRegEx := "^//\\s+[@]*name\\:?\\s+([^\n]+)"
-	pDescRegEx := "^//\\s+[@]*description\\:?\\s+([^\n]+)"
-	pTypeRegEx := "^//\\s+[@]*type\\:?\\s+([^\n]+)"
-	pEventTypeRegEx := "^//\\s+[@]*event_type\\:?\\s+([^\n]+)"
+	pNameRegEx := "^//\\s*[@]?name\\s*\\:\\s*([^\n]+)"
+	pDescRegEx := "^//\\s*[@]?description\\s*\\:?\\s*([^\n]+)"
+	pVerRegEx := "^//\\s*[@]?version\\s*\\:?\\s*([^\n]+)"
+	pTypeRegEx := "^//\\s*[@]?type\\s*\\:\\s*([^\n]+)"
+	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
 	re1 := regexp.MustCompile(pNameRegEx)
 	re2 := regexp.MustCompile(pDescRegEx)
 	re3 := regexp.MustCompile(pTypeRegEx)
 	re4 := regexp.MustCompile(pEventTypeRegEx)
+	re5 := regexp.MustCompile(pVerRegEx)
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
 	pEventType := ""
+	pVersion := ""
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
 		if re1.MatchString(line) {
@@ -337,16 +341,20 @@ func NewJSPlugin(script string) *JSPlugin {
 			pDesc = strings.TrimSpace(re2.FindStringSubmatch(line)[1])
 		}
 		if re3.MatchString(line) {
-			pType = strings.TrimSpace(re3.FindStringSubmatch(line)[1])
+			pType = strings.ToLower(strings.TrimSpace(re3.FindStringSubmatch(line)[1]))
 		}
 		if re4.MatchString(line) {
 			pEventType = strings.ToLower(strings.TrimSpace(re4.FindStringSubmatch(line)[1]))
+		}
+		if re5.MatchString(line) {
+			pVersion = strings.TrimSpace(re5.FindStringSubmatch(line)[1])
 		}
 	}
 
 	return &JSPlugin{
 		Name:        pName,
 		Description: pDesc,
+		Version:     pVersion,
 		PType:       pType,
 		Script:      script,
 		EventType:   pEventType,
@@ -354,14 +362,14 @@ func NewJSPlugin(script string) *JSPlugin {
 }
 
 // Execute executes the JS plugin
-func (p *JSPlugin) Execute(wd *selenium.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
 	if p.PType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
 	return execEnginePlugin(p, timeout, params, db)
 }
 
-func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *selenium.WebDriver) (map[string]interface{}, error) {
+func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *vdi.WebDriver) (map[string]interface{}, error) {
 	// Consts
 	const (
 		errMsg01 = "Error getting result from JS plugin: %v"

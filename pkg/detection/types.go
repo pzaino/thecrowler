@@ -22,7 +22,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 // DContext is a struct to store the context of the detection process
@@ -30,7 +30,7 @@ type DContext struct {
 	CtxID        string              `json:"ctx_id"`     // (required) the ID of the detection context
 	TargetURL    string              `json:"target_url"` // (optional) the URL of the target website
 	TargetIP     string              `json:"target_ip"`  // (optional) the IP address of the target website
-	WD           *selenium.WebDriver // (optional) the Selenium WebDriver (required to run detection plugins)
+	WD           *vdi.WebDriver      // (optional) the Selenium WebDriver (required to run detection plugins)
 	Header       *http.Header        // (optional) the HTTP header of the target website
 	HSSLInfo     *SSLInfo            `json:"ssl_info"`      // (optional) the SSL information of the target website
 	ResponseBody *string             `json:"response_body"` // (optional) the body of the HTTP response

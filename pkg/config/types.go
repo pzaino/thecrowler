@@ -51,6 +51,7 @@ type Crawler struct {
 	Workers               int           `json:"workers" yaml:"workers"`                                 // Number of crawler workers
 	VDIName               string        `json:"vdi_name" yaml:"vdi_name"`                               // Name of the VDI to use (this is useful when using custom configurations per each source)
 	Platform              string        `json:"platform" yaml:"platform"`                               // Platform to use (e.g., "desktop", "mobile")
+	BrowserPlatform       string        `json:"browser_platform" yaml:"browser_platform"`               // Browser platform to use (e.g., "desktop", "mobile")
 	Interval              string        `json:"interval" yaml:"interval"`                               // Interval between crawler requests (in seconds)
 	Timeout               int           `json:"timeout" yaml:"timeout"`                                 // Timeout for crawler requests (in seconds)
 	Maintenance           int           `json:"maintenance" yaml:"maintenance"`                         // Interval between crawler maintenance tasks (in seconds)
@@ -85,6 +86,7 @@ type Crawler struct {
 	CollectMetaTags       bool          `json:"collect_metatags" yaml:"collect_metatags"`               // Whether to collect the metatags or not
 	CollectPerfMetrics    bool          `json:"collect_performance" yaml:"collect_performance"`         // Whether to collect the performance metrics or not
 	CollectPageEvents     bool          `json:"collect_events" yaml:"collect_events"`                   // Whether to collect the page events or not
+	CollectXHR            bool          `json:"collect_xhr" yaml:"collect_xhr"`                         // Whether to collect the XHR requests or not
 	CollectLinks          bool          `json:"collect_links" yaml:"collect_links"`                     // Whether to collect the links or not
 	ReportInterval        int           `json:"report_time" yaml:"report_time"`                         // Time to wait before sending the report (in minutes)
 	CheckForRobots        bool          `json:"check_for_robots" yaml:"check_for_robots"`               // Whether to check for robots.txt or not
@@ -346,16 +348,17 @@ type Remote struct {
 
 // AgentsConfig represents the configuration section to tell the CROWler where to find the agents definitions
 type AgentsConfig struct {
-	Path    []string `yaml:"path"`    // Path to the agents definition files
-	Host    string   `yaml:"host"`    // Hostname of the API server
-	Port    int      `yaml:"port"`    // Port number of the API server
-	Region  string   `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
-	Token   string   `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
-	Secret  string   `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
-	Timeout int      `yaml:"timeout"` // Timeout for API requests (in seconds)
-	Type    string   `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
-	SSLMode string   `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
-	Refresh int      `yaml:"refresh"` // Refresh interval for the ruleset (in seconds)
+	GlobalParameters map[string]interface{} `yaml:"global_parameters" json:"global_parameters"` // Global parameters to be used by the agents
+	Path             []string               `yaml:"path" json:"path"`                           // Path to the agents definition files
+	Host             string                 `yaml:"host" json:"host"`                           // Hostname of the API server
+	Port             int                    `yaml:"port" json:"port"`                           // Port number of the API server
+	Region           string                 `yaml:"region" json:"region"`                       // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token            string                 `yaml:"token" json:"token"`                         // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret           string                 `yaml:"secret" json:"secret"`                       // Secret for API authentication (e.g., AWS secret access key)
+	Timeout          int                    `yaml:"timeout" json:"timeout"`                     // Timeout for API requests (in seconds)
+	Type             string                 `yaml:"type" json:"type"`                           // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode          string                 `yaml:"sslmode" json:"sslmode"`                     // SSL mode for API connection (e.g., "disable")
+	Refresh          int                    `yaml:"refresh" json:"refresh"`                     // Refresh interval for the ruleset (in seconds)
 }
 
 // RulesetConfig represents the top-level structure of the rules YAML file

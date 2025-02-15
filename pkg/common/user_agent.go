@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strings"
 
 	"crypto/rand"
 )
@@ -192,10 +193,26 @@ func (uaDB *UserAgentsDB) GetAgentByTypeAndOSAndBRG(uaType, os, brg string) stri
 		return ""
 	}
 
+	// Check if brg is set to "random"
+	brg_selected := ""
+	if brg == "random" || strings.TrimSpace(brg) == "" {
+		// Generate a random index between 0 and the number of user agent groups
+		idxRaw, err := rand.Int(rand.Reader, big.NewInt(int64(len(uaDB.UserAgentsGroups))))
+		if err != nil {
+			brg_selected = "linux"
+		} else {
+			// convert idxRaw to int
+			idx := int(idxRaw.Int64())
+			brg_selected = uaDB.UserAgentsGroups[idx].BRG
+		}
+	} else {
+		brg_selected = strings.ToLower(strings.TrimSpace(brg))
+	}
+
 	// Find the user agent group with the matching type, OS, and BRG
 	var group UserAgentGroup
 	for _, g := range uaDB.UserAgentsGroups {
-		if g.Type == uaType && g.OS == os && g.BRG == brg {
+		if g.Type == uaType && g.OS == os && g.BRG == brg_selected {
 			group = g
 			break
 		}

@@ -180,6 +180,7 @@ func NewConfig() *Config {
 			Workers:               1,
 			VDIName:               "",
 			Platform:              "desktop",
+			BrowserPlatform:       "linux",
 			Interval:              "2",
 			Timeout:               10,
 			Maintenance:           60,
@@ -209,6 +210,7 @@ func NewConfig() *Config {
 			CollectImages:         false,
 			CollectPerfMetrics:    true,
 			CollectPageEvents:     true,
+			CollectXHR:            false,
 			CollectLinks:          true,
 			CreateEventWhenDone:   false,
 			MaxRetries:            0,
@@ -655,6 +657,12 @@ func (c *Config) setDefaultPlatform() {
 		c.Crawler.Platform = "desktop"
 	} else {
 		c.Crawler.Platform = strings.ToLower(strings.TrimSpace(c.Crawler.Platform))
+	}
+	// Check also BrowserPlatform
+	if strings.TrimSpace(c.Crawler.BrowserPlatform) == "" {
+		c.Crawler.BrowserPlatform = "linux"
+	} else {
+		c.Crawler.BrowserPlatform = strings.ToLower(strings.TrimSpace(c.Crawler.BrowserPlatform))
 	}
 }
 
@@ -1645,6 +1653,11 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 			dstCfg.Delay = val
 		}
 	}
+	if srcCfg["browser_platform"] != nil {
+		if val, ok := srcCfg["browser_platform"].(string); ok {
+			dstCfg.BrowserPlatform = val
+		}
+	}
 	if srcCfg["browsing_mode"] != nil {
 		if val, ok := srcCfg["browsing_mode"].(string); ok {
 			dstCfg.BrowsingMode = val
@@ -1723,6 +1736,11 @@ func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {
 	if srcCfg["collect_events"] != nil {
 		if val, ok := srcCfg["collect_events"].(bool); ok {
 			dstCfg.CollectPageEvents = val
+		}
+	}
+	if srcCfg["collect_xhr"] != nil {
+		if val, ok := srcCfg["collect_xhr"].(bool); ok {
+			dstCfg.CollectXHR = val
 		}
 	}
 	if srcCfg["collect_keywords"] != nil {

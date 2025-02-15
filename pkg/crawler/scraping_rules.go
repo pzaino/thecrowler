@@ -29,9 +29,8 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 	"golang.org/x/net/html"
-
-	"github.com/tebeka/selenium"
 )
 
 const (
@@ -41,7 +40,7 @@ const (
 )
 
 // processScrapingRules processes the scraping rules
-func processScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext, url string) (string, error) {
+func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (string, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Scraping rules...")
 
 	scrapedDataDoc := ""
@@ -85,7 +84,7 @@ func addScrapedDataToDocument(scrapedDataDoc *string, newScrapedData string) {
 	}
 }
 
-func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url string) (string, error) {
+func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url string) (string, error) {
 	scrapedDataDoc := ""
 	var errList []error
 
@@ -145,7 +144,7 @@ func executeScrapingRulesByURL(wd *selenium.WebDriver, ctx *ProcessContext, url 
 	return scrapedDataDoc, nil
 }
 
-func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *selenium.WebDriver) (string, error) {
+func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *vdi.WebDriver) (string, error) {
 	scrapedDataDoc := ""
 
 	// Setup the environment
@@ -170,7 +169,7 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *s
 	return scrapedDataDoc, nil
 }
 
-func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *selenium.WebDriver) (string, error) {
+func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *vdi.WebDriver) (string, error) {
 	scrapedDataDoc := ""
 
 	// Set the environment
@@ -223,7 +222,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 
 // executeScrapingRule executes a single ScrapingRule
 func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
-	wd *selenium.WebDriver) (string, error) {
+	wd *vdi.WebDriver) (string, error) {
 	var jsonDocument string
 
 	// Execute Wait condition first
@@ -316,7 +315,7 @@ func cleanJSONDocument(doc map[string]interface{}) map[string]interface{} {
 	return cleaned
 }
 
-func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition, wd *selenium.WebDriver) error {
+func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition, wd *vdi.WebDriver) error {
 	for _, wc := range conditions {
 		err := WaitForCondition(ctx, wd, wc)
 		if err != nil {
@@ -326,7 +325,7 @@ func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition
 	return nil
 }
 
-func shouldExecuteScrapingRule(r *rules.ScrapingRule, wd *selenium.WebDriver) bool {
+func shouldExecuteScrapingRule(r *rules.ScrapingRule, wd *vdi.WebDriver) bool {
 	return len(r.Conditions) == 0 || checkScrapingConditions(r.Conditions, wd)
 }
 
@@ -506,7 +505,7 @@ func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	}
 }
 
-func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext) string {
+func runDefaultScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext) string {
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default scraping rules...")
 
@@ -529,7 +528,7 @@ func runDefaultScrapingRules(wd *selenium.WebDriver, ctx *ProcessContext) string
 	return scrapedDataDoc
 }
 
-func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *selenium.WebDriver, ctx *ProcessContext) string {
+func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *vdi.WebDriver, ctx *ProcessContext) string {
 	var scrapedDataDoc string
 	// Get the rule
 	for _, ruleName := range epi.Rules {
@@ -574,14 +573,14 @@ func checkScrapingPreConditions(conditions cfg.Condition, url string) bool {
 // checkScrapingConditions checks all types of conditions: Scraping and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
-func checkScrapingConditions(conditions map[string]interface{}, wd *selenium.WebDriver) bool {
+func checkScrapingConditions(conditions map[string]interface{}, wd *vdi.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
 	if len(conditions) > 0 {
 		// Check if the page contains a specific element
 		if _, ok := conditions["element"]; ok {
 			// Check if the element is present
-			_, err := (*wd).FindElement(selenium.ByCSSSelector, conditions["element"].(string))
+			_, err := (*wd).FindElement(vdi.ByCSSSelector, conditions["element"].(string))
 			if err != nil {
 				canProceed = false
 			}

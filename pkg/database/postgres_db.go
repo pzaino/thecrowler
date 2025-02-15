@@ -361,12 +361,17 @@ func (l *PostgresListener) pollNotifications() {
 
 // Close closes the database connection
 func (l *PostgresListener) Close() error {
-	close(l.done)
-	if l.conn != nil {
-		return l.conn.Close()
+	if l == nil {
+		return nil
 	}
-	if l.listener != nil {
-		return l.listener.Close()
+	if l.done != nil {
+		close(l.done)
+		if l.conn != nil {
+			return l.conn.Close()
+		}
+		if l.listener != nil {
+			return l.listener.Close()
+		}
 	}
 	return nil
 }

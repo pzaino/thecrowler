@@ -27,7 +27,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
-	"github.com/tebeka/selenium"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const (
@@ -682,7 +682,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	rval[StrConfig] = config
 
 	// Extract the Plugin library pointer from the config
-	plugin, ok := config["plugins_register"].(*plg.JSPluginRegister)
+	plugins, ok := config["plugins_register"].(*plg.JSPluginRegister)
 	if !ok {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = "missing 'pluginRegister' in config section"
@@ -696,9 +696,10 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 		rval[StrMessage] = "missing 'plugin_name' in parameters section"
 		return rval, errors.New("missing 'plugin' parameter")
 	}
+	plgName = strings.TrimSpace(plgName)
 
 	// Retrieve the plugin
-	plg, exists := plugin.GetPlugin(plgName)
+	plg, exists := plugins.GetPlugin(plgName)
 	if !exists {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("plugin '%s' not found", plgName)
@@ -710,7 +711,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	if !ok {
 		dbHandler = nil
 	}
-	wd, ok := config["vdi_hook"].(*selenium.WebDriver)
+	wd, ok := config["vdi_hook"].(*vdi.WebDriver)
 	if !ok {
 		wd = nil
 	}
@@ -724,6 +725,16 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 			plgParams["event"] = event
 		} else {
 			plgParams["event"] = nil
+		}
+	}
+	// Collect custom params
+	for k, v := range params {
+		if k != "plugin_name" &&
+			k != "event" &&
+			k != "config" &&
+			k != "vdi_hook" &&
+			k != "db_handler" {
+			plgParams[k] = v
 		}
 	}
 	// Check if params have a response field

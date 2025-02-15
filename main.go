@@ -44,6 +44,7 @@ import (
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 	"golang.org/x/time/rate"
 
 	_ "github.com/lib/pq"
@@ -92,7 +93,7 @@ var (
 // that will perform the actual crawling.
 type WorkBlock struct {
 	db             cdb.Handler
-	sel            *chan crowler.SeleniumInstance
+	sel            *chan vdi.SeleniumInstance
 	sources        *[]cdb.Source
 	RulesEngine    *rules.RuleEngine
 	PipelineStatus *[]crowler.Status
@@ -224,7 +225,7 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db *cdb.Handler, sel *chan crowler.SeleniumInstance, RulesEngine *rules.RuleEngine) {
+func checkSources(db *cdb.Handler, sel *chan vdi.SeleniumInstance, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status
 	PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
@@ -429,7 +430,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Acquired VDI instance: %v", vdiInstance.Config.Host)
 
 		// Create a channel that will signal when the VDI is no longer needed
-		releaseVDI := make(chan crowler.SeleniumInstance, 1) // Make it buffered
+		releaseVDI := make(chan vdi.SeleniumInstance, 1) // Make it buffered
 
 		go func() {
 			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
@@ -556,7 +557,7 @@ func StatusStr(condition int) string {
 }
 
 func initAll(configFile *string, config *cfg.Config,
-	db *cdb.Handler, vdiInstances *chan crowler.SeleniumInstance,
+	db *cdb.Handler, vdiInstances *chan vdi.SeleniumInstance,
 	RulesEngine *rules.RuleEngine, lmt **rate.Limiter) error {
 	var err error
 
@@ -603,13 +604,13 @@ func initAll(configFile *string, config *cfg.Config,
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reinitialize the VDI instances available to this engine
-	*vdiInstances = make(chan crowler.SeleniumInstance, len(config.Selenium))
+	*vdiInstances = make(chan vdi.SeleniumInstance, len(config.Selenium))
 	for _, seleniumConfig := range config.Selenium {
-		selService, err := crowler.NewSeleniumService(seleniumConfig)
+		selService, err := vdi.NewVDIService(seleniumConfig)
 		if err != nil {
 			return fmt.Errorf("creating Selenium Instances: %s", err)
 		}
-		*vdiInstances <- crowler.SeleniumInstance{
+		*vdiInstances <- vdi.SeleniumInstance{
 			Service: selService,
 			Config:  seleniumConfig,
 		}
@@ -657,7 +658,7 @@ func main() {
 	var db cdb.Handler
 
 	// Define sel before we set signal handlers
-	var vdiInstances chan crowler.SeleniumInstance
+	var vdiInstances chan vdi.SeleniumInstance
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -942,7 +943,7 @@ func configCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	handleErrorAndRespond(w, nil, configCopy, "Error in configuration Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
-func closeResources(db cdb.Handler, sel chan crowler.SeleniumInstance) {
+func closeResources(db cdb.Handler, sel chan vdi.SeleniumInstance) {
 	// Close the database connection
 	if db != nil {
 		err := db.Close()
