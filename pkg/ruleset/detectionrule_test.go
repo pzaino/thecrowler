@@ -70,3 +70,131 @@ func TestMetaTagGetContent(t *testing.T) {
 		t.Errorf("GetContent() = %v, want %v", got, expected)
 	}
 }
+
+func TestGetImplies(t *testing.T) {
+	dr := DetectionRule{Implies: []string{"rule1", "rule2"}}
+	expected := []string{"rule1", "rule2"}
+	if got := dr.GetImplies(); !equalStringSlices(got, expected) {
+		t.Errorf("GetImplies() = %v, want %v", got, expected)
+	}
+}
+
+func TestGetPluginCalls(t *testing.T) {
+	pluginCalls := []PluginCall{
+		{PluginName: "plugin1", PluginArgs: []PluginParams{{ArgName: "param1", ArgValue: nil, Properties: PluginParamsProperties{}}}},
+		{PluginName: "plugin2", PluginArgs: []PluginParams{{ArgName: "param2", ArgValue: nil, Properties: PluginParamsProperties{}}}},
+	}
+	dr := DetectionRule{PluginCalls: pluginCalls}
+	expected := pluginCalls
+	if got := dr.GetPluginCalls(); !equalPluginCalls(got, expected) {
+		t.Errorf("GetPluginCalls() = %v, want %v", got, expected)
+	}
+}
+
+// Helper function to compare two PluginCall structs
+func equalPluginCall(a, b PluginCall) bool {
+	if a.PluginName != b.PluginName {
+		return false
+	}
+	if len(a.PluginArgs) != len(b.PluginArgs) {
+		return false
+	}
+	for i := range a.PluginArgs {
+		if !equalPluginParams(a.PluginArgs[i], b.PluginArgs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper function to compare two PluginParams structs
+func equalPluginParams(a, b PluginParams) bool {
+	if a.ArgName != b.ArgName {
+		return false
+	}
+	if a.ArgValue != b.ArgValue {
+		return false
+	}
+	if a.Properties != b.Properties {
+		return false
+	}
+	return true
+}
+
+// Helper function to compare two slices of PluginCall
+func equalPluginCalls(a, b []PluginCall) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].PluginName != b[i].PluginName {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper function to compare two slices of strings
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestGetExternalDetections(t *testing.T) {
+	externalDetections := []ExternalDetection{
+		{Provider: "detection1", DetectionParams: []DetectionParams{{ParamName: "param1", ParamValue: nil}}},
+		{Provider: "detection2", DetectionParams: []DetectionParams{{ParamName: "param2", ParamValue: nil}}},
+	}
+	dr := DetectionRule{ExternalDetections: externalDetections}
+	expected := externalDetections
+	if got := dr.GetExternalDetections(); !equalExternalDetections(got, expected) {
+		t.Errorf("GetExternalDetections() = %v, want %v", got, expected)
+	}
+}
+
+// Helper function to compare two ExternalDetection structs
+func equalExternalDetection(a, b ExternalDetection) bool {
+	if a.Name != b.Name {
+		return false
+	}
+	if len(a.DetectionParams) != len(b.DetectionParams) {
+		return false
+	}
+	for i := range a.DetectionParams {
+		if !equalDetectionParams(a.DetectionParams[i], b.DetectionParams[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper function to compare two DetectionParams structs
+func equalDetectionParams(a, b DetectionParams) bool {
+	if a.ParamName != b.ParamName {
+		return false
+	}
+	if a.ParamValue != b.ParamValue {
+		return false
+	}
+	return true
+}
+
+// Helper function to compare two slices of ExternalDetection
+func equalExternalDetections(a, b []ExternalDetection) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !equalExternalDetection(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
