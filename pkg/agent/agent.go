@@ -727,6 +727,16 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 			plgParams["event"] = nil
 		}
 	}
+	// Collect custom params
+	for k, v := range params {
+		if k != "plugin_name" &&
+			k != "event" &&
+			k != "config" &&
+			k != "vdi_hook" &&
+			k != "db_handler" {
+			plgParams[k] = v
+		}
+	}
 	// Check if params have a response field
 	if params[StrRequest] != nil {
 		plgParams["jsonData"] = params[StrRequest]
