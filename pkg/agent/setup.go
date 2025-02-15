@@ -107,7 +107,7 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 			// Check if the path is wildcard
 			files, err := filepath.Glob(path)
 			if err != nil {
-				fmt.Println("Error finding rule files:", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "Error finding rule files:", err)
 				return err
 			}
 
@@ -159,14 +159,21 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					if len(globalParams) > 0 {
 						for i := 0; i < len(agtConfigStorage.Jobs); i++ {
 							// Add the global parameters to the configuration
-							for k, v := range globalParams {
-								// Check if the params field has a k field
-								if _, ok := agtConfigStorage.Jobs[i].Steps[0]["params"]; !ok {
-									// If not, add the k field
-									agtConfigStorage.Jobs[i].Steps[0]["params"] = make(map[string]interface{})
-								} else {
-									// If yes, merge the two maps
-									agtConfigStorage.Jobs[i].Steps[0]["params"].(map[string]interface{})[k] = v
+							for j := 0; j < len(agtConfigStorage.Jobs[i].Steps); j++ {
+								for k, v := range globalParams {
+									// Check if the params field has a k field
+									if _, ok := agtConfigStorage.Jobs[i].Steps[j]["params"]; !ok {
+										// If not, create the "params" key with an empty map[interface{}]interface{}
+										agtConfigStorage.Jobs[i].Steps[j]["params"] = make(map[interface{}]interface{})
+									}
+									// Ensure the type assertion works
+									if paramMap, ok := agtConfigStorage.Jobs[i].Steps[j]["params"].(map[interface{}]interface{}); ok {
+										// Convert globalParams into map[interface{}]interface{} before merging
+										paramMap[k] = v
+									} else {
+										// Handle unexpected types
+										cmn.DebugMsg(cmn.DbgLvlError, "params field is not of type map[interface{}]interface{}, but is %T", agtConfigStorage.Jobs[i].Steps[j]["params"])
+									}
 								}
 							}
 						}

@@ -77,6 +77,44 @@ func ConvertInfToMap(input interface{}) map[string]interface{} {
 	return output
 }
 
+// ConvertInfToMapInf converts an interface{} to a map[string]interface{} and
+// recursively converts nested maps as an interface{}
+func ConvertInfToMapInf(input interface{}) interface{} {
+	switch data := input.(type) {
+	case map[interface{}]interface{}:
+		output := make(map[string]interface{})
+		for key, value := range data {
+			strKey, ok := key.(string)
+			if !ok {
+				panic(fmt.Sprintf("Key %v is not a string", key))
+			}
+			output[strKey] = ConvertInfToMap(value) // Recursively convert
+		}
+		return output
+	case []interface{}: // Handle arrays of maps
+		newSlice := make([]interface{}, len(data))
+		for i, v := range data {
+			newSlice[i] = ConvertInfToMap(v) // Recursively convert elements
+		}
+		return newSlice
+	default:
+		return input // Return as is if not a map or slice
+	}
+}
+
+// ConvertInfMapToStrMap converts a map[interface{}]interface{} to a map[string]interface{}
+func ConvertInfMapToStrMap(input map[interface{}]interface{}) map[string]interface{} {
+	output := make(map[string]interface{})
+	for key, value := range input {
+		strKey, ok := key.(string)
+		if !ok {
+			continue // Skip keys that are not strings
+		}
+		output[strKey] = value
+	}
+	return output
+}
+
 // ConvertMapToJSON converts a map[string]interface{} to a JSON document
 func ConvertMapToJSON(input map[string]interface{}) []byte {
 	output, err := json.Marshal(input)
