@@ -128,17 +128,6 @@ func (ctx *ProcessContext) GetContextID() string {
 	return fmt.Sprintf("%d-%d", ctx.SelID, ctx.source.ID)
 }
 
-/*
-	GetWebDriver() *WebDriver
-	GetConfig() *cfg.Config // Assuming Config is a struct used inside ProcessContext
-	GetVDIClosedFlag() *bool
-	SetVDIClosedFlag(bool)
-	GetVDIOperationMutex() *sync.Mutex
-	GetVDIReturnedFlag() *bool
-	SetVDIReturnedFlag(bool)
-	GetVDIInstance() *SeleniumInstance
-*/
-
 // GetWebDriver returns the WebDriver object from the ProcessContext
 func (ctx *ProcessContext) GetWebDriver() *vdi.WebDriver {
 	return &ctx.wd
@@ -191,6 +180,14 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
 	processCtx.VDIReturned = false
+
+	if contentTypeDetectionMap.IsEmpty() {
+		// Load the content type detection rules
+		err := loadContentTypeDetectionRules("./support/content_type_detection.yaml")
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "loading content type detection rules: %v", err)
+		}
+	}
 
 	var err error
 	// Combine default configuration with the source configuration
@@ -1801,21 +1798,28 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					headers, _ := request["headers"].(map[string]interface{})
 					methodType, _ := request["method"].(string)
 					postData, _ := request["postData"].(string)
-					postDataDecoded, detectedType := decodeBodyContent(postData, false)
+					contentType, _ := request["mimeType"].(string)
+					if contentType == "" {
+						contentType, _ = headers["content-type"].(string)
+					}
+					postDataDecoded, detectedContentType := decodeBodyContent(postData, false, url)
+					if contentType == "" {
+						contentType = detectedContentType
+					}
 					if isStaticFile(url) {
 						continue
 					}
 
 					// Store Request Data
 					*collectedRequests = append(*collectedRequests, map[string]interface{}{
-						"object_type":  "request",
-						"requestId":    requestID,
-						"type":         "http",
-						"url":          url,
-						"method":       methodType,
-						"headers":      headers,
-						"request_body": postDataDecoded,
-						"request_type": detectedType,
+						"object_type":          "request",
+						"requestId":            requestID,
+						"type":                 "http",
+						"url":                  url,
+						"method":               methodType,
+						"headers":              headers,
+						"request_body":         postDataDecoded,
+						"request_content_type": contentType,
 					})
 
 				// Capture Response Metadata
@@ -1830,6 +1834,11 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					if contentType == "" {
 						contentType, _ = headers["content-type"].(string)
 					}
+					postData, _ := response["body"].(string)
+					decodedPostData, detectedContentType := decodeBodyContent(postData, false, url)
+					if contentType == "" {
+						contentType = detectedContentType
+					}
 					if isStaticFile(url) || isJavaScript(contentType) {
 						continue
 					}
@@ -1840,6 +1849,8 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 							(*collectedRequests)[i]["url"] = url
 							(*collectedRequests)[i]["status"] = status
 							(*collectedRequests)[i]["response_headers"] = headers
+							(*collectedRequests)[i]["response_content_type"] = contentType
+							(*collectedRequests)[i]["response_body"] = decodedPostData
 							break
 						}
 					}
@@ -1857,7 +1868,7 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					}
 
 					// Decode Response Body (if Base64)
-					decodedBody, detectedType := decodeBodyContent(responseBody, isBase64)
+					decodedBody, detectedType := decodeBodyContent(responseBody, isBase64, "")
 
 					// Store Response Body
 					for i := range *collectedRequests {
@@ -2053,7 +2064,7 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 	contentType, _ := headers["Content-Type"].(string)
 	methodType, _ := request["method"].(string)
 	postData, _ := request["postData"].(string)
-	postDataDecoded, detectedType := decodeBodyContent(postData, false)
+	postDataDecoded, detectedType := decodeBodyContent(postData, false, url)
 
 	// Ignore non-relevant request types (CSS, images, etc.)
 	urlNormalized := strings.ToLower(strings.TrimSpace(url))
@@ -2068,17 +2079,17 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"object_type":         "request",
-		"object_content_type": contentType,
-		"requestId":           requestID,
-		"type":                "http",
-		"url":                 url,
-		"method":              methodType,
-		"headers":             headers,
-		"request_body":        postDataDecoded,
-		"request_type":        detectedType,
-		"response_body":       "", // Placeholder for response
-		"response_type":       "", // Placeholder for response
+		"object_type":           "request",
+		"object_content_type":   contentType,
+		"requestId":             requestID,
+		"type":                  "http",
+		"url":                   url,
+		"method":                methodType,
+		"headers":               headers,
+		"request_body":          postDataDecoded,
+		"request_content_type":  detectedType,
+		"response_body":         "", // Placeholder for response
+		"response_content_type": "", // Placeholder for response
 	}
 }
 
@@ -2093,16 +2104,21 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 	respType, _ := response["type"].(string)
 	status, _ := response["status"].(float64)
 	respBody, _ := response["body"].(string)
+	respBodyDecoded, detectedType := decodeBodyContent(respBody, false, url)
+	if contentType == "" {
+		contentType = detectedType
+	}
 
 	// add to collectedResponses
 	*collectedResponses = append(*collectedResponses, map[string]interface{}{
-		"object_type":   "response",
-		"requestId":     requestID,
-		"type":          respType,
-		"url":           url,
-		"status":        status,
-		"headers":       headers,
-		"response_body": respBody,
+		"object_type":           "response",
+		"requestId":             requestID,
+		"type":                  respType,
+		"url":                   url,
+		"status":                status,
+		"headers":               headers,
+		"response_body":         respBodyDecoded,
+		"response_content_type": detectedType,
 	})
 
 	// Check if we already have a request stored for this response
@@ -2128,12 +2144,12 @@ func collectResponses(wd vdi.WebDriver, responseBodies map[string]interface{}) {
 		body, isBase64 := fetchResponseBody(wd, requestID)
 
 		// Decode if necessary
-		decodedBody, detectedType := decodeBodyContent(body, isBase64)
+		decodedBody, detectedType := decodeBodyContent(body, isBase64, "")
 
 		// Store response body inside the original request
 		requestMap := request.(map[string]interface{})
 		requestMap["response_body"] = decodedBody
-		requestMap["response_type"] = detectedType
+		requestMap["response_content_type"] = detectedType
 	}
 }
 
@@ -2177,7 +2193,7 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 }
 
 // Decode Base64 & Parse JSON Responses
-func decodeBodyContent(body string, isBase64 bool) (interface{}, string) {
+func decodeBodyContent(body string, isBase64 bool, url string) (interface{}, string) {
 	if strings.TrimSpace(body) == "" {
 		return body, "text/plain"
 	}
@@ -2198,6 +2214,9 @@ func decodeBodyContent(body string, isBase64 bool) (interface{}, string) {
 	// Strip potential anti-XSSI prefixes
 	bodyStr = strings.TrimPrefix(bodyStr, "for (;;);")
 
+	// Detect Content Type
+	detectedContentType := detectContentType(body, url)
+
 	// Attempt to parse as JSON (even without Content-Type check)
 	var jsonBody map[string]interface{}
 	if err := json.Unmarshal([]byte(bodyStr), &jsonBody); err == nil {
@@ -2205,13 +2224,8 @@ func decodeBodyContent(body string, isBase64 bool) (interface{}, string) {
 		return jsonBody, "application/json"
 	}
 
-	// ✅ Attempt to parse as HTML
-	if isHTML(body) {
-		return body, "text/html" // ✅ HTML detected
-	}
-
 	// Return raw body if not JSON
-	return body, "unknown"
+	return body, detectedContentType
 }
 
 func isHTML(content string) bool {
@@ -2221,18 +2235,18 @@ func isHTML(content string) bool {
 
 func deepConvertJSONFields(data map[string]interface{}) map[string]interface{} {
 	for key, value := range data {
-		// ✅ If the value is a string, check if it contains JSON
+		// If the value is a string, check if it contains JSON
 		if strVal, ok := value.(string); ok {
 			var nestedJSON interface{}
 			if err := json.Unmarshal([]byte(strVal), &nestedJSON); err == nil {
-				// ✅ If parsing succeeds, store the converted JSON structure
+				// If parsing succeeds, store the converted JSON structure
 				data[key] = deepConvertJSON(nestedJSON)
 			}
 		} else if nestedMap, ok := value.(map[string]interface{}); ok {
-			// ✅ Recursively process nested maps
+			// Recursively process nested maps
 			data[key] = deepConvertJSONFields(nestedMap)
 		} else if nestedArray, ok := value.([]interface{}); ok {
-			// ✅ Recursively process arrays
+			// Recursively process arrays
 			for i, item := range nestedArray {
 				if itemMap, ok := item.(map[string]interface{}); ok {
 					nestedArray[i] = deepConvertJSONFields(itemMap)
@@ -2249,7 +2263,7 @@ func deepConvertJSONFields(data map[string]interface{}) map[string]interface{} {
 	return data
 }
 
-// ✅ Helper function to deeply process JSON-converted values
+// Helper function to deeply process JSON-converted values
 func deepConvertJSON(value interface{}) interface{} {
 	switch v := value.(type) {
 	case map[string]interface{}:

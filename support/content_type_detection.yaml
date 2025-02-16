@@ -1,0 +1,239 @@
+html:
+  tag: "text/html"
+  content_patterns:
+    - "(?i)^\\s*(?:<!DOCTYPE\\s+html|<html|<head|<body|<title|<meta|<script|<div|<span|<!--|<iframe|<form)"
+  url_patterns:
+    - "(?i)\\.html?\\??.*$"
+
+xml:
+  tag: "text/xml"
+  content_patterns:
+    - "(?i)^\\s*<\\?xml"
+  url_patterns:
+    - "(?i)\\.xml$"
+
+json:
+  tag: "application/json"
+  content_patterns:
+    - "(?i)^\\s*\\{.*\\}"
+    - "(?i)^\\s*\\[.*\\]"
+  url_patterns:
+    - "(?i)\\.json\\??.*$"
+
+css:
+  tag: "text/css"
+  content_patterns:
+    - "(?i)^\\s*@(?:import|charset)\\s+"
+    - "(?i)^\\s*(?:[.#]?[a-zA-Z0-9_-]+\\s*[{])"
+    - "(?i)^\\s*@media\\s*\\("
+    - "(?i)^\\s*@\\w+{"
+  url_patterns:
+    - "(?i)\\.css\\??.*$"
+
+png:
+  tag: "image/png"
+  content_patterns:
+    - "(?i)^\\x89PNG\\r\\n\\x1A\\n"
+  url_patterns:
+    - "(?i)\\.png$"
+
+jpeg:
+  tag: "image/jpeg"
+  content_patterns:
+    - "(?i)^\xFF\xD8"
+  url_patterns:
+    - "(?i)\\.jpe?g$"
+
+gif:
+  tag: "image/gif"
+  content_patterns:
+    - "(?i)^GIF8"
+  url_patterns:
+    - "(?i)\\.gif$"
+
+svg:
+  tag: "image/svg+xml"
+  content_patterns:
+    - "(?i)^\\s*<svg"
+  url_patterns:
+    - "(?i)\\.svg$"
+
+js:
+  tag: "application/javascript"
+  content_patterns:
+    - "(?i)^\\s*<script"
+    - "(?i)^\\s*[;]*\\s*function"
+    - "(?i)^\\s*[;]*\\s*var\\s+\\w+\\s*=\\s*function"
+    - "(?i)^\\s*[;]*\\s*\\(function\\s*\\("
+    - "(?i)^\\s*[;]*\\s*!\\s*function\\s*\\("
+    - "(?i)^\\s*[;]*\\s*/\\*"
+    - "(?i)^\\s*[;]*\\s*//"
+    - "(?i)^\\s*[;]*\\s*(window|global|self)\\."
+  url_patterns:
+    - "(?i)\\.js\\??.*$"
+
+pdf:
+  tag: "application/pdf"
+  content_patterns:
+    - "%PDF-"
+  url_patterns:
+    - "(?i)\\.pdf\\??.*$"
+
+doc:
+  tag: "application/msword"
+  content_patterns:
+    - "(?i)^\\s*\\{\\s*\\\"version\\\""
+  url_patterns:
+    - "(?i)\\.doc$"
+
+docx:
+  tag: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  content_patterns:
+    - "(?i)^\\s*\\{\\s*\\\"version\\\""
+  url_patterns:
+    - "(?i)\\.docx$"
+
+xls:
+  tag: "application/vnd.ms-excel"
+  content_patterns:
+    - "(?i)^\\s*\\{\\s*\\\"version\\\""
+  url_patterns:
+    - "(?i)\\.xls$"
+
+xlsx:
+  tag: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  content_patterns:
+    - "(?i)^\\s*\\{\\s*\\\"version\\\""
+  url_patterns:
+    - "(?i)\\.xlsx$"
+
+ppt:
+  tag: "application/vnd.ms-powerpoint"
+  content_patterns:
+    - "(?i)^\\s*\\{\\s*\\\"version\\\""
+  url_patterns:
+    - "(?i)\\.ppt$"
+
+pptx:
+  tag: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  content_patterns:
+    - "(?i)^\\s*\\{\\s*\\\"version\\\""
+  url_patterns:
+    - "(?i)\\.pptx$"
+
+zip:
+  tag: "application/zip"
+  content_patterns:
+    - "PK\\x03\\x04"
+  url_patterns:
+    - "(?i)\\.zip$"
+
+tar:
+  tag: "application/x-tar"
+  content_patterns:
+    - "ustar"
+  url_patterns:
+    - "(?i)\\.tar$"
+
+gz:
+  tag: "application/gzip"
+  content_patterns:
+    - "\\x1F\\x8B\\x08"
+  url_patterns:
+    - "(?i)\\.gz$"
+
+bz2:
+  tag: "application/x-bzip2"
+  content_patterns:
+    - "BZh"
+  url_patterns:
+    - "(?i)\\.bz2$"
+
+rar:
+  tag: "application/x-rar-compressed"
+  content_patterns:
+    - "Rar!"
+  url_patterns:
+    - "(?i)\\.rar$"
+
+exe:
+  tag: "application/x-msdownload"
+  content_patterns:
+    - "MZ"
+  url_patterns:
+    - "(?i)\\.exe$"
+
+msi:
+  tag: "application/x-msi"
+  content_patterns:
+    - "MSI"
+  url_patterns:
+    - "(?i)\\.msi$"
+
+deb:
+  tag: "application/x-debian-package"
+  content_patterns:
+    - "deb"
+  url_patterns:
+    - "(?i)\\.deb$"
+
+rpm:
+  tag: "application/x-rpm"
+  content_patterns:
+    - "RPM"
+  url_patterns:
+    - "(?i)\\.rpm$"
+
+apk:
+  tag: "application/vnd.android.package-archive"
+  content_patterns:
+    - "PK\\x03\\x04"
+  url_patterns:
+    - "(?i)\\.apk$"
+
+iso:
+  tag: "application/x-iso9660-image"
+  content_patterns:
+    - "CD001"
+  url_patterns:
+    - "(?i)\\.iso$"
+
+mp3:
+  tag: "audio/mpeg"
+  content_patterns:
+    - "(?i)^ID3"
+    - "(?i)\\xFF\\xFB"
+  url_patterns:
+    - "(?i)\\.mp3$"
+
+mp4:
+  tag: "video/mp4"
+  content_patterns:
+    - "(?i)^ftypmp4"
+    - "(?i)^ftypisom"
+  url_patterns:
+    - "(?i)\\.mp4$"
+
+woff2:
+  tag: "font/woff2"
+  content_patterns:
+    - "(?i)wOF2"
+    - "(?i)data:font/woff2;"
+  url_patterns:
+    - "(?i)\\.woff2\\?.*$"
+
+woff:
+  tag: "font/woff"
+  content_patterns:
+    - "(?i)wOFF"
+    - "(?i)data:font/woff;"
+  url_patterns:
+    - "(?i)\\.woff\\?.*$"
+
+ttf:
+  tag: "font/ttf"
+  content_patterns:
+    - "(?i)trueType"
+    - "(?i)data:font/ttf;"
+  url_patterns:
+    - "(?i)\\.ttf\\?.*$"
