@@ -916,7 +916,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 
 	// Prepare script parameters
 	params := make(map[string]interface{})
-	params["jsonData"] = jsonDataMap
+	params["json_data"] = jsonDataMap
 
 	// Check if we have a valid webdriver
 	params["currentURL"] = ""

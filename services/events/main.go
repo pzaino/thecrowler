@@ -519,7 +519,7 @@ func processEvent(event cdb.Event) {
 	if pExists {
 		// Convert the event struct to a map
 		eventMap := make(map[string]interface{})
-		eventMap["jsonData"] = event
+		eventMap["json_data"] = event
 
 		// leave it blank for now
 		eventMap["currentURL"] = ""

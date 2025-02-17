@@ -750,7 +750,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	}
 	// Check if params have a response field
 	if params[StrRequest] != nil {
-		plgParams["jsonData"] = params[StrRequest]
+		plgParams["json_data"] = params[StrRequest]
 	}
 
 	// log plgParams
