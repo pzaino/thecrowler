@@ -1,7 +1,7 @@
 html:
   tag: "text/html"
   content_patterns:
-    - "(?i)^\\s*(?:<!DOCTYPE\\s+html|<html|<head|<body|<title|<meta|<script|<div|<span|<!--|<iframe|<form)"
+    - "(?i)^[\\s\\n]*(?:<!DOCTYPE\\s+html|<html|<head|<body|<title|<meta|<script|<div|<span|<!--|<iframe|<form)"
   url_patterns:
     - "(?i)\\.html?\\??.*$"
 
@@ -131,7 +131,7 @@ zip:
 tar:
   tag: "application/x-tar"
   content_patterns:
-    - "ustar"
+    - "^ustar"
   url_patterns:
     - "(?i)\\.tar$"
 
@@ -145,42 +145,39 @@ gz:
 bz2:
   tag: "application/x-bzip2"
   content_patterns:
-    - "BZh"
+    - "^BZh"
   url_patterns:
     - "(?i)\\.bz2$"
 
 rar:
   tag: "application/x-rar-compressed"
   content_patterns:
-    - "Rar!"
+    - "^Rar!"
   url_patterns:
     - "(?i)\\.rar$"
 
 exe:
   tag: "application/x-msdownload"
   content_patterns:
-    - "MZ"
+    - "^MZ"
   url_patterns:
     - "(?i)\\.exe$"
 
 msi:
   tag: "application/x-msi"
   content_patterns:
-    - "MSI"
   url_patterns:
     - "(?i)\\.msi$"
 
 deb:
   tag: "application/x-debian-package"
   content_patterns:
-    - "deb"
   url_patterns:
     - "(?i)\\.deb$"
 
 rpm:
   tag: "application/x-rpm"
   content_patterns:
-    - "RPM"
   url_patterns:
     - "(?i)\\.rpm$"
 
@@ -213,6 +210,23 @@ mp4:
     - "(?i)^ftypisom"
   url_patterns:
     - "(?i)\\.mp4$"
+
+fmp4: # Fragmented MP4
+  tag: "video/mp4"
+  content_patterns:
+    - "(?i)^\\x00{2}\\x01hmoof"  # Match fMP4 Movie Fragment Box
+    - "(?i)moof.*mdat"           # Ensure both moof and mdat exist
+  url_patterns:
+    - "(?i)\\.mp4$"
+    - "(?i)\\.m4s$"               # Common fMP4 segment extension
+
+dash_sidx: # DASH Segment Index
+  tag: "video/mp4"
+  content_patterns:
+    - "(?i)^\\x00{2}\\x00.*sidx"  # Match sidx at the start
+  url_patterns:
+    - "(?i)\\.mp4$"
+    - "(?i)\\.m4s$"  # DASH segment extension
 
 woff2:
   tag: "font/woff2"

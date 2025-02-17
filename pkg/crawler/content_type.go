@@ -16,16 +16,28 @@
 package crawler
 
 import (
+	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
+
+	"golang.org/x/net/html"
 	"gopkg.in/yaml.v2"
 )
 
 const (
 	// ErrUnknownContentType is the error message for unknown content types
 	ErrUnknownContentType = "unknown"
+
+	// XMLType1 is the XML content type
+	XMLType1 = "application/xml"
+	// XMLType2 is the XML content type
+	XMLType2 = "text/xml"
 )
 
 var (
@@ -38,9 +50,11 @@ var (
 
 // ContentTypeDetectionRules represents the content type detection rules for a web page.
 type ContentTypeDetectionRules map[string]struct {
-	Tag             string   `json:"tag" yaml:"tag"`                           // The tag to return if matched.
-	ContentPatterns []string `json:"content_patterns" yaml:"content_patterns"` // The data content patterns to match.
-	URLPatterns     []string `json:"url_patterns" yaml:"url_patterns"`         // The URL patterns to match.
+	Tag                 string           `json:"tag" yaml:"tag"`                           // The tag to return if matched.
+	ContentPatterns     []string         `json:"content_patterns" yaml:"content_patterns"` // The data content patterns to match.
+	URLPatterns         []string         `json:"url_patterns" yaml:"url_patterns"`         // The URL patterns to match.
+	CompContentPatterns []*regexp.Regexp // Compiled content patterns
+	CompURLPatterns     []*regexp.Regexp // Compiled URL patterns
 }
 
 // IsEmpty checks if the content type detection rules are empty.
@@ -56,25 +70,120 @@ func loadContentTypeDetectionRules(filePath string) error {
 	if err != nil {
 		return err
 	}
-	return yaml.Unmarshal(data, &contentTypeDetectionMap)
+
+	// Let's allocate the map
+	if contentTypeDetectionMap == nil {
+		contentTypeDetectionMap = make(ContentTypeDetectionRules)
+	}
+
+	err = yaml.Unmarshal(data, &contentTypeDetectionMap)
+	if err != nil {
+		return err
+	}
+
+	// Compile the regular expressions
+	for key, rule := range contentTypeDetectionMap {
+		// Create a new struct to modify
+		newRule := rule
+
+		for _, pattern := range rule.ContentPatterns {
+			if pattern == "" {
+				continue
+			}
+			re := regexp.MustCompile(pattern)
+			if re == nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to compile content pattern: %s", pattern)
+				continue
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Compiled content pattern: %v", re)
+			newRule.CompContentPatterns = append(newRule.CompContentPatterns, re)
+		}
+
+		for _, pattern := range rule.URLPatterns {
+			if pattern == "" {
+				continue
+			}
+			re := regexp.MustCompile(pattern)
+			if re == nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to compile URL pattern: %s", pattern)
+				continue
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Compiled URL pattern: %v", re)
+			newRule.CompURLPatterns = append(newRule.CompURLPatterns, re)
+		}
+
+		// Store the modified struct back into the map
+		contentTypeDetectionMap[key] = newRule
+	}
+
+	return nil
 }
 
 func detectContentType(body, url string) string {
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Detecting content using detectContentType()...")
+
+	// Copy body to an object we can modify
+	bodyStr := strings.TrimSpace(body)
+	bodyStr = html.UnescapeString(bodyStr)
+	urlStr := strings.TrimSpace(url)
+	urlStr = html.UnescapeString(urlStr)
+
 	for _, rule := range contentTypeDetectionMap {
-		// ✅ Check content-based patterns
-		for _, pattern := range rule.ContentPatterns {
-			re := regexp.MustCompile(pattern)
-			if re.MatchString(body) {
-				return rule.Tag
+		// Check content-based patterns
+		if bodyStr != "" {
+			for _, pattern := range rule.CompContentPatterns {
+				if pattern == nil {
+					continue
+				}
+				if pattern.MatchString(bodyStr) {
+					cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched content pattern: %s", pattern.String())
+					return strings.ToLower(strings.TrimSpace(rule.Tag))
+				}
+				//cmn.DebugMsg(cmn.DbgLvlDebug5, "No match for content pattern: '%s' for '%s...'", pattern.String(), bodyStr[:20])
 			}
 		}
-		// ✅ Check URL-based patterns (file extension, API patterns, etc.)
-		for _, pattern := range rule.URLPatterns {
-			re := regexp.MustCompile(pattern)
-			if re.MatchString(url) {
-				return rule.Tag
+		// Check URL-based patterns (file extension, API patterns, etc.)
+		if urlStr != "" {
+			for _, pattern := range rule.CompURLPatterns {
+				if pattern == nil {
+					continue
+				}
+				if pattern.MatchString(urlStr) {
+					cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched URL pattern: %s", pattern.String())
+					return strings.ToLower(strings.TrimSpace(rule.Tag))
+				}
 			}
 		}
 	}
 	return ErrUnknownContentType
+}
+
+// Convert XML to JSON (map format)
+// Convert XML to JSON (map format)
+func xmlToJSON(xmlStr string) (interface{}, error) {
+	// Define a generic container
+	var result interface{}
+
+	// Create an XML decoder
+	decoder := xml.NewDecoder(strings.NewReader(xmlStr))
+
+	// Decode XML into a structured format
+	err := decoder.Decode(&result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode XML: %w", err)
+	}
+
+	// Marshal back to JSON (ensures we have a proper structure)
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal XML to JSON: %w", err)
+	}
+
+	// Convert JSON string to a map
+	var finalResult interface{}
+	if err := json.Unmarshal(jsonData, &finalResult); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+	}
+
+	return finalResult, nil
 }

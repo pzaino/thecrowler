@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"image"
 	"image/png"
 	"math"
@@ -182,6 +183,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.VDIReturned = false
 
 	if contentTypeDetectionMap.IsEmpty() {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
 		// Load the content type detection rules
 		err := loadContentTypeDetectionRules("./support/content_type_detection.yaml")
 		if err != nil {
@@ -1923,6 +1925,7 @@ func startCDPLogging(wd vdi.WebDriver) (context.CancelFunc, *[]map[string]interf
 }
 
 func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{}) ([]map[string]interface{}, error) {
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting XHR logs...")
 	// Injected JavaScript to return the collected XHR logs
 	script := "return window.__XCAP_LOG__ || [];"
 	data, err := wd.ExecuteScript(script, nil)
@@ -1958,11 +1961,13 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 				respURL, _ := resp["url"].(string)
 				respStatus, _ := resp["status"].(float64)
 				responseBody, _ := resp["response_body"].(string)
+				decodedRespBody, detectedType := decodeBodyContent(responseBody, false, respURL)
 
 				// Match method, status, and normalized URL
 				if method == respMethod && status == respStatus && cmn.NormalizeURL(url) == cmn.NormalizeURL(respURL) {
 					// Merge request with response
-					logEntry["response_body"] = responseBody
+					logEntry["response_body"] = decodedRespBody
+					logEntry["response_content_type"] = detectedType
 					matchedXHR = append(matchedXHR, logEntry)
 					matched = true
 					break // Stop searching once we find a match
@@ -1971,7 +1976,8 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 
 			// If no response was found, add the request without response
 			if !matched {
-				logEntry["response_body"] = "(No matching response found)"
+				logEntry["response_body"] = ""
+				logEntry["response_content_type"] = "text/plain"
 				matchedXHR = append(matchedXHR, logEntry)
 			}
 		}
@@ -1983,12 +1989,13 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Matched JavaScript Fetch/XHR Requests with Responses: %v", matchedXHR)
 	}
-
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR logs collected successfully.")
 	return matchedXHR, nil
 }
 
 // Collect All Requests
 func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting request logs...")
 	logs, err := wd.Log("performance")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
@@ -2035,6 +2042,9 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 		if method == "Network.responseReceived" {
 			storeResponseMetadata(message, responseBodies, &collectedResponses)
 		}
+
+		// Keep session alive:
+		_, _ = wd.Title()
 	}
 
 	// Fetch Response Bodies & Attach Them
@@ -2049,6 +2059,8 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 
 	// Append XHR logs to the network logs
 	collectedRequests = append(collectedRequests, xhrLogs...)
+
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Request logs collection completed.")
 
 	// Return all collected requests (with response bodies inside)
 	return collectedRequests, nil
@@ -2123,15 +2135,8 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 
 	// Check if we already have a request stored for this response
 	if request, exists := responseBodies[requestID]; exists {
-		// Ensure it's JSON, HTML, or Form Data
-		/*
-			if strings.Contains(strings.ToLower(contentType), "application/json") ||
-				strings.Contains(strings.ToLower(contentType), "text/html") ||
-				strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") {
-		*/
 		requestMap := request.(map[string]interface{})
 		requestMap["response_content_type"] = contentType
-		//}
 	}
 }
 
@@ -2139,6 +2144,8 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 func collectResponses(wd vdi.WebDriver, responseBodies map[string]interface{}) {
 	for requestID, request := range responseBodies {
 		time.Sleep(100 * time.Millisecond) // Small delay
+		// Keep session alive:
+		_, _ = wd.Title()
 
 		// Fetch Response Body
 		body, isBase64 := fetchResponseBody(wd, requestID)
@@ -2194,28 +2201,31 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 
 // Decode Base64 & Parse JSON Responses
 func decodeBodyContent(body string, isBase64 bool, url string) (interface{}, string) {
-	if strings.TrimSpace(body) == "" {
-		return body, "text/plain"
-	}
-
 	// Decode Base64 if needed
 	if isBase64 {
 		decoded, err := base64.StdEncoding.DecodeString(body)
 		if err == nil {
 			body = string(decoded)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to decode Base64 body: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Failed to decode Base64 body: %v", err)
 		}
 	}
 
 	// Create a copy of body we can manipulate
-	bodyStr := strings.TrimSpace(body)
+	bodyStr := body
 
-	// Strip potential anti-XSSI prefixes
-	bodyStr = strings.TrimPrefix(bodyStr, "for (;;);")
+	bodyStr = removeAntiXSSIHeaders(bodyStr)
 
 	// Detect Content Type
-	detectedContentType := detectContentType(body, url)
+	detectedContentType := detectContentType(bodyStr, url)
+
+	if detectedContentType == XMLType2 || detectedContentType == XMLType1 {
+		// Attempt to parse as XML
+		xmlBody, err := xmlToJSON(bodyStr)
+		if err == nil {
+			return xmlBody, "application/xml"
+		}
+	}
 
 	// Attempt to parse as JSON (even without Content-Type check)
 	var jsonBody map[string]interface{}
@@ -2228,15 +2238,43 @@ func decodeBodyContent(body string, isBase64 bool, url string) (interface{}, str
 	return body, detectedContentType
 }
 
-func isHTML(content string) bool {
-	trimmed := strings.TrimSpace(content)
-	return strings.HasPrefix(trimmed, "<!DOCTYPE html") || strings.HasPrefix(trimmed, "<html") || strings.Contains(trimmed, "<head>")
+func removeAntiXSSIHeaders(bodyStr string) string {
+	// Trim whitespace
+	body := strings.TrimSpace(bodyStr)
+	if body == "" {
+		return body
+	}
+
+	// Strip potential anti-XSSI prefixes
+	body = strings.TrimPrefix(body, "for (;;);")
+	body = strings.TrimPrefix(body, "while(1);")
+	body = strings.TrimPrefix(body, "\"use strict\";")
+
+	// Remove potential JSON prefix
+	if strings.HasPrefix(body, "J{") {
+		body = strings.TrimPrefix(body, "J")
+	}
+
+	return body
 }
 
 func deepConvertJSONFields(data map[string]interface{}) map[string]interface{} {
 	for key, value := range data {
 		// If the value is a string, check if it contains JSON
 		if strVal, ok := value.(string); ok {
+			strVal = html.UnescapeString(strVal)
+
+			strVal = removeAntiXSSIHeaders(strVal)
+
+			// Detect XML inside JSON fields
+			if strings.HasPrefix(strVal, "<?xml") {
+				xmlParsed, err := xmlToJSON(strVal)
+				if err == nil {
+					data[key] = xmlParsed // Store structured JSON, not a string!
+					continue
+				}
+			}
+
 			var nestedJSON interface{}
 			if err := json.Unmarshal([]byte(strVal), &nestedJSON); err == nil {
 				// If parsing succeeds, store the converted JSON structure
