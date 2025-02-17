@@ -525,7 +525,7 @@ func processEvent(event cdb.Event) {
 		eventMap["currentURL"] = ""
 
 		// Add the source metadata to the event map
-		eventMap["metaData"] = metaData
+		eventMap["meta_data"] = metaData
 
 		// Execute the plugin
 		for _, plugin := range p {

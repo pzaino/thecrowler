@@ -941,7 +941,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 			metaData = configMap["meta_data"].(map[string]interface{})
 		}
 	}
-	params["metaData"] = metaData
+	params["meta_data"] = metaData
 
 	// Safely extract and add "parameters" from Details map
 	if step.Details != nil {
