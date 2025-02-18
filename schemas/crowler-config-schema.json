@@ -1807,6 +1807,14 @@
       "description": "This is the Plugins configuration section, it is used to tell the CROWler's Engine which plugins we want to use and provide the path to the plugins. Plugins are used to extend the CROWler's capabilities, for example, to detect phishing URLs, detect malware, detect network vulnerabilities, etc.",
       "type": "object",
       "properties": {
+        "global_parameters": {
+          "title": "CROWler Plugins Global Parameters",
+          "description": "This is the global parameters that the CROWler will pass to each plugin in this batch load.",
+          "type": "object",
+          "properties": {
+          },
+          "additionalProperties": true
+        },
         "timeout": {
           "title": "CROWler Plugin Execution Timeout",
           "description": "This is the timeout in seconds for the CROWler to execute a plugin.",
@@ -1902,7 +1910,8 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "external_detection": {

@@ -1139,6 +1139,7 @@
                                 "description": "Optional. The message you want to log if the rule matches something."
                             }
                         },
+                        "additionalProperties": false,
                         "description": "rule log configuration (aka what you want to be logged when the rule execute)."
                     },
                     "post_processing": {
@@ -1206,6 +1207,7 @@
             ]
         }
     },
+    "additionalProperties": false,
     "required": [
         "ruleset_name",
         "format_version",

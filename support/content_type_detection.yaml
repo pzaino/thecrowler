@@ -71,6 +71,7 @@ js:
     - "(?i)^\\s*[;]*\\s*(window|global|self)\\."
   url_patterns:
     - "(?i)\\.js(?:\\?.*)?$"
+    - "(?i)^\\s*data:application/x-javascript;.*"
 
 pdf:
   tag: "application/pdf"

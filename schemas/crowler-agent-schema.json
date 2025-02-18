@@ -65,6 +65,7 @@
                         }
                     }
                 },
+                "additionalProperties": false,
                 "required": [
                     "name",
                     "process",
