@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 
 	"golang.org/x/net/html"
 	"gopkg.in/yaml.v2"
@@ -38,6 +39,12 @@ const (
 	XMLType1 = "application/xml"
 	// XMLType2 is the XML content type
 	XMLType2 = "text/xml"
+	// TextType is the text content type
+	TextType = "text/plain"
+	// HTMLType is the HTML content type
+	HTMLType = "text/html"
+	// JSONType is the JSON content type
+	JSONType = "application/json"
 )
 
 var (
@@ -47,6 +54,23 @@ var (
 	// loadMutex is the mutex to protect the loading of the content type detection rules.
 	loadMutex sync.Mutex
 )
+
+// HTMLNode represents the structure for JSON output
+type HTMLNode struct {
+	Tag        string            `json:"tag,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Comment    string            `json:"comment,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+	Children   []HTMLNode        `json:"children,omitempty"`
+}
+
+// List of attributes to ignore
+var ignoredAttributes = map[string]bool{
+	"style": true,
+	"class": true,
+	"id":    true,
+}
 
 // ContentTypeDetectionRules represents the content type detection rules for a web page.
 type ContentTypeDetectionRules map[string]struct {
@@ -63,6 +87,7 @@ func (c *ContentTypeDetectionRules) IsEmpty() bool {
 }
 
 func loadContentTypeDetectionRules(filePath string) error {
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Loading content type detection rules from file: %s", filePath)
 	loadMutex.Lock()
 	defer loadMutex.Unlock()
 
@@ -86,31 +111,41 @@ func loadContentTypeDetectionRules(filePath string) error {
 		// Create a new struct to modify
 		newRule := rule
 
+		reCounter := 0
+		reGoodCounter := 0
+		// Compile the patterns
 		for _, pattern := range rule.ContentPatterns {
+			reCounter++
 			if pattern == "" {
 				continue
 			}
-			re := regexp.MustCompile(pattern)
-			if re == nil {
+			re, err := regexp.Compile(pattern)
+			if err != nil || re == nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to compile content pattern: %s", pattern)
 				continue
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Compiled content pattern: %v", re)
+			reGoodCounter++
 			newRule.CompContentPatterns = append(newRule.CompContentPatterns, re)
 		}
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully compiled %d content patterns for tag '%s' out of %d", reGoodCounter, rule.Tag, reCounter)
 
+		// Compile the URL patterns
+		reCounter = 0
+		reGoodCounter = 0
 		for _, pattern := range rule.URLPatterns {
+			reCounter++
 			if pattern == "" {
 				continue
 			}
-			re := regexp.MustCompile(pattern)
-			if re == nil {
+			re, err := regexp.Compile(pattern)
+			if err != nil || re == nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to compile URL pattern: %s", pattern)
 				continue
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Compiled URL pattern: %v", re)
+			reGoodCounter++
 			newRule.CompURLPatterns = append(newRule.CompURLPatterns, re)
 		}
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Successfully compiled %d URL patterns for tag '%s' out of %d", reGoodCounter, rule.Tag, reCounter)
 
 		// Store the modified struct back into the map
 		contentTypeDetectionMap[key] = newRule
@@ -119,8 +154,8 @@ func loadContentTypeDetectionRules(filePath string) error {
 	return nil
 }
 
-func detectContentType(body, url string) string {
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Detecting content using detectContentType()...")
+func detectContentType(body, url string, wd vdi.WebDriver) string {
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Detecting content using detectContentType()...")
 
 	// Copy body to an object we can modify
 	bodyStr := strings.TrimSpace(body)
@@ -136,12 +171,17 @@ func detectContentType(body, url string) string {
 					continue
 				}
 				if pattern.MatchString(bodyStr) {
-					cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched content pattern: %s", pattern.String())
+					//cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched content pattern: %s", pattern.String())
 					return strings.ToLower(strings.TrimSpace(rule.Tag))
 				}
 				//cmn.DebugMsg(cmn.DbgLvlDebug5, "No match for content pattern: '%s' for '%s...'", pattern.String(), bodyStr[:20])
 			}
+			// Keep session alive
+			if wd != nil {
+				_, _ = wd.Title()
+			}
 		}
+
 		// Check URL-based patterns (file extension, API patterns, etc.)
 		if urlStr != "" {
 			for _, pattern := range rule.CompURLPatterns {
@@ -149,9 +189,13 @@ func detectContentType(body, url string) string {
 					continue
 				}
 				if pattern.MatchString(urlStr) {
-					cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched URL pattern: %s", pattern.String())
+					//cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched URL pattern: %s", pattern.String())
 					return strings.ToLower(strings.TrimSpace(rule.Tag))
 				}
+			}
+			// Keep session alive
+			if wd != nil {
+				_, _ = wd.Title()
 			}
 		}
 	}
@@ -186,4 +230,51 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 	}
 
 	return finalResult, nil
+}
+
+// ExtractHTMLData recursively parses the HTML tree and extracts relevant data
+func ExtractHTMLData(n *html.Node) HTMLNode {
+	var node HTMLNode
+
+	switch n.Type {
+	case html.ElementNode:
+		node.Tag = n.Data
+		node.Attributes = make(map[string]string)
+
+		// Extract text content inside the tag
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.TextNode {
+				text := strings.TrimSpace(c.Data)
+				if text != "" {
+					node.Text = text
+				}
+			}
+		}
+
+		// Extract URLs and relevant attributes
+		for _, attr := range n.Attr {
+			key := strings.ToLower(attr.Key)
+
+			// Store URLs in the `URL` field
+			if key == "href" || key == "src" || key == "action" {
+				node.URL = attr.Val
+			} else if !ignoredAttributes[key] {
+				// Store only meaningful attributes
+				node.Attributes[key] = attr.Val
+			}
+		}
+
+	case html.CommentNode:
+		node.Comment = strings.TrimSpace(n.Data)
+	}
+
+	// Recursively parse child nodes
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		child := ExtractHTMLData(c)
+		if child.Tag != "" || child.Text != "" || child.URL != "" || child.Comment != "" || len(child.Attributes) > 0 {
+			node.Children = append(node.Children, child)
+		}
+	}
+
+	return node
 }

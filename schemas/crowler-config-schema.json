@@ -538,6 +538,19 @@
           "description": "This is a flag that tells the CROWler to collect the XHR of a website. This is useful for Cybersecurity applications, given it collects all page's XHR requests. This collection is automatic and for each page of a Source.",
           "type": "boolean"
         },
+        "filter_xhr": {
+          "title": "CROWler Engine Filter Page's XHR",
+          "description": "This is a flag that tells the CROWler to filter the XHR of a website. This is useful for Cybersecurity applications, given it filters all page's XHR requests. This collection is automatic and for each page of a Source.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "examples": [
+              "text/html",
+              "application/javascript",
+              "image/png"
+            ]
+          }
+        },
         "collect_links": {
           "title": "CROWler Engine Collect Page's Links",
           "description": "This is a flag that tells the CROWler to collect the links of a website. This is useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source.",

@@ -42,6 +42,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	gohtml "golang.org/x/net/html"
+
 	"github.com/PuerkitoBio/goquery"
 	"github.com/abadojack/whatlanggo"
 	cdp "github.com/mafredri/cdp"
@@ -762,7 +764,7 @@ func collectNavigationMetrics(wd *vdi.WebDriver, pageInfo *PageInfo) {
 func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 
 	// Convert to Go structure
-	xhrData, err := collectCDPRequests(ctx.wd)
+	xhrData, err := collectCDPRequests(ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data: Invalid XHR log format: %v", xhrData)
 		return
@@ -1720,22 +1722,6 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable iframe logging: %v", err)
 	}
 
-	/*
-		_, err = wd.ExecuteChromeDPCommand("Fetch.enable", map[string]interface{}{
-			"handleAuthRequests": false, // Prevents authentication-related request blocking
-			"patterns": []map[string]interface{}{
-				{
-					"urlPattern":   "*",        // Capture all requests
-					"resourceType": "XHR",      // Limit to XHR requests
-					"requestStage": "Response", // Only capture responses
-				},
-			},
-		})
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable XHR interception: %v", err)
-		}
-	*/
-
 	// Enable Log domain
 	_, err = wd.ExecuteChromeDPCommand("Log.enable", map[string]interface{}{})
 	if err != nil {
@@ -1757,7 +1743,7 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 	return nil
 }
 
-func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
+func listenForCDPEvents(pCtx *ProcessContext, ctx context.Context, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -1804,11 +1790,12 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					if contentType == "" {
 						contentType, _ = headers["content-type"].(string)
 					}
-					postDataDecoded, detectedContentType := decodeBodyContent(postData, false, url)
+					postDataDecoded, detectedContentType := decodeBodyContent(wd, postData, false, url)
 					if contentType == "" {
 						contentType = detectedContentType
 					}
-					if isStaticFile(url) {
+					// Filter XHR Requests
+					if filterXHRRequests(pCtx, contentType) {
 						continue
 					}
 
@@ -1837,11 +1824,13 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 						contentType, _ = headers["content-type"].(string)
 					}
 					postData, _ := response["body"].(string)
-					decodedPostData, detectedContentType := decodeBodyContent(postData, false, url)
+					decodedPostData, detectedContentType := decodeBodyContent(wd, postData, false, url)
 					if contentType == "" {
 						contentType = detectedContentType
 					}
-					if isStaticFile(url) || isJavaScript(contentType) {
+
+					// Filter XHR Requests
+					if filterXHRRequests(pCtx, contentType) {
 						continue
 					}
 
@@ -1870,7 +1859,11 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 					}
 
 					// Decode Response Body (if Base64)
-					decodedBody, detectedType := decodeBodyContent(responseBody, isBase64, "")
+					decodedBody, detectedType := decodeBodyContent(wd, responseBody, isBase64, "")
+					// Filter XHR Requests
+					if filterXHRRequests(pCtx, detectedType) {
+						continue
+					}
 
 					// Store Response Body
 					for i := range *collectedRequests {
@@ -1888,44 +1881,26 @@ func listenForCDPEvents(ctx context.Context, wd vdi.WebDriver, collectedRequests
 	}
 }
 
-func isStaticFile(urlRaw string) bool {
-	url := strings.ToLower(strings.TrimSpace(urlRaw))
-	return strings.HasSuffix(url, ".js") ||
-		strings.HasSuffix(url, ".js?") ||
-		strings.HasSuffix(url, ".css") ||
-		strings.HasSuffix(url, ".png") ||
-		strings.HasSuffix(url, ".jpg") ||
-		strings.HasSuffix(url, ".jpeg") ||
-		strings.HasSuffix(url, ".gif") ||
-		strings.HasSuffix(url, ".svg") ||
-		strings.HasSuffix(url, ".ico") ||
-		strings.HasSuffix(url, ".woff") ||
-		strings.HasSuffix(url, ".woff2") ||
-		strings.HasSuffix(url, ".ttf") ||
-		strings.HasSuffix(url, ".otf")
-}
-
-func isJavaScript(contentType string) bool {
-	lower := strings.ToLower(strings.TrimSpace(contentType))
-	return strings.Contains(lower, "javascript") || strings.Contains(lower, "ecmascript")
-}
-
-func startCDPLogging(wd vdi.WebDriver) (context.CancelFunc, *[]map[string]interface{}) {
+// StartCDPLogging starts CDP Logging
+func StartCDPLogging(pCtx *ProcessContext) (context.CancelFunc, *[]map[string]interface{}) {
 	// Store Collected Data
 	var collectedRequests []map[string]interface{}
+
+	wd := pCtx.wd
 
 	// Create a Context with a Cancel Function
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Start Listening (Runs in a Goroutine)
-	go listenForCDPEvents(ctx, wd, &collectedRequests)
+	go listenForCDPEvents(pCtx, ctx, wd, &collectedRequests)
 
 	// Return cancel function & collected data reference
 	return cancel, &collectedRequests
 }
 
-func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{}) ([]map[string]interface{}, error) {
+func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interface{}) ([]map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting XHR logs...")
+	wd := ctx.wd
 	// Injected JavaScript to return the collected XHR logs
 	script := "return window.__XCAP_LOG__ || [];"
 	data, err := wd.ExecuteScript(script, nil)
@@ -1956,12 +1931,14 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 
 			// Try to find a matching response
 			matched := false
+			detectedType := TextType
+			var decodedRespBody interface{}
 			for _, resp := range collectedResponses {
 				respMethod, _ := resp["method"].(string)
 				respURL, _ := resp["url"].(string)
 				respStatus, _ := resp["status"].(float64)
 				responseBody, _ := resp["response_body"].(string)
-				decodedRespBody, detectedType := decodeBodyContent(responseBody, false, respURL)
+				decodedRespBody, detectedType = decodeBodyContent(wd, responseBody, false, respURL)
 
 				// Match method, status, and normalized URL
 				if method == respMethod && status == respStatus && cmn.NormalizeURL(url) == cmn.NormalizeURL(respURL) {
@@ -1974,10 +1951,15 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 				}
 			}
 
+			// Filter out non-relevant requests
+			if filterXHRRequests(ctx, detectedType) {
+				continue
+			}
+
 			// If no response was found, add the request without response
 			if !matched {
 				logEntry["response_body"] = ""
-				logEntry["response_content_type"] = "text/plain"
+				logEntry["response_content_type"] = TextType
 				matchedXHR = append(matchedXHR, logEntry)
 			}
 		}
@@ -1994,8 +1976,9 @@ func collectXHRLogs(wd vdi.WebDriver, collectedResponses []map[string]interface{
 }
 
 // Collect All Requests
-func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
+func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting request logs...")
+	wd := ctx.wd
 	logs, err := wd.Log("performance")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
@@ -2026,7 +2009,7 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 
 		// Capture Requests
 		if method == "Network.requestWillBeSent" {
-			request := extractRequest(message)
+			request := extractRequest(ctx, message)
 			if request == nil {
 				continue
 			}
@@ -2040,18 +2023,17 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 
 		// Capture Responses (Metadata Only)
 		if method == "Network.responseReceived" {
-			storeResponseMetadata(message, responseBodies, &collectedResponses)
+			storeResponseMetadata(ctx, message, responseBodies, &collectedResponses)
 		}
 
-		// Keep session alive:
-		_, _ = wd.Title()
+		KeepSessionAlive(wd)
 	}
 
 	// Fetch Response Bodies & Attach Them
-	collectResponses(wd, responseBodies)
+	collectResponses(ctx, responseBodies)
 
 	// Collect XHR logs
-	xhrLogs, err := collectXHRLogs(wd, collectedResponses)
+	xhrLogs, err := collectXHRLogs(ctx, collectedResponses)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to collect XHR logs: %v", err)
 		return collectedRequests, err
@@ -2066,8 +2048,24 @@ func collectCDPRequests(wd vdi.WebDriver) ([]map[string]interface{}, error) {
 	return collectedRequests, nil
 }
 
+// FilterXHRRequests returns true if the detectedType is in the list of filtered XHR types
+func filterXHRRequests(ctx *ProcessContext, detectedType string) bool {
+	if len(ctx.config.Crawler.FilterXHR) == 0 || detectedType == "" {
+		return false
+	}
+	// Filter XHR Responses
+	for i := 0; i < len(ctx.config.Crawler.FilterXHR); i++ {
+		if detectedType == strings.ToLower(strings.TrimSpace(ctx.config.Crawler.FilterXHR[i])) {
+			return true
+		}
+	}
+
+	KeepSessionAlive(ctx.wd)
+	return false
+}
+
 // Extract Request Data
-func extractRequest(message map[string]interface{}) map[string]interface{} {
+func extractRequest(ctx *ProcessContext, message map[string]interface{}) map[string]interface{} {
 	params := message["params"].(map[string]interface{})
 	request := params["request"].(map[string]interface{})
 	requestID, _ := params["requestId"].(string)
@@ -2076,17 +2074,13 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 	contentType, _ := headers["Content-Type"].(string)
 	methodType, _ := request["method"].(string)
 	postData, _ := request["postData"].(string)
-	postDataDecoded, detectedType := decodeBodyContent(postData, false, url)
+	postDataDecoded, detectedType := decodeBodyContent(ctx.wd, postData, false, url)
+	if contentType == "" {
+		contentType = detectedType
+	}
 
 	// Ignore non-relevant request types (CSS, images, etc.)
-	urlNormalized := strings.ToLower(strings.TrimSpace(url))
-	if strings.HasSuffix(urlNormalized, ".js") || strings.HasSuffix(urlNormalized, ".js?") ||
-		strings.HasSuffix(urlNormalized, ".css") || strings.HasSuffix(urlNormalized, ".css?") ||
-		strings.HasSuffix(urlNormalized, ".png") || strings.HasSuffix(urlNormalized, ".jpg") ||
-		strings.HasSuffix(urlNormalized, ".jpeg") || strings.HasSuffix(urlNormalized, ".gif") ||
-		strings.HasSuffix(urlNormalized, ".svg") || strings.HasSuffix(urlNormalized, ".ico") ||
-		strings.HasSuffix(urlNormalized, ".woff") || strings.HasSuffix(urlNormalized, ".woff2") ||
-		strings.HasSuffix(urlNormalized, ".ttf") || strings.HasSuffix(urlNormalized, ".eot") {
+	if filterXHRRequests(ctx, detectedType) {
 		return nil
 	}
 
@@ -2106,7 +2100,7 @@ func extractRequest(message map[string]interface{}) map[string]interface{} {
 }
 
 // Store Response Metadata (For Later Retrieval)
-func storeResponseMetadata(message map[string]interface{}, responseBodies map[string]interface{}, collectedResponses *[]map[string]interface{}) {
+func storeResponseMetadata(ctx *ProcessContext, message map[string]interface{}, responseBodies map[string]interface{}, collectedResponses *[]map[string]interface{}) {
 	params := message["params"].(map[string]interface{})
 	response, _ := params["response"].(map[string]interface{})
 	requestID, _ := params["requestId"].(string)
@@ -2116,9 +2110,14 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 	respType, _ := response["type"].(string)
 	status, _ := response["status"].(float64)
 	respBody, _ := response["body"].(string)
-	respBodyDecoded, detectedType := decodeBodyContent(respBody, false, url)
+	respBodyDecoded, detectedType := decodeBodyContent(ctx.wd, respBody, false, url)
 	if contentType == "" {
 		contentType = detectedType
+	}
+
+	// Filter XHR Responses
+	if filterXHRRequests(ctx, detectedType) {
+		return
 	}
 
 	// add to collectedResponses
@@ -2141,17 +2140,23 @@ func storeResponseMetadata(message map[string]interface{}, responseBodies map[st
 }
 
 // Fetch & Attach Response Bodies
-func collectResponses(wd vdi.WebDriver, responseBodies map[string]interface{}) {
+func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}) {
+	wd := ctx.wd
+	// Fetch Response Bodies
 	for requestID, request := range responseBodies {
 		time.Sleep(100 * time.Millisecond) // Small delay
-		// Keep session alive:
-		_, _ = wd.Title()
+
+		KeepSessionAlive(wd)
 
 		// Fetch Response Body
 		body, isBase64 := fetchResponseBody(wd, requestID)
 
 		// Decode if necessary
-		decodedBody, detectedType := decodeBodyContent(body, isBase64, "")
+		decodedBody, detectedType := decodeBodyContent(wd, body, isBase64, "")
+		// Filter XHR Responses
+		if filterXHRRequests(ctx, detectedType) {
+			continue
+		}
 
 		// Store response body inside the original request
 		requestMap := request.(map[string]interface{})
@@ -2177,20 +2182,20 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 		time.Sleep(200 * time.Millisecond) // Wait before retrying
 	}
 
+	KeepSessionAlive(wd)
+
 	// Convert response to map
 	bodyData, ok := responseInf.(map[string]interface{})
 	if !ok || bodyData["body"] == nil {
 		return "", false
 	}
 
-	contentType, _ := bodyData["mimeType"].(string)
-	if contentType == "" {
-		contentType, _ = bodyData["content-type"].(string)
-	}
-
-	if isJavaScript(contentType) {
-		return "", false
-	}
+	/*
+		contentType, _ := bodyData["mimeType"].(string)
+		if contentType == "" {
+			contentType, _ = bodyData["content-type"].(string)
+		}
+	*/
 
 	// Check if it's Base64 encoded
 	bodyText, _ := bodyData["body"].(string)
@@ -2200,7 +2205,7 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 }
 
 // Decode Base64 & Parse JSON Responses
-func decodeBodyContent(body string, isBase64 bool, url string) (interface{}, string) {
+func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string) (interface{}, string) {
 	// Decode Base64 if needed
 	if isBase64 {
 		decoded, err := base64.StdEncoding.DecodeString(body)
@@ -2217,21 +2222,49 @@ func decodeBodyContent(body string, isBase64 bool, url string) (interface{}, str
 	bodyStr = removeAntiXSSIHeaders(bodyStr)
 
 	// Detect Content Type
-	detectedContentType := detectContentType(bodyStr, url)
+	detectedContentType := detectContentType(bodyStr, url, wd)
 
 	if detectedContentType == XMLType2 || detectedContentType == XMLType1 {
 		// Attempt to parse as XML
 		xmlBody, err := xmlToJSON(bodyStr)
-		if err == nil {
-			return xmlBody, "application/xml"
+		if err != nil {
+			return body, XMLType1
 		}
+		// Convert XML interface{} to string
+		xmlBodyStr, err := json.MarshalIndent(xmlBody, "", "  ")
+		if err == nil {
+			bodyStr = string(xmlBodyStr)
+			if detectedContentType != XMLType1 {
+				detectedContentType = XMLType1
+			}
+		}
+
+		KeepSessionAlive(wd)
+	}
+
+	if detectedContentType == HTMLType {
+		// attempt to convert HTML to JSON
+		doc, err := gohtml.Parse(strings.NewReader(bodyStr))
+		if err != nil {
+			return body, detectedContentType
+		}
+		processedData := ExtractHTMLData(doc)
+		jsonBody, _ := json.MarshalIndent(processedData, "", "  ")
+		bodyStr = string(jsonBody)
+
+		KeepSessionAlive(wd)
 	}
 
 	// Attempt to parse as JSON (even without Content-Type check)
 	var jsonBody map[string]interface{}
 	if err := json.Unmarshal([]byte(bodyStr), &jsonBody); err == nil {
 		jsonBody = deepConvertJSONFields(jsonBody)
-		return jsonBody, "application/json"
+		if detectedContentType != HTMLType {
+			detectedContentType = JSONType
+		}
+
+		KeepSessionAlive(wd)
+		return jsonBody, detectedContentType
 	}
 
 	// Return raw body if not JSON
@@ -3076,12 +3109,25 @@ func getDomainParts(parts []string, level uint) string {
 	}
 }
 
+// KeepSessionAlive is a dummy function that keeps the WebDriver session alive.
+// It's used to prevent the WebDriver session from timing out.
+func KeepSessionAlive(wd vdi.WebDriver) {
+	if wd == nil {
+		return
+	}
+	// Keep session alive
+	_, _ = wd.Title()
+}
+
 // worker is the worker function that is responsible for crawling a page
 func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 	var skippedURLs []LinkItem
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
+		KeepSessionAlive(processCtx.wd)
+
+		// Check if the URL should be skipped
 		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
 			break

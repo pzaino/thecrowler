@@ -87,6 +87,7 @@ type Crawler struct {
 	CollectPerfMetrics    bool          `json:"collect_performance" yaml:"collect_performance"`         // Whether to collect the performance metrics or not
 	CollectPageEvents     bool          `json:"collect_events" yaml:"collect_events"`                   // Whether to collect the page events or not
 	CollectXHR            bool          `json:"collect_xhr" yaml:"collect_xhr"`                         // Whether to collect the XHR requests or not
+	FilterXHR             []string      `json:"filter_xhr" yaml:"filter_xhr"`                           // Filter XHR mime_types
 	CollectLinks          bool          `json:"collect_links" yaml:"collect_links"`                     // Whether to collect the links or not
 	ReportInterval        int           `json:"report_time" yaml:"report_time"`                         // Time to wait before sending the report (in minutes)
 	CheckForRobots        bool          `json:"check_for_robots" yaml:"check_for_robots"`               // Whether to check for robots.txt or not
@@ -378,16 +379,17 @@ type RulesetConfig struct {
 
 // PluginConfig represents the top-level structure of the rules YAML file
 type PluginConfig struct {
-	Path    []string `yaml:"path"`    // Path to the ruleset files
-	Host    string   `yaml:"host"`    // Hostname of the API server
-	Port    int      `yaml:"port"`    // Port number of the API server
-	Region  string   `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
-	Token   string   `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
-	Secret  string   `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)
-	Timeout int      `yaml:"timeout"` // Timeout for API requests (in seconds)
-	Type    string   `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
-	SSLMode string   `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
-	Refresh int      `yaml:"refresh"` // Refresh interval for the ruleset (in seconds)
+	GlobalParameters map[string]interface{} `yaml:"global_parameters"` // Global parameters to be used by the agents
+	Path             []string               `yaml:"path"`              // Path to the ruleset files
+	Host             string                 `yaml:"host"`              // Hostname of the API server
+	Port             int                    `yaml:"port"`              // Port number of the API server
+	Region           string                 `yaml:"region"`            // Region of the storage (e.g., "us-east-1" when using S3 like services)
+	Token            string                 `yaml:"token"`             // Token for API authentication (e.g., API key or token, AWS access key ID)
+	Secret           string                 `yaml:"secret"`            // Secret for API authentication (e.g., AWS secret access key)
+	Timeout          int                    `yaml:"timeout"`           // Timeout for API requests (in seconds)
+	Type             string                 `yaml:"type"`              // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
+	SSLMode          string                 `yaml:"sslmode"`           // SSL mode for API connection (e.g., "disable")
+	Refresh          int                    `yaml:"refresh"`           // Refresh interval for the ruleset (in seconds)
 }
 
 // PrometheusConfig represents the Prometheus configuration
@@ -527,6 +529,16 @@ type Condition struct {
 // FileReader is an interface to read files
 type FileReader interface {
 	ReadFile(filename string) ([]byte, error)
+}
+
+// IsEMpty returns true if the Crawler configuration is empty
+func (c *Crawler) IsEmpty() bool {
+	return c.MaxDepth == 0 && c.MaxLinks == 0 && c.MaxSources == 0 && c.Delay == "" && c.BrowsingMode == "" && c.MaxRetries == 0 && c.MaxRedirects == 0 && c.MaxRequests == 0 && c.ResetCookiesPolicy == "" && !c.NoThirdPartyCookies && c.CrawlingInterval == "" && c.CrawlingIfError == "" && c.CrawlingIfOk == "" && c.ProcessingTimeout == "" && !c.RequestImages && !c.RequestCSS && !c.RequestScripts && !c.RequestPlugins && !c.RequestFrames && !c.CollectHTML && !c.CollectImages && !c.CollectFiles && !c.CollectContent && !c.CollectKeywords && !c.CollectMetaTags && !c.CollectPerfMetrics && !c.CollectPageEvents && !c.CollectXHR && c.ReportInterval == 0 && !c.CheckForRobots && !c.CreateEventWhenDone && c.Control.IsEmpty()
+}
+
+// IsEmpty returns true if the ControlConfig is empty
+func (c *ControlConfig) IsEmpty() bool {
+	return c.Host == "" && c.Port == 0 && c.Timeout == 0 && c.SSLMode == "" && c.CertFile == "" && c.KeyFile == "" && c.RateLimit == "" && c.ReadHeaderTimeout == 0 && c.ReadTimeout == 0 && c.WriteTimeout == 0
 }
 
 // IsEmpty returns true if the SysMng is empty

@@ -37,6 +37,13 @@ png:
   url_patterns:
     - "(?i)\\.png(?:\\?.*)?$"
 
+ico:
+  tag: "image/x-icon"
+  content_patterns:
+    - "(?i)^\\x00\\x00\\x01\\x00"
+    - "(?i)^\\x89PNG\\r\\n\\x1A\\n"
+  url_patterns:
+    - "(?i)\\.ico(?:\\?.*)?$"
 jpeg:
   tag: "image/jpeg"
   content_patterns:
