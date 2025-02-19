@@ -83,11 +83,12 @@ func (ct *CustomTime) IsEmpty() bool {
 func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 	files, err := filepath.Glob(path)
 	if err != nil {
-		fmt.Println("Error finding rule files:", err)
-		return nil, err
+		cmn.DebugMsg(cmn.DbgLvlError, "finding ruleset files: %v", err)
+		return nil, nil
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no files found")
+		cmn.DebugMsg(cmn.DbgLvlError, "finding ruleset files: %v", err)
+		return nil, nil
 	}
 
 	var rulesets []Ruleset
@@ -226,10 +227,7 @@ func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
 // and creating a new rule engine with the parsed sites.
 // It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
-	rules, err := BulkLoadRules(nil, rulesFile)
-	if err != nil {
-		return nil, err
-	}
+	rules, _ := BulkLoadRules(nil, rulesFile)
 
 	engine := NewRuleEngine("./schemas/ruleset-schema.json", rules)
 	return engine, nil
@@ -240,10 +238,9 @@ func LoadRulesFromFile(files []string) (*RuleEngine, error) {
 	var rules []Ruleset
 	for _, file := range files {
 		r, err := BulkLoadRules(nil, file)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			rules = append(rules, r...)
 		}
-		rules = append(rules, r...)
 	}
 	return NewRuleEngine("", rules), nil
 }

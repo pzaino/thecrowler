@@ -194,7 +194,8 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 		for _, path := range config.Path {
 			plugins, err := LoadPluginFromLocal(path)
 			if err != nil {
-				return nil, fmt.Errorf("failed to load plugin from %s: %v", path, err)
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to load plugin from %s: %v", path, err)
+				continue
 			}
 			if pType != "" {
 				for _, plugin := range plugins {
