@@ -53,7 +53,7 @@ require (
 	github.com/antchfx/htmlquery v1.3.4
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/mafredri/cdp v0.35.0
-	github.com/prometheus/client_golang v1.20.5
+	github.com/prometheus/client_golang v1.21.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/time v0.10.0
 )
