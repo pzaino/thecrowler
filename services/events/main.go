@@ -484,7 +484,6 @@ func handleNotification(payload string) {
 // Process the event
 func processEvent(event cdb.Event) {
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
-
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 
 	// Check if we have a Plugin for this event
