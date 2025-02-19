@@ -465,6 +465,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	if err != nil {
 		return nil, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the VM successfully: %v", params)
 
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
 

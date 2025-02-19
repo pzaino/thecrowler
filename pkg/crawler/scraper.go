@@ -916,7 +916,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 
 	// Prepare script parameters
 	params := make(map[string]interface{})
-	params["jsonData"] = jsonDataMap
+	params["json_data"] = jsonDataMap
 
 	// Check if we have a valid webdriver
 	params["currentURL"] = ""
@@ -941,7 +941,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 			metaData = configMap["meta_data"].(map[string]interface{})
 		}
 	}
-	params["metaData"] = metaData
+	params["meta_data"] = metaData
 
 	// Safely extract and add "parameters" from Details map
 	if step.Details != nil {

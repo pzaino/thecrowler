@@ -283,67 +283,7 @@ type LinkItem struct {
 	ElementID string `json:"element_id"`
 }
 
-const (
-	browserGpuDefault        = "--disable-gpu"
-	browserJSDefault         = "--enable-javascript"
-	browserStartMaxDefault   = "--start-maximized"
-	browserWindowSizeDefault = "--window-size=1920,1080"
-	browserExtensionsDefault = "--disable-extensions"
-	browserSandboxDefault    = "--no-sandbox"
-	browserInfoBarsDefault   = "--disable-infobars"
-	browserPopupsDefault     = "--disable-popup-blocking"
-	browserShmDefault        = "--disable-dev-shm-usage"
-
-	// BrowserChrome represents the Chrome browser
-	BrowserChrome = "chrome"
-	// BrowserFirefox represents the Firefox browser
-	BrowserFirefox = "firefox"
-	// BrowserChromium represents the Chromium browser
-	BrowserChromium = "chromium"
-)
-
 var (
-	browserSettingsMap = map[string]map[string]string{
-		BrowserChrome: {
-			"browserName":   BrowserChrome,
-			"windowSize":    browserWindowSizeDefault, // Set the window size to 1920x1080
-			"initialWindow": browserStartMaxDefault,   // (--start-maximized) Start with a maximized window
-			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
-			"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
-			"extensions":    browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
-			"popups":        browserPopupsDefault,     // Disable pop-up blocking (--disable-popup-blocking)
-			"gpu":           browserGpuDefault,        // (--disable-gpu) Disable GPU hardware acceleration, if necessary
-			"javascript":    browserJSDefault,         // (--enable-javascript) Enable JavaScript, which is typically enabled in real user browsers
-			"headless":      "",                       // Run in headless mode (--headless)
-			"incognito":     "",                       // Run in incognito mode
-			"disableDevShm": browserShmDefault,        // Disable /dev/shm use
-		},
-		BrowserFirefox: {
-			"browserName":   BrowserFirefox,
-			"initialWindow": browserStartMaxDefault, // Start with a maximized window
-			//"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
-			//"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
-			"extensions": browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
-			"popups":     browserPopupsDefault,     // Disable pop-up blocking
-			//"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
-			"javascript": browserJSDefault, // Enable JavaScript, which is typically enabled in real user browsers
-		},
-		BrowserChromium: {
-			"browserName":   BrowserChromium,
-			"windowSize":    browserWindowSizeDefault, // Set the window size to 1920x1080
-			"initialWindow": browserStartMaxDefault,   // Start with a maximized window
-			"sandbox":       browserSandboxDefault,    // Bypass OS security model, necessary in some environments
-			"infoBars":      browserInfoBarsDefault,   // Disables the "Chrome is being controlled by automated test software" infobar
-			"extensions":    browserExtensionsDefault, // Disables extensions to get a cleaner browsing experience
-			"popups":        browserPopupsDefault,     // Disable pop-up blocking
-			"gpu":           browserGpuDefault,        // Disable GPU hardware acceleration, if necessary
-			"javascript":    browserJSDefault,         // Enable JavaScript, which is typically enabled in real user browsers
-			"headless":      "",                       // Run in headless mode
-			"incognito":     "",                       // Run in incognito mode
-			"disableDevShm": browserShmDefault,        // Disable /dev/shm use
-		},
-	}
-
 	// docTypeMap maps the file extension to the document type.
 	docTypeMap = map[string]string{
 		".pdf":   "application/pdf",

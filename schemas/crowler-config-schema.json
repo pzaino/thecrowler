@@ -538,6 +538,19 @@
           "description": "This is a flag that tells the CROWler to collect the XHR of a website. This is useful for Cybersecurity applications, given it collects all page's XHR requests. This collection is automatic and for each page of a Source.",
           "type": "boolean"
         },
+        "filter_xhr": {
+          "title": "CROWler Engine Filter Page's XHR",
+          "description": "This is a flag that tells the CROWler to filter the XHR of a website. This is useful for Cybersecurity applications, given it filters all page's XHR requests. This collection is automatic and for each page of a Source.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "examples": [
+              "text/html",
+              "application/javascript",
+              "image/png"
+            ]
+          }
+        },
         "collect_links": {
           "title": "CROWler Engine Collect Page's Links",
           "description": "This is a flag that tells the CROWler to collect the links of a website. This is useful for AI datasets creation and knowledge bases. This collection is automatic and for each page of a Source.",
@@ -1807,6 +1820,14 @@
       "description": "This is the Plugins configuration section, it is used to tell the CROWler's Engine which plugins we want to use and provide the path to the plugins. Plugins are used to extend the CROWler's capabilities, for example, to detect phishing URLs, detect malware, detect network vulnerabilities, etc.",
       "type": "object",
       "properties": {
+        "global_parameters": {
+          "title": "CROWler Plugins Global Parameters",
+          "description": "This is the global parameters that the CROWler will pass to each plugin in this batch load.",
+          "type": "object",
+          "properties": {
+          },
+          "additionalProperties": true
+        },
         "timeout": {
           "title": "CROWler Plugin Execution Timeout",
           "description": "This is the timeout in seconds for the CROWler to execute a plugin.",
@@ -1902,7 +1923,8 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "external_detection": {

@@ -727,10 +727,21 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 			plgParams["event"] = nil
 		}
 	}
+	// Add meta_data from config if available
+	if meta, exists := config["meta_data"]; exists {
+		plgParams["meta_data"] = meta
+	} else {
+		if meta, exists := params["meta_data"]; exists {
+			plgParams["meta_data"] = meta
+		} else {
+			plgParams["meta_data"] = nil
+		}
+	}
 	// Collect custom params
 	for k, v := range params {
 		if k != "plugin_name" &&
 			k != "event" &&
+			k != "meta_data" &&
 			k != "config" &&
 			k != "vdi_hook" &&
 			k != "db_handler" {
@@ -739,7 +750,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	}
 	// Check if params have a response field
 	if params[StrRequest] != nil {
-		plgParams["jsonData"] = params[StrRequest]
+		plgParams["json_data"] = params[StrRequest]
 	}
 
 	// log plgParams

@@ -519,13 +519,13 @@ func processEvent(event cdb.Event) {
 	if pExists {
 		// Convert the event struct to a map
 		eventMap := make(map[string]interface{})
-		eventMap["jsonData"] = event
+		eventMap["json_data"] = event
 
 		// leave it blank for now
 		eventMap["currentURL"] = ""
 
 		// Add the source metadata to the event map
-		eventMap["metaData"] = metaData
+		eventMap["meta_data"] = metaData
 
 		// Execute the plugin
 		for _, plugin := range p {

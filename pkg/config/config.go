@@ -1266,7 +1266,7 @@ func (c *GeoLookupConfig) validate() {
 // It returns true if the config is empty, false otherwise.
 func IsEmpty(config Config) bool {
 	// Check if Crawler slice is nil or has zero length
-	if config.Crawler != (Crawler{}) {
+	if !config.Crawler.IsEmpty() {
 		return false
 	}
 
@@ -1381,7 +1381,7 @@ func (c *Config) IsEmpty() bool {
 		return false
 	}
 
-	if c.Crawler != (Crawler{}) {
+	if !c.Crawler.IsEmpty() {
 		return false
 	}
 
