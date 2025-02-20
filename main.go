@@ -423,11 +423,11 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 		}(args)
 	*/
 	go func(args *crowler.Pars) {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for available VDI instance...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for available VDI instance...")
 
 		// Fetch the next available Selenium instance (VDI)
 		vdiInstance := <-*args.Sel
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Acquired VDI instance: %v", vdiInstance.Config.Host)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Acquired VDI instance: %v", vdiInstance.Config.Host)
 
 		// Create a channel that will signal when the VDI is no longer needed
 		releaseVDI := make(chan vdi.SeleniumInstance, 1) // Make it buffered
@@ -436,13 +436,20 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
 		}()
 
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for VDI release (after any crawling activities are completed)...")
+
 		// Wait for `CrawlWebsite()` to release the VDI
-		select {
-		case recoveredVDI := <-releaseVDI:
-			cmn.DebugMsg(cmn.DbgLvlDebug, "VDI instance %v released for reuse", recoveredVDI.Config.Host)
-			*args.Sel <- recoveredVDI
-		case <-time.After(10 * time.Minute): // Just in case of a deadlock
-			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance release timed out! Dropping instance: %v", vdiInstance.Config.Host)
+		for {
+			select {
+			case recoveredVDI := <-releaseVDI:
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
+				*args.Sel <- recoveredVDI
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] quitting startCrawling() goroutine")
+				return // Exit the loop once VDI is returned
+
+			case <-time.After(10 * time.Minute): // Instead of quitting, just log
+				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG startCrawling] VDI instance %v is still in use after 10 minutes, continuing to wait...", vdiInstance.Config.Host)
+			}
 		}
 	}(&args)
 }
