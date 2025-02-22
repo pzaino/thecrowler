@@ -41,10 +41,14 @@ const (
 	XMLType2 = "text/xml"
 	// TextType is the text content type
 	TextType = "text/plain"
+	// TextEmptyType is the empty text content type
+	TextEmptyType = "text/empty"
 	// HTMLType is the HTML content type
 	HTMLType = "text/html"
 	// JSONType is the JSON content type
 	JSONType = "application/json"
+
+	spanTag = "span"
 )
 
 var (
@@ -157,47 +161,57 @@ func loadContentTypeDetectionRules(filePath string) error {
 func detectContentType(body, url string, wd vdi.WebDriver) string {
 	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Detecting content using detectContentType()...")
 
+	// Check if the content is empty
+	if body == "" && url == "" {
+		return TextEmptyType
+	}
+
 	// Copy body to an object we can modify
 	bodyStr := strings.TrimSpace(body)
 	bodyStr = html.UnescapeString(bodyStr)
 	urlStr := strings.TrimSpace(url)
 	urlStr = html.UnescapeString(urlStr)
 
+	// Check if the content is empty after unescaping
+	if bodyStr == "" && urlStr == "" {
+		return TextEmptyType
+	}
+
+	// Start content type detection
+	index := 0
 	for _, rule := range contentTypeDetectionMap {
 		// Check content-based patterns
 		if bodyStr != "" {
-			for _, pattern := range rule.CompContentPatterns {
-				if pattern == nil {
+			for i := 0; i < len(rule.CompContentPatterns); i++ {
+				if rule.CompContentPatterns[i] == nil {
 					continue
 				}
-				if pattern.MatchString(bodyStr) {
-					//cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched content pattern: %s", pattern.String())
+				if rule.CompContentPatterns[i].MatchString(bodyStr) {
+					//cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched content pattern: %s", rule.CompContentPatterns[i].String())
 					return strings.ToLower(strings.TrimSpace(rule.Tag))
 				}
-				//cmn.DebugMsg(cmn.DbgLvlDebug5, "No match for content pattern: '%s' for '%s...'", pattern.String(), bodyStr[:20])
-			}
-			// Keep session alive
-			if wd != nil {
-				_, _ = wd.Title()
+				//cmn.DebugMsg(cmn.DbgLvlDebug5, "No match for content pattern: '%s' for '%s...'", CompContentPatterns[i].String(), bodyStr[:20])
 			}
 		}
 
 		// Check URL-based patterns (file extension, API patterns, etc.)
 		if urlStr != "" {
-			for _, pattern := range rule.CompURLPatterns {
-				if pattern == nil {
+			for i := 0; i < len(rule.CompURLPatterns); i++ {
+				if rule.CompURLPatterns[i] == nil {
 					continue
 				}
-				if pattern.MatchString(urlStr) {
-					//cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched URL pattern: %s", pattern.String())
+				if rule.CompURLPatterns[i].MatchString(urlStr) {
+					//cmn.DebugMsg(cmn.DbgLvlDebug3, "Matched URL pattern: %s", rule.CompURLPatterns[i].String())
 					return strings.ToLower(strings.TrimSpace(rule.Tag))
 				}
 			}
-			// Keep session alive
-			if wd != nil {
-				_, _ = wd.Title()
-			}
 		}
+
+		// Keep session alive
+		if index%2 == 0 {
+			KeepSessionAlive(wd)
+		}
+		index++
 	}
 	return ErrUnknownContentType
 }
@@ -232,23 +246,54 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 	return finalResult, nil
 }
 
-// ExtractHTMLData recursively parses the HTML tree and extracts relevant data
+// ExtractHTMLData extracts the relevant data from an HTML node
 func ExtractHTMLData(n *html.Node) HTMLNode {
 	var node HTMLNode
 
 	switch n.Type {
 	case html.ElementNode:
+		// Skip useless tags
+		tag := strings.ToLower(n.Data)
+		if tag == "script" ||
+			tag == "noscript" ||
+			tag == "iframe" ||
+			tag == "svg" ||
+			tag == "img" ||
+			tag == "base" ||
+			tag == "input" ||
+			tag == "button" ||
+			tag == "select" ||
+			tag == "option" ||
+			tag == "textarea" ||
+			tag == "form" ||
+			tag == "style" {
+			return HTMLNode{} // Return empty node, effectively removing it
+		}
+
 		node.Tag = n.Data
 		node.Attributes = make(map[string]string)
 
-		// Extract text content inside the tag
+		// **If parent is <span>, merge child text instead of creating nested <span>**
+		isParentSpan := n.Parent != nil && strings.ToLower(n.Parent.Data) == spanTag
+		var childTextBuffer strings.Builder
+
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.TextNode {
 				text := strings.TrimSpace(c.Data)
 				if text != "" {
-					node.Text = text
+					if isParentSpan {
+						// Merge text directly if parent is also <span>
+						childTextBuffer.WriteString(" " + text)
+					} else {
+						node.Text = text
+					}
 				}
 			}
+		}
+
+		// Merge collected text into the parent <span>
+		if isParentSpan && childTextBuffer.Len() > 0 {
+			return HTMLNode{Text: childTextBuffer.String()}
 		}
 
 		// Extract URLs and relevant attributes
@@ -257,7 +302,12 @@ func ExtractHTMLData(n *html.Node) HTMLNode {
 
 			// Store URLs in the `URL` field
 			if key == "href" || key == "src" || key == "action" {
-				node.URL = attr.Val
+				if !ignoredURLs(attr.Val) {
+					node.URL = attr.Val
+				} else {
+					// Skip ignored URLs
+					return HTMLNode{}
+				}
 			} else if !ignoredAttributes[key] {
 				// Store only meaningful attributes
 				node.Attributes[key] = attr.Val
@@ -268,13 +318,53 @@ func ExtractHTMLData(n *html.Node) HTMLNode {
 		node.Comment = strings.TrimSpace(n.Data)
 	}
 
-	// Recursively parse child nodes
+	// Recursively parse child nodes, ignoring empty nodes
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		child := ExtractHTMLData(c)
-		if child.Tag != "" || child.Text != "" || child.URL != "" || child.Comment != "" || len(child.Attributes) > 0 {
-			node.Children = append(node.Children, child)
+
+		// **Skip unnecessary nested <span> elements**
+		if strings.ToLower(n.Data) == spanTag && strings.ToLower(child.Tag) == spanTag {
+			// Merge text from nested <span> instead of nesting it
+			if child.Text != "" {
+				node.Text += " " + child.Text
+			}
+		} else {
+			if child.Tag != "" || child.Text != "" || child.URL != "" || child.Comment != "" || len(child.Attributes) > 0 {
+				node.Children = append(node.Children, child)
+			}
 		}
 	}
 
 	return node
+}
+
+// ignoredURLs checks if the URL should be ignored
+func ignoredURLs(url string) bool {
+	// Check if the URL is empty
+	if url == "" {
+		return true
+	}
+
+	// Check if the URL is a data URL
+	if strings.HasPrefix(url, "data:") {
+		return true
+	}
+
+	// Check if the URL is a JavaScript URL
+	if strings.HasPrefix(url, "javascript:") {
+		return true
+	}
+
+	// Check if the URL is a mailto URL
+	if strings.HasPrefix(url, "mailto:") {
+		return true
+	}
+
+	// Check if the URL is a tel URL
+	if strings.HasPrefix(url, "tel:") {
+		return true
+	}
+
+	// Looks like a valid URL
+	return false
 }

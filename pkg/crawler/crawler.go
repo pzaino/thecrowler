@@ -1743,7 +1743,7 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 	return nil
 }
 
-func listenForCDPEvents(pCtx *ProcessContext, ctx context.Context, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
+func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -1794,10 +1794,6 @@ func listenForCDPEvents(pCtx *ProcessContext, ctx context.Context, wd vdi.WebDri
 					if contentType == "" {
 						contentType = detectedContentType
 					}
-					// Filter XHR Requests
-					if filterXHRRequests(pCtx, contentType) {
-						continue
-					}
 
 					// Store Request Data
 					*collectedRequests = append(*collectedRequests, map[string]interface{}{
@@ -1824,14 +1820,9 @@ func listenForCDPEvents(pCtx *ProcessContext, ctx context.Context, wd vdi.WebDri
 						contentType, _ = headers["content-type"].(string)
 					}
 					postData, _ := response["body"].(string)
-					decodedPostData, detectedContentType := decodeBodyContent(wd, postData, false, url)
+					decodedPostData, detectedContentType := decodeBodyContent(wd, postData, false, "")
 					if contentType == "" {
 						contentType = detectedContentType
-					}
-
-					// Filter XHR Requests
-					if filterXHRRequests(pCtx, contentType) {
-						continue
 					}
 
 					// Store Response Metadata
@@ -1860,10 +1851,6 @@ func listenForCDPEvents(pCtx *ProcessContext, ctx context.Context, wd vdi.WebDri
 
 					// Decode Response Body (if Base64)
 					decodedBody, detectedType := decodeBodyContent(wd, responseBody, isBase64, "")
-					// Filter XHR Requests
-					if filterXHRRequests(pCtx, detectedType) {
-						continue
-					}
 
 					// Store Response Body
 					for i := range *collectedRequests {
@@ -1892,7 +1879,7 @@ func StartCDPLogging(pCtx *ProcessContext) (context.CancelFunc, *[]map[string]in
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Start Listening (Runs in a Goroutine)
-	go listenForCDPEvents(pCtx, ctx, wd, &collectedRequests)
+	go listenForCDPEvents(ctx, pCtx, wd, &collectedRequests)
 
 	// Return cancel function & collected data reference
 	return cancel, &collectedRequests
@@ -1928,40 +1915,69 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 			method, _ := logEntry["m"].(string)
 			url, _ := logEntry["u"].(string)
 			status, _ := logEntry["s"].(float64)
+			if method == "" || url == "" {
+				continue
+			}
+
+			// Decode Request Body
+			requestBody, _ := logEntry["b"].(string)
+			decodedReqBody, detectedReqType := decodeBodyContent(wd, requestBody, false, url)
 
 			// Try to find a matching response
 			matched := false
-			detectedType := TextType
+			detectedType := ""
 			var decodedRespBody interface{}
 			for _, resp := range collectedResponses {
 				respMethod, _ := resp["method"].(string)
 				respURL, _ := resp["url"].(string)
 				respStatus, _ := resp["status"].(float64)
 				responseBody, _ := resp["response_body"].(string)
-				decodedRespBody, detectedType = decodeBodyContent(wd, responseBody, false, respURL)
+				decodedRespBody, detectedType = decodeBodyContent(wd, responseBody, false, "")
 
 				// Match method, status, and normalized URL
-				if method == respMethod && status == respStatus && cmn.NormalizeURL(url) == cmn.NormalizeURL(respURL) {
+				if (method == respMethod) &&
+					(status == respStatus) &&
+					(cmn.NormalizeURL(url) == cmn.NormalizeURL(respURL)) {
 					// Merge request with response
 					logEntry["response_body"] = decodedRespBody
 					logEntry["response_content_type"] = detectedType
-					matchedXHR = append(matchedXHR, logEntry)
 					matched = true
-					break // Stop searching once we find a match
+					break
 				}
 			}
 
-			// Filter out non-relevant requests
-			if filterXHRRequests(ctx, detectedType) {
-				continue
+			// Reformat the request entry
+			headers, _ := logEntry["h"].(map[string]interface{})
+			logEntry["object_type"] = "request"
+			rType, _ := logEntry["t"].(string)
+			logEntry["type"] = rType
+			if logEntry["t"] != nil {
+				delete(logEntry, "t")
 			}
+			logEntry["headers"] = headers
+			if logEntry["h"] != nil {
+				delete(logEntry, "h")
+			}
+			logEntry["method"] = method
+			delete(logEntry, "m")
+			logEntry["url"] = url
+			delete(logEntry, "u")
+			logEntry["status"] = status
+			delete(logEntry, "s")
+			if logEntry["b"] != nil {
+				delete(logEntry, "b")
+			}
+			logEntry["request_body"] = decodedReqBody
+			logEntry["request_content_type"] = detectedReqType
 
 			// If no response was found, add the request without response
 			if !matched {
 				logEntry["response_body"] = ""
-				logEntry["response_content_type"] = TextType
-				matchedXHR = append(matchedXHR, logEntry)
+				logEntry["response_content_type"] = TextEmptyType
 			}
+
+			// Append to matched XHR logs
+			matchedXHR = append(matchedXHR, logEntry)
 		}
 	}
 
@@ -2041,11 +2057,32 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 
 	// Append XHR logs to the network logs
 	collectedRequests = append(collectedRequests, xhrLogs...)
-
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Request logs collection completed.")
 
+	// Filter out all unwanted requests
+	filteredRequests := make([]map[string]interface{}, 0)
+	if len(ctx.config.Crawler.FilterXHR) == 0 {
+		return collectedRequests, nil
+	}
+	for i := 0; i < len(collectedRequests); i++ {
+		if collectedRequests[i] == nil {
+			continue
+		}
+		rct, _ := collectedRequests[i]["request_content_type"].(string)
+		rst, _ := collectedRequests[i]["response_content_type"].(string)
+		rctFCheck := filterXHRRequests(ctx, rct)
+		rstFCheck := filterXHRRequests(ctx, rst)
+		if (rctFCheck && rstFCheck) ||
+			(rct == ErrUnknownContentType && rstFCheck) ||
+			(rctFCheck && rst == ErrUnknownContentType) {
+			continue
+		}
+		filteredRequests = append(filteredRequests, collectedRequests[i])
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Filtering logs collection completed.")
+
 	// Return all collected requests (with response bodies inside)
-	return collectedRequests, nil
+	return filteredRequests, nil
 }
 
 // FilterXHRRequests returns true if the detectedType is in the list of filtered XHR types
@@ -2079,11 +2116,6 @@ func extractRequest(ctx *ProcessContext, message map[string]interface{}) map[str
 		contentType = detectedType
 	}
 
-	// Ignore non-relevant request types (CSS, images, etc.)
-	if filterXHRRequests(ctx, detectedType) {
-		return nil
-	}
-
 	return map[string]interface{}{
 		"object_type":           "request",
 		"object_content_type":   contentType,
@@ -2094,8 +2126,8 @@ func extractRequest(ctx *ProcessContext, message map[string]interface{}) map[str
 		"headers":               headers,
 		"request_body":          postDataDecoded,
 		"request_content_type":  detectedType,
-		"response_body":         "", // Placeholder for response
-		"response_content_type": "", // Placeholder for response
+		"response_body":         "",            // Placeholder for response
+		"response_content_type": TextEmptyType, // Placeholder for response
 	}
 }
 
@@ -2110,14 +2142,9 @@ func storeResponseMetadata(ctx *ProcessContext, message map[string]interface{}, 
 	respType, _ := response["type"].(string)
 	status, _ := response["status"].(float64)
 	respBody, _ := response["body"].(string)
-	respBodyDecoded, detectedType := decodeBodyContent(ctx.wd, respBody, false, url)
+	respBodyDecoded, detectedType := decodeBodyContent(ctx.wd, respBody, false, "")
 	if contentType == "" {
 		contentType = detectedType
-	}
-
-	// Filter XHR Responses
-	if filterXHRRequests(ctx, detectedType) {
-		return
 	}
 
 	// add to collectedResponses
@@ -2153,10 +2180,6 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}
 
 		// Decode if necessary
 		decodedBody, detectedType := decodeBodyContent(wd, body, isBase64, "")
-		// Filter XHR Responses
-		if filterXHRRequests(ctx, detectedType) {
-			continue
-		}
 
 		// Store response body inside the original request
 		requestMap := request.(map[string]interface{})
