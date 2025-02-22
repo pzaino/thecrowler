@@ -2073,7 +2073,9 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 		rstFCheck := filterXHRRequests(ctx, rst)
 		if (rctFCheck && rstFCheck) ||
 			(rct == ErrUnknownContentType && rstFCheck) ||
-			(rctFCheck && rst == ErrUnknownContentType) {
+			(rctFCheck && rst == ErrUnknownContentType) ||
+			(rct == TextEmptyType && rstFCheck) ||
+			(rctFCheck && rst == TextEmptyType) {
 			continue
 		}
 		filteredRequests = append(filteredRequests, collectedRequests[i])
