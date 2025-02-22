@@ -49,7 +49,6 @@ import (
 	cdp "github.com/mafredri/cdp"
 	"github.com/mafredri/cdp/protocol/emulation"
 	"github.com/mafredri/cdp/rpcc"
-	"github.com/tebeka/selenium"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -2887,7 +2886,7 @@ func removeImpurities(s string) string {
 func detectLang(wd vdi.WebDriver) string {
 	var lang string
 	var err error
-	html, err := wd.FindElement(selenium.ByXPATH, "/html")
+	html, err := wd.FindElement(vdi.ByXPATH, "/html")
 	if err == nil {
 		lang, err = html.GetAttribute("lang")
 		if err != nil {
@@ -2895,7 +2894,7 @@ func detectLang(wd vdi.WebDriver) string {
 		}
 	}
 	if lang == "" {
-		bodyHTML, err := wd.FindElement(selenium.ByTagName, "body")
+		bodyHTML, err := wd.FindElement(vdi.ByTagName, "body")
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "retrieving text: %v", err)
 			return "unknown"
@@ -3527,7 +3526,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// find the <a> element that contains the URL
-	element, err := processCtx.wd.FindElement(selenium.ByLinkText, url.Link)
+	element, err := processCtx.wd.FindElement(vdi.ByLinkText, url.Link)
 	if err != nil {
 		return err
 	}
