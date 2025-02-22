@@ -23,6 +23,7 @@ json:
 css:
   tag: "text/css"
   content_patterns:
+    - "(?i)^\\s*\\:\\w,?\\s*"
     - "(?i)^\\s*@(?:import|charset)\\s+"
     - "(?i)^\\s*(?:[.#]?[a-zA-Z0-9_-]+\\s*[{])"
     - "(?i)^\\s*@media\\s*\\("
@@ -33,7 +34,8 @@ css:
 png:
   tag: "image/png"
   content_patterns:
-    - "(?i)^\\x89PNG\\r\\n\\x1A\\n"
+    - "(?i)^[\\x89]PNG\\r\\n\\x1A\\n"
+    - "(?i)^\\xef\\xbf\\xbdPNG\\r\\n\\x1A\\n"
   url_patterns:
     - "(?i)\\.png(?:\\?.*)?$"
 
