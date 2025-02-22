@@ -1,12 +1,11 @@
 module github.com/pzaino/thecrowler
 
-go 1.23.5
+go 1.23.6
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.2
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/lib/pq v1.10.9
-	github.com/tebeka/selenium v0.9.9
 	gopkg.in/yaml.v2 v2.4.0
 )
 
