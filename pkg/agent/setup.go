@@ -204,7 +204,7 @@ func (jc *JobConfig) GetAgentByName(name string) (*JobConfig, bool) {
 		if strings.TrimSpace(jc.Jobs[i].Name) == name {
 			// Return the Job with the specified name inside a JobConfig struct
 			rjc := &JobConfig{}
-			rjc.Jobs = append(rjc.Jobs, rjc.Jobs[i])
+			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
 			return rjc, true
 		}
 	}
@@ -224,7 +224,7 @@ func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool)
 	for i := 0; i < len(jc.Jobs); i++ {
 		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == "event" && strings.TrimSpace(jc.Jobs[i].TriggerName) == eventType {
 			rjc := &JobConfig{}
-			rjc.Jobs = append(rjc.Jobs, rjc.Jobs[i])
+			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
 			agents = append(agents, rjc)
 		}
 	}
