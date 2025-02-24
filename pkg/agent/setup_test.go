@@ -8,7 +8,7 @@ func TestInitialize(t *testing.T) {
 	// Reset the global variables before each test
 	AgentsEngine = nil
 
-	// Call the Initialize function
+	// Call the Initialize function (global variable AgentsEngine should be initialized)
 	Initialize()
 
 	// Check if AgentsEngine is not nil

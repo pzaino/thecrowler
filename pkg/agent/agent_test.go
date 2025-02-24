@@ -23,6 +23,8 @@ import (
 func TestNewJobEngine(t *testing.T) {
 	jobEngine := NewJobEngine()
 
+	jobEngine.Initialize()
+
 	if jobEngine == nil {
 		t.Fatalf("Expected non-nil JobEngine, got nil")
 	}
@@ -31,8 +33,8 @@ func TestNewJobEngine(t *testing.T) {
 		t.Fatalf("Expected non-nil actions map, got nil")
 	}
 
-	if len(jobEngine.actions) != 0 {
-		t.Fatalf("Expected empty actions map, got %d elements", len(jobEngine.actions))
+	if len(jobEngine.actions) == 0 {
+		t.Fatalf("Expected actions map, got %d elements", len(jobEngine.actions))
 	}
 }
 
@@ -52,10 +54,12 @@ func TestRegisterAction(t *testing.T) {
 	jobEngine := NewJobEngine()
 	action := &MockAction{name: "TestAction"}
 
+	baseActions := len(jobEngine.actions)
+
 	jobEngine.RegisterAction(action)
 
-	if len(jobEngine.actions) != 1 {
-		t.Fatalf("Expected 1 action in actions map, got %d", len(jobEngine.actions))
+	if len(jobEngine.actions) != baseActions+1 {
+		t.Fatalf("Expected %d action in actions map, got %d", baseActions+1, len(jobEngine.actions))
 	}
 
 	if jobEngine.actions["TestAction"] != action {
@@ -111,6 +115,7 @@ func TestExecuteJob_MissingActionField(t *testing.T) {
 
 func TestExecuteJob_UnknownAction(t *testing.T) {
 	jobEngine := NewJobEngine()
+	jobEngine.Initialize()
 
 	job := []map[string]interface{}{
 		{
@@ -120,6 +125,11 @@ func TestExecuteJob_UnknownAction(t *testing.T) {
 			},
 		},
 	}
+
+	// COnvert job to Job struct
+	Job := Job{Name: "TestJob", Steps: job}
+
+	AgentsRegistry.LoadJob(Job)
 
 	_, err := jobEngine.ExecuteJob(job)
 	if err == nil {
@@ -160,7 +170,7 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			params: map[string]interface{}{
 				"input": "invalidcommand",
 			},
-			expectedError: "o such file or directory",
+			expectedError: "no such file or directory",
 		},
 	}
 
@@ -192,6 +202,140 @@ func TestRunCommandAction_Execute(t *testing.T) {
 				}
 				if response == "" {
 					t.Fatalf("Expected non-empty response, got empty string")
+				}
+			}
+		})
+	}
+}
+
+func TestDecisionAction_Execute(t *testing.T) {
+	TestAgent := Job{
+		Name: "TestAgent",
+		Steps: []map[string]interface{}{
+			{
+				"action": "RunCommand",
+				"params": map[string]interface{}{
+					"command": "echo 'Hello from TestAgent'",
+				},
+			},
+		},
+	}
+
+	// Create testAgent for testing purposes
+	AgentsRegistry.LoadJob(TestAgent)
+
+	action := &DecisionAction{}
+
+	tests := []struct {
+		name           string
+		params         map[string]interface{}
+		expectedError  string
+		expectedStatus string
+	}{
+		{
+			name: "ValidConditionTrue",
+			params: map[string]interface{}{
+				"condition": map[string]interface{}{
+					"condition_type": "if",
+					"expression":     "true",
+					"on_true": map[string]interface{}{
+						"call_agent": "TestAgent",
+					},
+				},
+			},
+			expectedError:  "agent 'TestAgent' not found",
+			expectedStatus: StatusError,
+		},
+		{
+			name: "ValidConditionFalse",
+			params: map[string]interface{}{
+				"condition": map[string]interface{}{
+					"condition_type": "if",
+					"expression":     "false",
+					"on_false": map[string]interface{}{
+						"call_agent": "TestAgent",
+					},
+				},
+			},
+			expectedError:  "agent 'TestAgent' not found",
+			expectedStatus: StatusError,
+		},
+		{
+			name: "MissingConditionParameter",
+			params: map[string]interface{}{
+				"on_true": map[string]interface{}{
+					"call_agent": "TestAgent",
+				},
+			},
+			expectedError:  "missing 'condition' parameter",
+			expectedStatus: StatusError,
+		},
+		{
+			name: "InvalidConditionResult",
+			params: map[string]interface{}{
+				"condition": map[string]interface{}{
+					"condition_type": "if",
+					"expression":     "invalid",
+					"on_true": map[string]interface{}{
+						"call_agent": "TestAgent",
+					},
+				},
+			},
+			expectedError:  "expression did not return a boolean: invalid",
+			expectedStatus: StatusError,
+		},
+		{
+			name: "MissingOnTrueSteps",
+			params: map[string]interface{}{
+				"condition": map[string]interface{}{
+					"condition_type": "if",
+					"expression":     "true",
+				},
+			},
+			expectedError:  "missing 'on_true' step",
+			expectedStatus: StatusError,
+		},
+		{
+			name: "MissingOnFalseSteps",
+			params: map[string]interface{}{
+				"condition": map[string]interface{}{
+					"condition_type": "if",
+					"expression":     "false",
+				},
+			},
+			expectedError:  "missing 'on_false' step",
+			expectedStatus: StatusError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := action.Execute(tt.params)
+
+			if tt.expectedError == "" && err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Fatalf("Expected error '%s', got nil", tt.expectedError)
+				}
+				if !contains(err.Error(), tt.expectedError) {
+					t.Fatalf("Expected error '%s', got '%s'", tt.expectedError, err.Error())
+				}
+			}
+
+			if tt.expectedError == "" && result == nil {
+				t.Fatalf("Expected non-nil result, got nil")
+			}
+
+			if tt.expectedError == "" {
+				status, ok := result[StrStatus].(string)
+				if !ok {
+					t.Fatalf("Expected status to be a string, got %T", result[StrStatus])
+				}
+				if status != tt.expectedStatus {
+					t.Fatalf("Expected status '%s', got '%s'", tt.expectedStatus, status)
 				}
 			}
 		})

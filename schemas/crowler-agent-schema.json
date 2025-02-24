@@ -27,37 +27,568 @@
                         "enum": [
                             "interval",
                             "event",
-                            "manual",
-                            "agent"
+                            "manual"
                         ]
                     },
                     "trigger_name": {
                         "type": "string",
-                        "description": "The name of the trigger associated with the job."
+                        "description": "The name of the trigger associated with the job. If the trigger_type is 'interval', this should be the interval expressed as 'every X minutes' or 'at date and time'. If the trigger_type is 'event', this should be the event_type. If the trigger_type is 'manual', this should be the agent's trigger-name (a name used to start this agent from another one).",
+                        "examples": [
+                            "every 5 minutes",
+                            "at 2022-01-01T00:00:00Z",
+                            "My Event Type",
+                            "HUP",
+                            "My Agent Name"
+                        ],
+                        "allOf": [
+                            {
+                                "if": {
+                                    "properties": {
+                                        "trigger_type": {
+                                            "const": "interval"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "trigger_name": {
+                                            "oneOf": [
+                                                {
+                                                    "type": "string",
+                                                    "pattern": "^every\\s+\\d+\\s+minutes$",
+                                                    "description": "Must be in the format 'every X minutes'"
+                                                },
+                                                {
+                                                    "type": "string",
+                                                    "pattern": "^at\\s+\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+                                                    "description": "Must be a valid ISO8601 date-time format starting with 'at'"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "if": {
+                                    "properties": {
+                                        "trigger_type": {
+                                            "const": "event"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "trigger_name": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "Should be the event type."
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "if": {
+                                    "properties": {
+                                        "trigger_type": {
+                                            "const": "signal"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "trigger_name": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "Should be the name of the signal."
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                "if": {
+                                    "properties": {
+                                        "trigger_type": {
+                                            "const": "agent"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "trigger_name": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "Should be the name of the agent."
+                                        }
+                                    }
+                                }
+                            }
+                        ]
                     },
                     "steps": {
                         "type": "array",
-                        "description": "List of steps in the job, each defined by an action and parameters.",
+                        "description": "List of steps in the job, each defined by an action and parameters. Each Step takes the output of the previous step as input.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "description": "The action to be performed in this step.",
+                                    "description": "The action to be performed in this step.\nAPIRequest: Make a RESTful API request.\nAIInteraction: Interact with an AI model (via API).\nDBQuery: Query a database.\nRunCommand: Run a command on the system.\nPluginExecution: Execute a CROWler's plugin.\nCreateEvent: Create an event in the CROWler system.\nDecision takes a decision based on the output of the previous step.",
                                     "enum": [
                                         "APIRequest",
                                         "AIInteraction",
                                         "DBQuery",
                                         "RunCommand",
-                                        "PluginExecution"
+                                        "PluginExecution",
+                                        "CreateEvent",
+                                        "Decision"
                                     ]
                                 },
                                 "params": {
                                     "type": "object",
-                                    "description": "Parameters for the action.",
+                                    "description": "Parameters for the action. This is a free section, however, there are some specific parameter names that are expected for each action. For example, for the 'APIRequest' action, the 'url' parameter is expected. FOr the 'AIInteraction' action, the 'prompt' parameter is expected. For the 'DBQuery' action, the 'query' parameter is expected. For the 'RunCommand' action, the 'command' parameter is expected. For the 'PluginExecution' action, the 'plugin_name' parameter is expected. Also, when referring to data from the previous response in the 'params' section, the data must be referred to as '$response' followed by the key of the data. For example, if the previous response has a key 'status_code', it should be referred to as '$response.status_code'.",
                                     "additionalProperties": true
                                 }
                             },
+                            "allOf": [
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "PluginExecution"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "plugin_name": {
+                                                        "type": "string",
+                                                        "description": "The name of the plugin to be executed."
+                                                    }
+                                                },
+                                                "required": [
+                                                    "plugin_name"
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "APIRequest"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "url": {
+                                                        "type": "string",
+                                                        "description": "The URL to make the request to."
+                                                    },
+                                                    "request_type": {
+                                                        "type": "string",
+                                                        "description": "The type of request to be made.",
+                                                        "enum": [
+                                                            "GET",
+                                                            "POST",
+                                                            "PUT",
+                                                            "DELETE"
+                                                        ]
+                                                    },
+                                                    "headers": {
+                                                        "type": "object",
+                                                        "description": "Headers to be included in the request.",
+                                                        "additionalProperties": {
+                                                            "type": "string"
+                                                        }
+                                                    },
+                                                    "body": {
+                                                        "type": "object",
+                                                        "description": "The body of the request in case of POST and PUT request_type.",
+                                                        "additionalProperties": true
+                                                    }
+                                                },
+                                                "required": [
+                                                    "url",
+                                                    "request_type"
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "AIInteraction"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "url": {
+                                                        "type": "string",
+                                                        "description": "The URL to make the request to."
+                                                    },
+                                                    "messages": {
+                                                        "type": "array",
+                                                        "description": "An array of message objects for chat-based endpoints.",
+                                                        "items": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "role": {
+                                                                    "type": "string",
+                                                                    "enum": [
+                                                                        "system",
+                                                                        "user",
+                                                                        "assistant"
+                                                                    ],
+                                                                    "description": "The role of the message sender."
+                                                                },
+                                                                "content": {
+                                                                    "type": "string",
+                                                                    "description": "The content of the message."
+                                                                }
+                                                            },
+                                                            "required": [
+                                                                "role",
+                                                                "content"
+                                                            ],
+                                                            "additionalProperties": false
+                                                        }
+                                                    },
+                                                    "prompt": {
+                                                        "type": "string",
+                                                        "description": "The prompt to be sent to the AI model."
+                                                    },
+                                                    "temperature": {
+                                                        "type": "number",
+                                                        "description": "The temperature parameter for the AI model.",
+                                                        "minimum": 0,
+                                                        "maximum": 1
+                                                    },
+                                                    "max_tokens": {
+                                                        "type": "integer",
+                                                        "description": "The max_tokens parameter for the AI model.",
+                                                        "minimum": 1
+                                                    },
+                                                    "top_p": {
+                                                        "type": "number",
+                                                        "description": "The top_p parameter for the AI model.",
+                                                        "minimum": 0,
+                                                        "maximum": 1
+                                                    },
+                                                    "frequency_penalty": {
+                                                        "type": "number",
+                                                        "description": "The frequency_penalty parameter for the AI model.",
+                                                        "minimum": 0
+                                                    },
+                                                    "presence_penalty": {
+                                                        "type": "number",
+                                                        "description": "The presence_penalty parameter for the AI model.",
+                                                        "minimum": 0
+                                                    },
+                                                    "stop": {
+                                                        "oneOf": [
+                                                            {
+                                                                "type": "string",
+                                                                "description": "A string at which to stop generating further tokens."
+                                                            },
+                                                            {
+                                                                "type": "array",
+                                                                "items": {
+                                                                    "type": "string"
+                                                                },
+                                                                "description": "An array of strings, any of which will stop token generation when encountered."
+                                                            }
+                                                        ]
+                                                    },
+                                                    "model": {
+                                                        "type": "string",
+                                                        "description": "The model to be used for the AI interaction."
+                                                    },
+                                                    "api_key": {
+                                                        "type": "string",
+                                                        "description": "The API key to be used for the AI interaction."
+                                                    },
+                                                    "logit_bias": {
+                                                        "type": "object",
+                                                        "description": "The logit_bias parameter for the AI model.",
+                                                        "additionalProperties": {
+                                                            "type": "number"
+                                                        }
+                                                    },
+                                                    "n": {
+                                                        "type": "integer",
+                                                        "description": "The n parameter for the AI model.",
+                                                        "minimum": 1
+                                                    },
+                                                    "user": {
+                                                        "type": "string",
+                                                        "description": "The user to be used for the AI interaction."
+                                                    }
+                                                },
+                                                "oneOf": [
+                                                    {
+                                                        "required": [
+                                                            "url",
+                                                            "prompt"
+                                                        ]
+                                                    },
+                                                    {
+                                                        "required": [
+                                                            "url",
+                                                            "messages"
+                                                        ]
+                                                    },
+                                                    {
+                                                        "required": [
+                                                            "url"
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "DBQuery"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "db_user": {
+                                                        "type": "string",
+                                                        "description": "The username to be used for the database connection. If no db_user, db_password, db_host, db_port, db_name, db_type are provided, the connection will be made using the CROWler current DB itself."
+                                                    },
+                                                    "db_password": {
+                                                        "type": "string",
+                                                        "description": "The password to be used for the database connection. If no db_user, db_password, db_host, db_port, db_name, db_type are provided, the connection will be made using the CROWler current DB itself."
+                                                    },
+                                                    "db_host": {
+                                                        "type": "string",
+                                                        "description": "The host to be used for the database connection. If no db_user, db_password, db_host, db_port, db_name, db_type are provided, the connection will be made using the CROWler current DB itself."
+                                                    },
+                                                    "db_port": {
+                                                        "type": "integer",
+                                                        "description": "The port to be used for the database connection. If no db_user, db_password, db_host, db_port, db_name, db_type are provided, the connection will be made using the CROWler current DB itself."
+                                                    },
+                                                    "db_name": {
+                                                        "type": "string",
+                                                        "description": "The name of the database to be used. If no db_user, db_password, db_host, db_port, db_name, db_type are provided, the connection will be made using the CROWler current DB itself."
+                                                    },
+                                                    "db_type": {
+                                                        "type": "string",
+                                                        "description": "The type of the database to be used. If no db_user, db_password, db_host, db_port, db_name, db_type are provided, the connection will be made using the CROWler current DB itself.",
+                                                        "enum": [
+                                                            "postgres",
+                                                            "sqlite"
+                                                        ]
+                                                    },
+                                                    "query": {
+                                                        "type": "string",
+                                                        "description": "The SQL query to be executed on the database. When using values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'user_id', it should be referred to as `$response.user_id`."
+                                                    }
+                                                },
+                                                "oneOf": [
+                                                    {
+                                                        "required": [
+                                                            "query"
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "RunCommand"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "command": {
+                                                        "type": "string",
+                                                        "description": "The command to be executed on the system. When using values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'user_id', it should be referred to as `$response.user_id`."
+                                                    }
+                                                },
+                                                "oneOf": [
+                                                    {
+                                                        "required": [
+                                                            "command"
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "CreateEvent"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "event_name": {
+                                                        "type": "string",
+                                                        "description": "The name of the event to be created. When referring values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'user_id', it should be referred to as `$response.user_id`."
+                                                    },
+                                                    "event_type": {
+                                                        "type": "string",
+                                                        "description": "The type of the event to be created. When referring values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'user_id', it should be referred to as `$response.user_id`."
+                                                    },
+                                                    "source": {
+                                                        "type": "string",
+                                                        "description": "The CROWler Source ID for this event, if applicable. (If no source is related to this event then this field should contain 0). When referring values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'source_id', it should be referred to as `$response.source_id`.",
+                                                        "additionalProperties": true
+                                                    }
+                                                },
+                                                "required": [
+                                                    "event_name",
+                                                    "event_type"
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "Decision"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "condition": {
+                                                        "type": "object",
+                                                        "description": "The condition to be evaluated.",
+                                                        "properties": {
+                                                            "condition_type": {
+                                                                "type": "string",
+                                                                "description": "The condition to be evaluated.",
+                                                                "enum": [
+                                                                    "if",
+                                                                    "switch"
+                                                                ]
+                                                            },
+                                                            "expression": {
+                                                                "type": "string",
+                                                                "description": "The expression to be evaluated. When referring values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'user_id', it should be referred to as `$response.user_id`.",
+                                                                "examples": [
+                                                                    "$response.status_code",
+                                                                    "$response.status_code == 200",
+                                                                    "$response.status_code == 404 && ($response.body.error == 'Not Found' || $response.body.error == 'Not Found')",
+                                                                    "$response.user_id > 1000"
+                                                                ]
+                                                            },
+                                                            "cases": {
+                                                                "type": "array",
+                                                                "description": "The cases to be evaluated in case of a switch condition.When referring values from the previous step, they must be expressed as `$response` followed by the key of the data. For example, if the previous response has a key 'user_id', it should be referred to as `$response.user_id`.",
+                                                                "items": {
+                                                                    "type": "object",
+                                                                    "properties": {
+                                                                        "case": {
+                                                                            "type": "string",
+                                                                            "description": "The case to be evaluated."
+                                                                        },
+                                                                        "agent_name": {
+                                                                            "type": "string",
+                                                                            "description": "The agent's name to use to call the agent execution from this point."
+                                                                        }
+                                                                    }
+                                                                }
+                                                            },
+                                                            "on_true": {
+                                                                "type": "object",
+                                                                "description": "The Agent to be called if the condition is true. This Agent MUST be registered in the Agents list.",
+                                                                "properties": {
+                                                                    "agent_name": {
+                                                                        "type": "string",
+                                                                        "description": "The Agent's name to allow the execution to continue."
+                                                                    }
+                                                                },
+                                                                "required": [
+                                                                    "agent_name"
+                                                                ]
+                                                            },
+                                                            "on_false": {
+                                                                "type": "object",
+                                                                "description": "The Agent's name to call if the condition is false.",
+                                                                "properties": {
+                                                                    "agent_name": {
+                                                                        "type": "string",
+                                                                        "description": "The agent's name to be used to call the agent execution from this point."
+                                                                    }
+                                                                },
+                                                                "required": [
+                                                                    "agent_name"
+                                                                ]
+                                                            }
+                                                        },
+                                                        "oneOf": [
+                                                            {
+                                                                "required": [
+                                                                    "condition_type",
+                                                                    "expression",
+                                                                    "on_true",
+                                                                    "on_false"
+                                                                ]
+                                                            },
+                                                            {
+                                                                "required": [
+                                                                    "condition_type",
+                                                                    "expression",
+                                                                    "cases"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                "required": [
+                                                    "condition"
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ],
+                            "additionalProperties": false,
                             "required": [
                                 "action",
                                 "params"

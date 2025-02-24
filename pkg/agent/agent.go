@@ -18,7 +18,9 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,11 +30,16 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
+
+	"github.com/Knetic/govaluate"
 )
 
 const (
 	// ErrMissingConfig is the error message for invalid config format
 	ErrMissingConfig = "invalid `config` format or missing config section in parameters section for the step"
+	// ErrMissingURL is the error message for missing URL parameter
+	ErrMissingURL = "missing 'url' parameter"
+
 	// StatusSuccess is the success status
 	StatusSuccess = "success"
 	// StatusError is the error status
@@ -49,10 +56,15 @@ const (
 	StrResponse = "output"
 	// StrRequest is the string representation of the input field
 	StrRequest = "input"
+	// StrEvent is the string representation of the event field
+	StrEvent = "event"
 
 	// jsonAppType is the application type for JSON
 	jsonAppType = "application/json"
 )
+
+var responseTokenPattern1 = regexp.MustCompile(`\$response(?:\.[a-zA-Z0-9_]+)+`)
+var responseTokenPattern2 = regexp.MustCompile(`{{(.*?)}}`)
 
 // DecisionTrace represents a decision trace for human readable explanations
 type DecisionTrace struct {
@@ -67,15 +79,56 @@ type JobEngine struct {
 	actions map[string]Action
 }
 
+// Initialize initializes the agent engine
+func Initialize() {
+	if AgentsEngine == nil {
+		AgentsEngine = NewJobEngine() // Ensure `AgentsEngine` is not nil
+	}
+	RegisterActions(AgentsEngine)
+}
+
+// RegisterActions registers all available actions with the engine
+func RegisterActions(engine *JobEngine) {
+	if engine == nil {
+		engine = NewJobEngine()
+	}
+	engine.RegisterAction(&APIRequestAction{})
+	engine.RegisterAction(&CreateEventAction{})
+	engine.RegisterAction(&RunCommandAction{})
+	engine.RegisterAction(&AIInteractionAction{})
+	engine.RegisterAction(&DBQueryAction{})
+	engine.RegisterAction(&PluginAction{})
+	engine.RegisterAction(&DecisionAction{})
+}
+
 // NewJobEngine creates a new job engine
 func NewJobEngine() *JobEngine {
-	return &JobEngine{
-		actions: make(map[string]Action),
+	return &JobEngine{}
+}
+
+// Initialize registers all actions with the engine
+func (je *JobEngine) Initialize() {
+	if je == nil {
+		je = NewJobEngine()
 	}
+	// Register actions
+	RegisterActions(je)
+}
+
+// GetAction returns an action by name
+func (je *JobEngine) GetAction(name string) (Action, bool) {
+	action, exists := je.actions[name]
+	return action, exists
 }
 
 // RegisterAction registers a new action with the engine
 func (je *JobEngine) RegisterAction(action Action) {
+	if je == nil {
+		je = NewJobEngine()
+	}
+	if je.actions == nil {
+		je.actions = make(map[string]Action)
+	}
 	je.actions[action.Name()] = action
 }
 
@@ -142,6 +195,15 @@ func (je *JobEngine) ExecuteJob(job []map[string]interface{}) (map[string]interf
 			}
 		}
 
+		// Check if the action exists and is valid
+		if je == nil || je.actions == nil || len(je.actions) == 0 {
+			return nil, errors.New("no actions registered")
+		}
+
+		if je.actions[actionName] == nil {
+			return nil, fmt.Errorf("unknown action: %s", actionName)
+		}
+
 		action, exists := je.actions[actionName]
 		if !exists {
 			return nil, fmt.Errorf("unknown action: %s", actionName)
@@ -179,8 +241,8 @@ func getInput(params map[string]interface{}) (map[string]interface{}, error) {
 			if !ok {
 				return input, fmt.Errorf("missing '%s' parameter", StrRequest)
 			}
-			if config["event"] != nil {
-				input["input"] = config["event"]
+			if config[StrEvent] != nil {
+				input["input"] = config[StrEvent]
 				return input, nil
 			}
 		}
@@ -188,6 +250,97 @@ func getInput(params map[string]interface{}) (map[string]interface{}, error) {
 	}
 	input[StrRequest] = params[StrRequest]
 	return input, nil
+}
+
+// ResolveResponseToken takes a token string (e.g. "$response.container.source_id")
+// and resolves it using the provided JSON document.
+func resolveResponseToken(doc map[string]interface{}, token string) interface{} {
+	tokenStr := strings.TrimSpace(token)
+	if tokenStr == "" {
+		return token
+	}
+
+	if tokenStr == "$response" {
+		// If token is just "$response", return the whole response document
+		return doc
+	}
+
+	const prefix = "$response"
+	if !strings.HasPrefix(tokenStr, prefix) {
+		// not a response token, return as-is
+		return token
+	}
+
+	// remove the "$response" prefix
+	path := strings.TrimPrefix(tokenStr, prefix)
+	if path == "" {
+		// token was just "$response": return the whole document
+		return doc
+	}
+
+	// remove a leading dot if present, then split the path into keys
+	path = strings.TrimPrefix(path, ".")
+
+	keys := strings.Split(path, ".")
+	return cmn.JsonParser(doc, keys...)
+}
+
+// resolveResponseString scans an input string for any occurrences of tokens like
+// "$response.xxx" and replaces them with the corresponding value from the JSON document.
+func resolveResponseString(doc map[string]interface{}, input string) string {
+	if doc == nil {
+		return input
+	}
+	inputStr := strings.TrimSpace(input)
+	if inputStr == "" {
+		return input
+	}
+	// check if input has {{ and }} and resolve them
+	result := responseTokenPattern2.ReplaceAllStringFunc(inputStr, func(token string) string {
+		key := strings.Trim(token, "{}")
+		key = strings.TrimSpace(key)
+		// Check if key is a valid key
+		if key == "" {
+			return token
+		}
+		value, _, err := cmn.KVStore.Get(key, "")
+		if err != nil {
+			return token // Keep original if key is missing
+		}
+		valueStr, _ := value.(string)
+		return valueStr
+	})
+	// pattern matches "$response" followed by one or more dot-prefixed keys
+	matches := responseTokenPattern1.FindAllString(result, -1)
+	for _, token := range matches {
+		value := resolveResponseToken(doc, token)
+		result = strings.ReplaceAll(result, token, fmt.Sprintf("%v", value))
+	}
+	return result
+}
+
+// resolveValue takes an arbitrary value that might be a string containing tokens,
+// a map, or a slice (array) and recursively resolves all $response tokens within it.
+func resolveValue(doc map[string]interface{}, value interface{}) interface{} {
+	switch v := value.(type) {
+	case string:
+		// Resolve any tokens within the string.
+		return resolveResponseString(doc, v)
+	case map[string]interface{}:
+		// Recursively process each key-value pair.
+		for key, val := range v {
+			v[key] = resolveValue(doc, val)
+		}
+		return v
+	case []interface{}:
+		// Recursively process each element in the slice.
+		for i, item := range v {
+			v[i] = resolveValue(doc, item)
+		}
+		return v
+	default:
+		return v
+	}
 }
 
 // Action interface for generic actions
@@ -210,6 +363,16 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	rval[StrResponse] = nil
 	rval[StrConfig] = nil
 
+	const postType = "POST"
+	const putType = "PUT"
+
+	input, err := getInput(params)
+	if err != nil {
+		// This step has no input, so let's assume input is empty
+		input = map[string]interface{}{}
+	}
+	inputMap, _ := input[StrRequest].(map[string]interface{})
+
 	config, err := getConfig(params)
 	if err != nil {
 		rval[StrStatus] = StatusError
@@ -221,10 +384,12 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	url, ok := params["url"].(string)
 	if !ok {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'url' parameter"
-		return rval, fmt.Errorf("missing 'url' parameter")
+		rval[StrMessage] = ErrMissingURL
+		return rval, errors.New(ErrMissingURL)
 	}
-
+	// Resolve any $response.xxx tokens in the URL string (if any)
+	url = resolveResponseString(input, url)
+	// Check if the final URL is valid
 	if !cmn.IsURLValid(url) {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("invalid URL: %s", url)
@@ -236,27 +401,60 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 		"url": url,
 	}
 
-	// Create requestBody
-	requestBody, err := getInput(params)
-	if err != nil {
-		rval[StrStatus] = StatusError
-		rval[StrMessage] = err.Error()
-		return rval, err
+	// Get request type (GET, POST, PUT, DELETE, etc.)
+	if params["type"] != nil {
+		request["type"] = params["type"].(string)
+		request["type"] = strings.ToUpper(strings.TrimSpace(resolveResponseString(inputMap, request["type"])))
+	} else {
+		request["type"] = "GET"
 	}
-	request["body"] = requestBody[StrRequest].(string)
+
+	// Create requestBody (if the request is a POST or PUT)
+	if request["type"] == postType || request["type"] == putType {
+		requestBody := ""
+		rawBody, _ := params["body"].(map[string]interface{})
+		if rawBody != nil {
+			// Check if there are any $response.xxx tokens in rawBody
+			requestBody, _ = resolveValue(inputMap, rawBody).(string)
+			if requestBody == "" {
+				// Check if this is a "POST" or "PUT" request, if so generate an error
+				// if the body is missing
+				if request["type"] == postType || request["type"] == putType {
+					rval[StrStatus] = StatusError
+					rval[StrMessage] = "missing 'input' parameter"
+					return rval, fmt.Errorf("missing 'input' parameter")
+				}
+			}
+		}
+		request["body"] = requestBody
+	}
 
 	// Create RequestHeaders
 	requestHeaders := make(map[string]interface{})
-	requestHeaders["Content-Type"] = jsonAppType
-	if params["auth"] != nil {
-		requestHeaders["Authorization"] = config["auth"].(string)
+	requestHeaders["User-Agent"] = "CROWler"
+	requestHeaders["Accept"] = jsonAppType
+	if request["type"] == postType || request["type"] == putType {
+		requestHeaders["Content-Type"] = jsonAppType
 	}
+	if params["auth"] != nil {
+		auth, ok := params["auth"].(string)
+		if ok {
+			auth = strings.TrimSpace(resolveResponseString(inputMap, auth))
+		}
+		requestHeaders["Authorization"] = auth
+	} else if config["api_key"] != nil {
+		auth, ok := config["api_key"].(string)
+		if ok {
+			auth = strings.TrimSpace(resolveResponseString(inputMap, auth))
+			requestHeaders["Authorization"] = auth
+		}
+	}
+	// Check if we have additional headers in the params
 	if params["headers"] != nil {
 		headers, ok := params["headers"].(map[string]interface{})
 		if ok {
-			for k, v := range headers {
-				requestHeaders[k] = v
-			}
+			headersProcessed := resolveValue(inputMap, headers).(map[string]interface{})
+			maps.Copy(requestHeaders, headersProcessed)
 		}
 	}
 	request["headers"] = string(cmn.ConvertMapToJSON(requestHeaders))
@@ -317,19 +515,58 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
+	eventMap, _ := eventRaw[StrRequest].(map[string]interface{})
 
 	// Transform eventRaw into an event struct
 	event := cdb.Event{}
 	event.Details = eventRaw
-	if params["type"] != nil {
-		event.Type = params["type"].(string)
+	if params["event_type"] != nil {
+		eType, _ := params["event_type"].(string)
+		eType = strings.TrimSpace(resolveResponseString(eventMap, eType))
+		event.Type = eType
 	}
 	if params["source"] != nil {
-		event.SourceID = params["source"].(uint64)
+		eSource, _ := params["source"].(string)
+		eSource = resolveResponseString(eventMap, eSource)
+		eSourceInt, err := strconv.ParseUint(eSource, 10, 64)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("invalid source ID: %v", err)
+			return rval, err
+		}
+		event.SourceID = eSourceInt
 	} else {
 		event.SourceID = 0
 	}
-	event.Timestamp = string(time.Now().Format("2006-01-02 15:04:05"))
+	// Check if there is a timestamp params
+	if params["timestamp"] != nil {
+		eTimestamp, _ := params["timestamp"].(string)
+		eTimestamp = resolveResponseString(eventMap, eTimestamp)
+		// convert eTimestamp to a time.Time
+		t, err := time.Parse("2006-01-02 15:04:05", eTimestamp)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("invalid timestamp: %v", err)
+			return rval, err
+		}
+		event.Timestamp = t.Format("2006-01-02 15:04:05")
+	} else {
+		event.Timestamp = string(time.Now().Format("2006-01-02 15:04:05"))
+	}
+	// Check if there is a Severity params
+	if params["severity"] != nil {
+		eSeverity, _ := params["severity"].(string)
+		eSeverity = strings.ToUpper(strings.TrimSpace(resolveResponseString(eventMap, eSeverity)))
+		event.Severity = eSeverity
+	} else {
+		event.Severity = "MEDIUM"
+	}
+	// Check if there is a Details params
+	if params["details"] != nil {
+		eDetails, _ := params["details"].(map[string]interface{})
+		eDetailsProcessed := resolveValue(eventMap, eDetails)
+		event.Details, _ = eDetailsProcessed.(map[string]interface{})
+	}
 
 	result, err := cdb.CreateEvent(&dbHandler, event)
 	if err != nil {
@@ -430,8 +667,38 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
+	// Check if the command is a direct command or a command map
+	if commandRaw[StrRequest] == nil {
+		// Check if there is a "command" in params
+		if params["command"] == nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "missing 'command' parameter"
+			return rval, fmt.Errorf("missing 'command' parameter")
+		}
+		commandRaw[StrRequest] = params["command"]
+	}
+	// Check if commandRaw has an input that is a string or a map
+	cmdStr := ""
+	commandMap := make(map[string]interface{})
+	_, ok := commandRaw[StrRequest].(string)
+	if !ok {
+		// Check if it's a map
+		_, ok = commandRaw[StrRequest].(map[string]interface{})
+		if !ok {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "invalid command format"
+			return rval, fmt.Errorf("invalid command format")
+		}
+		commandMap = commandRaw[StrRequest].(map[string]interface{})
+	} else {
+		// Must be a direct command
+		cmdStr = commandRaw[StrRequest].(string)
+		commandMap["command"] = cmdStr
+	}
+	// Check if cmdStr needs to be resolved
+	cmdStr = resolveResponseString(commandMap, cmdStr)
 
-	command := commandRaw[StrRequest].(string)
+	command := cmdStr
 	args := strings.Fields(command)
 	if len(args) == 0 {
 		rval[StrStatus] = StatusError
@@ -446,16 +713,42 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 	// Retrieve chrootDir and privileges from parameters
 	chrootDir := ""
 	if params["chroot_dir"] != nil {
-		chrootDir = params["chroot_dir"].(string)
+		tChrootDir, ok := params["chroot_dir"].(string)
+		if ok {
+			// Check if tChrootDir needs to be resolved
+			chrootDir = resolveResponseString(commandMap, tChrootDir)
+		}
 	}
 	// Check if we have UID and GID
 	uid := 0
 	gid := 0
 	if params["uid"] != nil {
-		uid = params["uid"].(int)
+		tUID, ok := params["uid"].(string)
+		if ok {
+			// Check if tUID needs to be resolved
+			tUID = resolveResponseString(commandMap, tUID)
+		}
+		// Convert tUID to an integer
+		uid, err = strconv.Atoi(tUID)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("invalid UID: %v", err)
+			return rval, err
+		}
 	}
 	if params["gid"] != nil {
-		gid = params["gid"].(int)
+		tGID, ok := params["gid"].(string)
+		if ok {
+			// Check if tGID needs to be resolved
+			tGID = resolveResponseString(commandMap, tGID)
+		}
+		// Convert tGID to an integer
+		gid, err = strconv.Atoi(tGID)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("invalid GID: %v", err)
+			return rval, err
+		}
 	}
 
 	// Log execution
@@ -498,32 +791,83 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 	}
 	rval[StrConfig] = config
 
-	promptRaw, err := getInput(params)
+	inputRaw, err := getInput(params)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
+
 	// Combine the prompt with the request
 	var prompt string
+	var promptType string
 	if params["prompt"] != nil {
 		prompt = params["prompt"].(string)
+		// Check if prompt needs to be resolved
+		prompt = resolveResponseString(inputRaw, prompt)
+		promptType = "prompt"
 	}
-	if promptRaw[StrRequest] != nil {
-		if prompt != "" {
-			prompt = prompt + " "
+	if prompt == "" {
+		prompt, _ = inputRaw[StrRequest].(string)
+	}
+	if prompt == "" {
+		// Check is params has a message field
+		if params[StrMessage] != nil {
+			prompt = params[StrMessage].(string)
+			// Check if prompt needs to be resolved
+			prompt = resolveResponseString(inputRaw, prompt)
+			promptType = StrMessage
 		}
-		prompt = prompt + promptRaw[StrRequest].(string)
+	}
+	if prompt == "" {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "missing 'prompt' or 'message' parameter"
+		return rval, fmt.Errorf("missing 'prompt' or 'message' parameter")
+	}
+
+	// Get the URL from the config
+	url := ""
+	if params["url"] == nil {
+		// Try the config
+		if config["url"] == nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = ErrMissingURL
+			return rval, errors.New(ErrMissingURL)
+		}
+		url, _ = config["url"].(string)
+	} else {
+		urlRaw := params["url"]
+		// Check if urlRaw is a string or a map
+		_, ok := urlRaw.(string)
+		if !ok {
+			// Check if it's a map
+			urlMap := urlRaw.(map[string]interface{})
+			url = urlMap[StrRequest].(string)
+		} else {
+			url = urlRaw.(string)
+		}
+	}
+	// Check if url needs to be resolved
+	url = resolveResponseString(inputRaw, url)
+	// Check if the final URL is valid
+	if !cmn.IsURLValid(url) {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = fmt.Sprintf("invalid URL: %s", url)
+		return rval, fmt.Errorf("invalid URL: %s", url)
 	}
 
 	// Generate the API request based on the input and parameters
 	request := map[string]string{
-		"url": config["url"].(string),
+		"url": url,
 	}
 
 	// Prepare request body
-	requestBody := map[string]interface{}{
-		"prompt": prompt,
+	requestBody := make(map[string]interface{}, 1)
+	// Check if we have a prompt or a message
+	if promptType == StrMessage {
+		requestBody[StrMessage] = prompt
+	} else {
+		requestBody["prompt"] = prompt
 	}
 	// Check if we have additional parameters for AI in params like temperature, max_tokens, etc.
 	if params["temperature"] != nil {
@@ -537,6 +881,7 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			return rval, fmt.Errorf("temperature '%v' parameter doesn't appear to be a valid float", config["temperature"])
 		}
 	}
+	// Check if we have max_tokens
 	if params["max_tokens"] != nil {
 		value, ok := params["max_tokens"].(float64)
 		if ok {
@@ -548,6 +893,163 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			return rval, fmt.Errorf("max_tokens '%v' parameter doesn't appear to be a valid integer", config["max_tokens"])
 		}
 	}
+	// Check if we have top_p
+	if params["top_p"] != nil {
+		value, ok := params["top_p"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Convert value to a float
+			valueFloat, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = fmt.Sprintf("top_p '%v' parameter doesn't appear to be a valid float", config["top_p"])
+				return rval, fmt.Errorf("top_p '%v' parameter doesn't appear to be a valid float", config["top_p"])
+			}
+			// Top p should be a float value between 0 and 1
+			requestBody["top_p"] = valueFloat
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("top_p '%v' parameter doesn't appear to be a valid float", config["top_p"])
+			return rval, fmt.Errorf("top_p '%v' parameter doesn't appear to be a valid float", config["top_p"])
+		}
+	}
+	// Check if we have presence_penalty
+	if params["presence_penalty"] != nil {
+		value, ok := params["presence_penalty"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Convert value to a float
+			valueFloat, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = fmt.Sprintf("presence_penalty '%v' parameter doesn't appear to be a valid float", config["presence_penalty"])
+				return rval, fmt.Errorf("presence_penalty '%v' parameter doesn't appear to be a valid float", config["presence_penalty"])
+			}
+			// Presence penalty should be a float value between 0 and 1
+			requestBody["presence_penalty"] = valueFloat
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("presence_penalty '%v' parameter doesn't appear to be a valid float", config["presence_penalty"])
+			return rval, fmt.Errorf("presence_penalty '%v' parameter doesn't appear to be a valid float", config["presence_penalty"])
+		}
+	}
+	// Check if we have frequency_penalty
+	if params["frequency_penalty"] != nil {
+		value, ok := params["frequency_penalty"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Convert value to a float
+			valueFloat, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = fmt.Sprintf("frequency_penalty '%v' parameter doesn't appear to be a valid float", config["frequency_penalty"])
+				return rval, fmt.Errorf("frequency_penalty '%v' parameter doesn't appear to be a valid float", config["frequency_penalty"])
+			}
+			// Frequency penalty should be a float value between 0 and 1
+			requestBody["frequency_penalty"] = valueFloat
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("frequency_penalty '%v' parameter doesn't appear to be a valid float", config["frequency_penalty"])
+			return rval, fmt.Errorf("frequency_penalty '%v' parameter doesn't appear to be a valid float", config["frequency_penalty"])
+		}
+	}
+	// Check if we have stop
+	if params["stop"] != nil {
+		value, ok := params["stop"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Stop should be a boolean value
+			requestBody["stop"] = value
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("stop '%v' parameter doesn't appear to be a valid boolean", config["stop"])
+			return rval, fmt.Errorf("stop '%v' parameter doesn't appear to be a valid boolean", config["stop"])
+		}
+	}
+	// Check if we have echo
+	if params["echo"] != nil {
+		value, ok := params["echo"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Echo should be a boolean value
+			requestBody["echo"] = value
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("echo '%v' parameter doesn't appear to be a valid boolean", config["echo"])
+			return rval, fmt.Errorf("echo '%v' parameter doesn't appear to be a valid boolean", config["echo"])
+		}
+	}
+	// Check if we have logprobs
+	if params["logprobs"] != nil {
+		value, ok := params["logprobs"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Logprobs should be an integer value
+			requestBody["logprobs"] = value
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("logprobs '%v' parameter doesn't appear to be a valid integer", config["logprobs"])
+			return rval, fmt.Errorf("logprobs '%v' parameter doesn't appear to be a valid integer", config["logprobs"])
+		}
+	}
+	// Check if we have n
+	if params["n"] != nil {
+		valid := true
+		value, ok := params["n"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Convert value to an integer
+			valueInt, err := strconv.Atoi(value)
+			if err == nil {
+				// N should be an integer value
+				requestBody["n"] = valueInt
+			} else {
+				valid = false
+			}
+		} else {
+			valid = false
+		}
+		if !valid {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("n '%v' parameter doesn't appear to be a valid integer", config["n"])
+			return rval, fmt.Errorf("n '%v' parameter doesn't appear to be a valid integer", config["n"])
+		}
+	}
+	// Check if we have stream
+
+	// Check if we have logit_bias
+	if params["logit_bias"] != nil {
+		valid := true
+		value, ok := params["logit_bias"].(string)
+		if ok {
+			// Check if value needs to be resolved
+			value = resolveResponseString(inputRaw, value)
+			// Convert value to a float
+			valueFloat, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				valid = false
+			} else {
+				// Logit bias should be a float value
+				requestBody["logit_bias"] = valueFloat
+			}
+		} else {
+			valid = false
+		}
+		if !valid {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("logit_bias '%v' parameter doesn't appear to be a valid float", config["logit_bias"])
+			return rval, fmt.Errorf("logit_bias '%v' parameter doesn't appear to be a valid float", config["logit_bias"])
+		}
+	}
+
+	// Create the request body:
 	request["body"] = string(cmn.ConvertMapToJSON(requestBody))
 
 	// Prepare request headers
@@ -611,47 +1113,39 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 		return rval, fmt.Errorf("missing 'dbHandler' in config")
 	}
 
-	// Extract query type (e.g., "select", "insert", "update", etc.)
-	queryType, ok := params["type"].(string)
-	if !ok {
-		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'type' parameter for DB operation"
-		return rval, fmt.Errorf("missing 'type' parameter for DB operation")
-	}
-
 	// Extract query string
-	queryRaw, err := getInput(params)
+	inputRaw, err := getInput(params)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
-	query := queryRaw[StrRequest].(string)
+
+	// Check if there is a params field called query
+	if params["query"] == nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "missing 'query' parameter"
+		return rval, fmt.Errorf("missing 'query' parameter")
+	}
+	query, _ := params["query"].(string)
+	// Check if query needs to be resolved
+	query = resolveResponseString(inputRaw, query)
 
 	// Execute the query based on type
 	var result interface{}
-	switch queryType {
-	case "select":
-		// Assume query returns rows
-		result, err = dbHandler.ExecuteQuery(query)
-	case "insert":
-		result, err = dbHandler.ExecuteQuery(query)
-	case "update":
-		result, err = dbHandler.ExecuteQuery(query)
-	case "delete":
-		result, err = dbHandler.ExecuteQuery(query)
-	default:
-		return nil, fmt.Errorf("unsupported query type: %s", queryType)
-	}
-
+	result, err = dbHandler.ExecuteQuery(query)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("database operation failed: %v", err)
 		return rval, fmt.Errorf("database operation failed: %v", err)
 	}
 
+	// Transform the result into a JSON document where the headers are they keys
+	// and the values are the values
+	resultMap := cmn.ConvertMapToJSON(cmn.ConvertInfToMap(result)) // This converts result into a map[string]interface{} and then into a JSON document
+
 	// Return the result
-	rval[StrResponse] = result
+	rval[StrResponse] = resultMap
 	rval[StrStatus] = StatusSuccess
 	rval[StrMessage] = "database operation successful"
 
@@ -689,6 +1183,14 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 		return rval, errors.New("missing 'pluginRegister' in config")
 	}
 
+	// Recover previous step response
+	inputRaw, err := getInput(params)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+
 	// Extract plugin's names from params
 	plgName, ok := params["plugin_name"].(string)
 	if !ok {
@@ -696,7 +1198,13 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 		rval[StrMessage] = "missing 'plugin_name' in parameters section"
 		return rval, errors.New("missing 'plugin' parameter")
 	}
-	plgName = strings.TrimSpace(plgName)
+	// Check if plgName needs to be resolved
+	plgName = strings.TrimSpace(resolveResponseString(inputRaw, plgName))
+	if plgName == "" {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "empty plugin name"
+		return rval, fmt.Errorf("empty plugin name")
+	}
 
 	// Retrieve the plugin
 	plg, exists := plugins.GetPlugin(plgName)
@@ -718,13 +1226,13 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	plgParams := make(map[string]interface{})
 	// Check if we have an event field
 	// Add event from config if available
-	if event, exists := config["event"]; exists {
-		plgParams["event"] = event
+	if event, exists := config[StrEvent]; exists {
+		plgParams[StrEvent] = event
 	} else {
-		if event, exists := params["event"]; exists {
-			plgParams["event"] = event
+		if event, exists := params[StrEvent]; exists {
+			plgParams[StrEvent] = event
 		} else {
-			plgParams["event"] = nil
+			plgParams[StrEvent] = nil
 		}
 	}
 	// Add meta_data from config if available
@@ -740,12 +1248,25 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	// Collect custom params
 	for k, v := range params {
 		if k != "plugin_name" &&
-			k != "event" &&
+			k != StrEvent &&
 			k != "meta_data" &&
 			k != "config" &&
 			k != "vdi_hook" &&
 			k != "db_handler" {
-			plgParams[k] = v
+			// Check if the value needs to be resolved
+			// To do that, first check which type of value it is
+			// If it's a string, resolve it
+			// If it's a map, resolve the values
+			if _, ok := v.(string); ok {
+				plgParams[k] = resolveResponseString(inputRaw, v.(string))
+			} else {
+				// Check if it's a map
+				if _, ok := v.(map[string]interface{}); ok {
+					plgParams[k] = resolveValue(inputRaw, v)
+				} else {
+					plgParams[k] = v
+				}
+			}
 		}
 	}
 	// Check if params have a response field
@@ -810,131 +1331,223 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 	}
 	rval[StrConfig] = config
 
-	condition, ok := params["condition"].(string)
+	// Extract previous step response
+	inputRaw, _ := getInput(params)
+
+	condition, ok := params["condition"].(map[string]interface{})
 	if !ok {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = "missing 'condition' parameter"
 		return rval, fmt.Errorf("missing 'condition' parameter")
 	}
 
-	if evaluateCondition(condition, params) {
-		if steps, ok := params["on_true"].([]map[string]interface{}); ok {
-			return AgentsEngine.ExecuteJob(steps)
-		}
+	result, err := evaluateCondition(condition, params, inputRaw)
+	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'on_true' steps"
-		return rval, fmt.Errorf("missing 'on_true' steps")
+		rval[StrMessage] = fmt.Sprintf("failed to evaluate condition: %v", err)
+		return rval, err
+	}
+	var nextStep map[string]interface{}
+	// Check if result is a boolean
+	resultBool, ok := result.(bool)
+	if !ok {
+		// result is not a boolean, so it's a set of steps
+		nextStep, ok = result.(map[string]interface{})
+		if !ok {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "invalid result from condition evaluation"
+			return rval, fmt.Errorf("invalid result from condition evaluation")
+		}
+	} else {
+		if resultBool {
+			nextStep, ok = condition["on_true"].(map[string]interface{})
+			if !ok {
+				fmt.Printf("condition: %v\n", condition)
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = "missing 'on_true' step"
+				return rval, fmt.Errorf("missing 'on_true' step")
+			}
+		} else {
+			nextStep, ok = condition["on_false"].(map[string]interface{})
+			if !ok {
+				fmt.Printf("condition: %v\n", condition)
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = "missing 'on_false' step"
+				return rval, fmt.Errorf("missing 'on_false' step")
+			}
+		}
 	}
 
-	if steps, ok := params["on_false"].([]map[string]interface{}); ok {
-		return AgentsEngine.ExecuteJob(steps)
+	var results map[string]interface{}
+	if nextStep != nil {
+		// extract the call_agent from the nextStep
+		agentName, ok := nextStep["call_agent"].(string)
+		if !ok {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "missing 'call_agent' in next step"
+			return rval, fmt.Errorf("missing 'call_agent' in next step")
+		}
+		// Check if agentName needs to be resolved
+		agentName = resolveResponseString(inputRaw, agentName)
+
+		// Retrieve the agent
+		agent, exists := AgentsEngine.GetAgentByName(agentName)
+		if !exists {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("agent '%s' not found", agentName)
+			return rval, fmt.Errorf("agent '%s' not found", agentName)
+		}
+
+		err = AgentsEngine.ExecuteJobs(agent, params)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = fmt.Sprintf("failed to execute steps: %v", err)
+			return rval, err
+		}
 	}
 
-	rval[StrStatus] = StatusError
-	rval[StrMessage] = "missing 'on_false' steps"
-	return rval, fmt.Errorf("missing 'on_false' steps")
+	rval[StrResponse] = results
+	rval[StrStatus] = StatusSuccess
+	rval[StrMessage] = "decision executed successfully"
+
+	return rval, nil
 }
 
-func evaluateCondition(condition string, params map[string]interface{}) bool {
+func evaluateCondition(condition, params, rawInput map[string]interface{}) (interface{}, error) {
 	// Check which condition to evaluate (agents usually support `if` and `switch` type conditions)
-	condition = strings.ToLower(strings.TrimSpace(condition))
+	conditionType, _ := condition["condition_type"].(string)
+	conditionType = strings.ToLower(strings.TrimSpace(conditionType))
 
 	// Check if the condition is a simple `if` condition
-	if condition == "if" {
+	if conditionType == "if" {
 		// Extract the condition to evaluate
-		cond, ok := params[StrRequest].(string)
+		// This should be a string expression like "$response.success == true && ($response.status == 'active' || $response.value > 10)"
+		expr, ok := condition["expression"].(string)
 		if !ok {
-			return false
+			return false, fmt.Errorf("missing 'expression' in condition")
 		}
 
 		// Evaluate the condition
-		return evaluateIfCondition(cond, params)
+		return evaluateIfCondition(expr, rawInput)
 	}
 
 	// Check if the condition is a `switch` condition
-	if condition == "switch" {
+	if conditionType == "switch" {
 		// Extract the switch condition
-		cond, ok := params[StrRequest].(string)
+		expr, ok := params["expression"].(string)
 		if !ok {
-			return false
+			return false, fmt.Errorf("missing 'expression' in condition")
+		}
+
+		// Also, check if the switch many cases needs to be resolved
+		// This should be an array of cases like {"1": "case1", "2": "case2", "default": "default"}
+		rawCases, ok := condition["cases"].(map[string]interface{})
+		if !ok {
+			return false, fmt.Errorf("missing 'cases' in condition")
 		}
 
 		// Evaluate the switch condition
-		return evaluateSwitchCondition(cond, params)
+		return evaluateSwitchCondition(expr, rawCases, rawInput)
 	}
 
-	return params[condition] != nil
+	return false, fmt.Errorf("unsupported condition type: %s", conditionType)
 }
 
 // evaluateIfCondition evaluates a boolean condition based on the given expression and parameters.
-func evaluateIfCondition(expression string, params map[string]interface{}) bool {
-	// Parse the expression (basic implementation)
-	// Example expressions: "response.success == true", "value > 10", "status == 'active'"
-	parts := strings.Fields(expression)
+func evaluateIfCondition(expression string, rawInput map[string]interface{}) (bool, error) {
+	// Check if expr needs to be resolved
+	expression = resolveResponseString(rawInput, expression)
 
-	if len(parts) < 3 {
-		fmt.Printf("Invalid if condition: %s\n", expression)
-		return false
+	// Wrap string values in single quotes
+	expression = wrapStrings(expression)
+
+	parsedExpr, err := govaluate.NewEvaluableExpression(expression)
+	if err != nil {
+		return false, fmt.Errorf("invalid expression: %s", expression)
 	}
 
-	leftOperand := parts[0]
-	operator := parts[1]
-	rightOperand := strings.Join(parts[2:], " ")
-
-	// Get the left operand value from params
-	leftValue, exists := params[leftOperand]
-	if !exists {
-		fmt.Printf("Missing parameter for if condition: %s\n", leftOperand)
-		return false
+	// Step 4: Evaluate the expression
+	result, err := parsedExpr.Evaluate(nil) // No need for additional parameters
+	if err != nil {
+		return false, fmt.Errorf("error evaluating expression: %v", err)
 	}
 
-	// Perform the comparison
-	switch operator {
-	case "==":
-		return fmt.Sprintf("%v", leftValue) == strings.Trim(rightOperand, "'\"")
-	case "!=":
-		return fmt.Sprintf("%v", leftValue) != strings.Trim(rightOperand, "'\"")
-	case ">":
-		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a > b })
-	case "<":
-		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a < b })
-	case ">=":
-		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a >= b })
-	case "<=":
-		return compareNumeric(leftValue, rightOperand, func(a, b float64) bool { return a <= b })
-	default:
-		fmt.Printf("Unsupported operator: %s\n", operator)
-		return false
+	// Step 5: Ensure the result is a boolean
+	booleanResult, ok := result.(bool)
+	if !ok {
+		return false, fmt.Errorf("expression did not return a boolean: %v", result)
 	}
+
+	return booleanResult, nil
+}
+
+// wrapStrings ensures string values in the expression are enclosed in single quotes.
+func wrapStrings(expression string) string {
+	// Regex to match words that are not part of an operator, number, or boolean.
+	re := regexp.MustCompile(`(\b[a-zA-Z_][a-zA-Z0-9_]*\b)`)
+	return re.ReplaceAllStringFunc(expression, func(match string) string {
+		// Avoid modifying operators or boolean values
+		lower := strings.ToLower(match)
+		if lower == "true" || lower == "false" || lower == "and" || lower == "or" || lower == "not" {
+			return match
+		}
+		// Wrap other words in quotes
+		return fmt.Sprintf("'%s'", match)
+	})
 }
 
 // evaluateSwitchCondition evaluates a switch-like condition based on the given expression and cases.
-func evaluateSwitchCondition(expression string, params map[string]interface{}) bool {
-	// Check if the expression exists in the params
-	value, exists := params[expression]
-	if !exists {
-		fmt.Printf("Missing parameter for switch condition: %s\n", expression)
-		return false
+func evaluateSwitchCondition(expression string, rawCases, rawInput map[string]interface{}) (interface{}, error) {
+
+	// Parse the expression (basic implementation)
+	// example expression: "test == test", or just "test"
+	parts := strings.Fields(expression)
+	var expr interface{}
+	var err error
+	if len(parts) > 1 {
+		// use evaluateIfCondition for comparison
+		expr, err = evaluateIfCondition(expression, rawInput)
+		if err != nil {
+			return false, fmt.Errorf("invalid switch condition: %s", expression)
+		}
+	} else {
+		// Check if expression needs to be resolved
+		expr = resolveResponseString(rawInput, expression)
+	}
+
+	// Check if cases needs to be resolved
+	cases := make(map[string]interface{})
+	// Convert rawCases to a map
+	for k, v := range rawCases {
+		// Check if k needs to be resolved
+		k = resolveResponseString(rawInput, k)
+		// Check if v needs to be resolved
+		// Is V a map?
+		if _, ok := v.(map[string]interface{}); ok {
+			v = resolveValue(rawInput, v)
+		} else {
+			// Check if v is a string
+			// If it is, resolve it
+			v = resolveResponseString(rawInput, v.(string))
+		}
+		cases[k] = v
 	}
 
 	// Look for matching cases in params
-	cases, ok := params["cases"].(map[string]interface{})
-	if !ok {
-		fmt.Printf("Invalid 'cases' for switch condition\n")
-		return false
-	}
-
-	valueStr := fmt.Sprintf("%v", value)
-	if _, match := cases[valueStr]; match {
-		return true
+	if expr != nil {
+		if caseValue, exists := cases[fmt.Sprintf("%v", expr)]; exists {
+			// Execute the case
+			fmt.Printf("Case %v\n", caseValue)
+			return caseValue, nil
+		}
 	}
 
 	// Fallback to 'default' case if defined
 	if _, defaultExists := cases["default"]; defaultExists {
-		return true
+		return cases["default"], nil
 	}
 
-	return false
+	return nil, fmt.Errorf("no matching case found")
 }
 
 // compareNumeric performs numeric comparison with a custom comparator function.
