@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -638,6 +639,18 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 	if err := addJSAPIMapJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIReduceJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIJoinJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPISortJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIPipeJSON(vm); err != nil {
 		return err
 	}
 
@@ -2232,6 +2245,257 @@ func addJSAPIMapJSON(vm *otto.Otto) error {
 			return otto.UndefinedValue()
 		}
 		return mappedValue
+	})
+}
+
+/* example of usage of the following functions:
+-------------------------------------------------------------------------------
+// Example data: an array of contact objects.
+var contacts = [
+  { id: 1, first_name: "Alice", last_name: "Smith", email: "alice@example.com" },
+  { id: 2, first_name: "Bob", last_name: "Jones", email: "bob@example.com" }
+];
+
+// Use reduceJSON to concatenate all email addresses.
+var allEmails = reduceJSON(contacts, function(acc, contact) {
+  return acc + (acc ? ", " : "") + contact.email;
+}, "");
+console.log("All Emails:", allEmails);
+-------------------------------------------------------------------------------
+
+// Use joinJSON to merge two datasets on the "id" field.
+var additionalData = [
+  { id: 1, phone: "123-456-7890" },
+  { id: 2, phone: "987-654-3210" }
+];
+var merged = joinJSON(contacts, additionalData, "id");
+console.log("Merged Data:", merged);
+-------------------------------------------------------------------------------
+
+// Use sortJSON to sort contacts by last name descending.
+var sortedContacts = sortJSON(contacts, "last_name", "desc");
+console.log("Sorted Contacts:", sortedContacts);
+-------------------------------------------------------------------------------
+
+// Compose a pipeline: first, add a greeting, then extract only id and greeting.
+var transformed = pipeJSON(contacts, [
+  function(arr) {
+    // Map over array: add greeting to each contact.
+    return arr.map(function(contact) {
+      contact.greeting = "Hello " + contact.first_name;
+      return contact;
+    });
+  },
+  function(arr) {
+    // Map over array: return only id and greeting.
+    return arr.map(function(contact) {
+      return { id: contact.id, greeting: contact.greeting };
+    });
+  }
+]);
+console.log("Transformed Data:", transformed);
+-------------------------------------------------------------------------------
+*/
+
+// reduceJSON applies a callback to each element of a JSON array, aggregating a result.
+// Usage in JS:
+//
+//	var total = reduceJSON([1,2,3,4], function(acc, val) { return acc + val; }, 0);
+func addJSAPIReduceJSON(vm *otto.Otto) error {
+	return vm.Set("reduceJSON", func(call otto.FunctionCall) otto.Value {
+		// First argument: a JSON array.
+		arrInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		arr, ok := arrInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Second argument: callback function.
+		callback := call.Argument(1)
+		if !callback.IsFunction() {
+			return otto.UndefinedValue()
+		}
+		// Third argument: initial accumulator.
+		accumulator := call.Argument(2)
+		// Iterate over each element and call the callback.
+		for _, elem := range arr {
+			result, err := callback.Call(otto.UndefinedValue(), accumulator, elem)
+			if err != nil {
+				continue // optionally log error
+			}
+			accumulator = result
+		}
+		return accumulator
+	})
+}
+
+// joinJSON performs an inner join between two JSON arrays based on a common key.
+// Usage in JS:
+//
+//	var joined = joinJSON(leftArray, rightArray, "id");
+func addJSAPIJoinJSON(vm *otto.Otto) error {
+	return vm.Set("joinJSON", func(call otto.FunctionCall) otto.Value {
+		// First argument: left array.
+		leftInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		leftArr, ok := leftInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Second argument: right array.
+		rightInterface, err := call.Argument(1).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		rightArr, ok := rightInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Third argument: join key.
+		joinKey, err := call.Argument(2).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Build an index for the right array.
+		rightIndex := make(map[string][]map[string]interface{})
+		for _, r := range rightArr {
+			rMap, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			keyVal, exists := rMap[joinKey]
+			if !exists {
+				continue
+			}
+			keyStr := fmt.Sprintf("%v", keyVal)
+			rightIndex[keyStr] = append(rightIndex[keyStr], rMap)
+		}
+
+		// For each element in the left array, find matching right records.
+		var results []map[string]interface{}
+		for _, l := range leftArr {
+			lMap, ok := l.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			keyVal, exists := lMap[joinKey]
+			if !exists {
+				continue
+			}
+			keyStr := fmt.Sprintf("%v", keyVal)
+			if matches, found := rightIndex[keyStr]; found {
+				for _, rMap := range matches {
+					joined := make(map[string]interface{})
+					// Merge left and right maps.
+					for k, v := range lMap {
+						joined[k] = v
+					}
+					for k, v := range rMap {
+						joined[k] = v
+					}
+					results = append(results, joined)
+				}
+			}
+		}
+		jsResult, err := vm.ToValue(results)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return jsResult
+	})
+}
+
+// sortJSON sorts an array of JSON objects based on a given key.
+// Usage in JS:
+//
+//	var sorted = sortJSON(dataArray, "last_name", "asc");
+//
+// The order parameter is optional ("asc" is default, "desc" for descending).
+func addJSAPISortJSON(vm *otto.Otto) error {
+	return vm.Set("sortJSON", func(call otto.FunctionCall) otto.Value {
+		const asc = "asc"
+		const desc = "desc"
+
+		// First argument: JSON array.
+		arrInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		arr, ok := arrInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Second argument: sort key.
+		sortKey, err := call.Argument(1).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		// Third argument: order ("asc" or "desc", default "asc").
+		order := asc
+		if call.Argument(2).IsDefined() {
+			order, err = call.Argument(2).ToString()
+			if err != nil {
+				order = asc
+			}
+			order = strings.ToLower(order)
+		}
+		// Use sort.Slice to sort the array.
+		sort.Slice(arr, func(i, j int) bool {
+			var vi, vj string
+			if mi, ok := arr[i].(map[string]interface{}); ok {
+				vi = fmt.Sprintf("%v", mi[sortKey])
+			}
+			if mj, ok := arr[j].(map[string]interface{}); ok {
+				vj = fmt.Sprintf("%v", mj[sortKey])
+			}
+			if order == desc {
+				return vj < vi
+			}
+			return vi < vj
+		})
+		result, err := vm.ToValue(arr)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+// pipeJSON applies a sequence of transformation callbacks to an initial JSON value.
+// Usage in JS:
+//
+//	var finalValue = pipeJSON(initialValue, [fn1, fn2, fn3]);
+func addJSAPIPipeJSON(vm *otto.Otto) error {
+	return vm.Set("pipeJSON", func(call otto.FunctionCall) otto.Value {
+		// First argument: initial JSON value.
+		value := call.Argument(0)
+		// Second argument: array of callback functions.
+		funcArray, err := call.Argument(1).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		callbacks, ok := funcArray.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Apply each callback sequentially.
+		for _, cbInterface := range callbacks {
+			cbValue, err := vm.ToValue(cbInterface)
+			if err != nil || !cbValue.IsFunction() {
+				continue
+			}
+			newValue, err := cbValue.Call(otto.UndefinedValue(), value)
+			if err != nil {
+				continue
+			}
+			value = newValue
+		}
+		return value
 	})
 }
 
