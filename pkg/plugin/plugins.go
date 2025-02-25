@@ -1888,11 +1888,31 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			const mongoSelect = "find"
 
 			// Extract connection parameters.
-			host := fmt.Sprintf("%v", config["host"])
-			port := int(config["port"].(float64))
-			user := fmt.Sprintf("%v", config["user"])
-			password := fmt.Sprintf("%v", config["password"])
-			dbname := fmt.Sprintf("%v", config["dbname"])
+			var host string
+			if config["host"] != nil {
+				host = fmt.Sprintf("%v", config["host"])
+			} else {
+				host = "localhost"
+			}
+			var port int
+			if config["port"] != nil {
+				portF64, _ := config["port"].(float64)
+				port = int(portF64)
+			} else {
+				port = 27017
+			}
+			var user string
+			if config["user"] != nil {
+				user = fmt.Sprintf("%v", config["user"])
+			}
+			var password string
+			if config["password"] != nil {
+				password = fmt.Sprintf("%v", config["password"])
+			}
+			var dbname string
+			if config["dbname"] != nil {
+				dbname = fmt.Sprintf("%v", config["dbname"])
+			}
 			// Build MongoDB URI. If authentication is needed:
 			var mongoURI string
 			if user == "" || password == "" {
