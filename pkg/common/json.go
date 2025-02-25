@@ -18,6 +18,7 @@ package common
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -89,4 +90,11 @@ func MapToJSONStr(m map[string]interface{}) (string, error) {
 func MapStrToJSONStr(m map[string]string) (string, error) {
 	js, err := json.Marshal(m)
 	return string(js), err
+}
+
+// SafeEscapeJSONString escapes a string for JSON
+func SafeEscapeJSONString(s any) string {
+	ss := strings.ReplaceAll(fmt.Sprintf("%v", s), "\\", "\\\\")
+	ss = strings.ReplaceAll(ss, "\"", "\\\"")
+	return ss
 }
