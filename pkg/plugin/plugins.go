@@ -1714,6 +1714,53 @@ func addJSAPIVacuumSource(vm *otto.Otto, db *cdb.Handler) error {
 	return err
 }
 
+/* example usage for externalDBQuery in JS:
+
+// Postgres and MySQL example (replace db_type with "mysql" for MySQL)
+
+let config = JSON.stringify({
+	db_type: "postgres",
+	host: "localhost",
+	port: 5432,
+	user: "dbUser",
+	password: "dbPassword",
+	dbname: "dbName"
+});
+
+let result = externalDBQuery(config, "SELECT * FROM users");
+console.log(result);
+
+// SQLite example
+
+let config = JSON.stringify({
+	db_type: "sqlite",
+	dbname: "/path/to/db.sqlite"
+});
+
+let result = externalDBQuery(config, "SELECT * FROM users");
+console.log(result);
+
+// MongoDB example
+
+let config = JSON.stringify({
+	db_type: "mongodb",
+	host: "localhost",
+	port: 27017,
+	user: "dbUser",
+	password: "dbPassword",
+	dbname: "dbName"
+});
+
+let query = JSON.stringify({
+	collection: "users",
+	action: "find",
+	filter: { name: "John" }
+});
+
+let result = externalDBQuery(config, query);
+console.log(result);
+*/
+
 // addJSAPIExternalDBQuery adds a new function "externalDBQuery" to the Otto VM,
 // allowing engine plugins to query external databases (PostgreSQL, MySQL, SQLite,
 // MongoDB, Neo4J) without interfering with the built-in runQuery function.
@@ -1838,14 +1885,14 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 
 		// MongoDB support.
 		case "mongodb":
-			const mongoGet = "$get"
+			const mongoSelect = "find"
+
 			// Extract connection parameters.
 			host := fmt.Sprintf("%v", config["host"])
 			port := int(config["port"].(float64))
 			user := fmt.Sprintf("%v", config["user"])
 			password := fmt.Sprintf("%v", config["password"])
 			dbname := fmt.Sprintf("%v", config["dbname"])
-			collectionName := fmt.Sprintf("%v", config["collection"]) // Required field.
 			// Build MongoDB URI. If authentication is needed:
 			var mongoURI string
 			if user == "" || password == "" {
@@ -1861,23 +1908,27 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			}
 			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
 
-			coll := client.Database(dbname).Collection(collectionName)
-			// extract the filter from the query. (the filter is in the { "action": "$get", filter: { "key": "value" } } format)
+			// Process the query object: { action: "find", filter: { name: "John" } }
 			var queryJSON map[string]interface{}
 			if err := json.Unmarshal([]byte(query), &queryJSON); err != nil {
 				return otto.UndefinedValue()
 			}
+
+			// Extract collection name from the query object (Required field).
+			collectionName := strings.TrimSpace(fmt.Sprintf("%v", queryJSON["collection"]))
+			coll := client.Database(dbname).Collection(collectionName)
+
 			// Extract requested action and filter.
 			actionRaw, ok := queryJSON["action"]
-			if !ok {
+			if !ok || actionRaw == nil {
 				// If the action is not provided, default to a find action.
-				actionRaw = mongoGet
+				actionRaw = mongoSelect
 			}
-			actionStr := fmt.Sprintf("%v", actionRaw)
-			actionStr = strings.ToLower(strings.TrimSpace(actionStr))
+			actionStr := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", actionRaw)))
+
 			var jsResult otto.Value
 			switch actionStr {
-			case mongoGet: // $get
+			case mongoSelect: // find
 				filterRaw, ok := queryJSON["filter"].(map[string]interface{})
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
