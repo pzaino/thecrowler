@@ -17,7 +17,9 @@ package plugin
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -36,6 +38,11 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -45,6 +52,10 @@ const (
 	eventPlugin   = "event_plugin"
 	none          = "none"
 	all           = "all"
+
+	postgresDBMS = "postgres"
+	mysqlDBMS    = "mysql"
+	sqliteDBMS   = "sqlite"
 )
 
 // NewJSPluginRegister returns a new JSPluginRegister
@@ -604,6 +615,11 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	}
 
 	err = addJSAPIVacuumSource(vm, db) // Add vacuumSource API
+	if err != nil {
+		return err
+	}
+
+	err = addJSAPIExternalDBQuery(vm) // Add externalDBQuery API
 	if err != nil {
 		return err
 	}
@@ -1666,6 +1682,225 @@ func addJSAPIVacuumSource(vm *otto.Otto, db *cdb.Handler) error {
 		return success
 	})
 	return err
+}
+
+// addJSAPIExternalDBQuery adds a new function "externalDBQuery" to the Otto VM,
+// allowing engine plugins to query external databases (PostgreSQL, MySQL, SQLite,
+// MongoDB, Neo4J) without interfering with the built-in runQuery function.
+func addJSAPIExternalDBQuery(vm *otto.Otto) error {
+	// Register externalDBQuery to the JS API.
+	// Usage in JavaScript:
+	//    var config = JSON.stringify({
+	//         db_type: "postgres",
+	//         host: "127.0.0.1",
+	//         port: 5432,
+	//         user: "dbuser",
+	//         password: "secret",
+	//         dbname: "mydb"
+	//    });
+	//    var result = externalDBQuery(config, "SELECT * FROM mytable");
+	//    console.log(result);
+	return vm.Set("externalDBQuery", func(call otto.FunctionCall) otto.Value {
+		// Get configuration and query from arguments.
+		configStr, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		query, err := call.Argument(1).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Parse configuration JSON.
+		var config map[string]interface{}
+		if err := json.Unmarshal([]byte(configStr), &config); err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Determine the database type.
+		dbTypeRaw, ok := config["db_type"]
+		if !ok {
+			// Default to postgres if not specified, or you may choose to error out.
+			dbTypeRaw = postgresDBMS
+		}
+		dbType := strings.ToLower(fmt.Sprintf("%v", dbTypeRaw))
+
+		// Switch among supported databases.
+		switch dbType {
+		// Relational databases:
+		case postgresDBMS, mysqlDBMS, sqliteDBMS:
+			var dsn, driverName string
+			switch dbType {
+			case postgresDBMS:
+				driverName = postgresDBMS
+				host := fmt.Sprintf("%v", config["host"])
+				port := int(config["port"].(float64))
+				user := fmt.Sprintf("%v", config["user"])
+				password := fmt.Sprintf("%v", config["password"])
+				dbname := fmt.Sprintf("%v", config["dbname"])
+				// You might also support sslmode if provided.
+				dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+					host, port, user, password, dbname)
+			case mysqlDBMS:
+				driverName = mysqlDBMS
+				host := fmt.Sprintf("%v", config["host"])
+				port := int(config["port"].(float64))
+				user := fmt.Sprintf("%v", config["user"])
+				password := fmt.Sprintf("%v", config["password"])
+				dbname := fmt.Sprintf("%v", config["dbname"])
+				// DSN for MySQL is typically: user:password@tcp(host:port)/dbname
+				dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
+					user, password, host, port, dbname)
+			case sqliteDBMS:
+				driverName = "sqlite3"
+				// For SQLite, the dbname is the file path.
+				dsn = fmt.Sprintf("%v", config["dbname"])
+			}
+			// Open the DB.
+			db, err := sql.Open(driverName, dsn)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer db.Close() //nolint:errcheck // We can't check error here it's a defer
+
+			rows, err := db.Query(query)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer rows.Close() // nolint:errcheck // We can't check error here it's a defer
+
+			cols, err := rows.Columns()
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			results := []map[string]interface{}{}
+			for rows.Next() {
+				rowMap := make(map[string]interface{})
+				// Create a slice for scanning.
+				colsVals := make([]interface{}, len(cols))
+				colsPtrs := make([]interface{}, len(cols))
+				for i := range colsVals {
+					colsPtrs[i] = &colsVals[i]
+				}
+
+				if err := rows.Scan(colsPtrs...); err != nil {
+					return otto.UndefinedValue()
+				}
+
+				for i, colName := range cols {
+					val := colsVals[i]
+					if b, ok := val.([]byte); ok {
+						rowMap[colName] = string(b)
+					} else {
+						rowMap[colName] = val
+					}
+				}
+				results = append(results, rowMap)
+			}
+
+			// Convert results to a JavaScript value.
+			jsResult, err := vm.ToValue(results)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			return jsResult
+
+		// MongoDB support.
+		case "mongodb":
+			// Extract connection parameters.
+			host := fmt.Sprintf("%v", config["host"])
+			port := int(config["port"].(float64))
+			user := fmt.Sprintf("%v", config["user"])
+			password := fmt.Sprintf("%v", config["password"])
+			dbname := fmt.Sprintf("%v", config["dbname"])
+			collectionName := fmt.Sprintf("%v", config["collection"]) // Required field.
+			// Build MongoDB URI. If authentication is needed:
+			mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d", user, password, host, port)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			coll := client.Database(dbname).Collection(collectionName)
+			// The query should be a JSON string representing a filter.
+			var filter bson.M
+			if err := json.Unmarshal([]byte(query), &filter); err != nil {
+				// If parsing fails, default to empty filter.
+				filter = bson.M{}
+			}
+			cursor, err := coll.Find(ctx, filter)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			var results []bson.M
+			if err = cursor.All(ctx, &results); err != nil {
+				return otto.UndefinedValue()
+			}
+			jsResult, err := vm.ToValue(results)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			return jsResult
+
+		// Neo4J support using NewDriverWithContext.
+		case "neo4j":
+			host := fmt.Sprintf("%v", config["host"])
+			port := int(config["port"].(float64))
+			user := fmt.Sprintf("%v", config["user"])
+			password := fmt.Sprintf("%v", config["password"])
+			// Use the neo4j:// protocol (or bolt:// if needed)
+			uri := fmt.Sprintf("neo4j://%s:%d", host, port)
+			ctx := context.Background()
+			driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(user, password, ""), nil)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer driver.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			// Create a session.
+			session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+			defer session.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			// Execute the Cypher query.
+			records, err := session.Run(ctx, query, nil)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			var results []map[string]interface{}
+			for records.Next(ctx) {
+				record := records.Record()
+				recMap := make(map[string]interface{})
+				for _, key := range record.Keys {
+					if value, found := record.Get(key); found {
+						recMap[key] = value
+					}
+				}
+				results = append(results, recMap)
+			}
+			if err = records.Err(); err != nil {
+				return otto.UndefinedValue()
+			}
+			jsResult, err := vm.ToValue(results)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			return jsResult
+
+		default:
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Unsupported database type: %s", dbType),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
+		}
+	})
 }
 
 // String returns the Plugin as a string
