@@ -1838,6 +1838,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 
 		// MongoDB support.
 		case "mongodb":
+			const mongoGet = "$get"
 			// Extract connection parameters.
 			host := fmt.Sprintf("%v", config["host"])
 			port := int(config["port"].(float64))
@@ -1846,7 +1847,12 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			dbname := fmt.Sprintf("%v", config["dbname"])
 			collectionName := fmt.Sprintf("%v", config["collection"]) // Required field.
 			// Build MongoDB URI. If authentication is needed:
-			mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d", user, password, host, port)
+			var mongoURI string
+			if user == "" || password == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d", host, port)
+			} else {
+				mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d", user, password, host, port)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
@@ -1856,25 +1862,56 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
 
 			coll := client.Database(dbname).Collection(collectionName)
-			// The query should be a JSON string representing a filter.
-			var filter bson.M
-			if err := json.Unmarshal([]byte(query), &filter); err != nil {
-				// If parsing fails, default to empty filter.
-				filter = bson.M{}
-			}
-			cursor, err := coll.Find(ctx, filter)
-			if err != nil {
+			// extract the filter from the query. (the filter is in the { "action": "$get", filter: { "key": "value" } } format)
+			var queryJSON map[string]interface{}
+			if err := json.Unmarshal([]byte(query), &queryJSON); err != nil {
 				return otto.UndefinedValue()
 			}
-			defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+			// Extract requested action and filter.
+			actionRaw, ok := queryJSON["action"]
+			if !ok {
+				// If the action is not provided, default to a find action.
+				actionRaw = mongoGet
+			}
+			actionStr := fmt.Sprintf("%v", actionRaw)
+			actionStr = strings.ToLower(strings.TrimSpace(actionStr))
+			var jsResult otto.Value
+			switch actionStr {
+			case mongoGet: // $get
+				filterRaw, ok := queryJSON["filter"].(map[string]interface{})
+				if !ok {
+					// If the filter is not provided, default to an empty filter.
+					filterRaw = map[string]interface{}{}
+				}
+				filterString, err := json.Marshal(filterRaw)
+				if err != nil {
+					return otto.UndefinedValue()
+				}
+				// The query should be a JSON string representing a filter.
+				var filter bson.M
+				if err := json.Unmarshal(filterString, &filter); err != nil {
+					// If parsing fails, default to empty filter.
+					filter = bson.M{}
+				}
+				cursor, err := coll.Find(ctx, filter)
+				if err != nil {
+					return otto.UndefinedValue()
+				}
+				defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
-			var results []bson.M
-			if err = cursor.All(ctx, &results); err != nil {
-				return otto.UndefinedValue()
-			}
-			jsResult, err := vm.ToValue(results)
-			if err != nil {
-				return otto.UndefinedValue()
+				var results []bson.M
+				if err = cursor.All(ctx, &results); err != nil {
+					return otto.UndefinedValue()
+				}
+				jsResult, err = vm.ToValue(results)
+				if err != nil {
+					return otto.UndefinedValue()
+				}
+			default:
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Unsupported action: %s", actionStr),
+				}
+				jsResult, _ = vm.ToValue(stub)
 			}
 			return jsResult
 
@@ -2094,7 +2131,7 @@ var myData = {
 
 // Filter the JSON document to only include "contacts" and "meta_data".
 var filtered = filterJSON(myData, ["contacts", "meta_data"]);
-console.log("Filtered JSON:", filtered);
+console.log("Filtered JSON:", JSON.Stringify(filtered));
 
 -------------------------------------------------------------------------------
 
@@ -2104,7 +2141,7 @@ var arrayData = [
     { id: 2, name: "Bob", age: 25, extra: "bar" }
 ];
 var filteredArray = filterJSON(arrayData, ["id", "name"]);
-console.log("Filtered Array:", filteredArray);
+console.log("Filtered Array:", JSON.Stringify(filteredArray));
 
 -------------------------------------------------------------------------------
 
@@ -2121,7 +2158,7 @@ var updatedContacts = mapJSON(contacts, function(contact) {
   return contact;
 });
 
-console.log("Updated Contacts:", updatedContacts);
+console.log("Updated Contacts:", JSON.Stringify(updatedContacts));
 
 -------------------------------------------------------------------------------
 */
