@@ -32,7 +32,7 @@ jobs:
             url: "http://example.com/api/data"
       - action: "AIInteraction"
         params:
-          prompt: "Summarize the following data:"
+          prompt: "Summarize the following data: $response"
           config:
             url: "https://api.openai.com/v1/completions"
             api_key: "your_api_key"
@@ -44,11 +44,10 @@ jobs:
     steps:
       - action: "DBQuery"
         params:
-          type: "insert"
           query: "INSERT INTO logs (message) VALUES ('Parallel job 1')"
       - action: "RunCommand"
         params:
-          command: "echo 'Parallel job 2'"
+          command: "echo 'Parallel action $response.status'"
 
   - name: "Serial Agent 2"
     process: "serial"
@@ -57,6 +56,6 @@ jobs:
     steps:
       - action: "PluginExecution"
         params:
-          plugin: ["example_plugin"]
+          plugin_name: "example_plugin"
 
 ```

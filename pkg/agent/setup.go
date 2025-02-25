@@ -46,48 +46,34 @@ type RetryConfig struct {
 	Backoff    float64
 }
 
-// Initialize initializes the agent engine
-func Initialize() {
-	if AgentsEngine == nil {
-		AgentsEngine = NewJobEngine() // Ensure `AgentsEngine` is not nil
-	}
-	RegisterActions(AgentsEngine)
-}
-
-// RegisterActions registers all available actions with the engine
-func RegisterActions(engine *JobEngine) {
-	if engine == nil {
-		engine = NewJobEngine()
-	}
-	engine.RegisterAction(&APIRequestAction{})
-	engine.RegisterAction(&CreateEventAction{})
-	engine.RegisterAction(&RunCommandAction{})
-	engine.RegisterAction(&AIInteractionAction{})
-	engine.RegisterAction(&DBQueryAction{})
-	engine.RegisterAction(&PluginAction{})
-	engine.RegisterAction(&DecisionAction{})
-}
-
-// GetAction returns an action by name
-func (je *JobEngine) GetAction(name string) (Action, bool) {
-	action, exists := je.actions[name]
-	return action, exists
-}
-
 // JobConfig represents the structure of a job configuration file
 type JobConfig struct {
-	Jobs []struct {
-		Name        string                   `yaml:"name" json:"name"`
-		Process     string                   `yaml:"process" json:"process"`
-		TriggerType string                   `yaml:"trigger_type" json:"trigger_type"`
-		TriggerName string                   `yaml:"trigger_name" json:"trigger_name"`
-		Steps       []map[string]interface{} `yaml:"steps" json:"steps"`
-	} `yaml:"jobs" json:"jobs"`
+	Jobs []Job `yaml:"jobs" json:"jobs"`
+}
+
+// Job represents a job configuration
+type Job struct {
+	Name        string                   `yaml:"name" json:"name"`
+	Process     string                   `yaml:"process" json:"process"`
+	TriggerType string                   `yaml:"trigger_type" json:"trigger_type"`
+	TriggerName string                   `yaml:"trigger_name" json:"trigger_name"`
+	Steps       []map[string]interface{} `yaml:"steps" json:"steps"`
 }
 
 // NewJobConfig creates a new job configuration
 func NewJobConfig() *JobConfig {
 	return &JobConfig{}
+}
+
+// LoadJob loads a job into the JobConfig
+func (jc *JobConfig) LoadJob(j Job) {
+	if jc == nil {
+		jc = NewJobConfig()
+	}
+	if jc.Jobs == nil {
+		jc.Jobs = make([]Job, 0)
+	}
+	jc.Jobs = append(jc.Jobs, j)
 }
 
 // LoadConfig loads a YAML or JSON configuration file
@@ -206,23 +192,54 @@ func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
 	jc.Jobs = append(jc.Jobs, agent.Jobs...)
 }
 
+// GetAgentByName returns an agent by name
+func (jc *JobConfig) GetAgentByName(name string) (*JobConfig, bool) {
+	if jc == nil {
+		return nil, false
+	}
+	if len(jc.Jobs) == 0 {
+		return nil, false
+	}
+	for i := 0; i < len(jc.Jobs); i++ {
+		if strings.TrimSpace(jc.Jobs[i].Name) == name {
+			// Return the Job with the specified name inside a JobConfig struct
+			rjc := &JobConfig{}
+			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
+			return rjc, true
+		}
+	}
+	return nil, false
+}
+
 // GetAgentsByEventType returns all agents that are triggered by a specific event type
 func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
-	var agents []*JobConfig
+	if jc == nil {
+		return nil, false
+	}
+	if len(jc.Jobs) == 0 {
+		return nil, false
+	}
 
+	var agents []*JobConfig
 	for i := 0; i < len(jc.Jobs); i++ {
 		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == "event" && strings.TrimSpace(jc.Jobs[i].TriggerName) == eventType {
-			agents = append(agents, &JobConfig{Jobs: []struct {
-				Name        string                   `yaml:"name" json:"name"`
-				Process     string                   `yaml:"process" json:"process"`
-				TriggerType string                   `yaml:"trigger_type" json:"trigger_type"`
-				TriggerName string                   `yaml:"trigger_name" json:"trigger_name"`
-				Steps       []map[string]interface{} `yaml:"steps" json:"steps"`
-			}{jc.Jobs[i]}})
+			rjc := &JobConfig{}
+			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
+			agents = append(agents, rjc)
 		}
 	}
 
 	return agents, len(agents) > 0
+}
+
+// GetAgentByName returns an agent by name from the JobEngine
+func (je *JobEngine) GetAgentByName(name string) (*JobConfig, bool) {
+	return AgentsRegistry.GetAgentByName(name)
+}
+
+// GetAgentsByEventType returns all agents that are triggered by a specific event type from the JobEngine
+func (je *JobEngine) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
+	return AgentsRegistry.GetAgentsByEventType(eventType)
 }
 
 // ExecuteJobs executes all jobs in the configuration

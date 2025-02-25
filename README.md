@@ -18,11 +18,13 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=shield&issueType=security)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_shield&issueType=security)
 ![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
 [![Go Reference](https://pkg.go.dev/badge/github.com/pzaino/thecrowler.svg)](https://pkg.go.dev/github.com/pzaino/thecrowler)
-![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub language count](https://img.shields.io/github/languages/count/pzaino/thecrowler)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/t/pzaino/thecrowler)
 ![GitHub contributors](https://img.shields.io/github/contributors/pzaino/thecrowler)
 ![GitHub code search count](https://img.shields.io/github/search?query=thecrowler)
+
+
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 
 **Project status:** **Still under active development! (aka WIP)** However, most of it is
