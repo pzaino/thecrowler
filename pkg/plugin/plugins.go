@@ -1930,14 +1930,22 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			defer cancel()
 			client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
 			if err != nil {
-				return otto.UndefinedValue()
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Problem generating MongoDB uri: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
 			}
 			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
 
 			// Process the query object: { action: "find", filter: { name: "John" } }
 			var queryJSON map[string]interface{}
 			if err := json.Unmarshal([]byte(query), &queryJSON); err != nil {
-				return otto.UndefinedValue()
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Problem parsing the query object: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
 			}
 
 			// Extract collection name from the query object (Required field).
@@ -1984,7 +1992,11 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter JSON Object:", filterRaw)
 				filterString, err := json.Marshal(filterRaw)
 				if err != nil {
-					return otto.UndefinedValue()
+					stub := map[string]interface{}{
+						"error": fmt.Sprintf("Problem parsing MongoDB values in the query object: %v", err),
+					}
+					jsResult, _ := vm.ToValue(stub)
+					return jsResult
 				}
 				// The query should be a JSON string representing a filter.
 				var filter bson.M
