@@ -1988,6 +1988,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
+					cmn.DebugMsg(cmn.DbgLvlError, "Problem converting MongoDB filter to BSON: %v", err)
 					filter = bson.M{}
 				}
 				/*
@@ -2089,21 +2090,35 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 func convertBsonDatesRecursive(obj interface{}) interface{} {
 	switch v := obj.(type) {
 	case map[string]interface{}:
-		// Convert a direct "$date" field into a BSON datetime (int64)
+		// Convert a direct "$date" field into BSON primitive.DateTime
 		if dateStr, exists := v["$date"]; exists {
 			if dateISO, ok := dateStr.(string); ok {
 				parsedTime, err := time.Parse(time.RFC3339, dateISO)
 				if err == nil {
-					//t := parsedTime.UnixMilli() // Store as int64 timestamp
-					// parsedTime.Format("2006-01-02T15:04:05.000Z")
-					return primitive.DateTime(parsedTime.UnixMilli())
+					return primitive.DateTime(parsedTime.UnixMilli()) // Convert to BSON DateTime
 				}
 			}
 		}
-		// Process nested objects
+
+		// Convert into bson.M (map) or bson.D (ordered list)
+		bsonMap := bson.M{}
+		bsonList := bson.D{}
 		for key, val := range v {
-			v[key] = convertBsonDatesRecursive(val)
+			converted := convertBsonDatesRecursive(val)
+
+			// If key is an operator ($gte, $lte), enforce bson.D (MongoDB requires ordered operators)
+			if strings.HasPrefix(key, "$") {
+				bsonList = append(bsonList, bson.E{Key: key, Value: converted})
+			} else {
+				bsonMap[key] = converted
+			}
 		}
+
+		// If the map contains MongoDB operators (like $gte, $lte), return bson.D
+		if len(bsonList) > 0 {
+			return bsonList
+		}
+		return bsonMap
 	case []interface{}:
 		// Process arrays
 		for i, val := range v {
