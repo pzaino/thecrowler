@@ -2650,7 +2650,11 @@ func addJSAPIISODate(vm *otto.Otto) error {
 			dateStr, _ := call.Argument(0).ToString()
 			parsedTime, err := time.Parse(time.RFC3339, dateStr)
 			if err != nil {
-				return otto.UndefinedValue()
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Source date/time not in RFC3339 format: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
 			}
 			t = parsedTime
 		}
