@@ -1805,6 +1805,33 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 		}
 		dbType := strings.ToLower(fmt.Sprintf("%v", dbTypeRaw))
 
+		// Extract connection parameters.
+		var host string
+		if config["host"] != nil {
+			host = fmt.Sprintf("%v", config["host"])
+		} else {
+			host = "localhost"
+		}
+		var port int
+		if config["port"] != nil {
+			portF64, _ := config["port"].(float64)
+			port = int(portF64)
+		} else {
+			port = 0
+		}
+		var user string
+		if config["user"] != nil {
+			user = fmt.Sprintf("%v", config["user"])
+		}
+		var password string
+		if config["password"] != nil {
+			password = fmt.Sprintf("%v", config["password"])
+		}
+		var dbname string
+		if config["dbname"] != nil {
+			dbname = fmt.Sprintf("%v", config["dbname"])
+		}
+
 		// Switch among supported databases.
 		switch dbType {
 		// Relational databases:
@@ -1813,28 +1840,24 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			switch dbType {
 			case postgresDBMS:
 				driverName = postgresDBMS
-				host := fmt.Sprintf("%v", config["host"])
-				port := int(config["port"].(float64))
-				user := fmt.Sprintf("%v", config["user"])
-				password := fmt.Sprintf("%v", config["password"])
-				dbname := fmt.Sprintf("%v", config["dbname"])
+				if port == 0 {
+					port = 5432
+				}
 				// You might also support sslmode if provided.
 				dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 					host, port, user, password, dbname)
 			case mysqlDBMS:
 				driverName = mysqlDBMS
-				host := fmt.Sprintf("%v", config["host"])
-				port := int(config["port"].(float64))
-				user := fmt.Sprintf("%v", config["user"])
-				password := fmt.Sprintf("%v", config["password"])
-				dbname := fmt.Sprintf("%v", config["dbname"])
+				if port == 0 {
+					port = 3306
+				}
 				// DSN for MySQL is typically: user:password@tcp(host:port)/dbname
 				dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 					user, password, host, port, dbname)
 			case sqliteDBMS:
 				driverName = "sqlite3"
 				// For SQLite, the dbname is the file path.
-				dsn = fmt.Sprintf("%v", config["dbname"])
+				dsn = dbname
 			}
 			// Open the DB.
 			db, err := sql.Open(driverName, dsn)
@@ -1889,32 +1912,8 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 		// MongoDB support.
 		case "mongodb":
 			const mongoSelect = "find"
-
-			// Extract connection parameters.
-			var host string
-			if config["host"] != nil {
-				host = fmt.Sprintf("%v", config["host"])
-			} else {
-				host = "localhost"
-			}
-			var port int
-			if config["port"] != nil {
-				portF64, _ := config["port"].(float64)
-				port = int(portF64)
-			} else {
+			if port == 0 {
 				port = 27017
-			}
-			var user string
-			if config["user"] != nil {
-				user = fmt.Sprintf("%v", config["user"])
-			}
-			var password string
-			if config["password"] != nil {
-				password = fmt.Sprintf("%v", config["password"])
-			}
-			var dbname string
-			if config["dbname"] != nil {
-				dbname = fmt.Sprintf("%v", config["dbname"])
 			}
 			// Build MongoDB URI. If authentication is needed:
 			var mongoURI string
@@ -1938,7 +1937,15 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			}
 
 			// Extract collection name from the query object (Required field).
-			collectionName := strings.TrimSpace(fmt.Sprintf("%v", queryJSON["collection"]))
+			var collectionName string
+			if queryJSON["collection"] != nil {
+				collectionName := strings.TrimSpace(fmt.Sprintf("%v", queryJSON["collection"]))
+				if collectionName == "" {
+					return otto.UndefinedValue()
+				}
+			} else {
+				return otto.UndefinedValue()
+			}
 			coll := client.Database(dbname).Collection(collectionName)
 
 			// Extract requested action and filter.
@@ -1952,6 +1959,11 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			var jsResult otto.Value
 			switch actionStr {
 			case mongoSelect: // find
+				// Extract the filter from the query object.
+				if queryJSON["filter"] == nil {
+					// If the filter is not provided, default to an empty filter.
+					queryJSON["filter"] = map[string]interface{}{}
+				}
 				filterRaw, ok := queryJSON["filter"].(map[string]interface{})
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
