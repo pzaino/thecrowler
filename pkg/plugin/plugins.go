@@ -1953,7 +1953,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			}
 			if noCollection {
 				stub := map[string]interface{}{
-					"error": "No 'collection' specified in the query object.",
+					"error": "No 'collection' field specified in the query object",
 				}
 				jsResult, _ := vm.ToValue(stub)
 				return jsResult
@@ -2007,7 +2007,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				}
 			default:
 				stub := map[string]interface{}{
-					"error": fmt.Sprintf("Unsupported action: %s", actionStr),
+					"error": fmt.Sprintf("Unsupported action in the query object: '%s'", actionStr),
 				}
 				jsResult, _ = vm.ToValue(stub)
 			}
