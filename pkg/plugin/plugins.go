@@ -1989,7 +1989,8 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 					// If the filter is not provided, default to an empty filter.
 					filterRaw = map[string]interface{}{}
 				}
-				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter JSON Object:", filterRaw)
+				dbgOut, _ := json.Marshal(filterRaw)
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter JSON Object:", string(dbgOut))
 				filterString, err := json.Marshal(filterRaw)
 				if err != nil {
 					stub := map[string]interface{}{
@@ -2090,7 +2091,8 @@ func convertBsonDatesRecursive(obj interface{}) interface{} {
 			if dateISO, ok := dateStr.(string); ok {
 				parsedTime, err := time.Parse(time.RFC3339, dateISO)
 				if err == nil {
-					return parsedTime.UnixMilli() // Store as int64 timestamp
+					//t := parsedTime.UnixMilli() // Store as int64 timestamp
+					return parsedTime.Format("2006-01-02T15:04:05.000Z")
 				}
 			}
 		}
