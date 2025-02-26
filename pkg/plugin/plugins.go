@@ -569,6 +569,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIConsoleLog(vm); err != nil {
 		return err
 	}
+	if err := addJSAPIISODate(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -2604,6 +2607,32 @@ func addJSAPIPipeJSON(vm *otto.Otto) error {
 			value = newValue
 		}
 		return value
+	})
+}
+
+// addJSAPIISODate adds a new function "ISODate" to the Otto VM,
+// which returns the current date and time in ISO 8601 format.
+// Usage in JS:
+//
+//		var now = ISODate();
+//	 console.log("Current time:", now);
+//	 var test = ISODate("2025-02-19T00:00:00Z");
+//	 console.log("Test time:", test);
+func addJSAPIISODate(vm *otto.Otto) error {
+	return vm.Set("ISODate", func(call otto.FunctionCall) otto.Value {
+		var t time.Time
+		if len(call.ArgumentList) == 0 {
+			t = time.Now().UTC()
+		} else {
+			dateStr, _ := call.Argument(0).ToString()
+			parsedTime, err := time.Parse(time.RFC3339, dateStr)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			t = parsedTime
+		}
+		result, _ := vm.ToValue(t.Format(time.RFC3339Nano))
+		return result
 	})
 }
 
