@@ -44,6 +44,7 @@ import (
 	"github.com/clbanning/mxj/v2"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -2092,7 +2093,8 @@ func convertBsonDatesRecursive(obj interface{}) interface{} {
 				parsedTime, err := time.Parse(time.RFC3339, dateISO)
 				if err == nil {
 					//t := parsedTime.UnixMilli() // Store as int64 timestamp
-					return parsedTime.Format("2006-01-02T15:04:05.000Z")
+					// parsedTime.Format("2006-01-02T15:04:05.000Z")
+					return primitive.DateTime(parsedTime.UnixMilli())
 				}
 			}
 		}
