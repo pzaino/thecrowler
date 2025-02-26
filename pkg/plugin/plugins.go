@@ -1976,11 +1976,12 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 					// If the filter is not provided, default to an empty filter.
 					queryJSON["filter"] = map[string]interface{}{}
 				}
-				filterRaw, ok := queryJSON["filter"].(map[string]interface{})
+				filterRaw, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(map[string]interface{})
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
 					filterRaw = map[string]interface{}{}
 				}
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter JSON Object:", filterRaw)
 				filterString, err := json.Marshal(filterRaw)
 				if err != nil {
 					return otto.UndefinedValue()
@@ -2065,6 +2066,33 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			return jsResult
 		}
 	})
+}
+
+// Recursive function to convert $date fields into bson "DateTime"
+// this is a support function for the MongoDB support in externalDBQuery
+func convertBsonDatesRecursive(obj interface{}) interface{} {
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		// Convert a direct "$date" field into a BSON datetime (int64)
+		if dateStr, exists := v["$date"]; exists {
+			if dateISO, ok := dateStr.(string); ok {
+				parsedTime, err := time.Parse(time.RFC3339, dateISO)
+				if err == nil {
+					return parsedTime.UnixMilli() // Store as int64 timestamp
+				}
+			}
+		}
+		// Process nested objects
+		for key, val := range v {
+			v[key] = convertBsonDatesRecursive(val)
+		}
+	case []interface{}:
+		// Process arrays
+		for i, val := range v {
+			v[i] = convertBsonDatesRecursive(val)
+		}
+	}
+	return obj
 }
 
 /// Data conversion functions
