@@ -1953,7 +1953,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			}
 			if noCollection {
 				stub := map[string]interface{}{
-					"error": fmt.Sprintf("No 'collection' specified in the query object."),
+					"error": "No 'collection' specified in the query object.",
 				}
 				jsResult, _ := vm.ToValue(stub)
 				return jsResult
