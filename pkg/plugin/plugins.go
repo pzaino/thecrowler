@@ -2658,7 +2658,7 @@ func addJSAPIISODate(vm *otto.Otto) error {
 			}
 			t = parsedTime
 		}
-		result, _ := vm.ToValue(t.Format(time.RFC3339Nano))
+		result, _ := vm.ToValue(t.Format("2006-01-02T15:04:05.000Z"))
 		return result
 	})
 }
