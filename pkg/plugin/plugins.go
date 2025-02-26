@@ -2001,11 +2001,12 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 					return jsResult
 				}
 				// The query should be a JSON string representing a filter.
-				var filter bson.M
+				var filter bson.D
 				if err := json.Unmarshal(filterString, &filter); err != nil {
 					// If parsing fails, default to empty filter.
-					filter = bson.M{}
+					filter = bson.D{}
 				}
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
 					return otto.UndefinedValue()
