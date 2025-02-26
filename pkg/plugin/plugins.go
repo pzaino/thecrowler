@@ -2015,10 +2015,9 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 
 		// Neo4J support using NewDriverWithContext.
 		case "neo4j":
-			host := fmt.Sprintf("%v", config["host"])
-			port := int(config["port"].(float64))
-			user := fmt.Sprintf("%v", config["user"])
-			password := fmt.Sprintf("%v", config["password"])
+			if port == 0 {
+				port = 7687
+			}
 			// Use the neo4j:// protocol (or bolt:// if needed)
 			uri := fmt.Sprintf("neo4j://%s:%d", host, port)
 			ctx := context.Background()
