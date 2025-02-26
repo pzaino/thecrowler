@@ -1808,7 +1808,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 		// Extract connection parameters.
 		var host string
 		if config["host"] != nil {
-			host = fmt.Sprintf("%v", config["host"])
+			host = strings.TrimSpace(fmt.Sprintf("%v", config["host"]))
 		} else {
 			host = "localhost"
 		}
@@ -1821,15 +1821,19 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 		}
 		var user string
 		if config["user"] != nil {
-			user = fmt.Sprintf("%v", config["user"])
+			user = strings.TrimSpace(fmt.Sprintf("%v", config["user"]))
 		}
 		var password string
 		if config["password"] != nil {
-			password = fmt.Sprintf("%v", config["password"])
+			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
 		}
 		var dbname string
 		if config["dbname"] != nil {
-			dbname = fmt.Sprintf("%v", config["dbname"])
+			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["dbname"]))
+		}
+		sslmode := "disable"
+		if config["sslmode"] != nil {
+			sslmode = strings.TrimSpace(fmt.Sprintf("%v", config["sslmode"]))
 		}
 
 		// Switch among supported databases.
@@ -1844,8 +1848,8 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 					port = 5432
 				}
 				// You might also support sslmode if provided.
-				dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-					host, port, user, password, dbname)
+				dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+					host, port, user, password, dbname, sslmode)
 			case mysqlDBMS:
 				driverName = mysqlDBMS
 				if port == 0 {
@@ -1938,13 +1942,21 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 
 			// Extract collection name from the query object (Required field).
 			var collectionName string
+			noCollection := false
 			if queryJSON["collection"] != nil {
-				collectionName := strings.TrimSpace(fmt.Sprintf("%v", queryJSON["collection"]))
+				collectionName = strings.TrimSpace(fmt.Sprintf("%v", queryJSON["collection"]))
 				if collectionName == "" {
-					return otto.UndefinedValue()
+					noCollection = true
 				}
 			} else {
-				return otto.UndefinedValue()
+				noCollection = true
+			}
+			if noCollection {
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("No 'collection' specified in the query object."),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
 			}
 			coll := client.Database(dbname).Collection(collectionName)
 
