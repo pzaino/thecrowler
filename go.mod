@@ -11,7 +11,7 @@ require (
 
 require (
 	github.com/abadojack/whatlanggo v1.0.1
-	github.com/likexian/whois v1.15.5
+	github.com/likexian/whois v1.15.6
 	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robertkrimen/otto v0.5.1
@@ -28,7 +28,6 @@ require (
 require golang.org/x/sync v0.11.0 // indirect
 
 require (
-	github.com/Knetic/govaluate v3.0.0+incompatible // indirect
 	github.com/antchfx/xpath v1.3.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -60,6 +59,7 @@ require (
 )
 
 require (
+	github.com/Knetic/govaluate v3.0.0+incompatible
 	github.com/antchfx/htmlquery v1.3.4
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/mafredri/cdp v0.35.0
