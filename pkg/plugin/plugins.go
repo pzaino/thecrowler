@@ -1994,13 +1994,21 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
-					return otto.UndefinedValue()
+					stub := map[string]interface{}{
+						"error": fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err),
+					}
+					jsResult, _ := vm.ToValue(stub)
+					return jsResult
 				}
 				defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
 				var results []bson.M
 				if err = cursor.All(ctx, &results); err != nil {
-					return otto.UndefinedValue()
+					stub := map[string]interface{}{
+						"error": fmt.Sprintf("Error attempting to use cursor on '%s' db: %v", dbname, err),
+					}
+					jsResult, _ := vm.ToValue(stub)
+					return jsResult
 				}
 				jsResult, err = vm.ToValue(results)
 				if err != nil {
