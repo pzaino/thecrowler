@@ -1804,7 +1804,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			// Default to postgres if not specified, or you may choose to error out.
 			dbTypeRaw = postgresDBMS
 		}
-		dbType := strings.ToLower(fmt.Sprintf("%v", dbTypeRaw))
+		dbType := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", dbTypeRaw)))
 
 		// Extract connection parameters.
 		var host string
@@ -1915,7 +1915,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			return jsResult
 
 		// MongoDB support.
-		case "mongodb":
+		case "mongodb", "mongodb+srv":
 			const mongoSelect = "find"
 			if port == 0 {
 				port = 27017
@@ -1923,9 +1923,9 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			// Build MongoDB URI. If authentication is needed:
 			var mongoURI string
 			if user == "" || password == "" {
-				mongoURI = fmt.Sprintf("mongodb://%s:%d", host, port)
+				mongoURI = fmt.Sprintf(dbType+"://%s:%d", host, port)
 			} else {
-				mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d", user, password, host, port)
+				mongoURI = fmt.Sprintf(dbType+"://%s:%s@%s:%d", user, password, host, port)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
