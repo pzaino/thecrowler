@@ -17,7 +17,10 @@ package plugin
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,6 +30,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +40,13 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
+
+	"github.com/clbanning/mxj/v2"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -45,6 +56,10 @@ const (
 	eventPlugin   = "event_plugin"
 	none          = "none"
 	all           = "all"
+
+	postgresDBMS = "postgres"
+	mysqlDBMS    = "mysql"
+	sqliteDBMS   = "sqlite"
 )
 
 // NewJSPluginRegister returns a new JSPluginRegister
@@ -545,66 +560,101 @@ func removeJSFunctions(vm *otto.Otto) error {
 
 // setCrowlerJSAPI sets the CROWler JS API functions
 func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
-	// Add the CROWler JS API functions
-	err := addJSHTTPRequest(vm)
-	if err != nil {
+	// Extends Otto JS VM with CROWler JS API functions
+
+	// Common functions
+
+	if err := addJSAPIDebugLevel(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIConsoleLog(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIISODate(vm); err != nil {
 		return err
 	}
 
-	err = addJSAPIClient(vm)
-	if err != nil {
+	// Crypto API functions
+
+	if err := addJSAPICrypto(vm); err != nil {
 		return err
 	}
 
-	err = addJSAPIFetch(vm)
-	if err != nil {
+	// API and Web functions
+
+	if err := addJSHTTPRequest(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIClient(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIFetch(vm); err != nil {
 		return err
 	}
 
-	err = addJSAPIConsoleLog(vm)
-	if err != nil {
+	// CROWler Events API functions
+
+	if err := addJSAPICreateEvent(vm, db); err != nil {
+		return err
+	}
+	if err := addJSAPIScheduleEvent(vm, db); err != nil {
 		return err
 	}
 
-	err = addJSAPIRunQuery(vm, db)
-	if err != nil {
+	// CROWler DB API functions
+
+	if err := addJSAPIRunQuery(vm, db); err != nil {
+		return err
+	}
+	if err := addJSAPICreateSource(vm, db); err != nil {
+		return err
+	}
+	if err := addJSAPIRemoveSource(vm, db); err != nil {
+		return err
+	}
+	if err := addJSAPIVacuumSource(vm, db); err != nil {
 		return err
 	}
 
-	err = addJSAPICreateEvent(vm, db)
-	if err != nil {
+	// External DBs interaction functions
+
+	if err := addJSAPIExternalDBQuery(vm); err != nil {
 		return err
 	}
 
-	err = addJSAPIScheduleEvent(vm, db)
-	if err != nil {
+	// Data conversion functions
+
+	if err := addJSAPIJSONToCSV(vm); err != nil {
+		return err
+	}
+	if err := addJSAPICSVToJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIXMLToJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIJSONToXML(vm); err != nil {
 		return err
 	}
 
-	err = addJSAPIDebugLevel(vm)
-	if err != nil {
+	// Data manipulation (transformation) functions
+
+	if err := addJSAPIFilterJSON(vm); err != nil {
 		return err
 	}
-
-	// Add Crypto API functions
-	err = addJSAPICrypto(vm)
-	if err != nil {
+	if err := addJSAPIMapJSON(vm); err != nil {
 		return err
 	}
-
-	// CROWler API functions
-	err = addJSAPICreateSource(vm, db)
-	if err != nil {
+	if err := addJSAPIReduceJSON(vm); err != nil {
 		return err
 	}
-
-	err = addJSAPIRemoveSource(vm, db) // Add removeSource API
-	if err != nil {
+	if err := addJSAPIJoinJSON(vm); err != nil {
 		return err
 	}
-
-	err = addJSAPIVacuumSource(vm, db) // Add vacuumSource API
-	if err != nil {
+	if err := addJSAPISortJSON(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIPipeJSON(vm); err != nil {
 		return err
 	}
 
@@ -1666,6 +1716,995 @@ func addJSAPIVacuumSource(vm *otto.Otto, db *cdb.Handler) error {
 		return success
 	})
 	return err
+}
+
+/* example usage for externalDBQuery in JS:
+
+// Postgres and MySQL example (replace db_type with "mysql" for MySQL)
+
+let config = JSON.stringify({
+	db_type: "postgres",
+	host: "localhost",
+	port: 5432,
+	user: "dbUser",
+	password: "dbPassword",
+	dbname: "dbName"
+});
+
+let result = externalDBQuery(config, "SELECT * FROM users");
+console.log(result);
+
+// SQLite example
+
+let config = JSON.stringify({
+	db_type: "sqlite",
+	dbname: "/path/to/db.sqlite"
+});
+
+let result = externalDBQuery(config, "SELECT * FROM users");
+console.log(result);
+
+// MongoDB example
+
+let config = JSON.stringify({
+	db_type: "mongodb",
+	host: "localhost",
+	port: 27017,
+	user: "dbUser",
+	password: "dbPassword",
+	dbname: "dbName"
+});
+
+let query = JSON.stringify({
+	collection: "users",
+	action: "find",
+	filter: { name: "John" }
+});
+
+let result = externalDBQuery(config, query);
+console.log(result);
+*/
+
+// addJSAPIExternalDBQuery adds a new function "externalDBQuery" to the Otto VM,
+// allowing engine plugins to query external databases (PostgreSQL, MySQL, SQLite,
+// MongoDB, Neo4J) without interfering with the built-in runQuery function.
+func addJSAPIExternalDBQuery(vm *otto.Otto) error {
+	// Register externalDBQuery to the JS API.
+	// Usage in JavaScript:
+	//    var config = JSON.stringify({
+	//         db_type: "postgres",
+	//         host: "127.0.0.1",
+	//         port: 5432,
+	//         user: "dbuser",
+	//         password: "secret",
+	//         dbname: "mydb"
+	//    });
+	//    var result = externalDBQuery(config, "SELECT * FROM mytable");
+	//    console.log(result);
+	return vm.Set("externalDBQuery", func(call otto.FunctionCall) otto.Value {
+		// Get configuration and query from arguments.
+		configStr, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		query, err := call.Argument(1).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Parse configuration JSON.
+		var config map[string]interface{}
+		if err := json.Unmarshal([]byte(configStr), &config); err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Determine the database type.
+		dbTypeRaw, ok := config["db_type"]
+		if !ok {
+			// Default to postgres if not specified, or you may choose to error out.
+			dbTypeRaw = postgresDBMS
+		}
+		dbType := strings.ToLower(fmt.Sprintf("%v", dbTypeRaw))
+
+		// Extract connection parameters.
+		var host string
+		if config["host"] != nil {
+			host = strings.TrimSpace(fmt.Sprintf("%v", config["host"]))
+		} else {
+			host = "localhost"
+		}
+		var port int
+		if config["port"] != nil {
+			portF64, _ := config["port"].(float64)
+			port = int(portF64)
+		} else {
+			port = 0
+		}
+		var user string
+		if config["user"] != nil {
+			user = strings.TrimSpace(fmt.Sprintf("%v", config["user"]))
+		}
+		var password string
+		if config["password"] != nil {
+			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
+		}
+		var dbname string
+		if config["dbname"] != nil {
+			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["dbname"]))
+		}
+		sslmode := "disable"
+		if config["sslmode"] != nil {
+			sslmode = strings.TrimSpace(fmt.Sprintf("%v", config["sslmode"]))
+		}
+
+		// Switch among supported databases.
+		switch dbType {
+		// Relational databases:
+		case postgresDBMS, mysqlDBMS, sqliteDBMS:
+			var dsn, driverName string
+			switch dbType {
+			case postgresDBMS:
+				driverName = postgresDBMS
+				if port == 0 {
+					port = 5432
+				}
+				// You might also support sslmode if provided.
+				dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+					host, port, user, password, dbname, sslmode)
+			case mysqlDBMS:
+				driverName = mysqlDBMS
+				if port == 0 {
+					port = 3306
+				}
+				// DSN for MySQL is typically: user:password@tcp(host:port)/dbname
+				dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
+					user, password, host, port, dbname)
+			case sqliteDBMS:
+				driverName = "sqlite3"
+				// For SQLite, the dbname is the file path.
+				dsn = dbname
+			}
+			// Open the DB.
+			db, err := sql.Open(driverName, dsn)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer db.Close() //nolint:errcheck // We can't check error here it's a defer
+
+			rows, err := db.Query(query)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer rows.Close() // nolint:errcheck // We can't check error here it's a defer
+
+			cols, err := rows.Columns()
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			results := []map[string]interface{}{}
+			for rows.Next() {
+				rowMap := make(map[string]interface{})
+				// Create a slice for scanning.
+				colsVals := make([]interface{}, len(cols))
+				colsPtrs := make([]interface{}, len(cols))
+				for i := range colsVals {
+					colsPtrs[i] = &colsVals[i]
+				}
+
+				if err := rows.Scan(colsPtrs...); err != nil {
+					return otto.UndefinedValue()
+				}
+
+				for i, colName := range cols {
+					val := colsVals[i]
+					if b, ok := val.([]byte); ok {
+						rowMap[colName] = string(b)
+					} else {
+						rowMap[colName] = val
+					}
+				}
+				results = append(results, rowMap)
+			}
+
+			// Convert results to a JavaScript value.
+			jsResult, err := vm.ToValue(results)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			return jsResult
+
+		// MongoDB support.
+		case "mongodb":
+			const mongoSelect = "find"
+			if port == 0 {
+				port = 27017
+			}
+			// Build MongoDB URI. If authentication is needed:
+			var mongoURI string
+			if user == "" || password == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d", host, port)
+			} else {
+				mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d", user, password, host, port)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+			if err != nil {
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Problem generating MongoDB uri: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
+			}
+			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			// Process the query object: { action: "find", filter: { name: "John" } }
+			var queryJSON map[string]interface{}
+			if err := json.Unmarshal([]byte(query), &queryJSON); err != nil {
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Problem parsing the query object: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
+			}
+
+			// Extract collection name from the query object (Required field).
+			var collectionName string
+			noCollection := false
+			if queryJSON["collection"] != nil {
+				collectionName = strings.TrimSpace(fmt.Sprintf("%v", queryJSON["collection"]))
+				if collectionName == "" {
+					noCollection = true
+				}
+			} else {
+				noCollection = true
+			}
+			if noCollection {
+				stub := map[string]interface{}{
+					"error": "No 'collection' field specified in the query object",
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
+			}
+			coll := client.Database(dbname).Collection(collectionName)
+
+			// Extract requested action and filter.
+			actionRaw, ok := queryJSON["action"]
+			if !ok || actionRaw == nil {
+				// If the action is not provided, default to a find action.
+				actionRaw = mongoSelect
+			}
+			actionStr := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", actionRaw)))
+
+			var jsResult otto.Value
+			switch actionStr {
+			case mongoSelect: // find
+				// Extract the filter from the query object.
+				if queryJSON["filter"] == nil {
+					// If the filter is not provided, default to an empty filter.
+					queryJSON["filter"] = map[string]interface{}{}
+				}
+				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
+				if !ok {
+					// If the filter is not provided, default to an empty filter.
+					cmn.DebugMsg(cmn.DbgLvlError, "Problem converting MongoDB filter to BSON: %v", err)
+					filter = bson.M{}
+				}
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
+				cursor, err := coll.Find(ctx, filter)
+				if err != nil {
+					return otto.UndefinedValue()
+				}
+				defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+				var results []bson.M
+				if err = cursor.All(ctx, &results); err != nil {
+					return otto.UndefinedValue()
+				}
+				jsResult, err = vm.ToValue(results)
+				if err != nil {
+					return otto.UndefinedValue()
+				}
+			default:
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Unsupported action in the query object: '%s'", actionStr),
+				}
+				jsResult, _ = vm.ToValue(stub)
+			}
+			return jsResult
+
+		// Neo4J support using NewDriverWithContext.
+		case "neo4j":
+			if port == 0 {
+				port = 7687
+			}
+			// Use the neo4j:// protocol (or bolt:// if needed)
+			uri := fmt.Sprintf("neo4j://%s:%d", host, port)
+			ctx := context.Background()
+			driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(user, password, ""), nil)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			defer driver.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			// Create a session.
+			session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+			defer session.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			// Execute the Cypher query.
+			records, err := session.Run(ctx, query, nil)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			var results []map[string]interface{}
+			for records.Next(ctx) {
+				record := records.Record()
+				recMap := make(map[string]interface{})
+				for _, key := range record.Keys {
+					if value, found := record.Get(key); found {
+						recMap[key] = value
+					}
+				}
+				results = append(results, recMap)
+			}
+			if err = records.Err(); err != nil {
+				return otto.UndefinedValue()
+			}
+			jsResult, err := vm.ToValue(results)
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+			return jsResult
+
+		default:
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Unsupported database type: %s", dbType),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
+		}
+	})
+}
+
+// Recursive function to convert $date fields into bson "DateTime"
+// this is a support function for the MongoDB support in externalDBQuery
+func convertBsonDatesRecursive(obj interface{}) interface{} {
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		// Convert a direct "$date" field into BSON primitive.DateTime
+		if dateStr, exists := v["$date"]; exists {
+			if dateISO, ok := dateStr.(string); ok {
+				parsedTime, err := time.Parse(time.RFC3339, dateISO)
+				if err == nil {
+					return primitive.DateTime(parsedTime.UnixMilli()) // Convert to BSON DateTime
+				}
+			}
+		}
+
+		// Convert into bson.M (map) or bson.D (ordered list)
+		bsonMap := bson.M{}
+		bsonList := bson.D{}
+		for key, val := range v {
+			converted := convertBsonDatesRecursive(val)
+
+			// If key is an operator ($gte, $lte), enforce bson.D (MongoDB requires ordered operators)
+			if strings.HasPrefix(key, "$") {
+				bsonList = append(bsonList, bson.E{Key: key, Value: converted})
+			} else {
+				bsonMap[key] = converted
+			}
+		}
+
+		// If the map contains MongoDB operators (like $gte, $lte), return bson.D
+		if len(bsonList) > 0 {
+			return bsonList
+		}
+		return bsonMap
+	case []interface{}:
+		// Process arrays
+		for i, val := range v {
+			v[i] = convertBsonDatesRecursive(val)
+		}
+	}
+	return obj
+}
+
+/// Data conversion functions
+
+// toCSV converts an array of objects into a CSV string.
+// It assumes that every object in the array has the same keys.
+func addJSAPIJSONToCSV(vm *otto.Otto) error {
+	return vm.Set("jsonToCSV", func(call otto.FunctionCall) otto.Value {
+		// Export the argument (should be an array of objects)
+		dataInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		dataSlice, ok := dataInterface.([]interface{})
+		if !ok || len(dataSlice) == 0 {
+			empty, _ := vm.ToValue("")
+			return empty
+		}
+		// Get header keys from the first row.
+		firstRow, ok := dataSlice[0].(map[string]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Collect keys (order is arbitrary; for production, you might want to enforce an order)
+		var headers []string
+		for key := range firstRow {
+			headers = append(headers, key)
+		}
+
+		var buf bytes.Buffer
+		csvWriter := csv.NewWriter(&buf)
+		// Write header row.
+		if err := csvWriter.Write(headers); err != nil {
+			return otto.UndefinedValue()
+		}
+		// Write data rows.
+		for _, rowInterface := range dataSlice {
+			rowMap, ok := rowInterface.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			var row []string
+			for _, key := range headers {
+				// Convert each value to string.
+				val := fmt.Sprintf("%v", rowMap[key])
+				row = append(row, val)
+			}
+			if err := csvWriter.Write(row); err != nil {
+				return otto.UndefinedValue()
+			}
+		}
+		csvWriter.Flush()
+		result, err := vm.ToValue(buf.String())
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+// csvToJSON converts a CSV string into a JavaScript array of objects.
+// The first row of the CSV is assumed to contain header keys.
+func addJSAPICSVToJSON(vm *otto.Otto) error {
+	return vm.Set("csvToJSON", func(call otto.FunctionCall) otto.Value {
+		csvStr, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		r := csv.NewReader(strings.NewReader(csvStr))
+		records, err := r.ReadAll()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		if len(records) < 1 {
+			return otto.UndefinedValue()
+		}
+		// First row is headers.
+		headers := records[0]
+		var results []map[string]interface{}
+		for i := 1; i < len(records); i++ {
+			row := records[i]
+			rowMap := make(map[string]interface{})
+			for j, header := range headers {
+				if j < len(row) {
+					rowMap[header] = row[j]
+				} else {
+					rowMap[header] = ""
+				}
+			}
+			results = append(results, rowMap)
+		}
+		result, err := vm.ToValue(results)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+// xmlToJSON converts an XML string into a JavaScript object.
+// This uses the mxj library to convert XML to a map[string]interface{}.
+func addJSAPIXMLToJSON(vm *otto.Otto) error {
+	return vm.Set("xmlToJSON", func(call otto.FunctionCall) otto.Value {
+		xmlStr, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		// Convert XML into a map using mxj.
+		mv, err := mxj.NewMapXml([]byte(xmlStr))
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		result, err := vm.ToValue(mv)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+// jsonToXML converts a JavaScript object (or JSON string) into an XML string.
+// It uses mxj to perform the conversion.
+func addJSAPIJSONToXML(vm *otto.Otto) error {
+	return vm.Set("jsonToXML", func(call otto.FunctionCall) otto.Value {
+		// Export the argument (which should be a JS object or JSON string)
+		jsonObj, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		// Ensure we have a map; if not, wrap it.
+		m, ok := jsonObj.(map[string]interface{})
+		if !ok {
+			m = map[string]interface{}{"root": jsonObj}
+		}
+		// Convert the map to XML.
+		xmlBytes, err := mxj.AnyXml(m)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		result, err := vm.ToValue(string(xmlBytes))
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+/// Data Transformation functions
+
+/* Example usage of 2 data transformation functions (filterJSON, mapJSON) in JS:
+-------------------------------------------------------------------------------
+// Assume myData is a JSON object received from an ETL process.
+var myData = {
+    contacts: [
+        { id: 1, first_name: "Alice", last_name: "Smith", email: "alice@example.com" },
+        { id: 2, first_name: "Bob", last_name: "Jones", email: "bob@example.com" }
+    ],
+    meta_data: { total: 2, source: "contacts_db" },
+    settings: { theme: "dark", version: "1.0.0" }
+};
+
+// Filter the JSON document to only include "contacts" and "meta_data".
+var filtered = filterJSON(myData, ["contacts", "meta_data"]);
+console.log("Filtered JSON:", JSON.Stringify(filtered));
+
+-------------------------------------------------------------------------------
+
+// If myData were an array of objects, filterJSON will map the filter over each element.
+var arrayData = [
+    { id: 1, name: "Alice", age: 30, extra: "foo" },
+    { id: 2, name: "Bob", age: 25, extra: "bar" }
+];
+var filteredArray = filterJSON(arrayData, ["id", "name"]);
+console.log("Filtered Array:", JSON.Stringify(filteredArray));
+
+-------------------------------------------------------------------------------
+
+// Sample data: an array of contact objects.
+var contacts = [
+  { id: 1, first_name: "Alice", last_name: "Smith", email: "alice@example.com" },
+  { id: 2, first_name: "Bob", last_name: "Jones", email: "bob@example.com" }
+];
+
+// Use mapJSON to add a "greeting" field to each contact.
+var updatedContacts = mapJSON(contacts, function(contact) {
+  // Add a new property based on the contact's name.
+  contact.greeting = "Hello, " + contact.first_name + " " + contact.last_name + "!";
+  return contact;
+});
+
+console.log("Updated Contacts:", JSON.Stringify(updatedContacts));
+
+-------------------------------------------------------------------------------
+*/
+
+// addJSAPIFilterJSON registers a new function "filterJSON" in the Otto VM.
+// It accepts a JSON document (object or array) and an array (or comma‐separated string)
+// of keys to filter, and returns a new document containing only those keys.
+func addJSAPIFilterJSON(vm *otto.Otto) error {
+	return vm.Set("filterJSON", func(call otto.FunctionCall) otto.Value {
+		// Export the JSON document from the first argument.
+		doc, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Export the filter keys from the second argument.
+		keysRaw, err := call.Argument(1).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Convert the filter keys into a slice of strings.
+		var keys []string
+		switch k := keysRaw.(type) {
+		case []interface{}:
+			for _, v := range k {
+				if s, ok := v.(string); ok {
+					keys = append(keys, s)
+				}
+			}
+		case string:
+			// If a comma-separated string is provided.
+			for _, s := range strings.Split(k, ",") {
+				trimmed := strings.TrimSpace(s)
+				if trimmed != "" {
+					keys = append(keys, trimmed)
+				}
+			}
+		default:
+			// Unsupported keys type.
+			return otto.UndefinedValue()
+		}
+
+		// Filter the JSON document.
+		filtered := filterJSONValue(doc, keys)
+
+		// Convert the filtered result back to an Otto value.
+		result, err := vm.ToValue(filtered)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+// filterJSONValue recursively filters a JSON document (object or array)
+// and returns only the properties that match one of the provided keys.
+// For an object, it returns a new map containing only the keys in the list.
+// For an array, it maps the filtering function over each element.
+func filterJSONValue(doc interface{}, keys []string) interface{} {
+	switch v := doc.(type) {
+	case map[string]interface{}:
+		filteredMap := make(map[string]interface{})
+		for _, key := range keys {
+			if val, exists := v[key]; exists {
+				filteredMap[key] = val
+			}
+		}
+		return filteredMap
+	case []interface{}:
+		var filteredArr []interface{}
+		for _, elem := range v {
+			// If the element is an object, filter it; otherwise, leave it as-is.
+			filteredArr = append(filteredArr, filterJSONValue(elem, keys))
+		}
+		return filteredArr
+	default:
+		// For non-object, non-array types, return as is.
+		return v
+	}
+}
+
+func addJSAPIMapJSON(vm *otto.Otto) error {
+	return vm.Set("mapJSON", func(call otto.FunctionCall) otto.Value {
+		// Export the first argument (should be a JSON array)
+		docInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		array, ok := docInterface.([]interface{})
+		if !ok {
+			// Not an array; return undefined.
+			return otto.UndefinedValue()
+		}
+
+		// The second argument should be a function
+		callback := call.Argument(1)
+		if !callback.IsFunction() {
+			return otto.UndefinedValue()
+		}
+
+		// Prepare a new slice to hold the mapped results.
+		var mapped []interface{}
+		for _, elem := range array {
+			// Call the callback with the current element.
+			result, err := callback.Call(otto.UndefinedValue(), elem)
+			if err != nil {
+				// In case of error, skip this element.
+				continue
+			}
+			exportResult, err := result.Export()
+			if err != nil {
+				continue
+			}
+			mapped = append(mapped, exportResult)
+		}
+
+		// Convert the mapped slice back to an Otto value.
+		mappedValue, err := vm.ToValue(mapped)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return mappedValue
+	})
+}
+
+/* example of usage of the following functions:
+-------------------------------------------------------------------------------
+// Example data: an array of contact objects.
+var contacts = [
+  { id: 1, first_name: "Alice", last_name: "Smith", email: "alice@example.com" },
+  { id: 2, first_name: "Bob", last_name: "Jones", email: "bob@example.com" }
+];
+
+// Use reduceJSON to concatenate all email addresses.
+var allEmails = reduceJSON(contacts, function(acc, contact) {
+  return acc + (acc ? ", " : "") + contact.email;
+}, "");
+console.log("All Emails:", allEmails);
+-------------------------------------------------------------------------------
+
+// Use joinJSON to merge two datasets on the "id" field.
+var additionalData = [
+  { id: 1, phone: "123-456-7890" },
+  { id: 2, phone: "987-654-3210" }
+];
+var merged = joinJSON(contacts, additionalData, "id");
+console.log("Merged Data:", merged);
+-------------------------------------------------------------------------------
+
+// Use sortJSON to sort contacts by last name descending.
+var sortedContacts = sortJSON(contacts, "last_name", "desc");
+console.log("Sorted Contacts:", sortedContacts);
+-------------------------------------------------------------------------------
+
+// Compose a pipeline: first, add a greeting, then extract only id and greeting.
+var transformed = pipeJSON(contacts, [
+  function(arr) {
+    // Map over array: add greeting to each contact.
+    return arr.map(function(contact) {
+      contact.greeting = "Hello " + contact.first_name;
+      return contact;
+    });
+  },
+  function(arr) {
+    // Map over array: return only id and greeting.
+    return arr.map(function(contact) {
+      return { id: contact.id, greeting: contact.greeting };
+    });
+  }
+]);
+console.log("Transformed Data:", transformed);
+-------------------------------------------------------------------------------
+*/
+
+// reduceJSON applies a callback to each element of a JSON array, aggregating a result.
+// Usage in JS:
+//
+//	var total = reduceJSON([1,2,3,4], function(acc, val) { return acc + val; }, 0);
+func addJSAPIReduceJSON(vm *otto.Otto) error {
+	return vm.Set("reduceJSON", func(call otto.FunctionCall) otto.Value {
+		// First argument: a JSON array.
+		arrInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		arr, ok := arrInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Second argument: callback function.
+		callback := call.Argument(1)
+		if !callback.IsFunction() {
+			return otto.UndefinedValue()
+		}
+		// Third argument: initial accumulator.
+		accumulator := call.Argument(2)
+		// Iterate over each element and call the callback.
+		for _, elem := range arr {
+			result, err := callback.Call(otto.UndefinedValue(), accumulator, elem)
+			if err != nil {
+				continue // optionally log error
+			}
+			accumulator = result
+		}
+		return accumulator
+	})
+}
+
+// joinJSON performs an inner join between two JSON arrays based on a common key.
+// Usage in JS:
+//
+//	var joined = joinJSON(leftArray, rightArray, "id");
+func addJSAPIJoinJSON(vm *otto.Otto) error {
+	return vm.Set("joinJSON", func(call otto.FunctionCall) otto.Value {
+		// First argument: left array.
+		leftInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		leftArr, ok := leftInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Second argument: right array.
+		rightInterface, err := call.Argument(1).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		rightArr, ok := rightInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Third argument: join key.
+		joinKey, err := call.Argument(2).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		// Build an index for the right array.
+		rightIndex := make(map[string][]map[string]interface{})
+		for _, r := range rightArr {
+			rMap, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			keyVal, exists := rMap[joinKey]
+			if !exists {
+				continue
+			}
+			keyStr := fmt.Sprintf("%v", keyVal)
+			rightIndex[keyStr] = append(rightIndex[keyStr], rMap)
+		}
+
+		// For each element in the left array, find matching right records.
+		var results []map[string]interface{}
+		for _, l := range leftArr {
+			lMap, ok := l.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			keyVal, exists := lMap[joinKey]
+			if !exists {
+				continue
+			}
+			keyStr := fmt.Sprintf("%v", keyVal)
+			if matches, found := rightIndex[keyStr]; found {
+				for _, rMap := range matches {
+					joined := make(map[string]interface{})
+					// Merge left and right maps.
+					for k, v := range lMap {
+						joined[k] = v
+					}
+					for k, v := range rMap {
+						joined[k] = v
+					}
+					results = append(results, joined)
+				}
+			}
+		}
+		jsResult, err := vm.ToValue(results)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return jsResult
+	})
+}
+
+// sortJSON sorts an array of JSON objects based on a given key.
+// Usage in JS:
+//
+//	var sorted = sortJSON(dataArray, "last_name", "asc");
+//
+// The order parameter is optional ("asc" is default, "desc" for descending).
+func addJSAPISortJSON(vm *otto.Otto) error {
+	return vm.Set("sortJSON", func(call otto.FunctionCall) otto.Value {
+		const asc = "asc"
+		const desc = "desc"
+
+		// First argument: JSON array.
+		arrInterface, err := call.Argument(0).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		arr, ok := arrInterface.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Second argument: sort key.
+		sortKey, err := call.Argument(1).ToString()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		// Third argument: order ("asc" or "desc", default "asc").
+		order := asc
+		if call.Argument(2).IsDefined() {
+			order, err = call.Argument(2).ToString()
+			if err != nil {
+				order = asc
+			}
+			order = strings.ToLower(order)
+		}
+		// Use sort.Slice to sort the array.
+		sort.Slice(arr, func(i, j int) bool {
+			var vi, vj string
+			if mi, ok := arr[i].(map[string]interface{}); ok {
+				vi = fmt.Sprintf("%v", mi[sortKey])
+			}
+			if mj, ok := arr[j].(map[string]interface{}); ok {
+				vj = fmt.Sprintf("%v", mj[sortKey])
+			}
+			if order == desc {
+				return vj < vi
+			}
+			return vi < vj
+		})
+		result, err := vm.ToValue(arr)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return result
+	})
+}
+
+// pipeJSON applies a sequence of transformation callbacks to an initial JSON value.
+// Usage in JS:
+//
+//	var finalValue = pipeJSON(initialValue, [fn1, fn2, fn3]);
+func addJSAPIPipeJSON(vm *otto.Otto) error {
+	return vm.Set("pipeJSON", func(call otto.FunctionCall) otto.Value {
+		// First argument: initial JSON value.
+		value := call.Argument(0)
+		// Second argument: array of callback functions.
+		funcArray, err := call.Argument(1).Export()
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		callbacks, ok := funcArray.([]interface{})
+		if !ok {
+			return otto.UndefinedValue()
+		}
+		// Apply each callback sequentially.
+		for _, cbInterface := range callbacks {
+			cbValue, err := vm.ToValue(cbInterface)
+			if err != nil || !cbValue.IsFunction() {
+				continue
+			}
+			newValue, err := cbValue.Call(otto.UndefinedValue(), value)
+			if err != nil {
+				continue
+			}
+			value = newValue
+		}
+		return value
+	})
+}
+
+// addJSAPIISODate adds a new function "ISODate" to the Otto VM,
+// which returns the current date and time in ISO 8601 format.
+// Usage in JS:
+//
+//		var now = ISODate();
+//	 console.log("Current time:", now);
+//	 var test = ISODate("2025-02-19T00:00:00Z");
+//	 console.log("Test time:", test);
+func addJSAPIISODate(vm *otto.Otto) error {
+	return vm.Set("ISODate", func(call otto.FunctionCall) otto.Value {
+		var t time.Time
+		if len(call.ArgumentList) == 0 {
+			t = time.Now().UTC()
+		} else {
+			dateStr, _ := call.Argument(0).ToString()
+			parsedTime, err := time.Parse(time.RFC3339, dateStr)
+			if err != nil {
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Source date/time not in RFC3339 format: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
+			}
+			t = parsedTime
+		}
+		result, _ := vm.ToValue(t.Format("2006-01-02T15:04:05.000Z"))
+		return result
+	})
 }
 
 // String returns the Plugin as a string
