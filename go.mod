@@ -31,7 +31,6 @@ require (
 	github.com/antchfx/xpath v1.3.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/clbanning/mxj/v2 v2.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
@@ -42,7 +41,6 @@ require (
 	github.com/mediabuyerbot/go-crx3 v1.3.1 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/neo4j/neo4j-go-driver/v5 v5.27.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
@@ -52,7 +50,6 @@ require (
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
-	go.mongodb.org/mongo-driver v1.17.2 // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -61,10 +58,13 @@ require (
 require (
 	github.com/Knetic/govaluate v3.0.0+incompatible
 	github.com/antchfx/htmlquery v1.3.4
+	github.com/clbanning/mxj/v2 v2.7.0
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/mafredri/cdp v0.35.0
+	github.com/neo4j/neo4j-go-driver/v5 v5.27.0
 	github.com/prometheus/client_golang v1.21.0
 	github.com/stretchr/testify v1.10.0
+	go.mongodb.org/mongo-driver v1.17.2
 	golang.org/x/time v0.10.0
 )
 
