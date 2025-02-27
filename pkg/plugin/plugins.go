@@ -1829,8 +1829,8 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
 		}
 		var dbname string
-		if config["dbname"] != nil {
-			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["dbname"]))
+		if config["db_name"] != nil {
+			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["db_name"]))
 		}
 		sslmode := "disable"
 		if config["sslmode"] != nil {
