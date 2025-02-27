@@ -1991,23 +1991,6 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 					cmn.DebugMsg(cmn.DbgLvlError, "Problem converting MongoDB filter to BSON: %v", err)
 					filter = bson.M{}
 				}
-				/*
-					filterString, err := json.Marshal(filterRaw)
-					if err != nil {
-						stub := map[string]interface{}{
-							"error": fmt.Sprintf("Problem parsing MongoDB values in the query object: %v", err),
-						}
-						jsResult, _ := vm.ToValue(stub)
-						return jsResult
-					}
-					cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter JSON Object:", string(filterString))
-					// The query should be a JSON string representing a filter.
-					var filter bson.D
-					if err := json.Unmarshal(filterString, &filter); err != nil {
-						// If parsing fails, default to empty filter.
-						filter = bson.D{}
-					}
-				*/
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
