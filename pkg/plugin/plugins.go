@@ -2626,7 +2626,11 @@ func addJSAPIJoinJSON(vm *otto.Otto) error {
 		// Third argument: join key.
 		joinKey, err := call.Argument(2).ToString()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a 'joi' key, a JSON tag to use to identify what we want to join: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// Build an index for the right array.
@@ -2692,16 +2696,36 @@ func addJSAPISortJSON(vm *otto.Otto) error {
 		// First argument: JSON array.
 		arrInterface, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a JSON array in input: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		arr, ok := arrInterface.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires that JSON array in input must be a valid array: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Second argument: sort key.
+		wrongSortKey := false
 		sortKey, err := call.Argument(1).ToString()
 		if err != nil {
-			return otto.UndefinedValue()
+			wrongSortKey = true
+		}
+		sortKey = strings.TrimSpace(sortKey)
+		if sortKey == "" {
+			wrongSortKey = true
+		}
+		if wrongSortKey {
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a valid JSON key to be ordered: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Third argument: order ("asc" or "desc", default "asc").
 		order := asc
@@ -2710,7 +2734,10 @@ func addJSAPISortJSON(vm *otto.Otto) error {
 			if err != nil {
 				order = asc
 			}
-			order = strings.ToLower(order)
+			order = strings.ToLower(strings.TrimSpace(order))
+			if order != asc && order != desc {
+				order = asc
+			}
 		}
 		// Use sort.Slice to sort the array.
 		sort.Slice(arr, func(i, j int) bool {
@@ -2745,11 +2772,19 @@ func addJSAPIPipeJSON(vm *otto.Otto) error {
 		// Second argument: array of callback functions.
 		funcArray, err := call.Argument(1).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a JSON array to process: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		callbacks, ok := funcArray.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires an array of functions to call to process the JSON array: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Apply each callback sequentially.
 		for _, cbInterface := range callbacks {
@@ -2759,6 +2794,7 @@ func addJSAPIPipeJSON(vm *otto.Otto) error {
 			}
 			newValue, err := cbValue.Call(otto.UndefinedValue(), value)
 			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error calling function in pipeJSON: %v", err)
 				continue
 			}
 			value = newValue
