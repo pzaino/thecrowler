@@ -1721,7 +1721,6 @@ func addJSAPIVacuumSource(vm *otto.Otto, db *cdb.Handler) error {
 /* example usage for externalDBQuery in JS:
 
 // Postgres and MySQL example (replace db_type with "mysql" for MySQL)
-
 let config = JSON.stringify({
 	db_type: "postgres",
 	host: "localhost",
@@ -1735,7 +1734,6 @@ let result = externalDBQuery(config, "SELECT * FROM users");
 console.log(result);
 
 // SQLite example
-
 let config = JSON.stringify({
 	db_type: "sqlite",
 	dbname: "/path/to/db.sqlite"
@@ -1745,7 +1743,6 @@ let result = externalDBQuery(config, "SELECT * FROM users");
 console.log(result);
 
 // MongoDB example
-
 let config = JSON.stringify({
 	db_type: "mongodb",
 	host: "localhost",
@@ -1758,7 +1755,7 @@ let config = JSON.stringify({
 let query = JSON.stringify({
 	collection: "users",
 	action: "find",
-	filter: { name: "John" }
+	filter: { name: "John", age: { "$gt": 25 }, date: { "$gte": ISODate("2021-01-01") } },
 });
 
 let result = externalDBQuery(config, query);
@@ -1772,12 +1769,13 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 	// Register externalDBQuery to the JS API.
 	// Usage in JavaScript:
 	//    var config = JSON.stringify({
-	//         db_type: "postgres",
-	//         host: "127.0.0.1",
-	//         port: 5432,
-	//         user: "dbuser",
-	//         password: "secret",
-	//         dbname: "mydb"
+	//         db_type: "postgres",// required
+	//         host: "127.0.0.1",  // required for all but sqlite
+	//         port: 5432,         // optional
+	//         user: "dbuser",     // optional
+	//         password: "secret", // optional
+	//         dbname: "mydb",     // required
+	//         sslmode: "disable"  // optional
 	//    });
 	//    var result = externalDBQuery(config, "SELECT * FROM mytable");
 	//    console.log(result);
@@ -1804,7 +1802,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			// Default to postgres if not specified, or you may choose to error out.
 			dbTypeRaw = postgresDBMS
 		}
-		dbType := strings.ToLower(fmt.Sprintf("%v", dbTypeRaw))
+		dbType := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", dbTypeRaw)))
 
 		// Extract connection parameters.
 		var host string
@@ -1829,8 +1827,8 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
 		}
 		var dbname string
-		if config["dbname"] != nil {
-			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["dbname"]))
+		if config["db_name"] != nil {
+			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["db_name"]))
 		}
 		sslmode := "disable"
 		if config["sslmode"] != nil {
@@ -1915,7 +1913,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			return jsResult
 
 		// MongoDB support.
-		case "mongodb":
+		case "mongodb", "mongodb+srv":
 			const mongoSelect = "find"
 			if port == 0 {
 				port = 27017
@@ -1923,9 +1921,9 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			// Build MongoDB URI. If authentication is needed:
 			var mongoURI string
 			if user == "" || password == "" {
-				mongoURI = fmt.Sprintf("mongodb://%s:%d", host, port)
+				mongoURI = fmt.Sprintf(dbType+"://%s:%d", host, port)
 			} else {
-				mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d", user, password, host, port)
+				mongoURI = fmt.Sprintf(dbType+"://%s:%s@%s:%d", user, password, host, port)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -1994,13 +1992,21 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
-					return otto.UndefinedValue()
+					stub := map[string]interface{}{
+						"error": fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err),
+					}
+					jsResult, _ := vm.ToValue(stub)
+					return jsResult
 				}
 				defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
 				var results []bson.M
 				if err = cursor.All(ctx, &results); err != nil {
-					return otto.UndefinedValue()
+					stub := map[string]interface{}{
+						"error": fmt.Sprintf("Error attempting to use cursor on '%s' db: %v", dbname, err),
+					}
+					jsResult, _ := vm.ToValue(stub)
+					return jsResult
 				}
 				jsResult, err = vm.ToValue(results)
 				if err != nil {
@@ -2120,7 +2126,11 @@ func addJSAPIJSONToCSV(vm *otto.Otto) error {
 		// Export the argument (should be an array of objects)
 		dataInterface, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": "No parameters passed. This function requires an array of objects.",
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		dataSlice, ok := dataInterface.([]interface{})
 		if !ok || len(dataSlice) == 0 {
@@ -2130,7 +2140,11 @@ func addJSAPIJSONToCSV(vm *otto.Otto) error {
 		// Get header keys from the first row.
 		firstRow, ok := dataSlice[0].(map[string]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error retrieving CSV headers: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Collect keys (order is arbitrary; for production, you might want to enforce an order)
 		var headers []string
@@ -2142,7 +2156,11 @@ func addJSAPIJSONToCSV(vm *otto.Otto) error {
 		csvWriter := csv.NewWriter(&buf)
 		// Write header row.
 		if err := csvWriter.Write(headers); err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error during writing CSV header: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Write data rows.
 		for _, rowInterface := range dataSlice {
@@ -2157,13 +2175,21 @@ func addJSAPIJSONToCSV(vm *otto.Otto) error {
 				row = append(row, val)
 			}
 			if err := csvWriter.Write(row); err != nil {
-				return otto.UndefinedValue()
+				stub := map[string]interface{}{
+					"error": fmt.Sprintf("Error during writing the CSV object: %v", err),
+				}
+				jsResult, _ := vm.ToValue(stub)
+				return jsResult
 			}
 		}
 		csvWriter.Flush()
 		result, err := vm.ToValue(buf.String())
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error during conversion to JavaScript value: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		return result
 	})
@@ -2175,12 +2201,20 @@ func addJSAPICSVToJSON(vm *otto.Otto) error {
 	return vm.Set("csvToJSON", func(call otto.FunctionCall) otto.Value {
 		csvStr, err := call.Argument(0).ToString()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": "Error this function requires parameters. a CSV table.",
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		r := csv.NewReader(strings.NewReader(csvStr))
 		records, err := r.ReadAll()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error reading the CSV table: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		if len(records) < 1 {
 			return otto.UndefinedValue()
@@ -2202,7 +2236,11 @@ func addJSAPICSVToJSON(vm *otto.Otto) error {
 		}
 		result, err := vm.ToValue(results)
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error converting the generated JSON to a JS value: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		return result
 	})
@@ -2312,13 +2350,21 @@ func addJSAPIFilterJSON(vm *otto.Otto) error {
 		// Export the JSON document from the first argument.
 		doc, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error this function requires an input JSON object: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// Export the filter keys from the second argument.
 		keysRaw, err := call.Argument(1).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error this function requires a comma separated list of JSON keys to filter: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// Convert the filter keys into a slice of strings.
@@ -2340,7 +2386,11 @@ func addJSAPIFilterJSON(vm *otto.Otto) error {
 			}
 		default:
 			// Unsupported keys type.
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error unsupported key type '%s' for key: %v", k, keysRaw),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// Filter the JSON document.
@@ -2387,18 +2437,30 @@ func addJSAPIMapJSON(vm *otto.Otto) error {
 		// Export the first argument (should be a JSON array)
 		docInterface, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": "Error, this function requires an array of objects.",
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		array, ok := docInterface.([]interface{})
 		if !ok {
 			// Not an array; return undefined.
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": "Error, the passed object is not a JSON array.",
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// The second argument should be a function
 		callback := call.Argument(1)
 		if !callback.IsFunction() {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, the passed callback is not a function: %v", callback),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// Prepare a new slice to hold the mapped results.
@@ -2484,16 +2546,28 @@ func addJSAPIReduceJSON(vm *otto.Otto) error {
 		// First argument: a JSON array.
 		arrInterface, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": "Error, this function requires an array of objects.",
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		arr, ok := arrInterface.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": "Error, passed object is not a JSON array. ",
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Second argument: callback function.
 		callback := call.Argument(1)
 		if !callback.IsFunction() {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, callback is not a function: %v", callback),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Third argument: initial accumulator.
 		accumulator := call.Argument(2)
@@ -2518,25 +2592,45 @@ func addJSAPIJoinJSON(vm *otto.Otto) error {
 		// First argument: left array.
 		leftInterface, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a 'left' array to merge into: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		leftArr, ok := leftInterface.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function that the 'left' array to be a valid JSON array: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Second argument: right array.
 		rightInterface, err := call.Argument(1).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires 'right' JSON array to merge from': %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		rightArr, ok := rightInterface.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires that the 'right' JSON object to be a valid JSON array: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Third argument: join key.
 		joinKey, err := call.Argument(2).ToString()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a 'joi' key, a JSON tag to use to identify what we want to join: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 
 		// Build an index for the right array.
@@ -2602,16 +2696,36 @@ func addJSAPISortJSON(vm *otto.Otto) error {
 		// First argument: JSON array.
 		arrInterface, err := call.Argument(0).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a JSON array in input: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		arr, ok := arrInterface.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires that JSON array in input must be a valid array: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Second argument: sort key.
+		wrongSortKey := false
 		sortKey, err := call.Argument(1).ToString()
 		if err != nil {
-			return otto.UndefinedValue()
+			wrongSortKey = true
+		}
+		sortKey = strings.TrimSpace(sortKey)
+		if sortKey == "" {
+			wrongSortKey = true
+		}
+		if wrongSortKey {
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a valid JSON key to be ordered: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Third argument: order ("asc" or "desc", default "asc").
 		order := asc
@@ -2620,7 +2734,10 @@ func addJSAPISortJSON(vm *otto.Otto) error {
 			if err != nil {
 				order = asc
 			}
-			order = strings.ToLower(order)
+			order = strings.ToLower(strings.TrimSpace(order))
+			if order != asc && order != desc {
+				order = asc
+			}
 		}
 		// Use sort.Slice to sort the array.
 		sort.Slice(arr, func(i, j int) bool {
@@ -2655,11 +2772,19 @@ func addJSAPIPipeJSON(vm *otto.Otto) error {
 		// Second argument: array of callback functions.
 		funcArray, err := call.Argument(1).Export()
 		if err != nil {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires a JSON array to process: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		callbacks, ok := funcArray.([]interface{})
 		if !ok {
-			return otto.UndefinedValue()
+			stub := map[string]interface{}{
+				"error": fmt.Sprintf("Error, this function requires an array of functions to call to process the JSON array: %v", err),
+			}
+			jsResult, _ := vm.ToValue(stub)
+			return jsResult
 		}
 		// Apply each callback sequentially.
 		for _, cbInterface := range callbacks {
@@ -2669,6 +2794,7 @@ func addJSAPIPipeJSON(vm *otto.Otto) error {
 			}
 			newValue, err := cbValue.Call(otto.UndefinedValue(), value)
 			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error calling function in pipeJSON: %v", err)
 				continue
 			}
 			value = newValue
