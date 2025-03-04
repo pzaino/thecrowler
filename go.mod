@@ -77,6 +77,6 @@ require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.35.0
+	golang.org/x/net v0.36.0
 	golang.org/x/text v0.22.0 // indirect
 )
