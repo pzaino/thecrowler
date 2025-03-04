@@ -2010,7 +2010,11 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				}
 				jsResult, err = vm.ToValue(results)
 				if err != nil {
-					return otto.UndefinedValue()
+					stub := map[string]interface{}{
+						"error": fmt.Sprintf("Error attempting to convert MongoDB results to a JS object: %v", err),
+					}
+					jsResult, _ := vm.ToValue(stub)
+					return jsResult
 				}
 			default:
 				stub := map[string]interface{}{
