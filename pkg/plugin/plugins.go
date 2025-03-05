@@ -2559,7 +2559,7 @@ func addJSAPIReduceJSON(vm *otto.Otto) error {
 		arr, ok := arrInterface.([]interface{})
 		if !ok {
 			stub := map[string]interface{}{
-				"error": "Error, passed object is not a JSON array. ",
+				"error": fmt.Sprintf("Error, passed object is not a JSON array: %v", arrInterface),
 			}
 			jsResult, _ := vm.ToValue(stub)
 			return jsResult
