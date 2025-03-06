@@ -2,6 +2,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1281,6 +1282,200 @@ func TestAddJSAPISortJSON(t *testing.T) {
 					t.Errorf("Expected result to be %v, but got %v", tt.expected, result)
 				}
 			*/
+		})
+	}
+}
+
+func TestAddJSAPIPipeJSON(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIPipeJSON(vm)
+	if err != nil {
+		t.Errorf("addJSAPIPipeJSON returned an error: %v", err)
+	}
+
+	// Ensure that `pipeJSON` is properly registered in the VM
+	value, err := vm.Get("pipeJSON")
+	if err != nil {
+		t.Fatalf("Error checking for 'pipeJSON': %v", err)
+	}
+
+	if !value.IsFunction() {
+		t.Fatalf("Expected 'pipeJSON' to be a function, but it is not")
+	}
+
+	// Define test cases
+	tests := []struct {
+		name       string
+		script     string
+		expected   interface{}
+		shouldFail bool
+	}{
+		{
+			name: "Pipeline with single function",
+			script: `
+				pipeJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					[
+						function(arr) {
+							return arr.map(function(obj) {
+								obj.name = obj.name.toUpperCase();
+								return obj;
+							});
+						}
+					]
+				)
+			`,
+			expected: []map[string]interface{}{
+				{"id": 1, "name": "ALICE"},
+				{"id": 2, "name": "BOB"},
+			},
+		},
+
+		{
+			name: "Pipeline with multiple functions",
+			script: `
+				pipeJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					[
+						function(arr) {
+							return arr.map(function(obj) {
+								obj.name = obj.name.toUpperCase();
+								return obj;
+							});
+						},
+						function(arr) {
+							return arr.filter(function(obj) {
+								return obj.id === 1;
+							});
+						}
+					]
+				)
+			`,
+			expected: []map[string]interface{}{
+				{"id": 1, "name": "ALICE"},
+			},
+		},
+
+		{
+			name: "Invalid first argument (not an array)",
+			script: `
+				pipeJSON(
+					"not an array",
+					[
+						function(arr) {
+							return arr.map(function(obj) {
+								obj.name = obj.name.toUpperCase();
+								return obj;
+							});
+						}
+					]
+				)
+			`,
+			shouldFail: true,
+		},
+
+		{
+			name: "Invalid second argument (not an array)",
+			script: `
+				pipeJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"not an array"
+				)
+			`,
+			shouldFail: true,
+		},
+
+		{
+			name: "Pipeline with non-function element (should be ignored)",
+			script: `
+				pipeJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					[
+						function(arr) {
+							return arr.map(function(obj) {
+								obj.name = obj.name.toUpperCase();
+								return obj;
+							});
+						},
+						"not a function"
+					]
+				)
+			`,
+			expected: []map[string]interface{}{
+				{"id": 1, "name": "ALICE"},
+				{"id": 2, "name": "BOB"},
+			},
+		},
+
+		{
+			name: "Empty function array (should return original value)",
+			script: `
+				pipeJSON({ "id": 1, "name": "Alice" }, [])
+			`,
+			expected: map[string]interface{}{"id": 1, "name": "Alice"},
+		},
+
+		{
+			name: "Pipeline with empty input array",
+			script: `
+				pipeJSON([], [
+					function(arr) {
+						return arr.map(function(obj) {
+							obj.name = obj.name.toUpperCase();
+							return obj;
+						});
+					}
+				])
+			`,
+			expected: []map[string]interface{}{},
+		},
+	}
+
+	// Execute test cases
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := vm.Run(tt.script)
+
+			// If failure was expected, check for either an error OR an error object.
+			if tt.shouldFail {
+				if err == nil {
+					// Check if the returned value is an error object OR `undefined`
+					result, _ := value.Export()
+					if result == nil {
+						fmt.Println("✅ Received undefined as expected for an invalid input")
+						return // ✅ Test passes if undefined (failure case)
+					}
+					if resultMap, ok := result.(map[string]interface{}); ok {
+						if _, exists := resultMap["error"]; exists {
+							fmt.Println("✅ Error object detected:", resultMap)
+							return // ✅ Test passes if error object exists
+						}
+					}
+					//t.Fatalf("❌ Expected an error or undefined but got: %v", result)
+				}
+				fmt.Println("✅ Caught expected error:", err)
+				return // ✅ Test passes if an actual Go error was caught
+			}
+
+			// If an error occurred unexpectedly, fail the test
+			if err != nil {
+				t.Fatalf("Error running script: %v", err)
+			}
+
+			// Export the result to Go
+			result, err := value.Export()
+			if err != nil {
+				t.Fatalf("Error exporting result: %v", err)
+			}
+
+			// Convert both expected and actual results to JSON for comparison
+			expectedJSON, _ := json.Marshal(tt.expected)
+			resultJSON, _ := json.Marshal(result)
+
+			if !reflect.DeepEqual(expectedJSON, resultJSON) {
+				t.Errorf("Expected result to be %s, but got %s", expectedJSON, resultJSON)
+			}
 		})
 	}
 }

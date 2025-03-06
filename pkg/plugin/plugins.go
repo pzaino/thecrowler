@@ -2750,28 +2750,51 @@ func addJSAPIPipeJSON(vm *otto.Otto) error {
 	return vm.Set("pipeJSON", func(call otto.FunctionCall) otto.Value {
 		// First argument: initial JSON value.
 		value := call.Argument(0)
+
 		// Second argument: array of callback functions.
-		funcArray, err := call.Argument(1).Export()
+		funcArrayValue := call.Argument(1)
+		if !funcArrayValue.IsObject() {
+			return returnError(vm, "Error, this function requires an array of functions as the second argument.")
+		}
+
+		// Ensure first argument is a valid JSON object or array.
+		if !value.IsObject() &&
+			!value.IsNumber() &&
+			!value.IsString() {
+			return returnError(vm, "Error, this function requires a JSON object or array as the first argument.")
+		}
+
+		// Extract the array length from JavaScript.
+		lengthValue, err := funcArrayValue.Object().Get("length")
 		if err != nil {
-			return returnError(vm, fmt.Sprintf("Error, this function requires a JSON array to process: %v", err))
+			return returnError(vm, "Error accessing function array length.")
 		}
-		callbacks, ok := funcArray.([]interface{})
-		if !ok {
-			return returnError(vm, fmt.Sprintf("Error, this function requires an array of functions to call to process the JSON array: %v", err))
+		length, err := lengthValue.ToInteger()
+		if err != nil {
+			return returnError(vm, "Error converting function array length to integer.")
 		}
-		// Apply each callback sequentially.
-		for _, cbInterface := range callbacks {
-			cbValue, err := vm.ToValue(cbInterface)
-			if err != nil || !cbValue.IsFunction() {
+
+		// Iterate over the array and process functions.
+		for i := int64(0); i < length; i++ {
+			// Get the function reference
+			funcValue, err := funcArrayValue.Object().Get(fmt.Sprintf("%d", i))
+			if err != nil {
 				continue
 			}
-			newValue, err := cbValue.Call(otto.UndefinedValue(), value)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error calling function in pipeJSON: %v", err)
+
+			// Ensure it's a function
+			if !funcValue.IsFunction() {
 				continue
+			}
+
+			// Call the function with the current value
+			newValue, err := funcValue.Call(otto.UndefinedValue(), value)
+			if err != nil {
+				continue // Skip errors
 			}
 			value = newValue
 		}
+
 		return value
 	})
 }
