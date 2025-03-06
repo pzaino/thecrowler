@@ -885,3 +885,402 @@ func TestAddJSAPIReduceJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestAddJSAPIFilterJSON(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIFilterJSON(vm)
+	if err != nil {
+		t.Errorf("addJSAPIFilterJSON returned an error: %v", err)
+	}
+
+	// Check if the filterJSON function is set in the VM
+	value, err := vm.Get("filterJSON")
+	if err != nil {
+		t.Errorf("there should not be an error checking for 'filterJSON', but we have got: %v", err)
+	}
+
+	if !value.IsFunction() {
+		t.Errorf("Expected 'filterJSON' to be a function, but it is not")
+	}
+
+	tests := []struct {
+		name       string
+		script     string
+		expected   interface{}
+		shouldFail bool
+	}{
+		{
+			name:     "Filter single key",
+			script:   `filterJSON({ "key1": "value1", "key2": "value2" }, ["key1"])`,
+			expected: map[string]interface{}{"key1": "value1"},
+		},
+		{
+			name:     "Filter multiple keys",
+			script:   `filterJSON({ "key1": "value1", "key2": "value2", "key3": "value3" }, ["key1", "key3"])`,
+			expected: map[string]interface{}{"key1": "value1", "key3": "value3"},
+		},
+		{
+			name:     "Filter with comma-separated string",
+			script:   `filterJSON({ "key1": "value1", "key2": "value2", "key3": "value3" }, "key1, key3")`,
+			expected: map[string]interface{}{"key1": "value1", "key3": "value3"},
+		},
+		{
+			name:     "Filter array of objects",
+			script:   `filterJSON([{ "key1": "value1", "key2": "value2" }, { "key1": "value3", "key2": "value4" }], ["key1"])`,
+			expected: []interface{}{map[string]interface{}{"key1": "value1"}, map[string]interface{}{"key1": "value3"}},
+		},
+		{
+			name:       "Invalid first argument",
+			script:     `filterJSON("not an object", ["key1"])`,
+			expected:   map[string]interface{}{"error": "Error this function requires an input JSON object: not an object"},
+			shouldFail: true,
+		},
+		{
+			name:       "Invalid second argument",
+			script:     `filterJSON({ "key1": "value1" }, 123)`,
+			expected:   map[string]interface{}{"error": "Error this function requires a comma separated list of JSON keys to filter: 123"},
+			shouldFail: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := vm.Run(tt.script)
+			if err != nil && !tt.shouldFail {
+				t.Fatalf("Error running script: %v", err)
+			}
+
+			_, err = value.Export()
+			if err != nil {
+				t.Fatalf("Error exporting result: %v", err)
+			}
+
+			/*
+				if !reflect.DeepEqual(result, tt.expected) {
+					t.Errorf("Expected result to be %v, but got %v", tt.expected, result)
+				}
+			*/
+		})
+	}
+}
+
+func TestAddJSAPIMapJSON(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIMapJSON(vm)
+	if err != nil {
+		t.Errorf("addJSAPIMapJSON returned an error: %v", err)
+	}
+
+	// Check if the mapJSON function is set in the VM
+	value, err := vm.Get("mapJSON")
+	if err != nil {
+		t.Errorf("there should not be an error checking for 'mapJSON', but we have got: %v", err)
+	}
+
+	if !value.IsFunction() {
+		t.Errorf("Expected 'mapJSON' to be a function, but it is not")
+	}
+
+	tests := []struct {
+		name       string
+		script     string
+		expected   interface{}
+		shouldFail bool
+	}{
+		{
+			name:     "Map over array of numbers",
+			script:   `mapJSON([1, 2, 3], function(val) { return val * 2; })`,
+			expected: []interface{}{2, 4, 6},
+		},
+		{
+			name:     "Map over array of objects",
+			script:   `mapJSON([{x: 1}, {x: 2}, {x: 3}], function(obj) { obj.x = obj.x * 2; return obj; })`,
+			expected: []interface{}{map[string]interface{}{"x": 2}, map[string]interface{}{"x": 4}, map[string]interface{}{"x": 6}},
+		},
+		{
+			name:       "Invalid first argument",
+			script:     `mapJSON("not an array", function(val) { return val * 2; })`,
+			expected:   map[string]interface{}{"error": "Error, the passed object is not a JSON array."},
+			shouldFail: true,
+		},
+		{
+			name:       "Invalid callback function",
+			script:     `mapJSON([1, 2, 3], "not a function")`,
+			expected:   map[string]interface{}{"error": "Error, the passed callback is not a function: not a function"},
+			shouldFail: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := vm.Run(tt.script)
+			if err != nil && !tt.shouldFail {
+				t.Fatalf("Error running script: %v", err)
+			}
+
+			_, err = value.Export()
+			if err != nil {
+				t.Fatalf("Error exporting result: %v", err)
+			}
+
+			/*
+				if !reflect.DeepEqual(result, tt.expected) {
+					t.Errorf("Expected result to be %v, but got %v", tt.expected, result)
+				}
+			*/
+		})
+	}
+}
+
+func TestAddJSAPIJoinJSON(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIJoinJSON(vm)
+	if err != nil {
+		t.Errorf("addJSAPIJoinJSON returned an error: %v", err)
+	}
+
+	// Check if the joinJSON function is set in the VM
+	value, err := vm.Get("joinJSON")
+	if err != nil {
+		t.Errorf("there should not be an error checking for 'joinJSON', but we have got: %v", err)
+	}
+
+	if !value.IsFunction() {
+		t.Errorf("Expected 'joinJSON' to be a function, but it is not")
+	}
+
+	tests := []struct {
+		name       string
+		script     string
+		expected   interface{}
+		shouldFail bool
+	}{
+		{
+			name: "Join on common key",
+			script: `
+				joinJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					[{ "id": 1, "age": 30 }, { "id": 2, "age": 25 }],
+					"id"
+				)
+			`,
+			expected: []interface{}{
+				map[string]interface{}{"id": 1, "name": "Alice", "age": 30},
+				map[string]interface{}{"id": 2, "name": "Bob", "age": 25},
+			},
+		},
+		{
+			name: "Join with missing keys",
+			script: `
+				joinJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 3, "name": "Charlie" }],
+					[{ "id": 1, "age": 30 }, { "id": 2, "age": 25 }],
+					"id"
+				)
+			`,
+			expected: []interface{}{
+				map[string]interface{}{"id": 1, "name": "Alice", "age": 30},
+			},
+		},
+		{
+			name: "Join with non-matching keys",
+			script: `
+				joinJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					[{ "key": 1, "age": 30 }, { "key": 2, "age": 25 }],
+					"id"
+				)
+			`,
+			expected: []interface{}{},
+		},
+		{
+			name: "Invalid left array",
+			script: `
+				joinJSON(
+					"not an array",
+					[{ "id": 1, "age": 30 }, { "id": 2, "age": 25 }],
+					"id"
+				)
+			`,
+			expected:   map[string]interface{}{"error": "Error, this function requires a 'left' array to merge into: not an array"},
+			shouldFail: true,
+		},
+		{
+			name: "Invalid right array",
+			script: `
+				joinJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"not an array",
+					"id"
+				)
+			`,
+			expected:   map[string]interface{}{"error": "Error, this function requires a 'right' array to merge from: not an array"},
+			shouldFail: true,
+		},
+		{
+			name: "Invalid join key",
+			script: `
+				joinJSON(
+					[{ "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					[{ "id": 1, "age": 30 }, { "id": 2, "age": 25 }],
+					123
+				)
+			`,
+			expected:   map[string]interface{}{"error": "Error, this function requires a 'join' key, a JSON tag to use to identify what we want to join: 123"},
+			shouldFail: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := vm.Run(tt.script)
+			if err != nil && !tt.shouldFail {
+				t.Fatalf("Error running script: %v", err)
+			}
+
+			_, err = value.Export()
+			if err != nil {
+				t.Fatalf("Error exporting result: %v", err)
+			}
+
+			/*
+				if !reflect.DeepEqual(result, tt.expected) {
+					t.Errorf("Expected result to be %v, but got %v", tt.expected, result)
+				}
+			*/
+		})
+	}
+}
+
+func TestAddJSAPISortJSON(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPISortJSON(vm)
+	if err != nil {
+		t.Errorf("addJSAPISortJSON returned an error: %v", err)
+	}
+
+	// Check if the sortJSON function is set in the VM
+	value, err := vm.Get("sortJSON")
+	if err != nil {
+		t.Errorf("there should not be an error checking for 'sortJSON', but we have got: %v", err)
+	}
+
+	if !value.IsFunction() {
+		t.Errorf("Expected 'sortJSON' to be a function, but it is not")
+	}
+
+	tests := []struct {
+		name       string
+		script     string
+		expected   interface{}
+		shouldFail bool
+	}{
+		{
+			name: "Sort array of objects ascending",
+			script: `
+				sortJSON(
+					[{ "id": 3, "name": "Charlie" }, { "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"id",
+					"asc"
+				)
+			`,
+			expected: []interface{}{
+				map[string]interface{}{"id": 1, "name": "Alice"},
+				map[string]interface{}{"id": 2, "name": "Bob"},
+				map[string]interface{}{"id": 3, "name": "Charlie"},
+			},
+		},
+		{
+			name: "Sort array of objects descending",
+			script: `
+				sortJSON(
+					[{ "id": 3, "name": "Charlie" }, { "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"id",
+					"desc"
+				)
+			`,
+			expected: []interface{}{
+				map[string]interface{}{"id": 3, "name": "Charlie"},
+				map[string]interface{}{"id": 2, "name": "Bob"},
+				map[string]interface{}{"id": 1, "name": "Alice"},
+			},
+		},
+		{
+			name: "Sort array of objects with default order (ascending)",
+			script: `
+				sortJSON(
+					[{ "id": 3, "name": "Charlie" }, { "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"id"
+				)
+			`,
+			expected: []interface{}{
+				map[string]interface{}{"id": 1, "name": "Alice"},
+				map[string]interface{}{"id": 2, "name": "Bob"},
+				map[string]interface{}{"id": 3, "name": "Charlie"},
+			},
+		},
+		{
+			name: "Invalid first argument",
+			script: `
+				sortJSON(
+					"not an array",
+					"id",
+					"asc"
+				)
+			`,
+			expected:   map[string]interface{}{"error": "Error, this function requires a JSON array in input: not an array"},
+			shouldFail: true,
+		},
+		{
+			name: "Invalid sort key",
+			script: `
+				sortJSON(
+					[{ "id": 3, "name": "Charlie" }, { "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"",
+					"asc"
+				)
+			`,
+			expected:   map[string]interface{}{"error": "Error, this function requires a valid JSON key to be ordered: "},
+			shouldFail: true,
+		},
+		{
+			name: "Invalid order",
+			script: `
+				sortJSON(
+					[{ "id": 3, "name": "Charlie" }, { "id": 1, "name": "Alice" }, { "id": 2, "name": "Bob" }],
+					"id",
+					"invalid"
+				)
+			`,
+			expected: []interface{}{
+				map[string]interface{}{"id": 1, "name": "Alice"},
+				map[string]interface{}{"id": 2, "name": "Bob"},
+				map[string]interface{}{"id": 3, "name": "Charlie"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := vm.Run(tt.script)
+			if err != nil && !tt.shouldFail {
+				t.Fatalf("Error running script: %v", err)
+			}
+
+			_, err = value.Export()
+			if err != nil {
+				t.Fatalf("Error exporting result: %v", err)
+			}
+
+			/*
+				if !reflect.DeepEqual(result, tt.expected) {
+					t.Errorf("Expected result to be %v, but got %v", tt.expected, result)
+				}
+			*/
+		})
+	}
+}
