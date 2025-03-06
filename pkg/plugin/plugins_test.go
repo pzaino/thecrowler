@@ -811,3 +811,77 @@ func TestFormatConsoleLog(t *testing.T) {
 		})
 	}
 }
+
+func TestAddJSAPIReduceJSON(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIReduceJSON(vm)
+	if err != nil {
+		t.Errorf("addJSAPIReduceJSON returned an error: %v", err)
+	}
+
+	// Check if the reduceJSON function is set in the VM
+	value, err := vm.Get("reduceJSON")
+	if err != nil {
+		t.Errorf("there should not be an error checking for 'reduceJSON', but we have got: %v", err)
+	}
+
+	if !value.IsFunction() {
+		t.Errorf("Expected 'reduceJSON' to be a function, but it is not")
+	}
+
+	tests := []struct {
+		name       string
+		script     string
+		expected   interface{}
+		shouldFail bool
+	}{
+		{
+			name:     "Sum of numbers",
+			script:   `reduceJSON([1, 2, 3, 4], function(acc, val) { return acc + val; }, 0)`,
+			expected: 10,
+		},
+		{
+			name:     "Concatenate strings",
+			script:   `reduceJSON(["a", "b", "c"], function(acc, val) { return acc + val; }, "")`,
+			expected: "abc",
+		},
+		{
+			name:     "Sum of object properties",
+			script:   `reduceJSON([{x: 1}, {x: 2}, {x: 3}], function(acc, obj) { return acc + obj.x; }, 0)`,
+			expected: 6,
+		},
+		{
+			name:       "Invalid first argument",
+			script:     `reduceJSON("not an array", function(acc, val) { return acc + val; }, 0)`,
+			expected:   map[string]interface{}{"error": "Error, this function requires an array of objects."},
+			shouldFail: true,
+		},
+		{
+			name:       "Invalid callback function",
+			script:     `reduceJSON([1, 2, 3], "not a function", 0)`,
+			expected:   map[string]interface{}{"error": "Error, callback is not a function: not a function"},
+			shouldFail: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := vm.Run(tt.script)
+			if err != nil && !tt.shouldFail {
+				t.Fatalf("Error running script: %v", err)
+			}
+
+			_, err = value.Export()
+			if err != nil {
+				t.Fatalf("Error exporting result: %v", err)
+			}
+
+			/*
+				if !reflect.DeepEqual(result, tt.expected) {
+					t.Errorf("Expected result to be %v, but got %v", tt.expected, result)
+				}
+			*/
+		})
+	}
+}

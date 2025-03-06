@@ -2550,29 +2550,43 @@ func addJSAPIReduceJSON(vm *otto.Otto) error {
 		// First argument: a JSON array.
 		arrInterface, err := call.Argument(0).Export()
 		if err != nil {
-			stub := map[string]interface{}{
-				"error": "Error, this function requires an array of objects.",
-			}
-			jsResult, _ := vm.ToValue(stub)
-			return jsResult
+			return returnError(vm, "Error, this function requires an array of objects.")
 		}
-		arr, ok := arrInterface.([]interface{})
-		if !ok {
-			stub := map[string]interface{}{
-				"error": fmt.Sprintf("Error, passed object is not a JSON array: %v", arrInterface),
+
+		// Print arrInstance type on the console:
+		fmt.Printf("arrInterface type: %T\n", arrInterface)
+
+		// Convert to a Go slice of interfaces
+		var arr []interface{}
+		switch v := arrInterface.(type) {
+		case []interface{}:
+			arr = v
+		case []int64:
+			for _, num := range v {
+				arr = append(arr, num) // Convert int64 to interface{}
 			}
-			jsResult, _ := vm.ToValue(stub)
-			return jsResult
+		case []float64:
+			for _, num := range v {
+				arr = append(arr, num) // Convert float64 to interface{}
+			}
+		case []string:
+			for _, str := range v {
+				arr = append(arr, str) // Convert string slice to interface{}
+			}
+		case []map[string]interface{}:
+			for _, obj := range v {
+				arr = append(arr, obj) // Convert object slice to interface{}
+			}
+		default:
+			return returnError(vm, fmt.Sprintf("Error, passed object is not a JSON array: %v", arrInterface))
 		}
+
 		// Second argument: callback function.
 		callback := call.Argument(1)
 		if !callback.IsFunction() {
-			stub := map[string]interface{}{
-				"error": fmt.Sprintf("Error, callback is not a function: %v", callback),
-			}
-			jsResult, _ := vm.ToValue(stub)
-			return jsResult
+			return returnError(vm, fmt.Sprintf("Error, callback is not a function: %v", callback))
 		}
+
 		// Third argument: initial accumulator.
 		accumulator := call.Argument(2)
 		// Iterate over each element and call the callback.
@@ -2835,6 +2849,12 @@ func addJSAPIISODate(vm *otto.Otto) error {
 		result, _ := vm.ToValue(t.Format("2006-01-02T15:04:05.000Z"))
 		return result
 	})
+}
+
+func returnError(vm *otto.Otto, message string) otto.Value {
+	stub := map[string]interface{}{"error": message}
+	jsResult, _ := vm.ToValue(stub)
+	return jsResult
 }
 
 // String returns the Plugin as a string
