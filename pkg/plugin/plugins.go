@@ -1822,6 +1822,11 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 		if config["user"] != nil {
 			user = strings.TrimSpace(fmt.Sprintf("%v", config["user"]))
 		}
+		if user == "" {
+			if config["username"] != nil {
+				user = strings.TrimSpace(fmt.Sprintf("%v", config["username"]))
+			}
+		}
 		var password string
 		if config["password"] != nil {
 			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
@@ -1986,10 +1991,10 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
-					cmn.DebugMsg(cmn.DbgLvlError, "Problem converting MongoDB filter to BSON: %v", err)
+					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
 					filter = bson.M{}
 				}
-				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "[MONGODB] MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
 					stub := map[string]interface{}{
