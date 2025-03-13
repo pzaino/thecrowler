@@ -573,6 +573,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIISODate(vm); err != nil {
 		return err
 	}
+	if err := addJSAPISetTimeout(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -2871,6 +2874,35 @@ func addJSAPIISODate(vm *otto.Otto) error {
 		}
 		result, _ := vm.ToValue(t.Format("2006-01-02T15:04:05.000Z"))
 		return result
+	})
+}
+
+// setTimeout is a JavaScript function that calls a function or evaluates an expression after a specified number of milliseconds.
+// Usage in JS:
+//
+//	setTimeout(function() {
+//		console.log("Hello, world!");
+//	}, 1000);
+func addJSAPISetTimeout(vm *otto.Otto) error {
+	return vm.Set("setTimeout", func(call otto.FunctionCall) otto.Value {
+		// First argument: function or expression to evaluate.
+		callback := call.Argument(0)
+		if !callback.IsFunction() {
+			return returnError(vm, "Error, this function requires a function as the first argument.")
+		}
+
+		// Second argument: delay in milliseconds.
+		delay, err := call.Argument(1).ToInteger()
+		if err != nil {
+			return returnError(vm, "Error, this function requires a delay in milliseconds as the second argument.")
+		}
+
+		// Call the function after the specified delay.
+		go func() {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+			_, _ = callback.Call(otto.UndefinedValue())
+		}()
+		return otto.UndefinedValue()
 	})
 }
 
