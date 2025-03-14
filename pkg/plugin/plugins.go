@@ -2929,6 +2929,9 @@ func addJSAPILoadLocalFile(vm *otto.Otto) error {
 		// Create a file path relative to the support directory.
 		filePath = "/app/support" + filePath
 
+		// convert into an os path
+		filePath = filepath.FromSlash(filePath)
+
 		// Read the file contents.
 		data, err := os.ReadFile(filePath)
 		if err != nil {
