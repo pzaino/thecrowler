@@ -576,6 +576,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPISetTimeout(vm); err != nil {
 		return err
 	}
+	if err := addJSAPILoadLocalFile(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -2903,6 +2906,34 @@ func addJSAPISetTimeout(vm *otto.Otto) error {
 			_, _ = callback.Call(otto.UndefinedValue())
 		}()
 		return otto.UndefinedValue()
+	})
+}
+
+// loadLocalFile is a JavaScript function that reads a file from the local filesystem.
+// Usage in JS:
+//
+//	var data = loadLocalFile("data.json");
+//	console.log("File contents:", data);
+func addJSAPILoadLocalFile(vm *otto.Otto) error {
+	return vm.Set("loadLocalFile", func(call otto.FunctionCall) otto.Value {
+		// First argument: file path.
+		filePath, err := call.Argument(0).ToString()
+		if err != nil {
+			return returnError(vm, "Error, this function requires a file path as the first argument.")
+		}
+
+		// Read the file contents.
+		data, err := os.ReadFile("./support/" + filePath)
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error reading file: %v", err))
+		}
+
+		// Convert the file contents to a string.
+		result, err := vm.ToValue(string(data))
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error converting file contents to a JavaScript value: %v", err))
+		}
+		return result
 	})
 }
 
