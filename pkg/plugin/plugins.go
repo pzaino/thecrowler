@@ -2212,6 +2212,10 @@ func addJSAPIJSONToCSV(vm *otto.Otto) error {
 
 // csvToJSON converts a CSV string into a JavaScript array of objects.
 // The first row of the CSV is assumed to contain header keys.
+//
+// Example usage in JS:
+// var data = loadLocalFile("data.csv");
+// var jsonData = csvToJSON(data);
 func addJSAPICSVToJSON(vm *otto.Otto) error {
 	return vm.Set("csvToJSON", func(call otto.FunctionCall) otto.Value {
 		csvStr, err := call.Argument(0).ToString()
@@ -2922,8 +2926,11 @@ func addJSAPILoadLocalFile(vm *otto.Otto) error {
 			return returnError(vm, "Error, this function requires a file path as the first argument.")
 		}
 
+		// Create a file path relative to the support directory.
+		filePath = "/app/support" + filePath
+
 		// Read the file contents.
-		data, err := os.ReadFile("./support/" + filePath)
+		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return returnError(vm, fmt.Sprintf("Error reading file: %v", err))
 		}
