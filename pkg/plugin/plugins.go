@@ -573,6 +573,12 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIISODate(vm); err != nil {
 		return err
 	}
+	if err := addJSAPISetTimeout(vm); err != nil {
+		return err
+	}
+	if err := addJSAPILoadLocalFile(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -1822,6 +1828,11 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 		if config["user"] != nil {
 			user = strings.TrimSpace(fmt.Sprintf("%v", config["user"]))
 		}
+		if user == "" {
+			if config["username"] != nil {
+				user = strings.TrimSpace(fmt.Sprintf("%v", config["username"]))
+			}
+		}
 		var password string
 		if config["password"] != nil {
 			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
@@ -1986,10 +1997,10 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
-					cmn.DebugMsg(cmn.DbgLvlError, "Problem converting MongoDB filter to BSON: %v", err)
+					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
 					filter = bson.M{}
 				}
-				cmn.DebugMsg(cmn.DbgLvlDebug5, "MongoDB filter BSON Object: %v", filter)
+				cmn.DebugMsg(cmn.DbgLvlDebug5, "[MONGODB] MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
 					stub := map[string]interface{}{
@@ -2201,6 +2212,10 @@ func addJSAPIJSONToCSV(vm *otto.Otto) error {
 
 // csvToJSON converts a CSV string into a JavaScript array of objects.
 // The first row of the CSV is assumed to contain header keys.
+//
+// Example usage in JS:
+// var data = loadLocalFile("data.csv");
+// var jsonData = csvToJSON(data);
 func addJSAPICSVToJSON(vm *otto.Otto) error {
 	return vm.Set("csvToJSON", func(call otto.FunctionCall) otto.Value {
 		csvStr, err := call.Argument(0).ToString()
@@ -2865,6 +2880,69 @@ func addJSAPIISODate(vm *otto.Otto) error {
 			t = parsedTime
 		}
 		result, _ := vm.ToValue(t.Format("2006-01-02T15:04:05.000Z"))
+		return result
+	})
+}
+
+// setTimeout is a JavaScript function that calls a function or evaluates an expression after a specified number of milliseconds.
+// Usage in JS:
+//
+//	setTimeout(function() {
+//		console.log("Hello, world!");
+//	}, 1000);
+func addJSAPISetTimeout(vm *otto.Otto) error {
+	return vm.Set("setTimeout", func(call otto.FunctionCall) otto.Value {
+		// First argument: function or expression to evaluate.
+		callback := call.Argument(0)
+		if !callback.IsFunction() {
+			return returnError(vm, "Error, this function requires a function as the first argument.")
+		}
+
+		// Second argument: delay in milliseconds.
+		delay, err := call.Argument(1).ToInteger()
+		if err != nil {
+			return returnError(vm, "Error, this function requires a delay in milliseconds as the second argument.")
+		}
+
+		// Call the function after the specified delay.
+		go func() {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+			_, _ = callback.Call(otto.UndefinedValue())
+		}()
+		return otto.UndefinedValue()
+	})
+}
+
+// loadLocalFile is a JavaScript function that reads a file from the local filesystem.
+// Usage in JS:
+//
+//	var data = loadLocalFile("data.json");
+//	console.log("File contents:", data);
+func addJSAPILoadLocalFile(vm *otto.Otto) error {
+	return vm.Set("loadLocalFile", func(call otto.FunctionCall) otto.Value {
+		// First argument: file path.
+		filePath, err := call.Argument(0).ToString()
+		if err != nil {
+			return returnError(vm, "Error, this function requires a file path as the first argument.")
+		}
+
+		// Create a file path relative to the support directory.
+		filePath = "/app/support/" + filePath
+
+		// convert into an os path
+		filePath = filepath.FromSlash(filePath)
+
+		// Read the file contents.
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error reading file: %v", err))
+		}
+
+		// Convert the file contents to a string.
+		result, err := vm.ToValue(string(data))
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error converting file contents to a JavaScript value: %v", err))
+		}
 		return result
 	})
 }

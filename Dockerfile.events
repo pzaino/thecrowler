@@ -16,6 +16,7 @@ COPY ./config.yaml .
 COPY ./schemas/ ./schemas
 COPY ./plugins/ ./plugins
 COPY ./agents/ ./agents
+COPY ./support/ ./support
 COPY ./autobuild.sh .
 
 # Ensure the script has correct permissions and check its presence
@@ -39,6 +40,7 @@ COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 COPY --from=builder /app/plugins /app/plugins
 COPY --from=builder /app/agents /app/agents
+COPY --from=builder /app/support /app/support
 
 # Ensure the executables have correct permissions
 RUN chmod +x events
