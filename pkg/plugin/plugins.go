@@ -2121,7 +2121,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			ctx := context.Background()
 			driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(user, password, ""), nil)
 			if err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error attempting to connect to neo4j '%s' db: %v", dbname, err))
 			}
 			defer driver.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
@@ -2132,7 +2132,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			// Execute the Cypher query.
 			records, err := session.Run(ctx, query, nil)
 			if err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error executing Cypher query on '%s' db: %v", dbname, err))
 			}
 
 			var results []map[string]interface{}
@@ -2147,20 +2147,16 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				results = append(results, recMap)
 			}
 			if err = records.Err(); err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error processing Cypher query results on '%s' db: %v", dbname, err))
 			}
 			jsResult, err := vm.ToValue(results)
 			if err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error converting Neo4J results to a JS object: %v", err))
 			}
 			return jsResult
 
 		default:
-			stub := map[string]interface{}{
-				"error": fmt.Sprintf("Unsupported database type: %s", dbType),
-			}
-			jsResult, _ := vm.ToValue(stub)
-			return jsResult
+			return returnError(vm, fmt.Sprintf("Unsupported database type: %s", dbType))
 		}
 	})
 }
