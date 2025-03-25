@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/robertkrimen/otto"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -577,6 +578,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 	if err := addJSAPILoadLocalFile(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
 
@@ -3015,6 +3019,23 @@ func addJSAPILoadLocalFile(vm *otto.Otto) error {
 		if err != nil {
 			return returnError(vm, fmt.Sprintf("Error converting file contents to a JavaScript value: %v", err))
 		}
+		return result
+	})
+}
+
+// addJSAPIGenUUID adds a new function "genUUID" to the Otto VM,
+// which generates a new UUID (v4) using the "github.com/google/uuid" package.
+// Usage in JS:
+//
+//		var uuid = genUUID();
+//	 console.log("Generated UUID:", uuid);
+func addJSAPIGenUUID(vm *otto.Otto) error {
+	return vm.Set("genUUID", func(call otto.FunctionCall) otto.Value {
+		uuid, err := uuid.NewRandom()
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error generating UUID: %v", err))
+		}
+		result, _ := vm.ToValue(uuid.String())
 		return result
 	})
 }
