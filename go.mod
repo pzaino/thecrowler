@@ -1,6 +1,7 @@
 module github.com/pzaino/thecrowler
 
 go 1.23.6
+toolchain go1.24.1
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.2
@@ -77,6 +78,6 @@ require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.37.0
+	golang.org/x/net v0.38.0
 	golang.org/x/text v0.23.0 // indirect
 )
