@@ -9,6 +9,10 @@ engine_count=""
 vdi_count=""
 prometheus=""
 postgres=""
+cpu_limit=""
+cpu_limit_engine=""
+cpu_limit_vdi=""
+cpu_limit_mng=""
 
 # Function to display usage
 cmd_usage() {
@@ -100,6 +104,18 @@ for arg in ${pars}; do
         --pg=*)
             postgres=${arg#--pg=}
             ;;
+        --cpu_limit=*|--cpu=*)
+            cpu_limit="${arg#*=}"
+            ;;
+        --cpu_limit_engine=*)
+            cpu_limit_engine="${arg#*=}"
+            ;;
+        --cpu_limit_vdi=*)
+            cpu_limit_vdi="${arg#*=}"
+            ;;
+        --cpu_limit_mng=*)
+            cpu_limit_mng="${arg#*=}"
+            ;;
     esac
 done
 
@@ -116,6 +132,12 @@ fi
 if [ -z "$postgres" ]; then
     read_yes_no_input "Do you want to include the PostgreSQL database?" postgres
 fi
+
+# set default values for CPU limits if not provided
+cpu_limit_engine=${cpu_limit_engine:-$cpu_limit}
+cpu_limit_vdi=${cpu_limit_vdi:-$cpu_limit}
+cpu_limit_mng=${cpu_limit_mng:-$cpu_limit}
+
 
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
@@ -136,6 +158,10 @@ services:
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit_mng:-1.0}"
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -173,6 +199,10 @@ services:
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit_mng:-1.0}"
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -219,6 +249,10 @@ if [ "$postgres" == "yes" ]; then
       - PROXY_SERVICE=\${VDI_PROXY_SERVICE:-}
       - TZ=\${VDI_TZ:-UTC}
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit:-1.0}"
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -271,6 +305,10 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit_engine:-0.5}"
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -306,6 +344,10 @@ if [ "$vdi_count" != "0" ]; then
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit_mng:-1.0}"
     ports:
       - "16686:16686" # Jaeger UI
       - "4317:4317"   # OpenTelemetry gRPC endpoint
@@ -352,6 +394,10 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://crowler-jaeger:4317}
       - SEL_PASSWD=\${SEL_PASSWD:-secret}
       - TZ=\${VDI_TZ:-UTC}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit_vdi:-1.0}"
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
@@ -386,6 +432,10 @@ if [ "$prometheus" == "yes" ]; then
     environment:
       - COMPOSE_PROJECT_NAME=crowler
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    deploy:
+      resources:
+        limits:
+          cpus: "${cpu_limit_mng:-1.0}"
     networks:
       - crowler-net
     restart: unless-stopped
