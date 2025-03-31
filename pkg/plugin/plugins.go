@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/robertkrimen/otto"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -577,6 +578,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 	if err := addJSAPILoadLocalFile(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
 
@@ -1940,22 +1944,14 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			defer cancel()
 			client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
 			if err != nil {
-				stub := map[string]interface{}{
-					"error": fmt.Sprintf("Problem generating MongoDB uri: %v", err),
-				}
-				jsResult, _ := vm.ToValue(stub)
-				return jsResult
+				return returnError(vm, fmt.Sprintf("Error attempting to connect to '%s' db: %v", dbname, err))
 			}
 			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
 
 			// Process the query object: { action: "find", filter: { name: "John" } }
 			var queryJSON map[string]interface{}
 			if err := json.Unmarshal([]byte(query), &queryJSON); err != nil {
-				stub := map[string]interface{}{
-					"error": fmt.Sprintf("Problem parsing the query object: %v", err),
-				}
-				jsResult, _ := vm.ToValue(stub)
-				return jsResult
+				return returnError(vm, fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err))
 			}
 
 			// Extract collection name from the query object (Required field).
@@ -1970,11 +1966,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				noCollection = true
 			}
 			if noCollection {
-				stub := map[string]interface{}{
-					"error": "No 'collection' field specified in the query object",
-				}
-				jsResult, _ := vm.ToValue(stub)
-				return jsResult
+				return returnError(vm, fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err))
 			}
 			coll := client.Database(dbname).Collection(collectionName)
 
@@ -2003,35 +1995,123 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "[MONGODB] MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
 				if err != nil {
-					stub := map[string]interface{}{
-						"error": fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err),
-					}
-					jsResult, _ := vm.ToValue(stub)
-					return jsResult
+					return returnError(vm, fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err))
 				}
 				defer cursor.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
 				var results []bson.M
 				if err = cursor.All(ctx, &results); err != nil {
-					stub := map[string]interface{}{
-						"error": fmt.Sprintf("Error attempting to use cursor on '%s' db: %v", dbname, err),
-					}
-					jsResult, _ := vm.ToValue(stub)
-					return jsResult
+					return returnError(vm, fmt.Sprintf("Error attempting to use cursor on '%s' db: %v", dbname, err))
 				}
 				jsResult, err = vm.ToValue(results)
 				if err != nil {
-					stub := map[string]interface{}{
-						"error": fmt.Sprintf("Error attempting to convert MongoDB results to a JS object: %v", err),
-					}
-					jsResult, _ := vm.ToValue(stub)
-					return jsResult
+					return returnError(vm, fmt.Sprintf("Error attempting to convert MongoDB results to a JS object: %v", err))
 				}
+
+			case "insertOne":
+				if queryJSON["document"] == nil {
+					return returnError(vm, "Missing 'document' field for insertOne operation")
+				}
+				doc, ok := queryJSON["document"].(map[string]interface{})
+				if !ok {
+					return returnError(vm, "Invalid format for 'document' field in insertOne operation")
+				}
+				result, err := coll.InsertOne(ctx, doc)
+				if err != nil {
+					return returnError(vm, fmt.Sprintf("Error inserting document: %v", err))
+				}
+				jsResult, _ = vm.ToValue(map[string]interface{}{"inserted_id": result.InsertedID})
+
+			case "insertMany":
+				if queryJSON["documents"] == nil {
+					return returnError(vm, "Missing 'documents' field for insertMany operation")
+				}
+				docs, ok := queryJSON["documents"].([]interface{})
+				if !ok {
+					return returnError(vm, "Invalid format for 'documents' field in insertMany operation")
+				}
+				result, err := coll.InsertMany(ctx, docs)
+				if err != nil {
+					return returnError(vm, fmt.Sprintf("Error inserting multiple documents: %v", err))
+				}
+				jsResult, _ = vm.ToValue(map[string]interface{}{"inserted_ids": result.InsertedIDs})
+
+			case "updateOne":
+				if queryJSON["filter"] == nil || queryJSON["update"] == nil {
+					return returnError(vm, "Missing 'filter' or 'update' field for updateOne operation")
+				}
+				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
+				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
+					filter = bson.M{}
+				}
+				update, ok := queryJSON["update"].(map[string]interface{})
+				if !ok {
+					return returnError(vm, "Invalid format for 'update' field in updateOne operation")
+				}
+				result, err := coll.UpdateOne(ctx, filter, bson.M{"$set": update})
+				if err != nil {
+					return returnError(vm, fmt.Sprintf("Error updating document: %v", err))
+				}
+				jsResult, _ = vm.ToValue(map[string]interface{}{
+					"matched_count":  result.MatchedCount,
+					"modified_count": result.ModifiedCount,
+				})
+
+			case "updateMany":
+				if queryJSON["filter"] == nil || queryJSON["update"] == nil {
+					return returnError(vm, "Missing 'filter' or 'update' field for updateMany operation")
+				}
+				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
+				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
+					filter = bson.M{}
+				}
+				update, ok := queryJSON["update"].(map[string]interface{})
+				if !ok {
+					return returnError(vm, "Invalid format for 'update' field in updateMany operation")
+				}
+				result, err := coll.UpdateMany(ctx, filter, bson.M{"$set": update})
+				if err != nil {
+					return returnError(vm, fmt.Sprintf("Error updating multiple documents: %v", err))
+				}
+				jsResult, _ = vm.ToValue(map[string]interface{}{
+					"matched_count":  result.MatchedCount,
+					"modified_count": result.ModifiedCount,
+				})
+
+			case "deleteOne":
+				if queryJSON["filter"] == nil {
+					return returnError(vm, "Missing 'filter' field for deleteOne operation")
+				}
+				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
+				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
+					filter = bson.M{}
+				}
+				result, err := coll.DeleteOne(ctx, filter)
+				if err != nil {
+					return returnError(vm, fmt.Sprintf("Error deleting document: %v", err))
+				}
+				jsResult, _ = vm.ToValue(map[string]interface{}{"deleted_count": result.DeletedCount})
+
+			case "deleteMany":
+				if queryJSON["filter"] == nil {
+					return returnError(vm, "Missing 'filter' field for deleteMany operation")
+				}
+				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
+				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
+					filter = bson.M{}
+				}
+				result, err := coll.DeleteMany(ctx, filter)
+				if err != nil {
+					return returnError(vm, fmt.Sprintf("Error deleting multiple documents: %v", err))
+				}
+				jsResult, _ = vm.ToValue(map[string]interface{}{"deleted_count": result.DeletedCount})
+
 			default:
-				stub := map[string]interface{}{
-					"error": fmt.Sprintf("Unsupported action in the query object: '%s'", actionStr),
-				}
-				jsResult, _ = vm.ToValue(stub)
+				return returnError(vm, fmt.Sprintf("Unsupported action in the query object: '%s'", actionStr))
 			}
 			return jsResult
 
@@ -2045,7 +2125,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			ctx := context.Background()
 			driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(user, password, ""), nil)
 			if err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error attempting to connect to neo4j '%s' db: %v", dbname, err))
 			}
 			defer driver.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
@@ -2056,7 +2136,7 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 			// Execute the Cypher query.
 			records, err := session.Run(ctx, query, nil)
 			if err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error executing Cypher query on '%s' db: %v", dbname, err))
 			}
 
 			var results []map[string]interface{}
@@ -2071,20 +2151,16 @@ func addJSAPIExternalDBQuery(vm *otto.Otto) error {
 				results = append(results, recMap)
 			}
 			if err = records.Err(); err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error processing Cypher query results on '%s' db: %v", dbname, err))
 			}
 			jsResult, err := vm.ToValue(results)
 			if err != nil {
-				return otto.UndefinedValue()
+				return returnError(vm, fmt.Sprintf("Error converting Neo4J results to a JS object: %v", err))
 			}
 			return jsResult
 
 		default:
-			stub := map[string]interface{}{
-				"error": fmt.Sprintf("Unsupported database type: %s", dbType),
-			}
-			jsResult, _ := vm.ToValue(stub)
-			return jsResult
+			return returnError(vm, fmt.Sprintf("Unsupported database type: %s", dbType))
 		}
 	})
 }
@@ -2943,6 +3019,23 @@ func addJSAPILoadLocalFile(vm *otto.Otto) error {
 		if err != nil {
 			return returnError(vm, fmt.Sprintf("Error converting file contents to a JavaScript value: %v", err))
 		}
+		return result
+	})
+}
+
+// addJSAPIGenUUID adds a new function "genUUID" to the Otto VM,
+// which generates a new UUID (v4) using the "github.com/google/uuid" package.
+// Usage in JS:
+//
+//		var uuid = genUUID();
+//	 console.log("Generated UUID:", uuid);
+func addJSAPIGenUUID(vm *otto.Otto) error {
+	return vm.Set("genUUID", func(call otto.FunctionCall) otto.Value {
+		uuid, err := uuid.NewRandom()
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error generating UUID: %v", err))
+		}
+		result, _ := vm.ToValue(uuid.String())
 		return result
 	})
 }
