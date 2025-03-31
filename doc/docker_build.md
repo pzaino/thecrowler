@@ -98,7 +98,7 @@ Once you've completed the steps above, follow the procedure below:
 On Linux, macOS and BSD:
 
   ```bash
-  ./scripts/generate-docker-compose.sh 1 1
+  ./scripts/generate-docker-compose.sh -e=1 -v=1
   ```
 
 On Microsoft Windows:
