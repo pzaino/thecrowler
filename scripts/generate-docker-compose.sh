@@ -26,6 +26,10 @@ cmd_usage() {
     echo "  --prom=<yes/no>          Include Prometheus PushGateway"
     echo "  --postgres=<yes/no>      Include PostgreSQL database"
     echo "  --pg=<yes/no>            Include PostgreSQL database"
+    echo "  --cpu_limit=<number>     CPU limit for all services"
+    echo "  --cpu_limit_engine=<number> CPU limit for crowler-engine instances"
+    echo "  --cpu_limit_vdi=<number> CPU limit for crowler-vdi instances"
+    echo "  --cpu_limit_mng=<number> CPU limit for crowler-api and crowler-events"
 }
 
 # Function to read and validate integer input
@@ -68,6 +72,19 @@ get_date() {
     date +"%Y%m%d"
 }
 
+# Detect number of logical CPUs in a portable way
+detect_cpu_count() {
+  if command -v nproc >/dev/null 2>&1; then
+    nproc --all
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    sysctl -n hw.logicalcpu
+  elif command -v getconf >/dev/null 2>&1; then
+    getconf _NPROCESSORS_ONLN
+  else
+    echo "1"  # Fallback to 1 if detection fails
+  fi
+}
+
 # process the arguments in pars
 # shellcheck disable=SC2068
 for arg in ${pars}; do
@@ -104,7 +121,7 @@ for arg in ${pars}; do
         --pg=*)
             postgres=${arg#--pg=}
             ;;
-        --cpu_limit=*|--cpu=*)
+        --cpu_limit=*|--cpu=*|--cpu-limit=*)
             cpu_limit="${arg#*=}"
             ;;
         --cpu_limit_engine=*)
@@ -131,6 +148,13 @@ if [ -z "$prometheus" ]; then
 fi
 if [ -z "$postgres" ]; then
     read_yes_no_input "Do you want to include the PostgreSQL database?" postgres
+fi
+
+# Automatically set CPU limit to total available cores if not set
+total_cpus=$(detect_cpu_count)
+
+if [ -z "$cpu_limit" ]; then
+    cpu_limit="$total_cpus"
 fi
 
 # set default values for CPU limits if not provided
