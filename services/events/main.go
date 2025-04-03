@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -46,6 +47,10 @@ var (
 
 	// AgentsEngine is the agent engine
 	AgentsEngine *agt.JobEngine
+
+	clientLimiters = make(map[string]*rate.Limiter)
+	limitersMutex  sync.Mutex
+	jobQueue       = make(chan cdb.Event, 1000) // buffered queue
 )
 
 func main() {
@@ -54,8 +59,8 @@ func main() {
 	flag.Parse()
 
 	// Initialize the logger
-	cmn.InitLogger("TheCROWlerAPI")
-	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler API is starting...")
+	cmn.InitLogger("TheCROWlerEventsAPI")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Events API is starting...")
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -103,8 +108,12 @@ func main() {
 		os.Exit(-1)
 	}
 
+	// Start async event workers
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go eventWorker()
+	}
+
 	// Start the event listener (on a separate go routine)
-	//go listenForEvents(&dbHandler)
 	go cdb.ListenForEvents(&dbHandler, handleNotification)
 
 	srv := &http.Server{
@@ -142,7 +151,7 @@ func main() {
 		IdleTimeout: time.Duration(config.Events.Timeout) * time.Second,
 	}
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	_ = runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Set the handlers
 	initAPIv1()
@@ -270,11 +279,22 @@ func initAPIv1() {
 }
 
 // RateLimitMiddleware is a middleware for rate limiting
+func getLimiter(ip string) *rate.Limiter {
+	limitersMutex.Lock()
+	defer limitersMutex.Unlock()
+	limiter, exists := clientLimiters[ip]
+	if !exists {
+		limiter = rate.NewLimiter(10, 20)
+		clientLimiters[ip] = limiter
+	}
+	return limiter
+}
+
 func RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
-			cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
-			http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !getLimiter(ip).Allow() {
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -303,6 +323,7 @@ func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
+/*
 func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	var event cdb.Event
 	err := json.NewDecoder(r.Body).Decode(&event)
@@ -318,6 +339,35 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]string{"message": "Event created successfully", "event_id": uid}
+	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
+}
+*/
+
+func createEventHandler(w http.ResponseWriter, r *http.Request) {
+	var event cdb.Event
+	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	eventID, err := cdb.CreateEvent(&dbHandler, event)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to create event: ", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	// Async process
+	jobQueue <- event
+
+	/*
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted) // 202
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message":  "Event accepted for processing",
+			"event_id": eventID,
+		})
+	*/
+	response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
 }
 
@@ -466,6 +516,7 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle the notification received
+/*
 func handleNotification(payload string) {
 	var event cdb.Event
 	err := json.Unmarshal([]byte(payload), &event)
@@ -479,6 +530,23 @@ func handleNotification(payload string) {
 
 	// Process the Event
 	processEvent(event)
+}
+*/
+
+func handleNotification(payload string) {
+	var event cdb.Event
+	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		jobQueue <- event
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
+	}
+}
+
+// eventWorker is a goroutine that processes events from the jobQueue
+func eventWorker() {
+	for event := range jobQueue {
+		processEvent(event)
+	}
 }
 
 // Process the event
