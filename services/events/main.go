@@ -39,6 +39,8 @@ var (
 	config      cfg.Config
 	configMutex = &sync.Mutex{}
 	limiter     *rate.Limiter
+	lmtRL       = 0
+	lmtBL       = 0
 
 	dbHandler cdb.Handler
 
@@ -201,6 +203,8 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	if err != nil {
 		bl = 10
 	}
+	lmtRL = rl
+	lmtBL = bl
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reload Plugins
@@ -284,12 +288,13 @@ func getLimiter(ip string) *rate.Limiter {
 	defer limitersMutex.Unlock()
 	limiter, exists := clientLimiters[ip]
 	if !exists {
-		limiter = rate.NewLimiter(10, 20)
+		limiter = rate.NewLimiter(rate.Limit(lmtRL), lmtBL)
 		clientLimiters[ip] = limiter
 	}
 	return limiter
 }
 
+// RateLimitMiddleware is a middleware for rate limiting
 func RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -350,14 +355,6 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	/*
-		eventID, err := cdb.CreateEvent(&dbHandler, event)
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Failed to create event: ", http.StatusInternalServerError, http.StatusOK)
-			return
-		}
-	*/
-
 	eventID := cdb.GenerateEventUID(event)
 
 	event.Action = "insert"
@@ -365,14 +362,6 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	// Async process
 	jobQueue <- event
 
-	/*
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted) // 202
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message":  "Event accepted for processing",
-			"event_id": eventID,
-		})
-	*/
 	response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
 }

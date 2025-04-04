@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 
-const test_target = 1000;
+const test_target = 10000;
 
 export let options = {
   stages: [
@@ -13,13 +13,18 @@ export let options = {
 };
 
 export default function () {
+  const uniqueId = `${__VU}-${__ITER}-${Math.random().toString(36).substring(2, 10)}`;
+  const now = new Date().toISOString();
+
   const payload = JSON.stringify({
-    source_id: 0,  // leave source ID to zero so test can be performed even with empty DB
+    source_id: 0,
     event_type: "test_event",
     event_severity: "low",
+    timestamp: now,
     details: {
-      Mode: "Test",
-      timestamp: new Date().toISOString()  // help avoid deduplication
+      mode: "Test",
+      ts: now,
+      unique_id: uniqueId
     }
   });
 
@@ -31,7 +36,7 @@ export default function () {
   const res = http.post('http://localhost:8082/v1/event/create', payload, { headers, timeout: '10s' });
 
   check(res, {
-    'is status 200 or 201': (r) => r.status === 200 || r.status === 201,
-    'body is not empty': (r) => r.body && r.body.length > 0
+    'is status 201': (r) => r.status === 201,
+    'has body': (r) => r.body && r.body.length > 0
   });
 }
