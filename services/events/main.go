@@ -50,7 +50,7 @@ var (
 
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
-	jobQueue       = make(chan cdb.Event, 1000) // buffered queue
+	jobQueue       = make(chan cdb.Event, 120000) // buffered queue
 )
 
 func main() {
@@ -350,11 +350,17 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eventID, err := cdb.CreateEvent(&dbHandler, event)
-	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Failed to create event: ", http.StatusInternalServerError, http.StatusOK)
-		return
-	}
+	/*
+		eventID, err := cdb.CreateEvent(&dbHandler, event)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Failed to create event: ", http.StatusInternalServerError, http.StatusOK)
+			return
+		}
+	*/
+
+	eventID := cdb.GenerateEventUID(event)
+
+	event.Action = "insert"
 
 	// Async process
 	jobQueue <- event
@@ -549,8 +555,31 @@ func eventWorker() {
 	}
 }
 
+// Process Events that have the Action field populated
+func processInternalEvent(event cdb.Event) {
+	event.Action = strings.ToLower(strings.TrimSpace(event.Action))
+
+	if event.Action == "" {
+		cmn.DebugMsg(cmn.DbgLvlError, "Action field is empty, ignoring event")
+		return
+	}
+
+	if event.Action == "insert" {
+		_, err := cdb.CreateEvent(&dbHandler, event)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB: %v", err)
+			return
+		}
+	}
+}
+
 // Process the event
 func processEvent(event cdb.Event) {
+	// Check if event.Action is empty
+	if event.Action != "" {
+		processInternalEvent(event)
+	}
+
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 

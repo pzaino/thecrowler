@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Check in which subdirectory are we, if we are already in "./tests/perf" we don't need to change directory
+test_path="."
+if [[ $(basename "$PWD") != "perf" ]]; then
+  # If we are not in the perf directory, change to it
+  test_path="./tests/perf"
+fi
+
+k6 run ${test_path}/event_create_events.js
