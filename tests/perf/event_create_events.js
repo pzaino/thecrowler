@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 
-const test_target = 10000;
+const test_target = 25000;
 
 export let options = {
   stages: [

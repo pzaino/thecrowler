@@ -31,7 +31,9 @@ import (
 
 const (
 	errTooManyRequests = "Too Many Requests"
-	errRateLimitExceed = "Rate limit exceeded"
+	//errRateLimitExceed = "Rate limit exceeded"
+
+	actionInsert = "insert"
 )
 
 var (
@@ -299,7 +301,7 @@ func RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 		if !getLimiter(ip).Allow() {
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -356,8 +358,7 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eventID := cdb.GenerateEventUID(event)
-
-	event.Action = "insert"
+	event.Action = actionInsert
 
 	// Async process
 	jobQueue <- event
@@ -540,7 +541,12 @@ func handleNotification(payload string) {
 // eventWorker is a goroutine that processes events from the jobQueue
 func eventWorker() {
 	for event := range jobQueue {
-		processEvent(event)
+		// Check if event.Action is empty
+		if event.Action != "" {
+			processInternalEvent(event)
+		} else {
+			processEvent(event)
+		}
 	}
 }
 
@@ -553,22 +559,32 @@ func processInternalEvent(event cdb.Event) {
 		return
 	}
 
-	if event.Action == "insert" {
-		_, err := cdb.CreateEvent(&dbHandler, event)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB: %v", err)
-			return
+	if event.Action == actionInsert {
+		const maxRetries = 5
+		const baseDelay = 10 * time.Millisecond
+
+		var err error
+		for i := 0; i < maxRetries; i++ {
+			_, err = cdb.CreateEvent(&dbHandler, event)
+			if err == nil {
+				return // success!
+			}
+
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
+
+			// Optional: only retry on known transient DB errors (e.g., connection refused, timeout)
+			// if !isRetryable(err) { break }
+
+			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
 		}
+
+		// Final failure
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
 	}
 }
 
 // Process the event
 func processEvent(event cdb.Event) {
-	// Check if event.Action is empty
-	if event.Action != "" {
-		processInternalEvent(event)
-	}
-
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 
