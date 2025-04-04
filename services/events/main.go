@@ -551,7 +551,12 @@ func handleNotification(payload string) {
 // eventWorker is a goroutine that processes events from the jobQueue
 func eventWorker() {
 	for event := range jobQueue {
-		processEvent(event)
+		// Check if event.Action is empty
+		if event.Action != "" {
+			processInternalEvent(event)
+		} else {
+			processEvent(event)
+		}
 	}
 }
 
@@ -565,21 +570,31 @@ func processInternalEvent(event cdb.Event) {
 	}
 
 	if event.Action == "insert" {
-		_, err := cdb.CreateEvent(&dbHandler, event)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB: %v", err)
-			return
+		const maxRetries = 5
+		const baseDelay = 10 * time.Millisecond
+
+		var err error
+		for i := 0; i < maxRetries; i++ {
+			_, err = cdb.CreateEvent(&dbHandler, event)
+			if err == nil {
+				return // success!
+			}
+
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
+
+			// Optional: only retry on known transient DB errors (e.g., connection refused, timeout)
+			// if !isRetryable(err) { break }
+
+			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
 		}
+
+		// Final failure
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
 	}
 }
 
 // Process the event
 func processEvent(event cdb.Event) {
-	// Check if event.Action is empty
-	if event.Action != "" {
-		processInternalEvent(event)
-	}
-
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 
