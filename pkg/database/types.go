@@ -65,6 +65,8 @@ type Source struct {
 
 // Event represents the structure of the Events table
 type Event struct {
+	// Action is FOR event handling (internal use only!)
+	Action string
 	// ID is the unique identifier of the event.
 	ID string `json:"event_sha256" yaml:"event_sha256"` // sha256 hash
 	// CreatedAt is the creation timestamp of the event.

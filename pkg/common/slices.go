@@ -22,7 +22,7 @@ import (
 
 // PrepareSlice trims spaces from all elements of a slice.
 // PrepareSlice prepares a slice of strings by trimming and lowercasing each element.
-func PrepareSlice(slice *[]string, flags int) []string {
+func PrepareSlice(slice *[]string, flags uint32) []string {
 	prepared := make([]string, len(*slice)) // Pre-allocate slice to required size
 	for i, s := range *slice {
 		if flags&01 == 01 {

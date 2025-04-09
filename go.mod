@@ -35,6 +35,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -60,6 +61,7 @@ require (
 	github.com/antchfx/htmlquery v1.3.4
 	github.com/clbanning/mxj/v2 v2.7.0
 	github.com/go-auxiliaries/selenium v0.9.10
+	github.com/google/uuid v1.6.0
 	github.com/mafredri/cdp v0.35.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.0
 	github.com/prometheus/client_golang v1.21.1

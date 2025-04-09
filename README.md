@@ -23,7 +23,6 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![GitHub contributors](https://img.shields.io/github/contributors/pzaino/thecrowler)
 ![GitHub code search count](https://img.shields.io/github/search?query=thecrowler)
 
-
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 

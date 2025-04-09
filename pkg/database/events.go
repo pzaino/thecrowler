@@ -66,7 +66,9 @@ func InitializeScheduler(db *Handler) {
 // It receives in input an Event struct and returns the Event UID and an error if the operation fails.
 func CreateEvent(db *Handler, e Event) (string, error) {
 	// get the current timestamp
-	e.Timestamp = time.Now().Format(time.RFC3339)
+	if e.Timestamp == "" {
+		e.Timestamp = time.Now().Format(time.RFC3339)
+	}
 
 	// Generate a unique identifier for the event
 	uid := GenerateEventUID(e)

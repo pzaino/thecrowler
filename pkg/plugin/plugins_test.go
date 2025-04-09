@@ -1479,3 +1479,73 @@ func TestAddJSAPIPipeJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestJSPluginRegisterRemove(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	// Create and register plugins
+	plugin1 := NewJSPlugin("console.log('Plugin 1')")
+	plugin1.Name = "plugin1"
+
+	plugin2 := NewJSPlugin("console.log('Plugin 2')")
+	plugin2.Name = "plugin2"
+
+	plugin3 := NewJSPlugin("console.log('Plugin 3')")
+	plugin3.Name = "plugin3"
+
+	reg.Register("plugin1", *plugin1)
+	reg.Register("plugin2", *plugin2)
+	reg.Register("plugin3", *plugin3)
+
+	// Ensure plugins are registered
+	if _, exists := reg.GetPlugin("plugin1"); !exists {
+		t.Errorf("Plugin 'plugin1' should be registered")
+	}
+	if _, exists := reg.GetPlugin("plugin2"); !exists {
+		t.Errorf("Plugin 'plugin2' should be registered")
+	}
+	if _, exists := reg.GetPlugin("plugin3"); !exists {
+		t.Errorf("Plugin 'plugin3' should be registered")
+	}
+
+	// Remove a plugin
+	reg.Remove("plugin2")
+
+	// Check if the plugin is removed
+	if _, exists := reg.GetPlugin("plugin2"); exists {
+		t.Errorf("Plugin 'plugin2' should be removed")
+	}
+
+	// Ensure other plugins are still registered
+	if _, exists := reg.GetPlugin("plugin1"); !exists {
+		t.Errorf("Plugin 'plugin1' should still be registered")
+	}
+	if _, exists := reg.GetPlugin("plugin3"); !exists {
+		t.Errorf("Plugin 'plugin3' should still be registered")
+	}
+
+	// Check the order list
+	expectedOrder := []string{"plugin1", "plugin3"}
+	if !reflect.DeepEqual(reg.Order, expectedOrder) {
+		t.Errorf("Expected order %v, got %v", expectedOrder, reg.Order)
+	}
+
+	// Test removing a non-existent plugin
+	reg.Remove("nonexistent")
+	if len(reg.Order) != 2 {
+		t.Errorf("Order list should remain unchanged when removing a non-existent plugin")
+	}
+
+	// Test removing with an empty name
+	reg.Remove("")
+	if len(reg.Order) != 2 {
+		t.Errorf("Order list should remain unchanged when removing with an empty name")
+	}
+
+	// Test removing from an uninitialized registry
+	uninitializedReg := &JSPluginRegister{}
+	uninitializedReg.Remove("plugin1")
+	if uninitializedReg.Registry != nil || len(uninitializedReg.Order) != 0 {
+		t.Errorf("Uninitialized registry should remain unchanged after calling Remove")
+	}
+}

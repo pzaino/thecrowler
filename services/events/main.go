@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,7 +31,9 @@ import (
 
 const (
 	errTooManyRequests = "Too Many Requests"
-	errRateLimitExceed = "Rate limit exceeded"
+	//errRateLimitExceed = "Rate limit exceeded"
+
+	actionInsert = "insert"
 )
 
 var (
@@ -38,6 +41,8 @@ var (
 	config      cfg.Config
 	configMutex = &sync.Mutex{}
 	limiter     *rate.Limiter
+	lmtRL       = 0
+	lmtBL       = 0
 
 	dbHandler cdb.Handler
 
@@ -46,6 +51,10 @@ var (
 
 	// AgentsEngine is the agent engine
 	AgentsEngine *agt.JobEngine
+
+	clientLimiters = make(map[string]*rate.Limiter)
+	limitersMutex  sync.Mutex
+	jobQueue       = make(chan cdb.Event, 120000) // buffered queue
 )
 
 func main() {
@@ -54,8 +63,8 @@ func main() {
 	flag.Parse()
 
 	// Initialize the logger
-	cmn.InitLogger("TheCROWlerAPI")
-	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler API is starting...")
+	cmn.InitLogger("TheCROWlerEventsAPI")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Events API is starting...")
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -103,8 +112,12 @@ func main() {
 		os.Exit(-1)
 	}
 
+	// Start async event workers
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go eventWorker()
+	}
+
 	// Start the event listener (on a separate go routine)
-	//go listenForEvents(&dbHandler)
 	go cdb.ListenForEvents(&dbHandler, handleNotification)
 
 	srv := &http.Server{
@@ -142,7 +155,7 @@ func main() {
 		IdleTimeout: time.Duration(config.Events.Timeout) * time.Second,
 	}
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	_ = runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Set the handlers
 	initAPIv1()
@@ -192,6 +205,8 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	if err != nil {
 		bl = 10
 	}
+	lmtRL = rl
+	lmtBL = bl
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reload Plugins
@@ -270,10 +285,22 @@ func initAPIv1() {
 }
 
 // RateLimitMiddleware is a middleware for rate limiting
+func getLimiter(ip string) *rate.Limiter {
+	limitersMutex.Lock()
+	defer limitersMutex.Unlock()
+	limiter, exists := clientLimiters[ip]
+	if !exists {
+		limiter = rate.NewLimiter(rate.Limit(lmtRL), lmtBL)
+		clientLimiters[ip] = limiter
+	}
+	return limiter
+}
+
+// RateLimitMiddleware is a middleware for rate limiting
 func RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
-			cmn.DebugMsg(cmn.DbgLvlDebug, errRateLimitExceed)
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !getLimiter(ip).Allow() {
 			http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
 			return
 		}
@@ -303,6 +330,7 @@ func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
+/*
 func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	var event cdb.Event
 	err := json.NewDecoder(r.Body).Decode(&event)
@@ -318,6 +346,24 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]string{"message": "Event created successfully", "event_id": uid}
+	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
+}
+*/
+
+func createEventHandler(w http.ResponseWriter, r *http.Request) {
+	var event cdb.Event
+	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	eventID := cdb.GenerateEventUID(event)
+	event.Action = actionInsert
+
+	// Async process
+	jobQueue <- event
+
+	response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
 }
 
@@ -466,6 +512,7 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle the notification received
+/*
 func handleNotification(payload string) {
 	var event cdb.Event
 	err := json.Unmarshal([]byte(payload), &event)
@@ -479,6 +526,61 @@ func handleNotification(payload string) {
 
 	// Process the Event
 	processEvent(event)
+}
+*/
+
+func handleNotification(payload string) {
+	var event cdb.Event
+	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		jobQueue <- event
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
+	}
+}
+
+// eventWorker is a goroutine that processes events from the jobQueue
+func eventWorker() {
+	for event := range jobQueue {
+		// Check if event.Action is empty
+		if event.Action != "" {
+			processInternalEvent(event)
+		} else {
+			processEvent(event)
+		}
+	}
+}
+
+// Process Events that have the Action field populated
+func processInternalEvent(event cdb.Event) {
+	event.Action = strings.ToLower(strings.TrimSpace(event.Action))
+
+	if event.Action == "" {
+		cmn.DebugMsg(cmn.DbgLvlError, "Action field is empty, ignoring event")
+		return
+	}
+
+	if event.Action == actionInsert {
+		const maxRetries = 5
+		const baseDelay = 10 * time.Millisecond
+
+		var err error
+		for i := 0; i < maxRetries; i++ {
+			_, err = cdb.CreateEvent(&dbHandler, event)
+			if err == nil {
+				return // success!
+			}
+
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
+
+			// Optional: only retry on known transient DB errors (e.g., connection refused, timeout)
+			// if !isRetryable(err) { break }
+
+			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
+		}
+
+		// Final failure
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
+	}
 }
 
 // Process the event
