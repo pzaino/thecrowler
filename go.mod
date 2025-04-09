@@ -19,7 +19,7 @@ require (
 
 require (
 	github.com/Ullaakut/nmap/v3 v3.0.5
-	github.com/evanw/esbuild v0.25.1
+	github.com/evanw/esbuild v0.25.2
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
 	golang.org/x/crypto v0.37.0
@@ -35,7 +35,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/kr/text v0.2.0 // indirect
