@@ -366,9 +366,17 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 
 	// Let's check results before we return it
 	if len(results) == 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "Failed to find element: '%s' %v", selector.Selector, err)
+		if cmn.GetDebugLevel() <= cmn.DbgLvlDebug3 {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "No results found for selector: '%s'", selector.Selector)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "Failed to find element: '%s' %v", selector.Selector, err)
+		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "Found element: '%s' %v", selector.Selector, results)
+		if cmn.GetDebugLevel() <= cmn.DbgLvlDebug3 {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Found element: '%s'", selector.Selector)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "Found element: '%s' %v", selector.Selector, results)
+		}
 	}
 	return results
 }
