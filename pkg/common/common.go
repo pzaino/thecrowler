@@ -37,6 +37,7 @@ var (
 	// DebugLevel is the debug level for logging
 	debugLevel   DbgLevel
 	loggerPrefix string
+	sysLoc       *time.Location
 )
 
 // GetEngineID returns the engine ID
@@ -71,6 +72,20 @@ func InitLogger(appName string) {
 
 	// Setting the log flags (date, time, microseconds, short file name)
 	log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
+
+	// Check if TZ is set in environment
+	if tz := os.Getenv("TZ"); tz != "" {
+		var err error
+		sysLoc, err = time.LoadLocation(tz)
+		if err != nil {
+			log.Printf("Warning: Invalid TZ value %q. Falling back to default: %v", tz, err)
+		} else {
+			time.Local = sysLoc
+			log.Printf("Timezone set to: %s", sysLoc)
+		}
+	} else {
+		log.Printf("Warning: TZ environment variable not set. Using system default timezone.")
+	}
 }
 
 // SetLoggerPrefix sets the logger prefix

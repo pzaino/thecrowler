@@ -210,6 +210,9 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time:", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location:", time.Local.String())
+
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Awaiting for requests...")
 	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == cmn.EnableStr {
