@@ -74,7 +74,7 @@ func InitLogger(appName string) {
 	log.SetFlags(log.LstdFlags | log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	// Check if TZ is set in environment
-	if tz := os.Getenv("TZ"); tz != "" {
+	if tz := os.Getenv("VDI_TZ"); tz != "" {
 		var err error
 		sysLoc, err = time.LoadLocation(tz)
 		if err != nil {
