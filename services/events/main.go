@@ -160,6 +160,9 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time:", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location:", time.Local.String())
+
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServeTLS(config.Events.CertFile, config.Events.KeyFile))
