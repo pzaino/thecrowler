@@ -83,6 +83,8 @@ func InitLogger(appName string) {
 			time.Local = sysLoc
 			log.Printf("Timezone set to: %s", sysLoc)
 		}
+	} else {
+		log.Printf("Warning: TZ environment variable not set. Using system default timezone.")
 	}
 }
 
