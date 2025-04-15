@@ -33,9 +33,9 @@ cmd_usage() {
     echo "  --cpu_limit_engine=<number> CPU limit for crowler-engine instances"
     echo "  --cpu_limit_vdi=<number>    CPU limit for crowler-vdi instances"
     echo "  --cpu_limit_mng=<number>    CPU limit for crowler-api and crowler-events"
-    echo "  --no-api                    Do not include crowler-api"
-    echo "  --no-events                 Do not include crowler-events"
-    echo "  --no-jaeger                 Do not include jaeger"
+    echo "  --no_api                    Do not include crowler-api"
+    echo "  --no_events                 Do not include crowler-events"
+    echo "  --no_jaeger                 Do not include jaeger"
 }
 
 # Function to read and validate integer input
@@ -139,13 +139,13 @@ for arg in ${pars}; do
         --cpu_limit_mng=*)
             cpu_limit_mng="${arg#*=}"
             ;;
-        --no-api)
+        --no_api)
             no_api=1
             ;;
-        --no-events)
+        --no_events)
             no_events=1
             ;;
-        --no-jaeger)
+        --no_jaeger)
             no_jaeger=1
             ;;
     esac
