@@ -514,9 +514,17 @@ done
 cat << EOF >> docker-compose.yml
 
 volumes:
+EOF
+if [ "$no_api" == "0" ]; then
+    cat << EOF >> docker-compose.yml
   api_data:
+EOF
+fi
+if [ "$no_events" == "0" ]; then
+    cat << EOF >> docker-compose.yml
   events_data:
 EOF
+fi
 
 if [ "$postgres" == "yes" ]; then
     cat << EOF >> docker-compose.yml
