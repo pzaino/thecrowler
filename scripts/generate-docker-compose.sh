@@ -384,7 +384,7 @@ done
 fi
 
 # Add Jaeger service if required
-if [ "$vdi_count" != "0" ] && [ "$no_jaeger" != "0" ]; then
+if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
     cat << EOF >> docker-compose.yml
 
   jaeger:
