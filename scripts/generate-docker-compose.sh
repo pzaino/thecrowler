@@ -13,23 +13,29 @@ cpu_limit=""
 cpu_limit_engine=""
 cpu_limit_vdi=""
 cpu_limit_mng=""
+no_api=0
+no_events=0
+no_jaeger=0
 
 # Function to display usage
 cmd_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
-    echo "  --engine_count=<number>  Number of crowler-engine instances"
-    echo "  -e=<number>              Number of crowler-engine instances"
-    echo "  --vdi_count=<number>     Number of crowler-vdi instances"
-    echo "  -v=<number>              Number of crowler-vdi instances"
-    echo "  --prometheus=<yes/no>    Include Prometheus PushGateway"
-    echo "  --prom=<yes/no>          Include Prometheus PushGateway"
-    echo "  --postgres=<yes/no>      Include PostgreSQL database"
-    echo "  --pg=<yes/no>            Include PostgreSQL database"
-    echo "  --cpu_limit=<number>     CPU limit for all services"
+    echo "  --engine_count=<number>     Number of crowler-engine instances"
+    echo "  -e=<number>                 Number of crowler-engine instances"
+    echo "  --vdi_count=<number>        Number of crowler-vdi instances"
+    echo "  -v=<number>                 Number of crowler-vdi instances"
+    echo "  --prometheus=<yes/no>       Include Prometheus PushGateway"
+    echo "  --prom=<yes/no>             Include Prometheus PushGateway"
+    echo "  --postgres=<yes/no>         Include PostgreSQL database"
+    echo "  --pg=<yes/no>               Include PostgreSQL database"
+    echo "  --cpu_limit=<number>        CPU limit for all services"
     echo "  --cpu_limit_engine=<number> CPU limit for crowler-engine instances"
-    echo "  --cpu_limit_vdi=<number> CPU limit for crowler-vdi instances"
-    echo "  --cpu_limit_mng=<number> CPU limit for crowler-api and crowler-events"
+    echo "  --cpu_limit_vdi=<number>    CPU limit for crowler-vdi instances"
+    echo "  --cpu_limit_mng=<number>    CPU limit for crowler-api and crowler-events"
+    echo "  --no-api                    Do not include crowler-api"
+    echo "  --no-events                 Do not include crowler-events"
+    echo "  --no-jaeger                 Do not include jaeger"
 }
 
 # Function to read and validate integer input
@@ -133,6 +139,15 @@ for arg in ${pars}; do
         --cpu_limit_mng=*)
             cpu_limit_mng="${arg#*=}"
             ;;
+        --no-api)
+            no_api=1
+            ;;
+        --no-events)
+            no_events=1
+            ;;
+        --no-jaeger)
+            no_jaeger=1
+            ;;
     esac
 done
 
@@ -167,7 +182,11 @@ cpu_limit_mng=${cpu_limit_mng:-$cpu_limit}
 cat << EOF > docker-compose.yml
 ---
 services:
+EOF
 
+# Add crowler-api and crowler-events if not disabled
+if [ "$no_api" == "0" ]; then
+    cat << EOF >> docker-compose.yml
   crowler-api:
     container_name: "crowler-api"
     env_file:
@@ -208,7 +227,10 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-
+EOF
+fi
+if [ "$no_events" == "0" ]; then
+    cat << EOF >> docker-compose.yml
   crowler-events:
     container_name: "crowler-events"
     env_file:
@@ -250,6 +272,7 @@ services:
       retries: 5
     restart: unless-stopped
 EOF
+fi
 
 # Add crowler-db
 # shellcheck disable=SC2086
@@ -361,7 +384,7 @@ done
 fi
 
 # Add Jaeger service if required
-if [ "$vdi_count" != "0" ]; then
+if [ "$vdi_count" != "0" ] && [ "$no_jaeger" != "0" ]; then
     cat << EOF >> docker-compose.yml
 
   jaeger:
