@@ -510,11 +510,13 @@ for i in $(seq 1 "$vdi_count"); do
 EOF
 done
 
-# Add Static Volumes
+# Add Static Volumes (if needed)
+if [ "$no_api" == "0" ] || [ "$no_events" == "0" ] || [ "$postgres" == "yes" ] || [ "$engine_count" != "0" ]; then
 cat << EOF >> docker-compose.yml
 
 volumes:
 EOF
+fi
 if [ "$no_api" == "0" ]; then
     cat << EOF >> docker-compose.yml
   api_data:
