@@ -351,6 +351,7 @@ func crawlSources(wb *WorkBlock) {
 			PipelineID:      idx,
 			Source:          source.URL,
 			SourceID:        source.ID,
+			VDIID:           selIdx,
 			PipelineRunning: 0,
 			CrawlingRunning: 0,
 			NetInfoRunning:  0,
@@ -364,6 +365,7 @@ func crawlSources(wb *WorkBlock) {
 			TotalActions:    0,
 			LastWait:        0,
 			LastDelay:       0,
+			DetectedState:   0,
 		}
 
 		// Start a goroutine to crawl the website
@@ -480,8 +482,19 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		if totalLinksToGo < 0 {
 			totalLinksToGo = 0
 		}
+		// Detect if we are stale-processing
+		if status.PipelineRunning == 1 && totalRunningTime > time.Duration(2*time.Minute) &&
+			status.CrawlingRunning == 0 && status.NetInfoRunning == 0 &&
+			status.HTTPInfoRunning == 0 {
+			// We are in a stale-processing state
+			status.DetectedState = 1
+		} else {
+			status.DetectedState = status.DetectedState & 0 // Reset the stale-processing state bit
+		}
 		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
+		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
+		report += fmt.Sprintf("                 VDI ID: %d\n", status.VDIID)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
 		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(status.CrawlingRunning))
 		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(status.NetInfoRunning))
@@ -497,6 +510,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("          Total Actions: %d\n", status.TotalActions)
 		report += fmt.Sprintf("         Last Page Wait: %f\n", status.LastWait)
 		report += fmt.Sprintf("        Last Page Delay: %f\n", status.LastDelay)
+		report += fmt.Sprintf("       Collection State: %s\n", CollectionState(status.DetectedState))
 		report += sepPLine + "\n"
 
 		// Update the metrics
@@ -561,6 +575,15 @@ func StatusStr(condition int) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// CollectionState returns the comma separated collection states string
+func CollectionState(condition int) string {
+	csSTr := ""
+	if condition&0x01 != 0 {
+		csSTr += "Stale-Processing detected"
+	}
+	return csSTr
 }
 
 func initAll(configFile *string, config *cfg.Config,
