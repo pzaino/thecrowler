@@ -45,7 +45,7 @@ const (
 	// Error messages
 
 	// VDIConnError is the error message for a connection error to the VDI
-	VDIConnError = "connecting to the VDI: %v"
+	VDIConnError = "connecting to the VDI: %v, retrying in %d seconds...\n"
 )
 
 var (
@@ -608,7 +608,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
 			if i == 0 || (i%maxRetry) == 0 {
-				cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err)
+				cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err, 5)
 			}
 			time.Sleep(5 * time.Second)
 		} else {
@@ -616,6 +616,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed", err)
 		return nil, err
 	}
 
