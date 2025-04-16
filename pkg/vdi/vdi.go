@@ -602,7 +602,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Connect to the WebDriver instance running remotely.
 	var wd WebDriver
 	var err error
-	maxRetry := 10
+	maxRetry := 500
 	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
