@@ -47,7 +47,7 @@ type Pars struct {
 type Status struct {
 	PipelineID      uint64
 	SourceID        uint64
-	VDIID           int
+	VDIID           string
 	Source          string
 	TotalPages      int
 	TotalLinks      int

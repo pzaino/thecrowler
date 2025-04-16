@@ -351,7 +351,7 @@ func crawlSources(wb *WorkBlock) {
 			PipelineID:      idx,
 			Source:          source.URL,
 			SourceID:        source.ID,
-			VDIID:           selIdx,
+			VDIID:           "",
 			PipelineRunning: 0,
 			CrawlingRunning: 0,
 			NetInfoRunning:  0,
@@ -376,6 +376,8 @@ func crawlSources(wb *WorkBlock) {
 		if sourceIdx >= len(*wb.sources) {
 			break // We have reached the end of the sources
 		}
+		// Increment the Selenium instance index to get the next instance
+		selIdx++
 	}
 
 	wg.Wait() // Block until all goroutines have decremented the counter
@@ -430,6 +432,9 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 		// Fetch the next available Selenium instance (VDI)
 		vdiInstance := <-*args.Sel
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Acquired VDI instance: %v", vdiInstance.Config.Host)
+
+		// Assign VDI ID to the pipeline status
+		(*args.Status).VDIID = vdiInstance.Config.Name
 
 		// Create a channel that will signal when the VDI is no longer needed
 		releaseVDI := make(chan vdi.SeleniumInstance, 1) // Make it buffered
@@ -489,12 +494,14 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 			// We are in a stale-processing state
 			status.DetectedState = 1
 		} else {
-			status.DetectedState = status.DetectedState & 0 // Reset the stale-processing state bit
+			if status.DetectedState&0x01 != 0 {
+				status.DetectedState = status.DetectedState & 0xfffe // Reset the stale-processing state bit
+			}
 		}
 		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
-		report += fmt.Sprintf("                 VDI ID: %d\n", status.VDIID)
+		report += fmt.Sprintf("                 VDI ID: %s\n", status.VDIID)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
 		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(status.CrawlingRunning))
 		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(status.NetInfoRunning))
