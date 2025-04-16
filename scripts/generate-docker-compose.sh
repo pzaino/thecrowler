@@ -295,6 +295,7 @@ if [ "$postgres" == "yes" ]; then
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
       - PROXY_SERVICE=\${VDI_PROXY_SERVICE:-}
       - TZ=\${VDI_TZ:-UTC}
+    command: ["postgres", "-c", "timezone=\${VDI_TZ:-UTC}"]
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     deploy:
       resources:
