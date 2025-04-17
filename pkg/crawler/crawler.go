@@ -579,13 +579,14 @@ func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
 	if ctx.config.Crawler.Platform == optBrowsingMobile {
 		browserType = 1
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Connecting to VDI %s...", sel.Config.Name)
 	ctx.wd, err = vdi.ConnectVDI(ctx, sel, browserType)
 	if err != nil {
 		//(*ctx.sel) <- sel
 		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
 		return err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "Connected to Selenium WebDriver successfully.")
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "Connected to VDI successfully.")
 	return nil
 }
 
