@@ -183,9 +183,6 @@ func (p *Pool) Add(instance SeleniumInstance) error {
 	if p == nil {
 		return fmt.Errorf("pool is nil")
 	}
-	if instance.Service == nil {
-		return fmt.Errorf("VDI instance is nil")
-	}
 	if instance.Config.Host == "" {
 		return fmt.Errorf("VDI instance host is empty")
 	}
