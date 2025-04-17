@@ -362,54 +362,59 @@ func crawlSources(wb *WorkBlock) {
 
 	// Start the crawling process for each source
 	var wg sync.WaitGroup                                    // WaitGroup to wait for all goroutines to finish
-	selIdx := 0                                              // Selenium instance index
 	sourceIdx := 0                                           // Source index
-	var maxSrc uint64 = uint64(wb.Config.Crawler.MaxSources) //nolint:gosec // DIsable G115 (integer overflow, given the MaxSources value is fully tested)
-	for idx := uint64(0); idx < maxSrc; idx++ {
-		// Check if the pipeline is already running
-		if (*wb.PipelineStatus)[idx].PipelineRunning == 1 {
-			continue
+	var maxSrc uint64 = uint64(wb.Config.Crawler.MaxSources) //nolint:gosec // Disable G115 (integer overflow, given the MaxSources value is fully tested)
+	maxPipelines := uint64(wb.sel.Size())                    //nolint:gosec      // Max Number of possible parallel pipelines
+	//idx := uint64(0); idx < maxSrc; idx++
+	for {
+		for pl := uint64(0); pl < maxPipelines; pl++ {
+			// Check if the pipeline is already running
+			if (*wb.PipelineStatus)[pl].PipelineRunning == 1 {
+				continue
+			}
+
+			// Get the source to crawl
+			source := (*wb.sources)[sourceIdx]
+			wg.Add(1)
+
+			// Initialize the status
+			(*wb.PipelineStatus)[pl] = crowler.Status{
+				PipelineID:      pl,
+				Source:          source.URL,
+				SourceID:        source.ID,
+				VDIID:           "",
+				PipelineRunning: 0,
+				CrawlingRunning: 0,
+				NetInfoRunning:  0,
+				HTTPInfoRunning: 0,
+				TotalPages:      0,
+				TotalErrors:     0,
+				TotalLinks:      0,
+				TotalSkipped:    0,
+				TotalDuplicates: 0,
+				TotalScraped:    0,
+				TotalActions:    0,
+				LastWait:        0,
+				LastDelay:       0,
+				DetectedState:   0,
+			}
+
+			// Start a goroutine to crawl the website
+			startCrawling(wb, &wg, source, uint64(sourceIdx)) //nolint:gosec // Disable G101 (CWE-20: Improper Input Validation, given the sourceIdx is fully tested)
+
+			// Increment the Source index to get the next source
+			sourceIdx++
+			if sourceIdx >= len(*wb.sources) {
+				break // We have reached the end of the sources
+			}
 		}
 
-		// Get the source to crawl
-		source := (*wb.sources)[sourceIdx]
-		wg.Add(1)
+		wg.Wait() // Block until all goroutines have decremented the counter
 
-		// Initialize the status
-		(*wb.PipelineStatus)[idx] = crowler.Status{
-			PipelineID:      idx,
-			Source:          source.URL,
-			SourceID:        source.ID,
-			VDIID:           "",
-			PipelineRunning: 0,
-			CrawlingRunning: 0,
-			NetInfoRunning:  0,
-			HTTPInfoRunning: 0,
-			TotalPages:      0,
-			TotalErrors:     0,
-			TotalLinks:      0,
-			TotalSkipped:    0,
-			TotalDuplicates: 0,
-			TotalScraped:    0,
-			TotalActions:    0,
-			LastWait:        0,
-			LastDelay:       0,
-			DetectedState:   0,
-		}
-
-		// Start a goroutine to crawl the website
-		startCrawling(wb, &wg, selIdx, source, idx)
-
-		// Increment the Source index to get the next source
-		sourceIdx++
 		if sourceIdx >= len(*wb.sources) {
 			break // We have reached the end of the sources
 		}
-		// Increment the Selenium instance index to get the next instance
-		selIdx++
 	}
-
-	wg.Wait() // Block until all goroutines have decremented the counter
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
@@ -419,14 +424,14 @@ func crawlSources(wb *WorkBlock) {
 	}
 }
 
-func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Source, idx uint64) {
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64) {
 	// Prepare the go routine parameters
 	args := crowler.Pars{
 		WG:      wg,
 		DB:      wb.db,
 		Src:     source,
 		Sel:     wb.sel,
-		SelIdx:  selIdx,
+		SelIdx:  0,
 		RE:      wb.RulesEngine,
 		Sources: wb.sources,
 		Index:   idx,
@@ -446,6 +451,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 			return
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Acquired VDI instance: %v", vdiInstance.Config.Host)
+		args.SelIdx = index // Update the index in the args
 
 		// Assign VDI ID to the pipeline status
 		(*args.Status).VDIID = vdiInstance.Config.Name
