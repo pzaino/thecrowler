@@ -35,7 +35,7 @@ type Pars struct {
 	WG      *sync.WaitGroup
 	DB      cdb.Handler
 	Src     cdb.Source
-	Sel     *chan vdi.SeleniumInstance
+	Sel     *vdi.Pool //Sel     *chan vdi.SeleniumInstance
 	SelIdx  int
 	RE      *rules.RuleEngine
 	Sources *[]cdb.Source

@@ -151,6 +151,127 @@ type WebElement = selenium.WebElement
 // Service Abstract type for a Service
 type Service = selenium.Service
 
+// Pool is a pool of VDI instances
+type Pool struct {
+	mu   sync.Mutex
+	slot []SeleniumInstance
+	busy map[int]bool // or status flags
+}
+
+func (p *Pool) Init(size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.slot = make([]SeleniumInstance, size)
+	p.busy = make(map[int]bool, size)
+	for i := 0; i < size; i++ {
+		p.busy[i] = false
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "VDI pool initialized with %d instances", size)
+}
+
+// NewPool creates a new pool of VDI instances
+func NewPool(size int) *Pool {
+	p := &Pool{}
+	p.Init(size)
+	return p
+}
+
+// Add adds a new VDI instance to the pool
+func (p *Pool) Add(instance SeleniumInstance) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.slot = append(p.slot, instance)
+	p.busy[len(p.slot)-1] = false
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI instance added to the pool")
+}
+
+// Remove removes a VDI instance from the pool
+func (p *Pool) Remove(index int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index >= 0 && index < len(p.slot) {
+		p.slot = append(p.slot[:index], p.slot[index+1:]...)
+		delete(p.busy, index)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI instance removed from the pool")
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "Invalid index for VDI instance removal: %d", index)
+	}
+}
+
+// Get returns a a reference to a VDI instance in the pool
+func (p *Pool) Get(index int) (*SeleniumInstance, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index >= 0 && index < len(p.slot) {
+		return &p.slot[index], nil
+	}
+	return nil, fmt.Errorf("invalid index for VDI instance: %d", index)
+}
+
+// Stop will stop the specified VDI instance
+func (p *Pool) Stop(index int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index >= 0 && index < len(p.slot) {
+		if p.slot[index].Service != nil {
+			err := p.slot[index].Service.Stop()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium: %v", err)
+			}
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium stopped successfully.")
+		}
+	}
+	return nil
+}
+
+// StopAll will stop all VDI instances in the pool
+func (p *Pool) StopAll() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.slot {
+		if p.slot[i].Service != nil {
+			err := p.slot[i].Service.Stop()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium: %v", err)
+			}
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium stopped successfully.")
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "All Selenium instances stopped successfully.")
+}
+
+// Size returns the size of the pool
+func (p *Pool) Size() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.slot)
+}
+
+// Acquire acquires a VDI instance from the pool
+func (p *Pool) Acquire() (int, SeleniumInstance, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i := range p.slot {
+		if !p.busy[i] {
+			p.busy[i] = true
+			return i, p.slot[i], nil
+		}
+	}
+	return -1, SeleniumInstance{}, fmt.Errorf("no free VDI available")
+}
+
+// Release releases a VDI instance back to the pool
+func (p *Pool) Release(index int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if index >= 0 && index < len(p.busy) {
+		p.busy[index] = false
+	}
+}
+
 // SeleniumInstance holds a Selenium service and its configuration
 type SeleniumInstance struct {
 	Service *Service

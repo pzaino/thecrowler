@@ -99,30 +99,30 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
-	SelID             int                        // The Selenium ID
-	SelInstance       vdi.SeleniumInstance       // The Selenium instance
-	WG                *sync.WaitGroup            // The Caller's WaitGroup
-	fpIdx             uint64                     // The index of the source page after it's indexed
-	config            cfg.Config                 // The configuration object (from the config package)
-	db                *cdb.Handler               // The database handler
-	wd                vdi.WebDriver              // The Selenium WebDriver
-	linksMutex        sync.Mutex                 // Mutex to protect the newLinks slice
-	newLinks          []LinkItem                 // The new links found during the crawling process
-	source            *cdb.Source                // The source to crawl
-	wg                sync.WaitGroup             // WaitGroup to wait for all page workers to finish
-	wgNetInfo         sync.WaitGroup             // WaitGroup to wait for network info to finish
-	sel               *chan vdi.SeleniumInstance // The Selenium instances channel
-	ni                *neti.NetInfo              // The network information of the web page
-	hi                *httpi.HTTPDetails         // The HTTP header information of the web page
-	re                *rules.RuleEngine          // The rule engine
-	getURLMutex       sync.Mutex                 // Mutex to protect the getURLContent function
-	visitedLinks      map[string]bool            // Map to keep track of visited links
-	userURLPatterns   []string                   // User-defined URL patterns
-	Status            *Status                    // Status of the crawling process
-	CollectedCookies  map[string]interface{}     // Collected cookies
-	VDIReturned       bool                       // Flag to indicate if the VDI instance was returned
-	SelClosed         bool                       // Flag to indicate if the Selenium instance was closed
-	VDIOperationMutex sync.Mutex                 // Mutex to protect the VDI operations
+	SelID             int                    // The Selenium ID
+	SelInstance       vdi.SeleniumInstance   // The Selenium instance
+	WG                *sync.WaitGroup        // The Caller's WaitGroup
+	fpIdx             uint64                 // The index of the source page after it's indexed
+	config            cfg.Config             // The configuration object (from the config package)
+	db                *cdb.Handler           // The database handler
+	wd                vdi.WebDriver          // The Selenium WebDriver
+	linksMutex        sync.Mutex             // Mutex to protect the newLinks slice
+	newLinks          []LinkItem             // The new links found during the crawling process
+	source            *cdb.Source            // The source to crawl
+	wg                sync.WaitGroup         // WaitGroup to wait for all page workers to finish
+	wgNetInfo         sync.WaitGroup         // WaitGroup to wait for network info to finish
+	sel               *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
+	ni                *neti.NetInfo          // The network information of the web page
+	hi                *httpi.HTTPDetails     // The HTTP header information of the web page
+	re                *rules.RuleEngine      // The rule engine
+	getURLMutex       sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks      map[string]bool        // Map to keep track of visited links
+	userURLPatterns   []string               // User-defined URL patterns
+	Status            *Status                // Status of the crawling process
+	CollectedCookies  map[string]interface{} // Collected cookies
+	VDIReturned       bool                   // Flag to indicate if the VDI instance was returned
+	SelClosed         bool                   // Flag to indicate if the Selenium instance was closed
+	VDIOperationMutex sync.Mutex             // Mutex to protect the VDI operations
 }
 
 // GetContextID returns a unique context ID for the ProcessContext
@@ -581,7 +581,7 @@ func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
 	}
 	ctx.wd, err = vdi.ConnectVDI(ctx, sel, browserType)
 	if err != nil {
-		(*ctx.sel) <- sel
+		//(*ctx.sel) <- sel
 		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
 		return err
 	}
@@ -591,6 +591,13 @@ func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
 
 // RefreshVDIConnection is responsible for refreshing the Selenium connection
 func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error {
+	if ctx.Status.DetectedState&0x01 != 0 {
+		// Stale-Processing detected, we need to abort the process
+		err := errors.New("stale-processing detected")
+		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Stale-Processing detected, aborting the process.")
+		return err
+	}
 	if err := ctx.wd.Refresh(); err != nil {
 		var browserType int
 		if ctx.config.Crawler.Platform == optBrowsingMobile {
@@ -601,7 +608,7 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
 			UpdateSourceState(*ctx.db, ctx.source.URL, err)
-			(*ctx.sel) <- sel
+			//(*ctx.sel) <- sel
 			cmn.DebugMsg(cmn.DbgLvlError, "re-"+vdi.VDIConnError, err)
 			return err
 		}

@@ -92,8 +92,9 @@ var (
 // crawling job on the pipeline. It's used to pass the information to the goroutines
 // that will perform the actual crawling.
 type WorkBlock struct {
-	db             cdb.Handler
-	sel            *chan vdi.SeleniumInstance
+	db cdb.Handler
+	//sel            *chan vdi.SeleniumInstance
+	sel            *vdi.Pool
 	sources        *[]cdb.Source
 	RulesEngine    *rules.RuleEngine
 	PipelineStatus *[]crowler.Status
@@ -103,6 +104,28 @@ type WorkBlock struct {
 // HealthCheck is a struct that holds the health status of the application.
 type HealthCheck struct {
 	Status string `json:"status"`
+}
+
+// NewVDIPool is a function that creates a new VDI pool with the given configurations.
+func NewVDIPool(configs []cfg.Selenium) (*vdi.Pool, error) {
+	p := vdi.NewPool(len(configs))
+	if p == nil {
+		return nil, fmt.Errorf("creating VDI pool")
+	}
+
+	// Initialize the pool with the Selenium instances
+	for _, seleniumConfig := range configs {
+		selService, err := vdi.NewVDIService(seleniumConfig)
+		if err != nil {
+			return nil, fmt.Errorf("creating VDI Instances: %s", err)
+		}
+		selInstance := vdi.SeleniumInstance{
+			Service: selService,
+			Config:  seleniumConfig,
+		}
+		p.Add(selInstance)
+	}
+	return p, nil
 }
 
 // This function is responsible for performing database maintenance
@@ -223,9 +246,10 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	return sourcesToCrawl, nil
 }
 
+/*sel *chan vdi.SeleniumInstance */
 // This function is responsible for checking the database for URLs that need to be crawled
 // and kickstart the crawling process for each of them
-func checkSources(db *cdb.Handler, sel *chan vdi.SeleniumInstance, RulesEngine *rules.RuleEngine) {
+func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status
 	PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
@@ -430,7 +454,12 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for available VDI instance...")
 
 		// Fetch the next available Selenium instance (VDI)
-		vdiInstance := <-*args.Sel
+		//vdiInstance := <-*args.Sel
+		index, vdiInstance, err := (*args).Sel.Acquire()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
+			return
+		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Acquired VDI instance: %v", vdiInstance.Config.Host)
 
 		// Assign VDI ID to the pipeline status
@@ -450,7 +479,9 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 			select {
 			case recoveredVDI := <-releaseVDI:
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
-				*args.Sel <- recoveredVDI
+				// *args.Sel <- recoveredVDI
+				// Return the VDI instance to the pool
+				(*args.Sel).Release(index)
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] quitting startCrawling() goroutine")
 				return // Exit the loop once VDI is returned
 
@@ -593,8 +624,10 @@ func CollectionState(condition int) string {
 	return csSTr
 }
 
+/* vdiInstances *chan vdi.SeleniumInstance */
+
 func initAll(configFile *string, config *cfg.Config,
-	db *cdb.Handler, vdiInstances *chan vdi.SeleniumInstance,
+	db *cdb.Handler, vdiInstances *vdi.Pool,
 	RulesEngine *rules.RuleEngine, lmt **rate.Limiter) error {
 	var err error
 
@@ -641,17 +674,20 @@ func initAll(configFile *string, config *cfg.Config,
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reinitialize the VDI instances available to this engine
-	*vdiInstances = make(chan vdi.SeleniumInstance, len(config.Selenium))
-	for _, seleniumConfig := range config.Selenium {
-		selService, err := vdi.NewVDIService(seleniumConfig)
-		if err != nil {
-			return fmt.Errorf("creating Selenium Instances: %s", err)
+	/*
+		*vdiInstances = make(chan vdi.SeleniumInstance, len(config.Selenium))
+		for _, seleniumConfig := range config.Selenium {
+			selService, err := vdi.NewVDIService(seleniumConfig)
+			if err != nil {
+				return fmt.Errorf("creating VDI Instances: %s", err)
+			}
+			*vdiInstances <- vdi.SeleniumInstance{
+				Service: selService,
+				Config:  seleniumConfig,
+			}
 		}
-		*vdiInstances <- vdi.SeleniumInstance{
-			Service: selService,
-			Config:  seleniumConfig,
-		}
-	}
+	*/
+	vdiInstances, err = NewVDIPool(config.Selenium)
 
 	// Initialize the rules engine
 	*RulesEngine = rules.NewEmptyRuleEngine(config.RulesetsSchemaPath)
@@ -695,7 +731,8 @@ func main() {
 	var db cdb.Handler
 
 	// Define sel before we set signal handlers
-	var vdiInstances chan vdi.SeleniumInstance
+	//var vdiInstances chan vdi.SeleniumInstance
+	var vdiInstances *vdi.Pool
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -729,7 +766,7 @@ func main() {
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
-				err := initAll(configFile, &config, &db, &vdiInstances, &GRulesEngine, &limiter)
+				err := initAll(configFile, &config, &db, vdiInstances, &GRulesEngine, &limiter)
 				if err != nil {
 					configMutex.Unlock()
 					cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
@@ -750,7 +787,7 @@ func main() {
 	}()
 
 	// Initialize the crawler
-	err := initAll(configFile, &config, &db, &vdiInstances, &GRulesEngine, &limiter)
+	err := initAll(configFile, &config, &db, vdiInstances, &GRulesEngine, &limiter)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 	}
@@ -769,7 +806,7 @@ func main() {
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	go checkSources(&db, &vdiInstances, &GRulesEngine)
+	go checkSources(&db, vdiInstances, &GRulesEngine)
 
 	// Start the internal/control API server
 	srv := &http.Server{
@@ -983,7 +1020,8 @@ func configCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	handleErrorAndRespond(w, nil, configCopy, "Error in configuration Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
-func closeResources(db cdb.Handler, sel chan vdi.SeleniumInstance) {
+// sel chan vdi.SeleniumInstance
+func closeResources(db cdb.Handler, sel *vdi.Pool) {
 	// Close the database connection
 	if db != nil {
 		err := db.Close()
@@ -994,16 +1032,19 @@ func closeResources(db cdb.Handler, sel chan vdi.SeleniumInstance) {
 		}
 	}
 	// Stop the Selenium services
-	if sel != nil {
-		close(sel)
-	}
-	for seleniumInstance := range sel {
-		if seleniumInstance.Service != nil {
-			err := seleniumInstance.Service.Stop()
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium instance: %v", err)
+	(*sel).StopAll()
+	/*
+		if sel != nil {
+			close(sel)
+		}
+		for seleniumInstance := range sel {
+			if seleniumInstance.Service != nil {
+				err := seleniumInstance.Service.Stop()
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium instance: %v", err)
+				}
 			}
 		}
-	}
+	*/
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All services stopped.")
 }
