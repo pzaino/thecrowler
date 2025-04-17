@@ -410,6 +410,16 @@ func StopSelenium(sel *selenium.Service) error {
 
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
+	if ctx == nil {
+		return nil, errors.New("context is nil")
+	}
+	if sel.Config.Host == "" {
+		return nil, errors.New("VDI instance host is empty")
+	}
+	if sel.Config.Port == 0 {
+		return nil, errors.New("VDI instance port is empty")
+	}
+
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {
