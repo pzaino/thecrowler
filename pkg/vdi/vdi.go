@@ -163,7 +163,7 @@ func (p *Pool) Init(size int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.slot = make([]SeleniumInstance, size)
+	//p.slot = make([]SeleniumInstance, size)
 	p.busy = make(map[int]bool, size)
 	for i := 0; i < size; i++ {
 		p.busy[i] = false
