@@ -158,6 +158,7 @@ type Pool struct {
 	busy map[int]bool // or status flags
 }
 
+// Init initializes the VDI pool
 func (p *Pool) Init(size int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -179,6 +180,9 @@ func NewPool(size int) *Pool {
 
 // Add adds a new VDI instance to the pool
 func (p *Pool) Add(instance SeleniumInstance) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.slot = append(p.slot, instance)
@@ -188,6 +192,9 @@ func (p *Pool) Add(instance SeleniumInstance) {
 
 // Remove removes a VDI instance from the pool
 func (p *Pool) Remove(index int) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if index >= 0 && index < len(p.slot) {
@@ -201,6 +208,9 @@ func (p *Pool) Remove(index int) {
 
 // Get returns a a reference to a VDI instance in the pool
 func (p *Pool) Get(index int) (*SeleniumInstance, error) {
+	if p == nil {
+		return nil, fmt.Errorf("pool is nil")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if index >= 0 && index < len(p.slot) {
@@ -211,6 +221,9 @@ func (p *Pool) Get(index int) (*SeleniumInstance, error) {
 
 // Stop will stop the specified VDI instance
 func (p *Pool) Stop(index int) error {
+	if p == nil {
+		return fmt.Errorf("pool is nil")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if index >= 0 && index < len(p.slot) {
@@ -227,6 +240,9 @@ func (p *Pool) Stop(index int) error {
 
 // StopAll will stop all VDI instances in the pool
 func (p *Pool) StopAll() {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.slot {
@@ -243,6 +259,9 @@ func (p *Pool) StopAll() {
 
 // Size returns the size of the pool
 func (p *Pool) Size() int {
+	if p == nil {
+		return 0
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.slot)
@@ -250,6 +269,9 @@ func (p *Pool) Size() int {
 
 // Acquire acquires a VDI instance from the pool
 func (p *Pool) Acquire() (int, SeleniumInstance, error) {
+	if p == nil {
+		return -1, SeleniumInstance{}, fmt.Errorf("pool is nil")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -264,6 +286,9 @@ func (p *Pool) Acquire() (int, SeleniumInstance, error) {
 
 // Release releases a VDI instance back to the pool
 func (p *Pool) Release(index int) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
