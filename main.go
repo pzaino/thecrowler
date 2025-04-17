@@ -773,6 +773,9 @@ func main() {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 	}
 
+	// Check how many VDI slots do we have:
+	cmn.DebugMsg(cmn.DbgLvlInfo, "VDI slots available: %d", vdiInstances.Size())
+
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
