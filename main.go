@@ -434,7 +434,8 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 
 		// Fetch the next available Selenium instance (VDI)
 		//vdiInstance := <-*args.Sel
-		index, vdiInstance, err := (*args).Sel.Acquire()
+		vdiPool := args.Sel
+		index, vdiInstance, err := vdiPool.Acquire()
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
 			return
@@ -460,7 +461,8 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
 				// *args.Sel <- recoveredVDI
 				// Return the VDI instance to the pool
-				(*args.Sel).Release(index)
+				vdiPool := args.Sel
+				vdiPool.Release(index)
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] quitting startCrawling() goroutine")
 				return // Exit the loop once VDI is returned
 
