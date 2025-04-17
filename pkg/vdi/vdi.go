@@ -275,7 +275,11 @@ func (p *Pool) Acquire() (int, SeleniumInstance, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	for i := range p.slot {
+	for i := 0; i < len(p.slot); i++ {
+		if p.slot[i].Service == nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
+			continue
+		}
 		if !p.busy[i] {
 			p.busy[i] = true
 			return i, p.slot[i], nil
