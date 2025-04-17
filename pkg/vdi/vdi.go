@@ -270,7 +270,7 @@ func (p *Pool) Size() int {
 // Acquire acquires a VDI instance from the pool
 func (p *Pool) Acquire() (int, SeleniumInstance, error) {
 	if p == nil {
-		return -1, SeleniumInstance{}, fmt.Errorf("pool is nil")
+		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -281,7 +281,7 @@ func (p *Pool) Acquire() (int, SeleniumInstance, error) {
 			return i, p.slot[i], nil
 		}
 	}
-	return -1, SeleniumInstance{}, fmt.Errorf("no free VDI available")
+	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
 }
 
 // Release releases a VDI instance back to the pool
