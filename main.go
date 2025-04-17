@@ -429,27 +429,6 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, selIdx int, source cdb.Sou
 	}
 
 	// Start a goroutine to crawl the website
-	/*
-		go func(args crowler.Pars) {
-			//defer wg.Done()
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for available VDI instance...")
-
-			// Acquire a Selenium instance
-			vdiInstance := <-*args.Sel
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Acquired VDI instance: %v", vdiInstance.Config.Host)
-
-			// Channel to release the Selenium instance
-			releaseVDI := make(chan crowler.SeleniumInstance)
-
-			// Start crawling the website synchronously
-			go crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
-
-			// Release the Selenium instance when done
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Returning VDI instance: %v to the pool", vdiInstance.Config.Host)
-			*args.Sel <- <-releaseVDI
-			cmn.DebugMsg(cmn.DbgLvlDebug, "VDI instance: %v returned to the pool", vdiInstance.Config.Host)
-		}(args)
-	*/
 	go func(args *crowler.Pars) {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for available VDI instance...")
 
@@ -732,7 +711,7 @@ func main() {
 
 	// Define sel before we set signal handlers
 	//var vdiInstances chan vdi.SeleniumInstance
-	var vdiInstances *vdi.Pool
+	var vdiInstances vdi.Pool
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -747,26 +726,26 @@ func main() {
 			case syscall.SIGINT:
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
-				closeResources(db, vdiInstances) // Release resources
+				closeResources(db, &vdiInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGTERM:
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
-				closeResources(db, vdiInstances) // Release resources
+				closeResources(db, &vdiInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
-				closeResources(db, vdiInstances) // Release resources
+				closeResources(db, &vdiInstances) // Release resources
 				os.Exit(0)
 
 			case syscall.SIGHUP:
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
 				configMutex.Lock()
-				err := initAll(configFile, &config, &db, vdiInstances, &GRulesEngine, &limiter)
+				err := initAll(configFile, &config, &db, &vdiInstances, &GRulesEngine, &limiter)
 				if err != nil {
 					configMutex.Unlock()
 					cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
@@ -775,7 +754,7 @@ func main() {
 				err = db.Connect(config)
 				if err != nil {
 					configMutex.Unlock()
-					closeResources(db, vdiInstances) // Release resources
+					closeResources(db, &vdiInstances) // Release resources
 					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection re-established.")
@@ -787,7 +766,7 @@ func main() {
 	}()
 
 	// Initialize the crawler
-	err := initAll(configFile, &config, &db, vdiInstances, &GRulesEngine, &limiter)
+	err := initAll(configFile, &config, &db, &vdiInstances, &GRulesEngine, &limiter)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "initializing the crawler: %v", err)
 	}
@@ -795,18 +774,18 @@ func main() {
 	// Connect to the database
 	err = db.Connect(config)
 	if err != nil {
-		closeResources(db, vdiInstances) // Release resources
+		closeResources(db, &vdiInstances) // Release resources
 		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established.")
-	defer closeResources(db, vdiInstances)
+	defer closeResources(db, &vdiInstances)
 
 	// Start events listener
 	go cdb.ListenForEvents(&db, handleNotification)
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
-	go checkSources(&db, vdiInstances, &GRulesEngine)
+	go checkSources(&db, &vdiInstances, &GRulesEngine)
 
 	// Start the internal/control API server
 	srv := &http.Server{
