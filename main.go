@@ -107,17 +107,17 @@ type HealthCheck struct {
 }
 
 // NewVDIPool is a function that creates a new VDI pool with the given configurations.
-func NewVDIPool(configs []cfg.Selenium) (*vdi.Pool, error) {
-	p := vdi.NewPool(len(configs))
+func NewVDIPool(p *vdi.Pool, configs []cfg.Selenium) error {
+	p.Init(len(configs))
 	if p == nil {
-		return nil, fmt.Errorf("creating VDI pool")
+		return fmt.Errorf("creating VDI pool")
 	}
 
 	// Initialize the pool with the Selenium instances
 	for _, seleniumConfig := range configs {
 		selService, err := vdi.NewVDIService(seleniumConfig)
 		if err != nil {
-			return nil, fmt.Errorf("creating VDI Instances: %s", err)
+			return fmt.Errorf("creating VDI Instances: %s", err)
 		}
 		selInstance := vdi.SeleniumInstance{
 			Service: selService,
@@ -125,7 +125,7 @@ func NewVDIPool(configs []cfg.Selenium) (*vdi.Pool, error) {
 		}
 		p.Add(selInstance)
 	}
-	return p, nil
+	return nil
 }
 
 // This function is responsible for performing database maintenance
@@ -668,7 +668,10 @@ func initAll(configFile *string, config *cfg.Config,
 			}
 		}
 	*/
-	vdiInstances, err = NewVDIPool(config.Selenium)
+	err = NewVDIPool(vdiInstances, config.Selenium)
+	if err != nil {
+		return fmt.Errorf("creating VDI pool: %s", err)
+	}
 
 	// Initialize the rules engine
 	*RulesEngine = rules.NewEmptyRuleEngine(config.RulesetsSchemaPath)
