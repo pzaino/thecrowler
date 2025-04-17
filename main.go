@@ -124,7 +124,11 @@ func NewVDIPool(p *vdi.Pool, configs []cfg.Selenium) error {
 			Service: selService,
 			Config:  seleniumConfig,
 		}
-		p.Add(selInstance)
+		err = p.Add(selInstance)
+		if err != nil {
+			return fmt.Errorf("adding VDI instance to pool: %s", err)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI instance added to the pool")
 	}
 	return nil
 }

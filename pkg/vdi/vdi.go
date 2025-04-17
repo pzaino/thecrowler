@@ -179,15 +179,15 @@ func NewPool(size int) *Pool {
 }
 
 // Add adds a new VDI instance to the pool
-func (p *Pool) Add(instance SeleniumInstance) {
+func (p *Pool) Add(instance SeleniumInstance) error {
 	if p == nil {
-		return
+		return fmt.Errorf("pool is nil")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.slot = append(p.slot, instance)
 	p.busy[len(p.slot)-1] = false
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI instance added to the pool")
+	return nil
 }
 
 // Remove removes a VDI instance from the pool
@@ -305,7 +305,7 @@ func (p *Pool) Release(index int) {
 type SeleniumInstance struct {
 	Service *Service
 	Config  cfg.Selenium
-	Mutex   *sync.Mutex
+	//Mutex   *sync.Mutex
 }
 
 // ProcessContextInterface abstracts the necessary methods required by ConnectVDI.
@@ -457,9 +457,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	if browser == BrowserChrome || browser == BrowserChromium {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
 		// Set the CDP port
-		args = append(args, "--remote-debugging-port=9222")
+		//args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		args = append(args, "--remote-debugging-address=0.0.0.0")
+		//args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
 		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
