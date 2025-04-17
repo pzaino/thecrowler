@@ -114,11 +114,12 @@ func NewVDIPool(p *vdi.Pool, configs []cfg.Selenium) error {
 	}
 
 	// Initialize the pool with the Selenium instances
-	for _, seleniumConfig := range configs {
+	for i, seleniumConfig := range configs {
 		selService, err := vdi.NewVDIService(seleniumConfig)
 		if err != nil {
 			return fmt.Errorf("creating VDI Instances: %s", err)
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI instance %s:%d:%d created", seleniumConfig.Host, seleniumConfig.Port, i)
 		selInstance := vdi.SeleniumInstance{
 			Service: selService,
 			Config:  seleniumConfig,
