@@ -338,6 +338,11 @@ func performDatabaseMaintenance(db cdb.Handler) {
 }
 
 func crawlSources(wb *WorkBlock) {
+	sourceChan := make(chan cdb.Source)
+	var wg sync.WaitGroup
+
+	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec // it's safe here.
+
 	// Start a goroutine to log the status periodically
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
@@ -360,68 +365,97 @@ func crawlSources(wb *WorkBlock) {
 		}
 	}(wb.PipelineStatus)
 
-	// Start the crawling process for each source
-	var wg sync.WaitGroup                                    // WaitGroup to wait for all goroutines to finish
-	sourceIdx := 0                                           // Source index
-	var maxSrc uint64 = uint64(wb.Config.Crawler.MaxSources) //nolint:gosec // Disable G115 (integer overflow, given the MaxSources value is fully tested)
-	maxPipelines := uint64(wb.sel.Size())                    //nolint:gosec      // Max Number of possible parallel pipelines
-	//idx := uint64(0); idx < maxSrc; idx++
-	for {
-		for pl := uint64(0); pl < maxPipelines; pl++ {
-			// Check if the pipeline is already running
-			if (*wb.PipelineStatus)[pl].PipelineRunning == 1 {
-				continue
+	// Control how many VDI workers are active
+	vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
+
+	// Launch VDI workers
+	for vdiID := uint64(0); vdiID < vdiCount; vdiID++ {
+		wg.Add(1)
+
+		go func(vdiSlot uint64) {
+			defer wg.Done()
+
+			var currentStatusIdx *uint64 = nil
+
+			for source := range sourceChan {
+				var statusIdx uint64
+				if currentStatusIdx == nil {
+					statusIdx = getAvailableOrNewPipelineStatus(wb)
+				} else {
+					statusIdx = *currentStatusIdx
+				}
+
+				// Ensure we have enough capacity
+				if int(statusIdx) >= len(*wb.PipelineStatus) {
+					*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{})
+				}
+
+				// ⏱️ Reset the pipeline status for this source
+				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
+					PipelineID:      statusIdx,
+					Source:          source.URL,
+					SourceID:        source.ID,
+					VDIID:           "", // Filled in by `startCrawling`
+					PipelineRunning: 0,  // Filled in elsewhere
+					CrawlingRunning: 0,  // Filled in elsewhere
+					NetInfoRunning:  0,  // Will be updated by NetInfo task
+					HTTPInfoRunning: 0,  // Will be updated by HTTPInfo task
+					TotalPages:      0,
+					TotalErrors:     0,
+					TotalLinks:      0,
+					TotalSkipped:    0,
+					TotalDuplicates: 0,
+					TotalScraped:    0,
+					TotalActions:    0,
+					LastWait:        0,
+					LastDelay:       0,
+					DetectedState:   0,
+				}
+
+				// 🌍 Launch crawling, will return when web crawling is done
+				startCrawling(wb, nil, source, statusIdx)
+
+				// 🔍 Check if NetInfo or HTTPInfo is still running — don't reuse if they are
+				status := &(*wb.PipelineStatus)[statusIdx]
+				if status.NetInfoRunning == 1 || status.HTTPInfoRunning == 1 {
+					currentStatusIdx = nil
+				} else {
+					currentStatusIdx = &statusIdx
+				}
 			}
-
-			// Get the source to crawl
-			source := (*wb.sources)[sourceIdx]
-			wg.Add(1)
-
-			// Initialize the status
-			(*wb.PipelineStatus)[pl] = crowler.Status{
-				PipelineID:      pl,
-				Source:          source.URL,
-				SourceID:        source.ID,
-				VDIID:           "",
-				PipelineRunning: 0,
-				CrawlingRunning: 0,
-				NetInfoRunning:  0,
-				HTTPInfoRunning: 0,
-				TotalPages:      0,
-				TotalErrors:     0,
-				TotalLinks:      0,
-				TotalSkipped:    0,
-				TotalDuplicates: 0,
-				TotalScraped:    0,
-				TotalActions:    0,
-				LastWait:        0,
-				LastDelay:       0,
-				DetectedState:   0,
-			}
-
-			// Start a goroutine to crawl the website
-			startCrawling(wb, &wg, source, uint64(sourceIdx)) //nolint:gosec // Disable G101 (CWE-20: Improper Input Validation, given the sourceIdx is fully tested)
-
-			// Increment the Source index to get the next source
-			sourceIdx++
-			if sourceIdx >= len(*wb.sources) {
-				break // We have reached the end of the sources
-			}
-		}
-
-		wg.Wait() // Block until all goroutines have decremented the counter
-
-		if sourceIdx >= len(*wb.sources) {
-			break // We have reached the end of the sources
-		}
+		}(vdiID)
 	}
+
+	// Feed sources into the pipeline dynamically
+	for _, source := range *wb.sources {
+		sourceChan <- source
+	}
+	close(sourceChan)
+
+	// Wait for all pipelines to complete their work
+	wg.Wait()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
 	// Reset all Pipelines status
-	for idx := uint64(0); idx < maxSrc; idx++ {
+	for idx := uint64(0); idx < maxPipelines; idx++ {
 		(*wb.PipelineStatus)[idx].PipelineRunning = 0
 	}
+}
+
+func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
+	for idx, status := range *wb.PipelineStatus {
+		if status.PipelineRunning == 0 && status.CrawlingRunning == 0 &&
+			status.NetInfoRunning == 0 && status.HTTPInfoRunning == 0 {
+			return uint64(idx)
+		}
+	}
+	// All are busy or reserved → add a new one
+	newIdx := uint64(len(*wb.PipelineStatus))
+	*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{
+		PipelineID: newIdx,
+	})
+	return newIdx
 }
 
 func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64) {
