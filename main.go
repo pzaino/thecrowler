@@ -391,15 +391,18 @@ func crawlSources(wb *WorkBlock) {
 				}
 
 				// ⏱️ Reset the pipeline status for this source
+				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
 					PipelineID:      statusIdx,
 					Source:          source.URL,
 					SourceID:        source.ID,
 					VDIID:           "", // Filled in by `startCrawling`
-					PipelineRunning: 0,  // Filled in elsewhere
-					CrawlingRunning: 0,  // Filled in elsewhere
-					NetInfoRunning:  0,  // Will be updated by NetInfo task
-					HTTPInfoRunning: 0,  // Will be updated by HTTPInfo task
+					StartTime:       now,
+					EndTime:         time.Time{}, // explicitly reset
+					PipelineRunning: 0,           // Filled in elsewhere
+					CrawlingRunning: 0,           // Filled in elsewhere
+					NetInfoRunning:  0,           // Will be updated by NetInfo task
+					HTTPInfoRunning: 0,           // Will be updated by HTTPInfo task
 					TotalPages:      0,
 					TotalErrors:     0,
 					TotalLinks:      0,
@@ -412,8 +415,13 @@ func crawlSources(wb *WorkBlock) {
 					DetectedState:   0,
 				}
 
+				var crawlWG sync.WaitGroup
+
 				// 🌍 Launch crawling, will return when web crawling is done
-				startCrawling(wb, nil, source, statusIdx)
+				startCrawling(wb, &crawlWG, source, statusIdx)
+
+				// Wait for the crawling to finish
+				crawlWG.Wait()
 
 				// 🔍 Check if NetInfo or HTTPInfo is still running — don't reuse if they are
 				status := &(*wb.PipelineStatus)[statusIdx]
@@ -459,6 +467,10 @@ func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
 }
 
 func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64) {
+	if wg != nil {
+		wg.Add(1)
+	}
+
 	// Prepare the go routine parameters
 	args := crowler.Pars{
 		WG:      wg,
