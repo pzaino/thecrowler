@@ -467,7 +467,9 @@ func closeSession(ctx *ProcessContext,
 
 	// Allow a new sources batch job to be processed (if any)
 	// in the caller:
-	ctx.WG.Done()
+	if ctx.WG != nil {
+		ctx.WG.Done()
+	}
 
 	// Signal pipeline completion
 	if ctx.Status.PipelineRunning == 1 || err != nil {
