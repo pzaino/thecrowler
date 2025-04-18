@@ -399,7 +399,7 @@ func crawlSources(wb *WorkBlock) {
 					VDIID:           "", // Filled in by `startCrawling`
 					StartTime:       now,
 					EndTime:         time.Time{}, // explicitly reset
-					PipelineRunning: 0,           // Filled in elsewhere
+					PipelineRunning: 1,           // Filled here to be safe
 					CrawlingRunning: 0,           // Filled in elsewhere
 					NetInfoRunning:  0,           // Will be updated by NetInfo task
 					HTTPInfoRunning: 0,           // Will be updated by HTTPInfo task
@@ -453,9 +453,9 @@ func crawlSources(wb *WorkBlock) {
 
 func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
 	for idx, status := range *wb.PipelineStatus {
-		if status.PipelineRunning == 0 && status.CrawlingRunning == 0 &&
-			status.NetInfoRunning == 0 && status.HTTPInfoRunning == 0 {
-			return uint64(idx)
+		if status.PipelineRunning != 1 && status.CrawlingRunning != 1 &&
+			status.NetInfoRunning != 1 && status.HTTPInfoRunning != 1 {
+			return uint64(idx) //nolint:gosec // it's safe here.
 		}
 	}
 	// All are busy or reserved → add a new one
