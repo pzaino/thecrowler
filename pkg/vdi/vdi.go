@@ -45,7 +45,7 @@ const (
 	// Error messages
 
 	// VDIConnError is the error message for a connection error to the VDI
-	VDIConnError = "connecting to the VDI: %v"
+	VDIConnError = "connecting to the VDI: %v, retrying in %d seconds...\n"
 )
 
 var (
@@ -151,11 +151,167 @@ type WebElement = selenium.WebElement
 // Service Abstract type for a Service
 type Service = selenium.Service
 
+// Pool is a pool of VDI instances
+type Pool struct {
+	mu   sync.Mutex
+	slot []SeleniumInstance
+	busy map[int]bool // or status flags
+}
+
+// Init initializes the VDI pool
+func (p *Pool) Init(size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	//p.slot = make([]SeleniumInstance, size)
+	p.busy = make(map[int]bool, size)
+	for i := 0; i < size; i++ {
+		p.busy[i] = false
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "VDI pool initialized with %d instances", size)
+}
+
+// NewPool creates a new pool of VDI instances
+func NewPool(size int) *Pool {
+	p := &Pool{}
+	p.Init(size)
+	return p
+}
+
+// Add adds a new VDI instance to the pool
+func (p *Pool) Add(instance SeleniumInstance) error {
+	if p == nil {
+		return fmt.Errorf("pool is nil")
+	}
+	if instance.Config.Host == "" {
+		return fmt.Errorf("VDI instance host is empty")
+	}
+	if instance.Config.Port == 0 {
+		return fmt.Errorf("VDI instance port is empty")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.slot = append(p.slot, instance)
+	p.busy[len(p.slot)-1] = false
+	return nil
+}
+
+// Remove removes a VDI instance from the pool
+func (p *Pool) Remove(index int) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index >= 0 && index < len(p.slot) {
+		p.slot = append(p.slot[:index], p.slot[index+1:]...)
+		delete(p.busy, index)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDI instance removed from the pool")
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, "Invalid index for VDI instance removal: %d", index)
+	}
+}
+
+// Get returns a a reference to a VDI instance in the pool
+func (p *Pool) Get(index int) (*SeleniumInstance, error) {
+	if p == nil {
+		return nil, fmt.Errorf("pool is nil")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index >= 0 && index < len(p.slot) {
+		return &p.slot[index], nil
+	}
+	return nil, fmt.Errorf("invalid index for VDI instance: %d", index)
+}
+
+// Stop will stop the specified VDI instance
+func (p *Pool) Stop(index int) error {
+	if p == nil {
+		return fmt.Errorf("pool is nil")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index >= 0 && index < len(p.slot) {
+		if p.slot[index].Service != nil {
+			err := p.slot[index].Service.Stop()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium: %v", err)
+			}
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium stopped successfully.")
+		}
+	}
+	return nil
+}
+
+// StopAll will stop all VDI instances in the pool
+func (p *Pool) StopAll() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.slot {
+		if p.slot[i].Service != nil {
+			err := p.slot[i].Service.Stop()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "stopping Selenium: %v", err)
+			}
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Selenium stopped successfully.")
+		}
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "All Selenium instances stopped successfully.")
+}
+
+// Size returns the size of the pool
+func (p *Pool) Size() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.slot)
+}
+
+// Acquire acquires a VDI instance from the pool
+func (p *Pool) Acquire() (int, SeleniumInstance, error) {
+	if p == nil {
+		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i := 0; i < len(p.slot); i++ {
+		if p.slot[i].Config.Host == "" || p.slot[i].Config.Port == 0 {
+			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
+			continue
+		}
+		if !p.busy[i] {
+			p.busy[i] = true
+			return i, p.slot[i], nil
+		}
+	}
+	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
+}
+
+// Release releases a VDI instance back to the pool
+func (p *Pool) Release(index int) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if index >= 0 && index < len(p.busy) {
+		p.busy[index] = false
+	}
+}
+
 // SeleniumInstance holds a Selenium service and its configuration
 type SeleniumInstance struct {
 	Service *Service
 	Config  cfg.Selenium
-	Mutex   *sync.Mutex
+	//Mutex   *sync.Mutex
 }
 
 // ProcessContextInterface abstracts the necessary methods required by ConnectVDI.
@@ -254,6 +410,16 @@ func StopSelenium(sel *selenium.Service) error {
 
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
+	if ctx == nil {
+		return nil, errors.New("context is nil")
+	}
+	if sel.Config.Host == "" {
+		return nil, errors.New("VDI instance host is empty")
+	}
+	if sel.Config.Port == 0 {
+		return nil, errors.New("VDI instance port is empty")
+	}
+
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {
@@ -307,9 +473,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	if browser == BrowserChrome || browser == BrowserChromium {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
 		// Set the CDP port
-		args = append(args, "--remote-debugging-port=9222")
+		//args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		args = append(args, "--remote-debugging-address=0.0.0.0")
+		//args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
 		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
@@ -602,13 +768,13 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Connect to the WebDriver instance running remotely.
 	var wd WebDriver
 	var err error
-	maxRetry := 10
+	maxRetry := 500
 	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
 			if i == 0 || (i%maxRetry) == 0 {
-				cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err)
+				cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err, 5)
 			}
 			time.Sleep(5 * time.Second)
 		} else {
@@ -616,6 +782,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed", err)
 		return nil, err
 	}
 

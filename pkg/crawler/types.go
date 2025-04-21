@@ -35,7 +35,7 @@ type Pars struct {
 	WG      *sync.WaitGroup
 	DB      cdb.Handler
 	Src     cdb.Source
-	Sel     *chan vdi.SeleniumInstance
+	Sel     *vdi.Pool //Sel     *chan vdi.SeleniumInstance
 	SelIdx  int
 	RE      *rules.RuleEngine
 	Sources *[]cdb.Source
@@ -47,6 +47,7 @@ type Pars struct {
 type Status struct {
 	PipelineID      uint64
 	SourceID        uint64
+	VDIID           string
 	Source          string
 	TotalPages      int
 	TotalLinks      int
@@ -67,6 +68,7 @@ type Status struct {
 	HTTPInfoRunning int // Flag to check if HTTP info is already gathered
 	PipelineRunning int // Flag to check if site info is already gathered
 	CrawlingRunning int // Flag to check if crawling is still running
+	DetectedState   int // field containing information about the detected state of the pipeline
 }
 
 // MetaTag represents a single meta tag, including its name and content.

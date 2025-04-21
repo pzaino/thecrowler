@@ -247,6 +247,7 @@ func NewConfig() *Config {
 		},
 		Selenium: []Selenium{
 			{
+				Name:        "vdi-1",
 				Path:        "",
 				DriverPath:  "",
 				Type:        "chrome",
@@ -893,7 +894,7 @@ func (c *Config) validateAPI() {
 func (c *Config) validateVDI() {
 	// Check Selenium
 	for i := range c.Selenium {
-		c.validateVDIName(&c.Selenium[i])
+		c.validateVDIName(&c.Selenium[i], i)
 		c.validateVDIType(&c.Selenium[i])
 		c.validateVDIServiceType(&c.Selenium[i])
 		c.validateVDIPath(&c.Selenium[i])
@@ -904,9 +905,9 @@ func (c *Config) validateVDI() {
 	}
 }
 
-func (c *Config) validateVDIName(selenium *Selenium) {
+func (c *Config) validateVDIName(selenium *Selenium, index int) {
 	if strings.TrimSpace(selenium.Name) == "" {
-		selenium.Name = selenium.Host
+		selenium.Name = selenium.Host + ":" + fmt.Sprint(selenium.Port) + ":" + fmt.Sprint(index)
 	} else {
 		selenium.Name = strings.ToLower(strings.TrimSpace(selenium.Name))
 	}
