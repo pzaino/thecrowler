@@ -110,6 +110,15 @@ detect_total_memory_mb() {
   fi
 }
 
+to_mem_unit() {
+  local mb=$1
+  if [ "$mb" -ge 1024 ]; then
+    echo "$((mb / 1024))g"
+  else
+    echo "${mb}m"
+  fi
+}
+
 # process the arguments in pars
 # shellcheck disable=SC2068
 for arg in ${pars}; do
@@ -239,6 +248,12 @@ if [ -z "$mem_limit_tlm_pct" ]; then
 else
     mem_limit_tlm_pct=$((total_memory_mb * mem_limit_tlm_pct / 100))
 fi
+
+# Convert to appropriate mem units
+mem_limit_vdi_pct=$(to_mem_unit "$mem_limit_vdi_pct")
+mem_limit_eng_pct=$(to_mem_unit "$mem_limit_eng_pct")
+mem_limit_mng_pct=$(to_mem_unit "$mem_limit_mng_pct")
+mem_limit_tlm_pct=$(to_mem_unit "$mem_limit_tlm_pct")
 
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
