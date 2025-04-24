@@ -15,7 +15,7 @@ apply_limits() {
     # Check if container is running
     if docker ps --format '{{.Names}}' | grep -q "^$container_name$"; then
       echo "→ Updating container: $container_name (service: $current_service) with CPU: $cpus, Memory: $mem_limit"
-      docker update --cpus="$cpus" --memory="$mem_limit" "$container_name"
+      docker update --cpus="$cpus" --memory="$mem_limit" --memory-swap="$mem_limit" "$container_name"
     else
       echo "⚠️  Container '$container_name' (service: $current_service) not running. Skipping."
     fi
