@@ -189,6 +189,7 @@ if [ "$no_api" == "0" ]; then
     cat << EOF >> docker-compose.yml
   crowler-api:
     container_name: "crowler-api"
+    cpus: "${cpu_limit_mng:-1.0}"
     env_file:
       - .env
     environment:
@@ -233,6 +234,7 @@ if [ "$no_events" == "0" ]; then
     cat << EOF >> docker-compose.yml
   crowler-events:
     container_name: "crowler-events"
+    cpus: "${cpu_limit_mng:-1.0}"
     env_file:
       - .env
     environment:
@@ -282,6 +284,7 @@ if [ "$postgres" == "yes" ]; then
   crowler-db:
     image: postgres:15.10-bookworm
     container_name: "crowler-db"
+    cpus: "${cpu_limit:-1.0}"
     ports:
       - "5432:5432"
     env_file:
@@ -340,6 +343,7 @@ for i in $(seq 1 "$engine_count"); do
 
   crowler-engine-$i:
     container_name: "crowler-engine-$i"
+    cpus: "${cpu_limit_engine:-1.0}"
     env_file:
       - .env
     environment:
@@ -356,7 +360,7 @@ for i in $(seq 1 "$engine_count"); do
     deploy:
       resources:
         limits:
-          cpus: "${cpu_limit_engine:-0.5}"
+          cpus: "${cpu_limit_engine:-1.0}"
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -391,6 +395,7 @@ if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
   jaeger:
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
+    cpus: "${cpu_limit_mng:-1.0}"
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     deploy:
       resources:
@@ -399,6 +404,7 @@ if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
     ports:
       - "16686:16686" # Jaeger UI
       - "4317:4317"   # OpenTelemetry gRPC endpoint
+    restart: unless-stopped
     networks:
       - crowler-net
 EOF
@@ -426,6 +432,7 @@ for i in $(seq 1 "$vdi_count"); do
 
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
+    cpus: "${cpu_limit_vdi:-1.0}"
     env_file:
       - .env
     environment:
@@ -473,6 +480,7 @@ if [ "$prometheus" == "yes" ]; then
   crowler-push-gateway:
     image: prom/pushgateway
     container_name: "crowler-push-gateway"
+    cpus: "${cpu_limit_mng:-1.0}"
     ports:
       - "9091:9091"
     env_file:
