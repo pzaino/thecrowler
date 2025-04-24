@@ -281,9 +281,11 @@ mem_limit_tlm_pct=$(to_mem_unit "$mem_limit_tlm_pct")
 if [ "$use_swarm" != "yes" ]; then
   platform="platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
   pull_policy_never="pull_policy: never"
+  net_driver="bridge"
 else
   platform=""
   pull_policy_never=""
+  net_driver="overlay"
 fi
 
 # Generate docker-compose.yml
@@ -590,14 +592,14 @@ cat << EOF >> docker-compose.yml
 
 networks:
   crowler-net:
-    driver: bridge
+    driver: ${net_driver}
 EOF
 
 # Add all dynamically created networks for VDIs
 for i in $(seq 1 "$vdi_count"); do
     cat << EOF >> docker-compose.yml
   crowler-vdi-$i:
-    driver: bridge
+    driver: ${net_driver}
 EOF
 done
 
