@@ -267,6 +267,7 @@ if [ "$no_api" == "0" ]; then
   crowler-api:
     container_name: "crowler-api"
     cpus: "${cpu_limit_mng:-1.0}"
+    mem_limit: "${mem_limit_mng_pct:-2g}"
     env_file:
       - .env
     environment:
@@ -313,6 +314,7 @@ if [ "$no_events" == "0" ]; then
   crowler-events:
     container_name: "crowler-events"
     cpus: "${cpu_limit_mng:-1.0}"
+    mem_limit: "${mem_limit_mng_pct:-2g}"
     env_file:
       - .env
     environment:
@@ -364,6 +366,7 @@ if [ "$postgres" == "yes" ]; then
     image: postgres:15.10-bookworm
     container_name: "crowler-db"
     cpus: "${cpu_limit:-1.0}"
+    mem_limit: "${mem_limit_mng_pct:-3g}"
     ports:
       - "5432:5432"
     env_file:
@@ -424,6 +427,7 @@ for i in $(seq 1 "$engine_count"); do
   crowler-engine-$i:
     container_name: "crowler-engine-$i"
     cpus: "${cpu_limit_engine:-1.0}"
+    mem_limit: "${mem_limit_eng_pct:-2g}"
     env_file:
       - .env
     environment:
@@ -441,7 +445,7 @@ for i in $(seq 1 "$engine_count"); do
       resources:
         limits:
           cpus: "${cpu_limit_engine:-1.0}"
-          memory: "${mem_limit_eng_pct:-2G}"
+          memory: "${mem_limit_eng_pct:-2g}"
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -477,6 +481,7 @@ if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
     cpus: "${cpu_limit_mng:-1.0}"
+    mem_limit: "${mem_limit_tlm_pct:-2g}"
     platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
     deploy:
       resources:
@@ -515,6 +520,7 @@ for i in $(seq 1 "$vdi_count"); do
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
     cpus: "${cpu_limit_vdi:-1.0}"
+    mem_limit: "${mem_limit_vdi_pct:-2g}"
     env_file:
       - .env
     environment:
@@ -535,7 +541,7 @@ for i in $(seq 1 "$vdi_count"); do
       resources:
         limits:
           cpus: "${cpu_limit_vdi:-1.0}"
-          memory: "${mem_limit_vdi_pct:-2G}"
+          memory: "${mem_limit_vdi_pct:-2g}"
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
@@ -564,6 +570,7 @@ if [ "$prometheus" == "yes" ]; then
     image: prom/pushgateway
     container_name: "crowler-push-gateway"
     cpus: "${cpu_limit_mng:-1.0}"
+    mem_limit: "${mem_limit_tlm_pct:-2g}"
     ports:
       - "9091:9091"
     env_file:
