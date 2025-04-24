@@ -277,6 +277,13 @@ mem_limit_eng_pct=$(to_mem_unit "$mem_limit_eng_pct")
 mem_limit_mng_pct=$(to_mem_unit "$mem_limit_mng_pct")
 mem_limit_tlm_pct=$(to_mem_unit "$mem_limit_tlm_pct")
 
+# Generate platform string
+if [ "$use_swarm" != "yes" ]; then
+  platform="platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+else
+  platform=""
+fi
+
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
 ---
@@ -305,7 +312,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
     build:
       context: .
       dockerfile: Dockerfile.searchapi
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     image: crowler-api
     pull_policy: never
     stdin_open: true # For interactive terminal access (optional)
@@ -347,7 +354,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
     build:
       context: .
       dockerfile: Dockerfile.events
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     image: crowler-events
     pull_policy: never
     stdin_open: true # For interactive terminal access (optional)
@@ -392,7 +399,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-3g}")
       - PROXY_SERVICE=\${VDI_PROXY_SERVICE:-}
       - TZ=\${VDI_TZ:-UTC}
     command: ["postgres", "-c", "timezone=\${VDI_TZ:-UTC}"]
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -449,7 +456,7 @@ $(emit_limits "    " "${cpu_limit_eng:-1.0}" "${mem_limit_eng_pct:-2g}")
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     image: crowler-engine-$i
     pull_policy: never
     networks:
@@ -481,7 +488,7 @@ if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
 $(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     ports:
       - "16686:16686" # Jaeger UI
       - "4317:4317"   # OpenTelemetry gRPC endpoint
@@ -533,7 +540,7 @@ $(emit_limits "    " "${cpu_limit_vdi:-1.0}" "${mem_limit_vdi_pct:-2g}")
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     ports:
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
       - "$HOST_PORT_START2:5900"
@@ -564,7 +571,7 @@ $(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
       - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     networks:
       - crowler-net
     restart: unless-stopped
