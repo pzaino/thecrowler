@@ -277,11 +277,13 @@ mem_limit_eng_pct=$(to_mem_unit "$mem_limit_eng_pct")
 mem_limit_mng_pct=$(to_mem_unit "$mem_limit_mng_pct")
 mem_limit_tlm_pct=$(to_mem_unit "$mem_limit_tlm_pct")
 
-# Generate platform string
+# Generate extra tags for swarm mode
 if [ "$use_swarm" != "yes" ]; then
   platform="platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+  pull_policy_never="pull_policy: never"
 else
   platform=""
+  pull_policy_never=""
 fi
 
 # Generate docker-compose.yml
@@ -314,7 +316,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
       dockerfile: Dockerfile.searchapi
     ${platform}
     image: crowler-api
-    pull_policy: never
+    ${pull_policy_never}
     stdin_open: true # For interactive terminal access (optional)
     tty: true        # For interactive terminal access (optional)
     ports:
@@ -356,7 +358,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
       dockerfile: Dockerfile.events
     ${platform}
     image: crowler-events
-    pull_policy: never
+    ${pull_policy_never}
     stdin_open: true # For interactive terminal access (optional)
     tty: true        # For interactive terminal access (optional)
     ports:
@@ -458,7 +460,7 @@ $(emit_limits "    " "${cpu_limit_eng:-1.0}" "${mem_limit_eng_pct:-2g}")
       dockerfile: Dockerfile.thecrowler
     ${platform}
     image: crowler-engine-$i
-    pull_policy: never
+    ${pull_policy_never}
     networks:
       - crowler-net
 $ENGINE_NETWORKS
@@ -539,7 +541,7 @@ $(emit_limits "    " "${cpu_limit_vdi:-1.0}" "${mem_limit_vdi_pct:-2g}")
       - TZ=\${VDI_TZ:-UTC}
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
-    pull_policy: never
+    ${pull_policy_never}
     ${platform}
     ports:
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
