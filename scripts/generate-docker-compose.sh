@@ -280,9 +280,9 @@ mem_limit_tlm_pct=$(to_mem_unit "$mem_limit_tlm_pct")
 # Ensure correct header is in place:
 header=""
 if [ "$use_swarm" == "yes" ]; then
-    header="version: 3.9"
+    header="version: '3.9'"
 else
-    header="version: 2.4"
+    header="version: '2.4'"
 fi
 
 # Generate docker-compose.yml
