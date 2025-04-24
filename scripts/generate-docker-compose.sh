@@ -16,6 +16,10 @@ cpu_limit_mng=""
 no_api=0
 no_events=0
 no_jaeger=0
+mem_limit_vdi_pct=""
+mem_limit_eng_pct=""
+mem_limit_mng_pct=""
+mem_limit_tlm_pct=""
 
 # Function to display usage
 cmd_usage() {
@@ -36,6 +40,10 @@ cmd_usage() {
     echo "  --no_api                    Do not include crowler-api"
     echo "  --no_events                 Do not include crowler-events"
     echo "  --no_jaeger                 Do not include jaeger"
+    echo "  --mem_limit_vdi=<number>    Memory limit for crowler-vdi instances in %"
+    echo "  --mem_limit_engine=<number> Memory limit for crowler-engine instances in %"
+    echo "  --mem_limit_mng=<number>    Memory limit for crowler-api and crowler-events in %"
+    echo "  --mem_limit_tlm=<number>    Memory limit for jaeger and prometheus gateway instances in %"
 }
 
 # Function to read and validate integer input
@@ -88,6 +96,17 @@ detect_cpu_count() {
     getconf _NPROCESSORS_ONLN
   else
     echo "1"  # Fallback to 1 if detection fails
+  fi
+}
+
+# Detect the total memory in MB in a portable way
+detect_total_memory_mb() {
+  if command -v free >/dev/null 2>&1; then
+    free -m | awk '/^Mem:/ { print $2 }'
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    sysctl -n hw.memsize | awk '{print int($1 / 1024 / 1024)}'
+  else
+    echo "2048" # Fallback to 2GB
   fi
 }
 
@@ -148,6 +167,18 @@ for arg in ${pars}; do
         --no_jaeger)
             no_jaeger=1
             ;;
+        --mem_limit_vdi=*)
+            mem_limit_vdi_pct="${arg#*=}"
+            ;;
+        --mem_limit_engine=*)
+            mem_limit_eng_pct="${arg#*=}"
+            ;;
+        --mem_limit_mng=*)
+            mem_limit_mng_pct="${arg#*=}"
+            ;;
+        --mem_limit_tlm=*)
+            mem_limit_tlm_pct="${arg#*=}"
+            ;;
     esac
 done
 
@@ -165,6 +196,15 @@ if [ -z "$postgres" ]; then
     read_yes_no_input "Do you want to include the PostgreSQL database?" postgres
 fi
 
+# Check memory % values if provided:
+# shellcheck disable=SC2235
+for pct in "$mem_limit_vdi_pct" "$mem_limit_eng_pct" "$mem_limit_mng_pct" "$mem_limit_tlm_pct"; do
+  if [ -n "$pct" ] && ([ "$pct" -lt 1 ] || [ "$pct" -gt 100 ]); then
+    echo "ERROR: Memory limit percentages must be between 1 and 100."
+    exit 1
+  fi
+done
+
 # Automatically set CPU limit to total available cores if not set
 total_cpus=$(detect_cpu_count)
 
@@ -172,11 +212,33 @@ if [ -z "$cpu_limit" ]; then
     cpu_limit="$total_cpus"
 fi
 
-# set default values for CPU limits if not provided
+# Set default values for CPU limits if not provided
 cpu_limit_engine=${cpu_limit_engine:-$cpu_limit}
 cpu_limit_vdi=${cpu_limit_vdi:-$cpu_limit}
 cpu_limit_mng=${cpu_limit_mng:-$cpu_limit}
 
+# Automatically set memory limits to 80% of total memory if not set
+total_memory_mb=$(detect_total_memory_mb)
+if [ -z "$mem_limit_vdi_pct" ]; then
+    mem_limit_vdi_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_vdi_pct=$((total_memory_mb * mem_limit_vdi_pct / 100))
+fi
+if [ -z "$mem_limit_eng_pct" ]; then
+    mem_limit_eng_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_eng_pct=$((total_memory_mb * mem_limit_eng_pct / 100))
+fi
+if [ -z "$mem_limit_mng_pct" ]; then
+    mem_limit_mng_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_mng_pct=$((total_memory_mb * mem_limit_mng_pct / 100))
+fi
+if [ -z "$mem_limit_tlm_pct" ]; then
+    mem_limit_tlm_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_tlm_pct=$((total_memory_mb * mem_limit_tlm_pct / 100))
+fi
 
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
@@ -206,6 +268,7 @@ if [ "$no_api" == "0" ]; then
       resources:
         limits:
           cpus: "${cpu_limit_mng:-1.0}"
+          memory: "${mem_limit_mng_pct:-2g}"
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -251,6 +314,7 @@ if [ "$no_events" == "0" ]; then
       resources:
         limits:
           cpus: "${cpu_limit_mng:-1.0}"
+          memory: "${mem_limit_mng_pct:-2g}"
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -304,6 +368,7 @@ if [ "$postgres" == "yes" ]; then
       resources:
         limits:
           cpus: "${cpu_limit:-1.0}"
+          memory: "${mem_limit_mng_pct:-3g}"
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -361,6 +426,7 @@ for i in $(seq 1 "$engine_count"); do
       resources:
         limits:
           cpus: "${cpu_limit_engine:-1.0}"
+          memory: "${mem_limit_eng_pct:-2G}"
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -401,6 +467,7 @@ if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
       resources:
         limits:
           cpus: "${cpu_limit_mng:-1.0}"
+          memory: "${mem_limit_tlm_pct:-2G}"
     ports:
       - "16686:16686" # Jaeger UI
       - "4317:4317"   # OpenTelemetry gRPC endpoint
@@ -453,6 +520,7 @@ for i in $(seq 1 "$vdi_count"); do
       resources:
         limits:
           cpus: "${cpu_limit_vdi:-1.0}"
+          memory: "${mem_limit_vdi_pct:-2G}"
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     pull_policy: never
@@ -492,6 +560,7 @@ if [ "$prometheus" == "yes" ]; then
       resources:
         limits:
           cpus: "${cpu_limit_mng:-1.0}"
+          memory: "${mem_limit_tlm_pct:-2G}"
     networks:
       - crowler-net
     restart: unless-stopped
