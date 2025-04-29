@@ -583,6 +583,12 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
+	if err := addJSAPIKVGet(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIKVSet(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -3038,6 +3044,157 @@ func addJSAPIGenUUID(vm *otto.Otto) error {
 		result, _ := vm.ToValue(uuid.String())
 		return result
 	})
+}
+
+/*
+  How to use getKV and setKV in JS:
+	// name: kv_example
+	// type: engine_plugin
+
+	let key = "session_token";
+	let ctx = "user_123";
+
+	// Set a KV pair
+	setKV(key, ctx, "abc123", {
+		persistent: false,
+		static: false,
+		session_valid: true,
+		source: "plugin"
+	});
+
+	// Retrieve it
+	let kv = getKV(key, ctx);
+	console.log("Stored:", kv.value); // "abc123"
+*/
+
+// addJSAPIKVGet retrieves a value from the KV store using a key and context ID.
+func addJSAPIKVGet(vm *otto.Otto) error {
+	return vm.Set("getKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+
+		val, props, err := cmn.KVStore.Get(key, ctxID)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		jsObj := map[string]interface{}{
+			"value":      normalizeValues(val),
+			"properties": props,
+		}
+		result, _ := vm.ToValue(jsObj)
+		return result
+	})
+}
+
+// addJSAPIKVSet sets a value in the KV store with a key and context ID.
+func addJSAPIKVSet(vm *otto.Otto) error {
+	return vm.Set("setKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+		val, _ := call.Argument(2).Export()
+
+		propsArg := call.Argument(3)
+		var props cmn.Properties
+		if propsArg.IsDefined() {
+			exportedProps, err := propsArg.Export()
+			if err == nil {
+				propMap := exportedProps.(map[string]interface{})
+				props = cmn.NewKVStoreEmptyProperty()
+				props.CtxID = ctxID
+				if p, ok := propMap["persistent"].(bool); ok {
+					props.Persistent = p
+				}
+				if s, ok := propMap["static"].(bool); ok {
+					props.Static = s
+				}
+				if sv, ok := propMap["session_valid"].(bool); ok {
+					props.SessionValid = sv
+				}
+				if src, ok := propMap["source"].(string); ok {
+					props.Source = src
+				}
+				props.Type = reflect.TypeOf(val).String()
+			}
+		} else {
+			props = cmn.NewKVStoreEmptyProperty()
+			props.CtxID = ctxID
+			props.Type = reflect.TypeOf(val).String()
+		}
+
+		_ = cmn.KVStore.Set(key, val, props)
+		return otto.TrueValue()
+	})
+}
+
+// normalizeValues recursively normalizes Go types to a form Otto (JavaScript) can understand
+func normalizeValues(value interface{}) interface{} {
+	switch v := value.(type) {
+	case nil:
+		// Treat nil as an empty array
+		return []interface{}{}
+
+	case []interface{}:
+		// Recursively normalize each element
+		for i, elem := range v {
+			v[i] = NormalizeValues(elem)
+		}
+		return v
+
+	case []int:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case []int64:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case []float64:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case []string:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case map[string]interface{}:
+		// Recursively normalize each map entry
+		for key, elem := range v {
+			v[key] = NormalizeValues(elem)
+		}
+		return v
+
+	case map[interface{}]interface{}:
+		// This happens when unmarshalling YAML sometimes
+		m := make(map[string]interface{})
+		for key, elem := range v {
+			k := ""
+			switch key := key.(type) {
+			case string:
+				k = key
+			default:
+				k = reflect.ValueOf(key).String()
+			}
+			m[k] = NormalizeValues(elem)
+		}
+		return m
+
+	default:
+		// Primitive types (string, bool, int, float) stay as is
+		return v
+	}
 }
 
 func returnError(vm *otto.Otto, message string) otto.Value {
