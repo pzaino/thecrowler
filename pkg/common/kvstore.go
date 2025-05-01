@@ -138,6 +138,9 @@ func (kv *KeyValueStore) Set(key string, value interface{}, properties Propertie
 
 // Increment increments the value for a given key and context by a specified step and it's thread safe.
 func (kv *KeyValueStore) Increment(key, ctxID string, step int64) (int64, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
 	fullKey := createKeyWithCtx(key, ctxID)
 
 	kv.mutex.Lock()
@@ -196,6 +199,9 @@ func (kv *KeyValueStore) Get(key string, ctxID string) (interface{}, Properties,
 
 // GetBySource retrieves the value and properties for a given key and source.
 func (kv *KeyValueStore) GetBySource(key string, source string) (interface{}, Properties, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -209,6 +215,9 @@ func (kv *KeyValueStore) GetBySource(key string, source string) (interface{}, Pr
 
 // GetWithCtx retrieves the value for a given key, considering both Source and CtxID if provided.
 func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (interface{}, Properties, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
@@ -227,6 +236,9 @@ func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (in
 
 // Size returns the number of key-value pairs in the store.
 func (kv *KeyValueStore) Size() int {
+	if kv == nil {
+		return 0
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -238,6 +250,9 @@ func (kv *KeyValueStore) Size() int {
 // If no flags are provided, only non-persistent entries are deleted.
 // Flag[0] set is to delete persistent entries
 func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
+	if kv == nil {
+		return errors.New("key-value store is nil")
+	}
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
@@ -268,6 +283,9 @@ func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 // If no flags are provided, only non-persistent entries are deleted.
 // Flag[0] set is to delete persistent entries
 func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
@@ -297,6 +315,9 @@ func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
 
 // DeleteNonPersistent removes all key-value pairs that are not persistent.
 func (kv *KeyValueStore) DeleteNonPersistent() {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 
@@ -309,6 +330,9 @@ func (kv *KeyValueStore) DeleteNonPersistent() {
 
 // DeleteNonPersistentByCID removes all key-value pairs for a given context that are not persistent.
 func (kv *KeyValueStore) DeleteNonPersistentByCID(ctxID string) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
@@ -321,6 +345,9 @@ func (kv *KeyValueStore) DeleteNonPersistentByCID(ctxID string) {
 
 // DeleteAll clears all key-value pairs from the store.
 func (kv *KeyValueStore) DeleteAll() {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 
@@ -329,6 +356,9 @@ func (kv *KeyValueStore) DeleteAll() {
 
 // DeleteAllByCID clears all key-value pairs for a given context from the store.
 func (kv *KeyValueStore) DeleteAllByCID(ctxID string) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
@@ -341,6 +371,9 @@ func (kv *KeyValueStore) DeleteAllByCID(ctxID string) {
 
 // CleanSession clears all key-value pairs that are session valid for the given CID.
 func (kv *KeyValueStore) CleanSession(ctxID string) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
@@ -357,6 +390,9 @@ func (kv *KeyValueStore) CleanSession(ctxID string) {
 
 // AllKeys returns a slice of all keys (without the CIDs) in the store (ignoring context).
 func (kv *KeyValueStore) AllKeys() []string {
+	if kv == nil {
+		return []string{}
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -371,6 +407,9 @@ func (kv *KeyValueStore) AllKeys() []string {
 
 // AllKeysAndCIDs returns a slice of all keys in the store (ignoring context).
 func (kv *KeyValueStore) AllKeysAndCIDs() []string {
+	if kv == nil {
+		return []string{}
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -383,6 +422,9 @@ func (kv *KeyValueStore) AllKeysAndCIDs() []string {
 
 // Keys returns a slice of all keys (without the CID) in the store for a given context.
 func (kv *KeyValueStore) Keys(ctxID string) []string {
+	if kv == nil {
+		return []string{}
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 

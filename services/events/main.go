@@ -227,6 +227,10 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		cmn.DebugMsg(cmn.DbgLvlError, "loading agents configuration: %v", err)
 	}
 
+	// Reset Key-Value Store
+	cmn.KVStore = nil
+	cmn.KVStore = cmn.NewKeyValueStore()
+
 	// Initialize the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database...")
 	connected := false
