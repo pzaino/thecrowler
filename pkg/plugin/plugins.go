@@ -3088,7 +3088,7 @@ func addJSAPIKVGet(vm *otto.Otto) error {
 		}
 
 		jsObj := map[string]interface{}{
-			"value":      normalizeValues(val),
+			"value":      normalizeKVValues(val),
 			"properties": props,
 		}
 		result, _ := vm.ToValue(jsObj)
@@ -3212,8 +3212,8 @@ func addJSAPIIncrDecrKV(vm *otto.Otto) error {
 	})
 }
 
-// normalizeValues recursively normalizes Go types to a form Otto (JavaScript) can understand
-func normalizeValues(value interface{}) interface{} {
+// normalizeKVValues recursively normalizes Go types to a form Otto (JavaScript) can understand
+func normalizeKVValues(value interface{}) interface{} {
 	switch v := value.(type) {
 	case nil:
 		// Treat nil as an empty array
@@ -3222,7 +3222,7 @@ func normalizeValues(value interface{}) interface{} {
 	case []interface{}:
 		// Recursively normalize each element
 		for i, elem := range v {
-			v[i] = NormalizeValues(elem)
+			v[i] = normalizeKVValues(elem)
 		}
 		return v
 
@@ -3257,7 +3257,7 @@ func normalizeValues(value interface{}) interface{} {
 	case map[string]interface{}:
 		// Recursively normalize each map entry
 		for key, elem := range v {
-			v[key] = NormalizeValues(elem)
+			v[key] = normalizeKVValues(elem)
 		}
 		return v
 
@@ -3272,7 +3272,7 @@ func normalizeValues(value interface{}) interface{} {
 			default:
 				k = reflect.ValueOf(key).String()
 			}
-			m[k] = NormalizeValues(elem)
+			m[k] = normalizeKVValues(elem)
 		}
 		return m
 
