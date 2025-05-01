@@ -589,6 +589,15 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIKVSet(vm); err != nil {
 		return err
 	}
+	if err := addJSAPIDeleteKV(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIListKVKeys(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIIncrDecrKV(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -3124,6 +3133,82 @@ func addJSAPIKVSet(vm *otto.Otto) error {
 
 		_ = cmn.KVStore.Set(key, val, props)
 		return otto.TrueValue()
+	})
+}
+
+func addJSAPIDeleteKV(vm *otto.Otto) error {
+	return vm.Set("deleteKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+
+		// Optional third argument: deletePersistent (default: false)
+		deletePersistent := false
+		if call.Argument(2).IsDefined() {
+			flag, err := call.Argument(2).ToBoolean()
+			if err == nil {
+				deletePersistent = flag
+			}
+		}
+
+		err := cmn.KVStore.Delete(key, ctxID, deletePersistent)
+		if err != nil {
+			// Return JS object { status: "error", message: ... }
+			jsResult, _ := vm.ToValue(map[string]interface{}{
+				"status":  "error",
+				"message": err.Error(),
+			})
+			return jsResult
+		}
+
+		jsResult, _ := vm.ToValue(map[string]interface{}{
+			"status": "deleted",
+		})
+		return jsResult
+	})
+}
+
+func addJSAPIListKVKeys(vm *otto.Otto) error {
+	return vm.Set("listKVKeys", func(call otto.FunctionCall) otto.Value {
+		ctxID, _ := call.Argument(0).ToString()
+
+		keys := cmn.KVStore.Keys(ctxID)
+
+		jsKeys, err := vm.ToValue(keys)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return jsKeys
+	})
+}
+
+func addJSAPIIncrDecrKV(vm *otto.Otto) error {
+	err := vm.Set("incrKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+		step, _ := call.Argument(2).ToInteger()
+
+		val, err := cmn.KVStore.Increment(key, ctxID, step)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+		jsVal, _ := vm.ToValue(val)
+		return jsVal
+	})
+	if err != nil {
+		return err
+	}
+
+	return vm.Set("decrKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+		step, _ := call.Argument(2).ToInteger()
+
+		val, err := cmn.KVStore.Decrement(key, ctxID, step)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+		jsVal, _ := vm.ToValue(val)
+		return jsVal
 	})
 }
 

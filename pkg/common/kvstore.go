@@ -136,6 +136,47 @@ func (kv *KeyValueStore) Set(key string, value interface{}, properties Propertie
 	return nil
 }
 
+// Increment increments the value for a given key and context by a specified step and it's thread safe.
+func (kv *KeyValueStore) Increment(key, ctxID string, step int64) (int64, error) {
+	fullKey := createKeyWithCtx(key, ctxID)
+
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+
+	entry, exists := kv.store[fullKey]
+	if !exists {
+		entry = Entry{
+			Value:      step,
+			Properties: NewKVStoreEmptyProperty(),
+		}
+		kv.store[fullKey] = entry
+		return step, nil
+	}
+
+	var valInt int64
+	switch v := entry.Value.(type) {
+	case int:
+		valInt = int64(v)
+	case int64:
+		valInt = v
+	case float64:
+		valInt = int64(v)
+	default:
+		return 0, fmt.Errorf("value is not numeric")
+	}
+
+	valInt += step
+	entry.Value = valInt
+	kv.store[fullKey] = entry
+
+	return valInt, nil
+}
+
+// Decrement decrements the value for a given key and context by a specified step and it's thread safe.
+func (kv *KeyValueStore) Decrement(key, ctxID string, step int64) (int64, error) {
+	return kv.Increment(key, ctxID, -step)
+}
+
 // Get retrieves the value (which could be string or []string) and properties for a given key and context.
 func (kv *KeyValueStore) Get(key string, ctxID string) (interface{}, Properties, error) {
 	if kv == nil {
