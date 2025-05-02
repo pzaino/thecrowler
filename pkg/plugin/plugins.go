@@ -598,6 +598,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIIncrDecrKV(vm); err != nil {
 		return err
 	}
+	if err := addJSAPISleep(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -3280,6 +3283,19 @@ func normalizeKVValues(value interface{}) interface{} {
 		// Primitive types (string, bool, int, float) stay as is
 		return v
 	}
+}
+
+// addJSAPISleep adds a sleep(ms) function to the VM
+func addJSAPISleep(vm *otto.Otto) error {
+	return vm.Set("sleep", func(call otto.FunctionCall) otto.Value {
+		ms, err := call.Argument(0).ToInteger()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "sleep() - invalid argument: %v", err)
+			return otto.UndefinedValue()
+		}
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+		return otto.UndefinedValue()
+	})
 }
 
 func returnError(vm *otto.Otto, message string) otto.Value {
