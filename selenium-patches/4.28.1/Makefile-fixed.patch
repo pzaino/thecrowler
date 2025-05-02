@@ -1,0 +1,11 @@
+--- ./Makefile.orig	2025-05-02 03:14:06
++++ ./Makefile	2025-05-02 03:25:42
+@@ -129,7 +129,7 @@
+ 
+ base: prepare_resources gen_certs
+ 	cd ./Base && SEL_PASSWD=$(SEL_PASSWD) docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --build-arg VERSION=$(BASE_VERSION) --build-arg RELEASE=$(BASE_RELEASE) --build-arg AUTHORS=$(AUTHORS) \
+-	--build-arg MVN_SELENIUM_VERSION=$(MVN_SELENIUM_VERSION) --secret id=SEL_PASSWD --sbom=true --attest type=provenance,mode=max -t $(NAME)/base:$(TAG_VERSION) .
++	--build-arg MVN_SELENIUM_VERSION=$(MVN_SELENIUM_VERSION) --secret id=SEL_PASSWD -t $(NAME)/base:$(TAG_VERSION) .
+ 
+ base_nightly:
+ 	BASE_VERSION=$(BASE_VERSION_NIGHTLY) BASE_RELEASE=$(BASE_RELEASE_NIGHTLY) make base
