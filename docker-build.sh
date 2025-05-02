@@ -90,6 +90,9 @@ POSTGRES_IMAGE=""
 # (Not yet working!) 4.27.0
 export SELENIUM_VER_NUM="4.27.0"
 export SELENIUM_BUILDID="20241204"
+#export SELENIUM_VER_NUM="4.28.1"
+#export SELENIUM_BUILDID="20250202"
+
 
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
@@ -253,6 +256,10 @@ then
     then
         # We need to patch the Dockerfile_Base file for ARM64
         patch_file="Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
+        if [ ! -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+        then
+            patch_file="Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
+        fi
         echo "Patching Dockerfile in ./NodeChromium for ARM64: ${patch_file}"
         if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
         then
