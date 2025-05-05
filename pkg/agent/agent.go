@@ -1278,7 +1278,7 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Plugin plgParams: %v", plgParams)
 
 	// Execute the plugin
-	pRval, err := plg.Execute(wd, &dbHandler, 30, plgParams)
+	pRval, err := plg.Execute(wd, &dbHandler, 60, plgParams)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
