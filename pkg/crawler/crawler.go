@@ -30,6 +30,7 @@ import (
 	"image"
 	"image/png"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -2551,15 +2552,15 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	}
 
 	// Wait for Page to Load
-	delay := exi.GetFloat(ctx.config.Crawler.Interval)
-	if delay <= 0 {
-		delay = 3
+	interval := exi.GetFloat(ctx.config.Crawler.Interval)
+	if interval <= 0 {
+		interval = 3
 	}
-	ctx.Status.LastWait = delay
+	ctx.Status.LastWait = interval
 	if level > 0 {
-		_ = vdiSleep(ctx, delay) // Pause to let page load
+		_ = vdiSleep(ctx, interval) // Pause to let page load
 	} else {
-		_ = vdiSleep(ctx, (delay + 5)) // Pause to let Home page load
+		_ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
 	}
 
 	// Get Session Cookies
@@ -2612,6 +2613,13 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		} else {
 			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-mobile01"]
 		}
+	}
+
+	// Parse the User Agent string for {random_int}
+	if strings.Contains(userAgent, "{random_int}") {
+		// Generates a random integer in the range [0, 999)
+		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
+		userAgent = strings.Replace(userAgent, "{random_int}", strconv.Itoa(randInt), -1)
 	}
 
 	// Check if the browser is Chrome and CDP is available
