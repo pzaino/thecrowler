@@ -488,7 +488,7 @@ fi
 if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
     cat << EOF >> docker-compose.yml
 
-  jaeger:
+  crowler-jaeger:
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
 $(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
