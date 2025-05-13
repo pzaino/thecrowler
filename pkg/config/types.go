@@ -357,6 +357,7 @@ type AgentsConfig struct {
 	Token            string                 `yaml:"token" json:"token"`                         // Token for API authentication (e.g., API key or token, AWS access key ID)
 	Secret           string                 `yaml:"secret" json:"secret"`                       // Secret for API authentication (e.g., AWS secret access key)
 	Timeout          int                    `yaml:"timeout" json:"timeout"`                     // Timeout for API requests (in seconds)
+	AgentsTimeout    int                    `yaml:"agents_timeout" json:"agents_timeout"`       // Timeout for agent execution (in seconds)
 	PluginsTimeout   int                    `yaml:"plugins_timeout" json:"plugins_timeout"`     // Timeout for plugin execution (in seconds)
 	Type             string                 `yaml:"type" json:"type"`                           // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode          string                 `yaml:"sslmode" json:"sslmode"`                     // SSL mode for API connection (e.g., "disable")
@@ -452,8 +453,8 @@ type Config struct {
 
 // PluginsConfig represents the configuration for plugins
 type PluginsConfig struct {
-	PluginTimeout int            `json:"plugin_timeout" yaml:"plugin_timeout"` // Timeout for plugin execution (in seconds)
-	Plugins       []PluginConfig `json:"locations" yaml:"locations"`
+	PluginsTimeout int            `json:"plugins_timeout" yaml:"plugins_timeout"` // Timeout for plugin execution (in seconds)
+	Plugins        []PluginConfig `json:"locations" yaml:"locations"`
 }
 
 // ExternalDetectionConfig represents the configuration for external detection providers

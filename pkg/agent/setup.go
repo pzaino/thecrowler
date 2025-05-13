@@ -58,7 +58,7 @@ type Job struct {
 	TriggerType    string                   `yaml:"trigger_type" json:"trigger_type"`
 	TriggerName    string                   `yaml:"trigger_name" json:"trigger_name"`
 	Steps          []map[string]interface{} `yaml:"steps" json:"steps"`
-	Timeout        int                      `yaml:"timeout" json:"timeout"`
+	AgentsTimeout  int                      `yaml:"timeout" json:"timeout"`
 	PluginsTimeout int                      `yaml:"plugins_timeout" json:"plugins_timeout"`
 }
 
@@ -146,8 +146,8 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					// Add the global parameters to the configuration
 					if len(globalParams) > 0 {
 						for i := 0; i < len(agtConfigStorage.Jobs); i++ {
-							if agtConfigStorage.Jobs[i].Timeout == 0 {
-								agtConfigStorage.Jobs[i].Timeout = agtConfig.Timeout
+							if agtConfigStorage.Jobs[i].AgentsTimeout == 0 {
+								agtConfigStorage.Jobs[i].AgentsTimeout = agtConfig.AgentsTimeout
 							}
 							if agtConfigStorage.Jobs[i].PluginsTimeout == 0 {
 								agtConfigStorage.Jobs[i].PluginsTimeout = agtConfig.PluginsTimeout

@@ -638,7 +638,7 @@ func processEvent(event cdb.Event) {
 		// Execute the plugin
 		for _, plugin := range p {
 			// Execute the plugin
-			rval, err := plugin.Execute(nil, &dbHandler, config.Plugins.PluginTimeout, eventMap)
+			rval, err := plugin.Execute(nil, &dbHandler, config.Plugins.PluginsTimeout, eventMap)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
 			}

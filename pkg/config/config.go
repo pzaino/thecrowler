@@ -385,7 +385,7 @@ func NewConfig() *Config {
 			},
 		},
 		Plugins: PluginsConfig{
-			PluginTimeout: 15,
+			PluginsTimeout: 15,
 			Plugins: []PluginConfig{{
 				Type: cmn.LocalStr,
 				Path: []string{
@@ -395,7 +395,8 @@ func NewConfig() *Config {
 		},
 		Agents: []AgentsConfig{
 			{
-				Timeout:        90,
+				Timeout:        10,
+				AgentsTimeout:  90,
 				PluginsTimeout: 60,
 				Path: []string{
 					"./agents/*.yaml",
@@ -1010,8 +1011,8 @@ func (c *Config) validateRulesets() {
 
 func (c *Config) validatePlugins() {
 	// Check Plugins
-	if c.Plugins.PluginTimeout < 1 {
-		c.Plugins.PluginTimeout = 15
+	if c.Plugins.PluginsTimeout < 1 {
+		c.Plugins.PluginsTimeout = 15
 	}
 	for i := range c.Plugins.Plugins {
 		if strings.TrimSpace(c.Plugins.Plugins[i].Type) == "" {
@@ -1034,10 +1035,16 @@ func (c *Config) validateAgents() {
 			c.Agents[i].Type = strings.TrimSpace(c.Agents[i].Type)
 		}
 		if c.Agents[i].Timeout == 0 {
-			c.Agents[i].Timeout = 90
+			c.Agents[i].Timeout = 10
 		}
-		if c.Agents[i].Timeout < 30 {
-			c.Agents[i].Timeout = 30
+		if c.Agents[i].Timeout < 10 {
+			c.Agents[i].Timeout = 10
+		}
+		if c.Agents[i].AgentsTimeout == 0 {
+			c.Agents[i].AgentsTimeout = 90
+		}
+		if c.Agents[i].AgentsTimeout < 30 {
+			c.Agents[i].AgentsTimeout = 30
 		}
 		if c.Agents[i].PluginsTimeout == 0 {
 			c.Agents[i].PluginsTimeout = 60
