@@ -395,6 +395,8 @@ func NewConfig() *Config {
 		},
 		Agents: []AgentsConfig{
 			{
+				Timeout:        90,
+				PluginsTimeout: 60,
 				Path: []string{
 					"./agents/*.yaml",
 				},
@@ -527,6 +529,7 @@ func (c *Config) Validate() error {
 	c.validateNetworkInfo()
 	c.validateRulesets()
 	c.validatePlugins()
+	c.validateAgents()
 	c.validateExternalDetection()
 	c.validateOS()
 	c.validateDebugLevel()
@@ -1018,6 +1021,39 @@ func (c *Config) validatePlugins() {
 		}
 		if len(c.Plugins.Plugins[i].Path) == 0 && c.Plugins.Plugins[i].Type == cmn.LocalStr {
 			c.Plugins.Plugins[i].Path = []string{PluginsDefaultPath}
+		}
+	}
+}
+
+func (c *Config) validateAgents() {
+	// Check Agents
+	for i := range c.Agents {
+		if strings.TrimSpace(c.Agents[i].Type) == "" {
+			c.Agents[i].Type = cmn.LocalStr
+		} else {
+			c.Agents[i].Type = strings.TrimSpace(c.Agents[i].Type)
+		}
+		if c.Agents[i].Timeout == 0 {
+			c.Agents[i].Timeout = 90
+		}
+		if c.Agents[i].Timeout < 30 {
+			c.Agents[i].Timeout = 30
+		}
+		if c.Agents[i].PluginsTimeout == 0 {
+			c.Agents[i].PluginsTimeout = 60
+		}
+		if c.Agents[i].PluginsTimeout < 30 {
+			c.Agents[i].PluginsTimeout = 30
+		}
+		if len(c.Agents[i].Path) == 0 && c.Agents[i].Type == cmn.LocalStr {
+			c.Agents[i].Path = []string{"./agents/*.yaml"}
+		}
+		for j := range c.Agents[i].Path {
+			if strings.TrimSpace(c.Agents[i].Path[j]) == "" {
+				c.Agents[i].Path[j] = "./agents/*.yaml"
+			} else {
+				c.Agents[i].Path[j] = strings.TrimSpace(c.Agents[i].Path[j])
+			}
 		}
 	}
 }

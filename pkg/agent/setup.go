@@ -53,11 +53,13 @@ type JobConfig struct {
 
 // Job represents a job configuration
 type Job struct {
-	Name        string                   `yaml:"name" json:"name"`
-	Process     string                   `yaml:"process" json:"process"`
-	TriggerType string                   `yaml:"trigger_type" json:"trigger_type"`
-	TriggerName string                   `yaml:"trigger_name" json:"trigger_name"`
-	Steps       []map[string]interface{} `yaml:"steps" json:"steps"`
+	Name           string                   `yaml:"name" json:"name"`
+	Process        string                   `yaml:"process" json:"process"`
+	TriggerType    string                   `yaml:"trigger_type" json:"trigger_type"`
+	TriggerName    string                   `yaml:"trigger_name" json:"trigger_name"`
+	Steps          []map[string]interface{} `yaml:"steps" json:"steps"`
+	Timeout        int                      `yaml:"timeout" json:"timeout"`
+	PluginsTimeout int                      `yaml:"plugins_timeout" json:"plugins_timeout"`
 }
 
 // NewJobConfig creates a new job configuration
@@ -144,6 +146,12 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 					// Add the global parameters to the configuration
 					if len(globalParams) > 0 {
 						for i := 0; i < len(agtConfigStorage.Jobs); i++ {
+							if agtConfigStorage.Jobs[i].Timeout == 0 {
+								agtConfigStorage.Jobs[i].Timeout = agtConfig.Timeout
+							}
+							if agtConfigStorage.Jobs[i].PluginsTimeout == 0 {
+								agtConfigStorage.Jobs[i].PluginsTimeout = agtConfig.PluginsTimeout
+							}
 							for j := 0; j < len(agtConfigStorage.Jobs[i].Steps); j++ {
 								// Check if each Job's step has a params field
 								if _, ok := agtConfigStorage.Jobs[i].Steps[0]["params"]; !ok {

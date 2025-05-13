@@ -357,6 +357,7 @@ type AgentsConfig struct {
 	Token            string                 `yaml:"token" json:"token"`                         // Token for API authentication (e.g., API key or token, AWS access key ID)
 	Secret           string                 `yaml:"secret" json:"secret"`                       // Secret for API authentication (e.g., AWS secret access key)
 	Timeout          int                    `yaml:"timeout" json:"timeout"`                     // Timeout for API requests (in seconds)
+	PluginsTimeout   int                    `yaml:"plugins_timeout" json:"plugins_timeout"`     // Timeout for plugin execution (in seconds)
 	Type             string                 `yaml:"type" json:"type"`                           // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode          string                 `yaml:"sslmode" json:"sslmode"`                     // SSL mode for API connection (e.g., "disable")
 	Refresh          int                    `yaml:"refresh" json:"refresh"`                     // Refresh interval for the ruleset (in seconds)
