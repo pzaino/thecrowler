@@ -2735,7 +2735,7 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to connect to CDP: %v", err)
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Close the connection when done
 
 	// Create a CDP client
 	cdpClient := cdp.NewClient(conn)
