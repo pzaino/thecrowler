@@ -39,7 +39,7 @@ func (rg *RuleGroup) SetEnv(CtxID string) {
 			properties := rg.Env[i].Properties
 
 			// Set the environment properties
-			envProperties := cmn.NewKVStoreProperty(properties.Persistent, properties.Static, properties.SessionValid, properties.Source, CtxID, properties.Type)
+			envProperties := cmn.NewKVStoreProperty(properties.Persistent, properties.Static, properties.SessionValid, properties.Shared, properties.Source, CtxID, properties.Type)
 			// Set the environment variable
 			err := cmn.KVStore.Set(key, values, envProperties)
 			if err != nil {
