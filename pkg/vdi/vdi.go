@@ -4,6 +4,8 @@ package vdi
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -445,6 +447,13 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Get the user agent string from the UserAgentsDB
 	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser)
+
+	// Parse the User Agent string for {random_int}
+	if strings.Contains(userAgent, "{random_int}") {
+		// Generates a random integer in the range [0, 999)
+		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
+		userAgent = strings.ReplaceAll(userAgent, "{random_int}", strconv.Itoa(randInt))
+	}
 
 	// Fallback in case the user agent is not found in the UserAgentsDB
 	if userAgent == "" {

@@ -2619,7 +2619,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	if strings.Contains(userAgent, "{random_int}") {
 		// Generates a random integer in the range [0, 999)
 		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.Replace(userAgent, "{random_int}", strconv.Itoa(randInt), -1)
+		userAgent = strings.ReplaceAll(userAgent, "{random_int}", strconv.Itoa(randInt))
 	}
 
 	// Check if the browser is Chrome and CDP is available
