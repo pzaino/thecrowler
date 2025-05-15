@@ -2624,18 +2624,22 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 
 	// Check if the browser is Chrome and CDP is available
 	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
-		// Enable the Network domain
-		_, _ = (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
-		// Set the User-Agent using CDP
-		_, err = (*wd).ExecuteChromeDPCommand("Network.setUserAgentOverride", map[string]interface{}{
-			"userAgent": userAgent,
-			"platform":  ctx.config.Crawler.Platform,
-		})
-		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
-			//return nil
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlError, "[CDP] Failed to change UserAgent using CDP: %v", err)
+		// Try with changeUserAgentCDP
+		err := changeUserAgentCDP(ctx, userAgent)
+		if err != nil {
+			// Enable the Network domain
+			_, _ = (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+			// Set the User-Agent using CDP
+			_, err = (*wd).ExecuteChromeDPCommand("Network.setUserAgentOverride", map[string]interface{}{
+				"userAgent": userAgent,
+				"platform":  ctx.config.Crawler.Platform,
+			})
+			if err == nil {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
+				//return nil
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "[CDP] Failed to change UserAgent using CDP: %v", err)
+			}
 		}
 	}
 
@@ -2731,12 +2735,12 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 	defer cancel()
 
 	// Get WebSocket URL from Selenium-controlled browser
-	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":9222/devtools/browser/<session-id>"
+	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":9222/devtools/browser/" + pctx.wd.SessionID()
 
 	// Dial the Chrome Debugger Protocol
 	conn, err := rpcc.DialContext(ctx, wsURL)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to connect to CDP: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to connect to CDP via 'ws': %v", err)
 		return err
 	}
 	defer conn.Close() //nolint:errcheck // Close the connection when done
@@ -2747,7 +2751,7 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 	// Enable Network domain
 	err = cdpClient.Network.Enable(ctx, nil)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to enable Network domain via 'ws': %v", err)
 		return err
 	}
 
@@ -2756,11 +2760,11 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 		UserAgent: userAgent,
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using CDP via 'ws': %v", err)
 		return err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Successfully changed User-Agent to: %s", userAgent)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Successfully changed UserAgent to: '%s', using CDP via 'ws'", userAgent)
 	return nil
 }
 
