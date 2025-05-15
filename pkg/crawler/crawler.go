@@ -2735,7 +2735,9 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 	defer cancel()
 
 	// Get WebSocket URL from Selenium-controlled browser
-	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":9222/devtools/browser/" + pctx.wd.SessionID()
+	port := fmt.Sprintf("%d", 9222+pctx.SelID)
+	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":" + port + "/devtools/browser/" + pctx.wd.SessionID()
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Connecting to CDP via 'ws': %s", wsURL)
 
 	// Dial the Chrome Debugger Protocol
 	conn, err := rpcc.DialContext(ctx, wsURL)
