@@ -2623,16 +2623,20 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	}
 
 	// Check if the browser is Chrome and CDP is available
-	if ctx.config.Selenium[ctx.SelID].Type == "chrome" {
+	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
+		// Enable the Network domain
+		_, _ = (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+		// Set the User-Agent using CDP
 		_, err = (*wd).ExecuteChromeDPCommand("Network.setUserAgentOverride", map[string]interface{}{
 			"userAgent": userAgent,
 			"platform":  ctx.config.Crawler.Platform,
 		})
 		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed via CDP to: %s", userAgent)
-			return nil
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
+			//return nil
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlError, "[CDP] Failed to change UserAgent using CDP: %v", err)
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to change User-Agent using CDP: %v", err)
 	}
 
 	// Fallback: Override userAgent using JavaScript injection
@@ -2647,7 +2651,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed via JavaScript to: %s", userAgent)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "UserAgent changed via JavaScript to: %s", userAgent)
 	return nil
 }
 
