@@ -2505,9 +2505,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 
 	// Change the User Agent (if needed)
 	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-		err = changeUserAgent(&wd, ctx)
+		err = changeUserAgent(&(ctx.wd), ctx)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "changing User Agent: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
 		}
 	}
 
