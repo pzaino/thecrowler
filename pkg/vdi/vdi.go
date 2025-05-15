@@ -482,11 +482,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	if browser == BrowserChrome || browser == BrowserChromium {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
 		// Set the CDP port
-		//args = append(args, "--remote-debugging-port=9222")
+		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		//args = append(args, "--remote-debugging-address=0.0.0.0")
+		args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
-		//args = append(args, "--auto-open-devtools-for-tabs")
+		args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
 	}
 
