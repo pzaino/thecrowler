@@ -410,6 +410,55 @@ func StopSelenium(sel *selenium.Service) error {
 	return err
 }
 
+// ResetVDI resets the Selenium WebDriver and reinitializes the session with a fresh instance
+// ResetVDI restarts the Selenium session for the current VDI instance only
+func ResetVDI(ctx ProcessContextInterface, browserType int) error {
+	if ctx == nil {
+		return fmt.Errorf("ProcessContext is nil")
+	}
+
+	ctx.GetVDIOperationMutex().Lock()
+	defer ctx.GetVDIOperationMutex().Unlock()
+
+	// get current session
+	vdi := ctx.GetWebDriver()
+
+	// Quit current session
+	(*vdi).Close()
+	(*vdi).Quit()
+
+	instance := ctx.GetVDIInstance()
+
+	// Stop the current service
+	/*
+		if instance.Service != nil {
+			err := instance.Service.Stop()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "ResetVDI: failed to stop Selenium service: %v", err)
+			}
+		}
+
+		// Start new Selenium service
+		service, err := NewVDIService(instance.Config)
+		if err != nil {
+			return fmt.Errorf("ResetVDI: failed to start Selenium service: %v", err)
+		}
+		instance.Service = service
+	*/
+
+	// Reconnect WebDriver
+	wd, err := ConnectVDI(ctx, *instance, browserType)
+	if err != nil {
+		return fmt.Errorf("ResetVDI: failed to reconnect to VDI: %v", err)
+	}
+
+	*ctx.GetWebDriver() = wd
+	ctx.SetVDIClosedFlag(false)
+	ctx.SetVDIReturnedFlag(false)
+
+	return nil
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -480,6 +529,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// CDP COnfig for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--no-first-run")
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
 		// Set the CDP port
 		args = append(args, "--remote-debugging-port=9222")

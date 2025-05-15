@@ -2478,8 +2478,15 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		return wd, "", nil
 	}
 
+	// Reset the Selenium session for a clean browser with new User-Agent
+	err := vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
+	}
+	wd = *ctx.GetWebDriver()
+
 	// check if webdriver session is still good, if not open a new one
-	_, err := wd.CurrentURL()
+	_, err = wd.CurrentURL()
 	if err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
 			// If the session is not found, create a new one
