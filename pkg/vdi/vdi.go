@@ -486,7 +486,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// Set the CDP host
 		args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
-		args = append(args, "--auto-open-devtools-for-tabs")
+		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
 	}
 
