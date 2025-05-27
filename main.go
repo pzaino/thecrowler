@@ -375,7 +375,15 @@ func crawlSources(wb *WorkBlock) {
 
 			var currentStatusIdx *uint64
 
-			for source := range sourceChan {
+			for {
+				// Fetch next available source in the queue:
+				source, ok := <-sourceChan
+				if !ok {
+					// Channel is closed, exit the goroutine
+					cmn.DebugMsg(cmn.DbgLvlDebug, "Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
+					return
+				}
+
 				var statusIdx uint64
 				if currentStatusIdx == nil {
 					statusIdx = getAvailableOrNewPipelineStatus(wb)
