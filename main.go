@@ -365,7 +365,8 @@ func crawlSources(wb *WorkBlock) {
 		}
 	}(wb.PipelineStatus)
 
-	vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
+	//vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
+	vdiCount := uint64(maxPipelines)
 
 	for vdiID := uint64(0); vdiID < vdiCount; vdiID++ {
 		wg.Add(1)
