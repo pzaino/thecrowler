@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -176,7 +177,7 @@ func performDBMaintenance(db cdb.Handler) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
+func retrieveAvailableSources(db cdb.Handler, max_sources int) ([]cdb.Source, error) {
 	// Check DB connection:
 	if err := db.CheckConnection(config); err != nil {
 		return nil, fmt.Errorf("error pinging the database: %w", err)
@@ -202,7 +203,10 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	// Execute the query within the transaction
 	// TODO: Add the intervals to the query to allow a user to decide how often to crawl a source etc.
 	//       replace the empty strings here with: last_ok_update, last_error, regular_crawling, processing_timeout
-	rows, err := tx.Query(query, config.Crawler.MaxSources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
+	if max_sources <= 0 {
+		max_sources = config.Crawler.MaxSources
+	}
+	rows, err := tx.Query(query, max_sources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {
@@ -269,7 +273,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		configMutex.RLock()
 
 		// Retrieve the sources to crawl
-		sourcesToCrawl, err := retrieveAvailableSources(*db)
+		sourcesToCrawl, err := retrieveAvailableSources(*db, 0)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "retrieving sources: %v", err)
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
@@ -338,17 +342,17 @@ func performDatabaseMaintenance(db cdb.Handler) {
 }
 
 func crawlSources(wb *WorkBlock) {
-	sourceChan := make(chan cdb.Source)
+	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 	var wg sync.WaitGroup
+	var batchCompleted atomic.Bool // import "sync/atomic"
 
-	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec // it's safe here.
+	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
 
 	// Start a goroutine to log the status periodically
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			// Check if all the pipelines have completed
 			pipelinesRunning := false
 			for _, status := range *plStatus {
 				if status.PipelineRunning == 1 {
@@ -358,24 +362,20 @@ func crawlSources(wb *WorkBlock) {
 			}
 			logStatus(plStatus)
 			if !pipelinesRunning {
-				// All pipelines have completed
-				// Stop the ticker
 				break
 			}
 		}
 	}(wb.PipelineStatus)
 
-	// Control how many VDI workers are active
 	vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
 
-	// Launch VDI workers
 	for vdiID := uint64(0); vdiID < vdiCount; vdiID++ {
 		wg.Add(1)
 
 		go func(vdiSlot uint64) {
 			defer wg.Done()
 
-			var currentStatusIdx *uint64 = nil
+			var currentStatusIdx *uint64
 
 			for source := range sourceChan {
 				var statusIdx uint64
@@ -385,70 +385,74 @@ func crawlSources(wb *WorkBlock) {
 					statusIdx = *currentStatusIdx
 				}
 
-				// Ensure we have enough capacity
-				if int(statusIdx) >= len(*wb.PipelineStatus) {
+				if int64(statusIdx) >= int64(len(*wb.PipelineStatus)) {
 					*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{})
 				}
 
-				// ⏱️ Reset the pipeline status for this source
 				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
 					PipelineID:      statusIdx,
 					Source:          source.URL,
 					SourceID:        source.ID,
-					VDIID:           "", // Filled in by `startCrawling`
+					VDIID:           "",
 					StartTime:       now,
-					EndTime:         time.Time{}, // explicitly reset
-					PipelineRunning: 1,           // Filled here to be safe
-					CrawlingRunning: 0,           // Filled in elsewhere
-					NetInfoRunning:  0,           // Will be updated by NetInfo task
-					HTTPInfoRunning: 0,           // Will be updated by HTTPInfo task
-					TotalPages:      0,
-					TotalErrors:     0,
-					TotalLinks:      0,
-					TotalSkipped:    0,
-					TotalDuplicates: 0,
-					TotalScraped:    0,
-					TotalActions:    0,
-					LastWait:        0,
-					LastDelay:       0,
-					DetectedState:   0,
+					EndTime:         time.Time{},
+					PipelineRunning: 1,
 				}
 
 				var crawlWG sync.WaitGroup
-
-				// 🌍 Launch crawling, will return when web crawling is done
 				startCrawling(wb, &crawlWG, source, statusIdx)
-
-				// Wait for the crawling to finish
 				crawlWG.Wait()
 
-				// 🔍 Check if NetInfo or HTTPInfo is still running — don't reuse if they are
 				status := &(*wb.PipelineStatus)[statusIdx]
 				if status.NetInfoRunning == 1 || status.HTTPInfoRunning == 1 {
 					currentStatusIdx = nil
 				} else {
 					currentStatusIdx = &statusIdx
 				}
+
+				// Check if we should try refilling
+				if !batchCompleted.Load() && wb.sel.Available() > len(sourceChan) {
+					newSources, err := monitorBatchAndRefill(wb)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
+					} else if len(newSources) == 0 {
+						batchCompleted.Store(true)
+						cmn.DebugMsg(cmn.DbgLvlDebug, "No more sources to refill — batch marked as completed.")
+					} else {
+						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
+						for _, src := range newSources {
+							sourceChan <- src
+						}
+					}
+				}
 			}
 		}(vdiID)
 	}
 
-	// Feed sources into the pipeline dynamically
 	for _, source := range *wb.sources {
 		sourceChan <- source
 	}
 	close(sourceChan)
 
-	// Wait for all pipelines to complete their work
 	wg.Wait()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
-	// Reset all Pipelines status
 	for idx := uint64(0); idx < maxPipelines; idx++ {
 		(*wb.PipelineStatus)[idx].PipelineRunning = 0
 	}
+}
+
+func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
+	if wb.sel.Available() == 0 {
+		return nil, nil
+	}
+	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available())
+	if err != nil {
+		return nil, err
+	}
+	return newSources, nil
 }
 
 func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
@@ -969,18 +973,25 @@ func updateDebugLevel(newLevel string) {
 	switch newLevel {
 	case "debug":
 		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug")
 	case "debug1":
 		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug1")
 	case "debug2":
 		config.DebugLevel = 2
+		cmn.SetDebugLevelFromString("debug2")
 	case "debug3":
 		config.DebugLevel = 3
+		cmn.SetDebugLevelFromString("debug3")
 	case "debug4":
 		config.DebugLevel = 4
+		cmn.SetDebugLevelFromString("debug4")
 	case "debug5":
 		config.DebugLevel = 5
+		cmn.SetDebugLevelFromString("debug5")
 	case "info":
 		config.DebugLevel = 0
+		cmn.SetDebugLevelFromString("info")
 	default:
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, invalid debug level specified: %s", newLevel)
 		return

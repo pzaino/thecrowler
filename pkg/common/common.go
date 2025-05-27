@@ -129,6 +129,32 @@ func GetDebugLevel() DbgLevel {
 	return debugLevel
 }
 
+// SetDebugLevelFromString sets the debug level based on a string input
+func SetDebugLevelFromString(dbgLvlStr string) {
+	switch strings.ToLower(strings.TrimSpace(dbgLvlStr)) {
+	case "fatal":
+		SetDebugLevel(DbgLvlFatal)
+	case "error":
+		SetDebugLevel(DbgLvlError)
+	case "info":
+		SetDebugLevel(DbgLvlInfo)
+	case "debug":
+		SetDebugLevel(DbgLvlDebug)
+	case "debug1":
+		SetDebugLevel(DbgLvlDebug1)
+	case "debug2":
+		SetDebugLevel(DbgLvlDebug2)
+	case "debug3":
+		SetDebugLevel(DbgLvlDebug3)
+	case "debug4":
+		SetDebugLevel(DbgLvlDebug4)
+	case "debug5":
+		SetDebugLevel(DbgLvlDebug5)
+	default:
+		SetDebugLevel(DbgLvlInfo) // Default to Info level
+	}
+}
+
 // DebugMsg is a function that prints debug information
 func DebugMsg(dbgLvl DbgLevel, msg string, args ...interface{}) {
 	// For always-log messages (Info, Warning, Error, Fatal)

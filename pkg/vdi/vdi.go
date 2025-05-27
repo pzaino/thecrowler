@@ -309,6 +309,23 @@ func (p *Pool) Release(index int) {
 	}
 }
 
+// Available returns the number of available VDI instances in the pool
+func (p *Pool) Available() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	available := 0
+	for _, busy := range p.busy {
+		if !busy {
+			available++
+		}
+	}
+	return available
+}
+
 // SeleniumInstance holds a Selenium service and its configuration
 type SeleniumInstance struct {
 	Service *Service
