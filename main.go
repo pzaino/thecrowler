@@ -438,7 +438,6 @@ func crawlSources(wb *WorkBlock) {
 	for _, source := range *wb.sources {
 		sourceChan <- source
 	}
-	close(sourceChan)
 
 	wg.Wait()
 
