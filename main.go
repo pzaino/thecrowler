@@ -201,8 +201,6 @@ func retrieveAvailableSources(db cdb.Handler, max_sources int) ([]cdb.Source, er
 	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query within the transaction
-	// TODO: Add the intervals to the query to allow a user to decide how often to crawl a source etc.
-	//       replace the empty strings here with: last_ok_update, last_error, regular_crawling, processing_timeout
 	if max_sources <= 0 {
 		max_sources = config.Crawler.MaxSources
 	}
