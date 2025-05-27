@@ -365,6 +365,45 @@ func crawlSources(wb *WorkBlock) {
 		}
 	}(wb.PipelineStatus)
 
+	// Refill go routine:
+	go func() {
+		inactivityTimeout := 30 * time.Second
+		timer := time.NewTimer(inactivityTimeout)
+
+		defer func() {
+			close(sourceChan)
+			cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
+		}()
+
+		for {
+			select {
+			case <-timer.C:
+				// Timeout expired → no new sources, close pipeline
+				return
+			default:
+				refillLock.Lock()
+				if wb.sel.Available() > len(sourceChan) {
+					newSources, err := monitorBatchAndRefill(wb)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
+					} else if len(newSources) > 0 {
+						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
+						for _, src := range newSources {
+							sourceChan <- src
+						}
+						// Reset the timer because we received new sources
+						if !timer.Stop() {
+							<-timer.C
+						}
+						timer.Reset(inactivityTimeout)
+					}
+				}
+				refillLock.Unlock()
+				time.Sleep(2 * time.Second) // Avoid tight loop
+			}
+		}
+	}()
+
 	//vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
 	vdiCount := uint64(maxPipelines)
 
@@ -417,21 +456,6 @@ func crawlSources(wb *WorkBlock) {
 				} else {
 					currentStatusIdx = &statusIdx
 				}
-
-				// Check if we should try refilling
-				refillLock.Lock() // !batchCompleted.Load() &&
-				if wb.sel.Available() > len(sourceChan) {
-					newSources, err := monitorBatchAndRefill(wb)
-					if err != nil {
-						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
-					} else if len(newSources) > 0 {
-						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
-						for _, src := range newSources {
-							sourceChan <- src
-						}
-					}
-				}
-				refillLock.Unlock()
 			}
 		}(vdiID)
 	}
