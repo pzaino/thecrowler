@@ -100,30 +100,31 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
-	SelID             int                    // The Selenium ID
-	SelInstance       vdi.SeleniumInstance   // The Selenium instance
-	WG                *sync.WaitGroup        // The Caller's WaitGroup
-	fpIdx             uint64                 // The index of the source page after it's indexed
-	config            cfg.Config             // The configuration object (from the config package)
-	db                *cdb.Handler           // The database handler
-	wd                vdi.WebDriver          // The Selenium WebDriver
-	linksMutex        sync.Mutex             // Mutex to protect the newLinks slice
-	newLinks          []LinkItem             // The new links found during the crawling process
-	source            *cdb.Source            // The source to crawl
-	wg                sync.WaitGroup         // WaitGroup to wait for all page workers to finish
-	wgNetInfo         sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel               *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
-	ni                *neti.NetInfo          // The network information of the web page
-	hi                *httpi.HTTPDetails     // The HTTP header information of the web page
-	re                *rules.RuleEngine      // The rule engine
-	getURLMutex       sync.Mutex             // Mutex to protect the getURLContent function
-	visitedLinks      map[string]bool        // Map to keep track of visited links
-	userURLPatterns   []string               // User-defined URL patterns
-	Status            *Status                // Status of the crawling process
-	CollectedCookies  map[string]interface{} // Collected cookies
-	VDIReturned       bool                   // Flag to indicate if the VDI instance was returned
-	SelClosed         bool                   // Flag to indicate if the Selenium instance was closed
-	VDIOperationMutex sync.Mutex             // Mutex to protect the VDI operations
+	SelID                int                    // The Selenium ID
+	SelInstance          vdi.SeleniumInstance   // The Selenium instance
+	WG                   *sync.WaitGroup        // The Caller's WaitGroup
+	fpIdx                uint64                 // The index of the source page after it's indexed
+	config               cfg.Config             // The configuration object (from the config package)
+	db                   *cdb.Handler           // The database handler
+	wd                   vdi.WebDriver          // The Selenium WebDriver
+	linksMutex           sync.Mutex             // Mutex to protect the newLinks slice
+	newLinks             []LinkItem             // The new links found during the crawling process
+	source               *cdb.Source            // The source to crawl
+	wg                   sync.WaitGroup         // WaitGroup to wait for all page workers to finish
+	wgNetInfo            sync.WaitGroup         // WaitGroup to wait for network info to finish
+	sel                  *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
+	ni                   *neti.NetInfo          // The network information of the web page
+	hi                   *httpi.HTTPDetails     // The HTTP header information of the web page
+	re                   *rules.RuleEngine      // The rule engine
+	getURLMutex          sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks         map[string]bool        // Map to keep track of visited links
+	userURLPatterns      []string               // User-defined URL patterns
+	userURLBlockPatterns []string               // User-defined URL block patterns
+	Status               *Status                // Status of the crawling process
+	CollectedCookies     map[string]interface{} // Collected cookies
+	VDIReturned          bool                   // Flag to indicate if the VDI instance was returned
+	SelClosed            bool                   // Flag to indicate if the Selenium instance was closed
+	VDIOperationMutex    sync.Mutex             // Mutex to protect the VDI operations
 }
 
 // GetContextID returns a unique context ID for the ProcessContext
@@ -252,6 +253,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Extract URLs patterns the user wants to include/exclude
 	processCtx.userURLPatterns = make([]string, 0)
+	processCtx.userURLBlockPatterns = make([]string, 0)
 
 	// Navigate the hierarchy: execution_plan -> conditions -> url_patterns
 	if executionPlanRaw, ok := sourceConfig["execution_plan"]; ok {
@@ -267,6 +269,16 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 									for _, pattern := range urlPatterns {
 										if strPattern, ok := pattern.(string); ok {
 											processCtx.userURLPatterns = append(processCtx.userURLPatterns, strPattern)
+										}
+									}
+								}
+							}
+							if urlBlockPatternsRaw, ok := conditions["url_block_patterns"]; ok {
+								if urlBlockPatterns, ok := urlBlockPatternsRaw.([]interface{}); ok {
+									// Convert []interface{} to []string
+									for _, pattern := range urlBlockPatterns {
+										if strPattern, ok := pattern.(string); ok {
+											processCtx.userURLBlockPatterns = append(processCtx.userURLBlockPatterns, strPattern)
 										}
 									}
 								}
@@ -2531,6 +2543,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 
 	}
 
+	// Block URLs (if any)
+	err = blockCDPURLs(&wd, ctx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
+	}
+
 	// Navigate to a page and interact with elements.
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -2607,6 +2625,37 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	*/
 
 	return wd, docType, nil
+}
+
+func blockCDPURLs(wd *vdi.WebDriver, ctx *ProcessContext) error {
+	// Check if we have any blocked URLs configured
+	if len((*ctx).userURLBlockPatterns) == 0 {
+		return nil // No patterns to block
+	}
+
+	// Extract patterns from the configuration
+	patterns := make([]string, 0)
+	for _, pattern := range (*ctx).userURLBlockPatterns {
+		if pattern != "" {
+			patterns = append(patterns, pattern)
+		}
+	}
+
+	// First: enable the Network domain
+	_, err := (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+	if err != nil {
+		return fmt.Errorf("failed to enable Network domain: %w", err)
+	}
+
+	// Then: set the blocked URL patterns
+	_, err = (*wd).ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
+		"urls": patterns,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set blocked URLs: %w", err)
+	}
+
+	return nil
 }
 
 func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
