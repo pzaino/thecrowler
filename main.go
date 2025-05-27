@@ -33,7 +33,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -342,8 +341,8 @@ func performDatabaseMaintenance(db cdb.Handler) {
 func crawlSources(wb *WorkBlock) {
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 	var wg sync.WaitGroup
-	var batchCompleted atomic.Bool // import "sync/atomic"
-	var refillLock sync.Mutex      // Mutex to protect the refill operation
+	//var batchCompleted atomic.Bool // import "sync/atomic"
+	var refillLock sync.Mutex // Mutex to protect the refill operation
 
 	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
 
@@ -411,15 +410,12 @@ func crawlSources(wb *WorkBlock) {
 				}
 
 				// Check if we should try refilling
-				refillLock.Lock()
-				if !batchCompleted.Load() && wb.sel.Available() > len(sourceChan) {
+				refillLock.Lock() // !batchCompleted.Load() &&
+				if wb.sel.Available() > len(sourceChan) {
 					newSources, err := monitorBatchAndRefill(wb)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
-					} else if len(newSources) == 0 {
-						batchCompleted.Store(true)
-						cmn.DebugMsg(cmn.DbgLvlDebug, "No more sources to refill — batch marked as completed.")
-					} else {
+					} else if len(newSources) > 0 {
 						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
 						for _, src := range newSources {
 							sourceChan <- src
