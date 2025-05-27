@@ -343,6 +343,7 @@ func crawlSources(wb *WorkBlock) {
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 	var wg sync.WaitGroup
 	var batchCompleted atomic.Bool // import "sync/atomic"
+	var refillLock sync.Mutex      // Mutex to protect the refill operation
 
 	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
 
@@ -410,6 +411,7 @@ func crawlSources(wb *WorkBlock) {
 				}
 
 				// Check if we should try refilling
+				refillLock.Lock()
 				if !batchCompleted.Load() && wb.sel.Available() > len(sourceChan) {
 					newSources, err := monitorBatchAndRefill(wb)
 					if err != nil {
@@ -424,6 +426,7 @@ func crawlSources(wb *WorkBlock) {
 						}
 					}
 				}
+				refillLock.Unlock()
 			}
 		}(vdiID)
 	}
