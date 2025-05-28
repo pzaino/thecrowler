@@ -2486,28 +2486,31 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	if wd == nil {
 		return nil, "", errors.New("WebDriver is nil")
 	}
-
 	if ctx.VDIReturned {
 		// If the VDI session is returned, return the WebDriver
 		return wd, "", nil
 	}
 
-	// Reset the Selenium session for a clean browser with new User-Agent
-	err := vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
-	}
-	wd = *ctx.GetWebDriver()
+	var err error
 
-	// check if webdriver session is still good, if not open a new one
-	_, err = wd.CurrentURL()
-	if err != nil {
-		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
-			// If the session is not found, create a new one
-			err = ctx.ConnectToVDI((*ctx).SelInstance)
-			wd = ctx.wd
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+	// Reset the Selenium session for a clean browser with new User-Agent
+	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
+		}
+		wd = *ctx.GetWebDriver()
+	} else {
+		// check if webdriver session is still good, if not open a new one
+		_, err = wd.CurrentURL()
+		if err != nil {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
+				// If the session is not found, create a new one
+				err = ctx.ConnectToVDI((*ctx).SelInstance)
+				wd = ctx.wd
+				if err != nil {
+					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+				}
 			}
 		}
 	}
