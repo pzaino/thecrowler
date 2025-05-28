@@ -407,7 +407,16 @@ func crawlSources(wb *WorkBlock) {
 							<-timer.C
 						}
 						timer.Reset(inactivityTimeout)
-
+					} else {
+						// no data returned, but are we still collecting from sources?
+						last := lastActivity.Load().(time.Time)
+						if time.Since(last) < (1 * time.Minute) {
+							// Yes, so reset the timer anyway
+							if !timer.Stop() {
+								<-timer.C
+							}
+							timer.Reset(inactivityTimeout)
+						}
 					}
 				}
 				refillLock.Unlock()
