@@ -389,7 +389,7 @@ func crawlSources(wb *WorkBlock) {
 				return
 			default:
 				refillLock.Lock()
-				if wb.sel.Available() > len(sourceChan) {
+				if wb.sel.Available() > 0 && len(sourceChan) < int(wb.Config.Crawler.MaxSources) {
 					newSources, err := monitorBatchAndRefill(wb)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
