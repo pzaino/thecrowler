@@ -2518,18 +2518,26 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		return nil, "", errors.New("URL is empty")
 	}
 
+	// Change the User Agent (if needed)
+	/*
+		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+			err = changeUserAgent(&(ctx.wd), ctx)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
+			}
+		}
+	*/
+
 	// Reinforce Browser Settings
 	err = vdi.ReinforceBrowserSettings(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
 	}
 
-	// Change the User Agent (if needed)
-	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-		err = changeUserAgent(&(ctx.wd), ctx)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
-		}
+	// Block URLs if any (URLs firewall)
+	err = blockCDPURLs(&wd, ctx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
 	}
 
 	// Add XHR Hook
@@ -2542,13 +2550,6 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		} /*else {
 			cancel, collectedRequests = startCDPLogging(wd)
 		}*/
-
-	}
-
-	// Block URLs (if any)
-	err = blockCDPURLs(&wd, ctx)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
 	}
 
 	// Navigate to a page and interact with elements.
@@ -2629,6 +2630,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 	*/
 
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	return wd, docType, nil
 }
 
@@ -3397,6 +3401,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			delay := exi.GetFloat(processCtx.config.Crawler.Delay)
 			processCtx.Status.LastDelay = delay
 			_ = vdiSleep(processCtx, delay)
+		}
+		if processCtx.RefreshCrawlingTimer != nil {
+			processCtx.RefreshCrawlingTimer()
 		}
 		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)

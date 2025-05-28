@@ -408,7 +408,7 @@ func crawlSources(wb *WorkBlock) {
 					}
 				}
 				refillLock.Unlock()
-				time.Sleep(2 * time.Second) // Avoid tight loop
+				time.Sleep(3 * time.Second) // Avoid tight loop
 			}
 		}
 	}()
@@ -422,7 +422,7 @@ func crawlSources(wb *WorkBlock) {
 			select {
 			case <-ticker.C:
 				last := lastActivity.Load().(time.Time)
-				if time.Since(last) > 5*time.Minute {
+				if time.Since(last) > (5 * time.Minute) {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					close(sourceChan)
 					return
