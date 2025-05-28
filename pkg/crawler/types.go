@@ -41,6 +41,7 @@ type Pars struct {
 	Sources *[]cdb.Source
 	Index   uint64
 	Status  *Status
+	Refresh func()
 }
 
 // Status holds the status of the crawler

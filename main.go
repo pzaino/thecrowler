@@ -431,6 +431,11 @@ func crawlSources(wb *WorkBlock) {
 		}
 	}()
 
+	// Function to refresh the last activity timestamp (from external functions)
+	refreshLastActivity := func() {
+		lastActivity.Store(time.Now())
+	}
+
 	//vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
 	vdiCount := uint64(maxPipelines)
 
@@ -475,7 +480,7 @@ func crawlSources(wb *WorkBlock) {
 				}
 
 				var crawlWG sync.WaitGroup
-				startCrawling(wb, &crawlWG, source, statusIdx)
+				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
 
 				status := &(*wb.PipelineStatus)[statusIdx]
@@ -529,7 +534,7 @@ func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
 	return newIdx
 }
 
-func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64) {
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64, refresh func()) {
 	if wg != nil {
 		wg.Add(1)
 	}
@@ -545,6 +550,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 		Sources: wb.sources,
 		Index:   idx,
 		Status:  &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
+		Refresh: refresh,
 	}
 
 	// Start a goroutine to crawl the website

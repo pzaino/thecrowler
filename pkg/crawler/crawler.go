@@ -125,6 +125,7 @@ type ProcessContext struct {
 	VDIReturned          bool                   // Flag to indicate if the VDI instance was returned
 	SelClosed            bool                   // Flag to indicate if the Selenium instance was closed
 	VDIOperationMutex    sync.Mutex             // Mutex to protect the VDI operations
+	RefreshCrawlingTimer func()                 // Function to refresh the crawling timer
 }
 
 // GetContextID returns a unique context ID for the ProcessContext
@@ -184,6 +185,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
 	processCtx.VDIReturned = false
+	processCtx.RefreshCrawlingTimer = args.Refresh
 
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
@@ -2550,6 +2552,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	}
 
 	// Navigate to a page and interact with elements.
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 			// If the session is not found, create a new one
