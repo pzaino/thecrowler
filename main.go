@@ -394,6 +394,7 @@ func crawlSources(wb *WorkBlock) {
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
 					} else if len(newSources) > 0 {
+						lastActivity.Store(time.Now()) // Reset activity
 						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
 						for _, src := range newSources {
 							sourceChan <- src
@@ -403,6 +404,7 @@ func crawlSources(wb *WorkBlock) {
 							<-timer.C
 						}
 						timer.Reset(inactivityTimeout)
+
 					}
 				}
 				refillLock.Unlock()
