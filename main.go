@@ -350,7 +350,7 @@ func crawlSources(wb *WorkBlock) {
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
 
-	// Start a goroutine to log the status periodically
+	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
@@ -369,7 +369,7 @@ func crawlSources(wb *WorkBlock) {
 		}
 	}(wb.PipelineStatus)
 
-	// Refill go routine:
+	// Refill go routine: (used to avoid pipeline starvation during crawling)
 	go func() {
 		inactivityTimeout := 30 * time.Second
 		timer := time.NewTimer(inactivityTimeout)
@@ -411,9 +411,9 @@ func crawlSources(wb *WorkBlock) {
 		}
 	}()
 
-	// Inactivity Watchdog
+	// Inactivity Watchdog (used to clean up pipelines that may be gone stale):
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
+		ticker := time.NewTicker(30 * time.Second) // ⬅️ check more often
 		defer ticker.Stop()
 
 		for {
@@ -448,6 +448,7 @@ func crawlSources(wb *WorkBlock) {
 					cmn.DebugMsg(cmn.DbgLvlDebug, "Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
 					return
 				}
+				lastActivity.Store(time.Now()) // Reset activity
 
 				var statusIdx uint64
 				if currentStatusIdx == nil {
