@@ -344,6 +344,7 @@ func crawlSources(wb *WorkBlock) {
 	var wg sync.WaitGroup
 	//var batchCompleted atomic.Bool // import "sync/atomic"
 	var refillLock sync.Mutex // Mutex to protect the refill operation
+	var closeChanOnce sync.Once
 
 	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
 
@@ -376,10 +377,12 @@ func crawlSources(wb *WorkBlock) {
 
 		defer func() {
 			defer func() {
-				recover() // avoid panic if somehow closed elsewhere
+				recover() //nolint:errcheck // avoid panic if somehow closed elsewhere
 			}()
-			close(sourceChan)
-			cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
+			closeChanOnce.Do(func() {
+				close(sourceChan)
+				cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
+			})
 		}()
 
 		for {
@@ -408,7 +411,7 @@ func crawlSources(wb *WorkBlock) {
 					}
 				}
 				refillLock.Unlock()
-				time.Sleep(3 * time.Second) // Avoid tight loop
+				time.Sleep(2 * time.Second) // Avoid tight loop
 			}
 		}
 	}()
@@ -424,7 +427,10 @@ func crawlSources(wb *WorkBlock) {
 				last := lastActivity.Load().(time.Time)
 				if time.Since(last) > (5 * time.Minute) {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
-					close(sourceChan)
+					closeChanOnce.Do(func() {
+						close(sourceChan)
+						cmn.DebugMsg(cmn.DbgLvlInfo, "Closed sourceChan")
+					})
 					return
 				}
 			}
