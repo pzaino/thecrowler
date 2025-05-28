@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -346,6 +347,9 @@ func crawlSources(wb *WorkBlock) {
 
 	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
 
+	var lastActivity atomic.Value
+	lastActivity.Store(time.Now())
+
 	// Start a goroutine to log the status periodically
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
@@ -371,6 +375,9 @@ func crawlSources(wb *WorkBlock) {
 		timer := time.NewTimer(inactivityTimeout)
 
 		defer func() {
+			defer func() {
+				recover() // avoid panic if somehow closed elsewhere
+			}()
 			close(sourceChan)
 			cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 		}()
@@ -400,6 +407,24 @@ func crawlSources(wb *WorkBlock) {
 				}
 				refillLock.Unlock()
 				time.Sleep(2 * time.Second) // Avoid tight loop
+			}
+		}
+	}()
+
+	// Inactivity Watchdog
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				last := lastActivity.Load().(time.Time)
+				if time.Since(last) > 5*time.Minute {
+					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
+					close(sourceChan)
+					return
+				}
 			}
 		}
 	}()
@@ -456,12 +481,14 @@ func crawlSources(wb *WorkBlock) {
 				} else {
 					currentStatusIdx = &statusIdx
 				}
+				lastActivity.Store(time.Now()) // Reset activity
 			}
 		}(vdiID)
 	}
 
 	for _, source := range *wb.sources {
 		sourceChan <- source
+		lastActivity.Store(time.Now()) // Reset activity
 	}
 
 	wg.Wait()
