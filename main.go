@@ -342,8 +342,8 @@ func performDatabaseMaintenance(db cdb.Handler) {
 func crawlSources(wb *WorkBlock) {
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 	var wg sync.WaitGroup
-	//var batchCompleted atomic.Bool // import "sync/atomic"
-	var refillLock sync.Mutex // Mutex to protect the refill operation
+	var batchCompleted atomic.Bool // import "sync/atomic"
+	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
 
 	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
@@ -381,6 +381,7 @@ func crawlSources(wb *WorkBlock) {
 			}()
 			closeChanOnce.Do(func() {
 				close(sourceChan)
+				batchCompleted.Store(true)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 			})
 		}()
@@ -438,6 +439,7 @@ func crawlSources(wb *WorkBlock) {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					closeChanOnce.Do(func() {
 						close(sourceChan)
+						batchCompleted.Store(true)
 						cmn.DebugMsg(cmn.DbgLvlInfo, "Closed sourceChan")
 					})
 					return
@@ -468,7 +470,13 @@ func crawlSources(wb *WorkBlock) {
 				if !ok {
 					// Channel is closed, exit the goroutine
 					cmn.DebugMsg(cmn.DbgLvlDebug, "Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
-					return
+					// Check if batch is completed
+					if batchCompleted.Load() {
+						return
+					}
+					// sleep 2 seconds and continue
+					time.Sleep(2 * time.Second)
+					continue
 				}
 				lastActivity.Store(time.Now()) // Reset activity
 
