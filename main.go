@@ -419,7 +419,7 @@ func crawlSources(wb *WorkBlock) {
 							timer.Reset(inactivityTimeout)
 						}
 					}
-				} else if wb.sel.Available() == 0 {
+				} else if wb.sel.Available() == 0 || len(sourceChan) >= int(wb.Config.Crawler.MaxSources) {
 					// Reset the timer, we are busy
 					if !timer.Stop() {
 						<-timer.C
