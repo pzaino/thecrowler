@@ -259,7 +259,8 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status
-	PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
+	//PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
+	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
 	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
@@ -331,7 +332,9 @@ func performDatabaseMaintenance(db cdb.Handler) {
 }
 
 func crawlSources(wb *WorkBlock) {
+	// Create the sources' queue (channel)
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
+
 	var wg sync.WaitGroup
 	var batchCompleted atomic.Bool // import "sync/atomic"
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
@@ -426,7 +429,7 @@ func crawlSources(wb *WorkBlock) {
 
 	// Inactivity Watchdog (used to clean up pipelines that may be gone stale):
 	go func() {
-		ticker := time.NewTicker(30 * time.Second) // ⬅️ check more often
+		ticker := time.NewTicker(30 * time.Second) // check every 30 seconds
 		defer ticker.Stop()
 
 		for {
@@ -451,10 +454,7 @@ func crawlSources(wb *WorkBlock) {
 		lastActivity.Store(time.Now())
 	}
 
-	//vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
-	vdiCount := uint64(maxPipelines)
-
-	for vdiID := uint64(0); vdiID < vdiCount; vdiID++ {
+	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
 		wg.Add(1)
 
 		go func(vdiSlot uint64) {
@@ -482,9 +482,11 @@ func crawlSources(wb *WorkBlock) {
 					}
 					continue
 				}
-				starves = 0                    // Reset starvation counter
-				lastActivity.Store(time.Now()) // Reset activity
+				starves = 0           // Reset starvation counter
+				refreshLastActivity() // Reset activity
 
+				// This makes sur we reuse always the same PipelineStatus index
+				// for this goroutine instance:
 				var statusIdx uint64
 				if currentStatusIdx == nil {
 					statusIdx = getAvailableOrNewPipelineStatus(wb)
@@ -517,7 +519,7 @@ func crawlSources(wb *WorkBlock) {
 				} else {
 					currentStatusIdx = &statusIdx
 				}
-				lastActivity.Store(time.Now()) // Reset activity
+				refreshLastActivity() // Reset activity
 			}
 		}(vdiID)
 	}
