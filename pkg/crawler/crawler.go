@@ -3972,6 +3972,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	resetPageInfo(&pageCache) // Reset the PageInfo object
 
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	return err
 }
 
