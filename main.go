@@ -696,7 +696,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		updateMetrics(status)
 
 		// Reset the status if the pipeline has completed (display only the last report)
-		if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
+		if status.PipelineRunning >= 2 {
 			status.PipelineRunning = 0
 		}
 	}
