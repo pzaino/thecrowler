@@ -469,21 +469,28 @@ func crawlSources(wb *WorkBlock) {
 			defer wg.Done()
 
 			var currentStatusIdx *uint64
-
+			starves := 0 // Counter for starvation
 			for {
 				// Fetch next available source in the queue:
 				source, ok := <-sourceChan
 				if !ok {
 					// Channel is closed, exit the goroutine
-					cmn.DebugMsg(cmn.DbgLvlDebug, "Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
 					// Check if batch is completed
 					if batchCompleted.Load() {
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
 						return
 					}
 					// sleep 2 seconds and continue
 					time.Sleep(2 * time.Second)
+					starves++
+					if starves > 5 {
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
+						starves = 0 // Reset starvation counter
+					}
 					continue
 				}
+				starves = 0                    // Reset starvation counter
 				lastActivity.Store(time.Now()) // Reset activity
 
 				var statusIdx uint64
@@ -639,9 +646,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	runningPipelines := 0
 	for idx := 0; idx < len(*PipelineStatus); idx++ {
 		status := (*PipelineStatus)[idx]
-		if status.PipelineRunning == 0 {
-			continue
-		}
+		//if status.PipelineRunning == 0 {
+		//	continue
+		//}
 		runningPipelines++
 
 		var totalRunningTime time.Duration

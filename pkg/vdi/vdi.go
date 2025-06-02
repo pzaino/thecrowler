@@ -307,6 +307,7 @@ func (p *Pool) Release(index int) {
 	if index >= 0 && index < len(p.busy) {
 		p.busy[index] = false
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG VDI] Released VDI slot %d, available: %d", index, p.Available())
 }
 
 // Available returns the number of available VDI instances in the pool
