@@ -177,7 +177,7 @@ func performDBMaintenance(db cdb.Handler) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db cdb.Handler, max_sources int) ([]cdb.Source, error) {
+func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, error) {
 	// Check DB connection:
 	if err := db.CheckConnection(config); err != nil {
 		return nil, fmt.Errorf("error pinging the database: %w", err)
@@ -201,10 +201,10 @@ func retrieveAvailableSources(db cdb.Handler, max_sources int) ([]cdb.Source, er
 	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query within the transaction
-	if max_sources <= 0 {
-		max_sources = config.Crawler.MaxSources
+	if maxSources <= 0 {
+		maxSources = config.Crawler.MaxSources
 	}
-	rows, err := tx.Query(query, max_sources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
+	rows, err := tx.Query(query, maxSources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {
@@ -318,15 +318,6 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		configMutex.RUnlock()
 
 		sourcesToCrawl = []cdb.Source{} // Reset the sources
-		// Return all instances to sel *chan crowler.SeleniumInstance
-		/*
-			for i := 0; i < len(config.Selenium); i++ {
-				*sel <- crowler.SeleniumInstance{
-					Service: nil,
-					Config:  config.Selenium[i],
-				}
-			}
-		*/
 	}
 }
 
@@ -346,7 +337,8 @@ func crawlSources(wb *WorkBlock) {
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
 
-	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec
+	//uint64(wb.sel.Size())
+	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
 
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
@@ -419,7 +411,7 @@ func crawlSources(wb *WorkBlock) {
 							timer.Reset(inactivityTimeout)
 						}
 					}
-				} else if wb.sel.Available() == 0 || len(sourceChan) >= int(wb.Config.Crawler.MaxSources) {
+				} else if (wb.sel.Available() == 0) || (len(sourceChan) >= int(wb.Config.Crawler.MaxSources)) {
 					// Reset the timer, we are busy
 					if !timer.Stop() {
 						<-timer.C
@@ -646,9 +638,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	runningPipelines := 0
 	for idx := 0; idx < len(*PipelineStatus); idx++ {
 		status := (*PipelineStatus)[idx]
-		//if status.PipelineRunning == 0 {
-		//	continue
-		//}
+		if status.PipelineRunning == 0 {
+			continue
+		}
 		runningPipelines++
 
 		var totalRunningTime time.Duration
