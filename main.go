@@ -419,6 +419,12 @@ func crawlSources(wb *WorkBlock) {
 							timer.Reset(inactivityTimeout)
 						}
 					}
+				} else if wb.sel.Available() == 0 {
+					// Reset the timer, we are busy
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(inactivityTimeout)
 				}
 				refillLock.Unlock()
 				time.Sleep(2 * time.Second) // Avoid tight loop

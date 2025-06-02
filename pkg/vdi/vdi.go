@@ -905,6 +905,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 
+	ctx.SetVDIClosedFlag(false)
+	ctx.SetVDIReturnedFlag(false)
 	return wd, err
 }
 
