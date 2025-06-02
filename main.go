@@ -388,7 +388,7 @@ func crawlSources(wb *WorkBlock) {
 				return
 			default:
 				refillLock.Lock()
-				if wb.sel.Available() > 0 && len(sourceChan) < int(wb.Config.Crawler.MaxSources) {
+				if (wb.sel.Available() > 0) && (len(sourceChan) < int(wb.Config.Crawler.MaxSources)) {
 					newSources, err := monitorBatchAndRefill(wb)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
@@ -414,7 +414,7 @@ func crawlSources(wb *WorkBlock) {
 							timer.Reset(inactivityTimeout)
 						}
 					}
-				} else if (wb.sel.Available() == 0) || (len(sourceChan) >= int(wb.Config.Crawler.MaxSources)) {
+				} else if (wb.sel.Available() == 0) || (len(sourceChan) >= int(wb.Config.Crawler.MaxSources*2)) {
 					// Reset the timer, we are busy
 					if !timer.Stop() {
 						<-timer.C
@@ -539,7 +539,7 @@ func crawlSources(wb *WorkBlock) {
 }
 
 func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
-	if wb.sel.Available() == 0 {
+	if wb.sel.Available() <= 0 {
 		return nil, nil
 	}
 	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available())
