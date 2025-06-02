@@ -664,10 +664,12 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 				status.DetectedState = status.DetectedState & 0xfffe // Reset the stale-processing state bit
 			}
 		}
-		if (status.PipelineRunning == 1) && (status.CrawlingRunning > 1) &&
-			(status.NetInfoRunning > 1) && (status.HTTPInfoRunning > 1) {
-			status.PipelineRunning = status.CrawlingRunning | status.NetInfoRunning | status.HTTPInfoRunning
-		}
+		/*
+			if (status.PipelineRunning == 1) && (status.CrawlingRunning > 1) &&
+				(status.NetInfoRunning > 1) && (status.HTTPInfoRunning > 1) {
+				status.PipelineRunning = status.CrawlingRunning | status.NetInfoRunning | status.HTTPInfoRunning
+			}
+		*/
 
 		// Prepare the report
 		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
