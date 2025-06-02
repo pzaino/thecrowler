@@ -662,9 +662,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 			totalLinksToGo = 0
 		}
 		// Detect if we are stale-processing
-		if status.PipelineRunning == 1 && totalRunningTime > time.Duration(2*time.Minute) &&
-			status.CrawlingRunning == 0 && status.NetInfoRunning == 0 &&
-			status.HTTPInfoRunning == 0 {
+		if (status.PipelineRunning == 1) && (totalRunningTime > time.Duration(2*time.Minute)) &&
+			(status.CrawlingRunning == 0) && (status.NetInfoRunning == 0) &&
+			(status.HTTPInfoRunning == 0) {
 			// We are in a stale-processing state
 			status.DetectedState = 1
 		} else {
@@ -672,6 +672,12 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 				status.DetectedState = status.DetectedState & 0xfffe // Reset the stale-processing state bit
 			}
 		}
+		if (status.PipelineRunning == 1) && (status.CrawlingRunning > 1) &&
+			(status.NetInfoRunning > 1) && (status.HTTPInfoRunning > 1) {
+			status.PipelineRunning = status.CrawlingRunning | status.NetInfoRunning | status.HTTPInfoRunning
+		}
+
+		// Prepare the report
 		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
