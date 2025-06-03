@@ -342,6 +342,7 @@ func crawlSources(wb *WorkBlock) {
 
 	//uint64(wb.sel.Size())
 	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
 
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
@@ -534,7 +535,9 @@ func crawlSources(wb *WorkBlock) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
 	for idx := uint64(0); idx < maxPipelines; idx++ {
-		(*wb.PipelineStatus)[idx].PipelineRunning = 0
+		if idx < uint64(len(*wb.PipelineStatus)) {
+			(*wb.PipelineStatus)[idx].PipelineRunning = 0
+		}
 	}
 }
 
