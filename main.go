@@ -433,7 +433,7 @@ func crawlSources(wb *WorkBlock) {
 		ticker := time.NewTicker(30 * time.Second) // check every 30 seconds
 		defer ticker.Stop()
 
-		for {
+		for { //nolint:gosimple // infinite loop is intentional
 			select {
 			case <-ticker.C:
 				last := lastActivity.Load().(time.Time)
@@ -485,6 +485,7 @@ func crawlSources(wb *WorkBlock) {
 				}
 				starves = 0           // Reset starvation counter
 				refreshLastActivity() // Reset activity
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d", source.URL, source.ID, vdiSlot)
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
@@ -494,8 +495,8 @@ func crawlSources(wb *WorkBlock) {
 				} else {
 					statusIdx = *currentStatusIdx
 				}
-
-				if int64(statusIdx) >= int64(len(*wb.PipelineStatus)) {
+				if statusIdx >= uint64(len(*wb.PipelineStatus)) {
+					// Safety check, if we are out of bounds, we need to append a new status
 					*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{})
 				}
 
@@ -618,7 +619,6 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 			select {
 			case recoveredVDI := <-releaseVDI:
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
-				// *args.Sel <- recoveredVDI
 				// Return the VDI instance to the pool
 				vdiPool := args.Sel
 				vdiPool.Release(index)
