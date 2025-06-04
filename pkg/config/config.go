@@ -50,6 +50,8 @@ const (
 	SSDefaultDelayTime = 100
 
 	stdRateLimit = "10,10"
+
+	never = "never"
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -195,7 +197,8 @@ func NewConfig() *Config {
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
-			ResetCookiesPolicy:    "never",
+			ChangeUserAgent:       never,
+			ResetCookiesPolicy:    never,
 			NoThirdPartyCookies:   false,
 			RequestImages:         true,
 			RequestCSS:            true,
@@ -639,6 +642,7 @@ func (c *Config) validateCrawler() {
 	c.setDefaultScreenshotMaxHeight()
 	c.setDefaultMaxRetries()
 	c.setDefaultMaxRedirects()
+	c.setChangeUserAgent()
 	c.setDefaultResetCookiesPolicy()
 	c.setDefaultControl()
 }
@@ -781,9 +785,17 @@ func (c *Config) setDefaultMaxRedirects() {
 	}
 }
 
+func (c *Config) setChangeUserAgent() {
+	if strings.TrimSpace(c.Crawler.ChangeUserAgent) == "" {
+		c.Crawler.ChangeUserAgent = never
+	} else {
+		c.Crawler.ChangeUserAgent = strings.ToLower(strings.TrimSpace(c.Crawler.ChangeUserAgent))
+	}
+}
+
 func (c *Config) setDefaultResetCookiesPolicy() {
 	if strings.TrimSpace(c.Crawler.ResetCookiesPolicy) == "" {
-		c.Crawler.ResetCookiesPolicy = "never"
+		c.Crawler.ResetCookiesPolicy = never
 	} else {
 		c.Crawler.ResetCookiesPolicy = strings.ToLower(strings.TrimSpace(c.Crawler.ResetCookiesPolicy))
 	}

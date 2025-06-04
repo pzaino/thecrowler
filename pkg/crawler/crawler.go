@@ -2494,7 +2494,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	var err error
 
 	// Reset the Selenium session for a clean browser with new User-Agent
-	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+	if ctx.config.Crawler.ChangeUserAgent == "always" {
 		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)

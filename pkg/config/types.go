@@ -67,6 +67,7 @@ type Crawler struct {
 	MaxRetries            int           `json:"max_retries" yaml:"max_retries"`                         // Maximum number of retries
 	MaxRedirects          int           `json:"max_redirects" yaml:"max_redirects"`                     // Maximum number of redirects
 	MaxRequests           int           `json:"max_requests" yaml:"max_requests"`                       // Maximum number of requests
+	ChangeUserAgent       string        `json:"change_useragent" yaml:"change_useragent"`               // Change user agent for each request (e.g., "never", "always", "on_start")
 	ResetCookiesPolicy    string        `json:"reset_cookies_policy" yaml:"reset_cookies_policy"`       // Cookies policy (e.g., "none", "on-request", "on-start", "when-done", "always")
 	NoThirdPartyCookies   bool          `json:"no_third_party_cookies" yaml:"no_third_party_cookies"`   // Whether to accept third-party cookies or not
 	CrawlingInterval      string        `json:"crawling_interval" yaml:"crawling_interval"`             // Time to wait before re-crawling a source

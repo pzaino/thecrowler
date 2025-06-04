@@ -444,6 +444,17 @@
             1000
           ]
         },
+        "change_useragent": {
+          "title": "CROWler Engine Change UserAgent at every new request",
+          "description": "This is the policy that the CROWler Engine will use to change the User-Agent at every new request. For example, 'always' means the CROWler will change the User-Agent on every request, 'never' means the CROWler will never change the User-Agent, 'on_start' means the CROWler will change the User-Agent only at the beginning of a crawling process.",
+          "type": "string",
+          "enum": [
+            "always",
+            "never",
+            "on_start",
+            ""
+          ]
+        },
         "reset_cookies_policy": {
           "title": "CROWler Engine Reset Cookies Policy",
           "description": "This is the policy that the CROWler Engine will use to reset cookies. For example, 'always' means the CROWler will reset cookies on every request and when done, 'never' means the CROWler will never reset cookies, 'on_start' means the CROWler will reset cookies only at the beginning of a crawling process.",
