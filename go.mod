@@ -22,10 +22,10 @@ require (
 	github.com/evanw/esbuild v0.25.2
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.37.0
+	golang.org/x/crypto v0.39.0
 )
 
-require golang.org/x/sync v0.13.0 // indirect
+require golang.org/x/sync v0.15.0 // indirect
 
 require (
 	github.com/antchfx/xpath v1.3.3 // indirect
@@ -71,13 +71,13 @@ require (
 
 require (
 	github.com/google/go-cmp v0.7.0
-	golang.org/x/sys v0.32.0 // indirect
+	golang.org/x/sys v0.33.0 // indirect
 )
 
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	golang.org/x/net v0.39.0
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/net v0.41.0
+	golang.org/x/text v0.26.0 // indirect
 )
