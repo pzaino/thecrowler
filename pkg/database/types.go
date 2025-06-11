@@ -44,6 +44,8 @@ type TxHandler struct {
 type Source struct {
 	// ID is the unique identifier of the source.
 	ID uint64
+	// Priority (optional) is the priority of the source, used for scheduling.
+	Priority string
 	// Category (optional) is the category of the source.
 	CategoryID uint64
 	// Name (optional) is the name of the source.

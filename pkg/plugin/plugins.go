@@ -1632,6 +1632,9 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		if name, ok := sourceData["name"].(string); ok {
 			source.Name = name
 		}
+		if priority, ok := sourceData["priority"].(string); ok {
+			source.Priority = priority
+		}
 		if categoryID, ok := sourceData["category_id"].(float64); ok {
 			source.CategoryID = uint64(categoryID)
 		}
