@@ -267,21 +267,32 @@
               },
               "source_priority": {
                 "title": "Configure the priority that this instance will use to filter the sources",
-                "description": "This is the priority that the CROWler Engine will use to filter the sources. For example 'high' to filter for high priority, 'medium,low' to pick only medium and low priority sources, 'my_priority' to pick the source with your specific custom priority.",
-                "type": "string",
-                "examples": [
-                  "high",
-                  "medium,low",
-                  "my_priority"
-                ]
+                "description": "This is a list of priorities that CROWler Engine will use to filter the sources. For example 'high' to filter for high priority, 'medium,low' to pick only medium and low priority sources, 'my_priority' to pick the source with your specific custom priority.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "examples": [
+                    "high",
+                    "medium",
+                    "low",
+                    "my_priority"
+                  ]
+                }
               },
               "vdi_name": {
                 "title": "CROWler Engine VDI Name",
-                "description": "Specify a comma separated list of VDIs that this instance of the Engine will use to crawl sources that have been picked by it.",
-                "type": "string",
+                "description": "Specify a list of VDIs that this instance of the Engine will use to crawl sources that have been picked by it.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "examples": [
+                    "crowler-vdi-1",
+                    "crowler-vdi-japan-1"
+                  ]
+                },
                 "examples": [
-                  "vdi1,vdi2",
-                  "vdi3"
+                  "- crowler-vdi-1",
+                  "- crowler-vdi-japan-1"
                 ]
               }
             }

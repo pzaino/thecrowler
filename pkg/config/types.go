@@ -100,9 +100,9 @@ type Crawler struct {
 
 // CustomEngine represents a custom engine configuration
 type CustomEngine struct {
-	Name           string `json:"name" yaml:"name"`                       // Name of the custom engine (e.g., "chromium", "firefox", "selenium")
-	SourcePriority string `json:"source_priority" yaml:"source_priority"` // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
-	VDIName        string `json:"vdi_name" yaml:"vdi_name"`               // Name of the VDI to use (this is useful when using custom configurations per each source)
+	Name           string   `json:"name" yaml:"name"`                       // Name of the custom engine (e.g., "chromium", "firefox", "selenium")
+	SourcePriority []string `json:"source_priority" yaml:"source_priority"` // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
+	VDIName        []string `json:"vdi_name" yaml:"vdi_name"`               // Name of the VDI to use (this is useful when using custom configurations per each source)
 }
 
 // ControlConfig represents the internal control API configuration

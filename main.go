@@ -1003,6 +1003,12 @@ func main() {
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time:", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location:", time.Local.String())
+	engineName, err := os.Hostname()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to get engine name: %v", err)
+		engineName = "unknown"
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name:", engineName)
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Crawler.Control.Host, config.Crawler.Control.Port)
 	var rStatus error

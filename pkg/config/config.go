@@ -184,8 +184,12 @@ func NewConfig() *Config {
 			SourcePriority: "",
 			Engine: []CustomEngine{
 				{
-					VDIName:        "",
-					SourcePriority: "",
+					VDIName: []string{
+						"",
+					},
+					SourcePriority: []string{
+						"",
+					},
 				},
 			},
 			Platform:              "desktop",
@@ -676,8 +680,29 @@ func (c *Config) setEngineInstance() {
 		}
 		if en == hostname {
 			// If the engine name is the same as the hostname, then we set it as the current engine
-			c.Crawler.VDIName = strings.TrimSpace(engine.VDIName)
-			c.Crawler.SourcePriority = strings.ToLower(strings.TrimSpace(engine.SourcePriority))
+			VDINames := ""
+			for i, vdi := range engine.VDIName {
+				vdi = strings.ToLower(strings.TrimSpace(vdi))
+				if vdi != "" {
+					VDINames += vdi
+					if i < len(engine.VDIName)-1 {
+						VDINames += ","
+					}
+				}
+			}
+			c.Crawler.VDIName = strings.TrimSpace(VDINames)
+
+			SourcePriorities := ""
+			for i, sourcePriority := range engine.SourcePriority {
+				sourcePriority = strings.ToLower(strings.TrimSpace(sourcePriority))
+				if sourcePriority != "" {
+					SourcePriorities += sourcePriority
+					if i < len(engine.SourcePriority)-1 {
+						SourcePriorities += ","
+					}
+				}
+			}
+			c.Crawler.SourcePriority = strings.TrimSpace(SourcePriorities)
 			return
 		}
 	}
@@ -968,7 +993,7 @@ func (c *Config) validateVDI() {
 		for _, engine := range c.Crawler.Engine {
 			if strings.ToLower(strings.TrimSpace(engine.Name)) == thisEngine {
 				// Yes this engine may have a VDI filter
-				if strings.TrimSpace(engine.VDIName) != "" {
+				if len(engine.VDIName) > 0 {
 					// Yes we have a VDI filter
 					allowedVDIs := getVDIByNameList(c.Selenium, engine.VDIName)
 					if len(allowedVDIs) == 0 {
@@ -2341,15 +2366,14 @@ func isZeroValue(v reflect.Value) bool {
 
 // Support functions
 
-func getVDIByNameList(selenium []Selenium, names string) []Selenium {
-	if len(selenium) == 0 || names == "" {
+func getVDIByNameList(selenium []Selenium, names []string) []Selenium {
+	if len(selenium) == 0 || len(names) == 0 {
 		return nil
 	}
 
-	nameList := strings.Split(names, ",")
 	var result []Selenium
 
-	for _, name := range nameList {
+	for _, name := range names {
 		name = strings.ToLower(strings.TrimSpace(name))
 		for _, vdi := range selenium {
 			if strings.ToLower(strings.TrimSpace(vdi.Name)) == name {
@@ -2362,6 +2386,6 @@ func getVDIByNameList(selenium []Selenium, names string) []Selenium {
 }
 
 // GetVDIByNameList returns all the nodes in the Selenium slice that match the given comma separated names.
-func (c *Config) GetVDIByNameList(names string) []Selenium {
+func (c *Config) GetVDIByNameList(names []string) []Selenium {
 	return getVDIByNameList(c.Selenium, names)
 }

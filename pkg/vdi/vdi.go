@@ -1231,7 +1231,7 @@ func QuitSelenium(ctx ProcessContextInterface) {
 	// Get the process WebDriver instance
 	wd := ctx.GetWebDriver()
 
-	if wd == nil {
+	if wd == nil || *wd == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to quit nil WebDriver session!")
 		return
 	}
