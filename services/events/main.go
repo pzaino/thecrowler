@@ -227,6 +227,10 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		cmn.DebugMsg(cmn.DbgLvlError, "loading agents configuration: %v", err)
 	}
 
+	// Reset Key-Value Store
+	cmn.KVStore = nil
+	cmn.KVStore = cmn.NewKeyValueStore()
+
 	// Initialize the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database...")
 	connected := false
@@ -634,7 +638,7 @@ func processEvent(event cdb.Event) {
 		// Execute the plugin
 		for _, plugin := range p {
 			// Execute the plugin
-			rval, err := plugin.Execute(nil, &dbHandler, 30, eventMap)
+			rval, err := plugin.Execute(nil, &dbHandler, config.Plugins.PluginsTimeout, eventMap)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
 			}

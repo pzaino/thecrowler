@@ -508,19 +508,20 @@ func TestNewKVStoreProperty(t *testing.T) {
 		persistent   bool
 		static       bool
 		SessionValid bool
+		Shared       bool
 		source       string
 		ctxID        string
 		expected     Properties
 	}{
-		{true, false, true, "source1", "ctx1", Properties{Persistent: true, Static: false, SessionValid: true, Source: "source1", CtxID: "ctx1", Type: "string"}},
-		{false, true, true, "source2", "ctx2", Properties{Persistent: false, Static: true, SessionValid: true, Source: "source2", CtxID: "ctx2", Type: "string"}},
-		{true, true, true, "source3", "ctx3", Properties{Persistent: true, Static: true, SessionValid: true, Source: "source3", CtxID: "ctx3", Type: "string"}},
-		{false, false, true, "source4", "ctx4", Properties{Persistent: false, Static: false, SessionValid: true, Source: "source4", CtxID: "ctx4", Type: "string"}},
+		{true, false, true, false, "source1", "ctx1", Properties{Persistent: true, Static: false, SessionValid: true, Shared: false, Source: "source1", CtxID: "ctx1", Type: "string"}},
+		{false, true, true, false, "source2", "ctx2", Properties{Persistent: false, Static: true, SessionValid: true, Shared: false, Source: "source2", CtxID: "ctx2", Type: "string"}},
+		{true, true, true, false, "source3", "ctx3", Properties{Persistent: true, Static: true, SessionValid: true, Shared: false, Source: "source3", CtxID: "ctx3", Type: "string"}},
+		{false, false, true, false, "source4", "ctx4", Properties{Persistent: false, Static: false, SessionValid: true, Shared: false, Source: "source4", CtxID: "ctx4", Type: "string"}},
 	}
 
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%v_%v_%v_%s_%s_%s", tt.persistent, tt.static, tt.SessionValid, tt.source, tt.ctxID, "string"), func(t *testing.T) {
-			result := NewKVStoreProperty(tt.persistent, tt.static, tt.SessionValid, tt.source, tt.ctxID, "string")
+		t.Run(fmt.Sprintf("%v_%v_%v_%v_%s_%s_%s", tt.persistent, tt.static, tt.SessionValid, tt.Shared, tt.source, tt.ctxID, "string"), func(t *testing.T) {
+			result := NewKVStoreProperty(tt.persistent, tt.static, tt.SessionValid, tt.Shared, tt.source, tt.ctxID, "string")
 			if result != tt.expected {
 				t.Errorf("expected %+v, got %+v", tt.expected, result)
 			}

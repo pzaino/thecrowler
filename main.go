@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -176,7 +177,7 @@ func performDBMaintenance(db cdb.Handler) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
+func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, error) {
 	// Check DB connection:
 	if err := db.CheckConnection(config); err != nil {
 		return nil, fmt.Errorf("error pinging the database: %w", err)
@@ -200,9 +201,10 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query within the transaction
-	// TODO: Add the intervals to the query to allow a user to decide how often to crawl a source etc.
-	//       replace the empty strings here with: last_ok_update, last_error, regular_crawling, processing_timeout
-	rows, err := tx.Query(query, config.Crawler.MaxSources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
+	if maxSources <= 0 {
+		maxSources = config.Crawler.MaxSources
+	}
+	rows, err := tx.Query(query, maxSources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {
@@ -257,7 +259,8 @@ func retrieveAvailableSources(db cdb.Handler) ([]cdb.Source, error) {
 func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status
-	PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
+	//PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
+	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
 	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
@@ -269,7 +272,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		configMutex.RLock()
 
 		// Retrieve the sources to crawl
-		sourcesToCrawl, err := retrieveAvailableSources(*db)
+		sourcesToCrawl, err := retrieveAvailableSources(*db, 0)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "retrieving sources: %v", err)
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
@@ -316,15 +319,6 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		configMutex.RUnlock()
 
 		sourcesToCrawl = []cdb.Source{} // Reset the sources
-		// Return all instances to sel *chan crowler.SeleniumInstance
-		/*
-			for i := 0; i < len(config.Selenium); i++ {
-				*sel <- crowler.SeleniumInstance{
-					Service: nil,
-					Config:  config.Selenium[i],
-				}
-			}
-		*/
 	}
 }
 
@@ -338,17 +332,26 @@ func performDatabaseMaintenance(db cdb.Handler) {
 }
 
 func crawlSources(wb *WorkBlock) {
-	sourceChan := make(chan cdb.Source)
+	// Create the sources' queue (channel)
+	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
+
 	var wg sync.WaitGroup
+	var batchCompleted atomic.Bool // import "sync/atomic"
+	var refillLock sync.Mutex      // Mutex to protect the refill operation
+	var closeChanOnce sync.Once
 
-	maxPipelines := uint64(wb.sel.Size()) //nolint:gosec // it's safe here.
+	//uint64(wb.sel.Size())
+	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
 
-	// Start a goroutine to log the status periodically
+	var lastActivity atomic.Value
+	lastActivity.Store(time.Now())
+
+	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			// Check if all the pipelines have completed
 			pipelinesRunning := false
 			for _, status := range *plStatus {
 				if status.PipelineRunning == 1 {
@@ -358,97 +361,196 @@ func crawlSources(wb *WorkBlock) {
 			}
 			logStatus(plStatus)
 			if !pipelinesRunning {
-				// All pipelines have completed
-				// Stop the ticker
 				break
 			}
 		}
 	}(wb.PipelineStatus)
 
-	// Control how many VDI workers are active
-	vdiCount := min(uint64(len(*wb.sources)), maxPipelines)
+	// Refill go routine: (used to avoid pipeline starvation during crawling)
+	go func() {
+		inactivityTimeout := 30 * time.Second
+		timer := time.NewTimer(inactivityTimeout)
 
-	// Launch VDI workers
-	for vdiID := uint64(0); vdiID < vdiCount; vdiID++ {
+		defer func() {
+			defer func() {
+				recover() //nolint:errcheck // avoid panic if somehow closed elsewhere
+			}()
+			closeChanOnce.Do(func() {
+				close(sourceChan)
+				batchCompleted.Store(true)
+				cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
+			})
+		}()
+
+		for {
+			select {
+			case <-timer.C:
+				// Timeout expired → no new sources, close pipeline
+				return
+			default:
+				refillLock.Lock()
+				if (wb.sel.Available() > 0) && (len(sourceChan) < len(wb.Config.Selenium)) {
+					newSources, err := monitorBatchAndRefill(wb)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
+					} else if len(newSources) > 0 {
+						lastActivity.Store(time.Now()) // Reset activity
+						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
+						for _, src := range newSources {
+							sourceChan <- src
+						}
+						// Reset the timer because we received new sources
+						if !timer.Stop() {
+							<-timer.C
+						}
+						timer.Reset(inactivityTimeout)
+					} else {
+						// no data returned, but are we still collecting from sources?
+						last := lastActivity.Load().(time.Time)
+						if time.Since(last) < (1 * time.Minute) {
+							// Yes, so reset the timer anyway
+							if !timer.Stop() {
+								<-timer.C
+							}
+							timer.Reset(inactivityTimeout)
+						}
+					}
+				} else if (wb.sel.Available() == 0) || (len(sourceChan) >= len(wb.Config.Selenium)) {
+					// Reset the timer, we are busy
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(inactivityTimeout)
+				}
+				refillLock.Unlock()
+				time.Sleep(2 * time.Second) // Avoid tight loop
+			}
+		}
+	}()
+
+	// Inactivity Watchdog (used to clean up pipelines that may be gone stale):
+	go func() {
+		ticker := time.NewTicker(30 * time.Second) // check every 30 seconds
+		defer ticker.Stop()
+
+		for { //nolint:gosimple // infinite loop is intentional
+			select {
+			case <-ticker.C:
+				last := lastActivity.Load().(time.Time)
+				if time.Since(last) > (5 * time.Minute) {
+					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
+					closeChanOnce.Do(func() {
+						close(sourceChan)
+						batchCompleted.Store(true)
+						cmn.DebugMsg(cmn.DbgLvlInfo, "Closed sourceChan")
+					})
+					return
+				}
+			}
+		}
+	}()
+
+	// Function to refresh the last activity timestamp (from external functions)
+	refreshLastActivity := func() {
+		lastActivity.Store(time.Now())
+	}
+
+	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
 		wg.Add(1)
 
 		go func(vdiSlot uint64) {
 			defer wg.Done()
 
-			var currentStatusIdx *uint64 = nil
+			var currentStatusIdx *uint64
+			starves := 0 // Counter for starvation
+			for {
+				// Fetch next available source in the queue:
+				source, ok := <-sourceChan
+				if !ok {
+					// Channel is closed, exit the goroutine
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
+					// Check if batch is completed
+					if batchCompleted.Load() {
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+						return
+					}
+					// sleep 2 seconds and continue
+					time.Sleep(2 * time.Second)
+					starves++
+					if starves > 5 {
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
+						starves = 0 // Reset starvation counter
+					}
+					continue
+				}
+				starves = 0           // Reset starvation counter
+				refreshLastActivity() // Reset activity
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d", source.URL, source.ID, vdiSlot)
 
-			for source := range sourceChan {
+				// This makes sur we reuse always the same PipelineStatus index
+				// for this goroutine instance:
 				var statusIdx uint64
 				if currentStatusIdx == nil {
 					statusIdx = getAvailableOrNewPipelineStatus(wb)
 				} else {
 					statusIdx = *currentStatusIdx
 				}
-
-				// Ensure we have enough capacity
-				if int(statusIdx) >= len(*wb.PipelineStatus) {
+				if statusIdx >= uint64(len(*wb.PipelineStatus)) {
+					// Safety check, if we are out of bounds, we need to append a new status
 					*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{})
 				}
 
-				// ⏱️ Reset the pipeline status for this source
 				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
 					PipelineID:      statusIdx,
 					Source:          source.URL,
 					SourceID:        source.ID,
-					VDIID:           "", // Filled in by `startCrawling`
+					VDIID:           "",
 					StartTime:       now,
-					EndTime:         time.Time{}, // explicitly reset
-					PipelineRunning: 1,           // Filled here to be safe
-					CrawlingRunning: 0,           // Filled in elsewhere
-					NetInfoRunning:  0,           // Will be updated by NetInfo task
-					HTTPInfoRunning: 0,           // Will be updated by HTTPInfo task
-					TotalPages:      0,
-					TotalErrors:     0,
-					TotalLinks:      0,
-					TotalSkipped:    0,
-					TotalDuplicates: 0,
-					TotalScraped:    0,
-					TotalActions:    0,
-					LastWait:        0,
-					LastDelay:       0,
-					DetectedState:   0,
+					EndTime:         time.Time{},
+					PipelineRunning: 1,
 				}
 
 				var crawlWG sync.WaitGroup
-
-				// 🌍 Launch crawling, will return when web crawling is done
-				startCrawling(wb, &crawlWG, source, statusIdx)
-
-				// Wait for the crawling to finish
+				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
 
-				// 🔍 Check if NetInfo or HTTPInfo is still running — don't reuse if they are
 				status := &(*wb.PipelineStatus)[statusIdx]
 				if status.NetInfoRunning == 1 || status.HTTPInfoRunning == 1 {
 					currentStatusIdx = nil
 				} else {
 					currentStatusIdx = &statusIdx
 				}
+				refreshLastActivity() // Reset activity
 			}
 		}(vdiID)
 	}
 
-	// Feed sources into the pipeline dynamically
 	for _, source := range *wb.sources {
 		sourceChan <- source
+		lastActivity.Store(time.Now()) // Reset activity
 	}
-	close(sourceChan)
 
-	// Wait for all pipelines to complete their work
 	wg.Wait()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
-	// Reset all Pipelines status
 	for idx := uint64(0); idx < maxPipelines; idx++ {
-		(*wb.PipelineStatus)[idx].PipelineRunning = 0
+		if idx < uint64(len(*wb.PipelineStatus)) {
+			(*wb.PipelineStatus)[idx].PipelineRunning = 0
+		}
 	}
+}
+
+func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
+	if wb.sel.Available() <= 0 {
+		return nil, nil
+	}
+	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available())
+	if err != nil {
+		return nil, err
+	}
+	return newSources, nil
 }
 
 func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
@@ -466,7 +568,7 @@ func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
 	return newIdx
 }
 
-func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64) {
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64, refresh func()) {
 	if wg != nil {
 		wg.Add(1)
 	}
@@ -482,6 +584,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 		Sources: wb.sources,
 		Index:   idx,
 		Status:  &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
+		Refresh: refresh,
 	}
 
 	// Start a goroutine to crawl the website
@@ -516,7 +619,6 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 			select {
 			case recoveredVDI := <-releaseVDI:
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
-				// *args.Sel <- recoveredVDI
 				// Return the VDI instance to the pool
 				vdiPool := args.Sel
 				vdiPool.Release(index)
@@ -557,9 +659,9 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 			totalLinksToGo = 0
 		}
 		// Detect if we are stale-processing
-		if status.PipelineRunning == 1 && totalRunningTime > time.Duration(2*time.Minute) &&
-			status.CrawlingRunning == 0 && status.NetInfoRunning == 0 &&
-			status.HTTPInfoRunning == 0 {
+		if (status.PipelineRunning == 1) && (totalRunningTime > time.Duration(2*time.Minute)) &&
+			(status.CrawlingRunning == 0) && (status.NetInfoRunning == 0) &&
+			(status.HTTPInfoRunning == 0) {
 			// We are in a stale-processing state
 			status.DetectedState = 1
 		} else {
@@ -567,6 +669,14 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 				status.DetectedState = status.DetectedState & 0xfffe // Reset the stale-processing state bit
 			}
 		}
+		/*
+			if (status.PipelineRunning == 1) && (status.CrawlingRunning > 1) &&
+				(status.NetInfoRunning > 1) && (status.HTTPInfoRunning > 1) {
+				status.PipelineRunning = status.CrawlingRunning | status.NetInfoRunning | status.HTTPInfoRunning
+			}
+		*/
+
+		// Prepare the report
 		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
@@ -593,7 +703,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		updateMetrics(status)
 
 		// Reset the status if the pipeline has completed (display only the last report)
-		if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
+		if status.PipelineRunning >= 2 {
 			status.PipelineRunning = 0
 		}
 	}
@@ -969,18 +1079,25 @@ func updateDebugLevel(newLevel string) {
 	switch newLevel {
 	case "debug":
 		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug")
 	case "debug1":
 		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug1")
 	case "debug2":
 		config.DebugLevel = 2
+		cmn.SetDebugLevelFromString("debug2")
 	case "debug3":
 		config.DebugLevel = 3
+		cmn.SetDebugLevelFromString("debug3")
 	case "debug4":
 		config.DebugLevel = 4
+		cmn.SetDebugLevelFromString("debug4")
 	case "debug5":
 		config.DebugLevel = 5
+		cmn.SetDebugLevelFromString("debug5")
 	case "info":
 		config.DebugLevel = 0
+		cmn.SetDebugLevelFromString("info")
 	default:
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, invalid debug level specified: %s", newLevel)
 		return

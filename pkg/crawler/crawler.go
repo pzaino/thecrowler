@@ -30,6 +30,7 @@ import (
 	"image"
 	"image/png"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -99,30 +100,32 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
-	SelID             int                    // The Selenium ID
-	SelInstance       vdi.SeleniumInstance   // The Selenium instance
-	WG                *sync.WaitGroup        // The Caller's WaitGroup
-	fpIdx             uint64                 // The index of the source page after it's indexed
-	config            cfg.Config             // The configuration object (from the config package)
-	db                *cdb.Handler           // The database handler
-	wd                vdi.WebDriver          // The Selenium WebDriver
-	linksMutex        sync.Mutex             // Mutex to protect the newLinks slice
-	newLinks          []LinkItem             // The new links found during the crawling process
-	source            *cdb.Source            // The source to crawl
-	wg                sync.WaitGroup         // WaitGroup to wait for all page workers to finish
-	wgNetInfo         sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel               *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
-	ni                *neti.NetInfo          // The network information of the web page
-	hi                *httpi.HTTPDetails     // The HTTP header information of the web page
-	re                *rules.RuleEngine      // The rule engine
-	getURLMutex       sync.Mutex             // Mutex to protect the getURLContent function
-	visitedLinks      map[string]bool        // Map to keep track of visited links
-	userURLPatterns   []string               // User-defined URL patterns
-	Status            *Status                // Status of the crawling process
-	CollectedCookies  map[string]interface{} // Collected cookies
-	VDIReturned       bool                   // Flag to indicate if the VDI instance was returned
-	SelClosed         bool                   // Flag to indicate if the Selenium instance was closed
-	VDIOperationMutex sync.Mutex             // Mutex to protect the VDI operations
+	SelID                int                    // The Selenium ID
+	SelInstance          vdi.SeleniumInstance   // The Selenium instance
+	WG                   *sync.WaitGroup        // The Caller's WaitGroup
+	fpIdx                uint64                 // The index of the source page after it's indexed
+	config               cfg.Config             // The configuration object (from the config package)
+	db                   *cdb.Handler           // The database handler
+	wd                   vdi.WebDriver          // The Selenium WebDriver
+	linksMutex           sync.Mutex             // Mutex to protect the newLinks slice
+	newLinks             []LinkItem             // The new links found during the crawling process
+	source               *cdb.Source            // The source to crawl
+	wg                   sync.WaitGroup         // WaitGroup to wait for all page workers to finish
+	wgNetInfo            sync.WaitGroup         // WaitGroup to wait for network info to finish
+	sel                  *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
+	ni                   *neti.NetInfo          // The network information of the web page
+	hi                   *httpi.HTTPDetails     // The HTTP header information of the web page
+	re                   *rules.RuleEngine      // The rule engine
+	getURLMutex          sync.Mutex             // Mutex to protect the getURLContent function
+	visitedLinks         map[string]bool        // Map to keep track of visited links
+	userURLPatterns      []string               // User-defined URL patterns
+	userURLBlockPatterns []string               // User-defined URL block patterns
+	Status               *Status                // Status of the crawling process
+	CollectedCookies     map[string]interface{} // Collected cookies
+	VDIReturned          bool                   // Flag to indicate if the VDI instance was returned
+	SelClosed            bool                   // Flag to indicate if the Selenium instance was closed
+	VDIOperationMutex    sync.Mutex             // Mutex to protect the VDI operations
+	RefreshCrawlingTimer func()                 // Function to refresh the crawling timer
 }
 
 // GetContextID returns a unique context ID for the ProcessContext
@@ -182,6 +185,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
 	processCtx.VDIReturned = false
+	processCtx.RefreshCrawlingTimer = args.Refresh
 
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
@@ -251,6 +255,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Extract URLs patterns the user wants to include/exclude
 	processCtx.userURLPatterns = make([]string, 0)
+	processCtx.userURLBlockPatterns = make([]string, 0)
 
 	// Navigate the hierarchy: execution_plan -> conditions -> url_patterns
 	if executionPlanRaw, ok := sourceConfig["execution_plan"]; ok {
@@ -270,6 +275,16 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 									}
 								}
 							}
+							if urlBlockPatternsRaw, ok := conditions["url_block_patterns"]; ok {
+								if urlBlockPatterns, ok := urlBlockPatternsRaw.([]interface{}); ok {
+									// Convert []interface{} to []string
+									for _, pattern := range urlBlockPatterns {
+										if strPattern, ok := pattern.(string); ok {
+											processCtx.userURLBlockPatterns = append(processCtx.userURLBlockPatterns, strPattern)
+										}
+									}
+								}
+							}
 						}
 					}
 				}
@@ -277,184 +292,265 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 	}
 
-	// Crawl the initial URL and get the HTML content
-	var pageSource vdi.WebDriver
-	pageSource, err = processCtx.CrawlInitialURL(sel)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
-		processCtx.Status.EndTime = time.Now()
-		processCtx.Status.CrawlingRunning = 3
-		processCtx.Status.PipelineRunning = 3
-		processCtx.Status.TotalErrors++
-		processCtx.Status.LastError = err.Error()
-		return
+	var timeout time.Duration
+	timeout = parseProcessingTimeout(processCtx.config.Crawler.ProcessingTimeout) - 1
+	if timeout == 0 {
+		timeout = 20 * time.Minute // default fallback
+		timeout -= time.Second
 	}
 
-	// Get screenshot of the page
-	processCtx.TakeScreenshot(pageSource, args.Src.URL, processCtx.fpIdx)
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
 
-	// Extract the HTML content and extract links
-	var htmlContent string
-	htmlContent, err = pageSource.PageSource()
-	if err != nil {
-		// Return the Selenium instance to the channel
-		// and update the source state in the database
-		cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
-		processCtx.Status.EndTime = time.Now()
-		processCtx.Status.CrawlingRunning = 3
-		processCtx.Status.PipelineRunning = 3
-		processCtx.Status.TotalErrors++
-		processCtx.Status.LastError = err.Error()
-		return
-	}
-	initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
+	done := make(chan struct{})
 
-	// Refresh the page
-	err = processCtx.RefreshVDIConnection(sel)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
-		processCtx.Status.EndTime = time.Now()
-		processCtx.Status.CrawlingRunning = 3
-		processCtx.Status.PipelineRunning = 3
-		processCtx.Status.TotalErrors++
-		processCtx.Status.LastError = err.Error()
-		return
-	}
+	// Wrap the entire crawling workflow into a goroutine
+	go func() {
+		defer close(done)
 
-	// Get network information
-	processCtx.wgNetInfo.Add(1)
-	go func(ctx *ProcessContext) {
-		defer ctx.wgNetInfo.Done()
-		ctx.GetNetInfo(ctx.source.URL)
-		_, err := ctx.IndexNetInfo(1)
+		// Crawl the initial URL and get the HTML content
+		var pageSource vdi.WebDriver
+		pageSource, err = processCtx.CrawlInitialURL(sel)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
+			processCtx.Status.EndTime = time.Now()
+			processCtx.Status.CrawlingRunning = 3
+			processCtx.Status.PipelineRunning = 3
+			processCtx.Status.TotalErrors++
+			processCtx.Status.LastError = err.Error()
+			return
 		}
-	}(processCtx)
 
-	// Get HTTP header information
-	if processCtx.config.HTTPHeaders.Enabled {
+		// Get screenshot of the page
+		processCtx.TakeScreenshot(pageSource, args.Src.URL, processCtx.fpIdx)
+
+		// Extract the HTML content and extract links
+		var htmlContent string
+		htmlContent, err = pageSource.PageSource()
+		if err != nil {
+			// Return the Selenium instance to the channel
+			// and update the source state in the database
+			cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
+			processCtx.Status.EndTime = time.Now()
+			processCtx.Status.CrawlingRunning = 3
+			processCtx.Status.PipelineRunning = 3
+			processCtx.Status.TotalErrors++
+			processCtx.Status.LastError = err.Error()
+			return
+		}
+		initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
+
+		// Refresh the page
+		err = processCtx.RefreshVDIConnection(sel)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
+			processCtx.Status.EndTime = time.Now()
+			processCtx.Status.CrawlingRunning = 3
+			processCtx.Status.PipelineRunning = 3
+			processCtx.Status.TotalErrors++
+			processCtx.Status.LastError = err.Error()
+			return
+		}
+
+		// Get network information
 		processCtx.wgNetInfo.Add(1)
-		go func(ctx *ProcessContext, htmlContent string) {
+		go func(ctx *ProcessContext) {
 			defer ctx.wgNetInfo.Done()
-			ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
-			_, err := ctx.IndexNetInfo(2)
+			ctx.GetNetInfo(ctx.source.URL)
+			_, err := ctx.IndexNetInfo(1)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
 			}
-		}(processCtx, htmlContent)
-	} else {
-		processCtx.Status.HTTPInfoRunning = 2
-	}
+		}(processCtx)
 
-	// Crawl the website
-	allLinks := initialLinks // links extracted from the initial page
-	var currentDepth int
-	maxDepth := checkMaxDepth(processCtx.config.Crawler.MaxDepth) // set a maximum depth for crawling
-	newLinksFound := len(initialLinks)
-	processCtx.Status.TotalLinks = newLinksFound
-	if processCtx.source.Restricted != 0 {
-		// Restriction level is higher than 0, so we need to crawl the website
-		for (currentDepth < maxDepth) && (newLinksFound > 0) {
-			// Create a channel to enqueue jobs
-			jobs := make(chan LinkItem, len(allLinks))
-			// Create a channel to collect errors
-			errChan := make(chan error, config.Crawler.Workers-2)
-
-			// Launch worker goroutines
-			for w := 1; w <= config.Crawler.Workers-2; w++ {
-				processCtx.wg.Add(1)
-
-				go func(w int) {
-					defer processCtx.wg.Done()
-					if err := worker(processCtx, w, jobs); err != nil {
-						// Send any error from the worker to the error channel
-						errChan <- err
-					}
-				}(w)
-			}
-
-			// Enqueue jobs (allLinks)
-			for _, link := range allLinks {
-				jobs <- link
-			}
-			close(jobs)
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
-
-			// Wait for workers to finish and collect new links
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
-			processCtx.wg.Wait()
-			close(errChan)
-
-			// Handle any errors from workers
-			for err = range errChan {
+		// Get HTTP header information
+		if processCtx.config.HTTPHeaders.Enabled {
+			processCtx.wgNetInfo.Add(1)
+			go func(ctx *ProcessContext, htmlContent string) {
+				defer ctx.wgNetInfo.Done()
+				ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
+				_, err := ctx.IndexNetInfo(2)
 				if err != nil {
-					// Log the error
-					cmn.DebugMsg(cmn.DbgLvlError, "Worker error: %v", err)
+					cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", err)
+				}
+			}(processCtx, htmlContent)
+		} else {
+			processCtx.Status.HTTPInfoRunning = 2
+		}
 
-					// Check if the error contains errCriticalError
-					if strings.Contains(err.Error(), errCriticalError) {
-						// Update source with error state
-						processCtx.Status.EndTime = time.Now()
-						processCtx.Status.CrawlingRunning = 3
-						processCtx.Status.PipelineRunning = 3
-						processCtx.Status.TotalErrors++
-						processCtx.Status.LastError = err.Error()
+		// Crawl the website
+		allLinks := initialLinks // links extracted from the initial page
+		var currentDepth int
+		maxDepth := checkMaxDepth(processCtx.config.Crawler.MaxDepth) // set a maximum depth for crawling
+		newLinksFound := len(initialLinks)
+		processCtx.Status.TotalLinks = newLinksFound
+		if processCtx.source.Restricted != 0 {
+			// Restriction level is higher than 0, so we need to crawl the website
+			for (currentDepth < maxDepth) && (newLinksFound > 0) {
+				// Create a channel to enqueue jobs
+				jobs := make(chan LinkItem, len(allLinks))
+				// Create a channel to collect errors
+				errChan := make(chan error, config.Crawler.Workers-2)
 
-						// Log the critical error and return to stop processing
-						cmn.DebugMsg(cmn.DbgLvlError, "encountered "+errCriticalError+": %v. Stopping crawling for Source: %d", err, processCtx.source.ID)
-						return
+				// Launch worker goroutines
+				for w := 1; w <= config.Crawler.Workers-2; w++ {
+					processCtx.wg.Add(1)
+
+					go func(w int) {
+						defer processCtx.wg.Done()
+						if err := worker(processCtx, w, jobs); err != nil {
+							// Send any error from the worker to the error channel
+							errChan <- err
+						}
+					}(w)
+				}
+
+				// Enqueue jobs (allLinks)
+				for _, link := range allLinks {
+					jobs <- link
+				}
+				close(jobs)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
+
+				// Wait for workers to finish and collect new links
+				cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
+				processCtx.wg.Wait()
+				close(errChan)
+
+				// Handle any errors from workers
+				for err = range errChan {
+					if err != nil {
+						// Log the error
+						cmn.DebugMsg(cmn.DbgLvlError, "Worker error: %v", err)
+
+						// Check if the error contains errCriticalError
+						if strings.Contains(err.Error(), errCriticalError) {
+							// Update source with error state
+							processCtx.Status.EndTime = time.Now()
+							processCtx.Status.CrawlingRunning = 3
+							processCtx.Status.PipelineRunning = 3
+							processCtx.Status.TotalErrors++
+							processCtx.Status.LastError = err.Error()
+
+							// Log the critical error and return to stop processing
+							cmn.DebugMsg(cmn.DbgLvlError, "encountered "+errCriticalError+": %v. Stopping crawling for Source: %d", err, processCtx.source.ID)
+							return
+						}
 					}
 				}
-			}
-			cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
+				cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
 
-			// Prepare for the next iteration
-			processCtx.linksMutex.Lock()
-			if len(processCtx.newLinks) > 0 {
-				// If MaxLinks is set, limit the number of new links
-				if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
-					linksToCrawl := processCtx.config.Crawler.MaxLinks - processCtx.Status.TotalPages
-					if linksToCrawl <= 0 {
-						// Remove all new links
-						processCtx.newLinks = []LinkItem{}
-					} else {
-						processCtx.newLinks = processCtx.newLinks[:linksToCrawl]
+				// Prepare for the next iteration
+				processCtx.linksMutex.Lock()
+				if len(processCtx.newLinks) > 0 {
+					// If MaxLinks is set, limit the number of new links
+					if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
+						linksToCrawl := processCtx.config.Crawler.MaxLinks - processCtx.Status.TotalPages
+						if linksToCrawl <= 0 {
+							// Remove all new links
+							processCtx.newLinks = []LinkItem{}
+						} else {
+							processCtx.newLinks = processCtx.newLinks[:linksToCrawl]
+						}
 					}
+					newLinksFound = len(processCtx.newLinks)
+					processCtx.Status.TotalLinks += newLinksFound
+					allLinks = processCtx.newLinks
+				} else {
+					newLinksFound = 0
 				}
-				newLinksFound = len(processCtx.newLinks)
-				processCtx.Status.TotalLinks += newLinksFound
-				allLinks = processCtx.newLinks
-			} else {
-				newLinksFound = 0
-			}
-			processCtx.newLinks = []LinkItem{} // reset newLinks
-			processCtx.linksMutex.Unlock()
+				processCtx.newLinks = []LinkItem{} // reset newLinks
+				processCtx.linksMutex.Unlock()
 
-			// Increment the current depth
-			currentDepth++
-			processCtx.Status.CurrentDepth = currentDepth
-			if processCtx.config.Crawler.MaxDepth == 0 {
-				maxDepth = currentDepth + 1
+				// Increment the current depth
+				currentDepth++
+				processCtx.Status.CurrentDepth = currentDepth
+				if processCtx.config.Crawler.MaxDepth == 0 {
+					maxDepth = currentDepth + 1
+				}
 			}
 		}
+
+		if processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
+			// Reset cookies after crawling
+			_ = ResetSiteSession(processCtx)
+		}
+
+		// Return the Selenium instance to the channel
+		processCtx.Status.CrawlingRunning = 2
+		vdi.ReturnVDIInstance(args.WG, processCtx, &sel, releaseVDI)
+
+		// Index the network information
+		processCtx.wgNetInfo.Wait()
+
+		// Pipeline has completed
+		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.PipelineRunning = 2
+	}()
+
+	// Wait for the crawling process to finish or timeout
+	select {
+	case <-timeoutTimer.C:
+		// Timeout hit
+		cmn.DebugMsg(cmn.DbgLvlError, "Crawling timed out for source: %s", args.Src.URL)
+		processCtx.Status.PipelineRunning = 3
+		processCtx.Status.CrawlingRunning = 3
+		processCtx.Status.LastError = "timeout during crawling"
+		UpdateSourceState(args.DB, args.Src.URL, errors.New("timeout during crawling"))
+		closeSession(processCtx, args, &sel, releaseVDI, errors.New("timeout"))
+		return
+	case <-done:
+		// Crawling completed successfully
+	}
+}
+
+func parseProcessingTimeout(timeoutStr string) time.Duration {
+	timeoutStr = strings.TrimSpace(strings.ToLower(timeoutStr))
+
+	// Normalize user input
+	timeoutStr = strings.ReplaceAll(timeoutStr, "minutes", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "minute", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "min", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "mins", "m")
+
+	timeoutStr = strings.ReplaceAll(timeoutStr, "hours", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "hour", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "hrs", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "hr", "h")
+
+	timeoutStr = strings.ReplaceAll(timeoutStr, "seconds", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "second", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "secs", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, "sec", "s")
+
+	dur, err := time.ParseDuration(timeoutStr)
+	if err != nil || dur <= 0 {
+		// fallback
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Invalid timeout format: %s, falling back to 20m", timeoutStr)
+		dur = 20 * time.Minute
+	}
+	// Ensure the duration is not negative
+	if dur < 0 {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Negative timeout duration: %s, falling back to 20m", timeoutStr)
+		dur = 20 * time.Minute
+	}
+	// Ensure the duration is not too large
+	if dur > 24*time.Hour {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Timeout duration too large: %s, falling back to 24h", timeoutStr)
+		dur = 24 * time.Hour
+	}
+	// Ensure the duration is not too small
+	if dur < 1*time.Second {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Timeout duration too small: %s, falling back to 1s", timeoutStr)
+		dur = 30 * time.Second
 	}
 
-	if processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
-		// Reset cookies after crawling
-		_ = ResetSiteSession(processCtx)
+	// Subtract 1 second for safety
+	if dur > time.Second {
+		dur -= time.Second
 	}
 
-	// Return the Selenium instance to the channel
-	processCtx.Status.CrawlingRunning = 2
-	vdi.ReturnVDIInstance(args.WG, processCtx, &sel, releaseVDI)
-
-	// Index the network information
-	processCtx.wgNetInfo.Wait()
-
-	// Pipeline has completed
-	processCtx.Status.EndTime = time.Now()
-	processCtx.Status.PipelineRunning = 2
+	return dur
 }
 
 func closeSession(ctx *ProcessContext,
@@ -2390,21 +2486,31 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	if wd == nil {
 		return nil, "", errors.New("WebDriver is nil")
 	}
-
 	if ctx.VDIReturned {
 		// If the VDI session is returned, return the WebDriver
 		return wd, "", nil
 	}
 
-	// check if webdriver session is still good, if not open a new one
-	_, err := wd.CurrentURL()
-	if err != nil {
-		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
-			// If the session is not found, create a new one
-			err = ctx.ConnectToVDI((*ctx).SelInstance)
-			wd = ctx.wd
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+	var err error
+
+	// Reset the Selenium session for a clean browser with new User-Agent
+	if ctx.config.Crawler.ChangeUserAgent == "always" {
+		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
+		}
+		wd = *ctx.GetWebDriver()
+	} else {
+		// check if webdriver session is still good, if not open a new one
+		_, err = wd.CurrentURL()
+		if err != nil {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
+				// If the session is not found, create a new one
+				err = ctx.ConnectToVDI((*ctx).SelInstance)
+				wd = ctx.wd
+				if err != nil {
+					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+				}
 			}
 		}
 	}
@@ -2415,18 +2521,26 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		return nil, "", errors.New("URL is empty")
 	}
 
+	// Change the User Agent (if needed)
+	/*
+		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+			err = changeUserAgent(&(ctx.wd), ctx)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
+			}
+		}
+	*/
+
 	// Reinforce Browser Settings
 	err = vdi.ReinforceBrowserSettings(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
 	}
 
-	// Change the User Agent (if needed)
-	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-		err = changeUserAgent(&wd, ctx)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "changing User Agent: %v", err)
-		}
+	// Block URLs if any (URLs firewall)
+	err = blockCDPURLs(&wd, ctx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
 	}
 
 	// Add XHR Hook
@@ -2439,10 +2553,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		} /*else {
 			cancel, collectedRequests = startCDPLogging(wd)
 		}*/
-
 	}
 
 	// Navigate to a page and interact with elements.
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 			// If the session is not found, create a new one
@@ -2470,15 +2586,15 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	}
 
 	// Wait for Page to Load
-	delay := exi.GetFloat(ctx.config.Crawler.Interval)
-	if delay <= 0 {
-		delay = 3
+	interval := exi.GetFloat(ctx.config.Crawler.Interval)
+	if interval <= 0 {
+		interval = 3
 	}
-	ctx.Status.LastWait = delay
+	ctx.Status.LastWait = interval
 	if level > 0 {
-		_ = vdiSleep(ctx, delay) // Pause to let page load
+		_ = vdiSleep(ctx, interval) // Pause to let page load
 	} else {
-		_ = vdiSleep(ctx, (delay + 5)) // Pause to let Home page load
+		_ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
 	}
 
 	// Get Session Cookies
@@ -2517,7 +2633,41 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 	*/
 
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	return wd, docType, nil
+}
+
+func blockCDPURLs(wd *vdi.WebDriver, ctx *ProcessContext) error {
+	// Check if we have any blocked URLs configured
+	if len((*ctx).userURLBlockPatterns) == 0 {
+		return nil // No patterns to block
+	}
+
+	// Extract patterns from the configuration
+	patterns := make([]string, 0)
+	for _, pattern := range (*ctx).userURLBlockPatterns {
+		if pattern != "" {
+			patterns = append(patterns, pattern)
+		}
+	}
+
+	// First: enable the Network domain
+	_, err := (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+	if err != nil {
+		return fmt.Errorf("failed to enable Network domain: %w", err)
+	}
+
+	// Then: set the blocked URL patterns
+	_, err = (*wd).ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
+		"urls": patterns,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set blocked URLs: %w", err)
+	}
+
+	return nil
 }
 
 func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
@@ -2533,17 +2683,39 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		}
 	}
 
+	// Parse the User Agent string for {random_int1}
+	if strings.Contains(userAgent, "{random_int1}") {
+		// Generates a random integer in the range [0, 999)
+		randInt := rand.IntN(8000) // nolint:gosec // We are using "math/rand/v2" here
+		userAgent = strings.ReplaceAll(userAgent, "{random_int1}", strconv.Itoa(randInt))
+	}
+
+	// Parse the User Agent string for {random_int2}
+	if strings.Contains(userAgent, "{random_int2}") {
+		// Generates a random integer in the range [0, 999)
+		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
+		userAgent = strings.ReplaceAll(userAgent, "{random_int2}", strconv.Itoa(randInt))
+	}
+
 	// Check if the browser is Chrome and CDP is available
-	if ctx.config.Selenium[ctx.SelID].Type == "chrome" {
-		_, err = (*wd).ExecuteChromeDPCommand("Network.setUserAgentOverride", map[string]interface{}{
-			"userAgent": userAgent,
-			"platform":  ctx.config.Crawler.Platform,
-		})
-		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed via CDP to: %s", userAgent)
-			return nil
+	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
+		// Try with changeUserAgentCDP
+		err := changeUserAgentCDP(ctx, userAgent)
+		if err != nil {
+			// Enable the Network domain
+			_, _ = (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+			// Set the User-Agent using CDP
+			_, err = (*wd).ExecuteChromeDPCommand("Network.setUserAgentOverride", map[string]interface{}{
+				"userAgent": userAgent,
+				"platform":  ctx.config.Crawler.Platform,
+			})
+			if err == nil {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
+				//return nil
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "[CDP] Failed to change UserAgent using CDP: %v", err)
+			}
 		}
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to change User-Agent using CDP: %v", err)
 	}
 
 	// Fallback: Override userAgent using JavaScript injection
@@ -2558,7 +2730,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "User-Agent changed via JavaScript to: %s", userAgent)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "UserAgent changed via JavaScript to: %s", userAgent)
 	return nil
 }
 
@@ -2638,15 +2810,17 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 	defer cancel()
 
 	// Get WebSocket URL from Selenium-controlled browser
-	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":9222/devtools/browser/<session-id>"
+	port := fmt.Sprintf("%d", 9222+pctx.SelID)
+	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":" + port + "/devtools/browser/" + pctx.wd.SessionID()
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Connecting to CDP via 'ws': %s", wsURL)
 
 	// Dial the Chrome Debugger Protocol
 	conn, err := rpcc.DialContext(ctx, wsURL)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to connect to CDP: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to connect to CDP via 'ws': %v", err)
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // Close the connection when done
 
 	// Create a CDP client
 	cdpClient := cdp.NewClient(conn)
@@ -2654,7 +2828,7 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 	// Enable Network domain
 	err = cdpClient.Network.Enable(ctx, nil)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to enable Network domain via 'ws': %v", err)
 		return err
 	}
 
@@ -2663,11 +2837,11 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 		UserAgent: userAgent,
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using CDP via 'ws': %v", err)
 		return err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Successfully changed User-Agent to: %s", userAgent)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Successfully changed UserAgent to: '%s', using CDP via 'ws'", userAgent)
 	return nil
 }
 
@@ -3230,6 +3404,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			delay := exi.GetFloat(processCtx.config.Crawler.Delay)
 			processCtx.Status.LastDelay = delay
 			_ = vdiSleep(processCtx, delay)
+		}
+		if processCtx.RefreshCrawlingTimer != nil {
+			processCtx.RefreshCrawlingTimer()
 		}
 		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
@@ -3795,6 +3972,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	resetPageInfo(&pageCache) // Reset the PageInfo object
 
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	return err
 }
 

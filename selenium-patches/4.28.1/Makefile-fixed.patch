@@ -1,0 +1,62 @@
+--- ./Makefile.orig	2025-05-02 03:14:06
++++ ./Makefile	2025-05-02 03:30:41
+@@ -14,7 +14,7 @@
+ AUTHORS := $(or $(AUTHORS),$(AUTHORS),SeleniumHQ)
+ PUSH_IMAGE := $(or $(PUSH_IMAGE),$(PUSH_IMAGE),false)
+ RELEASE_OLD_VERSION := $(or $(RELEASE_OLD_VERSION),$(RELEASE_OLD_VERSION),false)
+-FROM_IMAGE_ARGS := --build-arg NAMESPACE=$(NAMESPACE) --build-arg VERSION=$(TAG_VERSION) --build-arg AUTHORS=$(AUTHORS) --sbom=true --attest type=provenance,mode=max
++FROM_IMAGE_ARGS := --build-arg NAMESPACE=$(NAMESPACE) --build-arg VERSION=$(TAG_VERSION) --build-arg AUTHORS=$(AUTHORS) 
+ BUILD_ARGS := $(BUILD_ARGS) --progress plain
+ MAJOR := $(word 1,$(subst ., ,$(TAG_VERSION)))
+ MINOR := $(word 2,$(subst ., ,$(TAG_VERSION)))
+@@ -129,7 +129,7 @@
+ 
+ base: prepare_resources gen_certs
+ 	cd ./Base && SEL_PASSWD=$(SEL_PASSWD) docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --build-arg VERSION=$(BASE_VERSION) --build-arg RELEASE=$(BASE_RELEASE) --build-arg AUTHORS=$(AUTHORS) \
+-	--build-arg MVN_SELENIUM_VERSION=$(MVN_SELENIUM_VERSION) --secret id=SEL_PASSWD --sbom=true --attest type=provenance,mode=max -t $(NAME)/base:$(TAG_VERSION) .
++	--build-arg MVN_SELENIUM_VERSION=$(MVN_SELENIUM_VERSION) --secret id=SEL_PASSWD -t $(NAME)/base:$(TAG_VERSION) .
+ 
+ base_nightly:
+ 	BASE_VERSION=$(BASE_VERSION_NIGHTLY) BASE_RELEASE=$(BASE_RELEASE_NIGHTLY) make base
+@@ -219,11 +219,11 @@
+ standalone_firefox: firefox standalone_firefox_only
+ 
+ standalone_firefox_dev: firefox_dev
+-	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --sbom=true --attest type=provenance,mode=max \
++	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+ 	--build-arg NAMESPACE=$(NAME) --build-arg VERSION=dev --build-arg BASE=node-firefox -t $(NAME)/standalone-firefox:dev .
+ 
+ standalone_firefox_beta: firefox_beta
+-	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --sbom=true --attest type=provenance,mode=max \
++	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+ 	--build-arg NAMESPACE=$(NAME) --build-arg VERSION=beta --build-arg BASE=node-firefox -t $(NAME)/standalone-firefox:beta .
+ 
+ standalone_chrome_only:
+@@ -240,11 +240,11 @@
+ standalone_chrome: chrome standalone_chrome_only
+ 
+ standalone_chrome_dev: chrome_dev
+-	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --sbom=true --attest type=provenance,mode=max \
++	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+ 	--build-arg NAMESPACE=$(NAME) --build-arg VERSION=dev --build-arg BASE=node-chrome -t $(NAME)/standalone-chrome:dev .
+ 
+ standalone_chrome_beta: chrome_beta
+-	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --sbom=true --attest type=provenance,mode=max \
++	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+ 	--build-arg NAMESPACE=$(NAME) --build-arg VERSION=beta --build-arg BASE=node-chrome -t $(NAME)/standalone-chrome:beta .
+ 
+ standalone_chromium: chromium
+@@ -264,11 +264,11 @@
+ standalone_edge: edge standalone_edge_only
+ 
+ standalone_edge_dev: edge_dev
+-	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --sbom=true --attest type=provenance,mode=max \
++	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+ 	--build-arg NAMESPACE=$(NAME) --build-arg VERSION=dev --build-arg BASE=node-edge -t $(NAME)/standalone-edge:dev .
+ 
+ standalone_edge_beta: edge_beta
+-	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --sbom=true --attest type=provenance,mode=max \
++	cd ./Standalone && docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+ 	--build-arg NAMESPACE=$(NAME) --build-arg VERSION=beta --build-arg BASE=node-edge -t $(NAME)/standalone-edge:beta .
+ 
+ video: base

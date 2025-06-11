@@ -32,6 +32,7 @@ type Properties struct {
 	Persistent   bool   `yaml:"persistent"`    // Whether the entry should be persistent
 	Static       bool   `yaml:"static"`        // Whether the entry should be static
 	SessionValid bool   `yaml:"session_valid"` // Whether the entry should be valid for the session
+	Shared       bool   `yaml:"shared"`        // Whether the key should be shared across the cluster
 	Source       string `yaml:"source"`        // The source of the key-value entry
 	CtxID        string // Context ID for more specific identification
 	Type         string // The type of the stored value (e.g., "string", "[]string")
@@ -43,10 +44,25 @@ type Entry struct {
 	Properties Properties
 }
 
+// SharedCallback is a callback function type for shared key-value store operations.
+// It's used to notify the cluster sharing API when a key-value pair is set or updated.
+// It needs to be implemented by the code that will use KVStore.
+// The callback function should accept the action (set, update or delete), key, value, and properties as parameters.
+type SharedCallback func(action, key string, value interface{}, props Properties)
+
+// SetSharedCallback sets the callback function for shared key-value store operations.
+// This function should be called by the code that will use KVStore to set the callback.
+func (kv *KeyValueStore) SetSharedCallback(callback SharedCallback) {
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+	kv.sharedCallback = callback
+}
+
 // KeyValueStore stores key-value pairs with properties and ensures thread safety.
 type KeyValueStore struct {
-	store map[string]Entry
-	mutex sync.RWMutex
+	store          map[string]Entry
+	mutex          sync.RWMutex
+	sharedCallback SharedCallback
 }
 
 // NewKeyValueStore initializes the key-value store.
@@ -57,12 +73,15 @@ func NewKeyValueStore() *KeyValueStore {
 }
 
 // NewKVStoreProperty initializes a new Properties object.
-func NewKVStoreProperty(persistent bool, static bool, sessionValid bool, source string, ctxID string, Type string) Properties {
+func NewKVStoreProperty(persistent bool, static bool,
+	sessionValid bool, shared bool,
+	source string, ctxID string, Type string) Properties {
 	return Properties{
 		Persistent:   persistent,
 		Static:       static,
 		SessionValid: sessionValid,
 		Source:       source,
+		Shared:       shared,
 		CtxID:        ctxID,
 		Type:         Type,
 	}
@@ -74,6 +93,7 @@ func NewKVStoreEmptyProperty() Properties {
 		Persistent:   false,
 		Static:       false,
 		SessionValid: true,
+		Shared:       false,
 		Source:       "",
 		CtxID:        "",
 		Type:         "",
@@ -133,7 +153,60 @@ func (kv *KeyValueStore) Set(key string, value interface{}, properties Propertie
 			Properties: properties,
 		}
 	}
+	// If the entry is shared, call the shared callback
+	if properties.Shared && kv.sharedCallback != nil {
+		go kv.sharedCallback("set", key, value, properties)
+	}
 	return nil
+}
+
+// Increment increments the value for a given key and context by a specified step and it's thread safe.
+func (kv *KeyValueStore) Increment(key, ctxID string, step int64) (int64, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
+	fullKey := createKeyWithCtx(key, ctxID)
+
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+
+	entry, exists := kv.store[fullKey]
+	if !exists {
+		entry = Entry{
+			Value:      step,
+			Properties: NewKVStoreEmptyProperty(),
+		}
+		kv.store[fullKey] = entry
+		return step, nil
+	}
+
+	var valInt int64
+	switch v := entry.Value.(type) {
+	case int:
+		valInt = int64(v)
+	case int64:
+		valInt = v
+	case float64:
+		valInt = int64(v)
+	default:
+		return 0, fmt.Errorf("value is not numeric")
+	}
+
+	valInt += step
+	entry.Value = valInt
+	kv.store[fullKey] = entry
+
+	// If the entry is shared, call the shared callback
+	if kv.store[fullKey].Properties.Shared && kv.sharedCallback != nil {
+		go kv.sharedCallback("update", key, entry.Value, entry.Properties)
+	}
+
+	return valInt, nil
+}
+
+// Decrement decrements the value for a given key and context by a specified step and it's thread safe.
+func (kv *KeyValueStore) Decrement(key, ctxID string, step int64) (int64, error) {
+	return kv.Increment(key, ctxID, -step)
 }
 
 // Get retrieves the value (which could be string or []string) and properties for a given key and context.
@@ -155,6 +228,9 @@ func (kv *KeyValueStore) Get(key string, ctxID string) (interface{}, Properties,
 
 // GetBySource retrieves the value and properties for a given key and source.
 func (kv *KeyValueStore) GetBySource(key string, source string) (interface{}, Properties, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -168,6 +244,9 @@ func (kv *KeyValueStore) GetBySource(key string, source string) (interface{}, Pr
 
 // GetWithCtx retrieves the value for a given key, considering both Source and CtxID if provided.
 func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (interface{}, Properties, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
@@ -186,6 +265,9 @@ func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (in
 
 // Size returns the number of key-value pairs in the store.
 func (kv *KeyValueStore) Size() int {
+	if kv == nil {
+		return 0
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -197,6 +279,9 @@ func (kv *KeyValueStore) Size() int {
 // If no flags are provided, only non-persistent entries are deleted.
 // Flag[0] set is to delete persistent entries
 func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
+	if kv == nil {
+		return errors.New("key-value store is nil")
+	}
 	fullKey := createKeyWithCtx(key, ctxID)
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
@@ -217,6 +302,11 @@ func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 		}
 	}
 	if removeEntry {
+		// If the entry is shared, call the shared callback
+		if kv.store[fullKey].Properties.Shared && kv.sharedCallback != nil {
+			go kv.sharedCallback("delete", key, kv.store[fullKey].Value, kv.store[fullKey].Properties)
+		}
+		// Delete the entry
 		delete(kv.store, fullKey)
 	}
 	return nil
@@ -227,6 +317,9 @@ func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 // If no flags are provided, only non-persistent entries are deleted.
 // Flag[0] set is to delete persistent entries
 func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
@@ -248,6 +341,11 @@ func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
 
 			// Perform the deletion
 			if removeEntry {
+				// If the entry is shared, call the shared callback
+				if kv.store[key].Properties.Shared && kv.sharedCallback != nil {
+					go kv.sharedCallback("delete", key, kv.store[key].Value, kv.store[key].Properties)
+				}
+				// Delete the entry
 				delete(kv.store, key)
 			}
 		}
@@ -256,11 +354,19 @@ func (kv *KeyValueStore) DeleteByCID(ctxID string, flags ...bool) {
 
 // DeleteNonPersistent removes all key-value pairs that are not persistent.
 func (kv *KeyValueStore) DeleteNonPersistent() {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 
 	for key, entry := range kv.store {
 		if !entry.Properties.Persistent {
+			// If the entry is shared, call the shared callback
+			if entry.Properties.Shared && kv.sharedCallback != nil {
+				go kv.sharedCallback("delete", key, entry.Value, entry.Properties)
+			}
+			// Delete the entry
 			delete(kv.store, key)
 		}
 	}
@@ -268,11 +374,19 @@ func (kv *KeyValueStore) DeleteNonPersistent() {
 
 // DeleteNonPersistentByCID removes all key-value pairs for a given context that are not persistent.
 func (kv *KeyValueStore) DeleteNonPersistentByCID(ctxID string) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
 	for key := range kv.store {
 		if strings.HasSuffix(key, ":"+ctxID) && !kv.store[key].Properties.Persistent {
+			// If the entry is shared, call the shared callback
+			if kv.store[key].Properties.Shared && kv.sharedCallback != nil {
+				go kv.sharedCallback("delete", key, kv.store[key].Value, kv.store[key].Properties)
+			}
+			// Delete the entry
 			delete(kv.store, key)
 		}
 	}
@@ -280,19 +394,41 @@ func (kv *KeyValueStore) DeleteNonPersistentByCID(ctxID string) {
 
 // DeleteAll clears all key-value pairs from the store.
 func (kv *KeyValueStore) DeleteAll() {
+	if kv == nil {
+		return
+	}
+	if kv.store == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 
+	// Check for all shared entries and call the shared callback to notify the cluster
+	for key, entry := range kv.store {
+		if entry.Properties.Shared && kv.sharedCallback != nil {
+			go kv.sharedCallback("delete", key, entry.Value, entry.Properties)
+		}
+	}
+
+	// Clear the store
 	kv.store = make(map[string]Entry)
 }
 
 // DeleteAllByCID clears all key-value pairs for a given context from the store.
 func (kv *KeyValueStore) DeleteAllByCID(ctxID string) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
 	for key := range kv.store {
 		if strings.HasSuffix(key, ":"+ctxID) {
+			// If the entry is shared, call the shared callback
+			if kv.store[key].Properties.Shared && kv.sharedCallback != nil {
+				go kv.sharedCallback("delete", key, kv.store[key].Value, kv.store[key].Properties)
+			}
+			// Delete the entry
 			delete(kv.store, key)
 		}
 	}
@@ -300,15 +436,28 @@ func (kv *KeyValueStore) DeleteAllByCID(ctxID string) {
 
 // CleanSession clears all key-value pairs that are session valid for the given CID.
 func (kv *KeyValueStore) CleanSession(ctxID string) {
+	if kv == nil {
+		return
+	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 	ctxID = strings.TrimSpace(ctxID)
 	for key := range kv.store {
 		if strings.HasSuffix(key, ":"+ctxID) && kv.store[key].Properties.SessionValid {
+			// If the entry is shared, call the shared callback
+			if kv.store[key].Properties.Shared && kv.sharedCallback != nil {
+				go kv.sharedCallback("delete", key, kv.store[key].Value, kv.store[key].Properties)
+			}
+			// Delete the entry
 			delete(kv.store, key)
 		}
 		// Clean up also the non-persistent entries that are not session valid
 		if strings.HasSuffix(key, ":"+ctxID) && !kv.store[key].Properties.Persistent && !kv.store[key].Properties.SessionValid {
+			// If the entry is shared, call the shared callback
+			if kv.store[key].Properties.Shared && kv.sharedCallback != nil {
+				go kv.sharedCallback("delete", key, kv.store[key].Value, kv.store[key].Properties)
+			}
+			// Delete the entry
 			delete(kv.store, key)
 		}
 	}
@@ -316,6 +465,9 @@ func (kv *KeyValueStore) CleanSession(ctxID string) {
 
 // AllKeys returns a slice of all keys (without the CIDs) in the store (ignoring context).
 func (kv *KeyValueStore) AllKeys() []string {
+	if kv == nil {
+		return []string{}
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -330,6 +482,9 @@ func (kv *KeyValueStore) AllKeys() []string {
 
 // AllKeysAndCIDs returns a slice of all keys in the store (ignoring context).
 func (kv *KeyValueStore) AllKeysAndCIDs() []string {
+	if kv == nil {
+		return []string{}
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
@@ -342,6 +497,9 @@ func (kv *KeyValueStore) AllKeysAndCIDs() []string {
 
 // Keys returns a slice of all keys (without the CID) in the store for a given context.
 func (kv *KeyValueStore) Keys(ctxID string) []string {
+	if kv == nil {
+		return []string{}
+	}
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 

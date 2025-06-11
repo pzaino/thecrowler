@@ -50,6 +50,8 @@ const (
 	SSDefaultDelayTime = 100
 
 	stdRateLimit = "10,10"
+
+	never = "never"
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -195,7 +197,8 @@ func NewConfig() *Config {
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
-			ResetCookiesPolicy:    "never",
+			ChangeUserAgent:       never,
+			ResetCookiesPolicy:    never,
 			NoThirdPartyCookies:   false,
 			RequestImages:         true,
 			RequestCSS:            true,
@@ -385,7 +388,7 @@ func NewConfig() *Config {
 			},
 		},
 		Plugins: PluginsConfig{
-			PluginTimeout: 15,
+			PluginsTimeout: 15,
 			Plugins: []PluginConfig{{
 				Type: cmn.LocalStr,
 				Path: []string{
@@ -395,6 +398,9 @@ func NewConfig() *Config {
 		},
 		Agents: []AgentsConfig{
 			{
+				Timeout:        10,
+				AgentsTimeout:  90,
+				PluginsTimeout: 60,
 				Path: []string{
 					"./agents/*.yaml",
 				},
@@ -527,6 +533,7 @@ func (c *Config) Validate() error {
 	c.validateNetworkInfo()
 	c.validateRulesets()
 	c.validatePlugins()
+	c.validateAgents()
 	c.validateExternalDetection()
 	c.validateOS()
 	c.validateDebugLevel()
@@ -635,6 +642,7 @@ func (c *Config) validateCrawler() {
 	c.setDefaultScreenshotMaxHeight()
 	c.setDefaultMaxRetries()
 	c.setDefaultMaxRedirects()
+	c.setChangeUserAgent()
 	c.setDefaultResetCookiesPolicy()
 	c.setDefaultControl()
 }
@@ -777,9 +785,17 @@ func (c *Config) setDefaultMaxRedirects() {
 	}
 }
 
+func (c *Config) setChangeUserAgent() {
+	if strings.TrimSpace(c.Crawler.ChangeUserAgent) == "" {
+		c.Crawler.ChangeUserAgent = never
+	} else {
+		c.Crawler.ChangeUserAgent = strings.ToLower(strings.TrimSpace(c.Crawler.ChangeUserAgent))
+	}
+}
+
 func (c *Config) setDefaultResetCookiesPolicy() {
 	if strings.TrimSpace(c.Crawler.ResetCookiesPolicy) == "" {
-		c.Crawler.ResetCookiesPolicy = "never"
+		c.Crawler.ResetCookiesPolicy = never
 	} else {
 		c.Crawler.ResetCookiesPolicy = strings.ToLower(strings.TrimSpace(c.Crawler.ResetCookiesPolicy))
 	}
@@ -1007,8 +1023,8 @@ func (c *Config) validateRulesets() {
 
 func (c *Config) validatePlugins() {
 	// Check Plugins
-	if c.Plugins.PluginTimeout < 1 {
-		c.Plugins.PluginTimeout = 15
+	if c.Plugins.PluginsTimeout < 1 {
+		c.Plugins.PluginsTimeout = 15
 	}
 	for i := range c.Plugins.Plugins {
 		if strings.TrimSpace(c.Plugins.Plugins[i].Type) == "" {
@@ -1018,6 +1034,45 @@ func (c *Config) validatePlugins() {
 		}
 		if len(c.Plugins.Plugins[i].Path) == 0 && c.Plugins.Plugins[i].Type == cmn.LocalStr {
 			c.Plugins.Plugins[i].Path = []string{PluginsDefaultPath}
+		}
+	}
+}
+
+func (c *Config) validateAgents() {
+	// Check Agents
+	for i := range c.Agents {
+		if strings.TrimSpace(c.Agents[i].Type) == "" {
+			c.Agents[i].Type = cmn.LocalStr
+		} else {
+			c.Agents[i].Type = strings.TrimSpace(c.Agents[i].Type)
+		}
+		if c.Agents[i].Timeout == 0 {
+			c.Agents[i].Timeout = 10
+		}
+		if c.Agents[i].Timeout < 10 {
+			c.Agents[i].Timeout = 10
+		}
+		if c.Agents[i].AgentsTimeout == 0 {
+			c.Agents[i].AgentsTimeout = 90
+		}
+		if c.Agents[i].AgentsTimeout < 30 {
+			c.Agents[i].AgentsTimeout = 30
+		}
+		if c.Agents[i].PluginsTimeout == 0 {
+			c.Agents[i].PluginsTimeout = 60
+		}
+		if c.Agents[i].PluginsTimeout < 30 {
+			c.Agents[i].PluginsTimeout = 30
+		}
+		if len(c.Agents[i].Path) == 0 && c.Agents[i].Type == cmn.LocalStr {
+			c.Agents[i].Path = []string{"./agents/*.yaml"}
+		}
+		for j := range c.Agents[i].Path {
+			if strings.TrimSpace(c.Agents[i].Path[j]) == "" {
+				c.Agents[i].Path[j] = "./agents/*.yaml"
+			} else {
+				c.Agents[i].Path[j] = strings.TrimSpace(c.Agents[i].Path[j])
+			}
 		}
 	}
 }

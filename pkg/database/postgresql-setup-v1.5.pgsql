@@ -1829,6 +1829,7 @@ BEGIN
                 OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
                 OR s.status IS NULL
               )
+        ORDER BY s.created_at ASC, s.source_id ASC  -- Ensure deterministic order
         FOR UPDATE
         LIMIT limit_val
     )
