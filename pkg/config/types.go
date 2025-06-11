@@ -543,7 +543,7 @@ type FileReader interface {
 	ReadFile(filename string) ([]byte, error)
 }
 
-// IsEMpty returns true if the Crawler configuration is empty
+// IsEmpty returns true if the Crawler configuration is empty
 func (c *Crawler) IsEmpty() bool {
 	return c.MaxDepth == 0 && c.MaxLinks == 0 && c.MaxSources == 0 && c.Delay == "" && c.BrowsingMode == "" && c.MaxRetries == 0 && c.MaxRedirects == 0 && c.MaxRequests == 0 && c.ResetCookiesPolicy == "" && !c.NoThirdPartyCookies && c.CrawlingInterval == "" && c.CrawlingIfError == "" && c.CrawlingIfOk == "" && c.ProcessingTimeout == "" && !c.RequestImages && !c.RequestCSS && !c.RequestScripts && !c.RequestPlugins && !c.RequestFrames && !c.CollectHTML && !c.CollectImages && !c.CollectFiles && !c.CollectContent && !c.CollectKeywords && !c.CollectMetaTags && !c.CollectPerfMetrics && !c.CollectPageEvents && !c.CollectXHR && c.ReportInterval == 0 && !c.CheckForRobots && !c.CreateEventWhenDone && c.Control.IsEmpty()
 }

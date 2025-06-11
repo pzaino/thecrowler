@@ -672,7 +672,7 @@ func (c *Config) setEngineInstance() {
 	}
 	// If the user has specified a list of custom engine configurations
 	// then we need to find the one with the same hostname us our current hostname
-	hostname, _ := os.Hostname()
+	hostname := cmn.GetMicroServiceName()
 	for _, engine := range c.Crawler.Engine {
 		en := strings.ToLower(strings.TrimSpace(engine.Name))
 		if en == "" {
@@ -984,11 +984,7 @@ func (c *Config) validateVDI() {
 	}
 	// Check if this engine has aVDI filter
 	if len(c.Crawler.Engine) > 0 {
-		thisEngine, err := os.Hostname()
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to get hostname: %v", err)
-			return
-		}
+		thisEngine := cmn.GetMicroServiceName()
 		thisEngine = strings.ToLower(strings.TrimSpace(thisEngine))
 		for _, engine := range c.Crawler.Engine {
 			if strings.ToLower(strings.TrimSpace(engine.Name)) == thisEngine {

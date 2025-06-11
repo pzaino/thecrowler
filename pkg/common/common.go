@@ -376,3 +376,12 @@ func GetHostIP() string {
 	}
 	return hostIP
 }
+
+// GetMicroServiceName returns the microservice name from the environment variable
+func GetMicroServiceName() string {
+	microServiceName := os.Getenv("MICROSERVICE_NAME")
+	if microServiceName == "" {
+		microServiceName = GetHostName()
+	}
+	return microServiceName
+}
