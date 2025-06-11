@@ -313,6 +313,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-api
     build:
       context: .
       dockerfile: Dockerfile.searchapi
@@ -355,6 +356,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-events
     build:
       context: .
       dockerfile: Dockerfile.events
@@ -402,6 +404,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-3g}")
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
       - PROXY_SERVICE=\${VDI_PROXY_SERVICE:-}
       - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-db
     command: ["postgres", "-c", "timezone=\${VDI_TZ:-UTC}"]
     ${platform}
     volumes:
@@ -457,6 +460,7 @@ $(emit_limits "    " "${cpu_limit_eng:-1.0}" "${mem_limit_eng_pct:-2g}")
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-engine-$i
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
@@ -491,6 +495,14 @@ if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
   crowler-jaeger:
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
+    environment:
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411
+      - JAEGER_AGENT_HOST=crowler-jaeger
+      - JAEGER_SERVICE_NAME=crowler-jaeger
+      - JAEGER_SAMPLER_TYPE=const
+      - JAEGER_SAMPLER_PARAM=1
+      - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-jaeger
 $(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
     ${platform}
     ports:
@@ -541,6 +553,7 @@ $(emit_limits "    " "${cpu_limit_vdi:-1.0}" "${mem_limit_vdi_pct:-2g}")
       - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://crowler-jaeger:4317}
       - SEL_PASSWD=\${SEL_PASSWD:-secret}
       - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-vdi-$i
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
     ${pull_policy_never}
@@ -575,6 +588,7 @@ $(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
       - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler
+      - MICROSERVICE_NAME=crowler-push-gateway
     ${platform}
     networks:
       - crowler-net
