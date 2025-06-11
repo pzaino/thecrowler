@@ -249,10 +249,64 @@
             10
           ]
         },
-        "vdi_name": {
-          "title": "CROWler Engine VDI Name",
-          "description": "This is the name of the VDI that the CROWler Engine will use to crawl websites. This is useful when using custom configurations per each source. If you configure this in the main/default configuration, you'll prevent the engine from autoscaling over the VDIs.",
-          "type": "string"
+        "engine": {
+          "title": "CROWler Engine Configuration for each CROWler Engine instance",
+          "description": "This is the configuration for each CROWler Engine instance. This section is used to customize the CROWler Engine behavior for each instance.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "CROWler Engine Instance Name",
+                "description": "This is the name of the CROWler Engine instance. Normally it's either the hostname or the container name in which the engine is running.",
+                "type": "string",
+                "examples": [
+                  "crowler-engine-1",
+                  "crowler-engine-2"
+                ]
+              },
+              "source_priority": {
+                "title": "Configure the priority that this instance will use to filter the sources",
+                "description": "This is a list of priorities that CROWler Engine will use to filter the sources. For example 'high' to filter for high priority, 'medium,low' to pick only medium and low priority sources, 'my_priority' to pick the source with your specific custom priority.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "examples": [
+                    "high",
+                    "medium",
+                    "low",
+                    "my_priority"
+                  ]
+                }
+              },
+              "vdi_name": {
+                "title": "CROWler Engine VDI Name",
+                "description": "Specify a list of VDIs that this instance of the Engine will use to crawl sources that have been picked by it.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "examples": [
+                    "crowler-vdi-1",
+                    "crowler-vdi-japan-1"
+                  ]
+                },
+                "examples": [
+                  "- crowler-vdi-1",
+                  "- crowler-vdi-japan-1"
+                ]
+              }
+            }
+          },
+          "examples": [
+            {
+              "priority": "high",
+              "vdi_name": "vdi1,vdi2"
+            },
+            {
+              "priority": "medium,low",
+              "vdi_name": "vdi3"
+            }
+          ]
         },
         "platform": {
           "title": "CROWler Engine Platform",
@@ -442,6 +496,17 @@
           "examples": [
             3,
             1000
+          ]
+        },
+        "change_useragent": {
+          "title": "CROWler Engine Change UserAgent at every new request",
+          "description": "This is the policy that the CROWler Engine will use to change the User-Agent at every new request. For example, 'always' means the CROWler will change the User-Agent on every request, 'never' means the CROWler will never change the User-Agent, 'on_start' means the CROWler will change the User-Agent only at the beginning of a crawling process.",
+          "type": "string",
+          "enum": [
+            "always",
+            "never",
+            "on_start",
+            ""
           ]
         },
         "reset_cookies_policy": {
@@ -1773,6 +1838,18 @@
             "type": "integer",
             "minimum": 10
           },
+          "agents_timeout": {
+            "title": "CROWler Agents Timeout",
+            "description": "This is the timeout in seconds for the CROWler to execute an agent.",
+            "type": "integer",
+            "minimum": 30
+          },
+          "plugins_timeout": {
+            "title": "CROWler Agents Plugins Timeout",
+            "description": "This is the timeout in seconds for the CROWler to execute a plugin.",
+            "type": "integer",
+            "minimum": 30
+          },
           "type": {
             "title": "CROWler Agents Host Type",
             "description": "This is the type of the distribution server that the CROWler will use to fetch the agents. For example, s3, http or local. (local is default)",
@@ -1833,6 +1910,12 @@
           "description": "This is the timeout in seconds for the CROWler to execute a plugin.",
           "type": "integer",
           "minimum": 10
+        },
+        "plugins_timeout": {
+          "title": "CROWler Plugins Execution Timeout",
+          "description": "This is the timeout in seconds for the CROWler to execute a plugin.",
+          "type": "integer",
+          "minimum": 15
         },
         "locations": {
           "title": "CROWler Plugins Locations List",

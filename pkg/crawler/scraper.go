@@ -660,7 +660,7 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 
 	// Apply the post-processing steps to the extracted data
 	if len(ruleGroup.PostProcessing) != 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rulesgroup's post-processing steps to the extracted data")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rules group's post-processing steps to the extracted data")
 		data := cmn.ConvertMapToJSON(extractedData)
 		for _, step := range ruleGroup.PostProcessing {
 			ApplyPostProcessingStep(ctx, &step, &data)
@@ -1015,7 +1015,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 
 	// Execute the plugin
 	var value interface{}
-	value, err = plugin.Execute(&ctx.wd, ctx.db, ctx.config.Plugins.PluginTimeout, params)
+	value, err = plugin.Execute(&ctx.wd, ctx.db, ctx.config.Plugins.PluginsTimeout, params)
 	if err != nil {
 		return fmt.Errorf("error executing JS plugin: %v", err)
 	}

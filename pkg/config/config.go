@@ -50,6 +50,8 @@ const (
 	SSDefaultDelayTime = 100
 
 	stdRateLimit = "10,10"
+
+	never = "never"
 )
 
 // RemoteFetcher is an interface for fetching remote files.
@@ -177,8 +179,19 @@ func NewConfig() *Config {
 			MaxIdleConns: 75,
 		},
 		Crawler: Crawler{
-			Workers:               1,
-			VDIName:               "",
+			Workers:        1,
+			VDIName:        "",
+			SourcePriority: "",
+			Engine: []CustomEngine{
+				{
+					VDIName: []string{
+						"",
+					},
+					SourcePriority: []string{
+						"",
+					},
+				},
+			},
 			Platform:              "desktop",
 			BrowserPlatform:       "linux",
 			Interval:              "2",
@@ -195,7 +208,8 @@ func NewConfig() *Config {
 			Delay:                 "0",
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
-			ResetCookiesPolicy:    "never",
+			ChangeUserAgent:       never,
+			ResetCookiesPolicy:    never,
 			NoThirdPartyCookies:   false,
 			RequestImages:         true,
 			RequestCSS:            true,
@@ -385,7 +399,7 @@ func NewConfig() *Config {
 			},
 		},
 		Plugins: PluginsConfig{
-			PluginTimeout: 15,
+			PluginsTimeout: 15,
 			Plugins: []PluginConfig{{
 				Type: cmn.LocalStr,
 				Path: []string{
@@ -395,6 +409,9 @@ func NewConfig() *Config {
 		},
 		Agents: []AgentsConfig{
 			{
+				Timeout:        10,
+				AgentsTimeout:  90,
+				PluginsTimeout: 60,
 				Path: []string{
 					"./agents/*.yaml",
 				},
@@ -527,6 +544,7 @@ func (c *Config) Validate() error {
 	c.validateNetworkInfo()
 	c.validateRulesets()
 	c.validatePlugins()
+	c.validateAgents()
 	c.validateExternalDetection()
 	c.validateOS()
 	c.validateDebugLevel()
@@ -617,7 +635,9 @@ func (c *Config) validateRemoteSSLMode() {
 
 func (c *Config) validateCrawler() {
 	c.setDefaultWorkers()
+	c.setEngineInstance()
 	c.setDefaultVDIName()
+	c.setDefaultSourcePriority()
 	c.setDefaultPlatform()
 	c.setDefaultInterval()
 	c.setDefaultTimeout()
@@ -635,6 +655,7 @@ func (c *Config) validateCrawler() {
 	c.setDefaultScreenshotMaxHeight()
 	c.setDefaultMaxRetries()
 	c.setDefaultMaxRedirects()
+	c.setChangeUserAgent()
 	c.setDefaultResetCookiesPolicy()
 	c.setDefaultControl()
 }
@@ -645,11 +666,61 @@ func (c *Config) setDefaultWorkers() {
 	}
 }
 
+func (c *Config) setEngineInstance() {
+	if len(c.Crawler.Engine) == 0 {
+		return
+	}
+	// If the user has specified a list of custom engine configurations
+	// then we need to find the one with the same hostname us our current hostname
+	hostname := cmn.GetMicroServiceName()
+	for _, engine := range c.Crawler.Engine {
+		en := strings.ToLower(strings.TrimSpace(engine.Name))
+		if en == "" {
+			continue
+		}
+		if en == hostname {
+			// If the engine name is the same as the hostname, then we set it as the current engine
+			VDINames := ""
+			for i, vdi := range engine.VDIName {
+				vdi = strings.ToLower(strings.TrimSpace(vdi))
+				if vdi != "" {
+					VDINames += vdi
+					if i < len(engine.VDIName)-1 {
+						VDINames += ","
+					}
+				}
+			}
+			c.Crawler.VDIName = strings.TrimSpace(VDINames)
+
+			SourcePriorities := ""
+			for i, sourcePriority := range engine.SourcePriority {
+				sourcePriority = strings.ToLower(strings.TrimSpace(sourcePriority))
+				if sourcePriority != "" {
+					SourcePriorities += sourcePriority
+					if i < len(engine.SourcePriority)-1 {
+						SourcePriorities += ","
+					}
+				}
+			}
+			c.Crawler.SourcePriority = strings.TrimSpace(SourcePriorities)
+			return
+		}
+	}
+}
+
 func (c *Config) setDefaultVDIName() {
 	if strings.TrimSpace(c.Crawler.VDIName) == "" {
 		c.Crawler.VDIName = ""
 	} else {
 		c.Crawler.VDIName = strings.ToLower(strings.TrimSpace(c.Crawler.VDIName))
+	}
+}
+
+func (c *Config) setDefaultSourcePriority() {
+	if strings.TrimSpace(c.Crawler.SourcePriority) == "" {
+		c.Crawler.SourcePriority = ""
+	} else {
+		c.Crawler.SourcePriority = strings.ToLower(strings.TrimSpace(c.Crawler.SourcePriority))
 	}
 }
 
@@ -777,9 +848,17 @@ func (c *Config) setDefaultMaxRedirects() {
 	}
 }
 
+func (c *Config) setChangeUserAgent() {
+	if strings.TrimSpace(c.Crawler.ChangeUserAgent) == "" {
+		c.Crawler.ChangeUserAgent = never
+	} else {
+		c.Crawler.ChangeUserAgent = strings.ToLower(strings.TrimSpace(c.Crawler.ChangeUserAgent))
+	}
+}
+
 func (c *Config) setDefaultResetCookiesPolicy() {
 	if strings.TrimSpace(c.Crawler.ResetCookiesPolicy) == "" {
-		c.Crawler.ResetCookiesPolicy = "never"
+		c.Crawler.ResetCookiesPolicy = never
 	} else {
 		c.Crawler.ResetCookiesPolicy = strings.ToLower(strings.TrimSpace(c.Crawler.ResetCookiesPolicy))
 	}
@@ -903,6 +982,25 @@ func (c *Config) validateVDI() {
 		c.validateVDIPort(&c.Selenium[i])
 		c.validateVDIProxyURL(&c.Selenium[i])
 	}
+	// Check if this engine has aVDI filter
+	if len(c.Crawler.Engine) > 0 {
+		thisEngine := cmn.GetMicroServiceName()
+		thisEngine = strings.ToLower(strings.TrimSpace(thisEngine))
+		for _, engine := range c.Crawler.Engine {
+			if strings.ToLower(strings.TrimSpace(engine.Name)) == thisEngine {
+				// Yes this engine may have a VDI filter
+				if len(engine.VDIName) > 0 {
+					// Yes we have a VDI filter
+					allowedVDIs := getVDIByNameList(c.Selenium, engine.VDIName)
+					if len(allowedVDIs) == 0 {
+						c.Selenium = []Selenium{}
+					} else {
+						c.Selenium = allowedVDIs
+					}
+				}
+			}
+		}
+	}
 }
 
 func (c *Config) validateVDIName(selenium *Selenium, index int) {
@@ -1007,8 +1105,8 @@ func (c *Config) validateRulesets() {
 
 func (c *Config) validatePlugins() {
 	// Check Plugins
-	if c.Plugins.PluginTimeout < 1 {
-		c.Plugins.PluginTimeout = 15
+	if c.Plugins.PluginsTimeout < 1 {
+		c.Plugins.PluginsTimeout = 15
 	}
 	for i := range c.Plugins.Plugins {
 		if strings.TrimSpace(c.Plugins.Plugins[i].Type) == "" {
@@ -1018,6 +1116,45 @@ func (c *Config) validatePlugins() {
 		}
 		if len(c.Plugins.Plugins[i].Path) == 0 && c.Plugins.Plugins[i].Type == cmn.LocalStr {
 			c.Plugins.Plugins[i].Path = []string{PluginsDefaultPath}
+		}
+	}
+}
+
+func (c *Config) validateAgents() {
+	// Check Agents
+	for i := range c.Agents {
+		if strings.TrimSpace(c.Agents[i].Type) == "" {
+			c.Agents[i].Type = cmn.LocalStr
+		} else {
+			c.Agents[i].Type = strings.TrimSpace(c.Agents[i].Type)
+		}
+		if c.Agents[i].Timeout == 0 {
+			c.Agents[i].Timeout = 10
+		}
+		if c.Agents[i].Timeout < 10 {
+			c.Agents[i].Timeout = 10
+		}
+		if c.Agents[i].AgentsTimeout == 0 {
+			c.Agents[i].AgentsTimeout = 90
+		}
+		if c.Agents[i].AgentsTimeout < 30 {
+			c.Agents[i].AgentsTimeout = 30
+		}
+		if c.Agents[i].PluginsTimeout == 0 {
+			c.Agents[i].PluginsTimeout = 60
+		}
+		if c.Agents[i].PluginsTimeout < 30 {
+			c.Agents[i].PluginsTimeout = 30
+		}
+		if len(c.Agents[i].Path) == 0 && c.Agents[i].Type == cmn.LocalStr {
+			c.Agents[i].Path = []string{"./agents/*.yaml"}
+		}
+		for j := range c.Agents[i].Path {
+			if strings.TrimSpace(c.Agents[i].Path[j]) == "" {
+				c.Agents[i].Path[j] = "./agents/*.yaml"
+			} else {
+				c.Agents[i].Path[j] = strings.TrimSpace(c.Agents[i].Path[j])
+			}
 		}
 	}
 }
@@ -2221,4 +2358,30 @@ func MergeConfig(sourceConfig *SourceConfig, globalConfig Config) {
 // isZeroValue checks if the given field is empty or uninitialized (zero value)
 func isZeroValue(v reflect.Value) bool {
 	return reflect.DeepEqual(v.Interface(), reflect.Zero(v.Type()).Interface())
+}
+
+// Support functions
+
+func getVDIByNameList(selenium []Selenium, names []string) []Selenium {
+	if len(selenium) == 0 || len(names) == 0 {
+		return nil
+	}
+
+	var result []Selenium
+
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		for _, vdi := range selenium {
+			if strings.ToLower(strings.TrimSpace(vdi.Name)) == name {
+				result = append(result, vdi)
+			}
+		}
+	}
+
+	return result
+}
+
+// GetVDIByNameList returns all the nodes in the Selenium slice that match the given comma separated names.
+func (c *Config) GetVDIByNameList(names []string) []Selenium {
+	return getVDIByNameList(c.Selenium, names)
 }

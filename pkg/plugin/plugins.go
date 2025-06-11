@@ -583,6 +583,24 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
+	if err := addJSAPIKVGet(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIKVSet(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIDeleteKV(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIListKVKeys(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIIncrDecrKV(vm); err != nil {
+		return err
+	}
+	if err := addJSAPISleep(vm); err != nil {
+		return err
+	}
 
 	// Crypto API functions
 
@@ -1613,6 +1631,9 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		}
 		if name, ok := sourceData["name"].(string); ok {
 			source.Name = name
+		}
+		if priority, ok := sourceData["priority"].(string); ok {
+			source.Priority = priority
 		}
 		if categoryID, ok := sourceData["category_id"].(float64); ok {
 			source.CategoryID = uint64(categoryID)
@@ -3037,6 +3058,246 @@ func addJSAPIGenUUID(vm *otto.Otto) error {
 		}
 		result, _ := vm.ToValue(uuid.String())
 		return result
+	})
+}
+
+/*
+  How to use getKV and setKV in JS:
+	// name: kv_example
+	// type: engine_plugin
+
+	let key = "session_token";
+	let ctx = "user_123";
+
+	// Set a KV pair
+	setKV(key, ctx, "abc123", {
+		persistent: false,
+		static: false,
+		session_valid: true,
+		source: "plugin"
+	});
+
+	// Retrieve it
+	let kv = getKV(key, ctx);
+	console.log("Stored:", kv.value); // "abc123"
+*/
+
+// addJSAPIKVGet retrieves a value from the KV store using a key and context ID.
+func addJSAPIKVGet(vm *otto.Otto) error {
+	return vm.Set("getKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+
+		val, props, err := cmn.KVStore.Get(key, ctxID)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+
+		jsObj := map[string]interface{}{
+			"value":      normalizeKVValues(val),
+			"properties": props,
+		}
+		result, _ := vm.ToValue(jsObj)
+		return result
+	})
+}
+
+// addJSAPIKVSet sets a value in the KV store with a key and context ID.
+func addJSAPIKVSet(vm *otto.Otto) error {
+	return vm.Set("setKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+		val, _ := call.Argument(2).Export()
+
+		propsArg := call.Argument(3)
+		var props cmn.Properties
+		if propsArg.IsDefined() {
+			exportedProps, err := propsArg.Export()
+			if err == nil {
+				propMap := exportedProps.(map[string]interface{})
+				props = cmn.NewKVStoreEmptyProperty()
+				props.CtxID = ctxID
+				if p, ok := propMap["persistent"].(bool); ok {
+					props.Persistent = p
+				}
+				if s, ok := propMap["static"].(bool); ok {
+					props.Static = s
+				}
+				if sv, ok := propMap["session_valid"].(bool); ok {
+					props.SessionValid = sv
+				}
+				if src, ok := propMap["source"].(string); ok {
+					props.Source = src
+				}
+				props.Type = reflect.TypeOf(val).String()
+			}
+		} else {
+			props = cmn.NewKVStoreEmptyProperty()
+			props.CtxID = ctxID
+			props.Type = reflect.TypeOf(val).String()
+		}
+
+		_ = cmn.KVStore.Set(key, val, props)
+		return otto.TrueValue()
+	})
+}
+
+func addJSAPIDeleteKV(vm *otto.Otto) error {
+	return vm.Set("deleteKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+
+		// Optional third argument: deletePersistent (default: false)
+		deletePersistent := false
+		if call.Argument(2).IsDefined() {
+			flag, err := call.Argument(2).ToBoolean()
+			if err == nil {
+				deletePersistent = flag
+			}
+		}
+
+		err := cmn.KVStore.Delete(key, ctxID, deletePersistent)
+		if err != nil {
+			// Return JS object { status: "error", message: ... }
+			jsResult, _ := vm.ToValue(map[string]interface{}{
+				"status":  "error",
+				"message": err.Error(),
+			})
+			return jsResult
+		}
+
+		jsResult, _ := vm.ToValue(map[string]interface{}{
+			"status": "deleted",
+		})
+		return jsResult
+	})
+}
+
+func addJSAPIListKVKeys(vm *otto.Otto) error {
+	return vm.Set("listKVKeys", func(call otto.FunctionCall) otto.Value {
+		ctxID, _ := call.Argument(0).ToString()
+
+		keys := cmn.KVStore.Keys(ctxID)
+
+		jsKeys, err := vm.ToValue(keys)
+		if err != nil {
+			return otto.UndefinedValue()
+		}
+		return jsKeys
+	})
+}
+
+func addJSAPIIncrDecrKV(vm *otto.Otto) error {
+	err := vm.Set("incrKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+		step, _ := call.Argument(2).ToInteger()
+
+		val, err := cmn.KVStore.Increment(key, ctxID, step)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+		jsVal, _ := vm.ToValue(val)
+		return jsVal
+	})
+	if err != nil {
+		return err
+	}
+
+	return vm.Set("decrKV", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		ctxID, _ := call.Argument(1).ToString()
+		step, _ := call.Argument(2).ToInteger()
+
+		val, err := cmn.KVStore.Decrement(key, ctxID, step)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+		jsVal, _ := vm.ToValue(val)
+		return jsVal
+	})
+}
+
+// normalizeKVValues recursively normalizes Go types to a form Otto (JavaScript) can understand
+func normalizeKVValues(value interface{}) interface{} {
+	switch v := value.(type) {
+	case nil:
+		// Treat nil as an empty array
+		return []interface{}{}
+
+	case []interface{}:
+		// Recursively normalize each element
+		for i, elem := range v {
+			v[i] = normalizeKVValues(elem)
+		}
+		return v
+
+	case []int:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case []int64:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case []float64:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case []string:
+		arr := make([]interface{}, len(v))
+		for i, elem := range v {
+			arr[i] = elem
+		}
+		return arr
+
+	case map[string]interface{}:
+		// Recursively normalize each map entry
+		for key, elem := range v {
+			v[key] = normalizeKVValues(elem)
+		}
+		return v
+
+	case map[interface{}]interface{}:
+		// This happens when unmarshalling YAML sometimes
+		m := make(map[string]interface{})
+		for key, elem := range v {
+			k := ""
+			switch key := key.(type) {
+			case string:
+				k = key
+			default:
+				k = reflect.ValueOf(key).String()
+			}
+			m[k] = normalizeKVValues(elem)
+		}
+		return m
+
+	default:
+		// Primitive types (string, bool, int, float) stay as is
+		return v
+	}
+}
+
+// addJSAPISleep adds a sleep(ms) function to the VM
+func addJSAPISleep(vm *otto.Otto) error {
+	return vm.Set("sleep", func(call otto.FunctionCall) otto.Value {
+		ms, err := call.Argument(0).ToInteger()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "sleep() - invalid argument: %v", err)
+			return otto.UndefinedValue()
+		}
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+		return otto.UndefinedValue()
 	})
 }
 

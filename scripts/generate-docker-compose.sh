@@ -16,6 +16,11 @@ cpu_limit_mng=""
 no_api=0
 no_events=0
 no_jaeger=0
+mem_limit_vdi_pct=""
+mem_limit_eng_pct=""
+mem_limit_mng_pct=""
+mem_limit_tlm_pct=""
+use_swarm="no"
 
 # Function to display usage
 cmd_usage() {
@@ -36,6 +41,11 @@ cmd_usage() {
     echo "  --no_api                    Do not include crowler-api"
     echo "  --no_events                 Do not include crowler-events"
     echo "  --no_jaeger                 Do not include jaeger"
+    echo "  --mem_limit_vdi=<number>    Memory limit for crowler-vdi instances in %"
+    echo "  --mem_limit_engine=<number> Memory limit for crowler-engine instances in %"
+    echo "  --mem_limit_mng=<number>    Memory limit for crowler-api and crowler-events in %"
+    echo "  --mem_limit_tlm=<number>    Memory limit for jaeger and prometheus gateway instances in %"
+    echo "  --swarm=<yes/no>            Use Docker Swarm mode"
 }
 
 # Function to read and validate integer input
@@ -88,6 +98,43 @@ detect_cpu_count() {
     getconf _NPROCESSORS_ONLN
   else
     echo "1"  # Fallback to 1 if detection fails
+  fi
+}
+
+# Detect the total memory in MB in a portable way
+detect_total_memory_mb() {
+  if command -v free >/dev/null 2>&1; then
+    free -m | awk '/^Mem:/ { print $2 }'
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    sysctl -n hw.memsize | awk '{print int($1 / 1024 / 1024)}'
+  else
+    echo "2048" # Fallback to 2GB
+  fi
+}
+
+to_mem_unit() {
+  local mb=$1
+  if [ "$mb" -ge 1024 ]; then
+    echo "$((mb / 1024))g"
+  else
+    echo "${mb}m"
+  fi
+}
+
+emit_limits() {
+  local indent="$1"
+  local cpus="$2"
+  local memory="$3"
+
+  if [ "$use_swarm" == "yes" ]; then
+    echo "$indent""deploy:"
+    echo "$indent  resources:"
+    echo "$indent    limits:"
+    echo "$indent      cpus: \"$cpus\""
+    echo "$indent      memory: \"$memory\""
+  else
+    echo "$indent""cpus: \"$cpus\""
+    echo "$indent""mem_limit: \"$memory\""
   fi
 }
 
@@ -148,6 +195,21 @@ for arg in ${pars}; do
         --no_jaeger)
             no_jaeger=1
             ;;
+        --mem_limit_vdi=*)
+            mem_limit_vdi_pct="${arg#*=}"
+            ;;
+        --mem_limit_engine=*)
+            mem_limit_eng_pct="${arg#*=}"
+            ;;
+        --mem_limit_mng=*)
+            mem_limit_mng_pct="${arg#*=}"
+            ;;
+        --mem_limit_tlm=*)
+            mem_limit_tlm_pct="${arg#*=}"
+            ;;
+        --swarm=*)
+            use_swarm=${arg#*=}
+            ;;
     esac
 done
 
@@ -165,6 +227,15 @@ if [ -z "$postgres" ]; then
     read_yes_no_input "Do you want to include the PostgreSQL database?" postgres
 fi
 
+# Check memory % values if provided:
+# shellcheck disable=SC2235
+for pct in "$mem_limit_vdi_pct" "$mem_limit_eng_pct" "$mem_limit_mng_pct" "$mem_limit_tlm_pct"; do
+  if [ -n "$pct" ] && ([ "$pct" -lt 1 ] || [ "$pct" -gt 100 ]); then
+    echo "ERROR: Memory limit percentages must be between 1 and 100."
+    exit 1
+  fi
+done
+
 # Automatically set CPU limit to total available cores if not set
 total_cpus=$(detect_cpu_count)
 
@@ -172,11 +243,50 @@ if [ -z "$cpu_limit" ]; then
     cpu_limit="$total_cpus"
 fi
 
-# set default values for CPU limits if not provided
+# Set default values for CPU limits if not provided
 cpu_limit_engine=${cpu_limit_engine:-$cpu_limit}
 cpu_limit_vdi=${cpu_limit_vdi:-$cpu_limit}
 cpu_limit_mng=${cpu_limit_mng:-$cpu_limit}
 
+# Automatically set memory limits to 80% of total memory if not set
+total_memory_mb=$(detect_total_memory_mb)
+if [ -z "$mem_limit_vdi_pct" ]; then
+    mem_limit_vdi_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_vdi_pct=$((total_memory_mb * mem_limit_vdi_pct / 100))
+fi
+if [ -z "$mem_limit_eng_pct" ]; then
+    mem_limit_eng_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_eng_pct=$((total_memory_mb * mem_limit_eng_pct / 100))
+fi
+if [ -z "$mem_limit_mng_pct" ]; then
+    mem_limit_mng_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_mng_pct=$((total_memory_mb * mem_limit_mng_pct / 100))
+fi
+if [ -z "$mem_limit_tlm_pct" ]; then
+    mem_limit_tlm_pct=$((total_memory_mb * 80 / 100))
+else
+    mem_limit_tlm_pct=$((total_memory_mb * mem_limit_tlm_pct / 100))
+fi
+
+# Convert to appropriate mem units
+mem_limit_vdi_pct=$(to_mem_unit "$mem_limit_vdi_pct")
+mem_limit_eng_pct=$(to_mem_unit "$mem_limit_eng_pct")
+mem_limit_mng_pct=$(to_mem_unit "$mem_limit_mng_pct")
+mem_limit_tlm_pct=$(to_mem_unit "$mem_limit_tlm_pct")
+
+# Generate extra tags for swarm mode
+if [ "$use_swarm" != "yes" ]; then
+  platform="platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+  pull_policy_never="pull_policy: never"
+  net_driver="bridge"
+else
+  platform=""
+  pull_policy_never=""
+  net_driver="overlay"
+fi
 
 # Generate docker-compose.yml
 cat << EOF > docker-compose.yml
@@ -187,8 +297,10 @@ EOF
 # Add crowler-api and crowler-events if not disabled
 if [ "$no_api" == "0" ]; then
     cat << EOF >> docker-compose.yml
+
   crowler-api:
     container_name: "crowler-api"
+$(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
     env_file:
       - .env
     environment:
@@ -201,16 +313,13 @@ if [ "$no_api" == "0" ]; then
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit_mng:-1.0}"
+      - MICROSERVICE_NAME=crowler-api
     build:
       context: .
       dockerfile: Dockerfile.searchapi
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     image: crowler-api
-    pull_policy: never
+    ${pull_policy_never}
     stdin_open: true # For interactive terminal access (optional)
     tty: true        # For interactive terminal access (optional)
     ports:
@@ -231,8 +340,10 @@ EOF
 fi
 if [ "$no_events" == "0" ]; then
     cat << EOF >> docker-compose.yml
+
   crowler-events:
     container_name: "crowler-events"
+$(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
     env_file:
       - .env
     environment:
@@ -245,16 +356,13 @@ if [ "$no_events" == "0" ]; then
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit_mng:-1.0}"
+      - MICROSERVICE_NAME=crowler-events
     build:
       context: .
       dockerfile: Dockerfile.events
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     image: crowler-events
-    pull_policy: never
+    ${pull_policy_never}
     stdin_open: true # For interactive terminal access (optional)
     tty: true        # For interactive terminal access (optional)
     ports:
@@ -282,6 +390,7 @@ if [ "$postgres" == "yes" ]; then
   crowler-db:
     image: postgres:15.10-bookworm
     container_name: "crowler-db"
+$(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-3g}")
     ports:
       - "5432:5432"
     env_file:
@@ -295,12 +404,9 @@ if [ "$postgres" == "yes" ]; then
       - CROWLER_DB_PASSWORD=\${DOCKER_CROWLER_DB_PASSWORD}
       - PROXY_SERVICE=\${VDI_PROXY_SERVICE:-}
       - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-db
     command: ["postgres", "-c", "timezone=\${VDI_TZ:-UTC}"]
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit:-1.0}"
+    ${platform}
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
@@ -340,6 +446,7 @@ for i in $(seq 1 "$engine_count"); do
 
   crowler-engine-$i:
     container_name: "crowler-engine-$i"
+$(emit_limits "    " "${cpu_limit_eng:-1.0}" "${mem_limit_eng_pct:-2g}")
     env_file:
       - .env
     environment:
@@ -353,16 +460,13 @@ for i in $(seq 1 "$engine_count"); do
       - POSTGRES_DB_PORT=\${DOCKER_DB_PORT:-5432}
       - POSTGRES_SSL_MODE=\${DOCKER_POSTGRES_SSL_MODE:-disable}
       - TZ=\${VDI_TZ:-UTC}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit_engine:-0.5}"
+      - MICROSERVICE_NAME=crowler-engine-$i
     build:
       context: .
       dockerfile: Dockerfile.thecrowler
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${platform}
     image: crowler-engine-$i
-    pull_policy: never
+    ${pull_policy_never}
     networks:
       - crowler-net
 $ENGINE_NETWORKS
@@ -388,17 +492,23 @@ fi
 if [ "$vdi_count" != "0" ] && [ "$no_jaeger" == "0" ]; then
     cat << EOF >> docker-compose.yml
 
-  jaeger:
+  crowler-jaeger:
     image: jaegertracing/all-in-one:1.54
     container_name: "crowler-jaeger"
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit_mng:-1.0}"
+    environment:
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411
+      - JAEGER_AGENT_HOST=crowler-jaeger
+      - JAEGER_SERVICE_NAME=crowler-jaeger
+      - JAEGER_SAMPLER_TYPE=const
+      - JAEGER_SAMPLER_PARAM=1
+      - TZ=\${VDI_TZ:-UTC}
+      - MICROSERVICE_NAME=crowler-jaeger
+$(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
+    ${platform}
     ports:
       - "16686:16686" # Jaeger UI
       - "4317:4317"   # OpenTelemetry gRPC endpoint
+    restart: unless-stopped
     networks:
       - crowler-net
 EOF
@@ -426,6 +536,7 @@ for i in $(seq 1 "$vdi_count"); do
 
   crowler-vdi-$i:
     container_name: "crowler-vdi-$i"
+$(emit_limits "    " "${cpu_limit_vdi:-1.0}" "${mem_limit_vdi_pct:-2g}")
     env_file:
       - .env
     environment:
@@ -442,14 +553,11 @@ for i in $(seq 1 "$vdi_count"); do
       - SE_OTEL_EXPORTER_ENDPOINT=\${SE_OTEL_EXPORTER_ENDPOINT:-http://crowler-jaeger:4317}
       - SEL_PASSWD=\${SEL_PASSWD:-secret}
       - TZ=\${VDI_TZ:-UTC}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit_vdi:-1.0}"
+      - MICROSERVICE_NAME=crowler-vdi-$i
     shm_size: "2g"
     image: \${DOCKER_SELENIUM_IMAGE:-selenium/standalone-chromium:4.27.0-$(get_date)}
-    pull_policy: never
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
+    ${pull_policy_never}
+    ${platform}
     ports:
       - "$HOST_PORT_START1-$HOST_PORT_END1:4444-4445"
       - "$HOST_PORT_START2:5900"
@@ -473,17 +581,15 @@ if [ "$prometheus" == "yes" ]; then
   crowler-push-gateway:
     image: prom/pushgateway
     container_name: "crowler-push-gateway"
+$(emit_limits "    " "${cpu_limit_tlm:-1.0}" "${mem_limit_tlm_pct:-2g}")
     ports:
       - "9091:9091"
     env_file:
       - .env
     environment:
       - COMPOSE_PROJECT_NAME=crowler
-    platform: \${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
-    deploy:
-      resources:
-        limits:
-          cpus: "${cpu_limit_mng:-1.0}"
+      - MICROSERVICE_NAME=crowler-push-gateway
+    ${platform}
     networks:
       - crowler-net
     restart: unless-stopped
@@ -500,14 +606,14 @@ cat << EOF >> docker-compose.yml
 
 networks:
   crowler-net:
-    driver: bridge
+    driver: ${net_driver}
 EOF
 
 # Add all dynamically created networks for VDIs
 for i in $(seq 1 "$vdi_count"); do
     cat << EOF >> docker-compose.yml
   crowler-vdi-$i:
-    driver: bridge
+    driver: ${net_driver}
 EOF
 done
 

@@ -113,6 +113,7 @@ type EnvProperties struct {
 	Persistent   bool   `json:"persistent" yaml:"persistent"`
 	Static       bool   `json:"static" yaml:"static"`
 	SessionValid bool   `json:"session_valid" yaml:"session_valid"`
+	Shared       bool   `json:"shared" yaml:"shared"`
 	Type         string `json:"type" yaml:"type"`
 	Source       string `json:"source" yaml:"source"`
 }

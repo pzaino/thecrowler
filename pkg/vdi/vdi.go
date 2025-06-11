@@ -4,6 +4,8 @@ package vdi
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -307,6 +309,23 @@ func (p *Pool) Release(index int) {
 	}
 }
 
+// Available returns the number of available VDI instances in the pool
+func (p *Pool) Available() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	available := 0
+	for _, busy := range p.busy {
+		if !busy {
+			available++
+		}
+	}
+	return available
+}
+
 // SeleniumInstance holds a Selenium service and its configuration
 type SeleniumInstance struct {
 	Service *Service
@@ -408,6 +427,55 @@ func StopSelenium(sel *selenium.Service) error {
 	return err
 }
 
+// ResetVDI resets the Selenium WebDriver and reinitializes the session with a fresh instance
+// ResetVDI restarts the Selenium session for the current VDI instance only
+func ResetVDI(ctx ProcessContextInterface, browserType int) error {
+	if ctx == nil {
+		return fmt.Errorf("ProcessContext is nil")
+	}
+
+	ctx.GetVDIOperationMutex().Lock()
+	defer ctx.GetVDIOperationMutex().Unlock()
+
+	// get current session
+	vdi := ctx.GetWebDriver()
+
+	// Quit current session
+	(*vdi).Close()
+	(*vdi).Quit()
+
+	instance := ctx.GetVDIInstance()
+
+	// Stop the current service
+	/*
+		if instance.Service != nil {
+			err := instance.Service.Stop()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "ResetVDI: failed to stop Selenium service: %v", err)
+			}
+		}
+
+		// Start new Selenium service
+		service, err := NewVDIService(instance.Config)
+		if err != nil {
+			return fmt.Errorf("ResetVDI: failed to start Selenium service: %v", err)
+		}
+		instance.Service = service
+	*/
+
+	// Reconnect WebDriver
+	wd, err := ConnectVDI(ctx, *instance, browserType)
+	if err != nil {
+		return fmt.Errorf("ResetVDI: failed to reconnect to VDI: %v", err)
+	}
+
+	*ctx.GetWebDriver() = wd
+	ctx.SetVDIClosedFlag(false)
+	ctx.SetVDIReturnedFlag(false)
+
+	return nil
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -446,6 +514,20 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Get the user agent string from the UserAgentsDB
 	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser)
 
+	// Parse the User Agent string for {random_int1}
+	if strings.Contains(userAgent, "{random_int1}") {
+		// Generates a random integer in the range [0, 999)
+		randInt := rand.IntN(8000) // nolint:gosec // We are using "math/rand/v2" here
+		userAgent = strings.ReplaceAll(userAgent, "{random_int1}", strconv.Itoa(randInt))
+	}
+
+	// Parse the User Agent string for {random_int2}
+	if strings.Contains(userAgent, "{random_int2}") {
+		// Generates a random integer in the range [0, 999)
+		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
+		userAgent = strings.ReplaceAll(userAgent, "{random_int2}", strconv.Itoa(randInt))
+	}
+
 	// Fallback in case the user agent is not found in the UserAgentsDB
 	if userAgent == "" {
 		if browseType == 0 {
@@ -471,11 +553,12 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// CDP COnfig for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--no-first-run")
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
 		// Set the CDP port
-		//args = append(args, "--remote-debugging-port=9222")
+		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		//args = append(args, "--remote-debugging-address=0.0.0.0")
+		args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
 		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
@@ -822,6 +905,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 
+	ctx.SetVDIClosedFlag(false)
+	ctx.SetVDIReturnedFlag(false)
 	return wd, err
 }
 
@@ -1146,7 +1231,7 @@ func QuitSelenium(ctx ProcessContextInterface) {
 	// Get the process WebDriver instance
 	wd := ctx.GetWebDriver()
 
-	if wd == nil {
+	if wd == nil || *wd == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Attempted to quit nil WebDriver session!")
 		return
 	}

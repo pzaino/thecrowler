@@ -18,6 +18,7 @@ package common
 import (
 	"fmt"
 	"net"
+	"os"
 )
 
 // DetectLocalNetwork finds the local network the machine is connected to
@@ -79,4 +80,24 @@ func maskToCIDR(mask net.IPMask) int {
 // getAddrs is the default implementation for fetching interface addresses
 func getAddrs(iface net.Interface) ([]net.Addr, error) {
 	return iface.Addrs()
+}
+
+// GetHostName returns the hostname of the machine
+func GetHostName() string {
+	const unknown = "unknown"
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnames, err := net.LookupHost("localhost")
+		if err != nil {
+			return unknown
+		}
+		if len(hostnames) == 0 {
+			return unknown
+		}
+		return hostnames[0]
+	}
+	if len(hostname) == 0 {
+		return unknown
+	}
+	return hostname
 }
