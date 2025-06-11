@@ -53,11 +53,11 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 
 	var sourceID uint64
 	query := `
-        INSERT INTO Sources (url, name, category_id, usr_id, restricted, flags, config)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING source_id
     `
-	err = (*db).QueryRow(query, source.URL, source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, details).Scan(&sourceID)
+	err = (*db).QueryRow(query, source.URL, source.Name, source.Priority, source.CategoryID, source.UsrID, source.Restricted, source.Flags, details).Scan(&sourceID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create source: %v", err)
 	}

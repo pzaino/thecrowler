@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     usr_id BIGINT DEFAULT 0 NOT NULL,           -- The user that created the source.
     category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
+    priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source (e.g., 'low', 'medium', 'high', or even custom strings).
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
     last_crawled_at TIMESTAMP,                  -- The last time the source was crawled.
@@ -489,6 +490,15 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_usr_id') THEN
         CREATE INDEX idx_sources_usr_id ON Sources(usr_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Sources priority column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sources_priority') THEN
+        CREATE INDEX idx_sources_priority ON Sources(priority);
     END IF;
 END
 $$;
@@ -1791,51 +1801,79 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION update_sources(integer,character varying,character varying,character varying,character varying,character varying);
+        DROP FUNCTION update_sources(integer,character varying,character varying,character varying,character varying,character varying,character varying);
     END IF;
 END
 $$;
 
-CREATE OR REPLACE FUNCTION update_sources(limit_val INTEGER, p_engineID VARCHAR, p_last_ok_update VARCHAR, p_last_error VARCHAR, p_regular_crawling VARCHAR, p_processing_timeout VARCHAR)
+CREATE OR REPLACE FUNCTION update_sources(
+    limit_val INTEGER,
+    p_priority VARCHAR,
+    p_engineID VARCHAR,
+    p_last_ok_update VARCHAR,
+    p_last_error VARCHAR,
+    p_regular_crawling VARCHAR,
+    p_processing_timeout VARCHAR
+)
 RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
 $$
+DECLARE
+    priority_list TEXT[];
 BEGIN
+    -- Handle nulls and defaults
+    p_priority := COALESCE(TRIM(p_priority), '');
     p_last_ok_update := COALESCE(TRIM(p_last_ok_update));
     p_regular_crawling := COALESCE(TRIM(p_regular_crawling));
     p_last_error := COALESCE(TRIM(p_last_error));
     p_processing_timeout := COALESCE(TRIM(p_processing_timeout));
+
     IF p_last_error = '' THEN
         p_last_error := '15 minutes';
     END IF;
     IF p_processing_timeout = '' THEN
-        p_processing_timeout := '1 day';  -- Default to 1 day if not provided
+        p_processing_timeout := '1 day';
     END IF;
+
+    -- Parse priority list
+    IF p_priority <> '' THEN
+        priority_list := ARRAY(
+            SELECT TRIM(LOWER(value))
+            FROM unnest(string_to_array(p_priority, ',')) AS value
+        );
+    END IF;
+
     RETURN QUERY
     WITH SelectedSources AS (
         SELECT s.source_id
         FROM Sources AS s
         WHERE s.disabled = FALSE
           AND (
-                -- Handle cases where p_last_ok_update is provided
+                -- Priority clause only if priorities provided
+                (
+                    priority_list IS NOT NULL
+                    AND LOWER(TRIM(s.priority)) = ANY(priority_list)
+                )
+                OR
+                -- last_ok_update filter
                 (p_last_ok_update <> '' AND (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL))
                 OR
-                -- Handle cases where p_regular_crawling is provided
+                -- regular_crawling filter
                 (p_regular_crawling <> '' AND LOWER(TRIM(s.status)) = 'completed' AND s.last_updated_at < NOW() - p_regular_crawling::INTERVAL)
                 OR
-                -- Handle other statuses and conditions
+                -- error fallback
                 (LOWER(TRIM(s.status)) = 'error' AND s.last_updated_at < NOW() - p_last_error::INTERVAL)
                 OR LOWER(TRIM(s.status)) = 'pending'
                 OR LOWER(TRIM(s.status)) = 'new'
                 OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
                 OR s.status IS NULL
               )
-        ORDER BY s.created_at ASC, s.source_id ASC  -- Ensure deterministic order
+        ORDER BY s.created_at ASC, s.source_id ASC
         FOR UPDATE
         LIMIT limit_val
     )
     UPDATE Sources
-        SET status = 'processing',
-            engine = p_engineID
+    SET status = 'processing',
+        engine = p_engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
     RETURNING Sources.source_id, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
 END;

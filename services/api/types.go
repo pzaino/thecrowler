@@ -48,6 +48,7 @@ type StatusResponseRow struct {
 	SourceID      uint64           `json:"source_id"`
 	URL           sql.NullString   `json:"url"`
 	Status        sql.NullString   `json:"status"`
+	Priority      sql.NullString   `json:"priority"`
 	Engine        sql.NullString   `json:"engine"`
 	CreatedAt     sql.NullString   `json:"created_at"`
 	LastUpdatedAt sql.NullString   `json:"last_updated_at"`

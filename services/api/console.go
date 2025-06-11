@@ -310,6 +310,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 		SELECT source_id,
 			   url,
 			   status,
+			   priority,
 			   engine,
 			   created_at,
 			   last_updated_at,
@@ -334,7 +335,7 @@ func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
 	for rows.Next() {
 		var row StatusResponseRow
 		var configJSON []byte
-		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
+		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
 		if err != nil {
 			return results, err
 		}
@@ -381,7 +382,7 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 	results.Message = "Failed to get all statuses"
 
 	// Proceed with getting all statuses
-	rows, err := tx.Query("SELECT source_id, url, status, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config FROM Sources")
+	rows, err := tx.Query("SELECT source_id, url, status, priority, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config FROM Sources")
 	if err != nil {
 		return results, err
 	}
@@ -391,7 +392,7 @@ func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
 	for rows.Next() {
 		var row StatusResponseRow
 		var configJSON []byte
-		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
+		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
 		if err != nil {
 			return results, err
 		}
