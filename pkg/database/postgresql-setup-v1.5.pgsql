@@ -1801,7 +1801,7 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION update_sources(integer,character varying,character varying,character varying,character varying,character varying);
+        DROP FUNCTION update_sources(integer,character varying,character varying,character varying,character varying,character varying,character varying);
     END IF;
 END
 $$;

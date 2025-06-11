@@ -197,14 +197,14 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 		l.flags,
 		l.config
 	FROM
-		update_sources($1,$2,$3,$4,$5,$6) AS l
+		update_sources($1,$2,$3,$4,$5,$6,$7) AS l
 	ORDER BY l.last_updated_at ASC;`
 
 	// Execute the query within the transaction
 	if maxSources <= 0 {
 		maxSources = config.Crawler.MaxSources
 	}
-	rows, err := tx.Query(query, maxSources, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
+	rows, err := tx.Query(query, maxSources, config.Crawler.SourcePriority, cmn.GetEngineID(), config.Crawler.CrawlingIfOk, config.Crawler.CrawlingIfError, config.Crawler.CrawlingInterval, config.Crawler.ProcessingTimeout)
 	if err != nil {
 		err2 := tx.Rollback()
 		if err2 != nil {
