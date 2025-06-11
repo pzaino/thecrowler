@@ -179,8 +179,15 @@ func NewConfig() *Config {
 			MaxIdleConns: 75,
 		},
 		Crawler: Crawler{
-			Workers:               1,
-			VDIName:               "",
+			Workers:        1,
+			VDIName:        "",
+			SourcePriority: "",
+			Engine: []CustomEngine{
+				{
+					VDIName:        "",
+					SourcePriority: "",
+				},
+			},
 			Platform:              "desktop",
 			BrowserPlatform:       "linux",
 			Interval:              "2",
@@ -624,7 +631,9 @@ func (c *Config) validateRemoteSSLMode() {
 
 func (c *Config) validateCrawler() {
 	c.setDefaultWorkers()
+	c.setEngineInstance()
 	c.setDefaultVDIName()
+	c.setDefaultSourcePriority()
 	c.setDefaultPlatform()
 	c.setDefaultInterval()
 	c.setDefaultTimeout()
@@ -653,11 +662,40 @@ func (c *Config) setDefaultWorkers() {
 	}
 }
 
+func (c *Config) setEngineInstance() {
+	if len(c.Crawler.Engine) == 0 {
+		return
+	}
+	// If the user has specified a list of custom engine configurations
+	// then we need to find the one with the same hostname us our current hostname
+	hostname, _ := os.Hostname()
+	for _, engine := range c.Crawler.Engine {
+		en := strings.ToLower(strings.TrimSpace(engine.Name))
+		if en == "" {
+			continue
+		}
+		if en == hostname {
+			// If the engine name is the same as the hostname, then we set it as the current engine
+			c.Crawler.VDIName = strings.TrimSpace(engine.VDIName)
+			c.Crawler.SourcePriority = strings.ToLower(strings.TrimSpace(engine.SourcePriority))
+			return
+		}
+	}
+}
+
 func (c *Config) setDefaultVDIName() {
 	if strings.TrimSpace(c.Crawler.VDIName) == "" {
 		c.Crawler.VDIName = ""
 	} else {
 		c.Crawler.VDIName = strings.ToLower(strings.TrimSpace(c.Crawler.VDIName))
+	}
+}
+
+func (c *Config) setDefaultSourcePriority() {
+	if strings.TrimSpace(c.Crawler.SourcePriority) == "" {
+		c.Crawler.SourcePriority = ""
+	} else {
+		c.Crawler.SourcePriority = strings.ToLower(strings.TrimSpace(c.Crawler.SourcePriority))
 	}
 }
 
@@ -918,6 +956,29 @@ func (c *Config) validateVDI() {
 		c.validateVDIHost(&c.Selenium[i])
 		c.validateVDIPort(&c.Selenium[i])
 		c.validateVDIProxyURL(&c.Selenium[i])
+	}
+	// Check if this engine has aVDI filter
+	if len(c.Crawler.Engine) > 0 {
+		thisEngine, err := os.Hostname()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to get hostname: %v", err)
+			return
+		}
+		thisEngine = strings.ToLower(strings.TrimSpace(thisEngine))
+		for _, engine := range c.Crawler.Engine {
+			if strings.ToLower(strings.TrimSpace(engine.Name)) == thisEngine {
+				// Yes this engine may have a VDI filter
+				if strings.TrimSpace(engine.VDIName) != "" {
+					// Yes we have a VDI filter
+					allowedVDIs := getVDIByNameList(c.Selenium, engine.VDIName)
+					if len(allowedVDIs) == 0 {
+						c.Selenium = []Selenium{}
+					} else {
+						c.Selenium = allowedVDIs
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -2276,4 +2337,31 @@ func MergeConfig(sourceConfig *SourceConfig, globalConfig Config) {
 // isZeroValue checks if the given field is empty or uninitialized (zero value)
 func isZeroValue(v reflect.Value) bool {
 	return reflect.DeepEqual(v.Interface(), reflect.Zero(v.Type()).Interface())
+}
+
+// Support functions
+
+func getVDIByNameList(selenium []Selenium, names string) []Selenium {
+	if len(selenium) == 0 || names == "" {
+		return nil
+	}
+
+	nameList := strings.Split(names, ",")
+	var result []Selenium
+
+	for _, name := range nameList {
+		name = strings.ToLower(strings.TrimSpace(name))
+		for _, vdi := range selenium {
+			if strings.ToLower(strings.TrimSpace(vdi.Name)) == name {
+				result = append(result, vdi)
+			}
+		}
+	}
+
+	return result
+}
+
+// GetVDIByNameList returns all the nodes in the Selenium slice that match the given comma separated names.
+func (c *Config) GetVDIByNameList(names string) []Selenium {
+	return getVDIByNameList(c.Selenium, names)
 }

@@ -249,10 +249,53 @@
             10
           ]
         },
-        "vdi_name": {
-          "title": "CROWler Engine VDI Name",
-          "description": "This is the name of the VDI that the CROWler Engine will use to crawl websites. This is useful when using custom configurations per each source. If you configure this in the main/default configuration, you'll prevent the engine from autoscaling over the VDIs.",
-          "type": "string"
+        "engine": {
+          "title": "CROWler Engine Configuration for each CROWler Engine instance",
+          "description": "This is the configuration for each CROWler Engine instance. This section is used to customize the CROWler Engine behavior for each instance.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "CROWler Engine Instance Name",
+                "description": "This is the name of the CROWler Engine instance. Normally it's either the hostname or the container name in which the engine is running.",
+                "type": "string",
+                "examples": [
+                  "crowler-engine-1",
+                  "crowler-engine-2"
+                ]
+              },
+              "source_priority": {
+                "title": "Configure the priority that this instance will use to filter the sources",
+                "description": "This is the priority that the CROWler Engine will use to filter the sources. For example 'high' to filter for high priority, 'medium,low' to pick only medium and low priority sources, 'my_priority' to pick the source with your specific custom priority.",
+                "type": "string",
+                "examples": [
+                  "high",
+                  "medium,low",
+                  "my_priority"
+                ]
+              },
+              "vdi_name": {
+                "title": "CROWler Engine VDI Name",
+                "description": "Specify a comma separated list of VDIs that this instance of the Engine will use to crawl sources that have been picked by it.",
+                "type": "string",
+                "examples": [
+                  "vdi1,vdi2",
+                  "vdi3"
+                ]
+              }
+            }
+          },
+          "examples": [
+            {
+              "priority": "high",
+              "vdi_name": "vdi1,vdi2"
+            },
+            {
+              "priority": "medium,low",
+              "vdi_name": "vdi3"
+            }
+          ]
         },
         "platform": {
           "title": "CROWler Engine Platform",
