@@ -15,6 +15,10 @@
 // Package agent provides the agent functionality for the CROWler.
 package agent
 
+/*
+  The CROWler is the foundation; the user builds and deploys autonomous or semi-autonomous agents that leverage CROWler's capabilities to perform high-level content discovery, threat simulation, and intelligence extraction.
+*/
+
 import (
 	"encoding/json"
 	"fmt"
