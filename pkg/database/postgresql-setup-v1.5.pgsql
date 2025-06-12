@@ -1819,6 +1819,7 @@ RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSON
 $$
 DECLARE
     priority_list TEXT[];
+    use_priority_filter BOOLEAN := FALSE;
 BEGIN
     -- Handle nulls and defaults
     p_priority := COALESCE(TRIM(p_priority), '');
@@ -1840,9 +1841,7 @@ BEGIN
             SELECT TRIM(LOWER(value))
             FROM unnest(string_to_array(p_priority, ',')) AS value
         );
-    ELSE
-        -- Ensure the array has at least one default value
-        priority_list := ARRAY[''];
+        use_priority_filter := TRUE;
     END IF;
 
     RETURN QUERY
@@ -1852,23 +1851,21 @@ BEGIN
         WHERE s.disabled = FALSE
           AND (
                 -- Priority clause only if priorities provided
-                (
-                    priority_list IS NOT NULL
-                    AND LOWER(TRIM(s.priority)) = ANY(priority_list)
+                (NOT use_priority_filter OR LOWER(TRIM(s.priority)) = ANY(priority_list))
+                AND (
+                    -- last_ok_update filter
+                    (p_last_ok_update <> '' AND (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL))
+                    OR
+                    -- regular_crawling filter
+                    (p_regular_crawling <> '' AND LOWER(TRIM(s.status)) = 'completed' AND s.last_updated_at < NOW() - p_regular_crawling::INTERVAL)
+                    OR
+                    -- error fallback
+                    (LOWER(TRIM(s.status)) = 'error' AND s.last_updated_at < NOW() - p_last_error::INTERVAL)
+                    OR LOWER(TRIM(s.status)) = 'pending'
+                    OR LOWER(TRIM(s.status)) = 'new'
+                    OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
+                    OR s.status IS NULL
                 )
-                AND
-                -- last_ok_update filter
-                (p_last_ok_update <> '' AND (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL))
-                OR
-                -- regular_crawling filter
-                (p_regular_crawling <> '' AND LOWER(TRIM(s.status)) = 'completed' AND s.last_updated_at < NOW() - p_regular_crawling::INTERVAL)
-                OR
-                -- error fallback
-                (LOWER(TRIM(s.status)) = 'error' AND s.last_updated_at < NOW() - p_last_error::INTERVAL)
-                OR LOWER(TRIM(s.status)) = 'pending'
-                OR LOWER(TRIM(s.status)) = 'new'
-                OR (LOWER(TRIM(s.status)) = 'processing' AND s.last_updated_at < NOW() - p_processing_timeout::INTERVAL)
-                OR s.status IS NULL
               )
         ORDER BY s.created_at ASC, s.source_id ASC
         FOR UPDATE
