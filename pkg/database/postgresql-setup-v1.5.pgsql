@@ -1840,6 +1840,9 @@ BEGIN
             SELECT TRIM(LOWER(value))
             FROM unnest(string_to_array(p_priority, ',')) AS value
         );
+    ELSE
+        -- Ensure the array has at least one default value
+        priority_list := ARRAY[''];
     END IF;
 
     RETURN QUERY
@@ -1853,7 +1856,7 @@ BEGIN
                     priority_list IS NOT NULL
                     AND LOWER(TRIM(s.priority)) = ANY(priority_list)
                 )
-                OR
+                AND
                 -- last_ok_update filter
                 (p_last_ok_update <> '' AND (s.last_updated_at IS NULL OR s.last_updated_at < NOW() - p_last_ok_update::INTERVAL))
                 OR
