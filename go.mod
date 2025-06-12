@@ -1,6 +1,6 @@
 module github.com/pzaino/thecrowler
 
-go 1.23.8
+go 1.23.10
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
@@ -52,7 +52,6 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 require (
@@ -67,6 +66,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	go.mongodb.org/mongo-driver v1.17.3
 	golang.org/x/time v0.11.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
