@@ -279,7 +279,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "No sources to crawl, sleeping...")
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "No sources to crawl, sleeping...")
 
 			// Perform database maintenance if it's time
 			if time.Now().After(maintenanceTime) {
@@ -298,7 +298,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sources to crawl: %d", len(sourcesToCrawl))
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "Sources to crawl: %d", len(sourcesToCrawl))
 
 		// Crawl each source
 		workBlock := WorkBlock{
