@@ -179,6 +179,7 @@ func NewConfig() *Config {
 			MaxIdleConns: 75,
 		},
 		Crawler: Crawler{
+			QueryTimer:     5,
 			Workers:        1,
 			VDIName:        "",
 			SourcePriority: "",
@@ -634,6 +635,7 @@ func (c *Config) validateRemoteSSLMode() {
 }
 
 func (c *Config) validateCrawler() {
+	c.setDefaultQueryTimer()
 	c.setDefaultWorkers()
 	c.setEngineInstance()
 	c.setDefaultVDIName()
@@ -660,6 +662,12 @@ func (c *Config) validateCrawler() {
 	c.setDefaultControl()
 }
 
+func (c *Config) setDefaultQueryTimer() {
+	if c.Crawler.QueryTimer < 1 {
+		c.Crawler.QueryTimer = 1
+	}
+}
+
 func (c *Config) setDefaultWorkers() {
 	if c.Crawler.Workers < 1 {
 		c.Crawler.Workers = 1
@@ -680,6 +688,8 @@ func (c *Config) setEngineInstance() {
 		}
 		if en == hostname {
 			// If the engine name is the same as the hostname, then we set it as the current engine
+			c.Crawler.QueryTimer = engine.QueryTimer
+
 			VDINames := ""
 			for i, vdi := range engine.VDIName {
 				vdi = strings.ToLower(strings.TrimSpace(vdi))

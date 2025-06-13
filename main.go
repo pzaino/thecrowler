@@ -51,10 +51,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-const (
-	sleepTime = 30 * time.Second // Time to sleep when no URLs are found
-)
-
 var (
 	limiter     *rate.Limiter // Rate limiter
 	configFile  *string       // Configuration file path
@@ -277,10 +273,9 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			cmn.DebugMsg(cmn.DbgLvlError, "retrieving sources: %v", err)
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.RUnlock()
-			time.Sleep(sleepTime)
+			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sources to crawl: %d", len(sourcesToCrawl))
 
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
@@ -300,9 +295,10 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 				debug.FreeOSMemory() // Force release of unused memory to the OS
 				resourceReleaseTime = time.Now().Add(time.Duration(5) * time.Minute)
 			}
-			time.Sleep(sleepTime)
+			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sources to crawl: %d", len(sourcesToCrawl))
 
 		// Crawl each source
 		workBlock := WorkBlock{
