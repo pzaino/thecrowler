@@ -48,8 +48,9 @@ type Database struct {
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	Workers               int            `json:"workers" yaml:"workers"` // Number of crawler workers
-	Engine                []CustomEngine `json:"engine" yaml:"engine"`   // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
+	QueryTimer            int            `json:"query_timer" yaml:"query_timer"` // Time to wait before querying the next source (in seconds)
+	Workers               int            `json:"workers" yaml:"workers"`         // Number of crawler workers
+	Engine                []CustomEngine `json:"engine" yaml:"engine"`           // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
 	VDIName               string         // Name of the VDI to use (this is useful when using custom configurations per each source)
 	SourcePriority        string         // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
 	Platform              string         `json:"platform" yaml:"platform"`                               // Platform to use (e.g., "desktop", "mobile")
@@ -101,6 +102,7 @@ type Crawler struct {
 // CustomEngine represents a custom engine configuration
 type CustomEngine struct {
 	Name           string   `json:"name" yaml:"name"`                       // Name of the custom engine (e.g., "chromium", "firefox", "selenium")
+	QueryTimer     int      `json:"query_timer" yaml:"query_timer"`         // Time to wait before querying the next source (in seconds)
 	SourcePriority []string `json:"source_priority" yaml:"source_priority"` // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
 	VDIName        []string `json:"vdi_name" yaml:"vdi_name"`               // Name of the VDI to use (this is useful when using custom configurations per each source)
 }

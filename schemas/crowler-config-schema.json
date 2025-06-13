@@ -239,6 +239,16 @@
       "description": "This is the crawler (CROWler Engine) configuration section, it's used to tell the CROWler's engine how to behave. It is the configuration for the CROWler engine that the CROWler will use to crawl websites, spin workers and configure it's internal Control API.",
       "type": "object",
       "properties": {
+        "query_timer": {
+          "title": "CROWler Engine Query Timer",
+          "description": "This is the query timer for the CROWler Engine. It is the time in seconds that the CROWler Engine will wait before querying the database for new sources to crawl. (default every 30 seconds)",
+          "type": "integer",
+          "minimum": 1,
+          "examples": [
+            5,
+            15
+          ]
+        },
         "workers": {
           "title": "CROWler Engine Workers",
           "description": "This is the number of workers that the CROWler Engine will use to crawl websites. Minimum number is 3 per each Source if you have network discovery enabled or 1 per each source if you are doing crawling only. Increase the number of workers to scale up the CROWler engine vertically.",
@@ -265,6 +275,16 @@
                   "crowler-engine-2"
                 ]
               },
+              "query_timer": {
+                "title": "CROWler Engine Query Timer",
+                "description": "This is the query timer for the CROWler Engine. It is the time in seconds that the CROWler Engine will wait before querying the database for new sources to crawl.",
+                "type": "integer",
+                "minimum": 1,
+                "examples": [
+                  5,
+                  15
+                ]
+              },
               "source_priority": {
                 "title": "Configure the priority that this instance will use to filter the sources",
                 "description": "This is a list of priorities that CROWler Engine will use to filter the sources. For example 'high' to filter for high priority, 'medium,low' to pick only medium and low priority sources, 'my_priority' to pick the source with your specific custom priority.",
@@ -289,11 +309,7 @@
                     "crowler-vdi-1",
                     "crowler-vdi-japan-1"
                   ]
-                },
-                "examples": [
-                  "- crowler-vdi-1",
-                  "- crowler-vdi-japan-1"
-                ]
+                }
               }
             }
           },

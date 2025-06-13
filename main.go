@@ -51,10 +51,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-const (
-	sleepTime = 30 * time.Second // Time to sleep when no URLs are found
-)
-
 var (
 	limiter     *rate.Limiter // Rate limiter
 	configFile  *string       // Configuration file path
@@ -265,6 +261,8 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
 	resourceReleaseTime := time.Now().Add(time.Duration(5) * time.Minute)
+	// Flag used to avoid repeating 0 sources found constantly
+	gotSources := true // set to true by default for first source check (so it will log the first time)
 
 	// Start the main loop
 	defer configMutex.RUnlock()
@@ -277,14 +275,16 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			cmn.DebugMsg(cmn.DbgLvlError, "retrieving sources: %v", err)
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.RUnlock()
-			time.Sleep(sleepTime)
+			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sources to crawl: %d", len(sourcesToCrawl))
 
 		// Check if there are sources to crawl
 		if len(sourcesToCrawl) == 0 {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "No sources to crawl, sleeping...")
+			if gotSources {
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "No sources to crawl, sleeping...")
+				gotSources = false
+			}
 
 			// Perform database maintenance if it's time
 			if time.Now().After(maintenanceTime) {
@@ -300,9 +300,11 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 				debug.FreeOSMemory() // Force release of unused memory to the OS
 				resourceReleaseTime = time.Now().Add(time.Duration(5) * time.Minute)
 			}
-			time.Sleep(sleepTime)
+			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Sources to crawl: %d", len(sourcesToCrawl))
+		gotSources = true
 
 		// Crawl each source
 		workBlock := WorkBlock{
