@@ -356,7 +356,7 @@ func crawlSources(wb *WorkBlock) {
 		for range ticker.C {
 			pipelinesRunning := false
 			for _, status := range *plStatus {
-				if status.PipelineRunning == 1 {
+				if status.PipelineRunning <= 1 {
 					pipelinesRunning = true
 					break
 				}
