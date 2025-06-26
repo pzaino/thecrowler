@@ -315,7 +315,27 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			PipelineStatus: &PipelineStatus,
 			Config:         &config,
 		}
-		crawlSources(&workBlock)
+		event := cdb.Event{
+			Action:   "new",
+			Type:     "start_batch_crawling",
+			SourceID: 0,
+			Severity: config.Crawler.SourcePriority,
+			Details: map[string]interface{}{
+				"node": cmn.GetEngineID(),
+			},
+		}
+		createEvent(*db, event)
+		crawlSources(&workBlock) // Start the crawling of this batch of sources
+		event = cdb.Event{
+			Action:   "new",
+			Type:     "completed_batch_crawling",
+			SourceID: 0,
+			Severity: config.Crawler.SourcePriority,
+			Details: map[string]interface{}{
+				"node": cmn.GetEngineID(),
+			},
+		}
+		createEvent(*db, event)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.RUnlock()
@@ -330,6 +350,38 @@ func performDatabaseMaintenance(db cdb.Handler) {
 		cmn.DebugMsg(cmn.DbgLvlError, "performing database maintenance: %v", err)
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database maintenance completed successfully.")
+	}
+}
+
+func createEvent(db cdb.Handler, event cdb.Event) {
+	event.Action = strings.ToLower(strings.TrimSpace(event.Action))
+
+	if event.Action == "" {
+		cmn.DebugMsg(cmn.DbgLvlError, "Action field is empty, ignoring event")
+		return
+	}
+
+	if event.Action == "new" {
+		const maxRetries = 5
+		const baseDelay = 10 * time.Millisecond
+
+		var err error
+		for i := 0; i < maxRetries; i++ {
+			_, err = cdb.CreateEvent(&db, event)
+			if err == nil {
+				return // success!
+			}
+
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
+
+			// Optional: only retry on known transient DB errors (e.g., connection refused, timeout)
+			// if !isRetryable(err) { break }
+
+			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
+		}
+
+		// Final failure
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
 	}
 }
 
