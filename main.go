@@ -317,11 +317,11 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		}
 		event := cdb.Event{
 			Action:   "new",
-			Type:     "start_batch_crawling",
+			Type:     "started_batch_crawling",
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				"node": cmn.GetEngineID(),
+				"node": cmn.GetMicroServiceName(),
 			},
 		}
 		createEvent(*db, event)
@@ -332,7 +332,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				"node": cmn.GetEngineID(),
+				"node": cmn.GetMicroServiceName(),
 			},
 		}
 		createEvent(*db, event)
@@ -374,7 +374,7 @@ func createEvent(db cdb.Handler, event cdb.Event) {
 
 			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
 
-			// Optional: only retry on known transient DB errors (e.g., connection refused, timeout)
+			// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
 			// if !isRetryable(err) { break }
 
 			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
