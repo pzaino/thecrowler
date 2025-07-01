@@ -317,6 +317,7 @@ func dialTLSWithIPCheck(timeout time.Duration) func(ctx context.Context, network
 
 // InterpolateEnvVars replaces occurrences of `${VAR}` or `$VAR` in the input string
 // with the value of the VAR environment variable.
+/*
 func InterpolateEnvVars(input string) string {
 	envVarPattern := regexp.MustCompile(`\$\{?(\w+)\}?`)
 	return envVarPattern.ReplaceAllStringFunc(input, func(varName string) string {
@@ -327,6 +328,17 @@ func InterpolateEnvVars(input string) string {
 
 		// Return the environment variable value
 		return os.Getenv(trimmedVarName)
+	})
+}
+*/
+func InterpolateEnvVars(input string) string {
+	envVarPattern := regexp.MustCompile(`\$\{(\w+)\}`)
+	return envVarPattern.ReplaceAllStringFunc(input, func(match string) string {
+		submatches := envVarPattern.FindStringSubmatch(match)
+		if len(submatches) != 2 {
+			return match
+		}
+		return os.Getenv(submatches[1])
 	})
 }
 
