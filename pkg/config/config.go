@@ -210,6 +210,7 @@ func NewConfig() *Config {
 			MaxSources:            4,
 			BrowsingMode:          "recursive",
 			ChangeUserAgent:       never,
+			ForceSFSSameOrigin:    false,
 			ResetCookiesPolicy:    never,
 			NoThirdPartyCookies:   false,
 			RequestImages:         true,

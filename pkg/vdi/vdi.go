@@ -901,7 +901,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 		_, err2 := wd.ExecuteScript(blockVideo, nil)
 		if err2 != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err2)
 		}
 	}
 

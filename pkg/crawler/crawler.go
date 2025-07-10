@@ -110,6 +110,7 @@ type ProcessContext struct {
 	linksMutex           sync.Mutex             // Mutex to protect the newLinks slice
 	newLinks             []LinkItem             // The new links found during the crawling process
 	source               *cdb.Source            // The source to crawl
+	srcCfg               map[string]interface{} // Will store the source Config in an Unmarshaled format
 	wg                   sync.WaitGroup         // WaitGroup to wait for all page workers to finish
 	wgNetInfo            sync.WaitGroup         // WaitGroup to wait for network info to finish
 	sel                  *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
@@ -251,6 +252,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling source configuration: %v", err)
 		}
+		processCtx.srcCfg = sourceConfig
 	}
 
 	// Extract URLs patterns the user wants to include/exclude
@@ -2541,6 +2543,23 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	err = blockCDPURLs(&wd, ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
+	}
+
+	if ctx.config.Crawler.ForceSFSSameOrigin {
+		// We need to ensure that sec-fetch-site is set to same-origin before we get our URL
+		srcConfig := ctx.srcCfg["crawling_config"]
+		srcConfigMap, ok := srcConfig.(map[string]interface{})
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
+		} else {
+			homeURLInf := srcConfigMap["site"]
+			homeURL, ok := homeURLInf.(string)
+			if !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string")
+			} else {
+				_ = wd.Get(homeURL)
+			}
+		}
 	}
 
 	// Add XHR Hook

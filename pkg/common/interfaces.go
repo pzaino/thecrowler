@@ -161,3 +161,18 @@ func ConvertMapIIToSI(m interface{}) interface{} {
 	}
 	return m
 }
+
+// ConvertSliceInfToString converts a slice of interfaces into a string
+func ConvertSliceInfToString(input []interface{}) string {
+	strSlice := make([]string, len(input))
+	for i, v := range input {
+		strSlice[i] = fmt.Sprintf("%v", v) // Convert each element to string
+	}
+	// Join strSlice into a single JSON string
+	strBuffer, err := json.Marshal(strSlice)
+	if err != nil {
+		DebugMsg(DbgLvlError, fmt.Sprintf("Error marshaling slice to JSON: %s", err.Error()))
+		return "[]"
+	}
+	return fmt.Sprintf("[%s]", strBuffer)
+}
