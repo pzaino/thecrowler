@@ -181,13 +181,18 @@
                 "ua": [
                     {
                         "br": "chrome",
-                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.{random_int1}.{random_int2} Safari/537.36",
+                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.{random_int1}.{random_int2} Safari/537.36",
+                        "pct": 17.59
+                    },
+                    {
+                        "br": "chrome",
+                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.{random_int1}.{random_int2} Safari/537.36",
                         "pct": 17.59
                     },
                     {
                         "br": "chrome",
                         "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.{random_int1}.{random_int2} Safari/537.36",
-                        "pct": 17.59
+                        "pct": 1.85
                     },
                     {
                         "br": "chrome",
@@ -231,22 +236,17 @@
                     },
                     {
                         "br": "chrome",
-                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.{random_int1}.{random_int2} Safari/537.36",
+                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_74) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.{random_int1}.{random_int2} Safari/537.36",
                         "pct": 1.85
                     },
                     {
                         "br": "chrome",
-                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_74) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.{random_int1}.{random_int2} Safari/537.36",
-                        "pct": 1.85
-                    },
-                    {
-                        "br": "chrome",
-                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.{random_int1}.{random_int2} Safari/537.36",
+                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.{random_int1}.{random_int2} Safari/537.36",
                         "pct": 17.59
                     },
                     {
                         "br": "chrome",
-                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.{random_int1}.{random_int2} Safari/537.3",
+                        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.{random_int1}.{random_int2} Safari/537.3",
                         "pct": 17.59
                     }
                 ]
@@ -279,7 +279,7 @@
                 },
                 {
                     "br": "chrome",
-                    "ua": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.{random_int1}.{random_int2} Mobile Safari/537.3",
+                    "ua": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.{random_int1}.{random_int2} Mobile Safari/537.3",
                     "pct": 0.55
                 },
                 {
@@ -289,7 +289,7 @@
                 },
                 {
                     "br": "chrome",
-                    "ua": "Mozilla/5.0 (Linux; Android 7.0; SM-G930V Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.{random_int1}.{random_int2} Mobile Safari/537.36 (compatible; Google-Read-Aloud; +https://support.google.com/webmasters/answer/1061943",
+                    "ua": "Mozilla/5.0 (Linux; Android 7.0; SM-G930V Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.{random_int1}.{random_int2} Mobile Safari/537.36 (compatible; Google-Read-Aloud; +https://support.google.com/webmasters/answer/1061943",
                     "pct": 0.55
                 },
                 {
