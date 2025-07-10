@@ -19,13 +19,6 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-/*
-	"github.com/tebeka/selenium"
-	"github.com/tebeka/selenium/chrome"
-	"github.com/tebeka/selenium/firefox"
-	"github.com/tebeka/selenium/log"
-*/
-
 const (
 	browserGpuDefault        = "--disable-gpu"
 	browserJSDefault         = "--enable-javascript"
@@ -550,7 +543,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
-	// CDP COnfig for Chrome/Chromium
+	// CDP Config for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		args = append(args, "--no-first-run")
@@ -887,21 +880,34 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Configure CDP
 	if cdpActive {
-		blockVideo := `chrome.debugger.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
-			chrome.debugger.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.enable");
-			chrome.debugger.onEvent.addListener((source, message) => {
-				if (message.method === "Network.requestIntercepted" && message.params.request.url.includes(".mp4")) {
-					chrome.debugger.sendCommand({tabId: source.tabId}, "Network.continueInterceptedRequest", {
-						interceptionId: message.params.interceptionId,
-						errorReason: "BlockedByClient"
-					});
-				}
-			});
-		});`
+		/*
+			blockVideo := `chrome.debugger.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
+				chrome.debugger.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.enable");
+				chrome.debugger.onEvent.addListener((source, message) => {
+					if (message.method === "Network.requestIntercepted" && message.params.request.url.includes(".mp4")) {
+						chrome.debugger.sendCommand({tabId: source.tabId}, "Network.continueInterceptedRequest", {
+							interceptionId: message.params.interceptionId,
+							errorReason: "BlockedByClient"
+						});
+					}
+				});
+			});`
 
-		_, err2 := wd.ExecuteScript(blockVideo, nil)
+			_, err2 := wd.ExecuteScript(blockVideo, nil)
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err2)
+			}
+		*/
+		_, err2 := wd.ExecuteChromeDPCommand("Network.enable", nil)
 		if err2 != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err2)
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable CDP Network domain: %v", err2)
+		} else {
+			_, err2 = wd.ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
+				"urls": []string{"*.mp4"},
+			})
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to block .mp4 URLs: %v", err2)
+			}
 		}
 	}
 

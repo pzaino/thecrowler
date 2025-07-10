@@ -510,20 +510,20 @@ func parseProcessingTimeout(timeoutStr string) time.Duration {
 	timeoutStr = strings.TrimSpace(strings.ToLower(timeoutStr))
 
 	// Normalize user input
-	timeoutStr = strings.ReplaceAll(timeoutStr, "minutes", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "minute", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "min", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "mins", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " minutes", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " minute", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " min", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " mins", "m")
 
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hours", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hour", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hrs", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hr", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hours", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hour", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hrs", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hr", "h")
 
-	timeoutStr = strings.ReplaceAll(timeoutStr, "seconds", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "second", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "secs", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "sec", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " seconds", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " second", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " secs", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " sec", "s")
 
 	dur, err := time.ParseDuration(timeoutStr)
 	if err != nil || dur <= 0 {
