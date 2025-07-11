@@ -2484,6 +2484,11 @@ func deepConvertJSON(value interface{}) interface{} {
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext) (vdi.WebDriver, string, error) {
+	// Refresh Crawler Instance work timeout
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+
 	// Check if the vdi.WebDriver is still alive
 	if wd == nil {
 		return nil, "", errors.New("WebDriver is nil")
