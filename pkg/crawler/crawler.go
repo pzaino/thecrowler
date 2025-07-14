@@ -2489,6 +2489,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		ctx.RefreshCrawlingTimer()
 	}
 
+	// Check if the URL is empty
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil, "", errors.New("URL is empty")
+	}
+
 	// Check if the vdi.WebDriver is still alive
 	if wd == nil {
 		return nil, "", errors.New("WebDriver is nil")
@@ -2525,12 +2531,6 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 	}
 
-	// Check if the URL is empty
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return nil, "", errors.New("URL is empty")
-	}
-
 	// Change the User Agent (if needed)
 	/*
 		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
@@ -2540,6 +2540,17 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			}
 		}
 	*/
+
+	err = wd.Get("about:blank")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
+	}
+
+	// Set GPU properties
+	err = vdi.SetGPU(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
+	}
 
 	// Reinforce Browser Settings
 	err = vdi.ReinforceBrowserSettings(wd)
@@ -2610,12 +2621,6 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to add XHR hook: %v", err)
 		}
-	}
-
-	// Block video autoplay:
-	err = vdi.SetGPU(wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
 	}
 
 	// Wait for Page to Load
