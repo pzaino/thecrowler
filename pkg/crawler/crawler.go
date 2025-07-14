@@ -2503,6 +2503,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	// Reset the Selenium session for a clean browser with new User-Agent
 	if ctx.config.Crawler.ChangeUserAgent == "always" {
 		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer()
+		}
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
 		}
@@ -2607,6 +2610,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to add XHR hook: %v", err)
 		}
+	}
+
+	// Block video autoplay:
+	err = vdi.SetGPU(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
 	}
 
 	// Wait for Page to Load
