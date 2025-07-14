@@ -941,41 +941,26 @@ func addLoadListener(wd *WebDriver) error {
 	return nil
 }
 
-// SetGPU sets default GPU for session
-func SetGPU(wd WebDriver) error {
+// GPUPatch sets default GPU for session
+func GPUPatch(wd WebDriver) error {
 	script := `
-	const canvasProto = HTMLCanvasElement.prototype;
-	const getContextOrig = canvasProto.getContext;
-
-	canvasProto.getContext = function(type, attribs) {
-		const ctx = getContextOrig.call(this, type, attribs);
-
+	HTMLCanvasElement.prototype.getContext = (function(orig) {
+	return function(type, attribs) {
+		const ctx = orig.call(this, type, attribs);
 		if (type === 'webgl' || type === 'webgl2') {
-			const getExtOrig = ctx.getExtension;
-			ctx.getExtension = function(ext) {
-				if (ext === 'WEBGL_debug_renderer_info') {
-					return getExtOrig.call(this, ext);
-				}
-				return getExtOrig.call(this, ext);
-			};
-
-			const getParamOrig = ctx.getParameter;
+		const ext = ctx.getExtension('WEBGL_debug_renderer_info');
+		if (ext) {
+			const getParamOrig = ctx.getParameter.bind(ctx);
 			ctx.getParameter = function(param) {
-				const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
-				if (debugInfo) {
-					if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
-						return 'Intel(R) UHD Graphics 620';
-					}
-					if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
-						return 'Intel Inc.';
-					}
-				}
-				return getParamOrig.call(this, param);
+			if (param === ext.UNMASKED_RENDERER_WEBGL) return 'Intel(R) UHD Graphics 620';
+			if (param === ext.UNMASKED_VENDOR_WEBGL) return 'Intel Inc.';
+			return getParamOrig(param);
 			};
 		}
-
+		}
 		return ctx;
 	};
+	})(HTMLCanvasElement.prototype.getContext);
 	`
 
 	_, err := wd.ExecuteScript(script, nil)

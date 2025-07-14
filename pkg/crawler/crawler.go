@@ -2547,7 +2547,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	}
 
 	// Set GPU properties
-	err = vdi.SetGPU(wd)
+	err = vdi.GPUPatch(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
 	}
