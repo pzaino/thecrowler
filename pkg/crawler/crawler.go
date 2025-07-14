@@ -100,6 +100,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
+	pStatus              int                    // Process status
 	SelID                int                    // The Selenium ID
 	SelInstance          vdi.SeleniumInstance   // The Selenium instance
 	WG                   *sync.WaitGroup        // The Caller's WaitGroup
@@ -118,6 +119,7 @@ type ProcessContext struct {
 	hi                   *httpi.HTTPDetails     // The HTTP header information of the web page
 	re                   *rules.RuleEngine      // The rule engine
 	getURLMutex          sync.Mutex             // Mutex to protect the getURLContent function
+	closeSession         sync.Mutex
 	visitedLinks         map[string]bool        // Map to keep track of visited links
 	userURLPatterns      []string               // User-defined URL patterns
 	userURLBlockPatterns []string               // User-defined URL block patterns
@@ -187,6 +189,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.CollectedCookies = make(map[string]interface{})
 	processCtx.VDIReturned = false
 	processCtx.RefreshCrawlingTimer = args.Refresh
+	processCtx.pStatus = 1 // Processing started
 
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
@@ -559,6 +562,11 @@ func closeSession(ctx *ProcessContext,
 	args *Pars, sel *vdi.SeleniumInstance,
 	releaseVDI chan<- vdi.SeleniumInstance,
 	err error) {
+	ctx.closeSession.Lock()
+	if ctx.pStatus != 1 {
+		return
+	}
+
 	// Release VDI connection
 	// (this allows the next source to be processed, if any, in this batch job)
 	vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
@@ -596,8 +604,9 @@ func closeSession(ctx *ProcessContext,
 	ctx.linksMutex.Unlock()
 
 	// Set the context object to nil
-	*ctx = ProcessContext{} // Reset the struct
-	ctx = nil               // Signal that ctx is no longer needed
+	//*ctx = ProcessContext{} // Reset the struct
+	//ctx = nil               // Signal that ctx is no longer needed
+	ctx.pStatus = 10 // Processing completed
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Returning from crawling a source.")
 }
 
