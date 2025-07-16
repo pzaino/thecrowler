@@ -525,6 +525,11 @@
             ""
           ]
         },
+        "force_sec_fetch_site_same_origin": {
+          "title": "CRWOler engine forces sec-fetch-site same-origin",
+          "description": "This is a technique that is required for websites that requires sec-fetch-site same-origin for all pages except the home page. Some website uses this technique to block crawlers from crawl specific URLs. The CROWler can go around it when the user enable this check.",
+          "type": "boolean"
+        },
         "reset_cookies_policy": {
           "title": "CROWler Engine Reset Cookies Policy",
           "description": "This is the policy that the CROWler Engine will use to reset cookies. For example, 'always' means the CROWler will reset cookies on every request and when done, 'never' means the CROWler will never reset cookies, 'on_start' means the CROWler will reset cookies only at the beginning of a crawling process.",
