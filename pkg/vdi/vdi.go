@@ -19,13 +19,6 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-/*
-	"github.com/tebeka/selenium"
-	"github.com/tebeka/selenium/chrome"
-	"github.com/tebeka/selenium/firefox"
-	"github.com/tebeka/selenium/log"
-*/
-
 const (
 	browserGpuDefault        = "--disable-gpu"
 	browserJSDefault         = "--enable-javascript"
@@ -550,7 +543,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
-	// CDP COnfig for Chrome/Chromium
+	// CDP Config for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		args = append(args, "--no-first-run")
@@ -887,21 +880,34 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Configure CDP
 	if cdpActive {
-		blockVideo := `chrome.debugger.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
-			chrome.debugger.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.enable");
-			chrome.debugger.onEvent.addListener((source, message) => {
-				if (message.method === "Network.requestIntercepted" && message.params.request.url.includes(".mp4")) {
-					chrome.debugger.sendCommand({tabId: source.tabId}, "Network.continueInterceptedRequest", {
-						interceptionId: message.params.interceptionId,
-						errorReason: "BlockedByClient"
-					});
-				}
-			});
-		});`
+		/*
+			blockVideo := `chrome.debugger.attach({tabId: chrome.devtools.inspectedWindow.tabId}, "1.0", () => {
+				chrome.debugger.sendCommand({tabId: chrome.devtools.inspectedWindow.tabId}, "Network.enable");
+				chrome.debugger.onEvent.addListener((source, message) => {
+					if (message.method === "Network.requestIntercepted" && message.params.request.url.includes(".mp4")) {
+						chrome.debugger.sendCommand({tabId: source.tabId}, "Network.continueInterceptedRequest", {
+							interceptionId: message.params.interceptionId,
+							errorReason: "BlockedByClient"
+						});
+					}
+				});
+			});`
 
-		_, err2 := wd.ExecuteScript(blockVideo, nil)
+			_, err2 := wd.ExecuteScript(blockVideo, nil)
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err2)
+			}
+		*/
+		_, err2 := wd.ExecuteChromeDPCommand("Network.enable", nil)
 		if err2 != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable CDP Network domain: %v", err2)
+		} else {
+			_, err2 = wd.ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
+				"urls": []string{"*.mp4"},
+			})
+			if err2 != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to block .mp4 URLs: %v", err2)
+			}
 		}
 	}
 
@@ -930,6 +936,36 @@ func addLoadListener(wd *WebDriver) error {
 	_, err := (*wd).ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error adding load listener: %v", err)
+	}
+
+	return nil
+}
+
+// GPUPatch sets default GPU for session
+func GPUPatch(wd WebDriver) error {
+	script := `
+	HTMLCanvasElement.prototype.getContext = (function(orig) {
+	return function(type, attribs) {
+		const ctx = orig.call(this, type, attribs);
+		if (type === 'webgl' || type === 'webgl2') {
+		const ext = ctx.getExtension('WEBGL_debug_renderer_info');
+		if (ext) {
+			const getParamOrig = ctx.getParameter.bind(ctx);
+			ctx.getParameter = function(param) {
+			if (param === ext.UNMASKED_RENDERER_WEBGL) return 'Intel(R) UHD Graphics 620';
+			if (param === ext.UNMASKED_VENDOR_WEBGL) return 'Intel Inc.';
+			return getParamOrig(param);
+			};
+		}
+		}
+		return ctx;
+	};
+	})(HTMLCanvasElement.prototype.getContext);
+	`
+
+	_, err := wd.ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
 	return nil
@@ -1035,6 +1071,48 @@ func ReinforceBrowserSettings(wd WebDriver) error {
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
+	}
+
+	script = `
+	await page.evaluateOnNewDocument(() => {
+	const canvasProto = HTMLCanvasElement.prototype;
+	const getContextOrig = canvasProto.getContext;
+
+	canvasProto.getContext = function(type, attribs) {
+		const ctx = getContextOrig.call(this, type, attribs);
+
+		if (type === 'webgl' || type === 'webgl2') {
+		const getExtOrig = ctx.getExtension;
+		ctx.getExtension = function(ext) {
+			if (ext === 'WEBGL_debug_renderer_info') {
+			return getExtOrig.call(this, ext); // Keep it available
+			}
+			return getExtOrig.call(this, ext);
+		};
+
+		const getParamOrig = ctx.getParameter;
+		ctx.getParameter = function(param) {
+			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
+			if (debugInfo) {
+			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
+				return 'Intel(R) UHD Graphics 620';
+			}
+			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
+				return 'Intel Inc.';
+			}
+			}
+			return getParamOrig.call(this, param);
+		};
+		}
+
+		return ctx;
+	};
+	});
+	`
+
+	_, err = wd.ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
 	return nil

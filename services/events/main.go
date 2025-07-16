@@ -519,26 +519,10 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle the notification received
-/*
-func handleNotification(payload string) {
-	var event cdb.Event
-	err := json.Unmarshal([]byte(payload), &event)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification payload: %v", err)
-		return
-	}
-
-	// Log the event for debug purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received: %+v", event)
-
-	// Process the Event
-	processEvent(event)
-}
-*/
-
 func handleNotification(payload string) {
 	var event cdb.Event
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		// Put the event in the jobQueue
 		jobQueue <- event
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
@@ -579,7 +563,7 @@ func processInternalEvent(event cdb.Event) {
 
 			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
 
-			// Optional: only retry on known transient DB errors (e.g., connection refused, timeout)
+			// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
 			// if !isRetryable(err) { break }
 
 			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
@@ -602,7 +586,6 @@ func processEvent(event cdb.Event) {
 	}
 
 	// Set a shared state for the event processing
-	//processingStatus := "processing"
 	processingResult := []string{}
 
 	// Check if the event is associated with a source_id > 0
@@ -694,30 +677,25 @@ func processEvent(event cdb.Event) {
 		}
 	}
 
-	// Set the event as processed
-	//processingStatus = "processed"
-	/*
-		_, err := dbHandler.Exec(`UPDATE Events SET event_status = $1, event_result = $2 WHERE event_sha256 = $3`, processingStatus, processingResult, event.ID)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to update event status: %v", err)
-		}
-	*/
-
-	// Determine the global processing status
+	// Determine the "global processing" status for the event:
 	processingSuccess := true
-	for _, result := range processingResult {
-		if result == "failure" {
-			processingSuccess = false
-			break
+	if len(processingResult) > 0 {
+		for _, result := range processingResult {
+			if strings.ToLower(strings.TrimSpace(result)) == "failure" {
+				// We had at least one failure so we take it and report
+				processingSuccess = false
+				break
+			}
 		}
 	}
 
 	// Remove the event if needed
-	if config.Events.EventRemoval == "" || config.Events.EventRemoval == cmn.AlwaysStr {
+	removalPolicy := strings.ToLower(strings.TrimSpace(config.Events.EventRemoval))
+	if (removalPolicy == "") || (removalPolicy == cmn.AlwaysStr) {
 		removeHandledEvent(event.ID)
-	} else if config.Events.EventRemoval == "on_success" && processingSuccess {
+	} else if (removalPolicy == "on_success") && processingSuccess {
 		removeHandledEvent(event.ID)
-	} else if config.Events.EventRemoval == "on_failure" && !processingSuccess {
+	} else if (removalPolicy == "on_failure") && !processingSuccess {
 		removeHandledEvent(event.ID)
 	}
 }

@@ -372,10 +372,14 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "Failed to find element: '%s' %v", selector.Selector, err)
 		}
 	} else {
+		tstResults := cmn.ConvertSliceInfToString(results)
 		if cmn.GetDebugLevel() <= cmn.DbgLvlDebug3 {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Found element: '%s'", selector.Selector)
+			if len(tstResults) > 128 {
+				tstResults = tstResults[:128] + "..."
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Found element: '%s' %s", selector.Selector, tstResults)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "Found element: '%s' %v", selector.Selector, results)
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "Found element: '%s' %v", selector.Selector, tstResults)
 		}
 	}
 	return results

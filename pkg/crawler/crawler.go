@@ -100,6 +100,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
+	pStatus              int                    // Process status
 	SelID                int                    // The Selenium ID
 	SelInstance          vdi.SeleniumInstance   // The Selenium instance
 	WG                   *sync.WaitGroup        // The Caller's WaitGroup
@@ -110,6 +111,7 @@ type ProcessContext struct {
 	linksMutex           sync.Mutex             // Mutex to protect the newLinks slice
 	newLinks             []LinkItem             // The new links found during the crawling process
 	source               *cdb.Source            // The source to crawl
+	srcCfg               map[string]interface{} // Will store the source Config in an Unmarshaled format
 	wg                   sync.WaitGroup         // WaitGroup to wait for all page workers to finish
 	wgNetInfo            sync.WaitGroup         // WaitGroup to wait for network info to finish
 	sel                  *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
@@ -117,6 +119,7 @@ type ProcessContext struct {
 	hi                   *httpi.HTTPDetails     // The HTTP header information of the web page
 	re                   *rules.RuleEngine      // The rule engine
 	getURLMutex          sync.Mutex             // Mutex to protect the getURLContent function
+	closeSession         sync.Mutex
 	visitedLinks         map[string]bool        // Map to keep track of visited links
 	userURLPatterns      []string               // User-defined URL patterns
 	userURLBlockPatterns []string               // User-defined URL block patterns
@@ -186,6 +189,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.CollectedCookies = make(map[string]interface{})
 	processCtx.VDIReturned = false
 	processCtx.RefreshCrawlingTimer = args.Refresh
+	processCtx.pStatus = 1 // Processing started
 
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
@@ -251,6 +255,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling source configuration: %v", err)
 		}
+		processCtx.srcCfg = sourceConfig
 	}
 
 	// Extract URLs patterns the user wants to include/exclude
@@ -508,20 +513,20 @@ func parseProcessingTimeout(timeoutStr string) time.Duration {
 	timeoutStr = strings.TrimSpace(strings.ToLower(timeoutStr))
 
 	// Normalize user input
-	timeoutStr = strings.ReplaceAll(timeoutStr, "minutes", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "minute", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "min", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "mins", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " minutes", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " minute", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " min", "m")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " mins", "m")
 
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hours", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hour", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hrs", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "hr", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hours", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hour", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hrs", "h")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " hr", "h")
 
-	timeoutStr = strings.ReplaceAll(timeoutStr, "seconds", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "second", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "secs", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, "sec", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " seconds", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " second", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " secs", "s")
+	timeoutStr = strings.ReplaceAll(timeoutStr, " sec", "s")
 
 	dur, err := time.ParseDuration(timeoutStr)
 	if err != nil || dur <= 0 {
@@ -557,6 +562,11 @@ func closeSession(ctx *ProcessContext,
 	args *Pars, sel *vdi.SeleniumInstance,
 	releaseVDI chan<- vdi.SeleniumInstance,
 	err error) {
+	ctx.closeSession.Lock()
+	if ctx.pStatus != 1 {
+		return
+	}
+
 	// Release VDI connection
 	// (this allows the next source to be processed, if any, in this batch job)
 	vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
@@ -594,8 +604,9 @@ func closeSession(ctx *ProcessContext,
 	ctx.linksMutex.Unlock()
 
 	// Set the context object to nil
-	*ctx = ProcessContext{} // Reset the struct
-	ctx = nil               // Signal that ctx is no longer needed
+	//*ctx = ProcessContext{} // Reset the struct
+	//ctx = nil               // Signal that ctx is no longer needed
+	ctx.pStatus = 10 // Processing completed
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Returning from crawling a source.")
 }
 
@@ -2482,6 +2493,17 @@ func deepConvertJSON(value interface{}) interface{} {
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext) (vdi.WebDriver, string, error) {
+	// Refresh Crawler Instance work timeout
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+
+	// Check if the URL is empty
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil, "", errors.New("URL is empty")
+	}
+
 	// Check if the vdi.WebDriver is still alive
 	if wd == nil {
 		return nil, "", errors.New("WebDriver is nil")
@@ -2496,6 +2518,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	// Reset the Selenium session for a clean browser with new User-Agent
 	if ctx.config.Crawler.ChangeUserAgent == "always" {
 		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer()
+		}
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
 		}
@@ -2515,12 +2540,6 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 	}
 
-	// Check if the URL is empty
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return nil, "", errors.New("URL is empty")
-	}
-
 	// Change the User Agent (if needed)
 	/*
 		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
@@ -2530,6 +2549,17 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			}
 		}
 	*/
+
+	err = wd.Get("about:blank")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
+	}
+
+	// Set GPU properties
+	err = vdi.GPUPatch(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
+	}
 
 	// Reinforce Browser Settings
 	err = vdi.ReinforceBrowserSettings(wd)
@@ -2541,6 +2571,23 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	err = blockCDPURLs(&wd, ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
+	}
+
+	if ctx.config.Crawler.ForceSFSSameOrigin {
+		// We need to ensure that sec-fetch-site is set to same-origin before we get our URL
+		srcConfig := ctx.srcCfg["crawling_config"]
+		srcConfigMap, ok := srcConfig.(map[string]interface{})
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
+		} else {
+			homeURLInf := srcConfigMap["site"]
+			homeURL, ok := homeURLInf.(string)
+			if !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string")
+			} else {
+				_ = wd.Get(homeURL)
+			}
+		}
 	}
 
 	// Add XHR Hook
