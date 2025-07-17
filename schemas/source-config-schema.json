@@ -48,6 +48,21 @@
         "site": {
           "type": "string",
           "format": "uri"
+        },
+        "url_referrer": {
+          "type": "string",
+          "format": "uri",
+          "description": "This is the URL referrer for the source. It is used to set the referrer for the source when crawling."
+        },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "website",
+            "api",
+            "file",
+            "db"
+          ],
+          "description": "This is the type of the source. It can be a website, an API or a file."
         }
       },
       "additionalProperties": false,

@@ -523,7 +523,9 @@ type SourceConfig struct {
 
 // CrawlingConfig represents the crawling configuration for a source
 type CrawlingConfig struct {
-	Site string `json:"site" yaml:"site" validate:"required,url"`
+	Site        string `json:"site" yaml:"site" validate:"required,url"`
+	URLReferrer string `json:"url_referrer,omitempty" yaml:"url_referrer,omitempty"` // URL referrer for the source
+	SourceType  string `json:"source_type" yaml:"source_type"`                       // Type of the source (web, api, file) (validate:"required,oneof=website api file db")
 }
 
 // ExecutionPlanItem represents the execution plan item for a source

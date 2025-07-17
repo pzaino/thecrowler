@@ -743,7 +743,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	}
 
 	// Get the initial URL
-	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, 0, ctx)
+	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx)
 	if err != nil {
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 		return pageSource, err
@@ -2586,6 +2586,38 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string")
 			} else {
 				_ = wd.Get(homeURL)
+			}
+		}
+	}
+
+	if level == -1 {
+		// Main URL, we need to add the referrer to the request (if one was set)
+		srcConfig := ctx.srcCfg["crawling_config"]
+		srcConfigMap, ok := srcConfig.(map[string]interface{})
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}, so I cannot extract the referrer URL")
+		} else {
+			referrerURLInf := srcConfigMap["url_referrer"]
+			referrerURL, ok := referrerURLInf.(string)
+			if !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string")
+			} else {
+				if referrerURL != "" {
+					// Set the referrer URL
+					_, err = wd.ExecuteChromeDPCommand("Network.enable", nil)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+					} else {
+						_, err = wd.ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
+							"headers": map[string]interface{}{
+								"referer": referrerURL,
+							},
+						})
+						if err != nil {
+							cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
+						}
+					}
+				}
 			}
 		}
 	}
