@@ -2490,6 +2490,100 @@ func deepConvertJSON(value interface{}) interface{} {
 	}
 }
 
+func setReferrerHeader(wd vdi.WebDriver, ctx *ProcessContext) {
+	srcConfig := ctx.srcCfg["crawling_config"]
+	srcConfigMap, ok := srcConfig.(map[string]interface{})
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}, so I cannot extract the referrer URL")
+		return
+	}
+	referrerURLInf := srcConfigMap["url_referrer"]
+	referrerURL, ok := referrerURLInf.(string)
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string")
+		return
+	}
+	if referrerURL != "" {
+		_, err := wd.ExecuteChromeDPCommand("Network.enable", nil)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+			return
+		}
+		_, err = wd.ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
+			"headers": map[string]interface{}{
+				"referer": referrerURL,
+			},
+		})
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
+			return
+		}
+	}
+}
+
+func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
+	var err error
+
+	// Change the User Agent (if needed)
+	/*
+		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+			err = changeUserAgent(&(ctx.wd), ctx)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
+			}
+		}
+	*/
+
+	// Get about blank
+	err = wd.Get("about:blank")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
+	}
+
+	// Set GPU properties
+	err = vdi.GPUPatch(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
+	}
+
+	// Reinforce Browser Settings
+	err = vdi.ReinforceBrowserSettings(wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
+	}
+
+	// Block URLs if any (URLs firewall)
+	err = blockCDPURLs(&wd, ctx)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
+	}
+
+	if ctx.config.Crawler.ForceSFSSameOrigin {
+		// We need to ensure that sec-fetch-site is set to same-origin before we get our URL
+		srcConfig := ctx.srcCfg["crawling_config"]
+		srcConfigMap, ok := srcConfig.(map[string]interface{})
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
+		} else {
+			homeURLInf := srcConfigMap["site"]
+			homeURL, ok := homeURLInf.(string)
+			if !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string")
+			} else {
+				_ = wd.Get(homeURL)
+			}
+		}
+	}
+
+	// Add XHR Hook
+	if ctx.config.Crawler.CollectXHR {
+		err = enableCDPNetworkLogging(ctx.wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "adding XHR Hook: %v", err)
+		}
+	}
+}
+
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext) (vdi.WebDriver, string, error) {
@@ -2540,104 +2634,20 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 	}
 
-	// Change the User Agent (if needed)
-	/*
-		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-			err = changeUserAgent(&(ctx.wd), ctx)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
-			}
-		}
-	*/
+	// Setup the Browser before requesting a page
+	setupBrowser(wd, ctx)
 
-	err = wd.Get("about:blank")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
-	}
-
-	// Set GPU properties
-	err = vdi.GPUPatch(wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
-	}
-
-	// Reinforce Browser Settings
-	err = vdi.ReinforceBrowserSettings(wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
-	}
-
-	// Block URLs if any (URLs firewall)
-	err = blockCDPURLs(&wd, ctx)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
-	}
-
-	if ctx.config.Crawler.ForceSFSSameOrigin {
-		// We need to ensure that sec-fetch-site is set to same-origin before we get our URL
-		srcConfig := ctx.srcCfg["crawling_config"]
-		srcConfigMap, ok := srcConfig.(map[string]interface{})
-		if !ok {
-			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
-		} else {
-			homeURLInf := srcConfigMap["site"]
-			homeURL, ok := homeURLInf.(string)
-			if !ok {
-				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string")
-			} else {
-				_ = wd.Get(homeURL)
-			}
-		}
-	}
-
+	// Set the HTTP referer if we are on the first URL
 	if level == -1 {
-		// Main URL, we need to add the referrer to the request (if one was set)
-		srcConfig := ctx.srcCfg["crawling_config"]
-		srcConfigMap, ok := srcConfig.(map[string]interface{})
-		if !ok {
-			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}, so I cannot extract the referrer URL")
-		} else {
-			referrerURLInf := srcConfigMap["url_referrer"]
-			referrerURL, ok := referrerURLInf.(string)
-			if !ok {
-				cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string")
-			} else {
-				if referrerURL != "" {
-					// Set the referrer URL
-					_, err = wd.ExecuteChromeDPCommand("Network.enable", nil)
-					if err != nil {
-						cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
-					} else {
-						_, err = wd.ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
-							"headers": map[string]interface{}{
-								"referer": referrerURL,
-							},
-						})
-						if err != nil {
-							cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Add XHR Hook
-	//var collectedRequests *[]map[string]interface{}
-	//var cancel context.CancelFunc
-	if ctx.config.Crawler.CollectXHR {
-		err = enableCDPNetworkLogging(ctx.wd)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "adding XHR Hook: %v", err)
-		} /*else {
-			cancel, collectedRequests = startCDPLogging(wd)
-		}*/
+		setReferrerHeader(wd, ctx)
 	}
 
 	// Navigate to a page and interact with elements.
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
 	}
+
+	// Get the page and process the interval
 	if err := wd.Get(url); err != nil {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 			// If the session is not found, create a new one
@@ -2645,6 +2655,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			wd = ctx.wd
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+			}
+			// Setup the Browser before requesting a page
+			setupBrowser(wd, ctx)
+			// Set the HTTP referer if we are on the first URL
+			if level == -1 {
+				setReferrerHeader(wd, ctx)
 			}
 			// Retry navigating to the page
 			err := wd.Get(url)
@@ -2656,7 +2672,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 	}
 
-	// Add XHR Hook (before any request is made, but after the page is loaded)
+	// Add XHR Hook (before any action is made, but after the page has been requested)
 	if ctx.config.Crawler.CollectXHR {
 		err = addXHRHook(wd)
 		if err != nil {
@@ -2924,6 +2940,31 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 	return nil
 }
 
+func moveMouseRandomly(wd vdi.WebDriver) {
+	// Example: moving mouse via Rbee
+	x := rand.IntN(1920) // pick some random X coordinate
+	y := rand.IntN(1080) // pick some random Y coordinate
+
+	jsScript := fmt.Sprintf(`
+		(function() {
+			var xhr = new XMLHttpRequest();
+			xhr.open("POST", "http://127.0.0.1:3000/v1/rb", true);
+			xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+			var data = JSON.stringify({
+				"Action": "moveMouse",
+				"X": %d,
+				"Y": %d
+			});
+			xhr.send(data);
+		})();`, x, y)
+
+	// Run the JavaScript in the browser
+	_, err := wd.ExecuteScript(jsScript, nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to execute Rbee moveMouse: %v", err)
+	}
+}
+
 func vdiSleep(ctx *ProcessContext, delay float64) error {
 	driver := ctx.wd
 
@@ -2950,6 +2991,10 @@ func vdiSleep(ctx *ProcessContext, delay float64) error {
 			return err
 		}
 		time.Sleep(pollInterval)
+		// refresh session timeout
+		ctx.RefreshCrawlingTimer()
+		// Move the mouse using rBee
+		moveMouseRandomly(driver)
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Waited for %v seconds", delay)
 
