@@ -2503,7 +2503,7 @@ func setReferrerHeader(wd vdi.WebDriver, ctx *ProcessContext) {
 	referrerURLInf := srcConfigMap["url_referrer"]
 	referrerURL, ok := referrerURLInf.(string)
 	if !ok {
-		cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string")
+		cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string: %v", referrerURLInf)
 		return
 	}
 	if referrerURL != "" {
@@ -2568,7 +2568,7 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 		if !ok {
 			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
 		} else {
-			homeURLInf := srcConfigMap["url_referrer"]
+			homeURLInf := srcConfigMap["site"]
 			homeURL, ok := homeURLInf.(string)
 			if !ok {
 				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string: %v", homeURLInf)
