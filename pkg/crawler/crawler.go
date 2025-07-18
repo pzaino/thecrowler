@@ -2568,10 +2568,10 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 		if !ok {
 			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
 		} else {
-			homeURLInf := srcConfigMap["site"]
+			homeURLInf := srcConfigMap["url_referrer"]
 			homeURL, ok := homeURLInf.(string)
 			if !ok {
-				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string")
+				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string: %v", homeURLInf)
 			} else {
 				_ = wd.Get(homeURL)
 			}
