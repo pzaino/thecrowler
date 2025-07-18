@@ -25,6 +25,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -599,6 +601,9 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 		return err
 	}
 	if err := addJSAPISleep(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIMath(vm); err != nil {
 		return err
 	}
 
@@ -3299,6 +3304,35 @@ func addJSAPISleep(vm *otto.Otto) error {
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 		return otto.UndefinedValue()
 	})
+}
+
+// addJSAPIMath adds Math.random and Math.floor to the VM
+func addJSAPIMath(vm *otto.Otto) error {
+	mathObj, err := vm.Object(`Math = {}`)
+	if err != nil {
+		return err
+	}
+
+	// Math.random
+	err = mathObj.Set("random", func(call otto.FunctionCall) otto.Value {
+		val, _ := vm.ToValue(rand.Float64())
+		return val
+	})
+	if err != nil {
+		return err
+	}
+
+	// Math.floor
+	err = mathObj.Set("floor", func(call otto.FunctionCall) otto.Value {
+		num, _ := call.Argument(0).ToFloat()
+		val, _ := vm.ToValue(math.Floor(num))
+		return val
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func returnError(vm *otto.Otto, message string) otto.Value {
