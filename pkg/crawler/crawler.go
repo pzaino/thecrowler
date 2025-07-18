@@ -817,6 +817,9 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	}
 	resetPageInfo(&pageInfo) // Reset the PageInfo struct
 	fURL := cmn.NormalizeURL(ctx.source.URL)
+	if ctx.visitedLinks == nil {
+		ctx.visitedLinks = make(map[string]bool)
+	}
 	ctx.visitedLinks[fURL] = true
 	ctx.Status.TotalPages = 1
 
