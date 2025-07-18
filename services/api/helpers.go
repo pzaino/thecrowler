@@ -44,6 +44,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 		successCode = http.StatusOK
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// Log the error and prepare an error response
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
@@ -51,7 +52,6 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 			"error":   err.Error(),
 			"message": errMsg,
 		}
-		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(errCode) // Send the error code
 	} else {
 		// Prepare a success response
@@ -63,7 +63,6 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 		} else {
 			response = results
 		}
-		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(successCode) // Send the success code
 	}
 
@@ -71,7 +70,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log the error and send a fallback error response
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON response: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Original Results: %+v", results)
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "Original Results: %+v", results)
 
 		fallbackResponse := map[string]string{"error": "Internal Server Error"}
 		w.WriteHeader(http.StatusInternalServerError)
