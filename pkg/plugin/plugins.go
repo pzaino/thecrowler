@@ -3332,6 +3332,16 @@ func addJSAPIMath(vm *otto.Otto) error {
 		return err
 	}
 
+	// Math.round
+	err = mathObj.Set("round", func(call otto.FunctionCall) otto.Value {
+		num, _ := call.Argument(0).ToFloat()
+		val, _ := vm.ToValue(math.Round(num))
+		return val
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
