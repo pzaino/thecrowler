@@ -256,6 +256,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling source configuration: %v", err)
 		}
 		processCtx.srcCfg = sourceConfig
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Source configuration extracted: %v", processCtx.srcCfg)
 	}
 
 	// Extract URLs patterns the user wants to include/exclude
@@ -2500,6 +2501,7 @@ func setReferrerHeader(wd vdi.WebDriver, ctx *ProcessContext) {
 		cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}, so I cannot extract the referrer URL")
 		return
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "crawl_config: %v", srcConfig)
 	referrerURLInf := srcConfigMap["url_referrer"]
 	referrerURL, ok := referrerURLInf.(string)
 	if !ok {
