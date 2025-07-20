@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	errNoElementFound = "no element '%v' found."
-	errFailedToGetLoc = "failed to get element location: %v"
+	errNoElementFound        = "no element '%v' found."
+	errFailedToGetLoc        = "failed to get element location: %v"
+	defaultActionRulesConfig = "{\"config\":\"default\"}"
 )
 
 func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
@@ -39,7 +40,7 @@ func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 		// Execute the CROWler rules
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Action rules...")
 		// Execute the rules
-		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
+		if strings.TrimSpace(string((*ctx.source.Config))) == defaultActionRulesConfig {
 			runDefaultActionRules(wd, ctx)
 		} else {
 			configStr := string((*ctx.source.Config))

@@ -394,35 +394,38 @@ func crawlSources(wb *WorkBlock) {
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
 
-	//uint64(wb.sel.Size())
 	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
 
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
+	var pipelinesRunning atomic.Bool
 
 	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			pipelinesRunning := false
+			anyPipelineStillRunning := false
 			for _, status := range *plStatus {
 				if status.PipelineRunning <= 1 {
-					pipelinesRunning = true
+					anyPipelineStillRunning = true
 					break
 				}
 			}
 			logStatus(plStatus)
-			if !pipelinesRunning {
+			if !anyPipelineStillRunning {
+				pipelinesRunning.Store(false)
 				break
+			} else {
+				pipelinesRunning.Store(true)
 			}
 		}
 	}(wb.PipelineStatus)
 
 	// Refill go routine: (used to avoid pipeline starvation during crawling)
 	go func() {
-		inactivityTimeout := 30 * time.Second
+		inactivityTimeout := 60 * time.Second
 		timer := time.NewTimer(inactivityTimeout)
 
 		defer func() {
@@ -440,7 +443,11 @@ func crawlSources(wb *WorkBlock) {
 			select {
 			case <-timer.C:
 				// Timeout expired → no new sources, close pipeline
-				return
+				if pipelinesRunning.Load() {
+					timer.Reset(inactivityTimeout)
+				} else {
+					return
+				}
 			default:
 				refillLock.Lock()
 				if (wb.sel.Available() > 0) && (len(sourceChan) < len(wb.Config.Selenium)) {

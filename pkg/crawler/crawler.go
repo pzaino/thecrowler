@@ -4117,6 +4117,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
+	if processCtx.visitedLinks == nil {
+		processCtx.visitedLinks = make(map[string]bool)
+	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
 
 	// Add the new links to the process context
