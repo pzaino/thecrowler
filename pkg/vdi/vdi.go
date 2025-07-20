@@ -543,6 +543,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
+	args = append(args, "--incognito") // Run in incognito mode
+
 	// CDP Config for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
