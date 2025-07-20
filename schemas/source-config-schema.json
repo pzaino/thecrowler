@@ -54,7 +54,7 @@
           "format": "uri",
           "description": "This is the URL referrer for the source. It is used to set the referrer for the source when crawling."
         },
-        "if_no_links_found": {
+        "alternative_links": {
           "type": "array",
           "items": {
             "type": "string",

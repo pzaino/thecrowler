@@ -788,7 +788,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		if srcConfig != nil {
 			if crawlingConfig, ok := srcConfig.(map[string]interface{}); ok {
 				// Check if there are any user-defined URL patterns to match
-				if urlPatterns, ok := crawlingConfig["if_no_links_found"]; ok {
+				if urlPatterns, ok := crawlingConfig["alternative_links"]; ok {
 					if patterns, ok := urlPatterns.([]interface{}); ok {
 						// Use the user-defined URL patterns
 						for _, pattern := range patterns {
