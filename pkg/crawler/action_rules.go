@@ -689,9 +689,21 @@ func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver
 				return fmt.Errorf("plugin not found: %s", selector.Selector)
 			}
 
+			// Check r.Value for macros:
+			temp := strings.TrimSpace(r.Value)
+			if temp != "" {
+				switch strings.ToLower(temp) {
+				case "%current_url%":
+					rval, _ := (*wd).CurrentURL()
+					temp = rval
+				case "%source_url%":
+					temp = ctx.source.URL
+				}
+			}
+
 			// collect value as an argument to the plugin
 			args := []interface{}{}
-			args = append(args, r.Value)
+			args = append(args, temp)
 
 			// Execute the JavaScript
 			_, err := (*wd).ExecuteScript(plugin.String(), args)
