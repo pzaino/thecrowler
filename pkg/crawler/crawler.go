@@ -2641,6 +2641,29 @@ func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
 	}
 }
 
+func cleanUpBrowser(wd *vdi.WebDriver) {
+	// Clear everything before resetting the VDI session
+	script := `
+	window.localStorage.clear();
+	window.sessionStorage.clear();
+	if (window.indexedDB) {
+		indexedDB.databases().then(dbs => {
+			dbs.forEach(db => indexedDB.deleteDatabase(db.name));
+		});
+	}
+	if ('caches' in window) {
+		caches.keys().then(keys => {
+			keys.forEach(key => caches.delete(key));
+		});
+	}
+	`
+	_, err := (*wd).ExecuteScript(script, nil)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to clear storage: %v", err)
+	}
+	_ = (*wd).DeleteAllCookies()
+}
+
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext) (vdi.WebDriver, string, error) {
@@ -2668,26 +2691,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 
 	// Reset the Selenium session for a clean browser with new User-Agent
 	if ctx.config.Crawler.ChangeUserAgent == "always" {
-		// Clear everything before resetting the VDI session
-		script := `
-			window.localStorage.clear();
-			window.sessionStorage.clear();
-			if (window.indexedDB) {
-			indexedDB.databases().then(dbs => {
-				dbs.forEach(db => indexedDB.deleteDatabase(db.name));
-			});
-			}
-			if ('caches' in window) {
-			caches.keys().then(keys => {
-				keys.forEach(key => caches.delete(key));
-			});
-			}
-			`
-		_, err := wd.ExecuteScript(script, nil)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to clear storage: %v", err)
-		}
-		_ = wd.DeleteAllCookies()
+		cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
 
 		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
 		if ctx.RefreshCrawlingTimer != nil {
@@ -4083,6 +4087,8 @@ func ResetSiteSession(ctx *ProcessContext) error {
 
 	// Clear IndexedDB (if applicable)
 	_, _ = ctx.wd.ExecuteScript("indexedDB.databases().then(dbs => dbs.forEach(db => indexedDB.deleteDatabase(db.name)));", nil)
+
+	cleanUpBrowser(&ctx.wd)
 
 	return nil
 }
