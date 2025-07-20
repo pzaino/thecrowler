@@ -498,7 +498,7 @@ func crawlSources(wb *WorkBlock) {
 			select {
 			case <-ticker.C:
 				last := lastActivity.Load().(time.Time)
-				if time.Since(last) > (5 * time.Minute) {
+				if time.Since(last) > (5*time.Minute) && !pipelinesRunning.Load() {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					closeChanOnce.Do(func() {
 						close(sourceChan)
@@ -506,7 +506,8 @@ func crawlSources(wb *WorkBlock) {
 						cmn.DebugMsg(cmn.DbgLvlInfo, "Closed sourceChan")
 					})
 					return
-				}
+				} // else, reset the timer
+				ticker.Reset(30 * time.Second) // Reset the ticker to avoid tight loop
 			}
 		}
 	}()
