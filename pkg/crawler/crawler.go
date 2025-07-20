@@ -801,7 +801,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 								}
 								// Add the user-defined link to the pageInfo.Links
 								pageInfo.Links = append(pageInfo.Links, link)
-								cmn.DebugMsg(cmn.DbgLvlDebug2, "Added user-defined link: %s", patternStr)
+								cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG] Added user-defined link: %s", patternStr)
 							}
 						}
 					}
