@@ -1715,7 +1715,12 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 	return 0, fmt.Errorf("failed to insert keyword after retries: %s", keyword)
 }
 
-func addXHRHook(wd vdi.WebDriver) error {
+func addXHRHook(wd *vdi.WebDriver) error {
+	if wd == nil {
+		return errors.New("WebDriver is nil")
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-addXHRHook] Adding XHR Hook to WebDriver...")
+
 	script := `
 		(function() {
 			if (window.__XCAP_HOOK__) return;
@@ -1801,7 +1806,7 @@ func addXHRHook(wd vdi.WebDriver) error {
 			};
 		})();
 	`
-	_, err := wd.ExecuteScript(script, nil)
+	_, err := (*wd).ExecuteScript(script, nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to inject XHR Hook: %v", err)
 	}
@@ -2494,7 +2499,12 @@ func deepConvertJSON(value interface{}) interface{} {
 	}
 }
 
-func setReferrerHeader(wd vdi.WebDriver, ctx *ProcessContext) {
+func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
+	if wd == nil || *wd == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot set referrer header.")
+		return
+	}
+
 	srcConfig := ctx.srcCfg["crawling_config"]
 	srcConfigMap, ok := srcConfig.(map[string]interface{})
 	if !ok {
@@ -2509,12 +2519,12 @@ func setReferrerHeader(wd vdi.WebDriver, ctx *ProcessContext) {
 		return
 	}
 	if referrerURL != "" {
-		_, err := wd.ExecuteChromeDPCommand("Network.enable", nil)
+		_, err := (*wd).ExecuteChromeDPCommand("Network.enable", nil)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
 			return
 		}
-		_, err = wd.ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
+		_, err = (*wd).ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
 			"headers": map[string]interface{}{
 				"referer": referrerURL,
 			},
@@ -2526,9 +2536,13 @@ func setReferrerHeader(wd vdi.WebDriver, ctx *ProcessContext) {
 	}
 }
 
-func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
-	var err error
+func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
+	if wd == nil || *wd == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot setup browser.")
+		return
+	}
 
+	var err error
 	// Change the User Agent (if needed)
 	/*
 		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
@@ -2540,13 +2554,13 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 	*/
 
 	// Get about blank
-	err = wd.Get("about:blank")
+	err = (*wd).Get("about:blank")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
 	}
 
 	// Set GPU properties
-	err = vdi.GPUPatch(wd)
+	err = vdi.GPUPatch((*wd))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
 	}
@@ -2558,7 +2572,7 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 	}
 
 	// Block URLs if any (URLs firewall)
-	err = blockCDPURLs(&wd, ctx)
+	err = blockCDPURLs(wd, ctx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
 	}
@@ -2575,7 +2589,7 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 			if !ok {
 				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string: %v", homeURLInf)
 			} else {
-				_ = wd.Get(homeURL)
+				_ = (*wd).Get(homeURL)
 			}
 		}
 	}
@@ -2624,6 +2638,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
 		}
 		wd = *ctx.GetWebDriver()
+		if wd == nil {
+			return nil, "", errors.New("WebDriver is nil after reset")
+		}
 	} else {
 		// check if webdriver session is still good, if not open a new one
 		_, err = wd.CurrentURL()
@@ -2640,11 +2657,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	}
 
 	// Setup the Browser before requesting a page
-	setupBrowser(wd, ctx)
+	setupBrowser(&wd, ctx)
 
 	// Set the HTTP referer if we are on the first URL
 	if level == -1 {
-		setReferrerHeader(wd, ctx)
+		setReferrerHeader(&wd, ctx)
 	}
 
 	// Navigate to a page and interact with elements.
@@ -2662,10 +2679,10 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
 			}
 			// Setup the Browser before requesting a page
-			setupBrowser(wd, ctx)
+			setupBrowser(&wd, ctx)
 			// Set the HTTP referer if we are on the first URL
 			if level == -1 {
-				setReferrerHeader(wd, ctx)
+				setReferrerHeader(&wd, ctx)
 			}
 			// Retry navigating to the page
 			err := wd.Get(url)
@@ -2679,7 +2696,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 
 	// Add XHR Hook (before any action is made, but after the page has been requested)
 	if ctx.config.Crawler.CollectXHR {
-		err = addXHRHook(wd)
+		err = addXHRHook(&wd)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to add XHR hook: %v", err)
 		}
@@ -3685,6 +3702,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Execute any action rules after the link is opened
 	processActionRules(&processCtx.wd, processCtx, currentURL)
+	processCtx.RefreshCrawlingTimer()
 
 	// Re-Check current URL (because some Action Rules may change the URL)
 	currentURL, _ = processCtx.wd.CurrentURL()
@@ -3707,6 +3725,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
 	}
+	processCtx.RefreshCrawlingTimer()
 
 	// Extract page information and cache it for indexing
 	docType := inferDocumentType(url.Link, &processCtx.wd)
@@ -3771,6 +3790,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
+		processCtx.RefreshCrawlingTimer()
 	}
 
 	// Clear HTML and content if not required
@@ -4042,10 +4062,12 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		RE:           processCtx.re,
 		Config:       &processCtx.config,
 	}
+	processCtx.RefreshCrawlingTimer()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
 	}
+	processCtx.RefreshCrawlingTimer()
 
 	// Extract page information
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
@@ -4060,20 +4082,24 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 	// Generate Keywords
 	pageCache.Keywords = extractKeywords(pageCache)
+	processCtx.RefreshCrawlingTimer()
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
+		processCtx.RefreshCrawlingTimer()
 	}
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&htmlContent, &pageCache)
+		processCtx.RefreshCrawlingTimer()
 	}
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
+		processCtx.RefreshCrawlingTimer()
 	}
 
 	if !processCtx.config.Crawler.CollectHTML {
