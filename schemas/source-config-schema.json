@@ -54,6 +54,14 @@
           "format": "uri",
           "description": "This is the URL referrer for the source. It is used to set the referrer for the source when crawling."
         },
+        "if_no_links_found": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": "This is the list of URLs that the CROWler will use if no links are found on the source. This is useful for sources that have no links or for sources that have links that are not relevant to the source."
+        },
         "source_type": {
           "type": "string",
           "enum": [

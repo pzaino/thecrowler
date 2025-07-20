@@ -782,6 +782,33 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
+	if len(pageInfo.Links) == 0 {
+		// Not links were found, so we need to check if we have any user-defined URL patterns
+		srcConfig := ctx.srcCfg["crawling_config"]
+		if srcConfig != nil {
+			if crawlingConfig, ok := srcConfig.(map[string]interface{}); ok {
+				// Check if there are any user-defined URL patterns to match
+				if urlPatterns, ok := crawlingConfig["if_no_links_found"]; ok {
+					if patterns, ok := urlPatterns.([]interface{}); ok {
+						// Use the user-defined URL patterns
+						for _, pattern := range patterns {
+							if patternStr, ok := pattern.(string); ok {
+								link := LinkItem{
+									PageURL:   patternStr,
+									PageLevel: 1,
+									Link:      patternStr,
+									ElementID: "",
+								}
+								// Add the user-defined link to the pageInfo.Links
+								pageInfo.Links = append(pageInfo.Links, link)
+								cmn.DebugMsg(cmn.DbgLvlDebug2, "Added user-defined link: %s", patternStr)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	// Generate Keywords from the page content
 	pageInfo.Keywords = extractKeywords(pageInfo)
 
