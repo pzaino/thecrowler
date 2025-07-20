@@ -346,6 +346,43 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 		initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
 
+		// Add alternative_links to initial links:
+		srcConfig := processCtx.srcCfg["crawling_config"]
+		if srcConfig != nil {
+			if crawlingConfig, ok := srcConfig.(map[string]interface{}); ok {
+				// Check if there are any user-defined URL patterns to match
+				if urlPatterns, ok := crawlingConfig["alternative_links"]; ok {
+					if patterns, ok := urlPatterns.([]interface{}); ok {
+						// Use the user-defined URL patterns
+						for _, pattern := range patterns {
+							if patternStr, ok := pattern.(string); ok {
+								// Check if pattern is already in initialLinks
+								found := false
+								for _, link := range initialLinks {
+									if link.Link == patternStr {
+										found = true
+										break
+									}
+								}
+								if !found {
+									pURL, _ := processCtx.wd.CurrentURL()
+									link := LinkItem{
+										PageURL:   pURL,
+										PageLevel: 1,
+										Link:      patternStr,
+										ElementID: "",
+									}
+									// Add the user-defined link to the pageInfo.Links
+									initialLinks = append(initialLinks, link)
+									cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG] Added user-defined link: %s", patternStr)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Refresh the page
 		err = processCtx.RefreshVDIConnection(sel)
 		if err != nil {
@@ -782,33 +819,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, ctx.source.URL)
-	if len(pageInfo.Links) == 0 {
-		// Not links were found, so we need to check if we have any user-defined URL patterns
-		srcConfig := ctx.srcCfg["crawling_config"]
-		if srcConfig != nil {
-			if crawlingConfig, ok := srcConfig.(map[string]interface{}); ok {
-				// Check if there are any user-defined URL patterns to match
-				if urlPatterns, ok := crawlingConfig["alternative_links"]; ok {
-					if patterns, ok := urlPatterns.([]interface{}); ok {
-						// Use the user-defined URL patterns
-						for _, pattern := range patterns {
-							if patternStr, ok := pattern.(string); ok {
-								link := LinkItem{
-									PageURL:   patternStr,
-									PageLevel: 1,
-									Link:      patternStr,
-									ElementID: "",
-								}
-								// Add the user-defined link to the pageInfo.Links
-								pageInfo.Links = append(pageInfo.Links, link)
-								cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG] Added user-defined link: %s", patternStr)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+
 	// Generate Keywords from the page content
 	pageInfo.Keywords = extractKeywords(pageInfo)
 
