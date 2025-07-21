@@ -108,18 +108,18 @@ type ProcessContext struct {
 	config               cfg.Config             // The configuration object (from the config package)
 	db                   *cdb.Handler           // The database handler
 	wd                   vdi.WebDriver          // The Selenium WebDriver
-	linksMutex           sync.Mutex             // Mutex to protect the newLinks slice
+	linksMutex           cmn.SafeMutex          // Mutex to protect the newLinks slice
 	newLinks             []LinkItem             // The new links found during the crawling process
 	source               *cdb.Source            // The source to crawl
 	srcCfg               map[string]interface{} // Will store the source Config in an Unmarshaled format
 	wg                   sync.WaitGroup         // WaitGroup to wait for all page workers to finish
 	wgNetInfo            sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel                  *vdi.Pool              // The Selenium instances channel (sel               *chan vdi.SeleniumInstance)
+	sel                  *vdi.Pool              // The Selenium instances channel (sel *chan vdi.SeleniumInstance)
 	ni                   *neti.NetInfo          // The network information of the web page
 	hi                   *httpi.HTTPDetails     // The HTTP header information of the web page
 	re                   *rules.RuleEngine      // The rule engine
-	getURLMutex          sync.Mutex             // Mutex to protect the getURLContent function
-	closeSession         sync.Mutex
+	getURLMutex          cmn.SafeMutex          // Mutex to protect the getURLContent function
+	closeSession         cmn.SafeMutex          // Mutex to protect the closeSession function
 	visitedLinks         map[string]bool        // Map to keep track of visited links
 	userURLPatterns      []string               // User-defined URL patterns
 	userURLBlockPatterns []string               // User-defined URL block patterns
