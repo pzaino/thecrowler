@@ -450,20 +450,26 @@ func crawlSources(wb *WorkBlock) {
 			default:
 				refillLock.Lock()
 				if (wb.sel.Available() > 0) && (len(sourceChan) < len(wb.Config.Selenium)) {
-					newSources, err := monitorBatchAndRefill(wb)
+					newSources := []cdb.Source{}
+					var err error
+					if !batchCompleted.Load() {
+						newSources, err = monitorBatchAndRefill(wb)
+					}
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
 					} else if len(newSources) > 0 {
 						lastActivity.Store(time.Now()) // Reset activity
 						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
-						for _, src := range newSources {
-							sourceChan <- src
+						if !batchCompleted.Load() {
+							for _, src := range newSources {
+								sourceChan <- src
+							}
+							// Reset the timer because we received new sources
+							if !timer.Stop() {
+								<-timer.C
+							}
+							timer.Reset(inactivityTimeout)
 						}
-						// Reset the timer because we received new sources
-						if !timer.Stop() {
-							<-timer.C
-						}
-						timer.Reset(inactivityTimeout)
 					} else {
 						// no data returned, but are we still collecting from sources?
 						last := lastActivity.Load().(time.Time)
@@ -500,8 +506,8 @@ func crawlSources(wb *WorkBlock) {
 				if (time.Since(last) > (5 * time.Minute)) && !pipelinesRunning.Load() {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					closeChanOnce.Do(func() {
+						batchCompleted.Store(true) // Set the batch as completed
 						close(sourceChan)
-						batchCompleted.Store(true)
 						cmn.DebugMsg(cmn.DbgLvlInfo, "Closed sourceChan")
 					})
 					return
