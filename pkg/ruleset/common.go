@@ -362,7 +362,7 @@ func PrepareURLForSearch(urlStr string) (string, error) {
 		return "", fmt.Errorf("%s", errInvalidURL)
 	}
 
-	return strings.ToLower(strings.TrimSpace(urlStr)), nil
+	return strings.TrimSpace(urlStr), nil
 }
 
 // PrepareNameForSearch prepares the name for search by trimming spaces and converting it to lowercase.

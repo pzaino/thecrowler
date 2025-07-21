@@ -90,7 +90,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 
 	// Retrieve the rule group by URL
 	rgl, err := ctx.re.GetAllRulesGroupByURL(url)
-	if err == nil && len(rgl) != 0 {
+	if (err == nil) && (len(rgl) != 0) {
 		for _, rg := range rgl {
 			// Execute all the rules in the rule group (the following function also set the Env and clears it)
 			var data string
@@ -107,7 +107,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 			}
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No rule group found for URL: %v", url)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-FindRules] No rule group found for URL with either rulegroup name or rulegroup url: %v", url)
 	}
 	if err != nil {
 		errList = append(errList, fmt.Errorf("%v", err))
@@ -115,7 +115,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 
 	// Retrieve the ruleset by URL
 	rsl, err := ctx.re.GetAllRulesetByURL(url)
-	if err == nil && len(rsl) != 0 {
+	if (err == nil) && (len(rsl) != 0) {
 		for _, rs := range rsl {
 			// Execute all the rules in the ruleset
 			var data string
@@ -123,14 +123,14 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 			addScrapedDataToDocument(&scrapedDataDoc, data)
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No ruleset found for URL: %v", url)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-FindRules] No ruleset found for URL with the URL in the ruleset name: '%v'", url)
 	}
 	if err != nil {
 		errList = append(errList, fmt.Errorf("%v", err))
 	}
 
 	// log scraped data for debugging purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Scraped data (at executeScrapingRulesByURL level): {%v}", scrapedDataDoc)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-FindRules] Scraped data (at executeScrapingRulesByURL level): {%v}", scrapedDataDoc)
 
 	// Join all errors
 	errStr := ""
