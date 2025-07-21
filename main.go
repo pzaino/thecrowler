@@ -400,6 +400,7 @@ func crawlSources(wb *WorkBlock) {
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
 	var pipelinesRunning atomic.Bool
+	pipelinesRunning.Store(true)
 
 	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
@@ -417,8 +418,6 @@ func crawlSources(wb *WorkBlock) {
 			if !anyPipelineStillRunning {
 				pipelinesRunning.Store(false)
 				break
-			} else {
-				pipelinesRunning.Store(true)
 			}
 		}
 	}(wb.PipelineStatus)
@@ -498,7 +497,7 @@ func crawlSources(wb *WorkBlock) {
 			select {
 			case <-ticker.C:
 				last := lastActivity.Load().(time.Time)
-				if time.Since(last) > (5*time.Minute) && !pipelinesRunning.Load() {
+				if (time.Since(last) > (5 * time.Minute)) && !pipelinesRunning.Load() {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					closeChanOnce.Do(func() {
 						close(sourceChan)

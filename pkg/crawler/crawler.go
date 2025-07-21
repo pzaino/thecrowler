@@ -453,10 +453,10 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 					jobs <- link
 				}
 				close(jobs)
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "Enqueued jobs: %d", len(allLinks))
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Crawling] Enqueued jobs: %d", len(allLinks))
 
 				// Wait for workers to finish and collect new links
-				cmn.DebugMsg(cmn.DbgLvlDebug, "Waiting for workers to finish...")
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Crawling] Waiting for workers to finish...")
 				processCtx.wg.Wait()
 				close(errChan)
 
@@ -481,10 +481,11 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 						}
 					}
 				}
-				cmn.DebugMsg(cmn.DbgLvlDebug, "All workers finished.")
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Crawling] All workers finished.")
 
 				// Prepare for the next iteration
 				processCtx.linksMutex.Lock()
+				defer processCtx.linksMutex.Unlock()
 				if len(processCtx.newLinks) > 0 {
 					// If MaxLinks is set, limit the number of new links
 					if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
@@ -3050,8 +3051,8 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 
 func moveMouseRandomly(wd vdi.WebDriver) {
 	// Example: moving mouse via Rbee
-	x := rand.IntN(1920) // pick some random X coordinate
-	y := rand.IntN(1080) // pick some random Y coordinate
+	x := rand.IntN(1920) //nolint:gosec // We are using "math/rand/v2" here
+	y := rand.IntN(1080) //nolint:gosec // We are using "math/rand/v2" here
 
 	jsScript := fmt.Sprintf(`
 		(function() {
@@ -3069,7 +3070,7 @@ func moveMouseRandomly(wd vdi.WebDriver) {
 	// Run the JavaScript in the browser
 	_, err := wd.ExecuteScript(jsScript, nil)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to execute Rbee moveMouse: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Mouse] failed to execute Rbee moveMouse: %v", err)
 	}
 }
 
@@ -3091,7 +3092,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) error {
 
 	startTime := time.Now()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Waiting for %v seconds...", delay)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %v seconds...", delay)
 	for time.Since(startTime) < waitDuration {
 		// Perform a lightweight interaction to keep the session alive
 		_, err := driver.Title()
@@ -3100,11 +3101,13 @@ func vdiSleep(ctx *ProcessContext, delay float64) error {
 		}
 		time.Sleep(pollInterval)
 		// refresh session timeout
-		ctx.RefreshCrawlingTimer()
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer()
+		}
 		// Move the mouse using rBee
 		moveMouseRandomly(driver)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Waited for %v seconds", delay)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-WAIT] Waited for %v seconds", delay)
 
 	return nil
 }
@@ -3569,7 +3572,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		// Check if the URL should be skipped
 		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
 			break
 		}
 
@@ -3584,22 +3587,24 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		if skip {
 			processCtx.Status.TotalSkipped++
 			skippedURLs = append(skippedURLs, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' being skipped due skipping rules\n", id, url)
 			continue
 		}
 		if processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] {
 			// URL already visited
 			processCtx.Status.TotalDuplicates++
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: URL %s already visited\n", id, url.Link)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' already visited\n", id, url.Link)
 			continue
 		}
 
-		if processCtx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq || processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
+		if processCtx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
+			processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
 		}
 
 		// Process the job
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Processing job %s\n", id, url.Link)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Processing job %s\n", id, url.Link)
 		var err error
 		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
 			err = processJob(processCtx, id, urlLink, skippedURLs)
@@ -3615,14 +3620,17 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		}
+		if processCtx.visitedLinks == nil {
+			processCtx.visitedLinks = make(map[string]bool)
+		}
 		processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] = true
 
 		if err == nil {
 			processCtx.Status.TotalPages++
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s\n", id, url.Link)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished job %s\n", id, url.Link)
 		} else {
 			processCtx.Status.TotalErrors++
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Finished job %s with an error: %v\n", id, url.Link, err)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished job %s with an error: %v\n", id, url.Link, err)
 			if strings.Contains(err.Error(), errCriticalError) {
 				return err
 			}
@@ -3637,11 +3645,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			processCtx.Status.LastDelay = delay
 			_ = vdiSleep(processCtx, delay)
 		}
-		if processCtx.RefreshCrawlingTimer != nil {
-			processCtx.RefreshCrawlingTimer()
-		}
-		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Worker %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
+
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
 			break
 		}
 	}
