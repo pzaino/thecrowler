@@ -2689,15 +2689,15 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 
 	var err error
 	// Get the page and process the interval
-	max_retries := 0
+	maxRetries := 0
 	cfgSource := ctx.srcCfg["crawling_config"]
 	cfgSourceMap, ok := cfgSource.(map[string]interface{})
 	if ok {
 		if val, exists := cfgSourceMap["retries_on_redirect"]; exists {
-			max_retries = int(val.(float64))
+			maxRetries = int(val.(float64))
 		}
 	}
-	for retries := 0; retries < max_retries; retries++ {
+	for retries := 0; retries <= maxRetries; retries++ {
 		// Reset the Selenium session for a clean browser with new User-Agent
 		if ctx.config.Crawler.ChangeUserAgent == "always" {
 			cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
@@ -2794,10 +2794,10 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Redirect detected: %s != %s", currentURL, url)
-		if retries == max_retries-1 {
-			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, max_retries)
+		if retries == maxRetries && maxRetries > 0 {
+			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Retrying navigation to %s (%d/%d)", url, retries+1, max_retries)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
 	}
 
 	// Get Session Cookies
