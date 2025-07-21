@@ -531,24 +531,32 @@ func crawlSources(wb *WorkBlock) {
 			var currentStatusIdx *uint64
 			starves := 0 // Counter for starvation
 			for {
-				// Fetch next available source in the queue:
-				source, ok := <-sourceChan
-				if !ok {
-					// Channel is closed, exit the goroutine
-					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
-					// Check if batch is completed
-					if batchCompleted.Load() {
-						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
-						return
+				var source cdb.Source
+				if !batchCompleted.Load() {
+					var ok bool
+					// Fetch next available source in the queue:
+					source, ok = <-sourceChan
+					if !ok {
+						// Channel is closed, exit the goroutine
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
+						// Check if batch is completed
+						if batchCompleted.Load() {
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+							return
+						}
+						// sleep 2 seconds and continue
+						time.Sleep(2 * time.Second)
+						starves++
+						if starves > 5 {
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
+							starves = 0 // Reset starvation counter
+						}
+						continue
 					}
-					// sleep 2 seconds and continue
-					time.Sleep(2 * time.Second)
-					starves++
-					if starves > 5 {
-						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
-						starves = 0 // Reset starvation counter
-					}
-					continue
+				} else {
+					// Batch is completed, exit the goroutine
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+					return
 				}
 				starves = 0           // Reset starvation counter
 				refreshLastActivity() // Reset activity
