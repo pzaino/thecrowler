@@ -2688,93 +2688,116 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	}
 
 	var err error
+	// Get the page and process the interval
+	max_retries := 0
+	cfgSource := ctx.srcCfg["crawling_config"]
+	cfgSourceMap, ok := cfgSource.(map[string]interface{})
+	if ok {
+		if val, exists := cfgSourceMap["retries_on_redirect"]; exists {
+			max_retries = int(val.(float64))
+		}
+	}
+	for retries := 0; retries < max_retries; retries++ {
+		// Reset the Selenium session for a clean browser with new User-Agent
+		if ctx.config.Crawler.ChangeUserAgent == "always" {
+			cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
 
-	// Reset the Selenium session for a clean browser with new User-Agent
-	if ctx.config.Crawler.ChangeUserAgent == "always" {
-		cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
+			err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+			if ctx.RefreshCrawlingTimer != nil {
+				ctx.RefreshCrawlingTimer()
+			}
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
+			}
+			wd = *ctx.GetWebDriver()
+			if wd == nil {
+				return nil, "", errors.New("WebDriver is nil after reset")
+			}
+		} else {
+			// check if webdriver session is still good, if not open a new one
+			_, err = wd.CurrentURL()
+			if err != nil {
+				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
+					// If the session is not found, create a new one
+					err = ctx.ConnectToVDI((*ctx).SelInstance)
+					wd = ctx.wd
+					if err != nil {
+						return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+					}
+				}
+			}
+		}
 
-		err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+		// Setup the Browser before requesting a page
+		setupBrowser(&wd, ctx)
+
+		// Set the HTTP referer if we are on the first URL
+		if level == -1 {
+			setReferrerHeader(&wd, ctx)
+		}
+
+		// Navigate to a page and interact with elements.
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to reset VDI session: %v", err)
-		}
-		wd = *ctx.GetWebDriver()
-		if wd == nil {
-			return nil, "", errors.New("WebDriver is nil after reset")
-		}
-	} else {
-		// check if webdriver session is still good, if not open a new one
-		_, err = wd.CurrentURL()
-		if err != nil {
-			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
+
+		if err := wd.Get(url); err != nil {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
 				err = ctx.ConnectToVDI((*ctx).SelInstance)
 				wd = ctx.wd
 				if err != nil {
 					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
 				}
-			}
-		}
-	}
-
-	// Setup the Browser before requesting a page
-	setupBrowser(&wd, ctx)
-
-	// Set the HTTP referer if we are on the first URL
-	if level == -1 {
-		setReferrerHeader(&wd, ctx)
-	}
-
-	// Navigate to a page and interact with elements.
-	if ctx.RefreshCrawlingTimer != nil {
-		ctx.RefreshCrawlingTimer()
-	}
-
-	// Get the page and process the interval
-	if err := wd.Get(url); err != nil {
-		if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
-			// If the session is not found, create a new one
-			err = ctx.ConnectToVDI((*ctx).SelInstance)
-			wd = ctx.wd
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
-			}
-			// Setup the Browser before requesting a page
-			setupBrowser(&wd, ctx)
-			// Set the HTTP referer if we are on the first URL
-			if level == -1 {
-				setReferrerHeader(&wd, ctx)
-			}
-			// Retry navigating to the page
-			err := wd.Get(url)
-			if err != nil {
+				// Setup the Browser before requesting a page
+				setupBrowser(&wd, ctx)
+				// Set the HTTP referer if we are on the first URL
+				if level == -1 {
+					setReferrerHeader(&wd, ctx)
+				}
+				// Retry navigating to the page
+				err := wd.Get(url)
+				if err != nil {
+					return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
+				}
+			} else {
 				return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
 			}
+		}
+
+		// Add XHR Hook (before any action is made, but after the page has been requested)
+		if ctx.config.Crawler.CollectXHR {
+			err = addXHRHook(&wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to add XHR hook: %v", err)
+			}
+		}
+
+		// Wait for Page to Load
+		interval := exi.GetFloat(ctx.config.Crawler.Interval)
+		if interval <= 0 {
+			interval = 3
+		}
+		ctx.Status.LastWait = interval
+		if level > 0 {
+			_ = vdiSleep(ctx, interval) // Pause to let page load
 		} else {
-			return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
+			_ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
 		}
-	}
-
-	// Add XHR Hook (before any action is made, but after the page has been requested)
-	if ctx.config.Crawler.CollectXHR {
-		err = addXHRHook(&wd)
+		// Check if we are on the right URL
+		currentURL, err := wd.CurrentURL()
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to add XHR hook: %v", err)
+			return nil, "", fmt.Errorf("failed to get current URL after navigation: %v", err)
 		}
-	}
+		if strings.Contains(cmn.NormalizeURL(currentURL), cmn.NormalizeURL(url)) {
+			break // Exit loop if we are on the right URL
+		}
 
-	// Wait for Page to Load
-	interval := exi.GetFloat(ctx.config.Crawler.Interval)
-	if interval <= 0 {
-		interval = 3
-	}
-	ctx.Status.LastWait = interval
-	if level > 0 {
-		_ = vdiSleep(ctx, interval) // Pause to let page load
-	} else {
-		_ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Redirect detected: %s != %s", currentURL, url)
+		if retries == max_retries-1 {
+			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, max_retries)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Retrying navigation to %s (%d/%d)", url, retries+1, max_retries)
 	}
 
 	// Get Session Cookies

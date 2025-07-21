@@ -62,6 +62,12 @@
           },
           "description": "This is the list of URLs that the CROWler will use if no links are found on the source. This is useful for sources that have no links or for sources that have links that are not relevant to the source."
         },
+        "retries_on_redirect": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "This is the number of retries on redirect. If the CROWler encounters a redirect, it will retry the Source Link this many times before giving up. This can help with certain websites that redirect to different URLs based on the user agent or other factors."
+        },
         "source_type": {
           "type": "string",
           "enum": [
