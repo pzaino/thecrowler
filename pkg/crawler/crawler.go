@@ -839,6 +839,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	// Collect XHR
 	if ctx.config.Crawler.CollectXHR {
 		collectXHR(ctx, &pageInfo)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-InitialURL] Successfully collected XHR for '%s'\n", ctx.source.URL)
 	}
 
 	if !ctx.config.Crawler.CollectHTML {
@@ -925,6 +926,7 @@ func collectNavigationMetrics(wd *vdi.WebDriver, pageInfo *PageInfo) {
 
 // CollectXHR collects the XHR requests from the browser
 func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Starting collecting XHR requests...")
 
 	// Convert to Go structure
 	xhrData, err := collectCDPRequests(ctx)
@@ -932,8 +934,9 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data: Invalid XHR log format: %v", xhrData)
 		return
 	}
-
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR returned from collectCDPRequests\n")
 	// Store data in PageInfo
+
 	xhr := map[string]interface{}{"xhr": xhrData}
 	pageInfo.ScrapedData = append(pageInfo.ScrapedData, xhr)
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data Captured")
