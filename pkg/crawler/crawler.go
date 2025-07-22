@@ -4187,19 +4187,16 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
-		processCtx.RefreshCrawlingTimer()
 	}
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&htmlContent, &pageCache)
-		processCtx.RefreshCrawlingTimer()
 	}
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
-		processCtx.RefreshCrawlingTimer()
 	}
 
 	if !processCtx.config.Crawler.CollectHTML {
@@ -4212,6 +4209,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		pageCache.BodyText = ""
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
@@ -4221,6 +4219,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
