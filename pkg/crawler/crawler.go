@@ -938,8 +938,11 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 	pageInfo.ScrapedData = append(pageInfo.ScrapedData, xhr)
 
 	// Debug output
-	jsonData, _ := json.MarshalIndent(xhr, "", "  ")
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data Captured: %s", jsonData)
+	//jsonData, err := json.MarshalIndent(xhr, "", "  ")
+	//if err != nil {
+	//	cmn.DebugMsg(cmn.DbgLvlError, "marshalling XHR data to JSON: %v", err)
+	//}
+	//cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data Captured: %s", jsonData)
 }
 
 // Collects the page logs from the browser
@@ -3887,7 +3890,6 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
-		processCtx.RefreshCrawlingTimer()
 	}
 
 	// Clear HTML and content if not required
