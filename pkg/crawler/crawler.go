@@ -382,6 +382,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 				}
 			}
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Crawler] Initial links extracted: %d", len(initialLinks))
 
 		// Refresh the page
 		err = processCtx.RefreshVDIConnection(sel)
@@ -3112,7 +3113,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 		moveMouseRandomly(driver)
 	}
 	total_delay := time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-WAIT] Waited for %v seconds", total_delay.Seconds())
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", total_delay.Seconds())
 
 	return total_delay, nil
 }
@@ -3624,9 +3625,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			// Fuzzing Mode
 			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
 			err = processJob(processCtx, id, urlLink, skippedURLs)
-		}
-		if processCtx.visitedLinks == nil {
-			processCtx.visitedLinks = make(map[string]bool)
 		}
 		processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] = true
 
@@ -4236,6 +4234,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished processing job '%s', returning to worker routine.\n", id, url)
 	return err
 }
 
