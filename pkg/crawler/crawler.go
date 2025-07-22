@@ -3667,6 +3667,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		}
+		if processCtx.visitedLinks == nil {
+			processCtx.visitedLinks = make(map[string]bool)
+		}
 		processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] = true
 
 		if err == nil {
@@ -3945,6 +3948,9 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 
 	// Mark the link as visited and add new links to the process context
+	if processCtx.visitedLinks == nil {
+		processCtx.visitedLinks = make(map[string]bool)
+	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url.Link)] = true
 	processCtx.visitedLinks[cmn.NormalizeURL(currentURL)] = true
 
@@ -4126,6 +4132,9 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
+	if processCtx.visitedLinks == nil {
+		processCtx.visitedLinks = make(map[string]bool)
+	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url.Link)] = true
 
 	// Add the new links to the process context
@@ -4268,6 +4277,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
+	}
+	if processCtx.visitedLinks == nil {
+		processCtx.visitedLinks = make(map[string]bool)
 	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
 
