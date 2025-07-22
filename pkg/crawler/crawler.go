@@ -864,11 +864,12 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	ctx.Status.TotalPages = 1
 
 	// Delay before processing the next job
+	var totalDelay time.Duration
 	if ctx.config.Crawler.Delay != "0" {
 		delay := exi.GetFloat(ctx.config.Crawler.Delay)
-		ctx.Status.LastDelay = delay
-		_ = vdiSleep(ctx, delay)
+		totalDelay, _ = vdiSleep(ctx, delay)
 	}
+	ctx.Status.LastDelay = totalDelay.Seconds()
 
 	return pageSource, nil
 }
@@ -2779,12 +2780,13 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if interval <= 0 {
 			interval = 3
 		}
-		ctx.Status.LastWait = interval
+		var total_interval time.Duration
 		if level > 0 {
-			_ = vdiSleep(ctx, interval) // Pause to let page load
+			total_interval, _ = vdiSleep(ctx, interval) // Pause to let page load
 		} else {
-			_ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
+			total_interval, _ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
 		}
+		ctx.Status.LastWait = total_interval.Seconds()
 		// Check if we are on the right URL
 		currentURL, err := wd.CurrentURL()
 		if err != nil {
@@ -3074,7 +3076,7 @@ func moveMouseRandomly(wd vdi.WebDriver) {
 	}
 }
 
-func vdiSleep(ctx *ProcessContext, delay float64) error {
+func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	driver := ctx.wd
 
 	if delay < 3 {
@@ -3097,7 +3099,8 @@ func vdiSleep(ctx *ProcessContext, delay float64) error {
 		// Perform a lightweight interaction to keep the session alive
 		_, err := driver.Title()
 		if err != nil {
-			return err
+			total_delay := time.Since(startTime)
+			return total_delay, err
 		}
 		time.Sleep(pollInterval)
 		// refresh session timeout
@@ -3107,9 +3110,10 @@ func vdiSleep(ctx *ProcessContext, delay float64) error {
 		// Move the mouse using rBee
 		moveMouseRandomly(driver)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-WAIT] Waited for %v seconds", delay)
+	total_delay := time.Since(startTime)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-WAIT] Waited for %v seconds", total_delay.Seconds())
 
-	return nil
+	return total_delay, nil
 }
 
 func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
@@ -3640,11 +3644,12 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		skippedURLs = nil
 
 		// Delay before processing the next job
+		var totalDelay time.Duration
 		if processCtx.config.Crawler.Delay != "0" {
 			delay := exi.GetFloat(processCtx.config.Crawler.Delay)
-			processCtx.Status.LastDelay = delay
-			_ = vdiSleep(processCtx, delay)
+			totalDelay, _ = vdiSleep(processCtx, delay)
 		}
+		processCtx.Status.LastDelay = totalDelay.Seconds()
 
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
@@ -3785,7 +3790,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Wait for the page to load (adjustable delay based on configuration)
 	delay := exi.GetFloat(processCtx.config.Crawler.Interval)
-	_ = vdiSleep(processCtx, delay)
+	_, _ = vdiSleep(processCtx, delay)
 
 	// Check current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
@@ -3928,7 +3933,7 @@ func goBack(processCtx *ProcessContext) error {
 	}
 	// Wait for the page to load after going back
 	delay := exi.GetFloat(processCtx.config.Crawler.Interval)
-	_ = vdiSleep(processCtx, delay)
+	_, _ = vdiSleep(processCtx, delay)
 	return nil
 }
 
@@ -3968,7 +3973,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Wait for Page to Load
 	delay := exi.GetFloat(processCtx.config.Crawler.Interval)
-	_ = vdiSleep(processCtx, delay) // Pause to let page load
+	_, _ = vdiSleep(processCtx, delay) // Pause to let page load
 
 	// Check current URL
 	currentURL, _ := processCtx.wd.CurrentURL()
