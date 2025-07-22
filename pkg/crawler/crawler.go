@@ -2185,7 +2185,9 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 	for i, entry := range logs {
 		var logEntry map[string]interface{}
 		if i%100 == 0 {
-			ctx.RefreshCrawlingTimer()
+			if ctx.RefreshCrawlingTimer != nil {
+				ctx.RefreshCrawlingTimer() // Refresh crawling timer
+			}
 			KeepSessionAlive(wd)
 		}
 
