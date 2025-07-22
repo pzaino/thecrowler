@@ -2172,19 +2172,25 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 	wd := ctx.wd
 	logs, err := wd.Log("performance")
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to retrieve performance logs: %v", err)
 		return nil, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Performance logs retrieved successfully (%d entries).", len(logs))
 
 	var collectedRequests []map[string]interface{}
 	var collectedResponses []map[string]interface{}
 	responseBodies := make(map[string]interface{}) // Store response metadata
 
 	// Process logs
-	for _, entry := range logs {
+	for i, entry := range logs {
 		var logEntry map[string]interface{}
+		if i%100 == 0 {
+			ctx.RefreshCrawlingTimer()
+			KeepSessionAlive(wd)
+		}
+
 		if err := json.Unmarshal([]byte(entry.Message), &logEntry); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to parse log entry: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to parse log entry: %v", err)
 			continue
 		}
 
@@ -2216,9 +2222,8 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 		if method == "Network.responseReceived" {
 			storeResponseMetadata(ctx, message, responseBodies, &collectedResponses)
 		}
-
-		KeepSessionAlive(wd)
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Collected %d requests and %d responses.", len(collectedRequests), len(collectedResponses))
 
 	// Fetch Response Bodies & Attach Them
 	collectResponses(ctx, responseBodies)
@@ -2345,11 +2350,14 @@ func storeResponseMetadata(ctx *ProcessContext, message map[string]interface{}, 
 
 // Fetch & Attach Response Bodies
 func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}) {
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting response bodies...")
 	wd := ctx.wd
 	// Fetch Response Bodies
 	for requestID, request := range responseBodies {
 		time.Sleep(100 * time.Millisecond) // Small delay
-
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer() // Refresh crawling timer
+		}
 		KeepSessionAlive(wd)
 
 		// Fetch Response Body
@@ -2367,6 +2375,7 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}
 
 // Fetch Response Body from ChromeDP
 func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetching response body for requestId: %s", requestID)
 	responseBodyArgs := map[string]interface{}{
 		"requestId": requestID,
 	}
