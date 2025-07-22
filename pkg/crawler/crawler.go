@@ -850,6 +850,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		// If we don't need to collect content, clear it
 		pageInfo.BodyText = ""
 	}
+	ctx.getURLMutex.Unlock() // Unlock the getURLMutex
 
 	// Index the page
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
@@ -4132,6 +4133,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Set getURLMutex to ensure only one goroutine is accessing the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: starting processJob with '%s'\n", id, url)
 
 	if processCtx.VDIReturned {
 		// If the VDI session has been returned we need to stop the worker
@@ -4144,6 +4146,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s'\n", id, url)
 
 	// Re-Get current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
@@ -4168,6 +4171,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		pageCache.DetectedTech = *detectedTech
 	}
 	processCtx.RefreshCrawlingTimer()
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
 
 	// Extract page information
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
@@ -4182,7 +4186,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 	// Generate Keywords
 	pageCache.Keywords = extractKeywords(pageCache)
-	processCtx.RefreshCrawlingTimer()
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully extracted page information for '%s'\n", id, currentURL)
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
@@ -4211,6 +4215,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
+	processCtx.getURLMutex.Unlock()
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
