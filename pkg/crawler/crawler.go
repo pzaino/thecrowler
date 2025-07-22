@@ -637,6 +637,7 @@ func closeSession(ctx *ProcessContext,
 
 	// Release other resources in ctx
 	ctx.linksMutex.Lock()
+	defer ctx.linksMutex.Unlock()
 	ctx.newLinks = nil         // Clear the slice to release memory
 	ctx.visitedLinks = nil     // Clear the map to release memory
 	ctx.CollectedCookies = nil // Clear cookies
@@ -3912,6 +3913,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Add new links to the process context
 	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
+		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
@@ -4091,6 +4093,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
+		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
@@ -4224,6 +4227,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
+		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 	}
