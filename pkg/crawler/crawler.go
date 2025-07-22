@@ -2082,6 +2082,7 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 		cmn.DebugMsg(cmn.DbgLvlError, "Invalid XHR log format: %v", data)
 		return nil, errors.New("invalid XHR log format")
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR logs retrieved successfully (%d entries).", len(xhrData))
 
 	var matchedXHR []map[string]interface{}
 	for _, entry := range xhrData {
@@ -2182,6 +2183,7 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 	responseBodies := make(map[string]interface{}) // Store response metadata
 
 	// Process logs
+	totalLogs := len(logs)
 	for i, entry := range logs {
 		var logEntry map[string]interface{}
 		if i%100 == 0 {
@@ -2224,6 +2226,7 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 		if method == "Network.responseReceived" {
 			storeResponseMetadata(ctx, message, responseBodies, &collectedResponses)
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Processed log entry %d/%d: %s", i+1, totalLogs, method)
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Collected %d requests and %d responses.", len(collectedRequests), len(collectedResponses))
 
