@@ -2417,6 +2417,7 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 
 // Decode Base64 & Parse JSON Responses
 func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string) (interface{}, string) {
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Decoding body content...")
 	// Decode Base64 if needed
 	if isBase64 {
 		decoded, err := base64.StdEncoding.DecodeString(body)
@@ -2436,6 +2437,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 	detectedContentType := detectContentType(bodyStr, url, wd)
 
 	if detectedContentType == XMLType2 || detectedContentType == XMLType1 {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Detected XML content type: %s", detectedContentType)
 		// Attempt to parse as XML
 		xmlBody, err := xmlToJSON(bodyStr)
 		if err != nil {
@@ -2454,6 +2456,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 	}
 
 	if detectedContentType == HTMLType {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Detected HTML content type: %s", detectedContentType)
 		// attempt to convert HTML to JSON
 		doc, err := gohtml.Parse(strings.NewReader(bodyStr))
 		if err != nil {
@@ -2469,6 +2472,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 	// Attempt to parse as JSON (even without Content-Type check)
 	var jsonBody map[string]interface{}
 	if err := json.Unmarshal([]byte(bodyStr), &jsonBody); err == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Detected JSON content type: %s", detectedContentType)
 		jsonBody = deepConvertJSONFields(jsonBody)
 		if detectedContentType != HTMLType {
 			detectedContentType = JSONType
