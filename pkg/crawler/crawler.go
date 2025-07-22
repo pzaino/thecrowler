@@ -936,6 +936,7 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 	// Store data in PageInfo
 	xhr := map[string]interface{}{"xhr": xhrData}
 	pageInfo.ScrapedData = append(pageInfo.ScrapedData, xhr)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data Captured")
 
 	// Debug output
 	//jsonData, err := json.MarshalIndent(xhr, "", "  ")
