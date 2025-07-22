@@ -4193,35 +4193,35 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: 1\n", id)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 1\n", id)
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&htmlContent, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: 2\n", id)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 2\n", id)
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: 3\n", id)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 3\n", id)
 
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
 		pageCache.HTML = ""
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Cleared HTML content for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: 4\n", id)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 4\n", id)
 
 	if !processCtx.config.Crawler.CollectContent {
 		// If we don't need to collect content, clear it
 		pageCache.BodyText = ""
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: 5\n", id)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 5\n", id)
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
