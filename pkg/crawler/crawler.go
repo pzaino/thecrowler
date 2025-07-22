@@ -2174,6 +2174,9 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 // Collect All Requests
 func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting request logs...")
+	const (
+		rbee = "http://127.0.0.1:3000/v1/rb"
+	)
 	wd := ctx.wd
 	logs, err := wd.Log("performance")
 	if err != nil {
@@ -2223,6 +2226,11 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 			if request == nil {
 				continue
 			}
+			url, _ := request["url"].(string)
+			if url == rbee {
+				// Skip unwanted request and do NOT add it to tracking map
+				continue
+			}
 			collectedRequests = append(collectedRequests, request)
 			reqID, _ := request["requestId"].(string)
 			if reqID == "" {
@@ -2264,7 +2272,7 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 			continue
 		}
 		url, _ := collectedRequests[i]["url"].(string)
-		if url == "http://127.0.0.1:3000/v1/rb" { // remove requests to Rbee
+		if url == rbee { // remove requests to Rbee
 			continue
 		}
 		rct, _ := collectedRequests[i]["request_content_type"].(string)
