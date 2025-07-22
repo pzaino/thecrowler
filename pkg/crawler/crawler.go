@@ -929,7 +929,7 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Starting collecting XHR requests...")
 
 	// Convert to Go structure
-	xhrData, err := collectCDPRequests(ctx)
+	xhrData, err := collectCDPRequests(ctx, 1000)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data: Invalid XHR log format: %v", xhrData)
 		return
@@ -2060,7 +2060,7 @@ func StartCDPLogging(pCtx *ProcessContext) (context.CancelFunc, *[]map[string]in
 	return cancel, &collectedRequests
 }
 
-func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interface{}) ([]map[string]interface{}, error) {
+func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interface{}, maxItems int) ([]map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting XHR logs...")
 	wd := ctx.wd
 	// Injected JavaScript to return the collected XHR logs
@@ -2081,6 +2081,10 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 	if !ok {
 		cmn.DebugMsg(cmn.DbgLvlError, "Invalid XHR log format: %v", data)
 		return nil, errors.New("invalid XHR log format")
+	}
+	if (maxItems > 0) && (len(xhrData) > maxItems) {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Trimming XHR logs to maxItems (%d).", maxItems)
+		xhrData = xhrData[:maxItems] // Trim logs to maxItems
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR logs retrieved successfully (%d entries).", len(xhrData))
 
@@ -2168,7 +2172,7 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 }
 
 // Collect All Requests
-func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
+func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interface{}, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting request logs...")
 	wd := ctx.wd
 	logs, err := wd.Log("performance")
@@ -2177,6 +2181,11 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 		return nil, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Performance logs retrieved successfully (%d entries).", len(logs))
+
+	if (maxItems > 0) && (len(logs) > maxItems) {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Trimming logs to maxItems (%d).", maxItems)
+		logs = logs[:maxItems] // Trim logs to maxItems
+	}
 
 	var collectedRequests []map[string]interface{}
 	var collectedResponses []map[string]interface{}
@@ -2234,7 +2243,7 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 	collectResponses(ctx, responseBodies)
 
 	// Collect XHR logs
-	xhrLogs, err := collectXHRLogs(ctx, collectedResponses)
+	xhrLogs, err := collectXHRLogs(ctx, collectedResponses, maxItems)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to collect XHR logs: %v", err)
 		return collectedRequests, err
@@ -2249,6 +2258,7 @@ func collectCDPRequests(ctx *ProcessContext) ([]map[string]interface{}, error) {
 	if len(ctx.config.Crawler.FilterXHR) == 0 {
 		return collectedRequests, nil
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Filtering logs collection... %d requests to filter.", len(collectedRequests))
 	for i := 0; i < len(collectedRequests); i++ {
 		if collectedRequests[i] == nil {
 			continue
