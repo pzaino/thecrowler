@@ -4191,26 +4191,31 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
 	}
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&htmlContent, &pageCache)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
 	}
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
 	}
 
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
 		pageCache.HTML = ""
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Cleared HTML content for '%s'\n", id, currentURL)
 	}
 
 	if !processCtx.config.Crawler.CollectContent {
 		// If we don't need to collect content, clear it
 		pageCache.BodyText = ""
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
