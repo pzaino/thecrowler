@@ -2263,6 +2263,10 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 		if collectedRequests[i] == nil {
 			continue
 		}
+		url, _ := collectedRequests[i]["url"].(string)
+		if url == "http://127.0.0.1:3000/v1/rb" { // remove requests to Rbee
+			continue
+		}
 		rct, _ := collectedRequests[i]["request_content_type"].(string)
 		rst, _ := collectedRequests[i]["response_content_type"].(string)
 		rctFCheck := filterXHRRequests(ctx, rct)
@@ -2275,6 +2279,7 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 			continue
 		}
 		filteredRequests = append(filteredRequests, collectedRequests[i])
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Filtered Request: %s %s", collectedRequests[i]["method"], collectedRequests[i]["url"])
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Filtering logs collection completed.")
 
