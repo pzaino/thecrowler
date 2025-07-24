@@ -786,8 +786,43 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	// Get the initial URL
 	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx)
 	if err != nil {
-		UpdateSourceState(*ctx.db, ctx.source.URL, err)
-		return pageSource, err
+		// Check if we have alternative links to try
+		srcCfg := ctx.srcCfg["crawling_config"]
+		if srcCfg != nil {
+			if crawlingConfig, ok := srcCfg.(map[string]interface{}); ok {
+				// Check if there are any user-defined URL patterns to match
+				if urlPatterns, ok := crawlingConfig["alternative_links"]; ok {
+					if patterns, ok := urlPatterns.([]interface{}); ok {
+						// Use the user-defined URL patterns
+						for _, pattern := range patterns {
+							if patternStr, ok := pattern.(string); ok {
+								// Check if pattern is already in visitedLinks
+								found := false
+								for visitedLink := range ctx.visitedLinks {
+									if cmn.NormalizeURL(visitedLink) == cmn.NormalizeURL(patternStr) {
+										found = true
+										break
+									}
+								}
+								if !found {
+									// Try to get the content of the alternative link
+									cmn.DebugMsg(cmn.DbgLvlDebug, "Trying alternative link: %s", patternStr)
+									pageSource, docType, err = getURLContent(patternStr, ctx.wd, -1, ctx)
+									if err == nil {
+										cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully crawled alternative link: %s", patternStr)
+										break // Exit the loop if we successfully crawled an alternative link
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if err != nil {
+			UpdateSourceState(*ctx.db, ctx.source.URL, err)
+			return pageSource, err
+		}
 	}
 
 	// Create a new PageInfo struct
