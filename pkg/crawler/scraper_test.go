@@ -30,7 +30,7 @@ const (
 )
 
 func TestParseRules(t *testing.T) {
-	schema, _ := rs.LoadSchema("../../schemas/ruleset-schema.json")
+	schema, _ := rs.LoadSchema("../../schemas/crowler-ruleset-schema.json")
 
 	// Call the function
 	sites, err := rs.BulkLoadRules(schema, goodTestFile)
@@ -49,7 +49,7 @@ func TestParseRules(t *testing.T) {
 }
 
 func TestParseRulesInvalidFile(t *testing.T) {
-	schema, _ := rs.LoadSchema("../../schemas/ruleset-schema.json")
+	schema, _ := rs.LoadSchema("../../schemas/crowler-ruleset-schema.json")
 
 	r, err := rs.BulkLoadRules(schema, "./test_data/invalid_ruleset.yaml")
 	if (schema != nil) && (err == nil) {

@@ -527,6 +527,7 @@ type CrawlingConfig struct {
 	URLReferrer       string   `json:"url_referrer,omitempty" yaml:"url_referrer,omitempty"`               // URL referrer for the source
 	AlternativeLinks  []string `json:"alternative_links,omitempty" yaml:"alternative_links,omitempty"`     // URLs to use if no links are found
 	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
+	UnwantedURLs      []string `json:"unwanted_urls,omitempty" yaml:"unwanted_urls,omitempty"`             // Unwanted URLs patterns that trigger a redirect detection
 	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (web, api, file) (validate:"required,oneof=website api file db")
 }
 

@@ -116,7 +116,7 @@ For more examples of working rules please have a look at the default
 [rulesets](../rules/).
 
 For more info on all the available fields and their meaning, please refer to the
-[ruleset schema](./schemas/ruleset-schema.json).
+[ruleset schema](./schemas/crowler-ruleset-schema.json).
 
 Or you can have a look at the Rules Reference [here](./ruleset_reference.md).
 
@@ -227,7 +227,7 @@ More details on the source configuration [here](./sources.md).
 ## Ruleset Validation
 
 The ruleset is validated using a JSON schema. The schema is defined in the
-[ruleset schema](./schemas/ruleset-schema.json). The schema is used to validate
+[ruleset schema](./schemas/crowler-ruleset-schema.json). The schema is used to validate
 the ruleset format and to validate the ruleset content.
 
 ## Adding rules and rulesets validation in VSCode
@@ -239,7 +239,7 @@ Open (or create) your VSCode settings.json file and add the following:
 
 ```json
 "yaml.schemas": {
-    "./schemas/ruleset-schema.json": "*-ruleset.y*ml"
+    "./schemas/crowler-ruleset-schema.json": "*-ruleset.y*ml"
 }
 ```
 

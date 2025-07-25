@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	goodTestFile = "../../schemas/ruleset-schema.json"
+	goodTestFile = "../../schemas/crowler-ruleset-schema.json"
 )
 
 var rulesets = []Ruleset{

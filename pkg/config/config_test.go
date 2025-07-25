@@ -905,8 +905,8 @@ func TestValidateRulesets(t *testing.T) {
 	config.validateRulesets()
 
 	// Check if the RulesetsSchemaPath is set to the default value
-	if config.RulesetsSchemaPath != "./schemas/ruleset-schema.json" {
-		t.Errorf("Expected RulesetsSchemaPath to be './schemas/ruleset-schema.json', got %v", config.RulesetsSchemaPath)
+	if config.RulesetsSchemaPath != "./schemas/crowler-ruleset-schema.json" {
+		t.Errorf("Expected RulesetsSchemaPath to be './schemas/crowler-ruleset-schema.json', got %v", config.RulesetsSchemaPath)
 	}
 
 	// Check if the first Ruleset Type is set to the default value

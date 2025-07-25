@@ -43,7 +43,7 @@ type CategoriesSchema struct {
 
 func main() {
 	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
-	schemaFile := flag.String("schema", "./schemas/source-categories-schema.json", "Path to the schema file")
+	schemaFile := flag.String("schema", "./schemas/crowler-source-categories-schema.json", "Path to the schema file")
 	flag.Parse()
 
 	if len(os.Args) < 2 {

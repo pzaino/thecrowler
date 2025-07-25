@@ -100,35 +100,36 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
-	pStatus              int                    // Process status
-	SelID                int                    // The Selenium ID
-	SelInstance          vdi.SeleniumInstance   // The Selenium instance
-	WG                   *sync.WaitGroup        // The Caller's WaitGroup
-	fpIdx                uint64                 // The index of the source page after it's indexed
-	config               cfg.Config             // The configuration object (from the config package)
-	db                   *cdb.Handler           // The database handler
-	wd                   vdi.WebDriver          // The Selenium WebDriver
-	linksMutex           cmn.SafeMutex          // Mutex to protect the newLinks slice
-	newLinks             []LinkItem             // The new links found during the crawling process
-	source               *cdb.Source            // The source to crawl
-	srcCfg               map[string]interface{} // Will store the source Config in an Unmarshaled format
-	wg                   sync.WaitGroup         // WaitGroup to wait for all page workers to finish
-	wgNetInfo            sync.WaitGroup         // WaitGroup to wait for network info to finish
-	sel                  *vdi.Pool              // The Selenium instances channel (sel *chan vdi.SeleniumInstance)
-	ni                   *neti.NetInfo          // The network information of the web page
-	hi                   *httpi.HTTPDetails     // The HTTP header information of the web page
-	re                   *rules.RuleEngine      // The rule engine
-	getURLMutex          cmn.SafeMutex          // Mutex to protect the getURLContent function
-	closeSession         cmn.SafeMutex          // Mutex to protect the closeSession function
-	visitedLinks         map[string]bool        // Map to keep track of visited links
-	userURLPatterns      []string               // User-defined URL patterns
-	userURLBlockPatterns []string               // User-defined URL block patterns
-	Status               *Status                // Status of the crawling process
-	CollectedCookies     map[string]interface{} // Collected cookies
-	VDIReturned          bool                   // Flag to indicate if the VDI instance was returned
-	SelClosed            bool                   // Flag to indicate if the Selenium instance was closed
-	VDIOperationMutex    sync.Mutex             // Mutex to protect the VDI operations
-	RefreshCrawlingTimer func()                 // Function to refresh the crawling timer
+	pStatus              int                       // Process status
+	SelID                int                       // The Selenium ID
+	SelInstance          vdi.SeleniumInstance      // The Selenium instance
+	WG                   *sync.WaitGroup           // The Caller's WaitGroup
+	fpIdx                uint64                    // The index of the source page after it's indexed
+	config               cfg.Config                // The configuration object (from the config package)
+	db                   *cdb.Handler              // The database handler
+	wd                   vdi.WebDriver             // The Selenium WebDriver
+	linksMutex           cmn.SafeMutex             // Mutex to protect the newLinks slice
+	newLinks             []LinkItem                // The new links found during the crawling process
+	source               *cdb.Source               // The source to crawl
+	srcCfg               map[string]interface{}    // Will store the source Config in an Unmarshaled format
+	compiledUURLs        map[string]*regexp.Regexp // Compiled regex patterns for unwanted URLs
+	wg                   sync.WaitGroup            // WaitGroup to wait for all page workers to finish
+	wgNetInfo            sync.WaitGroup            // WaitGroup to wait for network info to finish
+	sel                  *vdi.Pool                 // The Selenium instances channel (sel *chan vdi.SeleniumInstance)
+	ni                   *neti.NetInfo             // The network information of the web page
+	hi                   *httpi.HTTPDetails        // The HTTP header information of the web page
+	re                   *rules.RuleEngine         // The rule engine
+	getURLMutex          cmn.SafeMutex             // Mutex to protect the getURLContent function
+	closeSession         cmn.SafeMutex             // Mutex to protect the closeSession function
+	visitedLinks         map[string]bool           // Map to keep track of visited links
+	userURLPatterns      []string                  // User-defined URL patterns
+	userURLBlockPatterns []string                  // User-defined URL block patterns
+	Status               *Status                   // Status of the crawling process
+	CollectedCookies     map[string]interface{}    // Collected cookies
+	VDIReturned          bool                      // Flag to indicate if the VDI instance was returned
+	SelClosed            bool                      // Flag to indicate if the Selenium instance was closed
+	VDIOperationMutex    sync.Mutex                // Mutex to protect the VDI operations
+	RefreshCrawlingTimer func()                    // Function to refresh the crawling timer
 }
 
 // GetContextID returns a unique context ID for the ProcessContext
@@ -257,6 +258,23 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 		processCtx.srcCfg = sourceConfig
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Source configuration extracted: %v", processCtx.srcCfg)
+		// Check if we have UnwantedURLs in the source configuration (and if so compile the patterns)
+		if unwantedURLs, ok := sourceConfig["unwanted_urls"]; ok {
+			if unwantedURLsSlice, ok := unwantedURLs.([]interface{}); ok {
+				processCtx.compiledUURLs = make(map[string]*regexp.Regexp)
+				for _, pattern := range unwantedURLsSlice {
+					if strPattern, ok := pattern.(string); ok {
+						// Compile the regex pattern
+						re, err := regexp.Compile(strPattern)
+						if err != nil {
+							cmn.DebugMsg(cmn.DbgLvlError, "compiling unwanted URL pattern '%s': %v", strPattern, err)
+							continue
+						}
+						processCtx.compiledUURLs[strPattern] = re
+					}
+				}
+			}
+		}
 	}
 
 	// Extract URLs patterns the user wants to include/exclude
@@ -2866,23 +2884,32 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if interval <= 0 {
 			interval = 3
 		}
-		var total_interval time.Duration
+		var totalInterval time.Duration
 		if level > 0 {
-			total_interval, _ = vdiSleep(ctx, interval) // Pause to let page load
+			totalInterval, _ = vdiSleep(ctx, interval) // Pause to let page load
 		} else {
-			total_interval, _ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
+			totalInterval, _ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
 		}
-		ctx.Status.LastWait = total_interval.Seconds()
+		ctx.Status.LastWait = totalInterval.Seconds()
 		// Check if we are on the right URL
 		currentURL, err := wd.CurrentURL()
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to get current URL after navigation: %v", err)
 		}
-		if strings.Contains(cmn.NormalizeURL(currentURL), cmn.NormalizeURL(url)) {
-			break // Exit loop if we are on the right URL
+		gotRedirectedToUURL := false
+		if ctx.compiledUURLs != nil {
+			for _, UURL := range ctx.compiledUURLs {
+				if UURL.MatchString(currentURL) {
+					gotRedirectedToUURL = true
+					break
+				}
+			}
+		}
+		if !gotRedirectedToUURL {
+			break // Exit loop if we are on the right URL or on an allowed redirect URL
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Redirect detected: %s != %s", currentURL, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Unwanted redirect detected: %s != %s", currentURL, url)
 		if retries == maxRetries && maxRetries > 0 {
 			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 		}
@@ -3185,21 +3212,22 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 		// Perform a lightweight interaction to keep the session alive
 		_, err := driver.Title()
 		if err != nil {
-			total_delay := time.Since(startTime)
-			return total_delay, err
+			totalDelay := time.Since(startTime)
+			return totalDelay, err
 		}
 		time.Sleep(pollInterval)
 		// refresh session timeout
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
-		// Move the mouse using rBee
-		moveMouseRandomly(driver)
 	}
-	total_delay := time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", total_delay.Seconds())
+	// Move the mouse using rBee
+	moveMouseRandomly(driver)
+	// Get the total delay
+	totalDelay := time.Since(startTime)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", totalDelay.Seconds())
 
-	return total_delay, nil
+	return totalDelay, nil
 }
 
 func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
