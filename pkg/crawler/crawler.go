@@ -2848,16 +2848,16 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 
 		// Get the longest timeout set by the user, between page timeout and scripts timeout
-		maxTimeout := time.Duration(ctx.config.Plugins.PluginsTimeout) * time.Second
-		processingTimeout := parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout) * time.Second
-		if processingTimeout > maxTimeout {
-			maxTimeout = processingTimeout
-		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Timeout] Setting timeouts: Page Load: %v, Async Script: %v, Implicit Wait: %v", time.Duration(maxTimeout), time.Duration(maxTimeout), time.Duration(maxTimeout))
+		//maxTimeout := time.Duration(ctx.config.Plugins.PluginsTimeout) * time.Second
+		//processingTimeout := parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout) * time.Second
+		//if processingTimeout > maxTimeout {
+		//	maxTimeout = processingTimeout
+		//}
+		//cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Timeout] Setting timeouts: Page Load: %v, Async Script: %v, Implicit Wait: %v", time.Duration(maxTimeout), time.Duration(maxTimeout), time.Duration(maxTimeout))
 		// Set Timeouts
-		_ = ctx.wd.SetPageLoadTimeout(time.Duration(maxTimeout))
-		_ = ctx.wd.SetAsyncScriptTimeout(time.Duration(maxTimeout))
-		_ = ctx.wd.SetImplicitWaitTimeout(time.Duration(maxTimeout))
+		//_ = ctx.wd.SetPageLoadTimeout(time.Duration(maxTimeout))
+		//_ = ctx.wd.SetAsyncScriptTimeout(time.Duration(maxTimeout))
+		//_ = ctx.wd.SetImplicitWaitTimeout(time.Duration(maxTimeout))
 
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
