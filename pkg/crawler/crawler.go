@@ -2848,9 +2848,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 
 		// Get the longest timeout set by the user, between page timeout and scripts timeout
-		maxTimeout := time.Duration(ctx.config.Plugins.PluginsTimeout) * time.Second
-		if parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout) > maxTimeout {
-			maxTimeout = parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout)
+		maxTimeout := time.Duration(time.Duration(ctx.config.Plugins.PluginsTimeout).Seconds())
+		if time.Duration(parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout).Seconds()) > maxTimeout {
+			maxTimeout = time.Duration(parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout).Seconds())
 		}
 
 		// Set Timeouts
