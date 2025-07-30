@@ -2853,11 +2853,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if processingTimeout > maxTimeout {
 			maxTimeout = processingTimeout
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Timeout] Setting timeouts: Page Load: %v, Async Script: %v, Implicit Wait: %v", maxTimeout, maxTimeout, maxTimeout)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Timeout] Setting timeouts: Page Load: %v, Async Script: %v, Implicit Wait: %v", time.Duration(maxTimeout), time.Duration(maxTimeout), time.Duration(maxTimeout))
 		// Set Timeouts
-		_ = ctx.wd.SetPageLoadTimeout(maxTimeout)
-		_ = ctx.wd.SetAsyncScriptTimeout(maxTimeout)
-		_ = ctx.wd.SetImplicitWaitTimeout(maxTimeout)
+		_ = ctx.wd.SetPageLoadTimeout(time.Duration(maxTimeout))
+		_ = ctx.wd.SetAsyncScriptTimeout(time.Duration(maxTimeout))
+		_ = ctx.wd.SetImplicitWaitTimeout(time.Duration(maxTimeout))
 
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
