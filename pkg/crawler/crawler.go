@@ -564,6 +564,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		return
 	case <-done:
 		// Crawling completed successfully
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling completed for source: %s", args.Src.URL)
 	}
 }
 
@@ -622,6 +623,7 @@ func closeSession(ctx *ProcessContext,
 	err error) {
 	ctx.closeSession.Lock()
 	if ctx.pStatus != 1 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Pipeline already completed for source: %v", ctx.source.ID)
 		return
 	}
 
@@ -2846,18 +2848,6 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
-
-		// Get the longest timeout set by the user, between page timeout and scripts timeout
-		//maxTimeout := time.Duration(ctx.config.Plugins.PluginsTimeout) * time.Second
-		//processingTimeout := parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout) * time.Second
-		//if processingTimeout > maxTimeout {
-		//	maxTimeout = processingTimeout
-		//}
-		//cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Timeout] Setting timeouts: Page Load: %v, Async Script: %v, Implicit Wait: %v", time.Duration(maxTimeout), time.Duration(maxTimeout), time.Duration(maxTimeout))
-		// Set Timeouts
-		//_ = ctx.wd.SetPageLoadTimeout(time.Duration(maxTimeout))
-		//_ = ctx.wd.SetAsyncScriptTimeout(time.Duration(maxTimeout))
-		//_ = ctx.wd.SetImplicitWaitTimeout(time.Duration(maxTimeout))
 
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
