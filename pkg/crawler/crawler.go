@@ -2847,12 +2847,36 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			ctx.RefreshCrawlingTimer()
 		}
 
+		// Get the longest timeout set by the user, between page timeout and scripts timeout
+		maxTimeout := time.Duration(ctx.config.Plugins.PluginsTimeout) * time.Second
+		if parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout) > maxTimeout {
+			maxTimeout = parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout)
+		}
+
+		// Set Timeouts
+		_ = ctx.wd.SetPageLoadTimeout(maxTimeout)
+		_ = ctx.wd.SetAsyncScriptTimeout(maxTimeout)
+		_ = ctx.wd.SetImplicitWaitTimeout(maxTimeout)
+
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
 				err = ctx.ConnectToVDI((*ctx).SelInstance)
 				wd = ctx.wd
 				if err != nil {
+					details := map[string]interface{}{
+						"source":  "crawler",
+						"url":     url,
+						"message": fmt.Sprintf("failed to create a new WebDriver session: %v", err),
+					}
+					e := cdb.Event{
+						Action:   "new",
+						SourceID: ctx.source.ID,
+						Type:     "vdi_failed_to_get_url",
+						Severity: ctx.source.Priority,
+						Details:  details,
+					}
+					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
 				}
 				// Setup the Browser before requesting a page
@@ -2864,9 +2888,35 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 				// Retry navigating to the page
 				err := wd.Get(url)
 				if err != nil {
+					details := map[string]interface{}{
+						"source":  "crawler",
+						"url":     url,
+						"message": fmt.Sprintf("failed to navigate to %s: %v", url, err),
+					}
+					e := cdb.Event{
+						Action:   "new",
+						SourceID: ctx.source.ID,
+						Type:     "vdi_failed_to_get_url",
+						Severity: ctx.source.Priority,
+						Details:  details,
+					}
+					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 					return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
 				}
 			} else {
+				details := map[string]interface{}{
+					"source":  "crawler",
+					"url":     url,
+					"message": fmt.Sprintf("failed to navigate to %s: %v", url, err),
+				}
+				e := cdb.Event{
+					Action:   "new",
+					SourceID: ctx.source.ID,
+					Type:     "vdi_failed_to_get_url",
+					Severity: ctx.source.Priority,
+					Details:  details,
+				}
+				_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 				return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
 			}
 		}
