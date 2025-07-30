@@ -225,6 +225,8 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 	wd *vdi.WebDriver) (string, error) {
 	var jsonDocument string
 
+	_ = vdi.Refresh(ctx)
+
 	// Execute Wait condition first
 	if len(r.WaitConditions) != 0 {
 		err := executeWaitConditions(ctx, r.WaitConditions, wd)

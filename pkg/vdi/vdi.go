@@ -1254,6 +1254,21 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 	}
 }
 
+// Refresh Session
+// Refresh is responsible for refreshing the Selenium server instance
+func Refresh(ctx ProcessContextInterface) error {
+	if ctx == nil || ctx.GetWebDriver() == nil {
+		return fmt.Errorf("invalid parameters: ProcessContext or SeleniumInstance is nil")
+	}
+
+	wd := ctx.GetWebDriver()
+
+	// get the page title
+	_, _ = (*wd).Title()
+
+	return nil
+}
+
 // ReturnVDIInstance is responsible for returning the Selenium server instance
 func ReturnVDIInstance(_ *sync.WaitGroup, pCtx ProcessContextInterface, sel *SeleniumInstance, releaseVDI chan<- SeleniumInstance) {
 	if pCtx == nil {
