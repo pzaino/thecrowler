@@ -2852,7 +2852,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if time.Duration(parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout).Seconds()) > maxTimeout {
 			maxTimeout = time.Duration(parseProcessingTimeout(ctx.config.Crawler.ProcessingTimeout).Seconds())
 		}
-
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Timeout] Setting timeouts: Page Load: %v, Async Script: %v, Implicit Wait: %v", maxTimeout, maxTimeout, maxTimeout)
 		// Set Timeouts
 		_ = ctx.wd.SetPageLoadTimeout(maxTimeout)
 		_ = ctx.wd.SetAsyncScriptTimeout(maxTimeout)
