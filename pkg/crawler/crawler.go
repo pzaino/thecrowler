@@ -4418,7 +4418,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
-	processCtx.getURLMutex.Unlock()
+	//processCtx.getURLMutex.Unlock()
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
