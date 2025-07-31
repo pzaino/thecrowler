@@ -4354,7 +4354,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
 		return err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s'\n", id, url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s'\n", id, url)
 
 	// Re-Get current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
@@ -4382,7 +4382,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	processCtx.RefreshCrawlingTimer()
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
 
 	// Extract page information
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
@@ -4399,50 +4399,45 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 	// Generate Keywords
 	pageCache.Keywords = extractKeywords(pageCache)
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully extracted page information for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s'\n", id, currentURL)
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
 	}
 	processCtx.RefreshCrawlingTimer()
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 1\n", id)
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&htmlContent, &pageCache)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
 	}
 	processCtx.RefreshCrawlingTimer()
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 2\n", id)
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		collectXHR(processCtx, &pageCache)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
 	}
 	processCtx.RefreshCrawlingTimer()
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 3\n", id)
 
 	if !processCtx.config.Crawler.CollectHTML {
 		// If we don't need to collect HTML content, clear it
 		pageCache.HTML = ""
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Cleared HTML content for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared HTML content for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 4\n", id)
 
 	if !processCtx.config.Crawler.CollectContent {
 		// If we don't need to collect content, clear it
 		pageCache.BodyText = ""
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 5\n", id)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
 	//processCtx.getURLMutex.Unlock()
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
@@ -4454,10 +4449,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 6\n", id)
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
