@@ -444,8 +444,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		allLinks := initialLinks // links extracted from the initial page
 		var currentDepth int
 		maxDepth := checkMaxDepth(processCtx.config.Crawler.MaxDepth) // set a maximum depth for crawling
-		newLinksFound := len(initialLinks)
-		processCtx.Status.TotalLinks.Store(int32(newLinksFound))
+		newLinksFound := int32(len(initialLinks))
+		processCtx.Status.TotalLinks.Store(newLinksFound)
 		if processCtx.source.Restricted != 0 {
 			// Restriction level is higher than 0, so we need to crawl the website
 			for (currentDepth < maxDepth) && (newLinksFound > 0) {
@@ -516,8 +516,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 							processCtx.newLinks = processCtx.newLinks[:linksToCrawl]
 						}
 					}
-					newLinksFound = len(processCtx.newLinks)
-					processCtx.Status.TotalLinks.Add(int32(newLinksFound))
+					newLinksFound = int32(len(processCtx.newLinks))
+					processCtx.Status.TotalLinks.Add(newLinksFound)
 					allLinks = processCtx.newLinks
 				} else {
 					newLinksFound = 0
@@ -527,7 +527,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 				// Increment the current depth
 				currentDepth++
-				processCtx.Status.CurrentDepth.Store(int32(currentDepth))
+				processCtx.Status.CurrentDepth.Add(1)
 				if processCtx.config.Crawler.MaxDepth == 0 {
 					maxDepth = currentDepth + 1
 				}
@@ -3757,9 +3757,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		KeepSessionAlive(processCtx.wd)
 
 		// Check if the URL should be skipped
-		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
-			break
+			return nil
 		}
 
 		// Recursive Mode
@@ -3787,6 +3787,12 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
+		}
+
+		// Check if the URL should be skipped
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
+			return nil
 		}
 
 		// Process the job
