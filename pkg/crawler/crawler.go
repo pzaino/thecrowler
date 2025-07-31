@@ -1831,17 +1831,18 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 	var keywordID int
 
 	// Before updating the source state, check if the database connection is still alive
-	err := db.CheckConnection(config)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
-		return 0, err
-	}
+	//err := db.CheckConnection(config)
+	//if err != nil {
+	//	cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
+	//	return 0, err
+	//}
 
 	if len(keyword) > 256 {
 		keyword = keyword[:256]
 	}
 
 	for i := 0; i < maxRetries; i++ {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Inserting keyword: '%s' (attempt %d/%d)", keyword, i+1, maxRetries)
 		err := db.QueryRow(`INSERT INTO Keywords (keyword)
                             VALUES ($1) ON CONFLICT (keyword) DO UPDATE
                             SET keyword = EXCLUDED.keyword RETURNING keyword_id`, keyword).
