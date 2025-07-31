@@ -1787,8 +1787,9 @@ func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageIn
 		if len(keyword) == 0 || strings.TrimSpace(keyword) == "" {
 			continue
 		}
+		keyword = strings.TrimSpace(keyword)
 
-		keywordID, err := insertKeywordWithRetries(db, keyword)
+		keywordID, err := insertKeywordWithRetries(tx, keyword)
 		if err != nil {
 			return err
 		}
@@ -1830,16 +1831,16 @@ func commitTransaction(tx *sql.Tx) error {
 // because indexPage uses a mutex to ensure that only one goroutine is indexing a page
 // at a time. However, when implementing multiple transactions in indexPage, this function
 // will be way more useful than it is now.
-func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
+func insertKeywordWithRetries(tx *sql.Tx, keyword string) (int, error) {
 	const maxRetries = 3
 	var keywordID int
 
 	if len(keyword) > 256 {
-		keyword = keyword[:256]
+		keyword = keyword[:255]
 	}
 
 	for i := 0; i < maxRetries; i++ {
-		err := db.QueryRow(`INSERT INTO Keywords (keyword)
+		err := tx.QueryRow(`INSERT INTO Keywords (keyword)
                             VALUES ($1) ON CONFLICT (keyword) DO UPDATE
                             SET keyword = EXCLUDED.keyword RETURNING keyword_id`, keyword).
 			Scan(&keywordID)
