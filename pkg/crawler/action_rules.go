@@ -88,7 +88,7 @@ func executeActionRules(ctx *ProcessContext,
 	// Extract each rule and execute it
 	for _, r := range rules {
 		executeRule(ctx, &r, wd)
-		ctx.Status.TotalActions++
+		ctx.Status.TotalActions.Add(1)
 	}
 }
 
@@ -1033,7 +1033,7 @@ func executePlannedRuleGroups(wd *vdi.WebDriver, ctx *ProcessContext, planned cf
 		} else {
 			// Execute the rule group
 			executeActionRules(ctx, rg.GetActionRules(), wd)
-			ctx.Status.TotalActions += len(rg.GetActionRules())
+			ctx.Status.TotalActions.Add(int32(len(rg.GetActionRules())))
 		}
 	}
 }

@@ -185,7 +185,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
-	processCtx.Status.PipelineRunning = 1
+	processCtx.Status.PipelineRunning.Store(1) // Set the pipeline status to running
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
 	processCtx.VDIReturned = false
@@ -223,9 +223,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		_, err := processCtx.IndexNetInfo(1)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
-			processCtx.Status.PipelineRunning = 3
+			processCtx.Status.PipelineRunning.Store(3)
 		} else {
-			processCtx.Status.PipelineRunning = 2
+			processCtx.Status.PipelineRunning.Store(2)
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
@@ -238,14 +238,14 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	if err = processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
 		processCtx.Status.EndTime = time.Now()
-		processCtx.Status.PipelineRunning = 3
-		processCtx.Status.TotalErrors++
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
 		processCtx.Status.LastError = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
 		closeSession(processCtx, args, &sel, releaseVDI, err)
 		return
 	}
-	processCtx.Status.CrawlingRunning = 1
+	processCtx.Status.CrawlingRunning.Store(1)
 	defer closeSession(processCtx, args, &sel, releaseVDI, err)
 
 	// Extract custom configuration from the source
@@ -338,9 +338,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 			processCtx.Status.EndTime = time.Now()
-			processCtx.Status.CrawlingRunning = 3
-			processCtx.Status.PipelineRunning = 3
-			processCtx.Status.TotalErrors++
+			processCtx.Status.CrawlingRunning.Store(3)
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
 			processCtx.Status.LastError = err.Error()
 			return
 		}
@@ -356,9 +356,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			// and update the source state in the database
 			cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
 			processCtx.Status.EndTime = time.Now()
-			processCtx.Status.CrawlingRunning = 3
-			processCtx.Status.PipelineRunning = 3
-			processCtx.Status.TotalErrors++
+			processCtx.Status.CrawlingRunning.Store(3)
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
 			processCtx.Status.LastError = err.Error()
 			return
 		}
@@ -407,9 +407,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
 			processCtx.Status.EndTime = time.Now()
-			processCtx.Status.CrawlingRunning = 3
-			processCtx.Status.PipelineRunning = 3
-			processCtx.Status.TotalErrors++
+			processCtx.Status.CrawlingRunning.Store(3)
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
 			processCtx.Status.LastError = err.Error()
 			return
 		}
@@ -437,7 +437,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 				}
 			}(processCtx, htmlContent)
 		} else {
-			processCtx.Status.HTTPInfoRunning = 2
+			processCtx.Status.HTTPInfoRunning.Store(2)
 		}
 
 		// Crawl the website
@@ -445,7 +445,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		var currentDepth int
 		maxDepth := checkMaxDepth(processCtx.config.Crawler.MaxDepth) // set a maximum depth for crawling
 		newLinksFound := len(initialLinks)
-		processCtx.Status.TotalLinks = newLinksFound
+		processCtx.Status.TotalLinks.Store(int32(newLinksFound))
 		if processCtx.source.Restricted != 0 {
 			// Restriction level is higher than 0, so we need to crawl the website
 			for (currentDepth < maxDepth) && (newLinksFound > 0) {
@@ -489,9 +489,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 						if strings.Contains(err.Error(), errCriticalError) {
 							// Update source with error state
 							processCtx.Status.EndTime = time.Now()
-							processCtx.Status.CrawlingRunning = 3
-							processCtx.Status.PipelineRunning = 3
-							processCtx.Status.TotalErrors++
+							processCtx.Status.CrawlingRunning.Store(3)
+							processCtx.Status.PipelineRunning.Store(3)
+							processCtx.Status.TotalErrors.Add(1)
 							processCtx.Status.LastError = err.Error()
 
 							// Log the critical error and return to stop processing
@@ -507,8 +507,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 				defer processCtx.linksMutex.Unlock()
 				if len(processCtx.newLinks) > 0 {
 					// If MaxLinks is set, limit the number of new links
-					if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages + len(processCtx.newLinks)) > processCtx.config.Crawler.MaxLinks) {
-						linksToCrawl := processCtx.config.Crawler.MaxLinks - processCtx.Status.TotalPages
+					if processCtx.config.Crawler.MaxLinks > 0 && ((processCtx.Status.TotalPages.Load() + int32(len(processCtx.newLinks))) > int32(processCtx.config.Crawler.MaxLinks)) {
+						linksToCrawl := int32(processCtx.config.Crawler.MaxLinks) - processCtx.Status.TotalPages.Load()
 						if linksToCrawl <= 0 {
 							// Remove all new links
 							processCtx.newLinks = []LinkItem{}
@@ -517,7 +517,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 						}
 					}
 					newLinksFound = len(processCtx.newLinks)
-					processCtx.Status.TotalLinks += newLinksFound
+					processCtx.Status.TotalLinks.Add(int32(newLinksFound))
 					allLinks = processCtx.newLinks
 				} else {
 					newLinksFound = 0
@@ -527,7 +527,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 				// Increment the current depth
 				currentDepth++
-				processCtx.Status.CurrentDepth = currentDepth
+				processCtx.Status.CurrentDepth.Store(int32(currentDepth))
 				if processCtx.config.Crawler.MaxDepth == 0 {
 					maxDepth = currentDepth + 1
 				}
@@ -540,7 +540,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 
 		// Return the Selenium instance to the channel
-		processCtx.Status.CrawlingRunning = 2
+		processCtx.Status.CrawlingRunning.Store(2)
 		vdi.ReturnVDIInstance(args.WG, processCtx, &sel, releaseVDI)
 
 		// Index the network information
@@ -548,7 +548,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 		// Pipeline has completed
 		processCtx.Status.EndTime = time.Now()
-		processCtx.Status.PipelineRunning = 2
+		processCtx.Status.PipelineRunning.Store(2)
 	}()
 
 	// Wait for the crawling process to finish or timeout
@@ -556,8 +556,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	case <-timeoutTimer.C:
 		// Timeout hit
 		cmn.DebugMsg(cmn.DbgLvlError, "Crawling timed out for source: %s", args.Src.URL)
-		processCtx.Status.PipelineRunning = 3
-		processCtx.Status.CrawlingRunning = 3
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.CrawlingRunning.Store(3)
 		processCtx.Status.LastError = "timeout during crawling"
 		UpdateSourceState(args.DB, args.Src.URL, errors.New("timeout during crawling"))
 		closeSession(processCtx, args, &sel, releaseVDI, errors.New("timeout"))
@@ -638,8 +638,8 @@ func closeSession(ctx *ProcessContext,
 	}
 
 	// Signal pipeline completion
-	if ctx.Status.PipelineRunning == 1 || err != nil {
-		ctx.Status.PipelineRunning = 3
+	if ctx.Status.PipelineRunning.Load() == 1 || err != nil {
+		ctx.Status.PipelineRunning.Store(3)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
 	ctx.Status.EndTime = time.Now()
@@ -762,7 +762,7 @@ func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
 
 // RefreshVDIConnection is responsible for refreshing the Selenium connection
 func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error {
-	if ctx.Status.DetectedState&0x01 != 0 {
+	if (ctx.Status.DetectedState.Load() & 0x01) != 0 {
 		// Stale-Processing detected, we need to abort the process
 		err := errors.New("stale-processing detected")
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
@@ -920,7 +920,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		ctx.visitedLinks = make(map[string]bool)
 	}
 	ctx.visitedLinks[fURL] = true
-	ctx.Status.TotalPages = 1
+	ctx.Status.TotalPages.Add(1)
 
 	// Delay before processing the next job
 	var totalDelay time.Duration
@@ -1150,7 +1150,7 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 
 // GetNetInfo is responsible for gathering network information for a Source
 func (ctx *ProcessContext) GetNetInfo(_ string) {
-	ctx.Status.NetInfoRunning = 1
+	ctx.Status.NetInfoRunning.Store(1)
 
 	// Create a new NetInfo instance
 	ctx.ni = &neti.NetInfo{}
@@ -1160,19 +1160,19 @@ func (ctx *ProcessContext) GetNetInfo(_ string) {
 	// Call GetNetInfo to retrieve network information
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Gathering network information for %s...", ctx.source.URL)
 	err := ctx.ni.GetNetInfo(ctx.source.URL)
-	ctx.Status.NetInfoRunning = 2
+	ctx.Status.NetInfoRunning.Store(2)
 
 	// Check for errors
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "GetNetInfo(%s) returned an error: %v", ctx.source.URL, err)
-		ctx.Status.NetInfoRunning = 3
+		ctx.Status.NetInfoRunning.Store(3)
 		return
 	}
 }
 
 // GetHTTPInfo is responsible for gathering HTTP header information for a Source
 func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
-	ctx.Status.HTTPInfoRunning = 1
+	ctx.Status.HTTPInfoRunning.Store(1)
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
 	browser := ctx.config.Selenium[ctx.SelID].Type
@@ -1191,12 +1191,12 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	// Call GetHTTPInfo to retrieve HTTP header information
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Gathering HTTP Headers information for %s...", ctx.source.URL)
 	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
-	ctx.Status.HTTPInfoRunning = 2
+	ctx.Status.HTTPInfoRunning.Store(2)
 
 	// Check for errors
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "while retrieving HTTP Headers Information: %v", ctx.source.URL, err)
-		ctx.Status.HTTPInfoRunning = 3
+		ctx.Status.HTTPInfoRunning.Store(3)
 		return
 	}
 }
@@ -3354,7 +3354,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 
 			// append the map to the list
 			scrapedList = append(scrapedList, scrapedMap)
-			ctx.Status.TotalScraped++
+			ctx.Status.TotalScraped.Add(1)
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
@@ -3730,8 +3730,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		KeepSessionAlive(processCtx.wd)
 
 		// Check if the URL should be skipped
-		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
+		if processCtx.config.Crawler.MaxLinks > 0 && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			break
 		}
 
@@ -3744,14 +3744,14 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Check if the URL should be skipped
 		skip := skipURL(processCtx, id, urlLink)
 		if skip {
-			processCtx.Status.TotalSkipped++
+			processCtx.Status.TotalSkipped.Add(1)
 			skippedURLs = append(skippedURLs, url)
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' being skipped due skipping rules\n", id, url)
 			continue
 		}
 		if processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] {
 			// URL already visited
-			processCtx.Status.TotalDuplicates++
+			processCtx.Status.TotalDuplicates.Add(1)
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' already visited\n", id, url.Link)
 			continue
 		}
@@ -3785,10 +3785,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] = true
 
 		if err == nil {
-			processCtx.Status.TotalPages++
+			processCtx.Status.TotalPages.Add(1)
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished job %s\n", id, url.Link)
 		} else {
-			processCtx.Status.TotalErrors++
+			processCtx.Status.TotalErrors.Add(1)
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished job %s with an error: %v\n", id, url.Link, err)
 			if strings.Contains(err.Error(), errCriticalError) {
 				return err
@@ -3806,8 +3806,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 		processCtx.Status.LastDelay = totalDelay.Seconds()
 
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages >= processCtx.config.Crawler.MaxLinks) {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages)
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			break
 		}
 	}

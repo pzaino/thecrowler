@@ -408,8 +408,9 @@ func crawlSources(wb *WorkBlock) {
 		defer ticker.Stop()
 		for range ticker.C {
 			anyPipelineStillRunning := false
-			for _, status := range *plStatus {
-				if status.PipelineRunning <= 1 {
+			for idx := range *plStatus {
+				status := &(*plStatus)[idx]
+				if status.PipelineRunning.Load() <= 1 {
 					anyPipelineStillRunning = true
 					break
 				}
@@ -583,15 +584,16 @@ func crawlSources(wb *WorkBlock) {
 					VDIID:           "",
 					StartTime:       now,
 					EndTime:         time.Time{},
-					PipelineRunning: 1,
+					PipelineRunning: atomic.Int32{},
 				}
+				(*wb.PipelineStatus)[statusIdx].PipelineRunning.Store(1) // Set the pipeline running status
 
 				var crawlWG sync.WaitGroup
 				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
 
 				status := &(*wb.PipelineStatus)[statusIdx]
-				if status.NetInfoRunning == 1 || status.HTTPInfoRunning == 1 {
+				if status.NetInfoRunning.Load() == 1 || status.HTTPInfoRunning.Load() == 1 {
 					currentStatusIdx = nil
 				} else {
 					currentStatusIdx = &statusIdx
@@ -612,7 +614,7 @@ func crawlSources(wb *WorkBlock) {
 
 	for idx := uint64(0); idx < maxPipelines; idx++ {
 		if idx < uint64(len(*wb.PipelineStatus)) {
-			(*wb.PipelineStatus)[idx].PipelineRunning = 0
+			(*wb.PipelineStatus)[idx].PipelineRunning.Store(0)
 		}
 	}
 }
@@ -629,9 +631,10 @@ func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
 }
 
 func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
-	for idx, status := range *wb.PipelineStatus {
-		if status.PipelineRunning != 1 && status.CrawlingRunning != 1 &&
-			status.NetInfoRunning != 1 && status.HTTPInfoRunning != 1 {
+	for idx := range *wb.PipelineStatus {
+		status := &(*wb.PipelineStatus)[idx]
+		if status.PipelineRunning.Load() != 1 && status.CrawlingRunning.Load() != 1 &&
+			status.NetInfoRunning.Load() != 1 && status.HTTPInfoRunning.Load() != 1 {
 			return uint64(idx) //nolint:gosec // it's safe here.
 		}
 	}
@@ -717,8 +720,8 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	report += sepRLine + "\n"
 	runningPipelines := 0
 	for idx := 0; idx < len(*PipelineStatus); idx++ {
-		status := (*PipelineStatus)[idx]
-		if status.PipelineRunning == 0 {
+		status := &(*PipelineStatus)[idx]
+		if status.PipelineRunning.Load() == 0 {
 			continue
 		}
 		runningPipelines++
@@ -729,19 +732,20 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		} else {
 			totalRunningTime = status.EndTime.Sub(status.StartTime)
 		}
-		totalLinksToGo := status.TotalLinks - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
+		totalLinksToGo := status.TotalLinks.Load() - (status.TotalPages.Load() + status.TotalSkipped.Load() + status.TotalDuplicates.Load())
 		if totalLinksToGo < 0 {
 			totalLinksToGo = 0
 		}
 		// Detect if we are stale-processing
-		if (status.PipelineRunning == 1) && (totalRunningTime > time.Duration(2*time.Minute)) &&
-			(status.CrawlingRunning == 0) && (status.NetInfoRunning == 0) &&
-			(status.HTTPInfoRunning == 0) {
+		if (status.PipelineRunning.Load() == 1) && (totalRunningTime > time.Duration(2*time.Minute)) &&
+			(status.CrawlingRunning.Load() == 0) && (status.NetInfoRunning.Load() == 0) &&
+			(status.HTTPInfoRunning.Load() == 0) {
 			// We are in a stale-processing state
-			status.DetectedState = 1
+			status.DetectedState.Store(1)
 		} else {
-			if status.DetectedState&0x01 != 0 {
-				status.DetectedState = status.DetectedState & 0xfffe // Reset the stale-processing state bit
+			if (status.DetectedState.Load() & 0x01) != 0 {
+				tmp := status.DetectedState.Load() & 0xfffe
+				status.DetectedState.Store(tmp) // Reset the stale-processing state bit
 			}
 		}
 		/*
@@ -756,30 +760,30 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
 		report += fmt.Sprintf("                 VDI ID: %s\n", status.VDIID)
-		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
-		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(status.CrawlingRunning))
-		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(status.NetInfoRunning))
-		report += fmt.Sprintf("        HTTPInfo status: %s\n", StatusStr(status.HTTPInfoRunning))
+		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(int(status.PipelineRunning.Load())))
+		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(int(status.CrawlingRunning.Load())))
+		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(int(status.NetInfoRunning.Load())))
+		report += fmt.Sprintf("        HTTPInfo status: %s\n", StatusStr(int(status.HTTPInfoRunning.Load())))
 		report += fmt.Sprintf("           Running Time: %s\n", totalRunningTime)
-		report += fmt.Sprintf("    Total Crawled Pages: %d\n", status.TotalPages)
-		report += fmt.Sprintf("           Total Errors: %d\n", status.TotalErrors)
-		report += fmt.Sprintf("  Total Collected Links: %d\n", status.TotalLinks)
-		report += fmt.Sprintf("    Total Skipped Links: %d\n", status.TotalSkipped)
-		report += fmt.Sprintf(" Total Duplicated Links: %d\n", status.TotalDuplicates)
+		report += fmt.Sprintf("    Total Crawled Pages: %d\n", status.TotalPages.Load())
+		report += fmt.Sprintf("           Total Errors: %d\n", status.TotalErrors.Load())
+		report += fmt.Sprintf("  Total Collected Links: %d\n", status.TotalLinks.Load())
+		report += fmt.Sprintf("    Total Skipped Links: %d\n", status.TotalSkipped.Load())
+		report += fmt.Sprintf(" Total Duplicated Links: %d\n", status.TotalDuplicates.Load())
 		report += fmt.Sprintf("Total Links to complete: %d\n", totalLinksToGo)
-		report += fmt.Sprintf("          Total Scrapes: %d\n", status.TotalScraped)
-		report += fmt.Sprintf("          Total Actions: %d\n", status.TotalActions)
+		report += fmt.Sprintf("          Total Scrapes: %d\n", status.TotalScraped.Load())
+		report += fmt.Sprintf("          Total Actions: %d\n", status.TotalActions.Load())
 		report += fmt.Sprintf("         Last Page Wait: %f\n", status.LastWait)
 		report += fmt.Sprintf("        Last Page Delay: %f\n", status.LastDelay)
-		report += fmt.Sprintf("       Collection State: %s\n", CollectionState(status.DetectedState))
+		report += fmt.Sprintf("       Collection State: %s\n", CollectionState(int(status.DetectedState.Load())))
 		report += sepPLine + "\n"
 
 		// Update the metrics
 		updateMetrics(status)
 
 		// Reset the status if the pipeline has completed (display only the last report)
-		if status.PipelineRunning >= 2 {
-			status.PipelineRunning = 0
+		if status.PipelineRunning.Load() >= 2 {
+			status.PipelineRunning.Store(0)
 		}
 	}
 	report += sepRLine + "\n"
@@ -788,7 +792,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	}
 }
 
-func updateMetrics(status crowler.Status) {
+func updateMetrics(status *crowler.Status) {
 	if !config.Prometheus.Enabled {
 		return
 	}
@@ -798,9 +802,9 @@ func updateMetrics(status crowler.Status) {
 		"pipeline_id": fmt.Sprintf("%d", status.PipelineID),
 		"source":      status.Source,
 	}
-	totalPages.With(labels).Set(float64(status.TotalPages))
-	totalLinks.With(labels).Set(float64(status.TotalLinks))
-	totalErrors.With(labels).Set(float64(status.TotalErrors))
+	totalPages.With(labels).Set(float64(status.TotalPages.Load()))
+	totalLinks.With(labels).Set(float64(status.TotalLinks.Load()))
+	totalErrors.With(labels).Set(float64(status.TotalErrors.Load()))
 
 	// Push metrics
 	if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
@@ -812,7 +816,7 @@ func updateMetrics(status crowler.Status) {
 	}
 
 	// Delete metrics if pipeline is complete
-	if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
+	if status.PipelineRunning.Load() == 2 || status.PipelineRunning.Load() == 3 {
 		// Use the configured pushgateway URL
 		if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
 			Grouping("pipeline_id", fmt.Sprintf("%d", status.PipelineID)).

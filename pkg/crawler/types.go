@@ -18,6 +18,7 @@ package crawler
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -50,26 +51,26 @@ type Status struct {
 	SourceID        uint64
 	VDIID           string
 	Source          string
-	TotalPages      int
-	TotalLinks      int
-	TotalSkipped    int
-	TotalDuplicates int
-	TotalErrors     int
-	TotalScraped    int
-	TotalActions    int
-	TotalFuzzing    int
+	TotalPages      atomic.Int32
+	TotalLinks      atomic.Int32
+	TotalSkipped    atomic.Int32
+	TotalDuplicates atomic.Int32
+	TotalErrors     atomic.Int32
+	TotalScraped    atomic.Int32
+	TotalActions    atomic.Int32
+	TotalFuzzing    atomic.Int32
 	StartTime       time.Time
 	EndTime         time.Time
-	CurrentDepth    int
+	CurrentDepth    atomic.Int32
 	LastWait        float64
 	LastDelay       float64
 	LastError       string
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
-	NetInfoRunning  int // Flag to check if network info is already gathered
-	HTTPInfoRunning int // Flag to check if HTTP info is already gathered
-	PipelineRunning int // Flag to check if site info is already gathered
-	CrawlingRunning int // Flag to check if crawling is still running
-	DetectedState   int // field containing information about the detected state of the pipeline
+	NetInfoRunning  atomic.Int32 // Flag to check if network info is already gathered
+	HTTPInfoRunning atomic.Int32 // Flag to check if HTTP info is already gathered
+	PipelineRunning atomic.Int32 // Flag to check if site info is already gathered
+	CrawlingRunning atomic.Int32 // Flag to check if crawling is still running
+	DetectedState   atomic.Int32 // field containing information about the detected state of the pipeline
 }
 
 // MetaTag represents a single meta tag, including its name and content.
