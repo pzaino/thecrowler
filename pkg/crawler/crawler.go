@@ -119,7 +119,7 @@ type ProcessContext struct {
 	ni                   *neti.NetInfo             // The network information of the web page
 	hi                   *httpi.HTTPDetails        // The HTTP header information of the web page
 	re                   *rules.RuleEngine         // The rule engine
-	getURLMutex          cmn.SafeMutex             // Mutex to protect the getURLContent function
+	getURLMutex          sync.Mutex                // Mutex to protect the getURLContent function
 	closeSession         cmn.SafeMutex             // Mutex to protect the closeSession function
 	visitedLinks         map[string]bool           // Map to keep track of visited links
 	userURLPatterns      []string                  // User-defined URL patterns
@@ -816,12 +816,12 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
 func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDriver, error) {
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling Source: %d", ctx.source.ID)
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling URL: %s", ctx.source.URL)
-
 	// Set the processCtx.GetURLMutex to protect the getURLContent function
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling Source: %d", ctx.source.ID)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Crawling URL: %s", ctx.source.URL)
 
 	if ctx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
 		ctx.config.Crawler.ResetCookiesPolicy == "on_start" ||
@@ -933,7 +933,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		// If we don't need to collect content, clear it
 		pageInfo.BodyText = ""
 	}
-	ctx.getURLMutex.Unlock() // Unlock the getURLMutex
+	//ctx.getURLMutex.Unlock() // Unlock the getURLMutex
 
 	// Index the page
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
@@ -1281,8 +1281,8 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // is a good thing. You don't want to overwhelm the Source site with requests.
 func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
-	indexPageMutex.Lock()
-	defer indexPageMutex.Unlock()
+	//indexPageMutex.Lock()
+	//defer indexPageMutex.Unlock()
 
 	pageInfo.URL = url
 
@@ -4439,6 +4439,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
 
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 6\n", id)
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
