@@ -1292,6 +1292,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Database ready, Indexing page: %s", url)
 
 	// Start a transaction
 	tx, err := db.Begin()
@@ -1299,6 +1300,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Transaction started...")
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
@@ -1307,6 +1309,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 		rollbackTransaction(tx)
 		return 0, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] SearchIndex updated with indexID: %d", indexID)
 
 	// Insert or update the page in WebObjects
 	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
@@ -1315,6 +1318,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 		rollbackTransaction(tx)
 		return 0, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
@@ -1325,6 +1329,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 			return 0, err
 		}
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Indexing] MetaTags inserted for indexID: %d", indexID)
 
 	// Insert into KeywordIndex
 	if pageInfo.Config.Crawler.CollectKeywords {
@@ -1335,6 +1340,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 			return 0, err
 		}
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Indexing] Keywords inserted for indexID: %d", indexID)
 
 	// Commit the transaction
 	err = commitTransaction(tx)
@@ -1343,6 +1349,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 		rollbackTransaction(tx)
 		return 0, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Transaction committed successfully.")
 
 	// Return the index ID
 	return indexID, nil
