@@ -4359,11 +4359,13 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		Config:       &processCtx.config,
 	}
 	processCtx.RefreshCrawlingTimer()
+	vdi.Refresh(processCtx) // Refresh the WebDriver session
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
 	}
 	processCtx.RefreshCrawlingTimer()
+	vdi.Refresh(processCtx) // Refresh the WebDriver session
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
 
 	// Extract page information
@@ -4374,6 +4376,8 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		}
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
+	processCtx.RefreshCrawlingTimer()
+	vdi.Refresh(processCtx) // Refresh the WebDriver session
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
@@ -4386,6 +4390,8 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
 	}
+	processCtx.RefreshCrawlingTimer()
+	vdi.Refresh(processCtx) // Refresh the WebDriver session
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 1\n", id)
 
 	// Collect Page logs
@@ -4393,6 +4399,8 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectPageLogs(&htmlContent, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
 	}
+	processCtx.RefreshCrawlingTimer()
+	vdi.Refresh(processCtx) // Refresh the WebDriver session
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 2\n", id)
 
 	// Collect XHR
@@ -4400,6 +4408,8 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectXHR(processCtx, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
 	}
+	processCtx.RefreshCrawlingTimer()
+	vdi.Refresh(processCtx) // Refresh the WebDriver session
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: check-point 3\n", id)
 
 	if !processCtx.config.Crawler.CollectHTML {
