@@ -1281,8 +1281,8 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // is a good thing. You don't want to overwhelm the Source site with requests.
 func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
-	indexPageMutex.Lock()
-	defer indexPageMutex.Unlock()
+	//indexPageMutex.Lock()
+	//defer indexPageMutex.Unlock()
 
 	pageInfo.URL = url
 
@@ -3774,7 +3774,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
-			return nil
+			return nil // We return here because we reached the max_links limit!
 		}
 
 		// Recursive Mode
@@ -3807,7 +3807,16 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
-			return nil
+			return nil // We return here because we reached the max_links limit!
+		}
+
+		// Check if we have already crawled this URL from another instance
+		if processCtx.config.Crawler.PreventDuplicateURLs {
+			alreadyCrawled, _ := cdb.IsURLKnown(urlLink, processCtx.db)
+			if alreadyCrawled {
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: URL '%s' already crawled by another instance\n", id, url)
+				continue
+			}
 		}
 
 		// Process the job
@@ -3856,7 +3865,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
-			break
+			break // We break here because we reached the max_links limit!
 		}
 	}
 
@@ -4351,7 +4360,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Get the HTML content of the page
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for %s: %v\n", id, url, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
 		return err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s'\n", id, url)
