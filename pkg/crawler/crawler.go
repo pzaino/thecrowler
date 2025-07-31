@@ -1281,8 +1281,8 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // is a good thing. You don't want to overwhelm the Source site with requests.
 func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
-	//indexPageMutex.Lock()
-	//defer indexPageMutex.Unlock()
+	indexPageMutex.Lock()
+	defer indexPageMutex.Unlock()
 
 	pageInfo.URL = url
 
@@ -1297,6 +1297,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Error starting transaction: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
@@ -1305,6 +1306,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Error inserting or updating SearchIndex: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
@@ -1314,6 +1316,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Insert or update the page in WebObjects
 	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Error inserting or updating WebObjects: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating WebObjects: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
@@ -1324,6 +1327,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	if pageInfo.Config.Crawler.CollectMetaTags {
 		err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Indexing] Error inserting meta tags for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting meta tags: %v", err)
 			rollbackTransaction(tx)
 			return 0, err
@@ -1335,6 +1339,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	if pageInfo.Config.Crawler.CollectKeywords {
 		err = insertKeywords(tx, db, indexID, pageInfo)
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Indexing] Error inserting keywords for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
 			rollbackTransaction(tx)
 			return 0, err
@@ -1345,6 +1350,7 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Error committing transaction: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
 		rollbackTransaction(tx)
 		return 0, err
@@ -1776,6 +1782,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
 func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Inserting keywords for indexID: %d", indexID)
 	for _, keyword := range pageInfo.Keywords {
 		keywordID, err := insertKeywordWithRetries(db, keyword)
 		if err != nil {
@@ -1842,6 +1849,8 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 		if err != nil {
 			if strings.Contains(err.Error(), "deadlock detected") {
 				if i == maxRetries-1 {
+					cmn.DebugMsg(cmn.DbgLvlError, "Failed to insert keyword after retries: '%s', %v", keyword, err)
+					cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Failed to insert keyword after retries: '%s', %v", keyword, err)
 					return 0, err
 				}
 				time.Sleep(time.Duration(i) * 100 * time.Millisecond) // Exponential backoff
@@ -1851,6 +1860,7 @@ func insertKeywordWithRetries(db cdb.Handler, keyword string) (int, error) {
 		}
 		return keywordID, nil
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Failed to insert keyword after retries: '%s'", keyword)
 	return 0, fmt.Errorf("failed to insert keyword after retries: %s", keyword)
 }
 
