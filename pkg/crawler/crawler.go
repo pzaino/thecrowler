@@ -673,8 +673,35 @@ func closeSession(ctx *ProcessContext,
 
 // CreateCrawlCompletedEvent creates a new event in the database to indicate that the crawl has completed
 func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) error {
+	lStatus := NonAtomicStatus{
+		PipelineID:      status.PipelineID,
+		SourceID:        status.SourceID,
+		VDIID:           status.VDIID,
+		Source:          status.Source,
+		TotalPages:      status.TotalPages.Load(),
+		TotalLinks:      status.TotalLinks.Load(),
+		TotalSkipped:    status.TotalSkipped.Load(),
+		TotalDuplicates: status.TotalDuplicates.Load(),
+		TotalErrors:     status.TotalErrors.Load(),
+		TotalScraped:    status.TotalScraped.Load(),
+		TotalActions:    status.TotalActions.Load(),
+		TotalFuzzing:    status.TotalFuzzing.Load(),
+		StartTime:       status.StartTime,
+		EndTime:         status.EndTime,
+		CurrentDepth:    status.CurrentDepth.Load(),
+		LastWait:        status.LastWait,
+		LastDelay:       status.LastDelay,
+		LastError:       status.LastError,
+		// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
+		NetInfoRunning:  status.NetInfoRunning.Load(),  // Flag to check if network info is already gathered
+		HTTPInfoRunning: status.HTTPInfoRunning.Load(), // Flag to check if HTTP info is already gathered
+		PipelineRunning: status.PipelineRunning.Load(), // Flag to check if the pipeline is still running
+		CrawlingRunning: status.CrawlingRunning.Load(), // Flag to check if the crawling is still running
+		DetectedState:   status.DetectedState.Load(),   // Detected state of the source
+	}
+
 	// Convert Status into a JSON string
-	statusJSON, err := json.Marshal(status)
+	statusJSON, err := json.Marshal(lStatus)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "marshalling status to JSON: %v", err)
 	}

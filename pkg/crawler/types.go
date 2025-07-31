@@ -73,6 +73,34 @@ type Status struct {
 	DetectedState   atomic.Int32 // field containing information about the detected state of the pipeline
 }
 
+// NonAtomicStatus holds the status of the crawler
+type NonAtomicStatus struct {
+	PipelineID      uint64
+	SourceID        uint64
+	VDIID           string
+	Source          string
+	TotalPages      int32
+	TotalLinks      int32
+	TotalSkipped    int32
+	TotalDuplicates int32
+	TotalErrors     int32
+	TotalScraped    int32
+	TotalActions    int32
+	TotalFuzzing    int32
+	StartTime       time.Time
+	EndTime         time.Time
+	CurrentDepth    int32
+	LastWait        float64
+	LastDelay       float64
+	LastError       string
+	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
+	NetInfoRunning  int32 // Flag to check if network info is already gathered
+	HTTPInfoRunning int32 // Flag to check if HTTP info is already gathered
+	PipelineRunning int32 // Flag to check if site info is already gathered
+	CrawlingRunning int32 // Flag to check if crawling is still running
+	DetectedState   int32 // field containing information about the detected state of the pipeline
+}
+
 // MetaTag represents a single meta tag, including its name and content.
 type MetaTag struct {
 	Name    string
