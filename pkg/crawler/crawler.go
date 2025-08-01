@@ -659,6 +659,8 @@ func closeSession(ctx *ProcessContext,
 	// in the caller:
 	if ctx.WG != nil {
 		ctx.WG.Done()
+	} else {
+		args.WG.Done()
 	}
 
 	// Signal pipeline completion
