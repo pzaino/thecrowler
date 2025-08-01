@@ -592,6 +592,7 @@ func crawlSources(wb *WorkBlock) {
 				var crawlWG sync.WaitGroup
 				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG Pipeline] Crawling completed for source: %s (ID: %d) on VDI slot %d", source.URL, source.ID, vdiSlot)
 
 				status := &(*wb.PipelineStatus)[statusIdx]
 				if status.NetInfoRunning.Load() == 1 || status.HTTPInfoRunning.Load() == 1 {
