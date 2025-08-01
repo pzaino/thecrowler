@@ -689,6 +689,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 
 		go func() {
 			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] CrawlWebsite() completed for source %s (ID: %d)", args.Src.URL, args.Src.ID)
 		}()
 
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for VDI release (after any crawling activities are completed)...")
