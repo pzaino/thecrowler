@@ -315,13 +315,18 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			PipelineStatus: &PipelineStatus,
 			Config:         &config,
 		}
+		// Create a new WorkBlock for the crawling job
+		batchUID := cmn.GenerateUID()
 		event := cdb.Event{
 			Action:   "new",
 			Type:     "started_batch_crawling",
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				"node": cmn.GetMicroServiceName(),
+				"uid":                batchUID,
+				"node":               cmn.GetMicroServiceName(),
+				"time":               time.Now(),
+				"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
 		createEvent(*db, event)
@@ -332,7 +337,9 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
+				"uid":  batchUID,
 				"node": cmn.GetMicroServiceName(),
+				"time": time.Now(),
 			},
 		}
 		createEvent(*db, event)
@@ -592,7 +599,6 @@ func crawlSources(wb *WorkBlock) {
 				var crawlWG sync.WaitGroup
 				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
-				cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG Pipeline] Crawling completed for source: %s (ID: %d) on VDI slot %d", source.URL, source.ID, vdiSlot)
 
 				status := &(*wb.PipelineStatus)[statusIdx]
 				if status.NetInfoRunning.Load() == 1 || status.HTTPInfoRunning.Load() == 1 {
@@ -690,7 +696,6 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 
 		go func() {
 			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] CrawlWebsite() completed for source %s (ID: %d)", args.Src.URL, args.Src.ID)
 		}()
 
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for VDI release (after any crawling activities are completed)...")

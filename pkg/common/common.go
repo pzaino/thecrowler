@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -39,6 +41,11 @@ var (
 	loggerPrefix string
 	sysLoc       *time.Location
 )
+
+// GenerateUID generates a unique identifier using Google's UID format and package
+func GenerateUID() string {
+	return uuid.New().String()
+}
 
 // GetEngineID returns the engine ID
 func GetEngineID() string {
