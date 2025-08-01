@@ -571,49 +571,73 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 func parseProcessingTimeout(timeoutStr string) time.Duration {
 	timeoutStr = strings.TrimSpace(strings.ToLower(timeoutStr))
 
-	// Normalize user input
-	timeoutStr = strings.ReplaceAll(timeoutStr, " minutes", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " minute", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " min", "m")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " mins", "m")
+	// Normalize known time units
+	replacements := map[string]string{
+		" minutes": "m", " minute": "m", " mins": "m", " min": "m",
+		" hours": "h", " hour": "h", " hrs": "h", " hr": "h",
+		" seconds": "s", " second": "s", " secs": "s", " sec": "s",
+	}
 
-	timeoutStr = strings.ReplaceAll(timeoutStr, " hours", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " hour", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " hrs", "h")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " hr", "h")
+	for k, v := range replacements {
+		timeoutStr = strings.ReplaceAll(timeoutStr, k, v)
+	}
 
-	timeoutStr = strings.ReplaceAll(timeoutStr, " seconds", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " second", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " secs", "s")
-	timeoutStr = strings.ReplaceAll(timeoutStr, " sec", "s")
+	// Handle days, weeks, months, years
+	// Note: months and years are approximate (30 and 365 days)
+	unitMultipliers := map[string]time.Duration{
+		"d":      24 * time.Hour,
+		"day":    24 * time.Hour,
+		"days":   24 * time.Hour,
+		"w":      7 * 24 * time.Hour,
+		"week":   7 * 24 * time.Hour,
+		"weeks":  7 * 24 * time.Hour,
+		"mo":     30 * 24 * time.Hour,
+		"month":  30 * 24 * time.Hour,
+		"months": 30 * 24 * time.Hour,
+		"y":      365 * 24 * time.Hour,
+		"year":   365 * 24 * time.Hour,
+		"years":  365 * 24 * time.Hour,
+	}
 
+	// Match numeric value followed by unit
+	re := regexp.MustCompile(`^(\d+)\s*(day|days|week|weeks|month|months|year|years|d|w|mo|y)$`)
+	if matches := re.FindStringSubmatch(timeoutStr); matches != nil {
+		value, err := strconv.Atoi(matches[1])
+		if err == nil {
+			unit := matches[2]
+			if mult, ok := unitMultipliers[unit]; ok {
+				dur := time.Duration(value) * mult
+				return clampDuration(dur, timeoutStr)
+			}
+		}
+	}
+
+	// Fallback to native duration parsing
 	dur, err := time.ParseDuration(timeoutStr)
 	if err != nil || dur <= 0 {
-		// fallback
 		cmn.DebugMsg(cmn.DbgLvlWarn, "Invalid timeout format: %s, falling back to 20m", timeoutStr)
 		dur = 20 * time.Minute
 	}
-	// Ensure the duration is not negative
+
+	return clampDuration(dur, timeoutStr)
+}
+
+func clampDuration(dur time.Duration, originalInput string) time.Duration {
 	if dur < 0 {
-		cmn.DebugMsg(cmn.DbgLvlWarn, "Negative timeout duration: %s, falling back to 20m", timeoutStr)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Negative timeout duration: %s, falling back to 20m", originalInput)
 		dur = 20 * time.Minute
 	}
-	// Ensure the duration is not too large
 	if dur > 24*time.Hour {
-		cmn.DebugMsg(cmn.DbgLvlWarn, "Timeout duration too large: %s, falling back to 24h", timeoutStr)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Timeout duration too large: %s, falling back to 24h", originalInput)
 		dur = 24 * time.Hour
 	}
-	// Ensure the duration is not too small
 	if dur < 1*time.Second {
-		cmn.DebugMsg(cmn.DbgLvlWarn, "Timeout duration too small: %s, falling back to 1s", timeoutStr)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Timeout duration too small: %s, falling back to 30s", originalInput)
 		dur = 30 * time.Second
 	}
-
-	// Subtract 1 second for safety
 	if dur > time.Second {
 		dur -= time.Second
 	}
-
 	return dur
 }
 
@@ -2701,25 +2725,27 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "crawl_config: %v", srcConfig)
 	referrerURLInf := srcConfigMap["url_referrer"]
-	referrerURL, ok := referrerURLInf.(string)
-	if !ok {
-		cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string: %v", referrerURLInf)
-		return
-	}
-	if referrerURL != "" {
-		_, err := (*wd).ExecuteChromeDPCommand("Network.enable", nil)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+	if referrerURLInf != nil {
+		referrerURL, ok := referrerURLInf.(string)
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string: %v", referrerURLInf)
 			return
 		}
-		_, err = (*wd).ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
-			"headers": map[string]interface{}{
-				"referer": referrerURL,
-			},
-		})
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
-			return
+		if referrerURL != "" {
+			_, err := (*wd).ExecuteChromeDPCommand("Network.enable", nil)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+				return
+			}
+			_, err = (*wd).ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
+				"headers": map[string]interface{}{
+					"referer": referrerURL,
+				},
+			})
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
+				return
+			}
 		}
 	}
 }
@@ -3772,7 +3798,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		KeepSessionAlive(processCtx.wd)
 
 		// Check if the URL should be skipped
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
@@ -3805,7 +3831,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 
 		// Check if the URL should be skipped
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
@@ -3863,7 +3889,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 		processCtx.Status.LastDelay = totalDelay.Seconds()
 
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			break // We break here because we reached the max_links limit!
 		}
