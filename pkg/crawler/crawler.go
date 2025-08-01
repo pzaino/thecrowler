@@ -2701,25 +2701,27 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "crawl_config: %v", srcConfig)
 	referrerURLInf := srcConfigMap["url_referrer"]
-	referrerURL, ok := referrerURLInf.(string)
-	if !ok {
-		cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string: %v", referrerURLInf)
-		return
-	}
-	if referrerURL != "" {
-		_, err := (*wd).ExecuteChromeDPCommand("Network.enable", nil)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+	if referrerURLInf != nil {
+		referrerURL, ok := referrerURLInf.(string)
+		if !ok {
+			cmn.DebugMsg(cmn.DbgLvlError, "referrerURLInf is not a string: %v", referrerURLInf)
 			return
 		}
-		_, err = (*wd).ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
-			"headers": map[string]interface{}{
-				"referer": referrerURL,
-			},
-		})
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
-			return
+		if referrerURL != "" {
+			_, err := (*wd).ExecuteChromeDPCommand("Network.enable", nil)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
+				return
+			}
+			_, err = (*wd).ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
+				"headers": map[string]interface{}{
+					"referer": referrerURL,
+				},
+			})
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
+				return
+			}
 		}
 	}
 }
