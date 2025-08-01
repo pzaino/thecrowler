@@ -3772,7 +3772,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		KeepSessionAlive(processCtx.wd)
 
 		// Check if the URL should be skipped
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
@@ -3805,7 +3805,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 
 		// Check if the URL should be skipped
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
@@ -3863,7 +3863,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 		processCtx.Status.LastDelay = totalDelay.Seconds()
 
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) {
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
 			break // We break here because we reached the max_links limit!
 		}
