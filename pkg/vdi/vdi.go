@@ -543,6 +543,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
+	args = append(args, "--incognito") // Run in incognito mode
+
 	// CDP Config for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
@@ -972,7 +974,11 @@ func GPUPatch(wd WebDriver) error {
 }
 
 // ReinforceBrowserSettings applies additional settings to the WebDriver instance
-func ReinforceBrowserSettings(wd WebDriver) error {
+func ReinforceBrowserSettings(wd *WebDriver) error {
+	if wd == nil {
+		return fmt.Errorf("WebDriver is nil")
+	}
+
 	// Reapply WebRTC and navigator spoofing settings
 	script := `
         try {
@@ -1068,7 +1074,7 @@ func ReinforceBrowserSettings(wd WebDriver) error {
 		}
     `
 
-	_, err := wd.ExecuteScript(script, nil)
+	_, err := (*wd).ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
 	}
@@ -1110,7 +1116,7 @@ func ReinforceBrowserSettings(wd WebDriver) error {
 	});
 	`
 
-	_, err = wd.ExecuteScript(script, nil)
+	_, err = (*wd).ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
@@ -1246,6 +1252,21 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
 		}
 	}
+}
+
+// Refresh Session
+// Refresh is responsible for refreshing the Selenium server instance
+func Refresh(ctx ProcessContextInterface) error {
+	if ctx == nil || ctx.GetWebDriver() == nil {
+		return fmt.Errorf("invalid parameters: ProcessContext or SeleniumInstance is nil")
+	}
+
+	wd := ctx.GetWebDriver()
+
+	// get the page title
+	_, _ = (*wd).Title()
+
+	return nil
 }
 
 // ReturnVDIInstance is responsible for returning the Selenium server instance

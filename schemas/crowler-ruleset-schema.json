@@ -1,6 +1,6 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "$id": "https://github.com/pzaino/thecrowler/main/schemas/ruleset-schema.json",
+    "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-ruleset-schema.json",
     "title": "CROWler Ruleset Schema",
     "version": "1.0.5",
     "description": "The CROWler ruleset schema defines the structure of a ruleset file, which contains rules for scraping, action execution, detection, and crawling.",

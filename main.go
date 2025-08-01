@@ -394,27 +394,30 @@ func crawlSources(wb *WorkBlock) {
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
 
-	//uint64(wb.sel.Size())
 	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
 
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
+	var pipelinesRunning atomic.Bool
+	pipelinesRunning.Store(true)
 
 	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			pipelinesRunning := false
-			for _, status := range *plStatus {
-				if status.PipelineRunning <= 1 {
-					pipelinesRunning = true
+			anyPipelineStillRunning := false
+			for idx := range *plStatus {
+				status := &(*plStatus)[idx]
+				if status.PipelineRunning.Load() <= 1 {
+					anyPipelineStillRunning = true
 					break
 				}
 			}
 			logStatus(plStatus)
-			if !pipelinesRunning {
+			if !anyPipelineStillRunning {
+				pipelinesRunning.Store(false)
 				break
 			}
 		}
@@ -422,7 +425,7 @@ func crawlSources(wb *WorkBlock) {
 
 	// Refill go routine: (used to avoid pipeline starvation during crawling)
 	go func() {
-		inactivityTimeout := 30 * time.Second
+		inactivityTimeout := 60 * time.Second
 		timer := time.NewTimer(inactivityTimeout)
 
 		defer func() {
@@ -440,24 +443,34 @@ func crawlSources(wb *WorkBlock) {
 			select {
 			case <-timer.C:
 				// Timeout expired → no new sources, close pipeline
-				return
+				if pipelinesRunning.Load() {
+					timer.Reset(inactivityTimeout)
+				} else {
+					return
+				}
 			default:
 				refillLock.Lock()
 				if (wb.sel.Available() > 0) && (len(sourceChan) < len(wb.Config.Selenium)) {
-					newSources, err := monitorBatchAndRefill(wb)
+					newSources := []cdb.Source{}
+					var err error
+					if !batchCompleted.Load() {
+						newSources, err = monitorBatchAndRefill(wb)
+					}
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
 					} else if len(newSources) > 0 {
 						lastActivity.Store(time.Now()) // Reset activity
 						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
-						for _, src := range newSources {
-							sourceChan <- src
+						if !batchCompleted.Load() {
+							for _, src := range newSources {
+								sourceChan <- src
+							}
+							// Reset the timer because we received new sources
+							if !timer.Stop() {
+								<-timer.C
+							}
+							timer.Reset(inactivityTimeout)
 						}
-						// Reset the timer because we received new sources
-						if !timer.Stop() {
-							<-timer.C
-						}
-						timer.Reset(inactivityTimeout)
 					} else {
 						// no data returned, but are we still collecting from sources?
 						last := lastActivity.Load().(time.Time)
@@ -491,15 +504,16 @@ func crawlSources(wb *WorkBlock) {
 			select {
 			case <-ticker.C:
 				last := lastActivity.Load().(time.Time)
-				if time.Since(last) > (5 * time.Minute) {
+				if (time.Since(last) > (5 * time.Minute)) && !pipelinesRunning.Load() {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					closeChanOnce.Do(func() {
+						batchCompleted.Store(true) // Set the batch as completed
 						close(sourceChan)
-						batchCompleted.Store(true)
 						cmn.DebugMsg(cmn.DbgLvlInfo, "Closed sourceChan")
 					})
 					return
-				}
+				} // else, reset the timer
+				ticker.Reset(30 * time.Second) // Reset the ticker to avoid tight loop
 			}
 		}
 	}()
@@ -518,24 +532,32 @@ func crawlSources(wb *WorkBlock) {
 			var currentStatusIdx *uint64
 			starves := 0 // Counter for starvation
 			for {
-				// Fetch next available source in the queue:
-				source, ok := <-sourceChan
-				if !ok {
-					// Channel is closed, exit the goroutine
-					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
-					// Check if batch is completed
-					if batchCompleted.Load() {
-						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
-						return
+				var source cdb.Source
+				if !batchCompleted.Load() {
+					var ok bool
+					// Fetch next available source in the queue:
+					source, ok = <-sourceChan
+					if !ok {
+						// Channel is closed, exit the goroutine
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
+						// Check if batch is completed
+						if batchCompleted.Load() {
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+							return
+						}
+						// sleep 2 seconds and continue
+						time.Sleep(2 * time.Second)
+						starves++
+						if starves > 5 {
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
+							starves = 0 // Reset starvation counter
+						}
+						continue
 					}
-					// sleep 2 seconds and continue
-					time.Sleep(2 * time.Second)
-					starves++
-					if starves > 5 {
-						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
-						starves = 0 // Reset starvation counter
-					}
-					continue
+				} else {
+					// Batch is completed, exit the goroutine
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+					return
 				}
 				starves = 0           // Reset starvation counter
 				refreshLastActivity() // Reset activity
@@ -562,15 +584,16 @@ func crawlSources(wb *WorkBlock) {
 					VDIID:           "",
 					StartTime:       now,
 					EndTime:         time.Time{},
-					PipelineRunning: 1,
+					PipelineRunning: atomic.Int32{},
 				}
+				(*wb.PipelineStatus)[statusIdx].PipelineRunning.Store(1) // Set the pipeline running status
 
 				var crawlWG sync.WaitGroup
 				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
 
 				status := &(*wb.PipelineStatus)[statusIdx]
-				if status.NetInfoRunning == 1 || status.HTTPInfoRunning == 1 {
+				if status.NetInfoRunning.Load() == 1 || status.HTTPInfoRunning.Load() == 1 {
 					currentStatusIdx = nil
 				} else {
 					currentStatusIdx = &statusIdx
@@ -591,7 +614,7 @@ func crawlSources(wb *WorkBlock) {
 
 	for idx := uint64(0); idx < maxPipelines; idx++ {
 		if idx < uint64(len(*wb.PipelineStatus)) {
-			(*wb.PipelineStatus)[idx].PipelineRunning = 0
+			(*wb.PipelineStatus)[idx].PipelineRunning.Store(0)
 		}
 	}
 }
@@ -608,9 +631,10 @@ func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
 }
 
 func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
-	for idx, status := range *wb.PipelineStatus {
-		if status.PipelineRunning != 1 && status.CrawlingRunning != 1 &&
-			status.NetInfoRunning != 1 && status.HTTPInfoRunning != 1 {
+	for idx := range *wb.PipelineStatus {
+		status := &(*wb.PipelineStatus)[idx]
+		if status.PipelineRunning.Load() != 1 && status.CrawlingRunning.Load() != 1 &&
+			status.NetInfoRunning.Load() != 1 && status.HTTPInfoRunning.Load() != 1 {
 			return uint64(idx) //nolint:gosec // it's safe here.
 		}
 	}
@@ -696,8 +720,8 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	report += sepRLine + "\n"
 	runningPipelines := 0
 	for idx := 0; idx < len(*PipelineStatus); idx++ {
-		status := (*PipelineStatus)[idx]
-		if status.PipelineRunning == 0 {
+		status := &(*PipelineStatus)[idx]
+		if status.PipelineRunning.Load() == 0 {
 			continue
 		}
 		runningPipelines++
@@ -708,19 +732,20 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		} else {
 			totalRunningTime = status.EndTime.Sub(status.StartTime)
 		}
-		totalLinksToGo := status.TotalLinks - (status.TotalPages + status.TotalSkipped + status.TotalDuplicates)
+		totalLinksToGo := status.TotalLinks.Load() - (status.TotalPages.Load() + status.TotalSkipped.Load() + status.TotalDuplicates.Load())
 		if totalLinksToGo < 0 {
 			totalLinksToGo = 0
 		}
 		// Detect if we are stale-processing
-		if (status.PipelineRunning == 1) && (totalRunningTime > time.Duration(2*time.Minute)) &&
-			(status.CrawlingRunning == 0) && (status.NetInfoRunning == 0) &&
-			(status.HTTPInfoRunning == 0) {
+		if (status.PipelineRunning.Load() == 1) && (totalRunningTime > time.Duration(2*time.Minute)) &&
+			(status.CrawlingRunning.Load() == 0) && (status.NetInfoRunning.Load() == 0) &&
+			(status.HTTPInfoRunning.Load() == 0) {
 			// We are in a stale-processing state
-			status.DetectedState = 1
+			status.DetectedState.Store(1)
 		} else {
-			if status.DetectedState&0x01 != 0 {
-				status.DetectedState = status.DetectedState & 0xfffe // Reset the stale-processing state bit
+			if (status.DetectedState.Load() & 0x01) != 0 {
+				tmp := status.DetectedState.Load() & 0xfffe
+				status.DetectedState.Store(tmp) // Reset the stale-processing state bit
 			}
 		}
 		/*
@@ -735,30 +760,30 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
 		report += fmt.Sprintf("                 VDI ID: %s\n", status.VDIID)
-		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(status.PipelineRunning))
-		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(status.CrawlingRunning))
-		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(status.NetInfoRunning))
-		report += fmt.Sprintf("        HTTPInfo status: %s\n", StatusStr(status.HTTPInfoRunning))
+		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(int(status.PipelineRunning.Load())))
+		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(int(status.CrawlingRunning.Load())))
+		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(int(status.NetInfoRunning.Load())))
+		report += fmt.Sprintf("        HTTPInfo status: %s\n", StatusStr(int(status.HTTPInfoRunning.Load())))
 		report += fmt.Sprintf("           Running Time: %s\n", totalRunningTime)
-		report += fmt.Sprintf("    Total Crawled Pages: %d\n", status.TotalPages)
-		report += fmt.Sprintf("           Total Errors: %d\n", status.TotalErrors)
-		report += fmt.Sprintf("  Total Collected Links: %d\n", status.TotalLinks)
-		report += fmt.Sprintf("    Total Skipped Links: %d\n", status.TotalSkipped)
-		report += fmt.Sprintf(" Total Duplicated Links: %d\n", status.TotalDuplicates)
+		report += fmt.Sprintf("    Total Crawled Pages: %d\n", status.TotalPages.Load())
+		report += fmt.Sprintf("           Total Errors: %d\n", status.TotalErrors.Load())
+		report += fmt.Sprintf("  Total Collected Links: %d\n", status.TotalLinks.Load())
+		report += fmt.Sprintf("    Total Skipped Links: %d\n", status.TotalSkipped.Load())
+		report += fmt.Sprintf(" Total Duplicated Links: %d\n", status.TotalDuplicates.Load())
 		report += fmt.Sprintf("Total Links to complete: %d\n", totalLinksToGo)
-		report += fmt.Sprintf("          Total Scrapes: %d\n", status.TotalScraped)
-		report += fmt.Sprintf("          Total Actions: %d\n", status.TotalActions)
+		report += fmt.Sprintf("          Total Scrapes: %d\n", status.TotalScraped.Load())
+		report += fmt.Sprintf("          Total Actions: %d\n", status.TotalActions.Load())
 		report += fmt.Sprintf("         Last Page Wait: %f\n", status.LastWait)
 		report += fmt.Sprintf("        Last Page Delay: %f\n", status.LastDelay)
-		report += fmt.Sprintf("       Collection State: %s\n", CollectionState(status.DetectedState))
+		report += fmt.Sprintf("       Collection State: %s\n", CollectionState(int(status.DetectedState.Load())))
 		report += sepPLine + "\n"
 
 		// Update the metrics
 		updateMetrics(status)
 
 		// Reset the status if the pipeline has completed (display only the last report)
-		if status.PipelineRunning >= 2 {
-			status.PipelineRunning = 0
+		if status.PipelineRunning.Load() >= 2 {
+			status.PipelineRunning.Store(0)
 		}
 	}
 	report += sepRLine + "\n"
@@ -767,7 +792,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	}
 }
 
-func updateMetrics(status crowler.Status) {
+func updateMetrics(status *crowler.Status) {
 	if !config.Prometheus.Enabled {
 		return
 	}
@@ -777,9 +802,9 @@ func updateMetrics(status crowler.Status) {
 		"pipeline_id": fmt.Sprintf("%d", status.PipelineID),
 		"source":      status.Source,
 	}
-	totalPages.With(labels).Set(float64(status.TotalPages))
-	totalLinks.With(labels).Set(float64(status.TotalLinks))
-	totalErrors.With(labels).Set(float64(status.TotalErrors))
+	totalPages.With(labels).Set(float64(status.TotalPages.Load()))
+	totalLinks.With(labels).Set(float64(status.TotalLinks.Load()))
+	totalErrors.With(labels).Set(float64(status.TotalErrors.Load()))
 
 	// Push metrics
 	if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
@@ -791,7 +816,7 @@ func updateMetrics(status crowler.Status) {
 	}
 
 	// Delete metrics if pipeline is complete
-	if status.PipelineRunning == 2 || status.PipelineRunning == 3 {
+	if status.PipelineRunning.Load() == 2 || status.PipelineRunning.Load() == 3 {
 		// Use the configured pushgateway URL
 		if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
 			Grouping("pipeline_id", fmt.Sprintf("%d", status.PipelineID)).

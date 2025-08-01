@@ -83,6 +83,7 @@ type Crawler struct {
 	RequestScripts        bool           `json:"request_scripts" yaml:"request_scripts"`                                   // Whether to request the scripts or not
 	RequestPlugins        bool           `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
 	RequestFrames         bool           `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
+	PreventDuplicateURLs  bool           `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
 	CollectHTML           bool           `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
 	CollectImages         bool           `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
 	CollectFiles          bool           `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not
@@ -523,7 +524,12 @@ type SourceConfig struct {
 
 // CrawlingConfig represents the crawling configuration for a source
 type CrawlingConfig struct {
-	Site string `json:"site" yaml:"site" validate:"required,url"`
+	Site              string   `json:"site" yaml:"site" validate:"required,url"`
+	URLReferrer       string   `json:"url_referrer,omitempty" yaml:"url_referrer,omitempty"`               // URL referrer for the source
+	AlternativeLinks  []string `json:"alternative_links,omitempty" yaml:"alternative_links,omitempty"`     // URLs to use if no links are found
+	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
+	UnwantedURLs      []string `json:"unwanted_urls,omitempty" yaml:"unwanted_urls,omitempty"`             // Unwanted URLs patterns that trigger a redirect detection
+	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (web, api, file) (validate:"required,oneof=website api file db")
 }
 
 // ExecutionPlanItem represents the execution plan item for a source

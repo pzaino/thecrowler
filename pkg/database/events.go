@@ -86,6 +86,31 @@ func CreateEvent(db *Handler, e Event) (string, error) {
 	return uid, nil
 }
 
+// CreateEventWithRetries attempts to create a new event in the database with retries.
+func CreateEventWithRetries(db *Handler, event Event) (string, error) {
+	const maxRetries = 5
+	const baseDelay = 50 * time.Millisecond
+
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		eID, err := CreateEvent(db, event)
+		if err == nil {
+			return eID, nil // success!
+		}
+
+		cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
+
+		// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
+		// if !isRetryable(err) { break }
+
+		time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
+	}
+
+	// Final failure
+	cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
+	return "", fmt.Errorf("failed to create event after %d retries: %w", maxRetries, err)
+}
+
 /*
 // ScheduleEvent schedules a new event in the database. Like CreateEvent, it receives an Event struct, but it also needs a scheduling time and returns the Event UID and an error if the operation fails.
 func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error) {

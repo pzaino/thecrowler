@@ -389,7 +389,7 @@ func NewConfig() *Config {
 				OSVersion: "",
 			},
 		},
-		RulesetsSchemaPath: "./schemas/ruleset-schema.json",
+		RulesetsSchemaPath: "./schemas/crowler-ruleset-schema.json",
 		Rulesets: []RulesetConfig{
 			{
 				Type: cmn.LocalStr,
@@ -1091,7 +1091,7 @@ func (c *Config) validatePrometheus() {
 func (c *Config) validateRulesets() {
 	// Check Rulesets
 	if strings.TrimSpace(c.RulesetsSchemaPath) == "" {
-		c.RulesetsSchemaPath = "./schemas/ruleset-schema.json"
+		c.RulesetsSchemaPath = "./schemas/crowler-ruleset-schema.json"
 	} else {
 		c.RulesetsSchemaPath = strings.TrimSpace(c.RulesetsSchemaPath)
 	}

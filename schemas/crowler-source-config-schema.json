@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/pzaino/thecrowler/main/schemas/source-config-schema.json",
+  "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-source-config-schema.json",
   "title": "CROWler Source Configuration",
   "description": "This is the configuration for a Source (base URL) that the CROWler will use to crawl websites.",
   "version": "1.0.0",
@@ -48,6 +48,43 @@
         "site": {
           "type": "string",
           "format": "uri"
+        },
+        "url_referrer": {
+          "type": "string",
+          "format": "uri",
+          "description": "This is the URL referrer for the source. It is used to set the referrer for the source when crawling."
+        },
+        "alternative_links": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": "This is the list of URLs that the CROWler will use if no links are found on the source. This is useful for sources that have no links or for sources that have links that are not relevant to the source."
+        },
+        "retries_on_redirect": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "This is the number of retries on redirect. Redirects are identified via 'unwanted_urls' patterns. If the CROWler encounters such a redirect, it will retry the original Link this many times before giving up. This can help with certain websites that redirect to different URLs based on the user agent or other factors."
+        },
+        "unwanted_urls":{
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "Regex pattern to match unwanted redirect URLs."
+          },
+          "description": "This is a list of unwanted URLs patterns that the CROWler uses to detect problematic redirects. If a redirect leads to one of these URLs, the CROWler will attempt to reload the original URL instead. This helps avoid irrelevant or error-prone URLs during crawling. It's not a block list, but a way to tell the system, 'retry the original URL if we get redirected here'."
+        },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "website",
+            "api",
+            "file",
+            "db"
+          ],
+          "description": "This is the type of the source. It can be a website, an API or a file."
         }
       },
       "additionalProperties": false,

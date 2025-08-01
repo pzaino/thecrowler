@@ -170,7 +170,7 @@ func main() {
 // CSV format: URL, Category ID, UsrID, Restricted, Flags, ConfigFileName
 func insertWebsitesFromFile(db *sql.DB, filename string) error {
 	// Read the csv file
-	file, err := os.Open(filename)
+	file, err := os.Open(filename) //nolint:gosec // We are not using the file for sensitive data
 	if err != nil {
 		return err
 	}
@@ -311,7 +311,7 @@ func getSourceConfig(configFile string) (*json.RawMessage, error) {
 	sourceConfigRaw := json.RawMessage{}
 	if strings.TrimSpace(configFile) != "" {
 		// Read the config file
-		configFile, err := os.ReadFile(configFile)
+		configFile, err := os.ReadFile(configFile) //nolint:gosec // We are not using the file for sensitive data
 		if err != nil {
 			return &sourceConfigRaw, err
 		}

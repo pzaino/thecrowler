@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
@@ -39,6 +40,9 @@ import (
 
 // ApplyRule applies the provided scraping rule to the provided web page.
 func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDriver) (map[string]interface{}, error) {
+
+	_ = vdi.Refresh(ctx)
+
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
 	extractedData := make(map[string]interface{})
 
@@ -47,6 +51,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	ErrorState := false
 	ErrorMsg := ""
 
+	startTime := time.Now()
 	// Iterate over the rule's elements to be extracted
 	for e := 0; e < len(rule.Elements); e++ {
 		key := rule.Elements[e].Key
@@ -127,6 +132,9 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 			extractedData[key] = allExtracted
 		}
 	}
+	endTime := time.Now()
+	// Log the time taken to extract the data for this element
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Time taken to execute rule '%s': %v", rule.RuleName, endTime.Sub(startTime))
 
 	// Optional: Extract JavaScript files if required
 	if rule.JsFiles {
@@ -636,6 +644,8 @@ func extractByPlugin(ctx *ProcessContext, wd *vdi.WebDriver, selector string) []
 
 // ApplyRulesGroup extracts the data from the provided web page using the provided a rule group.
 func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, webPage *vdi.WebDriver) (map[string]interface{}, error) {
+	_ = vdi.Refresh(ctx)
+
 	// Initialize a map to hold the extracted data
 	extractedData := make(map[string]interface{})
 

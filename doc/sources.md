@@ -63,7 +63,7 @@ Open (or create) your VSCode settings.json file and add the following:
 
 ```json
 "yaml.schemas": {
-   "./schemas/source-config-schema.json": "*-sourcecfg.y*ml",
+   "./schemas/crowler-source-config-schema.json": "*-sourcecfg.y*ml",
 }
 ```
 

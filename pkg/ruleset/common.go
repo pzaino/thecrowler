@@ -229,7 +229,7 @@ func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
 	rules, _ := BulkLoadRules(nil, rulesFile)
 
-	engine := NewRuleEngine("./schemas/ruleset-schema.json", rules)
+	engine := NewRuleEngine("./schemas/crowler-ruleset-schema.json", rules)
 	return engine, nil
 }
 
@@ -362,7 +362,7 @@ func PrepareURLForSearch(urlStr string) (string, error) {
 		return "", fmt.Errorf("%s", errInvalidURL)
 	}
 
-	return strings.ToLower(strings.TrimSpace(urlStr)), nil
+	return strings.TrimSpace(urlStr), nil
 }
 
 // PrepareNameForSearch prepares the name for search by trimming spaces and converting it to lowercase.

@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	errNoElementFound = "no element '%v' found."
-	errFailedToGetLoc = "failed to get element location: %v"
+	errNoElementFound        = "no element '%v' found."
+	errFailedToGetLoc        = "failed to get element location: %v"
+	defaultActionRulesConfig = "{\"config\":\"default\"}"
 )
 
 func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
@@ -39,7 +40,7 @@ func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 		// Execute the CROWler rules
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Action rules...")
 		// Execute the rules
-		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
+		if strings.TrimSpace(string((*ctx.source.Config))) == defaultActionRulesConfig {
 			runDefaultActionRules(wd, ctx)
 		} else {
 			configStr := string((*ctx.source.Config))
@@ -87,7 +88,7 @@ func executeActionRules(ctx *ProcessContext,
 	// Extract each rule and execute it
 	for _, r := range rules {
 		executeRule(ctx, &r, wd)
-		ctx.Status.TotalActions++
+		ctx.Status.TotalActions.Add(1)
 	}
 }
 
@@ -688,9 +689,21 @@ func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver
 				return fmt.Errorf("plugin not found: %s", selector.Selector)
 			}
 
+			// Check r.Value for macros:
+			temp := strings.TrimSpace(r.Value)
+			if temp != "" {
+				switch strings.ToLower(temp) {
+				case "%current_url%":
+					rval, _ := (*wd).CurrentURL()
+					temp = rval
+				case "%source_url%":
+					temp = ctx.source.URL
+				}
+			}
+
 			// collect value as an argument to the plugin
 			args := []interface{}{}
-			args = append(args, r.Value)
+			args = append(args, temp)
 
 			// Execute the JavaScript
 			_, err := (*wd).ExecuteScript(plugin.String(), args)
@@ -1020,7 +1033,7 @@ func executePlannedRuleGroups(wd *vdi.WebDriver, ctx *ProcessContext, planned cf
 		} else {
 			// Execute the rule group
 			executeActionRules(ctx, rg.GetActionRules(), wd)
-			ctx.Status.TotalActions += len(rg.GetActionRules())
+			ctx.Status.TotalActions.Add(int32(len(rg.GetActionRules())))
 		}
 	}
 }

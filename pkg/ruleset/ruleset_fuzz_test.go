@@ -40,7 +40,7 @@ rule_groups: []
 		}
 
 		// Load the schema file
-		schemaFile := "../../schemas/ruleset-schema.json"
+		schemaFile := "../../schemas/crowler-ruleset-schema.json"
 		schemaData, err := os.ReadFile(schemaFile)
 		if err != nil {
 			t.Fatalf("failed to read schema file: %v", err)

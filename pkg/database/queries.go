@@ -69,3 +69,20 @@ func GetSourceID(filter SourceFilter, db *Handler) (uint64, error) {
 	// Convert to uint64 (safe because of the check above)
 	return uint64(sourceID), nil //nolint:gosec // This is a read-only operation and the int64 is never negative
 }
+
+// IsURLKnown checks if a URL is already present in Sources or SearchIndex
+func IsURLKnown(url string, db *Handler) (bool, error) {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1 FROM SearchIndex WHERE page_url = $1
+		);
+	`
+
+	var exists bool
+	err := (*db).QueryRow(query, url).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check URL existence: %w", err)
+	}
+
+	return exists, nil
+}
