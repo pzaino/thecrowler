@@ -446,6 +446,7 @@ func crawlSources(wb *WorkBlock) {
 				if pipelinesRunning.Load() {
 					timer.Reset(inactivityTimeout)
 				} else {
+					cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 					return
 				}
 			default:
