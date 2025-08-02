@@ -646,6 +646,8 @@ func closeSession(ctx *ProcessContext,
 	releaseVDI chan<- vdi.SeleniumInstance,
 	err error) {
 	ctx.closeSession.Lock()
+	defer ctx.closeSession.Unlock()
+
 	if ctx.pStatus != 1 {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Pipeline already completed for source: %v", ctx.source.ID)
 		return
@@ -660,7 +662,9 @@ func closeSession(ctx *ProcessContext,
 	if ctx.WG != nil {
 		ctx.WG.Done()
 	} else {
-		args.WG.Done()
+		if args.WG != nil {
+			args.WG.Done()
+		}
 	}
 
 	// Signal pipeline completion
