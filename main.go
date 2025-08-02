@@ -315,13 +315,18 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			PipelineStatus: &PipelineStatus,
 			Config:         &config,
 		}
+		// Create a new WorkBlock for the crawling job
+		//batchUID := cmn.GenerateUID()
 		event := cdb.Event{
 			Action:   "new",
 			Type:     "started_batch_crawling",
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
+				//"uid":                batchUID,
 				"node": cmn.GetMicroServiceName(),
+				//"time":               time.Now(),
+				//"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
 		createEvent(*db, event)
@@ -332,7 +337,9 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
+				//"uid":  batchUID,
 				"node": cmn.GetMicroServiceName(),
+				//"time": time.Now(),
 			},
 		}
 		createEvent(*db, event)
@@ -446,6 +453,7 @@ func crawlSources(wb *WorkBlock) {
 				if pipelinesRunning.Load() {
 					timer.Reset(inactivityTimeout)
 				} else {
+					cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 					return
 				}
 			default:
