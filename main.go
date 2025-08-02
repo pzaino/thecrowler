@@ -316,17 +316,17 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			Config:         &config,
 		}
 		// Create a new WorkBlock for the crawling job
-		batchUID := cmn.GenerateUID()
+		//batchUID := cmn.GenerateUID()
 		event := cdb.Event{
 			Action:   "new",
 			Type:     "started_batch_crawling",
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				"uid":                batchUID,
-				"node":               cmn.GetMicroServiceName(),
-				"time":               time.Now(),
-				"initial_batch_size": len(sourcesToCrawl),
+				//"uid":                batchUID,
+				"node": cmn.GetMicroServiceName(),
+				//"time":               time.Now(),
+				//"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
 		createEvent(*db, event)
@@ -337,9 +337,9 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				"uid":  batchUID,
+				//"uid":  batchUID,
 				"node": cmn.GetMicroServiceName(),
-				"time": time.Now(),
+				//"time": time.Now(),
 			},
 		}
 		createEvent(*db, event)
