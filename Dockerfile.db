@@ -1,0 +1,12 @@
+FROM postgres@sha256:4d89c904835259bc58876520e56267ca07a4ebd6a027f7814bbbf91b50d685be
+
+# Set build-time default timezone (can be overridden at runtime)
+ARG TIMEZONE=UTC
+ENV TZ=$TIMEZONE
+
+# Copy database init scripts
+COPY ./pkg/database/postgresql-setup.sh /docker-entrypoint-initdb.d/init.sh
+COPY ./pkg/database/postgresql-setup-v1.5.pgsql /docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql
+
+# Make sure init script is executable
+RUN chmod +x /docker-entrypoint-initdb.d/init.sh
