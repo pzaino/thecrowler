@@ -1,0 +1,98 @@
+---
+
+name: Build and Push Images from Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub release tag to build from (e.g., v1.5.0)"
+        required: true
+      dry_run:
+        description: "Dry run (do not push images)"
+        required: false
+        default: "false"
+
+env:
+  REGISTRY: docker.io
+  IMAGE_OWNER: zfpsystems
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up QEMU for cross-platform
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build & Push crowler-api
+        run: |
+          for tag in ${{ github.event.inputs.release_tag }} latest; do
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              echo "[DRY RUN] Would build and push crowler-api:$tag"
+            else
+              docker buildx build \
+                --platform linux/amd64,linux/arm64 \
+                -f Dockerfile.searchapi \
+                -t $REGISTRY/$IMAGE_OWNER/crowler-api:$tag \
+                --push .
+            fi
+          done
+
+      - name: Build & Push crowler-events
+        run: |
+          for tag in ${{ github.event.inputs.release_tag }} latest; do
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              echo "[DRY RUN] Would build and push crowler-events:$tag"
+            else
+              docker buildx build \
+                --platform linux/amd64,linux/arm64 \
+                -f Dockerfile.events \
+                -t $REGISTRY/$IMAGE_OWNER/crowler-events:$tag \
+                --push .
+            fi
+          done
+
+      - name: Build & Push crowler-engine
+        run: |
+          for tag in ${{ github.event.inputs.release_tag }} latest; do
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              echo "[DRY RUN] Would build and push crowler-engine:$tag"
+            else
+              docker buildx build \
+                --platform linux/amd64,linux/arm64 \
+                -f Dockerfile.thecrowler \
+                -t $REGISTRY/$IMAGE_OWNER/crowler-engine:$tag \
+                --push .
+            fi
+          done
+
+      - name: Build & Push crowler-db
+        run: |
+          for tag in ${{ github.event.inputs.release_tag }} latest; do
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              echo "[DRY RUN] Would build and push crowler-db:$tag"
+            else
+              docker buildx build \
+                --platform linux/amd64,linux/arm64 \
+                --build-arg TIMEZONE=UTC \
+                -f Dockerfile.db \
+                -t $REGISTRY/$IMAGE_OWNER/crowler-db:$tag \
+                --push .
+            fi
+          done
