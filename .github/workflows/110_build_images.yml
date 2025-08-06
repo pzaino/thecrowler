@@ -25,8 +25,13 @@
       runs-on: ubuntu-latest
 
       steps:
+        - name: Harden the runner (Audit all outbound calls)
+          uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.13.0
+          with:
+            egress-policy: audit
+
         - name: Checkout repo at release tag
-          uses: actions/checkout@v4
+          uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
           with:
             ref: ${{ github.event.inputs.release_tag }}
             fetch-depth: 0
@@ -48,17 +53,17 @@
             fi
 
         - name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@v3
+          uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
         - name: Log in to Docker Hub
           if: ${{ github.event.inputs.dry_run != 'true' }}
-          uses: docker/login-action@v3
+          uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
           with:
             username: ${{ secrets.DOCKER_USERNAME }}
             password: ${{ secrets.DOCKER_PASSWORD }}
 
         - name: Set up QEMU for cross-platform
-          uses: docker/setup-qemu-action@v3
+          uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
         - name: Build & Push crowler-api
           run: |
