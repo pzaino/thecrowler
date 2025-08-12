@@ -2331,11 +2331,11 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 	totalLogs := len(logs)
 	for i, entry := range logs {
 		var logEntry map[string]interface{}
-		if i%100 == 0 {
+		if (i % 100) == 0 {
 			if ctx.RefreshCrawlingTimer != nil {
 				ctx.RefreshCrawlingTimer() // Refresh crawling timer
 			}
-			KeepSessionAlive(wd)
+			KeepSessionAlive(&wd)
 		}
 
 		if err := json.Unmarshal([]byte(entry.Message), &logEntry); err != nil {
@@ -2440,7 +2440,7 @@ func filterXHRRequests(ctx *ProcessContext, detectedType string) bool {
 		}
 	}
 
-	KeepSessionAlive(ctx.wd)
+	KeepSessionAlive(&ctx.wd)
 	return false
 }
 
@@ -2519,7 +2519,7 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer() // Refresh crawling timer
 		}
-		KeepSessionAlive(wd)
+		KeepSessionAlive(&wd)
 
 		// Fetch Response Body
 		body, isBase64 := fetchResponseBody(wd, requestID)
@@ -2552,7 +2552,7 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 		time.Sleep(200 * time.Millisecond) // Wait before retrying
 	}
 
-	KeepSessionAlive(wd)
+	KeepSessionAlive(&wd)
 
 	// Convert response to map
 	bodyData, ok := responseInf.(map[string]interface{})
@@ -2611,7 +2611,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 			}
 		}
 
-		KeepSessionAlive(wd)
+		KeepSessionAlive(&wd)
 	}
 
 	if detectedContentType == HTMLType {
@@ -2625,7 +2625,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 		jsonBody, _ := json.MarshalIndent(processedData, "", "  ")
 		bodyStr = string(jsonBody)
 
-		KeepSessionAlive(wd)
+		KeepSessionAlive(&wd)
 	}
 
 	// Attempt to parse as JSON (even without Content-Type check)
@@ -2637,7 +2637,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 			detectedContentType = JSONType
 		}
 
-		KeepSessionAlive(wd)
+		KeepSessionAlive(&wd)
 		return jsonBody, detectedContentType
 	}
 
@@ -3849,12 +3849,16 @@ func getDomainParts(parts []string, level uint) string {
 
 // KeepSessionAlive is a dummy function that keeps the WebDriver session alive.
 // It's used to prevent the WebDriver session from timing out.
-func KeepSessionAlive(wd vdi.WebDriver) {
+func KeepSessionAlive(wd *vdi.WebDriver) {
 	if wd == nil {
 		return
 	}
 	// Keep session alive
-	_, _ = wd.Title()
+	titleStr, _ := (*wd).Title()
+	if titleStr == "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] WebDriver session returned an empty title")
+		return
+	}
 }
 
 // worker is the worker function that is responsible for crawling a page
@@ -3863,7 +3867,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
-		KeepSessionAlive(processCtx.wd)
+		KeepSessionAlive(&processCtx.wd)
 
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
