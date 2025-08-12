@@ -2879,6 +2879,10 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			maxRetries = int(val.(float64))
 		}
 	}
+
+	// Tracking validation retries (if any)
+	validationRetryBudget := make(map[string]int)
+
 	for retries := 0; retries <= maxRetries; retries++ {
 		// Reset the Selenium session for a clean browser with new User-Agent
 		if ctx.config.Crawler.ChangeUserAgent == "always" {
@@ -2923,6 +2927,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			ctx.RefreshCrawlingTimer()
 		}
 
+		PageLoadOk := false
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
@@ -3020,11 +3025,61 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 				}
 			}
 		}
-		if !gotRedirectedToUURL {
-			break // Exit loop if we are on the right URL or on an allowed redirect URL
+		if gotRedirectedToUURL {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Unwanted redirect detected: %s != %s", currentURL, url)
+			if retries == maxRetries && maxRetries > 0 {
+				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
+			continue
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Unwanted redirect detected: %s != %s", currentURL, url)
+		// We are on an allowed URL. Run page-load validation here.
+		status, _ := ApplyLoadValidation(ctx, &wd, level)
+
+		// Case 1: valid (or log_only, which you treat as valid after logging)
+		if status.Valid {
+			if status.Action == VALogOnly {
+				cmn.DebugMsg(cmn.DbgLvlWarn, "load_validation: log_only for URL %s", url)
+			}
+			PageLoadOk = true
+		} else {
+			switch status.Action {
+			case VARetry:
+				used := validationRetryBudget[status.RetryKey]
+				if used < status.MaxRetries {
+					validationRetryBudget[status.RetryKey] = used + 1
+					// Guard general retry exhaustion
+					if !(maxRetries > 0 && retries >= maxRetries) {
+						continue // outer loop will reload
+					}
+					return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
+				}
+				// Rule retry budget exhausted → fall back to general retry
+				if !(maxRetries > 0 && retries >= maxRetries) {
+					continue
+				}
+				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
+
+			case VANone:
+				// No explicit action; rely on general retry policy
+				if !(maxRetries > 0 && retries >= maxRetries) {
+					continue
+				}
+				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
+
+			case VASkip:
+				return wd, "", fmt.Errorf("page skipped by validation")
+
+			case VAFail:
+				return nil, "", fmt.Errorf("page validation failed")
+			}
+		}
+		// Page validation returned Ok
+		if PageLoadOk {
+			break
+		}
+
 		if retries == maxRetries && maxRetries > 0 {
 			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 		}
