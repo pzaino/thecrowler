@@ -659,19 +659,19 @@ func closeSession(ctx *ProcessContext,
 		return
 	}
 
-	// Release VDI connection
-	// (this allows the next source to be processed, if any, in this batch job)
-	vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
-
 	// Allow a new sources batch job to be processed (if any)
 	// in the caller:
 	if ctx.WG != nil {
-		ctx.WG.Done()
+		defer ctx.WG.Done()
 	} else {
 		if args.WG != nil {
-			args.WG.Done()
+			defer ctx.WG.Done()
 		}
 	}
+
+	// Release VDI connection
+	// (this allows the next source to be processed, if any, in this batch job)
+	vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
 
 	// Signal pipeline completion
 	if ctx.Status.PipelineRunning.Load() == 1 || err != nil {
