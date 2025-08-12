@@ -398,7 +398,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	// Create the sources' queue (channel)
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 
-	var wg sync.WaitGroup
+	var batchWg sync.WaitGroup
 	var batchCompleted atomic.Bool // import "sync/atomic"
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
@@ -535,10 +535,10 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
-		wg.Add(1)
+		batchWg.Add(1)
 
 		go func(vdiSlot uint64) {
-			defer wg.Done()
+			defer batchWg.Done()
 
 			var currentStatusIdx *uint64
 			starves := 0 // Counter for starvation
@@ -621,7 +621,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 		lastActivity.Store(time.Now()) // Reset activity
 	}
 
-	wg.Wait()
+	batchWg.Wait()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
