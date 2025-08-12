@@ -182,6 +182,7 @@ func (ctx *ProcessContext) GetVDIInstance() *vdi.SeleniumInstance {
 func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.SeleniumInstance) {
 	// Initialize the process context
 	processCtx := NewProcessContext(args)
+	var err error
 
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
@@ -195,13 +196,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
 		// Load the content type detection rules
-		err := loadContentTypeDetectionRules("./support/content_type_detection.yaml")
+		err = loadContentTypeDetectionRules("./support/content_type_detection.yaml")
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "loading content type detection rules: %v", err)
 		}
 	}
 
-	var err error
 	// Combine default configuration with the source configuration
 	if processCtx.source.Config != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Custom Source configuration found, proceeding to combine it with the default one for this source...")
@@ -215,6 +215,19 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Log the crawling process
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Crawling using: %s", processCtx.config.Crawler.BrowsingMode)
+
+	var timeout time.Duration
+	timeout = parseProcessingTimeout(processCtx.config.Crawler.ProcessingTimeout) - 1
+	if timeout == 0 {
+		timeout = 20 * time.Minute // default fallback
+		timeout -= time.Second
+	}
+
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+
+	// Ensure we always close the session correctly
+	defer closeSession(processCtx, args, &sel, releaseVDI, err)
 
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
 	if !IsValidURIProtocol(args.Src.URL) {
@@ -230,7 +243,6 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Finished crawling website: %s", args.Src.URL)
-		closeSession(processCtx, args, &sel, releaseVDI, err)
 		return
 	}
 
@@ -242,11 +254,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.TotalErrors.Add(1)
 		processCtx.Status.LastError = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
-		closeSession(processCtx, args, &sel, releaseVDI, err)
 		return
 	}
 	processCtx.Status.CrawlingRunning.Store(1)
-	defer closeSession(processCtx, args, &sel, releaseVDI, err)
 
 	// Extract custom configuration from the source
 	sourceConfig := make(map[string]interface{})
@@ -316,16 +326,6 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 	}
 
-	var timeout time.Duration
-	timeout = parseProcessingTimeout(processCtx.config.Crawler.ProcessingTimeout) - 1
-	if timeout == 0 {
-		timeout = 20 * time.Minute // default fallback
-		timeout -= time.Second
-	}
-
-	timeoutTimer := time.NewTimer(timeout)
-	defer timeoutTimer.Stop()
-
 	done := make(chan struct{})
 
 	// Wrap the entire crawling workflow into a goroutine
@@ -334,14 +334,14 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 		// Crawl the initial URL and get the HTML content
 		var pageSource vdi.WebDriver
-		pageSource, err = processCtx.CrawlInitialURL(sel)
-		if err != nil {
+		pageSource, tErr := processCtx.CrawlInitialURL(sel)
+		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 			processCtx.Status.EndTime = time.Now()
 			processCtx.Status.CrawlingRunning.Store(3)
 			processCtx.Status.PipelineRunning.Store(3)
 			processCtx.Status.TotalErrors.Add(1)
-			processCtx.Status.LastError = err.Error()
+			processCtx.Status.LastError = tErr.Error()
 			return
 		}
 
@@ -350,8 +350,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 		// Extract the HTML content and extract links
 		var htmlContent string
-		htmlContent, err = pageSource.PageSource()
-		if err != nil {
+		htmlContent, tErr = pageSource.PageSource()
+		if tErr != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
 			cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
@@ -359,7 +359,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			processCtx.Status.CrawlingRunning.Store(3)
 			processCtx.Status.PipelineRunning.Store(3)
 			processCtx.Status.TotalErrors.Add(1)
-			processCtx.Status.LastError = err.Error()
+			processCtx.Status.LastError = tErr.Error()
 			return
 		}
 		initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
@@ -403,8 +403,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Crawler] Initial links extracted: %d", len(initialLinks))
 
 		// Refresh the page
-		err = processCtx.RefreshVDIConnection(sel)
-		if err != nil {
+		tErr = processCtx.RefreshVDIConnection(sel)
+		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
 			processCtx.Status.EndTime = time.Now()
 			processCtx.Status.CrawlingRunning.Store(3)
@@ -419,9 +419,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		go func(ctx *ProcessContext) {
 			defer ctx.wgNetInfo.Done()
 			ctx.GetNetInfo(ctx.source.URL)
-			_, err := ctx.IndexNetInfo(1)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
+			_, tErr := ctx.IndexNetInfo(1)
+			if tErr != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", tErr)
 			}
 		}(processCtx)
 
@@ -431,9 +431,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			go func(ctx *ProcessContext, htmlContent string) {
 				defer ctx.wgNetInfo.Done()
 				ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
-				_, err := ctx.IndexNetInfo(2)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", err)
+				_, tErr := ctx.IndexNetInfo(2)
+				if tErr != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "indexing HTTP information: %v", tErr)
 				}
 			}(processCtx, htmlContent)
 		} else {
@@ -560,7 +560,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.CrawlingRunning.Store(3)
 		processCtx.Status.LastError = "timeout during crawling"
 		UpdateSourceState(args.DB, args.Src.URL, errors.New("timeout during crawling"))
-		closeSession(processCtx, args, &sel, releaseVDI, errors.New("timeout"))
+		err = errors.New("timeout")
 		return
 	case <-done:
 		// Crawling completed successfully
@@ -2888,7 +2888,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 
 	// Tracking validation retries (if any)
 	validationRetryBudget := make(map[string]int)
-
+	ctx.Status.LastRetry.Store(0)
 	for retries := 0; retries <= maxRetries; retries++ {
 		// Reset the Selenium session for a clean browser with new User-Agent
 		if ctx.config.Crawler.ChangeUserAgent == "always" {
@@ -2934,6 +2934,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		}
 
 		PageLoadOk := false
+		ctx.Status.LastRetry.Add(1) // Increment the report retry count
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one

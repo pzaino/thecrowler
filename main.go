@@ -402,7 +402,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	var batchCompleted atomic.Bool // import "sync/atomic"
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
-	var totalSources atomic.Uint64
+	var totalSources atomic.Uint64 // Total Crawled Sources Counter
 
 	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
@@ -615,6 +615,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 		}(vdiID)
 	}
 
+	// First batch load into the queue: (initial load)
 	for _, source := range *wb.sources {
 		sourceChan <- source
 		lastActivity.Store(time.Now()) // Reset activity
@@ -787,6 +788,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("Total Links to complete: %d\n", totalLinksToGo)
 		report += fmt.Sprintf("          Total Scrapes: %d\n", status.TotalScraped.Load())
 		report += fmt.Sprintf("          Total Actions: %d\n", status.TotalActions.Load())
+		report += fmt.Sprintf("        Last Page Retry: %d\n", status.LastRetry.Load())
 		report += fmt.Sprintf("         Last Page Wait: %f\n", status.LastWait)
 		report += fmt.Sprintf("        Last Page Delay: %f\n", status.LastDelay)
 		report += fmt.Sprintf("       Collection State: %s\n", CollectionState(int(status.DetectedState.Load())))

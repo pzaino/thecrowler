@@ -62,6 +62,7 @@ type Status struct {
 	StartTime       time.Time
 	EndTime         time.Time
 	CurrentDepth    atomic.Int32
+	LastRetry       atomic.Int32 // Last retry count
 	LastWait        float64
 	LastDelay       float64
 	LastError       string
