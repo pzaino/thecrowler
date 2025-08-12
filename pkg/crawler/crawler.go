@@ -4452,6 +4452,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 
 	// Get the HTML content of the page
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Getting HTML content for '%s'\n", id, url)
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
@@ -4479,6 +4480,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	processCtx.RefreshCrawlingTimer()
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Detecting technologies for '%s'\n", id, currentURL)
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
@@ -4488,6 +4490,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
 
 	// Extract page information
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page information for '%s'\n", id, currentURL)
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
 	if err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
@@ -4506,6 +4509,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting navigation metrics for '%s'\n", id, currentURL)
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
 	}
@@ -4514,6 +4518,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting page logs for '%s'\n", id, currentURL)
 		collectPageLogs(&htmlContent, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
 	}
@@ -4522,6 +4527,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting XHR for '%s'\n", id, currentURL)
 		collectXHR(processCtx, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
 	}
@@ -4529,12 +4535,14 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	if !processCtx.config.Crawler.CollectHTML {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting HTML content is disabled, clearing HTML content for '%s'\n", id, currentURL)
 		// If we don't need to collect HTML content, clear it
 		pageCache.HTML = ""
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared HTML content for '%s'\n", id, currentURL)
 	}
 
 	if !processCtx.config.Crawler.CollectContent {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting content is disabled, clearing body text content for '%s'\n", id, currentURL)
 		// If we don't need to collect content, clear it
 		pageCache.BodyText = ""
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
@@ -4559,6 +4567,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully added new links to the process context.\n", id)
 	}
 	resetPageInfo(&pageCache) // Reset the PageInfo object
 
