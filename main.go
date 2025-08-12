@@ -316,33 +316,35 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			Config:         &config,
 		}
 		// Create a new WorkBlock for the crawling job
-		//batchUID := cmn.GenerateUID()
+		batchUID := cmn.GenerateUID()
 		event := cdb.Event{
 			Action:   "new",
 			Type:     "started_batch_crawling",
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				//"uid":                batchUID,
-				"node": cmn.GetMicroServiceName(),
-				//"time":               time.Now(),
-				//"initial_batch_size": len(sourcesToCrawl),
+				"uid":                batchUID,
+				"node":               cmn.GetMicroServiceName(),
+				"time":               time.Now(),
+				"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
 		createEvent(*db, event)
-		crawlSources(&workBlock) // Start the crawling of this batch of sources
+		totSrc := crawlSources(&workBlock) // Start the crawling of this batch of sources
 		event = cdb.Event{
 			Action:   "new",
 			Type:     "completed_batch_crawling",
 			SourceID: 0,
 			Severity: config.Crawler.SourcePriority,
 			Details: map[string]interface{}{
-				//"uid":  batchUID,
-				"node": cmn.GetMicroServiceName(),
-				//"time": time.Now(),
+				"uid":              batchUID,
+				"node":             cmn.GetMicroServiceName(),
+				"time":             time.Now(),
+				"final_batch_size": totSrc,
 			},
 		}
 		createEvent(*db, event)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Crawled '%d' sources in this batch", totSrc)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.RUnlock()
@@ -392,7 +394,7 @@ func createEvent(db cdb.Handler, event cdb.Event) {
 	}
 }
 
-func crawlSources(wb *WorkBlock) {
+func crawlSources(wb *WorkBlock) uint64 {
 	// Create the sources' queue (channel)
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 
@@ -400,6 +402,7 @@ func crawlSources(wb *WorkBlock) {
 	var batchCompleted atomic.Bool // import "sync/atomic"
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
+	var totalSources atomic.Uint64
 
 	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
@@ -570,6 +573,7 @@ func crawlSources(wb *WorkBlock) {
 				starves = 0           // Reset starvation counter
 				refreshLastActivity() // Reset activity
 				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d", source.URL, source.ID, vdiSlot)
+				totalSources.Add(1) // Increment the total sources counter
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
@@ -625,6 +629,8 @@ func crawlSources(wb *WorkBlock) {
 			(*wb.PipelineStatus)[idx].PipelineRunning.Store(0)
 		}
 	}
+
+	return totalSources.Load() // Return the total number of sources crawled
 }
 
 func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
