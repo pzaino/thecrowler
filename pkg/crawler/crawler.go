@@ -3867,6 +3867,11 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
+		if processCtx.Status.PipelineRunning.Load() > 1 {
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping worker due to pipeline shutdown\n", id)
+			return nil // We return here because the pipeline is shutting down!
+		}
+		// Pipeline is still running so we can process the job
 		KeepSessionAlive(&processCtx.wd)
 
 		// Check if the URL should be skipped
