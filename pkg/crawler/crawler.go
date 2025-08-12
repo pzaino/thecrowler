@@ -571,6 +571,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 func parseProcessingTimeout(timeoutStr string) time.Duration {
 	timeoutStr = strings.TrimSpace(strings.ToLower(timeoutStr))
 
+	if timeoutStr == "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Processing timeout is empty, using default 20m")
+		return 20 * time.Minute // Default fallback
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Processing timeout set to: %s", timeoutStr)
+
 	// Normalize known time units
 	replacements := map[string]string{
 		" minutes": "m", " minute": "m", " mins": "m", " min": "m",
