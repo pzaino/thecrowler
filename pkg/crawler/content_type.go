@@ -209,7 +209,7 @@ func detectContentType(body, url string, wd vdi.WebDriver) string {
 
 		// Keep session alive
 		if index%2 == 0 {
-			KeepSessionAlive(wd)
+			KeepSessionAlive(&wd)
 		}
 		index++
 	}
