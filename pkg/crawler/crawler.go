@@ -344,9 +344,13 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			processCtx.Status.LastError = tErr.Error()
 			return
 		}
+		processCtx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 		// Get screenshot of the page
 		processCtx.TakeScreenshot(pageSource, args.Src.URL, processCtx.fpIdx)
+		processCtx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 		// Extract the HTML content and extract links
 		var htmlContent string
@@ -363,6 +367,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			return
 		}
 		initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
+		processCtx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 		// Add alternative_links to initial links:
 		srcConfig := processCtx.srcCfg["crawling_config"]
@@ -401,16 +407,20 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			}
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Crawler] Initial links extracted: %d", len(initialLinks))
+		processCtx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 		// Refresh the page
 		tErr = processCtx.RefreshVDIConnection(sel)
 		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
-			processCtx.Status.EndTime = time.Now()
-			processCtx.Status.CrawlingRunning.Store(3)
-			processCtx.Status.PipelineRunning.Store(3)
-			processCtx.Status.TotalErrors.Add(1)
-			processCtx.Status.LastError = err.Error()
+			if processCtx != nil {
+				processCtx.Status.EndTime = time.Now()
+				processCtx.Status.CrawlingRunning.Store(3)
+				processCtx.Status.PipelineRunning.Store(3)
+				processCtx.Status.TotalErrors.Add(1)
+				processCtx.Status.LastError = err.Error()
+			}
 			return
 		}
 
@@ -907,7 +917,10 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 			return pageSource, err
 		}
 	}
+	ctx.RefreshCrawlingTimer()
+	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
+	//
 	// Create a new PageInfo struct
 	var pageInfo PageInfo
 
@@ -926,6 +939,8 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	if detectedTech != nil {
 		pageInfo.DetectedTech = (*detectedTech)
 	}
+	ctx.RefreshCrawlingTimer()
+	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Continue with extracting page info and indexing
 	err = extractPageInfo(&pageSource, ctx, docType, &pageInfo)
@@ -943,21 +958,29 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Generate Keywords from the page content
 	pageInfo.Keywords = extractKeywords(pageInfo)
+	ctx.RefreshCrawlingTimer()
+	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Collect Navigation Timing metrics
 	if ctx.config.Crawler.CollectPerfMetrics {
 		collectNavigationMetrics(&ctx.wd, &pageInfo)
+		ctx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 	}
 
 	// Collect Page logs
 	if ctx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&pageSource, &pageInfo)
+		ctx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 	}
 
 	// Collect XHR
 	if ctx.config.Crawler.CollectXHR {
 		collectXHR(ctx, &pageInfo)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-InitialURL] Successfully collected XHR for '%s'\n", ctx.source.URL)
+		ctx.RefreshCrawlingTimer()
+		_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 	}
 
 	if !ctx.config.Crawler.CollectHTML {
