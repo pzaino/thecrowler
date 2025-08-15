@@ -3879,7 +3879,7 @@ func KeepSessionAlive(wd *vdi.WebDriver) {
 	// Keep session alive
 	titleStr, _ := (*wd).Title()
 	if titleStr == "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] WebDriver session returned an empty title")
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] Sent 'Keep Session Alive' command. %s", titleStr)
 		return
 	}
 }
