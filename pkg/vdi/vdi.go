@@ -1264,7 +1264,10 @@ func Refresh(ctx ProcessContextInterface) error {
 	wd := ctx.GetWebDriver()
 
 	// get the page title
-	_, _ = (*wd).Title()
+	title, _ := (*wd).Title()
+	if title == "" {
+		cmn.DebugMsg(cmn.DbgLvlError, "Issued a 'Keep Session Alive' command. %s", title)
+	}
 
 	return nil
 }
