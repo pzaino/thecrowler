@@ -57,7 +57,7 @@ repos:
   #  rev: v2.4.0
   #  hooks:
   #    - id: golangci-lint
-  - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v9.33.0
-    hooks:
-      - id: eslint
+  #- repo: https://github.com/pre-commit/mirrors-eslint
+  #  rev: v9.33.0
+  #  hooks:
+  #    - id: eslint
