@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -534,7 +535,28 @@ func crawlSources(wb *WorkBlock) uint64 {
 		lastActivity.Store(time.Now())
 	}
 
+	ramp := config.Crawler.InitialRampUp
+	if ramp < 0 {
+		// Calculate the ramp-up factor based on the number of sources and the number of Selenium instances
+		if len(config.Selenium) > 0 {
+			ramp = config.Crawler.MaxSources / len(config.Selenium)
+		} else {
+			ramp = 1 // fallback: minimal ramping
+		}
+	}
+
+	currVDI := 0
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
+		if ramp > 0 {
+			// linear ramp: first starts at 0, then vdiID*(1/ramp) seconds
+			baseStep := time.Second / time.Duration(ramp)
+			// Sleep for a ramp-up time based on the VDI ID and the ramp factor
+			time.Sleep(time.Duration(currVDI) * baseStep)
+			if currVDI < math.MaxInt {
+				currVDI++ // Increment the current VDI ID for the next iteration
+			}
+		}
+
 		batchWg.Add(1)
 
 		go func(vdiSlot uint64) {

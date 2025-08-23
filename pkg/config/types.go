@@ -65,6 +65,7 @@ type Crawler struct {
 	MaxDepth              int            `json:"max_depth" yaml:"max_depth"`                                               // Maximum depth to crawl
 	MaxLinks              int            `json:"max_links" yaml:"max_links"`                                               // Maximum number of links to crawl per Source
 	MaxSources            int            `json:"max_sources" yaml:"max_sources"`                                           // Maximum number of sources to crawl
+	InitialRampUp         int            `json:"initial_ramp_up" yaml:"initial_ramp_up"`                                   // Initial ramp-up time for the crawler (in seconds) (to help proxies to warm up) 0 = no ramp-up, -1 = automatic ramp-up
 	Delay                 string         `json:"delay" yaml:"delay"`                                                       // Delay between requests (in seconds)
 	BrowsingMode          string         `json:"browsing_mode" yaml:"browsing_mode"`                                       // Browsing type (e.g., "recursive", "human", "fuzzing")
 	MaxRetries            int            `json:"max_retries" yaml:"max_retries"`                                           // Maximum number of retries
