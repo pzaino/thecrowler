@@ -572,9 +572,10 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	currVDI := 0
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
+		refreshLastActivity() // Reset activity
 		if ramp > 0 {
 			// Sleep for a ramp-up time based on the VDI ID and the ramp factor
-			time.Sleep((time.Duration(currVDI*engineMultiplier) * time.Duration(ramp)) * time.Second)
+			_, _ = waitSomeTime(float64((engineMultiplier+currVDI)*ramp), refreshLastActivity)
 			if currVDI < math.MaxInt {
 				currVDI++ // Increment the current VDI ID for the next iteration
 			}
@@ -679,6 +680,33 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 
 	return totalSources.Load() // Return the total number of sources crawled
+}
+
+func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {
+	if delay < 1 {
+		delay = 1
+	}
+
+	divider := math.Log10(delay+1) * 10 // Adjust multiplier as needed
+
+	waitDuration := time.Duration(delay) * time.Second
+	pollInterval := time.Duration(delay/divider) * time.Second // Check every pollInterval seconds to keep alive
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-RampUp] Waiting for %v seconds...", delay)
+	startTime := time.Now()
+	for time.Since(startTime) < waitDuration {
+		// Perform a controlled sleep so we can refresh the session timeout if needed
+		time.Sleep(pollInterval)
+		// refresh session timeout
+		if SessionRefresh != nil {
+			SessionRefresh()
+		}
+	}
+	// Get the total delay
+	totalDelay := time.Since(startTime)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-RampUp] Waited for %v seconds", totalDelay.Seconds())
+
+	return totalDelay, nil
 }
 
 func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
