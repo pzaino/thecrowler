@@ -465,6 +465,16 @@
             20
           ]
         },
+        "initial_ramp_up": {
+          "title": "CROWler Engine Initial Ramp Up",
+          "description": "This is the initial ramp up for the CROWler Engine. It is the time in seconds that the CROWler Engine will wait in between starting collecting data for each source in a new batch (at the beginning of a new collection). Valid values are < 0 for automatic ramp-up, 0 for no ramp-up, > 0 for manual ramp-up. A ramp-up can be useful to help proxies to 'warm up'.",
+          "type": "integer",
+          "examples": [
+            -1,
+            5,
+            15
+          ]
+        },
         "delay": {
           "title": "CROWler Engine Delay Between Page's Fetching Requests",
           "description": "This is the delay between requests that the CROWler Engine will use to crawl websites. It is the delay between requests that the CROWler will use as part of the HBS. For delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.",
