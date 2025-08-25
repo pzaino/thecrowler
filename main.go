@@ -568,6 +568,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 			ramp = 1 // fallback: minimal ramping
 		}
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
 	currVDI := 0
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
@@ -657,6 +658,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 				refreshLastActivity() // Reset activity
 			}
 		}(vdiID)
+		// Log the VDI instance started
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Started VDI slot %d", vdiID)
 	}
 
 	// First batch load into the queue: (initial load)
