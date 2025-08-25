@@ -574,7 +574,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
 		if ramp > 0 {
 			// Sleep for a ramp-up time based on the VDI ID and the ramp factor
-			time.Sleep(time.Duration(currVDI*engineMultiplier) * time.Duration(ramp))
+			time.Sleep((time.Duration(currVDI*engineMultiplier) * time.Duration(ramp)) * time.Second)
 			if currVDI < math.MaxInt {
 				currVDI++ // Increment the current VDI ID for the next iteration
 			}
