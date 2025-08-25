@@ -412,6 +412,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 	lastActivity.Store(time.Now())
 	var pipelinesRunning atomic.Bool
 	pipelinesRunning.Store(true)
+	var rampupRunning atomic.Bool
+	rampupRunning.Store(true)
 
 	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
@@ -427,7 +429,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				}
 			}
 			logStatus(plStatus)
-			if !anyPipelineStillRunning {
+			if !anyPipelineStillRunning && !rampupRunning.Load() {
 				pipelinesRunning.Store(false)
 				break
 			}
@@ -666,6 +668,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 		lastActivity.Store(time.Now()) // Reset activity
 	}
 
+	rampupRunning.Store(false) // Ramp-up phase is over
 	batchWg.Wait()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
