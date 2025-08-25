@@ -535,6 +535,30 @@ func crawlSources(wb *WorkBlock) uint64 {
 		lastActivity.Store(time.Now())
 	}
 
+	// Get engine name and if it has an ID at the end use it as a multiplier
+	engineName := cmn.GetMicroServiceName()
+	engineMultiplier := 1
+	// The engine ID is usually preceded by either a - or a _
+	// So check if it contains either of them, if yes try to use them to extract the last part, otherwise use the last two chars
+	if strings.Contains(engineName, "-") {
+		parts := strings.Split(engineName, "-")
+		lastPart := parts[len(parts)-1]
+		if id, err := strconv.Atoi(lastPart); err == nil {
+			engineMultiplier = id
+		}
+	} else if strings.Contains(engineName, "_") {
+		parts := strings.Split(engineName, "_")
+		lastPart := parts[len(parts)-1]
+		if id, err := strconv.Atoi(lastPart); err == nil {
+			engineMultiplier = id
+		}
+	} else if len(engineName) > 2 {
+		lastPart := engineName[len(engineName)-2:]
+		if id, err := strconv.Atoi(lastPart); err == nil {
+			engineMultiplier = id
+		}
+	}
+
 	ramp := config.Crawler.InitialRampUp
 	if ramp < 0 {
 		// Calculate the ramp-up factor based on the number of sources and the number of Selenium instances
@@ -549,7 +573,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
 		if ramp > 0 {
 			// Sleep for a ramp-up time based on the VDI ID and the ramp factor
-			time.Sleep(time.Duration(currVDI) * time.Duration(ramp))
+			time.Sleep(time.Duration(currVDI*engineMultiplier) * time.Duration(ramp))
 			if currVDI < math.MaxInt {
 				currVDI++ // Increment the current VDI ID for the next iteration
 			}
