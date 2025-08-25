@@ -456,7 +456,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 			select {
 			case <-timer.C:
 				// Timeout expired → no new sources, close pipeline
-				if pipelinesRunning.Load() {
+				if pipelinesRunning.Load() || rampupRunning.Load() {
 					timer.Reset(inactivityTimeout)
 				} else {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
