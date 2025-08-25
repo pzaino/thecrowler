@@ -182,6 +182,18 @@ func (ctx *ProcessContext) GetVDIInstance() *vdi.SeleniumInstance {
 func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.SeleniumInstance) {
 	// Initialize the process context
 	processCtx := NewProcessContext(args)
+	if processCtx == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to create a new ProcessContext")
+		UpdateSourceState(args.DB, args.Src.URL, errors.New("failed to create a new ProcessContext"))
+		args.Status.EndTime = time.Now()
+		args.Status.PipelineRunning.Store(3) // Set the pipeline status to error
+		args.Status.TotalErrors.Add(1)
+		args.Status.LastError = "failed to create a new ProcessContext"
+		cmn.DebugMsg(cmn.DbgLvlError, "Crawling process aborted for source: %s", args.Src.URL)
+		return
+	}
+
+	// We have process context, so we can proceed:
 	var err error
 
 	// Pipeline has started
@@ -407,7 +419,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			}
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Crawler] Initial links extracted: %d", len(initialLinks))
-		processCtx.RefreshCrawlingTimer()
+		if processCtx.RefreshCrawlingTimer != nil {
+			processCtx.RefreshCrawlingTimer()
+		}
 		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 		// Refresh the page
@@ -917,7 +931,9 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 			return pageSource, err
 		}
 	}
-	ctx.RefreshCrawlingTimer()
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	//
@@ -939,7 +955,9 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	if detectedTech != nil {
 		pageInfo.DetectedTech = (*detectedTech)
 	}
-	ctx.RefreshCrawlingTimer()
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Continue with extracting page info and indexing
@@ -958,20 +976,26 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Generate Keywords from the page content
 	pageInfo.Keywords = extractKeywords(pageInfo)
-	ctx.RefreshCrawlingTimer()
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Collect Navigation Timing metrics
 	if ctx.config.Crawler.CollectPerfMetrics {
 		collectNavigationMetrics(&ctx.wd, &pageInfo)
-		ctx.RefreshCrawlingTimer()
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer()
+		}
 		_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 	}
 
 	// Collect Page logs
 	if ctx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&pageSource, &pageInfo)
-		ctx.RefreshCrawlingTimer()
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer()
+		}
 		_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 	}
 
@@ -979,7 +1003,9 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	if ctx.config.Crawler.CollectXHR {
 		collectXHR(ctx, &pageInfo)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-InitialURL] Successfully collected XHR for '%s'\n", ctx.source.URL)
-		ctx.RefreshCrawlingTimer()
+		if ctx.RefreshCrawlingTimer != nil {
+			ctx.RefreshCrawlingTimer()
+		}
 		_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 	}
 
@@ -4137,7 +4163,9 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Execute any action rules after the link is opened
 	processActionRules(&processCtx.wd, processCtx, currentURL)
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 
 	// Re-Check current URL (because some Action Rules may change the URL)
 	currentURL, _ = processCtx.wd.CurrentURL()
@@ -4160,7 +4188,9 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 
 	// Extract page information and cache it for indexing
 	docType := inferDocumentType(url.Link, &processCtx.wd)
@@ -4509,7 +4539,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		RE:           processCtx.re,
 		Config:       &processCtx.config,
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Detecting technologies for '%s'\n", id, currentURL)
@@ -4517,7 +4549,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
 
@@ -4530,7 +4564,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		}
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
@@ -4545,7 +4581,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	// Collect Page logs
@@ -4554,7 +4592,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectPageLogs(&htmlContent, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	// Collect XHR
@@ -4563,7 +4603,9 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		collectXHR(processCtx, &pageCache)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
 	}
-	processCtx.RefreshCrawlingTimer()
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	if !processCtx.config.Crawler.CollectHTML {
