@@ -570,15 +570,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
-	currVDI := 0
 	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
 		refreshLastActivity() // Reset activity
 		if ramp > 0 {
 			// Sleep for a ramp-up time based on the VDI ID and the ramp factor
-			_, _ = waitSomeTime(float64((engineMultiplier*2)+ramp+currVDI), refreshLastActivity)
-			if currVDI < math.MaxInt {
-				currVDI++ // Increment the current VDI ID for the next iteration
-			}
+			_, _ = waitSomeTime(float64(ramp), refreshLastActivity)
 		}
 
 		batchWg.Add(1)
