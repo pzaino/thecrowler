@@ -428,7 +428,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					break
 				}
 			}
-			logStatus(plStatus)
+			logStatus(plStatus, maxPipelines)
 			if !anyPipelineStillRunning && !rampupRunning.Load() {
 				pipelinesRunning.Store(false)
 				break
@@ -799,7 +799,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 	}(&args)
 }
 
-func logStatus(PipelineStatus *[]crowler.Status) {
+func logStatus(PipelineStatus *[]crowler.Status, maxPipelines uint64) {
 	// Log the status of the pipelines
 	const (
 		sepRLine = "====================================="
@@ -808,7 +808,10 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	report := "Pipelines status report\n"
 	report += sepRLine + "\n"
 	runningPipelines := 0
-	for idx := 0; idx < len(*PipelineStatus); idx++ {
+	if uint64(len(*PipelineStatus)) > maxPipelines {
+		maxPipelines = uint64(len(*PipelineStatus))
+	}
+	for idx := uint64(0); idx < maxPipelines; idx++ {
 		status := &(*PipelineStatus)[idx]
 		if status.PipelineRunning.Load() == 0 {
 			continue
