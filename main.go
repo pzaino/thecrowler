@@ -518,7 +518,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 			select {
 			case <-ticker.C:
 				last := lastActivity.Load().(time.Time)
-				if (time.Since(last) > (5 * time.Minute)) && !pipelinesRunning.Load() {
+				if (time.Since(last) > (5 * time.Minute)) && !pipelinesRunning.Load() && !rampupRunning.Load() {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No crawling activity for 5 minutes, closing sourceChan.")
 					closeChanOnce.Do(func() {
 						batchCompleted.Store(true) // Set the batch as completed
@@ -594,10 +594,9 @@ func crawlSources(wb *WorkBlock) uint64 {
 					// Fetch next available source in the queue:
 					source, ok = <-sourceChan
 					if !ok {
-						// Channel is closed, exit the goroutine
-						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Source channel closed, exiting goroutine for VDI slot %d", vdiSlot)
-						// Check if batch is completed
+						// Channel is closed, let's check if we need to quit or not:
 						if batchCompleted.Load() {
+							// Batch is completed, exit the goroutine
 							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
 							return
 						}
