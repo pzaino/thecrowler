@@ -397,7 +397,7 @@ func createEvent(db cdb.Handler, event cdb.Event) {
 
 func crawlSources(wb *WorkBlock) uint64 {
 	// Create the sources' queue (channel)
-	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
+	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*3)
 
 	var batchWg sync.WaitGroup
 	var batchCompleted atomic.Bool // import "sync/atomic"
@@ -406,7 +406,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	var totalSources atomic.Uint64 // Total Crawled Sources Counter
 	var statusLock sync.Mutex      // Mutex to protect the PipelineStatus slice
 
-	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
+	maxPipelines := len(config.Selenium) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
 
 	var lastActivity atomic.Value
@@ -573,7 +573,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
-	for vdiID := uint64(0); vdiID < maxPipelines; vdiID++ {
+	for vdiID := 0; vdiID < maxPipelines; vdiID++ {
 		refreshLastActivity() // Reset activity
 		if ramp > 0 {
 			pipelinesRunning.Store(true)
@@ -583,10 +583,10 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 		batchWg.Add(1)
 
-		go func(vdiSlot uint64) {
+		go func(vdiSlot int) {
 			defer batchWg.Done()
 
-			var currentStatusIdx *uint64
+			var currentStatusIdx *int
 			starves := 0          // Counter for starvation
 			refreshLastActivity() // Reset activity
 
@@ -623,25 +623,28 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
-				var statusIdx uint64
+				var statusIdx int
 				// Getting a new status index must be protected by a lock
 				statusLock.Lock()
 				if currentStatusIdx == nil {
+					// Get a new or available pipeline status index
+					// (at startup or when extra data collections are ongoing and we need to move on to the next web collection)
 					statusIdx = getAvailableOrNewPipelineStatus(wb)
 				} else {
+					// reuse current status index (we completed all types of collections)
 					statusIdx = *currentStatusIdx
 				}
-				if statusIdx >= uint64(len(*wb.PipelineStatus)) {
+				if statusIdx >= len(*wb.PipelineStatus) {
 					// Safety check, if we are out of bounds, we need to append a new status
 					*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{})
-					if uint64(len(*wb.PipelineStatus)) > maxPipelines {
-						maxPipelines = uint64(len(*wb.PipelineStatus))
+					if len(*wb.PipelineStatus) > maxPipelines {
+						maxPipelines = len(*wb.PipelineStatus)
 					}
 				}
 
 				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
-					PipelineID:      statusIdx,
+					PipelineID:      uint64(statusIdx), //nolint:gosec // it's safe here.
 					Source:          source.URL,
 					SourceID:        source.ID,
 					VDIID:           "",
@@ -655,6 +658,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
 
 				// Start crawling the website
+				// startCrawling will spawn a crawling thread and return, so we need to wait for
+				// that thread to complete:
 				var crawlWG sync.WaitGroup
 				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
@@ -668,6 +673,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				refreshLastActivity() // Reset activity
 			}
 		}(vdiID)
+
 		// Log the VDI instance started
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Started VDI slot %d", vdiID)
 	}
@@ -683,8 +689,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
-	for idx := uint64(0); idx < maxPipelines; idx++ {
-		if idx < uint64(len(*wb.PipelineStatus)) {
+	for idx := 0; idx < maxPipelines; idx++ {
+		if idx < len(*wb.PipelineStatus) {
 			(*wb.PipelineStatus)[idx].PipelineRunning.Store(0)
 		}
 	}
@@ -730,23 +736,23 @@ func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
 	return newSources, nil
 }
 
-func getAvailableOrNewPipelineStatus(wb *WorkBlock) uint64 {
+func getAvailableOrNewPipelineStatus(wb *WorkBlock) int {
 	for idx := range *wb.PipelineStatus {
 		status := &(*wb.PipelineStatus)[idx]
 		if status.PipelineRunning.Load() != 1 && status.CrawlingRunning.Load() != 1 &&
 			status.NetInfoRunning.Load() != 1 && status.HTTPInfoRunning.Load() != 1 {
-			return uint64(idx) //nolint:gosec // it's safe here.
+			return idx //nolint:gosec // it's safe here.
 		}
 	}
 	// All are busy or reserved → add a new one
-	newIdx := uint64(len(*wb.PipelineStatus))
+	newIdx := len(*wb.PipelineStatus)
 	*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{
-		PipelineID: newIdx,
+		PipelineID: uint64(newIdx),
 	})
 	return newIdx
 }
 
-func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uint64, refresh func()) {
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int, refresh func()) {
 	if wg != nil {
 		wg.Add(1)
 	}
@@ -760,7 +766,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 		SelIdx:  0,
 		RE:      wb.RulesEngine,
 		Sources: wb.sources,
-		Index:   idx,
+		Index:   uint64(idx),                  //nolint:gosec // it's safe here.
 		Status:  &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
 		Refresh: refresh,
 	}
