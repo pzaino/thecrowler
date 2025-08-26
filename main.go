@@ -638,9 +638,6 @@ func crawlSources(wb *WorkBlock) uint64 {
 						maxPipelines = uint64(len(*wb.PipelineStatus))
 					}
 				}
-				statusLock.Unlock()
-
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
 
 				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
@@ -653,7 +650,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 					PipelineRunning: atomic.Int32{},
 				}
 				(*wb.PipelineStatus)[statusIdx].PipelineRunning.Store(1) // Set the pipeline running status
+				statusLock.Unlock()
 
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
+
+				// Start crawling the website
 				var crawlWG sync.WaitGroup
 				startCrawling(wb, &crawlWG, source, statusIdx, refreshLastActivity)
 				crawlWG.Wait()
