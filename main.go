@@ -616,8 +616,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				}
 				starves = 0           // Reset starvation counter
 				refreshLastActivity() // Reset activity
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d", source.URL, source.ID, vdiSlot)
-				totalSources.Add(1) // Increment the total sources counter
+				totalSources.Add(1)   // Increment the total sources counter
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
@@ -630,7 +629,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 				if statusIdx >= uint64(len(*wb.PipelineStatus)) {
 					// Safety check, if we are out of bounds, we need to append a new status
 					*wb.PipelineStatus = append(*wb.PipelineStatus, crowler.Status{})
+					if uint64(len(*wb.PipelineStatus)) > maxPipelines {
+						maxPipelines = uint64(len(*wb.PipelineStatus))
+					}
 				}
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
 
 				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
