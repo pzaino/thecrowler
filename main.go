@@ -397,24 +397,29 @@ func createEvent(db cdb.Handler, event cdb.Event) {
 
 func crawlSources(wb *WorkBlock) uint64 {
 	// Create the sources' queue (channel)
-	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*3)
+	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 
 	var batchWg sync.WaitGroup
-	var batchCompleted atomic.Bool // import "sync/atomic"
-	var refillLock sync.Mutex      // Mutex to protect the refill operation
+	var refillLock sync.Mutex // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
-	var totalSources atomic.Uint64 // Total Crawled Sources Counter
-	var statusLock sync.Mutex      // Mutex to protect the PipelineStatus slice
+	var statusLock sync.Mutex // Mutex to protect the PipelineStatus slice
 
 	maxPipelines := len(config.Selenium) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max sources: %d", wb.Config.Crawler.MaxSources*2)
 
+	var TotalSources atomic.Uint64 // Total Crawled Sources Counter
+	TotalSources.Store(0)
+	var batchCompleted atomic.Bool // import "sync/atomic"
+	batchCompleted.Store(false)
 	var lastActivity atomic.Value
 	lastActivity.Store(time.Now())
 	var pipelinesRunning atomic.Bool
 	pipelinesRunning.Store(true)
 	var rampupRunning atomic.Bool
 	rampupRunning.Store(true)
+	var BusyInstances atomic.Int32
+	BusyInstances.Store(0)
 
 	// Report go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
@@ -586,8 +591,10 @@ func crawlSources(wb *WorkBlock) uint64 {
 		go func(vdiSlot int) {
 			defer batchWg.Done()
 
-			var currentStatusIdx *int
-			starves := 0          // Counter for starvation
+			var (
+				currentStatusIdx *int
+				starves          int // Counter for starvation
+			)
 			refreshLastActivity() // Reset activity
 
 			for {
@@ -595,20 +602,30 @@ func crawlSources(wb *WorkBlock) uint64 {
 				if !batchCompleted.Load() {
 					var ok bool
 					// Fetch next available source in the queue:
-					source, ok = <-sourceChan
+					/*source, ok = <-sourceChan
 					if !ok {
 						// Channel is closed, let's check if we need to quit or not:
-						if batchCompleted.Load() {
-							// Batch is completed, exit the goroutine
+						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+						return
+					}*/
+					select {
+					case source, ok = <-sourceChan:
+						if !ok {
+							// Channel is closed, let's check if we need to quit or not:
 							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
 							return
 						}
+					default:
+						// No source available right now
 						starves++
 						if starves > 5 {
 							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
 							starves = 0 // Reset starvation counter
 							// sleep 2 seconds and continue
 							time.Sleep(2 * time.Second)
+						} else {
+							// short sleep to avoid tight loop
+							time.Sleep(500 * time.Millisecond)
 						}
 						continue
 					}
@@ -619,7 +636,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 				}
 				starves = 0           // Reset starvation counter
 				refreshLastActivity() // Reset activity
-				totalSources.Add(1)   // Increment the total sources counter
+				TotalSources.Add(1)   // Increment the total sources counter
+				BusyInstances.Add(1)  // Increment busy instances counter
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
@@ -671,6 +689,10 @@ func crawlSources(wb *WorkBlock) uint64 {
 					currentStatusIdx = &statusIdx
 				}
 				refreshLastActivity() // Reset activity
+				BusyInstances.Add(-1) // Decrement busy instances counter
+				if BusyInstances.Load() < 0 {
+					BusyInstances.Store(0)
+				}
 			}
 		}(vdiID)
 
@@ -695,7 +717,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 		}
 	}
 
-	return totalSources.Load() // Return the total number of sources crawled
+	return TotalSources.Load() // Return the total number of sources crawled
 }
 
 func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {

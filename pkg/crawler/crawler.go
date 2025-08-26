@@ -119,7 +119,7 @@ type ProcessContext struct {
 	ni                   *neti.NetInfo             // The network information of the web page
 	hi                   *httpi.HTTPDetails        // The HTTP header information of the web page
 	re                   *rules.RuleEngine         // The rule engine
-	getURLMutex          sync.Mutex                // Mutex to protect the getURLContent function
+	getURLMutex          cmn.SafeMutex             // Mutex to protect the getURLContent function
 	closeSession         cmn.SafeMutex             // Mutex to protect the closeSession function
 	visitedLinks         map[string]bool           // Map to keep track of visited links
 	userURLPatterns      []string                  // User-defined URL patterns
@@ -1044,7 +1044,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		// If we don't need to collect content, clear it
 		pageInfo.BodyText = ""
 	}
-	//ctx.getURLMutex.Unlock() // Unlock the getURLMutex
+	ctx.getURLMutex.Unlock() // Unlock the getURLMutex
 
 	// Index the page
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
