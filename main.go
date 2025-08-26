@@ -428,7 +428,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					break
 				}
 			}
-			logStatus(plStatus, maxPipelines)
+			logStatus(plStatus)
 			if !anyPipelineStillRunning && !rampupRunning.Load() {
 				pipelinesRunning.Store(false)
 				break
@@ -799,7 +799,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx uin
 	}(&args)
 }
 
-func logStatus(PipelineStatus *[]crowler.Status, maxPipelines uint64) {
+func logStatus(PipelineStatus *[]crowler.Status) {
 	// Log the status of the pipelines
 	const (
 		sepRLine = "====================================="
@@ -808,10 +808,8 @@ func logStatus(PipelineStatus *[]crowler.Status, maxPipelines uint64) {
 	report := "Pipelines status report\n"
 	report += sepRLine + "\n"
 	runningPipelines := 0
-	if uint64(len(*PipelineStatus)) > maxPipelines {
-		maxPipelines = uint64(len(*PipelineStatus))
-	}
-	for idx := uint64(0); idx < maxPipelines; idx++ {
+
+	for idx := 0; idx < len(*PipelineStatus); idx++ {
 		status := &(*PipelineStatus)[idx]
 		if status.PipelineRunning.Load() == 0 {
 			continue
@@ -847,8 +845,8 @@ func logStatus(PipelineStatus *[]crowler.Status, maxPipelines uint64) {
 			}
 		*/
 
-		// Prepare the report
-		report += fmt.Sprintf("               Pipeline: %d\n", status.PipelineID)
+		// Prepare the report (pipelineID + 1 is to avoid the pipeline 0 which seems to confuse many people)
+		report += fmt.Sprintf("               Pipeline: %d of %d\n", status.PipelineID+1, len(*PipelineStatus))
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
 		report += fmt.Sprintf("                 VDI ID: %s\n", status.VDIID)
