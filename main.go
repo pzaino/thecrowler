@@ -708,10 +708,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 
 	// First batch load into the queue: (initial load)
+	LastActivity.Store(time.Now()) // Reset activity
 	for _, source := range *wb.sources {
 		sourceChan <- source
-		LastActivity.Store(time.Now()) // Reset activity
 	}
+	LastActivity.Store(time.Now()) // Reset activity
 
 	RampUpRunning.Store(false) // Ramp-up phase is over
 	batchWg.Wait()
