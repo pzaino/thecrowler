@@ -622,6 +622,7 @@ func parseProcessingTimeout(timeoutStr string) time.Duration {
 		"seconds": 1 * time.Second,
 		"minute":  1 * time.Minute,
 		"minutes": 1 * time.Minute,
+		"mutes":   1 * time.Minute,
 		"m":       1 * time.Minute,
 		"h":       1 * time.Hour,
 		"hr":      1 * time.Hour,
@@ -643,7 +644,7 @@ func parseProcessingTimeout(timeoutStr string) time.Duration {
 	}
 
 	// Match numeric value followed by unit
-	re := regexp.MustCompile(`^(\d+)\s*(s|sec|secs|second|seconds|m|minute|minutes|h|hr|hrs|hour|hours|day|days|week|weeks|month|months|year|years|d|w|mo|y)$`)
+	re := regexp.MustCompile(`^(\d+)\s*(s|sec|secs|second|seconds|m|minute|minutes|mutes|h|hr|hrs|hour|hours|day|days|week|weeks|month|months|year|years|d|w|mo|y)$`)
 	if matches := re.FindStringSubmatch(timeoutStr); matches != nil {
 		value, err := strconv.Atoi(matches[1])
 		if err == nil {
