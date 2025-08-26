@@ -615,22 +615,35 @@ func parseProcessingTimeout(timeoutStr string) time.Duration {
 	// Handle days, weeks, months, years
 	// Note: months and years are approximate (30 and 365 days)
 	unitMultipliers := map[string]time.Duration{
-		"d":      24 * time.Hour,
-		"day":    24 * time.Hour,
-		"days":   24 * time.Hour,
-		"w":      7 * 24 * time.Hour,
-		"week":   7 * 24 * time.Hour,
-		"weeks":  7 * 24 * time.Hour,
-		"mo":     30 * 24 * time.Hour,
-		"month":  30 * 24 * time.Hour,
-		"months": 30 * 24 * time.Hour,
-		"y":      365 * 24 * time.Hour,
-		"year":   365 * 24 * time.Hour,
-		"years":  365 * 24 * time.Hour,
+		"s":       1 * time.Second,
+		"sec":     1 * time.Second,
+		"secs":    1 * time.Second,
+		"second":  1 * time.Second,
+		"seconds": 1 * time.Second,
+		"minute":  1 * time.Minute,
+		"minutes": 1 * time.Minute,
+		"m":       1 * time.Minute,
+		"h":       1 * time.Hour,
+		"hr":      1 * time.Hour,
+		"hrs":     1 * time.Hour,
+		"hour":    1 * time.Hour,
+		"hours":   1 * time.Hour,
+		"d":       24 * time.Hour,
+		"day":     24 * time.Hour,
+		"days":    24 * time.Hour,
+		"w":       7 * 24 * time.Hour,
+		"week":    7 * 24 * time.Hour,
+		"weeks":   7 * 24 * time.Hour,
+		"mo":      30 * 24 * time.Hour,
+		"month":   30 * 24 * time.Hour,
+		"months":  30 * 24 * time.Hour,
+		"y":       365 * 24 * time.Hour,
+		"year":    365 * 24 * time.Hour,
+		"years":   365 * 24 * time.Hour,
 	}
 
 	// Match numeric value followed by unit
-	re := regexp.MustCompile(`^(\d+)\s*(day|days|week|weeks|month|months|year|years|d|w|mo|y)$`)
+	re := regexp.MustCompile(`^(\d+)\s*(s|sec|secs|second|seconds|m|minute|minutes|h|hr|hrs|hour|hours|day|days|week|weeks|month|months|year|years|d|w|mo|y)$`)
 	if matches := re.FindStringSubmatch(timeoutStr); matches != nil {
 		value, err := strconv.Atoi(matches[1])
 		if err == nil {
