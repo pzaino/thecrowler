@@ -715,7 +715,7 @@ func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
 	if wb.sel.Available() <= 0 {
 		return nil, nil
 	}
-	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available())
+	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available()*2)
 	if err != nil {
 		return nil, err
 	}
