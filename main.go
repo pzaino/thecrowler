@@ -404,6 +404,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	var refillLock sync.Mutex      // Mutex to protect the refill operation
 	var closeChanOnce sync.Once
 	var totalSources atomic.Uint64 // Total Crawled Sources Counter
+	var statusLock sync.Mutex      // Mutex to protect the PipelineStatus slice
 
 	maxPipelines := uint64(len(config.Selenium)) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
@@ -586,7 +587,9 @@ func crawlSources(wb *WorkBlock) uint64 {
 			defer batchWg.Done()
 
 			var currentStatusIdx *uint64
-			starves := 0 // Counter for starvation
+			starves := 0          // Counter for starvation
+			refreshLastActivity() // Reset activity
+
 			for {
 				var source cdb.Source
 				if !batchCompleted.Load() {
@@ -600,12 +603,12 @@ func crawlSources(wb *WorkBlock) uint64 {
 							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
 							return
 						}
-						// sleep 2 seconds and continue
-						time.Sleep(2 * time.Second)
 						starves++
 						if starves > 5 {
 							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
 							starves = 0 // Reset starvation counter
+							// sleep 2 seconds and continue
+							time.Sleep(2 * time.Second)
 						}
 						continue
 					}
@@ -621,6 +624,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
 				var statusIdx uint64
+				// Getting a new status index must be protected by a lock
+				statusLock.Lock()
 				if currentStatusIdx == nil {
 					statusIdx = getAvailableOrNewPipelineStatus(wb)
 				} else {
@@ -633,6 +638,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 						maxPipelines = uint64(len(*wb.PipelineStatus))
 					}
 				}
+				statusLock.Unlock()
+
 				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
 
 				now := time.Now()
@@ -715,7 +722,7 @@ func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
 	if wb.sel.Available() <= 0 {
 		return nil, nil
 	}
-	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available()*2)
+	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available())
 	if err != nil {
 		return nil, err
 	}
