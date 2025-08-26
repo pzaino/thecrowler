@@ -602,14 +602,26 @@ func parseProcessingTimeout(timeoutStr string) time.Duration {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Processing timeout set to: %s", timeoutStr)
 
 	// Normalize known time units
-	replacements := map[string]string{
-		" minutes": "m", " minute": "m", " mins": "m", " min": "m",
-		" hours": "h", " hour": "h", " hrs": "h", " hr": "h",
-		" seconds": "s", " second": "s", " secs": "s", " sec": "s",
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{" minutes", "m"},
+		{" minute", "m"},
+		{" mins", "m"},
+		{" min", "m"},
+		{" hours", "h"},
+		{" hour", "h"},
+		{" hrs", "h"},
+		{" hr", "h"},
+		{" seconds", "s"},
+		{" second", "s"},
+		{" secs", "s"},
+		{" sec", "s"},
 	}
 
-	for k, v := range replacements {
-		timeoutStr = strings.ReplaceAll(timeoutStr, k, v)
+	for _, i := range replacements {
+		timeoutStr = strings.ReplaceAll(timeoutStr, i.old, i.new)
 	}
 
 	// Handle days, weeks, months, years
