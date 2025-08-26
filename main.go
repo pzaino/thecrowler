@@ -425,7 +425,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	var (
 		batchWg          sync.WaitGroup
-		refillLock       sync.Mutex // Mutex to protect the refill operation
+		refillLock       cmn.SafeMutex // Mutex to protect the refill operation
 		closeChanOnce    sync.Once
 		statusLock       sync.Mutex    // Mutex to protect the PipelineStatus slice
 		TotalSources     atomic.Uint64 // Total Crawled Sources Counter
@@ -474,35 +474,74 @@ func crawlSources(wb *WorkBlock) uint64 {
 	go func() {
 		inactivityTimeout := 60 * time.Second
 		timer := time.NewTimer(inactivityTimeout)
+		// Determine the target queue capacity for refilling decisions
+		targetCap := cap(sourceChan)
+		if targetCap == 0 {
+			// Unbuffered or unknown: fall back to VDIs count so we don’t block forever
+			targetCap = len(wb.Config.Selenium)
+		}
+		// Optional: low/high water marks to smooth bursts
+		lowWater := targetCap / 2 // start refilling when queue drops below this
+		highWater := targetCap    // never exceed channel cap
+
+		// helper to reset timer
+		resetTimer := func() {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(inactivityTimeout)
+		}
 
 		defer func() {
+			// make sure timer is stopped/drained to avoid leaks
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+
 			defer func() {
 				recover() //nolint:errcheck // avoid panic if somehow closed elsewhere
 			}()
+
 			closeChanOnce.Do(func() {
 				close(sourceChan)
 				BatchCompleted.Store(true)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
+				refillLock.Unlock() // this is a special lock which is self-aware, so we can safely try to unlock it here to ensure that if is locked we'll unlock and if it isn't we won't panic
 			})
 		}()
+
+		// ensure LastActivity sane
+		if v := LastActivity.Load(); v == nil {
+			LastActivity.Store(time.Now())
+		}
 
 		for {
 			select {
 			case <-timer.C:
 				// Timeout expired → no new sources, close pipeline
 				if PipelinesRunning.Load() || RampUpRunning.Load() {
-					timer.Reset(inactivityTimeout)
+					resetTimer() // still busy, reset timer
+					continue
 				} else {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 					return
 				}
 			default:
 				refillLock.Lock()
-				if (wb.sel.Available() > 0) && (len(sourceChan) < len(wb.Config.Selenium)) {
+				if (wb.sel.Available() > 0) && (len(sourceChan) < lowWater) {
+					// We need to refill the source channel
+					need := highWater - len(sourceChan)
+
 					newSources := []cdb.Source{}
 					var err error
 					if !BatchCompleted.Load() {
-						newSources, err = monitorBatchAndRefill(wb)
+						newSources, err = monitorBatchAndRefill(wb, need)
 					}
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
@@ -514,28 +553,19 @@ func crawlSources(wb *WorkBlock) uint64 {
 								sourceChan <- src
 							}
 							// Reset the timer because we received new sources
-							if !timer.Stop() {
-								<-timer.C
-							}
-							timer.Reset(inactivityTimeout)
+							resetTimer()
 						}
 					} else {
 						// no data returned, but are we still collecting from sources?
 						last := LastActivity.Load().(time.Time)
 						if time.Since(last) < (1 * time.Minute) {
 							// Yes, so reset the timer anyway
-							if !timer.Stop() {
-								<-timer.C
-							}
-							timer.Reset(inactivityTimeout)
+							resetTimer()
 						}
 					}
-				} else if (wb.sel.Available() == 0) || (len(sourceChan) >= len(wb.Config.Selenium)) {
+				} else if (wb.sel.Available() == 0) || (len(sourceChan) >= highWater) {
 					// Reset the timer, we are busy
-					if !timer.Stop() {
-						<-timer.C
-					}
-					timer.Reset(inactivityTimeout)
+					resetTimer()
 				}
 				refillLock.Unlock()
 				time.Sleep(2 * time.Second) // Avoid tight loop
@@ -632,7 +662,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 							time.Sleep(2 * time.Second)
 						} else {
 							// short sleep to avoid tight loop
-							time.Sleep(500 * time.Millisecond)
+							time.Sleep(200 * time.Millisecond)
 						}
 						continue
 					}
@@ -755,11 +785,14 @@ func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {
 	return totalDelay, nil
 }
 
-func monitorBatchAndRefill(wb *WorkBlock) ([]cdb.Source, error) {
+func monitorBatchAndRefill(wb *WorkBlock, need int) ([]cdb.Source, error) {
 	if wb.sel.Available() <= 0 {
 		return nil, nil
 	}
-	newSources, err := retrieveAvailableSources(wb.db, wb.sel.Available())
+	if need <= 0 {
+		need = wb.sel.Available()
+	}
+	newSources, err := retrieveAvailableSources(wb.db, need)
 	if err != nil {
 		return nil, err
 	}
