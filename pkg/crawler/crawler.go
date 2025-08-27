@@ -180,6 +180,11 @@ func (ctx *ProcessContext) GetVDIInstance() *vdi.SeleniumInstance {
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
 func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.SeleniumInstance) {
+	var (
+		closeChanOnce sync.Once
+		err           error
+	)
+
 	// Initialize the process context
 	processCtx := NewProcessContext(args)
 	if processCtx == nil {
@@ -194,7 +199,6 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	}
 
 	// We have process context, so we can proceed:
-	var err error
 
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
@@ -236,10 +240,18 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	}
 
 	timeoutTimer := time.NewTimer(timeout)
-	defer timeoutTimer.Stop()
+	defer func() {
+		timeoutTimer.Stop()
 
-	// Ensure we always close the session correctly
-	defer closeSession(processCtx, args, &sel, releaseVDI, err)
+		defer func() {
+			recover() //nolint:errcheck // avoid panic if somehow closed elsewhere
+		}()
+
+		closeChanOnce.Do(func() {
+			// Ensure we always close the session correctly
+			closeSession(processCtx, args, &sel, releaseVDI, err)
+		})
+	}()
 
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
 	if !IsValidURIProtocol(args.Src.URL) {
