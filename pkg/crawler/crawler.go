@@ -2921,6 +2921,18 @@ func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
 }
 
 func cleanUpBrowser(wd *vdi.WebDriver) {
+	if wd == nil || *wd == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot clean up browser.")
+		return
+	}
+
+	// Check if the current page is `data:`, if so skip this routine and return
+	currentURL, err := (*wd).CurrentURL()
+	if err == nil && strings.HasPrefix(currentURL, "data:") {
+		_ = (*wd).DeleteAllCookies()
+		return
+	}
+
 	// Clear everything before resetting the VDI session
 	script := `
 	window.localStorage.clear();
@@ -2936,10 +2948,11 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 		});
 	}
 	`
-	_, err := (*wd).ExecuteScript(script, nil)
+	_, err = (*wd).ExecuteScript(script, nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to clear storage: %v", err)
 	}
+
 	_ = (*wd).DeleteAllCookies()
 }
 
