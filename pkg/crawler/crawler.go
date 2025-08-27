@@ -120,6 +120,7 @@ type ProcessContext struct {
 	hi                   *httpi.HTTPDetails        // The HTTP header information of the web page
 	re                   *rules.RuleEngine         // The rule engine
 	getURLMutex          cmn.SafeMutex             // Mutex to protect the getURLContent function
+	accessVDIMutex       cmn.SafeMutex             // Mutex to protect access to the VDI instance
 	closeSession         cmn.SafeMutex             // Mutex to protect the closeSession function
 	visitedLinks         map[string]bool           // Map to keep track of visited links
 	userURLPatterns      []string                  // User-defined URL patterns
@@ -3005,6 +3006,12 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext) (vdi.WebDriver, string, error) {
+	if ctx == nil {
+		return nil, "", errors.New("ProcessContext is nil")
+	}
+	ctx.accessVDIMutex.Lock() // Allow 1 worker per session	at the time
+	defer ctx.accessVDIMutex.Unlock()
+
 	// Refresh Crawler Instance work timeout
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
@@ -3040,6 +3047,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	validationRetryBudget := make(map[string]int)
 	ctx.Status.LastRetry.Store(0)
 	for retries := 0; retries <= maxRetries; retries++ {
+		if ctx.VDIReturned {
+			// If the VDI session is returned, return the WebDriver
+			return wd, "", nil
+		}
+
 		// Reset the Selenium session for a clean browser with new User-Agent
 		if ctx.config.Crawler.ChangeUserAgent == "always" {
 			cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
