@@ -205,7 +205,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.Status.PipelineRunning.Store(1) // Set the pipeline status to running
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
-	processCtx.VDIReturned = false
+	processCtx.SetVDIReturnedFlag(false)
 	processCtx.RefreshCrawlingTimer = args.Refresh
 	processCtx.pStatus = 1 // Processing started
 
@@ -736,6 +736,7 @@ func closeSession(ctx *ProcessContext,
 	// Release VDI connection
 	// (this allows the next source to be processed, if any, in this batch job)
 	vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
+	ctx.SetVDIReturnedFlag(true)
 
 	// Signal pipeline completion
 	if ctx.Status.PipelineRunning.Load() == 1 || err != nil {
@@ -764,9 +765,6 @@ func closeSession(ctx *ProcessContext,
 	ctx.CollectedCookies = nil // Clear cookies
 	ctx.linksMutex.Unlock()
 
-	// Set the context object to nil
-	//*ctx = ProcessContext{} // Reset the struct
-	//ctx = nil               // Signal that ctx is no longer needed
 	ctx.pStatus = 10 // Processing completed
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Returning from crawling a source.")
 }
@@ -2854,6 +2852,10 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
 	if wd == nil || *wd == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot setup browser.")
+		return
+	}
+
+	if ctx.VDIReturned {
 		return
 	}
 
