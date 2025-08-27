@@ -533,6 +533,9 @@ func crawlSources(wb *WorkBlock) uint64 {
 						continue
 					}
 					PipelinesRunning.Store(false)
+					RampUpRunning.Store(false)
+					BatchCompleted.Store(true)
+					time.Sleep(15 * time.Second) // Give some time to the pipelines to complete
 				} else {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 					return
