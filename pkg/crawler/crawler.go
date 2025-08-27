@@ -3556,6 +3556,14 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 }
 
 func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
+	if ctx.VDIReturned {
+		// If the VDI session is returned, stop the process
+		return nil
+	}
+	if wd == nil || *wd == nil {
+		return errors.New("WebDriver is nil, cannot get cookies")
+	}
+
 	// Get the cookies
 	cookies, err := (*wd).GetCookies()
 	if err != nil {
@@ -3564,6 +3572,10 @@ func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
 
 	// Add new cookies to the context
 	for _, cookie := range cookies {
+		if ctx.CollectedCookies == nil {
+			// SOmething must have close the session here
+			break
+		}
 		ctx.CollectedCookies[cookie.Name] = cookie.Value
 	}
 
