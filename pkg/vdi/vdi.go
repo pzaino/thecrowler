@@ -1282,7 +1282,7 @@ func Refresh(ctx ProcessContextInterface) error {
 	// get the page title
 	title, _ := (*wd).Title()
 	if title == "" {
-		cmn.DebugMsg(cmn.DbgLvlError, "Issued a 'Keep Session Alive' command. %s", title)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Refresh] Sent 'Keep Session Alive' command. %s", title)
 	}
 
 	return nil
