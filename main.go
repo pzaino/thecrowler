@@ -526,8 +526,12 @@ func crawlSources(wb *WorkBlock) uint64 {
 			case <-timer.C:
 				// Timeout expired → no new sources, close pipeline
 				if PipelinesRunning.Load() || RampUpRunning.Load() {
-					resetTimer() // still busy, reset timer
-					continue
+					last := LastActivity.Load().(time.Time)
+					if time.Since(last) < (1 * time.Minute) {
+						// Yes, so reset the timer anyway
+						resetTimer()
+						continue
+					}
 				} else {
 					cmn.DebugMsg(cmn.DbgLvlInfo, "No new sources received in the last %v — closing pipeline.", inactivityTimeout)
 					return
