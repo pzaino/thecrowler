@@ -4541,12 +4541,14 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Get the HTML content of the page
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Getting HTML content for '%s'\n", id, url)
+	startTime := time.Now()
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
 		return err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s'\n", id, url)
+	elapsed := time.Since(startTime)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s' in %v\n", id, url, elapsed)
 
 	// Re-Get current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
@@ -4571,18 +4573,21 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Detecting technologies for '%s'\n", id, currentURL)
+	startTime = time.Now()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
 	}
+	elapsed = time.Since(startTime)
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully detected technologies for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully detected technologies for '%s' in %v\n", id, currentURL, elapsed)
 
 	// Extract page information
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page information for '%s'\n", id, currentURL)
+	startTime = time.Now()
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
 	if err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
@@ -4590,6 +4595,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		}
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
+	elapsed = time.Since(startTime)
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
@@ -4599,13 +4605,15 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 	// Generate Keywords
 	pageCache.Keywords = extractKeywords(pageCache)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting navigation metrics for '%s'\n", id, currentURL)
+		startTime = time.Now()
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s'\n", id, currentURL)
+		elapsed = time.Since(startTime)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -4615,8 +4623,10 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting page logs for '%s'\n", id, currentURL)
+		startTime = time.Now()
 		collectPageLogs(&htmlContent, &pageCache)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s'\n", id, currentURL)
+		elapsed = time.Since(startTime)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -4626,8 +4636,10 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting XHR for '%s'\n", id, currentURL)
+		startTime = time.Now()
 		collectXHR(processCtx, &pageCache)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s'\n", id, currentURL)
+		elapsed = time.Since(startTime)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -4650,24 +4662,29 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
-	//processCtx.getURLMutex.Unlock()
+	processCtx.getURLMutex.Unlock()
+	startTime = time.Now()
 	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
+	elapsed = time.Since(startTime)
 	if processCtx.visitedLinks == nil {
 		processCtx.visitedLinks = make(map[string]bool)
 	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexed page '%s' in %v\n", id, currentURL, elapsed)
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
+		startTime = time.Now()
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully added new links to the process context.\n", id)
+		elapsed = time.Since(startTime)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully added new links to the process context in %v\n", id, elapsed)
 	}
 	resetPageInfo(&pageCache) // Reset the PageInfo object
 
