@@ -4155,6 +4155,16 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 		return true
 	}
 
+	// Check if the URL matches any of the Unwanted URLs:
+	if processCtx.compiledUURLs != nil {
+		for _, UURL := range processCtx.compiledUURLs {
+			if UURL.MatchString(url) {
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
+				return true
+			}
+		}
+	}
+
 	// Check if the URL is the same as the Source URL (in which case skip it)
 	if url == processCtx.source.URL {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' as it is the same as the source URL\n", id, url)
