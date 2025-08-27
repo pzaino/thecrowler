@@ -4063,11 +4063,13 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
+		/* The following is in GetURLContent now:
 		if processCtx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
 			processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies on each request
 			_ = ResetSiteSession(processCtx)
 		}
+		*/
 
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
@@ -4119,14 +4121,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		// Clear the skipped URLs
 		skippedURLs = nil
-
-		// Delay before processing the next job
-		var totalDelay time.Duration
-		if processCtx.config.Crawler.Delay != "0" {
-			delay := exi.GetFloat(processCtx.config.Crawler.Delay)
-			totalDelay, _ = vdiSleep(processCtx, delay)
-		}
-		processCtx.Status.LastDelay = totalDelay.Seconds()
 
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
@@ -4776,6 +4770,14 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		pageCache.BodyText = ""
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
 	}
+
+	// Delay before processing the next job
+	var totalDelay time.Duration
+	if processCtx.config.Crawler.Delay != "0" {
+		delay := exi.GetFloat(processCtx.config.Crawler.Delay)
+		totalDelay, _ = vdiSleep(processCtx, delay)
+	}
+	processCtx.Status.LastDelay = totalDelay.Seconds()
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
