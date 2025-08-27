@@ -4572,6 +4572,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
+	// Detect Page/Website technologies
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Detecting technologies for '%s'\n", id, currentURL)
 	startTime = time.Now()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
@@ -4596,16 +4597,35 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	elapsed = time.Since(startTime)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
+
+	// Get Page Information
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page links for '%s'\n", id, currentURL)
+	startTime = time.Now()
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
+	elapsed = time.Since(startTime)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page links for '%s' in %v\n", id, currentURL, elapsed)
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
+
 	// Generate Keywords
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page keywords for '%s'\n", id, currentURL)
+	startTime = time.Now()
 	pageCache.Keywords = extractKeywords(pageCache)
+	elapsed = time.Since(startTime)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
+	if processCtx.RefreshCrawlingTimer != nil {
+		processCtx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
