@@ -446,7 +446,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 					processCtx.Status.CrawlingRunning.Store(3)
 					processCtx.Status.PipelineRunning.Store(3)
 					processCtx.Status.TotalErrors.Add(1)
-					processCtx.Status.LastError = err.Error()
+					if processCtx.Status != nil { // double check
+						processCtx.Status.LastError = err.Error()
+					}
 				}
 			}
 			return
