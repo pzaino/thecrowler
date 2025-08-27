@@ -867,7 +867,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Post-connection settings
-	setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+	if !*ctx.GetVDIReturnedFlag() {
+		setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+	}
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
 	result, err2 := getBrowserConfiguration(&wd)
