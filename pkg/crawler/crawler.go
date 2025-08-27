@@ -429,11 +429,13 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
 			if processCtx != nil {
-				processCtx.Status.EndTime = time.Now()
-				processCtx.Status.CrawlingRunning.Store(3)
-				processCtx.Status.PipelineRunning.Store(3)
-				processCtx.Status.TotalErrors.Add(1)
-				processCtx.Status.LastError = err.Error()
+				if processCtx.Status != nil {
+					processCtx.Status.EndTime = time.Now()
+					processCtx.Status.CrawlingRunning.Store(3)
+					processCtx.Status.PipelineRunning.Store(3)
+					processCtx.Status.TotalErrors.Add(1)
+					processCtx.Status.LastError = err.Error()
+				}
 			}
 			return
 		}
