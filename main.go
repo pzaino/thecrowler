@@ -627,8 +627,10 @@ func crawlSources(wb *WorkBlock) uint64 {
 		RefreshLastActivity() // Reset activity
 		if ramp > 0 {
 			PipelinesRunning.Store(true)
-			// Sleep for a ramp-up time based on the VDI ID and the ramp factor
-			_, _ = waitSomeTime(float64(ramp), RefreshLastActivity)
+			if vdiID > 0 {
+				// Sleep for a ramp-up time based on the VDI ID and the ramp factor
+				_, _ = waitSomeTime(float64(ramp), RefreshLastActivity)
+			}
 		}
 
 		batchWg.Add(1)
