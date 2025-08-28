@@ -623,6 +623,13 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
+	// First batch load into the queue: (initial load)
+	LastActivity.Store(time.Now()) // Reset activity
+	for _, source := range *wb.sources {
+		sourceChan <- source
+	}
+	LastActivity.Store(time.Now()) // Reset activity
+
 	for vdiID := 0; vdiID < maxPipelines; vdiID++ {
 		RefreshLastActivity() // Reset activity
 		if ramp > 0 {
@@ -746,13 +753,6 @@ func crawlSources(wb *WorkBlock) uint64 {
 		// Log the VDI instance started
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Started VDI slot %d", vdiID)
 	}
-
-	// First batch load into the queue: (initial load)
-	LastActivity.Store(time.Now()) // Reset activity
-	for _, source := range *wb.sources {
-		sourceChan <- source
-	}
-	LastActivity.Store(time.Now()) // Reset activity
 
 	RampUpRunning.Store(false) // Ramp-up phase is over
 	batchWg.Wait()
