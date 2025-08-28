@@ -440,16 +440,14 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		// Refresh the page
 		tErr = processCtx.RefreshVDIConnection(sel)
 		if tErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", tErr)
 			if processCtx != nil {
 				if processCtx.Status != nil {
 					processCtx.Status.EndTime = time.Now()
 					processCtx.Status.CrawlingRunning.Store(3)
 					processCtx.Status.PipelineRunning.Store(3)
 					processCtx.Status.TotalErrors.Add(1)
-					if processCtx.Status != nil { // double check
-						processCtx.Status.LastError = err.Error()
-					}
+					processCtx.Status.LastError = tErr.Error()
 				}
 			}
 			return
@@ -3188,6 +3186,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			totalInterval, _ = vdiSleep(ctx, (interval + 5)) // Pause to let Home page load
 		}
 		ctx.Status.LastWait = totalInterval.Seconds()
+
 		// Check if we are on the right URL
 		currentURL, err := wd.CurrentURL()
 		if err != nil {
