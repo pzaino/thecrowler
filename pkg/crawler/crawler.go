@@ -897,7 +897,8 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 		cmn.DebugMsg(cmn.DbgLvlError, "Stale-Processing detected, aborting the process.")
 		return err
 	}
-	if err := ctx.wd.Refresh(); err != nil {
+	title, err := ctx.wd.Title()
+	if err != nil {
 		var browserType int
 		if ctx.config.Crawler.Platform == optBrowsingMobile {
 			browserType = 1
@@ -912,6 +913,7 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 			return err
 		}
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Refreshed VDI connection, current page title: %s", title)
 	return nil
 }
 
