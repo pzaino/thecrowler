@@ -42,7 +42,7 @@ const (
 
 func genHealthURL(t serviceType) string {
 	// Define the health check endpoint
-	var rval string
+	rval := ""
 	switch t {
 	case crowler:
 		rval = fmt.Sprintf("%s:%d/v1/health", config.Crawler.Control.Host, config.Crawler.Control.Port)
@@ -102,6 +102,7 @@ func main() {
 	// Perform the GET request
 	resp, err := http.Get(healthURL) //nolint:gosec // This is usually a localhost connection
 	if err != nil || resp.StatusCode != http.StatusOK {
+		cmn.DebugMsg(cmn.DbgLvlDebug, fmt.Sprintf("Health check failed for %s: %v", *service, err))
 		// If there's an error or the status is not 200, exit with a non-zero status
 		os.Exit(1)
 	}
