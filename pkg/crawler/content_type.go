@@ -388,6 +388,11 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 			if allocSize > maxAttributesPerElement {
 				allocSize = maxAttributesPerElement
 			}
+			// Ensure allocSize+2 won't overflow int
+			if allocSize > (int(^uint(0)>>1))-2 {
+				// Set allocSize to maximum allowed
+				allocSize = (int(^uint(0) >> 1)) - 2
+			}
 			node := make(map[string]interface{}, allocSize+2)
 			// attributes -> "@name"
 			for _, a := range t.Attr {
