@@ -382,8 +382,13 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			allocSize := len(t.Attr)
-			if allocSize > maxAttributesPerElement {
+			if allocSize < 0 || allocSize > maxAttributesPerElement {
 				allocSize = maxAttributesPerElement
+			}
+			// Ensure allocSize+2 won't overflow int
+			if allocSize > (int(^uint(0)>>1))-2 {
+				// Set allocSize to maximum allowed
+				allocSize = (int(^uint(0) >> 1)) - 2
 			}
 			node := make(map[string]interface{}, allocSize+2)
 			// attributes -> "@name"
