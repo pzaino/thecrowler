@@ -48,6 +48,9 @@ const (
 	JSONType = "application/json"
 
 	spanTag = "span"
+
+	// Maximum XML attributes per element to prevent allocation overflow
+	maxAttributesPerElement = 1024
 )
 
 var (
@@ -378,7 +381,11 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			node := make(map[string]interface{}, len(t.Attr)+2)
+			allocSize := len(t.Attr)
+			if allocSize > maxAttributesPerElement {
+				allocSize = maxAttributesPerElement
+			}
+			node := make(map[string]interface{}, allocSize+2)
 			// attributes -> "@name"
 			for _, a := range t.Attr {
 				key := "@" + a.Name.Local
