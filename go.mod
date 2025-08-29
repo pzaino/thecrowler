@@ -63,7 +63,7 @@ require (
 	github.com/mafredri/cdp v0.35.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.2
 	github.com/prometheus/client_golang v1.23.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.17.4
 	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
