@@ -19,7 +19,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
@@ -38,6 +37,7 @@ const (
 	crowler serviceType = iota
 	vdi
 	api
+	events
 )
 
 func genHealthURL(t serviceType) string {
@@ -60,6 +60,13 @@ func genHealthURL(t serviceType) string {
 		} else {
 			rval = fmt.Sprintf("http://%s", rval)
 		}
+	case events:
+		rval = fmt.Sprintf("%s:%d/v1/health", config.Events.Host, config.Events.Port)
+		if config.Events.SSLMode == cmn.EnableStr {
+			rval = fmt.Sprintf("https://%s", rval)
+		} else {
+			rval = fmt.Sprintf("http://%s", rval)
+		}
 	}
 	return rval
 }
@@ -68,6 +75,8 @@ func main() {
 	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
 	service := flag.String("service", "crowler", "Service to check (crowler, vdi, api)")
 
+	cmn.InitLogger("healthCheck")
+
 	// Parse the command line arguments
 	flag.Parse()
 
@@ -75,7 +84,7 @@ func main() {
 	var err error
 	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
-		log.Println(err)
+		cmn.DebugMsg(cmn.DbgLvlError, fmt.Sprintf("Health check failed to load config.yaml: %v", err))
 		os.Exit(1)
 	}
 
@@ -88,8 +97,10 @@ func main() {
 		serviceToCheck = vdi
 	case "api":
 		serviceToCheck = api
+	case "events":
+		serviceToCheck = events
 	default:
-		log.Printf("Unknown service: %s", *service)
+		cmn.DebugMsg(cmn.DbgLvlError, "Unknown service: %s", *service)
 		os.Exit(1)
 	}
 
