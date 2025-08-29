@@ -191,7 +191,7 @@
                                                                     "type": ["string", "number", "boolean"]
                                                                 }
                                                             },
-                                                            "description": "Optional. Attributes specific to each selector type. CHeck the documentation for the specific selector type to see which attributes are supported."
+                                                            "description": "Optional. Attributes specific to each selector type. Check the documentation for the specific selector type to see which attributes are supported."
                                                         },
                                                         "attribute": {
                                                             "type": "object",
@@ -255,6 +255,10 @@
                                             "critical": {
                                                 "type": "boolean",
                                                 "description": "Flag to indicate if the element is critical for the rule to be considered successful. Keep in mind that setting this flag will make the rule fail and set the Source crawling to error state. This can be useful to stop the crawling process if a critical element is not found and get it re-scheduled with a different Proxy IP if the problem was due to a block."
+                                            },
+                                            "transform_html_to_json": {
+                                                "type": "boolean",
+                                                "description": "Flag to indicate if the extracted data should be transformed into JSON format. This is useful for structured data extraction when you specified html in the extract -> type -> html."
                                             }
                                         },
                                         "additionalProperties": false,

@@ -245,9 +245,10 @@ type ActionRule struct {
 
 // Element represents a single element to be scraped
 type Element struct {
-	Key       string     `json:"key" yaml:"key"`
-	Selectors []Selector `json:"selectors" yaml:"selectors"`
-	Critical  bool       `json:"critical" yaml:"critical"`
+	Key                 string     `json:"key" yaml:"key"`
+	Selectors           []Selector `json:"selectors" yaml:"selectors"`
+	Critical            bool       `json:"critical" yaml:"critical"`
+	TransformHTMLToJSON bool       `json:"transform_html_to_json" yaml:"transform_html_to_json"`
 }
 
 // Selector represents a single selector

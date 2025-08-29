@@ -16,7 +16,6 @@
 package crawler
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -49,6 +48,9 @@ const (
 	JSONType = "application/json"
 
 	spanTag = "span"
+
+	// Maximum XML attributes per element to prevent allocation overflow
+	maxAttributesPerElement = 1024
 )
 
 var (
@@ -72,8 +74,101 @@ type HTMLNode struct {
 // List of attributes to ignore
 var ignoredAttributes = map[string]bool{
 	"style": true,
-	"class": true,
-	"id":    true,
+	//"class": true, // Only enable for testing purposes or reducing noise
+	//"id":    true, // Only enable for testing purposes or reducing noise
+	"onabort":              true,
+	"onafterprint":         true,
+	"onanimationend":       true,
+	"onanimationiteration": true,
+	"onanimationstart":     true,
+	"onauxclick":           true,
+	"onbeforecopy":         true,
+	"onbeforecut":          true,
+	"onbeforepaste":        true,
+	"onbeforeprint":        true,
+	"onbeforeunload":       true,
+	"onblur":               true,
+	"oncanplay":            true,
+	"oncanplaythrough":     true,
+	"onchange":             true,
+	"onclick":              true,
+	"onclose":              true,
+	"oncontextmenu":        true,
+	"oncopy":               true,
+	"oncuechange":          true,
+	"oncut":                true,
+	"ondblclick":           true,
+	"ondrag":               true,
+	"ondragend":            true,
+	"ondragenter":          true,
+	"ondragleave":          true,
+	"ondragover":           true,
+	"ondragstart":          true,
+	"ondrop":               true,
+	"ondurationchange":     true,
+	"onemptied":            true,
+	"onended":              true,
+	"onerror":              true,
+	"onfocus":              true,
+	"onformdata":           true,
+	"onfullscreenchange":   true,
+	"onfullscreenerror":    true,
+	"ongotpointercapture":  true,
+	"oninput":              true,
+	"oninvalid":            true,
+	"onkeydown":            true,
+	"onkeypress":           true,
+	"onkeyup":              true,
+	"onload":               true,
+	"onloadeddata":         true,
+	"onloadedmetadata":     true,
+	"onloadstart":          true,
+	"onlostpointercapture": true,
+	"onmousedown":          true,
+	"onmouseenter":         true,
+	"onmouseleave":         true,
+	"onmousemove":          true,
+	"onmouseout":           true,
+	"onmouseover":          true,
+	"onmouseup":            true,
+	"onmousewheel":         true,
+	"onpaste":              true,
+	"onpause":              true,
+	"onplay":               true,
+	"onplaying":            true,
+	"onpointercancel":      true,
+	"onpointerdown":        true,
+	"onpointerenter":       true,
+	"onpointerleave":       true,
+	"onpointermove":        true,
+	"onpointerout":         true,
+	"onpointerover":        true,
+	"onpointerup":          true,
+	"onprogress":           true,
+	"onratechange":         true,
+	"onreset":              true,
+	"onresize":             true,
+	"onscroll":             true,
+	"onsearch":             true,
+	"onseeked":             true,
+	"onseeking":            true,
+	"onselect":             true,
+	"onshow":               true,
+	"onsort":               true,
+	"onstalled":            true,
+	"onsubmit":             true,
+	"onsuspend":            true,
+	"ontimeupdate":         true,
+	"ontoggle":             true,
+	"onvolumechange":       true,
+	"onwaiting":            true,
+	"onwheel":              true,
+	"nonce":                true, "integrity": true, "crossorigin": true, "referrerpolicy": true,
+	"loading": true, "decoding": true, "fetchpriority": true,
+	"align": true, "bgcolor": true, "border": true, "cellpadding": true, "cellspacing": true,
+	"width": true, "height": true,
+	"autocapitalize": true, "autocorrect": true, "spellcheck": true,
+	"enterkeyhint": true, "inputmode": true,
 }
 
 // ContentTypeDetectionRules represents the content type detection rules for a web page.
@@ -217,7 +312,7 @@ func detectContentType(body, url string, wd vdi.WebDriver) string {
 }
 
 // Convert XML to JSON (map format)
-// Convert XML to JSON (map format)
+/* old implementation:
 func xmlToJSON(xmlStr string) (interface{}, error) {
 	// Define a generic container
 	var result interface{}
@@ -244,6 +339,105 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 	}
 
 	return finalResult, nil
+}
+*/
+
+// xmlToJSON parses XML with a token walker and returns a generic JSONable structure.
+// Shape:
+//
+//	{ "Root": { "@attr": "...", "#text": "...", "Child": [ {...}, {...} ] } }
+func xmlToJSON(xmlStr string) (interface{}, error) {
+	dec := xml.NewDecoder(strings.NewReader(xmlStr))
+
+	type element struct {
+		Name string
+		Node map[string]interface{}
+	}
+
+	var stack []element
+
+	// Helper to append child under key, auto-array on duplicate keys
+	appendChild := func(parent map[string]interface{}, key string, val interface{}) {
+		if existing, ok := parent[key]; ok {
+			switch arr := existing.(type) {
+			case []interface{}:
+				parent[key] = append(arr, val)
+			default:
+				parent[key] = []interface{}{arr, val}
+			}
+		} else {
+			parent[key] = val
+		}
+	}
+
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return nil, fmt.Errorf("xml token error: %w", err)
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			allocSize := len(t.Attr)
+			if allocSize < 0 {
+				allocSize = 0
+			}
+			if allocSize > maxAttributesPerElement {
+				allocSize = maxAttributesPerElement
+			}
+			// Ensure allocSize+2 won't overflow int
+			if allocSize > (int(^uint(0)>>1))-2 {
+				// Set allocSize to maximum allowed
+				allocSize = (int(^uint(0) >> 1)) - 2
+			}
+			node := make(map[string]interface{}, allocSize+2)
+			// attributes -> "@name"
+			for _, a := range t.Attr {
+				key := "@" + a.Name.Local
+				node[key] = a.Value
+			}
+			stack = append(stack, element{Name: t.Name.Local, Node: node})
+
+		case xml.CharData:
+			if len(stack) == 0 {
+				continue
+			}
+			txt := strings.TrimSpace(string([]byte(t)))
+			if txt == "" {
+				continue
+			}
+			// accumulate text
+			if v, ok := stack[len(stack)-1].Node["#text"]; ok {
+				stack[len(stack)-1].Node["#text"] = strings.TrimSpace(v.(string) + " " + txt)
+			} else {
+				stack[len(stack)-1].Node["#text"] = txt
+			}
+
+		case xml.EndElement:
+			// pop
+			if len(stack) == 0 {
+				continue
+			}
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+
+			// finished root?
+			if len(stack) == 0 {
+				// return { RootName: cur.Node }
+				return map[string]interface{}{cur.Name: cur.Node}, nil
+			}
+
+			// attach to parent
+			parent := stack[len(stack)-1]
+			appendChild(parent.Node, cur.Name, cur.Node)
+		}
+	}
+
+	// no elements
+	return nil, fmt.Errorf("empty XML")
 }
 
 // ExtractHTMLData extracts the relevant data from an HTML node
@@ -273,7 +467,7 @@ func ExtractHTMLData(n *html.Node) HTMLNode {
 		node.Tag = n.Data
 		node.Attributes = make(map[string]string)
 
-		// **If parent is <span>, merge child text instead of creating nested <span>**
+		// If parent is <span>, merge child text instead of creating nested <span>
 		isParentSpan := n.Parent != nil && strings.ToLower(n.Parent.Data) == spanTag
 		var childTextBuffer strings.Builder
 
@@ -285,7 +479,11 @@ func ExtractHTMLData(n *html.Node) HTMLNode {
 						// Merge text directly if parent is also <span>
 						childTextBuffer.WriteString(" " + text)
 					} else {
-						node.Text = text
+						// accumulate rather than overwrite to preserve full text
+						if node.Text != "" {
+							node.Text += " "
+						}
+						node.Text += text
 					}
 				}
 			}
@@ -294,6 +492,16 @@ func ExtractHTMLData(n *html.Node) HTMLNode {
 		// Merge collected text into the parent <span>
 		if isParentSpan && childTextBuffer.Len() > 0 {
 			return HTMLNode{Text: childTextBuffer.String()}
+		}
+		if childTextBuffer.Len() > 0 {
+			// keep attributes and tag; just add the collected text
+			txt := strings.TrimSpace(childTextBuffer.String())
+			if txt != "" {
+				if node.Text != "" {
+					node.Text += " "
+				}
+				node.Text += txt
+			}
 		}
 
 		// Extract URLs and relevant attributes

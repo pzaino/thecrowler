@@ -474,6 +474,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	if ctx == nil {
 		return nil, errors.New("context is nil")
 	}
+
+	// Validate the VDI configuration
 	if sel.Config.Host == "" {
 		return nil, errors.New("VDI instance host is empty")
 	}
@@ -865,12 +867,18 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Post-connection settings
-	setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+	if !*ctx.GetVDIReturnedFlag() {
+		setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+	}
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
 	result, err2 := getBrowserConfiguration(&wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v\n", err)
+		// Check if the error contains: "invalid session id"
+		if strings.Contains(err2.Error(), "invalid session id") {
+			return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
+		}
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
 	}
@@ -878,6 +886,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	err2 = addLoadListener(&wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
+		// Check if the error contains: "invalid session id"
+		if strings.Contains(err2.Error(), "invalid session id") {
+			return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
+		}
 	}
 
 	// Configure CDP
@@ -903,6 +915,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		_, err2 := wd.ExecuteChromeDPCommand("Network.enable", nil)
 		if err2 != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable CDP Network domain: %v", err2)
+			// Check if the error contains: "invalid session id"
+			if strings.Contains(err2.Error(), "invalid session id") {
+				return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
+			}
 		} else {
 			_, err2 = wd.ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
 				"urls": []string{"*.mp4"},
@@ -1264,7 +1280,10 @@ func Refresh(ctx ProcessContextInterface) error {
 	wd := ctx.GetWebDriver()
 
 	// get the page title
-	_, _ = (*wd).Title()
+	title, _ := (*wd).Title()
+	if title == "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Refresh] Sent 'Keep Session Alive' command. %s", title)
+	}
 
 	return nil
 }
