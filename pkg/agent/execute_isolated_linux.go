@@ -29,6 +29,8 @@ import (
 	"time"
 )
 
+// This is the implementation of executeIsolatedCommand for Linux Hosts
+
 // trySetNoNewPrivs sets SysProcAttr.NoNewPrivs= true if the field exists.
 func trySetNoNewPrivs(sys *syscall.SysProcAttr) {
 	if sys == nil {

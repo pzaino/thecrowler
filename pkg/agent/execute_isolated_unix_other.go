@@ -28,6 +28,9 @@ import (
 	"time"
 )
 
+// This is the implementation of executeIsolatedCommand for Unix-like systems
+// like macOS, BSD etc.
+
 // executeIsolatedCommand (macOS/BSD)
 // - UID/GID drop if requested (requires privilege)
 // - Captures stdout/stderr + exit code
