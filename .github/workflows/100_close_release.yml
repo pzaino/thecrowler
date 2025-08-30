@@ -67,14 +67,29 @@
             git tag "$VERSION"
             git push origin "$VERSION"
 
+        # after "Create Git tag" and before "Create GitHub release"
+        - name: Find previous tag
+          id: prev
+          run: |
+            VERSION="${{ steps.get_version.outputs.version }}"
+            # previous reachable tag (if none, leave empty)
+            PREV=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)
+            echo "prev_tag=$PREV" >> "$GITHUB_OUTPUT"
+
         - name: Create GitHub release
           if: ${{ github.event.inputs.dry_run != 'true' }}
           uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
           with:
             tag_name: ${{ steps.get_version.outputs.version }}
             name: Release ${{ steps.get_version.outputs.version }}
+            # This should ensure my custom intro to appear first
             body: |
               Release ${{ steps.get_version.outputs.version }}
+
+              **Full Changelog**:
+              https://github.com/${{ github.repository }}/compare/${{ steps.prev.outputs.prev_tag }}...${{ steps.get_version.outputs.version }}
+            # GitHub should append the auto notes based on release.yml here
+            generate_release_notes: true
             prerelease: ${{ github.event.inputs.prerelease }}
           env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
