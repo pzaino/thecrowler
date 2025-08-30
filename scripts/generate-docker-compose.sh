@@ -331,7 +331,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
     user: apiuser
     read_only: true
     healthcheck:
-      test: ["CMD-SHELL", "healthCheck"]
+      test: ["CMD-SHELL", "./healthCheck -service api"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -374,7 +374,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-2g}")
     user: eventsuser
     read_only: true
     healthcheck:
-      test: ["CMD-SHELL", "healthCheck"]
+      test: ["CMD-SHELL", "./healthCheck -service events"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -479,7 +479,7 @@ $ENGINE_NETWORKS
       - engine_data:/app/data
     user: crowler
     healthcheck:
-      test: ["CMD-SHELL", "healthCheck"]
+      test: ["CMD-SHELL", "./healthCheck -service crowler"]
       interval: 10s
       timeout: 5s
       retries: 5
