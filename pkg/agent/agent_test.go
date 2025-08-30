@@ -170,7 +170,7 @@ func TestRunCommandAction_Execute(t *testing.T) {
 			params: map[string]interface{}{
 				"input": "invalidcommand",
 			},
-			expectedError: "no such file or directory",
+			expectedError: "start failed: exec: \"invalidcommand\": executable file not found in $PATH",
 		},
 	}
 
