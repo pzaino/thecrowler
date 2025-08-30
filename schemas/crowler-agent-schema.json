@@ -13,6 +13,11 @@
                         "type": "string",
                         "description": "The name of the job."
                     },
+                    "description": {
+                        "type": "string",
+                        "description": "A brief description of the job.",
+                        "minLength": 1
+                    },
                     "process": {
                         "type": "string",
                         "description": "The process type, either 'serial' or 'parallel'.",
@@ -130,9 +135,14 @@
                         "items": {
                             "type": "object",
                             "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "A brief description of the step.",
+                                    "minLength": 1
+                                },
                                 "action": {
                                     "type": "string",
-                                    "description": "The action to be performed in this step.\nAPIRequest: Make a RESTful API request.\nAIInteraction: Interact with an AI model (via API).\nDBQuery: Query a database.\nRunCommand: Run a command on the system.\nPluginExecution: Execute a CROWler's plugin.\nCreateEvent: Create an event in the CROWler system.\nDecision takes a decision based on the output of the previous step.",
+                                    "description": "The action to be performed in this step.\nAPIRequest: Make a RESTful API request.\nAIInteraction: Interact with one of the known AI models (via API).\nDBQuery: Query a database.\nRunCommand: Run a command on the system.\nPluginExecution: Execute a CROWler's plugin.\nCreateEvent: Create an event in the CROWler system.\nDecision takes a decision based on the output of the previous step.",
                                     "enum": [
                                         "APIRequest",
                                         "AIInteraction",
@@ -145,7 +155,7 @@
                                 },
                                 "params": {
                                     "type": "object",
-                                    "description": "Parameters for the action. This is a free section, however, there are some specific parameter names that are expected for each action. For example, for the 'APIRequest' action, the 'url' parameter is expected. FOr the 'AIInteraction' action, the 'prompt' parameter is expected. For the 'DBQuery' action, the 'query' parameter is expected. For the 'RunCommand' action, the 'command' parameter is expected. For the 'PluginExecution' action, the 'plugin_name' parameter is expected. Also, when referring to data from the previous response in the 'params' section, the data must be referred to as '$response' followed by the key of the data. For example, if the previous response has a key 'status_code', it should be referred to as '$response.status_code'.",
+                                    "description": "Parameters for the action. This is a free section, however, there are some specific parameter names that are expected for each action. For example, for the 'APIRequest' action, the 'url' parameter is expected. For the 'AIInteraction' action, the 'model' and 'prompt' parameters are expected. For the 'DBQuery' action, the 'query' parameter is expected. For the 'RunCommand' action, the 'command' parameter is expected. For the 'PluginExecution' action, the 'plugin_name' parameter is expected. Also, when referring to data from the previous response in the 'params' section, the data must be referred to as '$response' followed by the key of the data. For example, if the previous response has a key 'status_code', it should be referred to as '$response.status_code'.",
                                     "additionalProperties": true
                                 }
                             },
@@ -236,10 +246,6 @@
                                             "params": {
                                                 "type": "object",
                                                 "properties": {
-                                                    "url": {
-                                                        "type": "string",
-                                                        "description": "The URL to make the request to."
-                                                    },
                                                     "messages": {
                                                         "type": "array",
                                                         "description": "An array of message objects for chat-based endpoints.",
@@ -341,19 +347,14 @@
                                                 "oneOf": [
                                                     {
                                                         "required": [
-                                                            "url",
+                                                            "model",
                                                             "prompt"
                                                         ]
                                                     },
                                                     {
                                                         "required": [
-                                                            "url",
+                                                            "model",
                                                             "messages"
-                                                        ]
-                                                    },
-                                                    {
-                                                        "required": [
-                                                            "url"
                                                         ]
                                                     }
                                                 ]
