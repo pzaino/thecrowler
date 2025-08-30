@@ -95,8 +95,8 @@ from:
 - **Advanced Detection Capabilities**: Discover a wealth of information with
 features that go beyond basic crawling:
   - URL and Content Discovery
-  - Page Content, Metadata, and and more
-  - Keywords Analysis and Language Detection
+  - Page Content, Metadata, XHR, fetch, and more
+  - Keywords extraction and analysis, Language Detection
   - Insightful HTTP Headers, Network Info, WHOIS, DNS, and Geo-localization
   Data
 - **Sophisticated Ruleset**: To leverage rules-based activities and logic
@@ -108,6 +108,12 @@ features that go beyond basic crawling:
   - Crawling rules: To define how the crawler should behave in different
     situations (for instance both recursive and non-recursive crawling,
     fuzzing, etc.)
+- **Plugin System**: Extend The CROWler's capabilities with a robust plugin system
+  architecture, allowing developers to create entirely new solutions and/or integrate seamlessly with existing ones.
+  - Plugins can be executed in the browser context, enabling rich interactions with web pages.
+  - They can also be executed in the engine context, allowing for deeper integration with the crawling process.
+  - Plugins are written in JavaScript and Javascript has been extended to support ETL (Extract, Transform, Load) operations as well as Event-driven programming, multiple DBs (PostgreSQL, MongoDB, Neo4J, MySQL, SQLite) and there are also extensions to use CSV and other file types directly and seamlessly.
+  - Plugins can also be controlled via the new Agents Architecture as well as the Events API.
 - **Powerful Search Engine Integration**: Utilize an API-driven search engine
 equipped with dorking capabilities and comprehensive content search, opening
 new avenues for data analysis and insight.
