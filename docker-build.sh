@@ -62,6 +62,12 @@ if [ "${DOCKER_CROWLER_DB_USER}" = "" ]; then
     export DOCKER_CROWLER_DB_USER=crowler
 fi
 
+# Check if a config.yaml has been created:
+if [ ! -f "./config.yaml" ]; then
+    # No config.yaml found, so let's use config.default instead:
+    cp ./config.default ./config.yaml
+fi
+
 # Detect host architecture
 ARCH=$(uname -m)
 PLATFORM="linux/amd64"
