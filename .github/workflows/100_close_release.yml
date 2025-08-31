@@ -94,6 +94,15 @@
           env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+        - name: Publish module version to Go proxy (curl only)
+          if: ${{ github.event.inputs.dry_run != 'true' }}
+          run: |
+            set -euxo pipefail
+            VERSION="${{ steps.get_version.outputs.version }}"
+            MODULE="github.com/pzaino/thecrowler"
+            curl -fsS "https://proxy.golang.org/${MODULE}/@v/${VERSION}.info" >/dev/null
+            curl -fsS "https://pkg.go.dev/${MODULE}@${VERSION}" >/dev/null || true
+
         - name: Dry run notice
           if: ${{ github.event.inputs.dry_run == 'true' }}
           run: |
