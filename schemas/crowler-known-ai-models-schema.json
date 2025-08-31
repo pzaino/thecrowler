@@ -1,5 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-known-ai-models-schema.json",
   "title": "Models Schema",
   "type": "object",
   "properties": {
