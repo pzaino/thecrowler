@@ -92,7 +92,7 @@ func MapStrToJSONStr(m map[string]string) (string, error) {
 	return string(js), err
 }
 
-// SafeEscapeJSONString escapes a string for JSON
+// SafeEscapeJSONString escapes a string for JSON and for embedding in quoted contexts
 func SafeEscapeJSONString(s any) string {
 	ss := strings.ReplaceAll(fmt.Sprintf("%v", s), "\\", "\\\\")
 	ss = strings.ReplaceAll(ss, "\"", "\\\"")
