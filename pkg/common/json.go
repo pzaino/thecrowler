@@ -96,5 +96,6 @@ func MapStrToJSONStr(m map[string]string) (string, error) {
 func SafeEscapeJSONString(s any) string {
 	ss := strings.ReplaceAll(fmt.Sprintf("%v", s), "\\", "\\\\")
 	ss = strings.ReplaceAll(ss, "\"", "\\\"")
+	ss = strings.ReplaceAll(ss, "'", "\\'")
 	return ss
 }
