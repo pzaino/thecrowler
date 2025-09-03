@@ -52,6 +52,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 require (
@@ -61,12 +62,11 @@ require (
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/google/uuid v1.6.0
 	github.com/mafredri/cdp v0.35.0
-	github.com/neo4j/neo4j-go-driver/v5 v5.28.2
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.3
 	github.com/prometheus/client_golang v1.23.0
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.17.4
 	golang.org/x/time v0.12.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
