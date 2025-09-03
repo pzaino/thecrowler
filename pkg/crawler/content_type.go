@@ -440,6 +440,16 @@ func xmlToJSON(xmlStr string) (interface{}, error) {
 	return nil, fmt.Errorf("empty XML")
 }
 
+// TransformTextToHTML transforms a string containing HTML to a *html.Node type
+func TransformTextToHTML(text string) (*html.Node, error) {
+	// Parse the HTML content
+	doc, err := html.Parse(strings.NewReader(text))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+	return doc, nil
+}
+
 // ExtractHTMLData extracts the relevant data from an HTML node
 func ExtractHTMLData(n *html.Node) HTMLNode {
 	var node HTMLNode

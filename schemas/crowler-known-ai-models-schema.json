@@ -1,0 +1,206 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-known-ai-models-schema.json",
+  "title": "Models Schema",
+  "type": "object",
+  "properties": {
+    "models": {
+      "type": "array",
+      "description": "List of AI/ML models with metadata and parameters",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique model identifier"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the model"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the model"
+          },
+          "author": {
+            "type": "string",
+            "description": "Model author or organization"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Reference URL for the model"
+          },
+          "request_type": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE"
+            ],
+            "description": "HTTP request type"
+          },
+          "api_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "API endpoint for the model"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "nlp",
+                "code",
+                "image_generation",
+                "image_understanding",
+                "multimodal",
+                "speech_to_text",
+                "text_to_speech",
+                "embedding",
+                "retrieval",
+                "agent"
+              ]
+            },
+            "description": "Describes what the model is capable of."
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Default parameters for the model. Varies by vendor.",
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "top_p": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "max_tokens": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "frequency_penalty": {
+                "type": "number"
+              },
+              "presence_penalty": {
+                "type": "number"
+              },
+              "stop": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "stream": {
+                "type": "boolean"
+              },
+              "logprobs": {
+                "type": "integer"
+              },
+              "n": {
+                "type": "integer",
+                "description": "Number of completions to generate"
+              },
+              "messages": {
+                "type": "array"
+              },
+              "tools": {
+                "type": "array"
+              },
+              "functions": {
+                "type": "array"
+              },
+              "tool_choice": {
+                "type": [
+                  "string",
+                  "object"
+                ],
+                "description": "Used for OpenAI tool selection"
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "response_format": {
+                "type": "string"
+              },
+              "return_likelihoods": {
+                "type": "string"
+              },
+              "input": {
+                "type": "string"
+              },
+              "image_url": {
+                "type": "string"
+              },
+              "audio_url": {
+                "type": "string"
+              },
+              "output_format": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "voice": {
+                "type": "string"
+              },
+              "sampling_temperature": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags to classify the model"
+          },
+          "agent_profiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional profiles describing agent-level use cases",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "version",
+          "author",
+          "url",
+          "request_type",
+          "api_endpoint",
+          "capabilities",
+          "parameters",
+          "tags"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "models"
+  ],
+  "additionalProperties": false
+}
