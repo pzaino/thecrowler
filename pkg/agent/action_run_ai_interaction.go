@@ -128,8 +128,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			requestBody["temperature"] = value
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("temperature '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["temperature"]))
-			return rval, fmt.Errorf("temperature '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["temperature"]))
+			rval[StrMessage] = fmt.Sprintf("temperature '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["temperature"]))
+			return rval, fmt.Errorf("temperature '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["temperature"]))
 		}
 	}
 	// Check if we have max_tokens
@@ -140,8 +140,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			requestBody["max_tokens"] = int(value)
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("max_tokens '%v' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["max_tokens"]))
-			return rval, fmt.Errorf("max_tokens '%v' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["max_tokens"]))
+			rval[StrMessage] = fmt.Sprintf("max_tokens '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["max_tokens"]))
+			return rval, fmt.Errorf("max_tokens '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["max_tokens"]))
 		}
 	}
 	// Check if we have top_p
@@ -154,15 +154,15 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			valueFloat, err := strconv.ParseFloat(value, 64)
 			if err != nil {
 				rval[StrStatus] = StatusError
-				rval[StrMessage] = fmt.Sprintf("top_p '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
-				return rval, fmt.Errorf("top_p '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
+				rval[StrMessage] = fmt.Sprintf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
+				return rval, fmt.Errorf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
 			}
 			// Top p should be a float value between 0 and 1
 			requestBody["top_p"] = valueFloat
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("top_p '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
-			return rval, fmt.Errorf("top_p '%v' parameter doesn't appear to be a valid float", config["top_p"])
+			rval[StrMessage] = fmt.Sprintf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
+			return rval, fmt.Errorf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
 		}
 	}
 	// Check if we have presence_penalty
@@ -175,15 +175,15 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			valueFloat, err := strconv.ParseFloat(value, 64)
 			if err != nil {
 				rval[StrStatus] = StatusError
-				rval[StrMessage] = fmt.Sprintf("presence_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
-				return rval, fmt.Errorf("presence_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
+				rval[StrMessage] = fmt.Sprintf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
+				return rval, fmt.Errorf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
 			}
 			// Presence penalty should be a float value between 0 and 1
 			requestBody["presence_penalty"] = valueFloat
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("presence_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
-			return rval, fmt.Errorf("presence_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
+			rval[StrMessage] = fmt.Sprintf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
+			return rval, fmt.Errorf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
 		}
 	}
 	// Check if we have frequency_penalty
@@ -196,15 +196,15 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			valueFloat, err := strconv.ParseFloat(value, 64)
 			if err != nil {
 				rval[StrStatus] = StatusError
-				rval[StrMessage] = fmt.Sprintf("frequency_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
-				return rval, fmt.Errorf("frequency_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
+				rval[StrMessage] = fmt.Sprintf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
+				return rval, fmt.Errorf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
 			}
 			// Frequency penalty should be a float value between 0 and 1
 			requestBody["frequency_penalty"] = valueFloat
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("frequency_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
-			return rval, fmt.Errorf("frequency_penalty '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
+			rval[StrMessage] = fmt.Sprintf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
+			return rval, fmt.Errorf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
 		}
 	}
 	// Check if we have stop
@@ -217,8 +217,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			requestBody["stop"] = value
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("stop '%v' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["stop"]))
-			return rval, fmt.Errorf("stop '%v' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["stop"]))
+			rval[StrMessage] = fmt.Sprintf("stop '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["stop"]))
+			return rval, fmt.Errorf("stop '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["stop"]))
 		}
 	}
 	// Check if we have echo
@@ -231,8 +231,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			requestBody["echo"] = value
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("echo '%v' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["echo"]))
-			return rval, fmt.Errorf("echo '%v' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["echo"]))
+			rval[StrMessage] = fmt.Sprintf("echo '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["echo"]))
+			return rval, fmt.Errorf("echo '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["echo"]))
 		}
 	}
 	// Check if we have logprobs
@@ -245,8 +245,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 			requestBody["logprobs"] = value
 		} else {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("logprobs '%v' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["logprobs"]))
-			return rval, fmt.Errorf("logprobs '%v' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["logprobs"]))
+			rval[StrMessage] = fmt.Sprintf("logprobs '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["logprobs"]))
+			return rval, fmt.Errorf("logprobs '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["logprobs"]))
 		}
 	}
 	// Check if we have n
@@ -269,8 +269,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		}
 		if !valid {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("n '%v' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["n"]))
-			return rval, fmt.Errorf("n '%v' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["n"]))
+			rval[StrMessage] = fmt.Sprintf("n '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["n"]))
+			return rval, fmt.Errorf("n '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["n"]))
 		}
 	}
 	// Check if we have stream
@@ -295,8 +295,8 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		}
 		if !valid {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("logit_bias '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["logit_bias"]))
-			return rval, fmt.Errorf("logit_bias '%v' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["logit_bias"]))
+			rval[StrMessage] = fmt.Sprintf("logit_bias '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["logit_bias"]))
+			return rval, fmt.Errorf("logit_bias '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["logit_bias"]))
 		}
 	}
 
