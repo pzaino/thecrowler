@@ -123,6 +123,26 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 			}
 		}
 
+		if rule.Elements[e].TransformHTMLToJSON {
+			// Transform the extracted HTML to JSON
+			var transformed []interface{}
+			for _, item := range allExtracted {
+				if strItem, ok := item.(string); ok {
+					// Transform the string to an *html type:
+					htmlDoc, err := TransformTextToHTML(strItem)
+					if err != nil {
+						transformed = append(transformed, htmlDoc)
+					} else {
+						jsonObj := ExtractHTMLData(htmlDoc)
+						transformed = append(transformed, jsonObj)
+					}
+				} else {
+					transformed = append(transformed, item)
+				}
+			}
+			allExtracted = transformed
+		}
+
 		// Add the extracted data to the WebObject's map
 		if len(allExtracted) == 1 {
 			// If only one result, store it directly (as an object or string)
