@@ -178,14 +178,14 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 			// Check if tUID needs to be resolved
 			tUID = resolveResponseString(commandMap, tUID)
 		}
-		// Convert tUID to an integer
-		uidRaw, err := strconv.Atoi(tUID)
+		// Convert tUID to a uint32, checking for valid range
+		uidParsed, err := strconv.ParseUint(tUID, 10, 32)
 		if err != nil {
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("invalid UID: %v", err)
 			return rval, err
 		}
-		uid = uint32(uidRaw) //nolint:gosec // it's ok here
+		uid = uint32(uidParsed) //nolint:gosec // it's ok here
 	}
 	if params["gid"] != nil {
 		tGID, ok := params["gid"].(string)
@@ -193,14 +193,14 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 			// Check if tGID needs to be resolved
 			tGID = resolveResponseString(commandMap, tGID)
 		}
-		// Convert tGID to an integer
-		gidRaw, err := strconv.Atoi(tGID)
+		// Convert tGID to a uint32, checking for valid range
+		gidParsed, err := strconv.ParseUint(tGID, 10, 32)
 		if err != nil {
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("invalid GID: %v", err)
 			return rval, err
 		}
-		gid = uint32(gidRaw) //nolint:gosec // it's ok here
+		gid = uint32(gidParsed) //nolint:gosec // it's ok here
 	}
 
 	// Log execution

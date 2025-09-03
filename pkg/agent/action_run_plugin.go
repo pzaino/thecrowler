@@ -84,8 +84,8 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	plg, exists := plugins.GetPlugin(plgName)
 	if !exists {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = fmt.Sprintf("plugin '%s' not found", plgName)
-		return rval, fmt.Errorf("plugin '%s' not found", plgName)
+		rval[StrMessage] = fmt.Sprintf("plugin '%s' not found", cmn.SafeEscapeJSONString(plgName))
+		return rval, fmt.Errorf("plugin '%s' not found", cmn.SafeEscapeJSONString(plgName))
 	}
 
 	// Prepare the plugin parameters
