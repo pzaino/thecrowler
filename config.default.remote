@@ -1,0 +1,15 @@
+version: "1.0.0"
+author: "Paolo Fabio Zaino"
+description: "Reusable remote configuration for The CROWler Engine instances"
+created_at: "2025-09-07T12:00:00"
+
+remote:
+  host: "${CROWLER_DISTRIBUTION_HOST}"
+  path: "${CROWLER_DISTRIBUTION_PATH}"
+  port: ${CROWLER_DISTRIBUTION_PORT}
+  type: "http"
+  region: "${CROWLER_DISTRIBUTION_REGION}"
+  token: "${CROWLER_DISTRIBUTION_TOKEN}"
+  secret: "${CROWLER_DISTRIBUTION_SECRET}"
+  timeout: ${CROWLER_DISTRIBUTION_TIMEOUT}
+  sslmode: "${CROWLER_DISTRIBUTION_SSLMODE}"

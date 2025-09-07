@@ -65,6 +65,15 @@
         - name: Set up QEMU for cross-platform
           uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
+        - name: Prepare config.yaml
+          run: |
+            if [ ! -f config.yaml ]; then
+              mv config.default.remote config.yaml
+              echo "Renamed config.default.remote to config.yaml"
+            else
+              echo "config.yaml already exists, skipping rename."
+            fi
+
         - name: Build & Push crowler-api
           run: |
             if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
