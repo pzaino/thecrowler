@@ -594,12 +594,12 @@ func processEvent(event cdb.Event) {
 		// Retrieve the source details
 		source, err := cdb.GetSourceByID(&dbHandler, event.SourceID)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v (probably source removed already by the system or the user)", err)
 		} else {
 			// extract the source details -> meta_data
 			var configMap map[string]interface{}
 			if err := json.Unmarshal(*source.Config, &configMap); err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshalling config: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling config: %v", err)
 				metaData = nil
 			} else {
 				metaData = configMap["meta_data"].(map[string]interface{})
