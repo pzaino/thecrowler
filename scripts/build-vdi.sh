@@ -175,6 +175,44 @@ pushd ./docker-selenium >/dev/null
     sed -i 's/--sbom[= ][^ ]*//g' Makefile
   fi
 
+  # ===== Docker Hub mirror fallback for library images (ubuntu:*) =====
+  pick_lib_mirror() {
+    # prefer AWS Public ECR mirror, then Google mirror, then Docker Hub
+    for pfx in "public.ecr.aws/docker/library" "mirror.gcr.io/library" "docker.io/library"; do
+      if docker buildx imagetools inspect "${pfx}/ubuntu:latest" >/dev/null 2>&1; then
+        echo "${pfx}"; return 0
+      fi
+    done
+    # last resort
+    echo "docker.io/library"
+  }
+
+  LIB_MIRROR="${LIB_MIRROR_OVERRIDE:-$(pick_lib_mirror)}"
+  echo "Using library mirror prefix: ${LIB_MIRROR}"
+
+  # Collect ubuntu tags used across Selenium Dockerfiles (Base, Standalone, Node*)
+  mapfile -t UBUNTU_TAGS < <(grep -RhoE '^FROM[[:space:]]+ubuntu:([^[:space:]]+)' \
+      Base Standalone Node* 2>/dev/null | awk '{print $2}' | cut -d: -f2 | sort -u)
+
+  if [ "${#UBUNTU_TAGS[@]}" -gt 0 ]; then
+    echo "Ubuntu tags referenced: ${UBUNTU_TAGS[*]}"
+  fi
+
+  # Rewrite FROM lines to use the mirror (safer than retagging because BuildKit may still HEAD the registry)
+  # Examples: FROM ubuntu:noble-20241118.1  ->  FROM public.ecr.aws/docker/library/ubuntu:noble-20241118.1
+  find . -maxdepth 2 -type f -name 'Dockerfile*' -print0 | xargs -0 sed -i -E \
+    "s#^FROM[[:space:]]+ubuntu:#FROM ${LIB_MIRROR}/ubuntu:#"
+
+  # Prime cache: pull each required ubuntu tag from the mirror with retries
+  for tag in "${UBUNTU_TAGS[@]}"; do
+    echo "Pulling ${LIB_MIRROR}/ubuntu:${tag}"
+    n=0; until [ $n -ge 5 ]; do
+      if docker pull "${LIB_MIRROR}/ubuntu:${tag}"; then break; fi
+      n=$((n+1)); sleep $((2**n))
+    done
+  done
+  # ===== END mirror fallback =====
+
   # Build (Chromium forced in CI if requested)
   if [ "${FORCE_CHROMIUM}" = "true" ]; then
     make standalone_chromium
