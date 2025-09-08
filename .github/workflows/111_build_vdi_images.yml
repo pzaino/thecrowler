@@ -44,6 +44,13 @@ jobs:
     steps:
       - name: Harden the runner (audit)
         uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            mirror.gcr.io:443
+            public.ecr.aws:443
+            registry-1.docker.io:443
 
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
