@@ -1,6 +1,6 @@
 module github.com/pzaino/thecrowler
 
-go 1.23.12
+go 1.24.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
@@ -22,10 +22,10 @@ require (
 	github.com/evanw/esbuild v0.25.9
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.41.0
+	golang.org/x/crypto v0.42.0
 )
 
-require golang.org/x/sync v0.16.0 // indirect
+require golang.org/x/sync v0.17.0 // indirect
 
 require (
 	github.com/antchfx/xpath v1.3.3 // indirect
@@ -73,7 +73,7 @@ require (
 
 require (
 	github.com/google/go-cmp v0.7.0
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
 )
 
 require (
@@ -81,5 +81,5 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	golang.org/x/net v0.43.0
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
 )
