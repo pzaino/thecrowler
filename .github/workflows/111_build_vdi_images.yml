@@ -1,192 +1,110 @@
 ---
-name: Build & Push CROWler VDI Images (Chromium)
+name: Build & Push VDI (Chromium)
 
 permissions:
-  contents: write
+  contents: read
+  packages: write
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "GitHub release tag to build from (e.g., v1.5.0)"
+        description: "Tag for Docker image (e.g., v1.5.0)"
         required: true
+      selenium_version:
+        description: "Selenium version (default 4.28.1)"
+        required: false
+        default: "4.28.1"
+      selenium_build_id:
+        description: "Selenium build id (default 20250202)"
+        required: false
+        default: "20250202"
+      push_latest:
+        description: "Also update :latest multi-arch tag?"
+        required: false
+        default: "true"
       dry_run:
-        description: "Dry run (no pushes/manifests)"
+        description: "Dry run (do not push)"
         required: false
         default: "false"
-      selenium_version:
-        description: "(Optional) Selenium version (e.g., 4.28.1)"
-        required: false
-        default: ""
-      selenium_build_id:
-        description: "(Optional) Selenium build id (e.g., 20250202)"
-        required: false
-        default: ""
 
 env:
   REGISTRY: docker.io
   IMAGE_OWNER: zfpsystems
+  IMAGE_NAME: crowler-vdi
 
 jobs:
-  build-arch:
-    name: Build VDI (${{ matrix.platform }})
+  build:
+    name: Build ${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        platform: ["linux/amd64", "linux/arm64/v8"]
-        include:
-          - platform: "linux/amd64"
-            arch_suffix: "amd64"
-            docker_arch: "amd64"
-          - platform: "linux/arm64/v8"
-            arch_suffix: "arm64"
-            docker_arch: "arm64"
-
-    env:
-      TAG: ${{ github.event.inputs.release_tag }}
-      DRY_RUN: ${{ github.event.inputs.dry_run }}
-
-      # Script-required env (safe CI defaults; secrets are injected later):
-      DOCKER_DB_HOST: "db"
-      DOCKER_DB_PORT: "5432"
-      DOCKER_POSTGRES_DB_USER: "postgres"
-      DOCKER_POSTGRES_DB_NAME: "SitesIndex"
-      DOCKER_CROWLER_DB_USER: "crowler"
-
-      # Optional Selenium pinning (dispatcher can provide; else the script defaults apply):
-      SELENIUM_VER_NUM: ${{ github.event.inputs.selenium_version }}
-      SELENIUM_BUILDID: ${{ github.event.inputs.selenium_build_id }}
-
+        arch: [amd64, arm64]
     steps:
       - name: Harden the runner (audit)
         uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911
-        with:
-          egress-policy: audit
 
-      - name: Checkout repo at release tag
+      - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ env.TAG }}
-          fetch-depth: 0
-
-      - name: Verify release tag exists
-        run: |
-          git rev-parse "${TAG}" >/dev/null 2>&1 || { echo "ERROR: Tag ${TAG} does not exist!"; exit 1; }
-
-      - name: Install build prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y make git patch
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
 
-      - name: Set up Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
 
       - name: Log in to Docker Hub
-        if: ${{ env.DRY_RUN != 'true' }}
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Provide DB secrets
+      - name: Ensure script exists
+        run: |
+          test -x scripts/build-vdi.sh || { echo "scripts/build-vdi.sh missing or not executable"; exit 1; }
+
+      - name: Build Selenium VDI (Chromium) for ${{ matrix.arch }}
         env:
-          DOCKER_POSTGRES_PASSWORD: ${{ secrets.DOCKER_POSTGRES_PASSWORD }}
-          DOCKER_CROWLER_DB_PASSWORD: ${{ secrets.DOCKER_CROWLER_DB_PASSWORD }}
+          # Force cross-platform build without editing the Makefiles:
+          DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}${{ matrix.arch == 'arm64' && '/v8' || '' }}
+          FORCE_CHROMIUM: "true"
+          SKIP_COMPOSE: "true"
+          SELENIUM_VER_NUM: ${{ github.event.inputs.selenium_version }}
+          SELENIUM_BUILDID: ${{ github.event.inputs.selenium_build_id }}
         run: |
-          echo "DOCKER_POSTGRES_PASSWORD=${DOCKER_POSTGRES_PASSWORD}" >> $GITHUB_ENV
-          echo "DOCKER_CROWLER_DB_PASSWORD=${DOCKER_CROWLER_DB_PASSWORD}" >> $GITHUB_ENV
+          scripts/build-vdi.sh
+          echo "Listing built selenium images:"
+          docker images 'selenium/standalone-*' --format '{{.Repository}}:{{.Tag}} ({{.ID}})'
 
-      - name: Prepare config.yaml if missing
+      - name: Retag as ${{ env.IMAGE_NAME }}:${{ github.event.inputs.release_tag }}-${{ matrix.arch }}
         run: |
-          if [ ! -f config.yaml ]; then
-            if [ -f config.default.remote ]; then
-              cp config.default.remote config.yaml
-            elif [ -f config.default ]; then
-              cp config.default config.yaml
-            fi
+          # Pick the chromium build first; fallback to chrome (unlikely).
+          IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' selenium/standalone-chromium | head -n1)
+          if [ -z "$IMG" ]; then
+            IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' selenium/standalone-chrome | head -n1)
           fi
-
-      # CI-only patch: allow forcing platform and forcing the Make target to Chromium.
-      - name: Make VDI script CI-overridable (force chromium)
-        run: |
-          SRC="build-vdi.sh"
-          test -f "${SRC}" || { echo "ERROR: ${SRC} not found"; exit 1; }
-          cp "${SRC}" build-vdi.ci.sh
-
-          # 1) Allow FORCE_ARCH / FORCE_PLATFORM to override uname -m logic and DOCKER_DEFAULT_PLATFORM
-          awk '
-            BEGIN { injected=0 }
-            { print }
-            /^ARCH=\$\(/ && !injected {
-              print ""
-              print "# --- CI override hook ---"
-              print "[ -n \"${FORCE_ARCH}\" ] && ARCH=\"${FORCE_ARCH}\""
-              print "[ -n \"${FORCE_PLATFORM}\" ] && PLATFORM=\"${FORCE_PLATFORM}\" && export DOCKER_DEFAULT_PLATFORM=\"${FORCE_PLATFORM}\""
-              print "# ------------------------"
-              injected=1
-            }
-          ' build-vdi.ci.sh > build-vdi.tmp && mv build-vdi.tmp build-vdi.ci.sh
-
-          # 2) Force the Make target to standalone_chromium regardless of arch/version logic
-          #    Replace final make invocation lines (standalone_* targets) with standalone_chromium
-          sed -i 's/make[[:space:]]\+standalone_chrome/make standalone_chromium/g' build-vdi.ci.sh
-          sed -i 's/make[[:space:]]\+standalone_firefox/make standalone_chromium/g' build-vdi.ci.sh
-          chmod +x build-vdi.ci.sh
-
-      - name: Build VDI (Chromium only)
-        env:
-          FORCE_PLATFORM: ${{ matrix.platform }}
-          FORCE_ARCH: ${{ matrix.docker_arch }}
-          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
-        run: |
-          if [ "${DRY_RUN}" = "true" ]; then
-            echo "[DRY RUN] Would run Chromium build for ${FORCE_PLATFORM}"
-            exit 0
+          if [ -z "$IMG" ]; then
+            echo "ERROR: No built selenium standalone image found"; exit 1
           fi
-          ./build-vdi.ci.sh
+          echo "Using source image: $IMG"
+          TARGET="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ github.event.inputs.release_tag }}-${{ matrix.arch }}"
+          docker tag "$IMG" "$TARGET"
+          docker images "$TARGET"
 
-      - name: Compute SELENIUM_PROD_RELEASE used by the build
-        id: outtag
+      - name: Push arch image
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
-          if [ -n "${SELENIUM_VER_NUM}" ] && [ -n "${SELENIUM_BUILDID}" ]; then
-            PROD="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
-          else
-            # script default: version + current date
-            if [ -z "${SELENIUM_VER_NUM}" ]; then
-              SELENIUM_VER_NUM=$(grep -E '^export SELENIUM_VER_NUM=' build-vdi.ci.sh | sed 's/.*="\([^"]*\)".*/\1/' | tail -1)
-            fi
-            CURRENT_DATE=$(date +%Y%m%d)
-            PROD="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
-          fi
-          echo "prod=${PROD}" >> $GITHUB_OUTPUT
+          docker push "${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ github.event.inputs.release_tag }}-${{ matrix.arch }}"
 
-      - name: Retag & push only crowler-vdi (arch-suffixed)
-        if: ${{ env.DRY_RUN != 'true' }}
-        env:
-          PROD: ${{ steps.outtag.outputs.prod }}
-        run: |
-          SRC_LOCAL="selenium/standalone-chromium:${PROD}"   # built locally by Make
-          docker image inspect "${SRC_LOCAL}" >/dev/null 2>&1 || { echo "Missing local image ${SRC_LOCAL}"; exit 1; }
-
-          TARGET="${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:${TAG}-${{ matrix.arch_suffix }}"
-          LATEST_ARCH="${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:latest-${{ matrix.arch_suffix }}"
-
-          docker tag "${SRC_LOCAL}" "${TARGET}"
-          docker tag "${SRC_LOCAL}" "${LATEST_ARCH}"
-          docker push "${TARGET}"
-          docker push "${LATEST_ARCH}"
-
-  publish-manifests:
-    name: Publish multi-arch manifests
+  publish:
+    name: Publish multi-arch manifest
+    needs: build
     runs-on: ubuntu-latest
-    needs: build-arch
     if: ${{ github.event.inputs.dry_run != 'true' }}
     steps:
-      - name: Set up Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
 
       - name: Log in to Docker Hub
@@ -195,23 +113,19 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Create & push manifest (versioned)
-        env:
-          TAG: ${{ github.event.inputs.release_tag }}
-          REGISTRY: docker.io
-          IMAGE_OWNER: zfpsystems
+      - name: Create and push manifest for ${{ github.event.inputs.release_tag }}
         run: |
-          docker manifest create ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:${TAG} \
-            --amend ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:${TAG}-amd64 \
-            --amend ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:${TAG}-arm64
-          docker manifest push ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:${TAG}
+          BASE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_NAME }}"
+          docker buildx imagetools create \
+            -t "${BASE}:${{ github.event.inputs.release_tag }}" \
+            "${BASE}:${{ github.event.inputs.release_tag }}-amd64" \
+            "${BASE}:${{ github.event.inputs.release_tag }}-arm64"
 
-      - name: Create & push manifest (latest)
-        env:
-          REGISTRY: docker.io
-          IMAGE_OWNER: zfpsystems
+      - name: Also update :latest (optional)
+        if: ${{ github.event.inputs.push_latest == 'true' }}
         run: |
-          docker manifest create ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:latest \
-            --amend ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:latest-amd64 \
-            --amend ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:latest-arm64
-          docker manifest push ${REGISTRY}/${IMAGE_OWNER}/crowler-vdi:latest
+          BASE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_NAME }}"
+          docker buildx imagetools create \
+            -t "${BASE}:latest" \
+            "${BASE}:${{ github.event.inputs.release_tag }}-amd64" \
+            "${BASE}:${{ github.event.inputs.release_tag }}-arm64"
