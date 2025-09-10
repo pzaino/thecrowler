@@ -82,7 +82,7 @@ func FetchRemoteBytes(ctx context.Context, rawURL string, opts FetchOpts) ([]byt
 func FetchRemoteText(ctx context.Context, rawURL string, opts FetchOpts) (string, error) {
 	// sensible default allowlist for “text” fetches
 	if len(opts.AllowedMIMEs) == 0 {
-		opts.AllowedMIMEs = []string{"text/", "application/json", "application/javascript"}
+		opts.AllowedMIMEs = []string{"text/", "application/json", "application/javascript", "application/octet-stream"}
 	}
 	b, ctype, err := FetchRemoteBytes(ctx, rawURL, opts)
 	if err != nil {
