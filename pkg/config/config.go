@@ -482,6 +482,12 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 		return Config{}, fmt.Errorf("remote configuration is empty")
 	}
 
+	// Check if there is a DebugLevel in the config
+	if cfg.DebugLevel != 0 {
+		config.DebugLevel = cfg.DebugLevel
+		cmn.SetDebugLevel(cmn.DbgLevel(config.DebugLevel))
+	}
+
 	// Interpolate remote fields
 	cfg.Remote.Host = cmn.InterpolateEnvVars(cfg.Remote.Host)
 	cfg.Remote.Port = cmn.InterpolateEnvVars(cfg.Remote.Port)
@@ -521,6 +527,7 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 
 	// Process ENV variables
 	interpolatedData := cmn.InterpolateEnvVars(rulesetBody)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Remote configuration file content: %s", interpolatedData)
 
 	// If the configuration file has been found and is not empty, unmarshal it
 	interpolatedData = strings.TrimSpace(interpolatedData)
