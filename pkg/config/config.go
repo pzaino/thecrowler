@@ -441,6 +441,7 @@ func LoadConfig(confName string) (Config, error) {
 	}
 
 	if (config.Remote != (Remote{})) && (config.Remote.Type == "remote") {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Remote configuration detected, fetching remote configuration")
 		// This local configuration references a remote configuration
 		// Load the remote configuration
 		fetcher := &CMNFetcher{}
@@ -483,6 +484,7 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	// Check if the remote configuration contains valid values
 	err := cfg.validateRemote()
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Remote configuration is invalid: %v", err)
 		return Config{}, err
 	}
 
