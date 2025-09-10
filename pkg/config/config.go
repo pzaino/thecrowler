@@ -492,8 +492,6 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	cfg.Remote.Type = cmn.InterpolateEnvVars(cfg.Remote.Type)
 	cfg.Remote.SSLMode = cmn.InterpolateEnvVars(cfg.Remote.SSLMode)
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Fetching remote configuration from %s:%s%s", cfg.Remote.Host, cfg.Remote.Port, cfg.Remote.Path)
-
 	// Check if the remote configuration contains valid values
 	err := cfg.validateRemote()
 	if err != nil {
@@ -501,10 +499,14 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 		return Config{}, err
 	}
 
-	// Create a RESTClient object
+	// Ensure Path is correctly formatted
 	if strings.TrimSpace(config.Remote.Path) == "/" {
 		config.Remote.Path = ""
 	}
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Fetching remote configuration from %s:%s%s", cfg.Remote.Host, cfg.Remote.Port, cfg.Remote.Path)
+
+	// Fetch the remote configuration file
 	url := fmt.Sprintf("http://%s/%s", config.Remote.Host, config.Remote.Path)
 	rulesetBody, err := fetcher.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
 	if err != nil {
