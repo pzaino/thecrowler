@@ -507,14 +507,14 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	// Build the URL
 	url := ""
 	if cfg.Remote.Port != "80" && cfg.Remote.Port != "443" && cfg.Remote.Port != "0" {
-		url = fmt.Sprintf("http://%s:%s/%s", config.Remote.Host, cfg.Remote.Port, config.Remote.Path)
+		url = fmt.Sprintf("http://%s:%s/%s", cfg.Remote.Host, cfg.Remote.Port, cfg.Remote.Path)
 	} else {
-		url = fmt.Sprintf("http://%s/%s", config.Remote.Host, config.Remote.Path)
+		url = fmt.Sprintf("http://%s/%s", cfg.Remote.Host, cfg.Remote.Path)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Fetching remote configuration from: '%s'", url)
 
 	// Fetch the remote configuration file
-	rulesetBody, err := fetcher.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
+	rulesetBody, err := fetcher.FetchRemoteFile(url, cfg.Remote.Timeout, cfg.Remote.SSLMode)
 	if err != nil {
 		return config, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
 	}
