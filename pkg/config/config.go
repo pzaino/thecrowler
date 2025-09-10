@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -156,7 +157,7 @@ func NewConfig() *Config {
 		Remote: Remote{
 			Host:    cmn.LoalhostStr,
 			Path:    "/",
-			Port:    0,
+			Port:    "0",
 			Region:  cmn.NowhereStr,
 			Token:   "",
 			Secret:  "",
@@ -481,6 +482,16 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 		return Config{}, fmt.Errorf("remote configuration is empty")
 	}
 
+	// Interpolate remote fields
+	cfg.Remote.Host = cmn.InterpolateEnvVars(cfg.Remote.Host)
+	cfg.Remote.Port = cmn.InterpolateEnvVars(cfg.Remote.Port)
+	cfg.Remote.Path = cmn.InterpolateEnvVars(cfg.Remote.Path)
+	cfg.Remote.Region = cmn.InterpolateEnvVars(cfg.Remote.Region)
+	cfg.Remote.Token = cmn.InterpolateEnvVars(cfg.Remote.Token)
+	cfg.Remote.Secret = cmn.InterpolateEnvVars(cfg.Remote.Secret)
+	cfg.Remote.Type = cmn.InterpolateEnvVars(cfg.Remote.Type)
+	cfg.Remote.SSLMode = cmn.InterpolateEnvVars(cfg.Remote.SSLMode)
+
 	// Check if the remote configuration contains valid values
 	err := cfg.validateRemote()
 	if err != nil {
@@ -586,8 +597,11 @@ func (c *Config) validateRemotePath() {
 }
 
 func (c *Config) validateRemotePort() {
-	if c.Remote.Port < 1 || c.Remote.Port > 65535 {
-		c.Remote.Port = 8081
+	// convert string to int
+	portStr := strings.TrimSpace(c.Remote.Port)
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		c.Remote.Port = "8086"
 	}
 }
 

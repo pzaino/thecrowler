@@ -353,7 +353,7 @@ type Rules struct {
 type Remote struct {
 	Host    string `yaml:"host"`    // Hostname of the API server
 	Path    string `yaml:"path"`    // Path to the storage (e.g., "/tmp/images" or Bucket name)
-	Port    int    `yaml:"port"`    // Port number of the API server
+	Port    string `yaml:"port"`    // Port number of the API server (is typed string so users can use ENV)
 	Region  string `yaml:"region"`  // Region of the storage (e.g., "us-east-1" when using S3 like services)
 	Token   string `yaml:"token"`   // Token for API authentication (e.g., API key or token, AWS access key ID)
 	Secret  string `yaml:"secret"`  // Secret for API authentication (e.g., AWS secret access key)

@@ -292,7 +292,7 @@ func TestValidateRemotePort(t *testing.T) {
 	// Create a config instance with a valid port
 	config := &Config{
 		Remote: Remote{
-			Port: 8080,
+			Port: "8080",
 		},
 	}
 
@@ -300,14 +300,14 @@ func TestValidateRemotePort(t *testing.T) {
 	config.validateRemotePort()
 
 	// Check if the Remote.Port remains unchanged
-	if config.Remote.Port != 8080 {
+	if config.Remote.Port != "8080" {
 		t.Errorf("Expected Remote.Port to be 8080, got %v", config.Remote.Port)
 	}
 
 	// Create a config instance with an invalid port
 	config = &Config{
 		Remote: Remote{
-			Port: 99999,
+			Port: "99999",
 		},
 	}
 
@@ -315,14 +315,14 @@ func TestValidateRemotePort(t *testing.T) {
 	config.validateRemotePort()
 
 	// Check if the Remote.Port is set to the default port (8081)
-	if config.Remote.Port != 8081 {
-		t.Errorf("Expected Remote.Port to be 8081, got %v", config.Remote.Port)
+	if config.Remote.Port != "8086" {
+		t.Errorf("Expected Remote.Port to be 8086, got %v", config.Remote.Port)
 	}
 
 	// Create a config instance with a negative port
 	config = &Config{
 		Remote: Remote{
-			Port: -123,
+			Port: "-123",
 		},
 	}
 
@@ -330,7 +330,7 @@ func TestValidateRemotePort(t *testing.T) {
 	config.validateRemotePort()
 
 	// Check if the Remote.Port is set to the default port (8081)
-	if config.Remote.Port != 8081 {
+	if config.Remote.Port != "8086" {
 		t.Errorf("Expected Remote.Port to be 8081, got %v", config.Remote.Port)
 	}
 }
@@ -1162,7 +1162,7 @@ func TestConfigString(t *testing.T) {
 		Remote: Remote{
 			Host:   testURL,
 			Path:   "/api",
-			Port:   8080,
+			Port:   "8080",
 			Region: testRegion,
 			Token:  "mytoken",
 		},
