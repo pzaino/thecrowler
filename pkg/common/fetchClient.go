@@ -3,6 +3,8 @@ package common
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -17,6 +19,10 @@ import (
 
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+const (
+	utf8Str = "utf-8"
 )
 
 // ---- Public API
@@ -82,14 +88,52 @@ func FetchRemoteBytes(ctx context.Context, rawURL string, opts FetchOpts) ([]byt
 func FetchRemoteText(ctx context.Context, rawURL string, opts FetchOpts) (string, error) {
 	// sensible default allowlist for “text” fetches
 	if len(opts.AllowedMIMEs) == 0 {
-		opts.AllowedMIMEs = []string{"text/", "application/json", "application/javascript", "application/octet-stream"}
+		opts.AllowedMIMEs = []string{
+			"text/",
+			"application/json",
+			"application/x-yaml",
+			"application/yaml",
+			"application/javascript",
+			"application/octet-stream"}
 	}
+
 	b, ctype, err := FetchRemoteBytes(ctx, rawURL, opts)
 	if err != nil {
 		return "", err
 	}
+
+	// --- Transparent gzip (even if Transport didn't do it) ---
+	if looksLikeGzip(b) {
+		zr, zerr := gzip.NewReader(bytes.NewReader(b))
+		if zerr == nil {
+			defer zr.Close() //nolint:errcheck
+			if ub, rerr := io.ReadAll(zr); rerr == nil {
+				b = ub
+			}
+		}
+	}
+
+	// --- Strip UTF-8 BOM, if present ---
+	b = bytes.TrimPrefix(b, []byte("\xEF\xBB\xBF"))
+
+	// --- Strip common XSSI/anti-JSON prefixes (some CDNs add these) ---
+	if i := bytes.IndexByte(b, '\n'); i > 0 {
+		line1 := b[:i]
+		switch {
+		case bytes.HasPrefix(line1, []byte(")]}',")),
+			bytes.HasPrefix(line1, []byte("while(1);")),
+			bytes.HasPrefix(line1, []byte("for(;;);")):
+			b = b[i+1:]
+		}
+	}
+
+	// --- Quick sanity guard: if we got an HTML/JSON error page, bail early with a helpful preview ---
+	if looksLikeHTML(b) || looksLikeJSONError(b) {
+		return "", fmt.Errorf("remote payload doesn't look like YAML (ctype=%q). First 200 bytes: %q", ctype, firstBytes(b, 200))
+	}
+
 	// Quick charset sniff (very light): honor Content-Type charset if present; otherwise assume UTF-8.
-	cs := "utf-8"
+	cs := utf8Str
 	if ctype != "" {
 		_, params, _ := mime.ParseMediaType(ctype)
 		if v := strings.TrimSpace(strings.ToLower(params["charset"])); v != "" {
@@ -97,11 +141,36 @@ func FetchRemoteText(ctx context.Context, rawURL string, opts FetchOpts) (string
 		}
 	}
 	// We only support UTF-8 transparently here. If you need ISO-8859-1/Shift-JIS, plug an iconv step.
-	if cs != "utf-8" && cs != "utf8" {
+	if cs != utf8Str && cs != "utf8" {
 		// return raw bytes note if not UTF-8 (avoid mojibake)
 		return string(b), nil
 	}
 	return string(b), nil
+}
+
+func looksLikeGzip(b []byte) bool {
+	return len(b) > 2 && b[0] == 0x1f && b[1] == 0x8b
+}
+
+func looksLikeHTML(b []byte) bool {
+	trim := bytes.TrimSpace(b)
+	return bytes.HasPrefix(trim, []byte("<!DOCTYPE html")) || bytes.HasPrefix(trim, []byte("<html"))
+}
+
+func looksLikeJSONError(b []byte) bool {
+	trim := bytes.TrimSpace(b)
+	// very light heuristic: lone true/false/null or a small {"error":...} page
+	if bytes.HasPrefix(trim, []byte("{")) && bytes.Contains(trim, []byte(`"error"`)) {
+		return true
+	}
+	return bytes.Equal(trim, []byte("true")) || bytes.Equal(trim, []byte("false")) || bytes.Equal(trim, []byte("null"))
+}
+
+func firstBytes(b []byte, n int) string {
+	if len(b) > n {
+		return string(b[:n]) + "..."
+	}
+	return string(b)
 }
 
 // ---- HTTP(S) implementation
@@ -129,6 +198,7 @@ func fetchHTTP(ctx context.Context, rawURL string, opts FetchOpts) ([]byte, stri
 	follow := opts.FollowRedirects
 	if !follow {
 		// if not following redirects, any 3xx is an error
+		DebugMsg(DbgLvlInfo, "Not following redirects")
 	}
 	client := &http.Client{
 		Transport: tr,
