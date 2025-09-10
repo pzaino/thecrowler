@@ -16,6 +16,7 @@
 package common
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,19 @@ import (
 )
 
 // FetchRemoteFile fetches a remote file and returns the contents as a string.
+func FetchRemoteFile(url string, timeout int, sslmode string) (string, error) {
+	ctx := context.Background()
+	return FetchRemoteText(ctx, url, FetchOpts{
+		Timeout:        time.Duration(timeout) * time.Second,
+		ConnectTimeout: 10 * time.Second,
+		SSLMode:        sslmode,
+		MaxSize:        16 << 20,
+		Retries:        2,
+		SSRFGuard:      "", // or "on"/"strict"
+	})
+}
+
+/*
 func FetchRemoteFile(url string, timeout int, sslmode string) (string, error) {
 	httpClient := &http.Client{
 		Transport: SafeTransport(timeout, sslmode),
@@ -49,6 +63,7 @@ func FetchRemoteFile(url string, timeout int, sslmode string) (string, error) {
 
 	return string(body), nil
 }
+*/
 
 // APIResponse is a generic API response.
 type APIResponse struct {

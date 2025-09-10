@@ -61,10 +61,10 @@ import (
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 const (
@@ -5177,28 +5177,69 @@ func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) (
 	// - config.ImageStorageAPI.Path as S3 bucket name
 	// - filename as S3 object key
 
-	// Create an AWS session
-	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(saveCfg.Region),
-		Credentials: credentials.NewStaticCredentials(saveCfg.Token, saveCfg.Secret, ""),
-	})
-	if err != nil {
-		return "", err
+	if saveCfg.Region == "" {
+		return "", fmt.Errorf("missing AWS region")
+	}
+	if saveCfg.Path == "" {
+		return "", fmt.Errorf("missing S3 bucket (saveCfg.Path)")
+	}
+	if filename == "" {
+		return "", fmt.Errorf("missing object key (filename)")
 	}
 
-	// Create an S3 service client
-	svc := s3.New(sess)
+	// Use a bounded context since we can’t accept ctx from the caller.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	// Upload the screenshot to the S3 bucket
-	_, err = svc.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(saveCfg.Path),
-		Key:    aws.String(filename),
-		Body:   bytes.NewReader(data),
-	})
-	if err != nil {
-		return "", err
+	// Build config options. If Token/Secret are empty, fall back to default chain (env/IMDS/etc).
+	opts := []func(*awscfg.LoadOptions) error{
+		awscfg.WithRegion(saveCfg.Region),
+	}
+	if saveCfg.Token != "" && saveCfg.Secret != "" {
+		opts = append(opts, awscfg.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(saveCfg.Token, saveCfg.Secret, ""),
+		))
 	}
 
-	// Return the location of the saved file
+	awsCfg, err := awscfg.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return "", fmt.Errorf("aws config: %w", err)
+	}
+
+	// Create S3 client (default AWS endpoint; if you later add Endpoint/UsePathStyle
+	// to FileStorageAPI, you can pass an options func here without changing the signature).
+	client := s3.NewFromConfig(awsCfg)
+
+	// Best-effort content type and length
+	ct := httpDetectContentType(data)
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(saveCfg.Path),
+		Key:           aws.String(filename),
+		Body:          bytes.NewReader(data),
+		ContentType:   aws.String(ct),
+		ContentLength: aws.Int64(int64(len(data))),
+		// Optional hardening (uncomment when needed):
+		// ACL:                  types.ObjectCannedACLPrivate,
+		// ServerSideEncryption: types.ServerSideEncryptionAwsKms,
+		// SSEKMSKeyId:          aws.String("arn:aws:kms:..."),
+	})
+	if err != nil {
+		return "", fmt.Errorf("s3 PutObject: %w", err)
+	}
+
+	// Keep the original return format (s3://…)
 	return fmt.Sprintf("s3://%s/%s", saveCfg.Path, filename), nil
+}
+
+// httpDetectContentType uses net/http’s sniffer on up to 512 bytes.
+func httpDetectContentType(b []byte) string {
+	const sniff = 512
+	if len(b) == 0 {
+		return "application/octet-stream"
+	}
+	if len(b) > sniff {
+		return http.DetectContentType(b[:sniff])
+	}
+	return http.DetectContentType(b)
 }
