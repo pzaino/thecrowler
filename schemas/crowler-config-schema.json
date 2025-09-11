@@ -1793,11 +1793,9 @@
           "port": {
             "title": "CROWler Rulesets Host Port",
             "description": "This is the port that the CROWler will use to fetch the ruleset.",
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535,
+            "type": "string",
             "examples": [
-              443
+              "8082"
             ]
           },
           "region": {
@@ -1899,11 +1897,9 @@
           "port": {
             "title": "CROWler Agents Host Port",
             "description": "This is the port that the CROWler will use to fetch the agents.",
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535,
+            "type": "string",
             "examples": [
-              443
+              "8082"
             ]
           },
           "region": {
@@ -2033,9 +2029,10 @@
               "port": {
                 "title": "CROWler Plugins location Host Port",
                 "description": "This is the port that the CROWler will use to fetch the plugin.",
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 65535
+                "type": "string",
+                "examples": [
+                  "8082"
+                ]
               },
               "region": {
                 "title": "CROWler Plugins location Host Region",

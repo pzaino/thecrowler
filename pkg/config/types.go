@@ -367,7 +367,7 @@ type AgentsConfig struct {
 	GlobalParameters map[string]interface{} `yaml:"global_parameters" json:"global_parameters"` // Global parameters to be used by the agents
 	Path             []string               `yaml:"path" json:"path"`                           // Path to the agents definition files
 	Host             string                 `yaml:"host" json:"host"`                           // Hostname of the API server
-	Port             int                    `yaml:"port" json:"port"`                           // Port number of the API server
+	Port             string                 `yaml:"port" json:"port"`                           // Port number of the API server
 	Region           string                 `yaml:"region" json:"region"`                       // Region of the storage (e.g., "us-east-1" when using S3 like services)
 	Token            string                 `yaml:"token" json:"token"`                         // Token for API authentication (e.g., API key or token, AWS access key ID)
 	Secret           string                 `yaml:"secret" json:"secret"`                       // Secret for API authentication (e.g., AWS secret access key)
@@ -384,7 +384,7 @@ type RulesetConfig struct {
 	SchemaPath string   `yaml:"schema_path"` // Path to the JSON schema file
 	Path       []string `yaml:"path"`        // Path to the ruleset files
 	Host       string   `yaml:"host"`        // Hostname of the API server
-	Port       int      `yaml:"port"`        // Port number of the API server
+	Port       string   `yaml:"port"`        // Port number of the API server
 	Region     string   `yaml:"region"`      // Region of the storage (e.g., "us-east-1" when using S3 like services)
 	Token      string   `yaml:"token"`       // Token for API authentication (e.g., API key or token, AWS access key ID)
 	Secret     string   `yaml:"secret"`      // Secret for API authentication (e.g., AWS secret access key)
@@ -399,7 +399,7 @@ type PluginConfig struct {
 	GlobalParameters map[string]interface{} `yaml:"global_parameters"` // Global parameters to be used by the agents
 	Path             []string               `yaml:"path"`              // Path to the ruleset files
 	Host             string                 `yaml:"host"`              // Hostname of the API server
-	Port             int                    `yaml:"port"`              // Port number of the API server
+	Port             string                 `yaml:"port"`              // Port number of the API server
 	Region           string                 `yaml:"region"`            // Region of the storage (e.g., "us-east-1" when using S3 like services)
 	Token            string                 `yaml:"token"`             // Token for API authentication (e.g., API key or token, AWS access key ID)
 	Secret           string                 `yaml:"secret"`            // Secret for API authentication (e.g., AWS secret access key)

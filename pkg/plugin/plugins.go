@@ -277,7 +277,33 @@ func LoadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 			continue
 		}
 
-		url := fmt.Sprintf("http://%s/%s", config.Host, path)
+		// Set the protocol:
+		proto := ""
+		if config.Type == "http" {
+			proto = "http"
+		} else if config.Type == "ftp" {
+			proto = "ftp"
+		} else {
+			proto = "s3"
+		}
+
+		if config.SSLMode == cmn.EnableStr && proto == "http" {
+			proto = "https"
+		}
+		if config.SSLMode == cmn.EnableStr && proto == "ftp" {
+			proto = "ftps"
+		}
+
+		// Construct the URL
+		url := ""
+		if config.Port != "" && config.Port != "80" && config.Port != "443" {
+			url = fmt.Sprintf("%s://%s:%s/%s", proto, config.Host, config.Port, path)
+		} else {
+			url = fmt.Sprintf("%s://%s/%s", proto, config.Host, path)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Downloading plugin from %s", url)
+
+		// Download the plugin from the specified URL
 		pluginBody, err := cmn.FetchRemoteFile(url, config.Timeout, config.SSLMode)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch plugin from %s: %v", url, err)
