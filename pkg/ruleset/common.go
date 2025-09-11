@@ -296,11 +296,12 @@ func loadRulesFromRemote(schema *jsonschema.Schema, config cfg.RulesetConfig) (*
 
 		// Set the protocol:
 		proto := ""
-		if config.Type == "http" {
+		switch strings.ToLower(strings.TrimSpace(config.Type)) {
+		case "http":
 			proto = "http"
-		} else if config.Type == "ftp" {
+		case "ftp":
 			proto = "ftp"
-		} else {
+		default:
 			proto = "s3"
 		}
 

@@ -205,8 +205,6 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 	// Ensure pType is set
 	pType = strings.ToLower(strings.TrimSpace(pType))
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Loading plugins of type '%s' from configuration: %+v", pType, config)
-
 	// Construct the URL to download the plugins from
 	if config.Host == "" {
 		for _, path := range config.Path {
@@ -280,11 +278,12 @@ func LoadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 
 		// Set the protocol:
 		proto := ""
-		if config.Type == "http" {
+		switch strings.ToLower(strings.TrimSpace(config.Type)) {
+		case "http":
 			proto = "http"
-		} else if config.Type == "ftp" {
+		case "ftp":
 			proto = "ftp"
-		} else {
+		default:
 			proto = "s3"
 		}
 
