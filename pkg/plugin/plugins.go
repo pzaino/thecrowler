@@ -265,7 +265,6 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 
 // LoadPluginsFromRemote loads plugins from a distribution server either on the local net or the
 // internet.
-// TODO: This function needs improvements, it's not very efficient (a server call for each plugin)
 func LoadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 	var plugins []*JSPlugin
 
