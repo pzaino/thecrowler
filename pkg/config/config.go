@@ -114,8 +114,8 @@ func recursiveInclude(yamlContent string, baseDir string, reader FileReader) (st
 	return yamlContent, nil
 }
 
-// getConfigFile reads and unmarshals a configuration file with the given name.
-// It checks if the file exists, reads its contents, and unmarshals it into a Config struct.
+// getConfigFile reads and unmarshal a configuration file with the given name.
+// It checks if the file exists, reads its contents, and unmarshal it into a Config struct.
 // If the file does not exist or an error occurs during reading or unmarshaling, an error is returned.
 func getConfigFile(confName string) (Config, error) {
 
@@ -527,7 +527,7 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 
 	// Process ENV variables
 	interpolatedData := cmn.InterpolateEnvVars(rulesetBody)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Remote configuration file content: %s", interpolatedData)
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Remote configuration file content: %s", interpolatedData)
 
 	// If the configuration file has been found and is not empty, unmarshal it
 	interpolatedData = strings.TrimSpace(interpolatedData)
