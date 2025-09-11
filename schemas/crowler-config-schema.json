@@ -46,11 +46,9 @@
         "port": {
           "title": "CROWler Configuration Distribution Server Port",
           "description": "This is the port that the CROWler will use to fetch its configuration.",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535,
+          "type": "string",
           "examples": [
-            80
+            "8086"
           ]
         },
         "region": {
@@ -82,6 +80,7 @@
             "s3",
             "http",
             "local",
+            "ftp",
             ""
           ]
         },
@@ -1131,6 +1130,7 @@
             "s3",
             "http",
             "local",
+            "ftp",
             ""
           ]
         },
@@ -1207,6 +1207,7 @@
             "s3",
             "http",
             "local",
+            "ftp",
             ""
           ]
         },
@@ -1827,6 +1828,7 @@
               "s3",
               "http",
               "local",
+              "ftp",
               ""
             ]
           },
@@ -1943,6 +1945,7 @@
               "s3",
               "http",
               "local",
+              "ftp",
               ""
             ]
           },
@@ -2063,6 +2066,7 @@
                   "s3",
                   "http",
                   "local",
+                  "ftp",
                   ""
                 ]
               },
