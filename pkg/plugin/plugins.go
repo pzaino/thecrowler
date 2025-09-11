@@ -205,6 +205,8 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 	// Ensure pType is set
 	pType = strings.ToLower(strings.TrimSpace(pType))
 
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Loading plugins of type '%s' from configuration: %+v", pType, config)
+
 	// Construct the URL to download the plugins from
 	if config.Host == "" {
 		for _, path := range config.Path {
