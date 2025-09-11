@@ -235,6 +235,8 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 		}
 		return pluginsSet, nil
 	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Preparing to load plugins from remote host %s", config.Host)
 	// Plugins are stored remotely
 	plugins, err := LoadPluginsFromRemote(config)
 	if err != nil {
@@ -271,6 +273,7 @@ func LoadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 	// Construct the URL to download the plugins from
 	for _, path := range config.Path {
 		fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Loading plugin from remote path: '%s' and of type '%s'", path, fileType)
 		if fileType != "js" {
 			// Ignore unsupported file types
 			continue
