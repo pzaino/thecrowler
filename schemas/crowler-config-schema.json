@@ -5,7 +5,6 @@
   "description": "This is the configuration schema for the CROWler. This schema describes all the sections of the config.yaml configuration file and provides info on configuring a fleet of CROWler's Engines, VDIs, APIs and how they should work. Keep in mind that the 'remote' property should be used on its own, and the 'database', 'crawler', 'api', 'selenium', 'network_info' properties should be used together.",
   "type": "object",
   "properties": {
-
     "version": {
       "title": "CROWler Configuration version",
       "description": "This is the version of the CROWler configuration. This is for you to version your work.",
@@ -28,7 +27,6 @@
       "type": "string",
       "pattern": "(?:(?:(?:(\\d{4})[-\\/\\.](\\d{2})[-\\/\\.](\\d{2}))|(?:(\\d{2})[-\\/\\.](\\d{2})[-\\/\\.](\\d{4})))\\s*(?:T\\s*)?)?(?:(\\d{1,2}):(\\d{2})(?::(\\d{2}))?\\s*([AaPp][Mm])?)?"
     },
-
     "remote": {
       "title": "Remote Configuration",
       "description": "This is the remote configuration section to tell the CROWler's Engine that the actual config.yaml configuration has to be fetched remotely from a distribution server. If you use this section, then do not populate the other configuration sections as they will be ignored. The CROWler will fetch its configuration from the remote server and use it to start the engine.",
@@ -109,7 +107,6 @@
         "type"
       ]
     },
-
     "database": {
       "title": "CROWler DB Configuration CDBI",
       "description": "This is the database configuration section, it's used to tell the CROWler how to connect to the database to store collected data, which type of database we use and other options to optimize the database for a specific use case.",
@@ -233,7 +230,6 @@
         "dbname"
       ]
     },
-
     "crawler": {
       "title": "CROWler Engine's crawling Configuration CEI",
       "description": "This is the crawler (CROWler Engine) configuration section, it's used to tell the CROWler's engine how to behave. It is the configuration for the CROWler engine that the CROWler will use to crawl websites, spin workers and configure it's internal Control API.",
@@ -743,7 +739,6 @@
       },
       "additionalProperties": false
     },
-
     "api": {
       "title": "CROWler General/Search API Configuration",
       "description": "This is the General/Search API configuration section, it's used to configure the General/Search API and it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API. It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
@@ -842,7 +837,6 @@
         "timeout"
       ]
     },
-
     "selenium": {
       "title": "CROWler VDI access Configuration",
       "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for all the tools in the VDI image (for ex. selenium driver, Rbee etc.), to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
@@ -983,7 +977,6 @@
         ]
       }
     },
-
     "prometheus": {
       "enabled": {
         "title": "CROWler Prometheus Exporter Enabled",
@@ -1004,7 +997,6 @@
         "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])(\\.([a-zA-Z0-9\\-]+))*)|(\\[([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}\\])|(\\${[A-Za-z_][A-Za-z0-9_]*}))$"
       }
     },
-
     "events": {
       "title": "CROWler Events Manager Configuration (CEMI)",
       "description": "This is the Events Manager configuration section, it is used to configure the Events Manager",
@@ -1087,7 +1079,6 @@
       },
       "additionalProperties": false
     },
-
     "image_storage": {
       "title": "CROWler Images Storage access Configuration",
       "description": "This is the Image Storage configuration section, it is used to tell the CROWler's Engine how and where to store collected images.",
@@ -1164,7 +1155,6 @@
         "type"
       ]
     },
-
     "file_storage": {
       "title": "CROWler general Files Storage access Configuration",
       "description": "This is the File Storage configuration section, it is used to tell the CROWler's Engine how and where to store collected files.",
@@ -1241,7 +1231,6 @@
         "type"
       ]
     },
-
     "http_headers": {
       "title": "CROWler HTTP Headers collection Configuration",
       "description": "This is the HTTP Headers collection configuration section, it is used to tell the CROWler's Engine to collect HTTP headers and how when making requests to websites.",
@@ -1264,9 +1253,78 @@
           "type": "boolean"
         },
         "ssl_discovery": {
-          "title": "CROWler HTTP Headers collection SSL Discovery",
-          "description": "This is a flag that tells the CROWler to discover SSL certificates when collecting HTTP headers. This is useful for detecting the headers of a website.",
-          "type": "boolean"
+          "title": "SSL discovery configuration",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable SSL discovery"
+            },
+            "jarm": {
+              "type": "boolean",
+              "description": "Collect JARM fingerprint"
+            },
+            "ja3": {
+              "type": "boolean",
+              "description": "Collect JA3 fingerprint (client hello)"
+            },
+            "ja3s": {
+              "type": "boolean",
+              "description": "Collect JA3S fingerprint (server hello)"
+            },
+            "ja4": {
+              "type": "boolean",
+              "description": "Collect JA4 fingerprint"
+            },
+            "ja4s": {
+              "type": "boolean",
+              "description": "Collect JA4S fingerprint"
+            },
+            "hassh": {
+              "type": "boolean",
+              "description": "Collect HASSH (client)"
+            },
+            "hassh_server": {
+              "type": "boolean",
+              "description": "Collect HASSH (server)"
+            },
+            "tlsh": {
+              "type": "boolean",
+              "description": "Compute TLSH hash"
+            },
+            "simhash": {
+              "type": "boolean",
+              "description": "Compute SimHash"
+            },
+            "minhash": {
+              "type": "boolean",
+              "description": "Compute MinHash"
+            },
+            "blake2": {
+              "type": "boolean",
+              "description": "Compute BLAKE2 hash"
+            },
+            "sha256": {
+              "type": "boolean",
+              "description": "Compute SHA-256 hash"
+            },
+            "cityhash": {
+              "type": "boolean",
+              "description": "Compute CityHash"
+            },
+            "murmurhash": {
+              "type": "boolean",
+              "description": "Compute MurmurHash"
+            },
+            "custom_tls": {
+              "type": "boolean",
+              "description": "Enable custom TLS probing"
+            }
+          },
+          "required": [
+            "enabled"
+          ]
         },
         "proxies": {
           "title": "CROWler HTTP Headers collection Proxies",
@@ -1306,7 +1364,6 @@
       },
       "additionalProperties": false
     },
-
     "network_info": {
       "title": "CROWler Network Information collection Configuration",
       "description": "This is the network information collection configuration section, it is used to tell the CROWler's Engine how and what network information we want to collect for each discovered entity within the crawling of a Source. This section is also used to tell the CROWler if we want to detect network vulnerabilities, open ports, etc. Collect Whois information, DNS information, and more.",
@@ -1698,7 +1755,6 @@
       },
       "additionalProperties": false
     },
-
     "rulesets_schema_path": {
       "title": "CROWler Ruleset JSON Schema location Configuration",
       "description": "This is the path to the rulesets schema. It is the path to the schema that the CROWler will use to validate the rulesets.",
@@ -1707,7 +1763,6 @@
         "./schemas/rulesets.schema.json"
       ]
     },
-
     "rulesets": {
       "title": "CROWler Rulesets locations Configuration",
       "description": "This is the rulesets load configuration section, it is used to tell the CROWler where and how to load all the Rulesets we want to use to crawl, interact, scrape info and detect stuff on the provided Sources to crawl.",
@@ -1738,11 +1793,9 @@
           "port": {
             "title": "CROWler Rulesets Host Port",
             "description": "This is the port that the CROWler will use to fetch the ruleset.",
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535,
+            "type": "string",
             "examples": [
-              443
+              "8082"
             ]
           },
           "region": {
@@ -1807,7 +1860,6 @@
       "minItems": 1,
       "uniqueItems": true
     },
-
     "agents": {
       "title": "CROWler Agents Configuration and locations",
       "description": "This is the CROWler Agents configuration section. The Agents are used to process Data, Events and more. They are used to extend the CROWler's capabilities, without coding. Agents can be AI based or simple sets of actions, plugins and/or both. Each Agent is defined using YAML or JSON files.",
@@ -1820,8 +1872,7 @@
             "title": "CROWler Agents Global Parameters",
             "description": "This is the global parameters that the CROWler will pass to each agent in this batch load.",
             "type": "object",
-            "properties": {
-            },
+            "properties": {},
             "additionalProperties": true
           },
           "path": {
@@ -1846,11 +1897,9 @@
           "port": {
             "title": "CROWler Agents Host Port",
             "description": "This is the port that the CROWler will use to fetch the agents.",
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535,
+            "type": "string",
             "examples": [
-              443
+              "8082"
             ]
           },
           "region": {
@@ -1927,7 +1976,6 @@
       "minItems": 1,
       "uniqueItems": true
     },
-
     "plugins": {
       "title": "CROWler Plugins locations Configuration",
       "description": "This is the Plugins configuration section, it is used to tell the CROWler's Engine which plugins we want to use and provide the path to the plugins. Plugins are used to extend the CROWler's capabilities, for example, to detect phishing URLs, detect malware, detect network vulnerabilities, etc.",
@@ -1937,8 +1985,7 @@
           "title": "CROWler Plugins Global Parameters",
           "description": "This is the global parameters that the CROWler will pass to each plugin in this batch load.",
           "type": "object",
-          "properties": {
-          },
+          "properties": {},
           "additionalProperties": true
         },
         "timeout": {
@@ -1982,9 +2029,10 @@
               "port": {
                 "title": "CROWler Plugins location Host Port",
                 "description": "This is the port that the CROWler will use to fetch the plugin.",
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 65535
+                "type": "string",
+                "examples": [
+                  "8082"
+                ]
               },
               "region": {
                 "title": "CROWler Plugins location Host Region",
@@ -2045,7 +2093,6 @@
       },
       "additionalProperties": false
     },
-
     "external_detection": {
       "title": "CROWler External Detection Services Configuration",
       "description": "This is the External Detection configuration section, it is used to tell the CROWler's Engine which external detection services we want to use and provide credentials to access them. External detection services are provided by VirusTotal, URLHaus, PhishTank, GoogleSafeBrowsing, AbuseIPDB, OpenPhish, Cuckoo, HybridAnalysis, CiscoUmbrella, AlienVault, IPVoid, Shodan, Censys, SSLLabs. They can be accessed using the CROWler's Detection Rules.",
@@ -2125,8 +2172,7 @@
           "title": "Cuckoo Configuration",
           "description": "This is the Cuckoo configuration section, it is used to tell the CROWler's Engine how to connect to Cuckoo and use its services. Cuckoo will be accessed through CROWler's Detection Rules.",
           "type": "object",
-          "properties": {
-          },
+          "properties": {},
           "additionalProperties": false
         },
         "google_safe_browsing": {
@@ -2202,8 +2248,7 @@
           "title": "PhishTank Configuration",
           "description": "This is the PhishTank configuration section, it is used to tell the CROWler's Engine how to connect to PhishTank and use its services. PhishTank will be accessed through CROWler's Detection Rules.",
           "type": "object",
-          "properties": {
-          },
+          "properties": {},
           "additionalProperties": false
         },
         "shodan": {
@@ -2239,8 +2284,7 @@
           "title": "URLHaus Configuration",
           "description": "This is the URLHaus configuration section, it is used to tell the CROWler's Engine how to connect to URLHaus and use its services. URLHaus will be accessed through CROWler's Detection Rules.",
           "type": "object",
-          "properties": {
-          },
+          "properties": {},
           "additionalProperties": false
         },
         "virus_total": {
@@ -2262,13 +2306,11 @@
       },
       "additionalProperties": false
     },
-
     "os": {
       "title": "CROWler (internal) Platform OS Configuration",
       "description": "This is the operating system that the CROWler will use to run. For example, linux, windows or macos. This field is set automatically by the CROWler itself, so no need to set it manually.",
       "type": "string"
     },
-
     "debug_level": {
       "title": "CROWler Debug Level Configuration",
       "description": "This is the debug level for the CROWler. It is the level of debugging that the CROWler will use to log messages. The higher the level, the more messages will be logged. Don't set or use 0 for NO debug messages.",
@@ -2277,7 +2319,6 @@
         1
       ]
     }
-
   },
   "additionalProperties": false,
   "oneOf": [
@@ -2285,14 +2326,24 @@
       "title": "Remote Configuration Mode",
       "description": "Configuration where the 'remote' field must be provided. In this case, the local configuration sections like 'database', 'crawler', and others should not be populated.",
       "allOf": [
-        { "$ref": "#/properties/remote" },
+        {
+          "$ref": "#/properties/remote"
+        },
         {
           "title": "Remote Configuration Mode requirements",
           "type": "object",
-          "required": ["remote"],
+          "required": [
+            "remote"
+          ],
           "not": {
             "title": "Local Configuration exclusions",
-            "required": ["database", "crawler", "api", "selenium", "network_info"]
+            "required": [
+              "database",
+              "crawler",
+              "api",
+              "selenium",
+              "network_info"
+            ]
           }
         }
       ]
@@ -2302,28 +2353,54 @@
       "description": "Configuration where the 'database', 'crawler', 'api', 'selenium', and 'network_info' fields must be provided. In this case, the 'remote' field should not be populated.",
       "type": "object",
       "properties": {
-        "database": { "$ref": "#/properties/database" },
-        "crawler": { "$ref": "#/properties/crawler" },
-        "api": { "$ref": "#/properties/api" },
-        "selenium": { "$ref": "#/properties/selenium" },
-        "network_info": { "$ref": "#/properties/network_info" }
+        "database": {
+          "$ref": "#/properties/database"
+        },
+        "crawler": {
+          "$ref": "#/properties/crawler"
+        },
+        "api": {
+          "$ref": "#/properties/api"
+        },
+        "selenium": {
+          "$ref": "#/properties/selenium"
+        },
+        "network_info": {
+          "$ref": "#/properties/network_info"
+        }
       },
-      "required": ["database", "crawler", "api", "selenium", "network_info"],
+      "required": [
+        "database",
+        "crawler",
+        "api",
+        "selenium",
+        "network_info"
+      ],
       "not": {
         "title": "Local Configuration Mode exclusions",
-        "required": ["remote"]
+        "required": [
+          "remote"
+        ]
       }
     }
   ],
   "dependencies": {
     "database": {
       "not": {
-        "required": ["remote"]
+        "required": [
+          "remote"
+        ]
       }
     },
     "remote": {
       "not": {
-        "required": ["database", "crawler", "api", "selenium", "network_info"]
+        "required": [
+          "database",
+          "crawler",
+          "api",
+          "selenium",
+          "network_info"
+        ]
       }
     }
   }

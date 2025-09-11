@@ -20,6 +20,7 @@ package agent
 */
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -82,120 +83,198 @@ func (jc *JobConfig) LoadJob(j Job) {
 	jc.Jobs = append(jc.Jobs, j)
 }
 
-// LoadConfig loads a YAML or JSON configuration file
-// TODO: implement also remote loading of Agents Definitions
-func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
-	// iterate over all the configuration options
-	for _, agtConfig := range agtConfigs {
-		// Extract the GlobalParameters for this entry
-		globalParams := agtConfig.GlobalParameters
+// --- helpers: parsing and normalization ---
 
-		// Load the configuration from the file
-		paths := agtConfig.Path
-		if len(paths) == 0 {
-			paths = []string{"./agents/*.yaml"}
+// parseAgentsBytes decodes YAML or JSON into a JobConfig
+func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
+	var cfg JobConfig
+	var err error
+	switch strings.ToLower(strings.TrimPrefix(fileType, ".")) {
+	case "yaml", "yml":
+		err = yaml.NewDecoder(bytes.NewReader(data)).Decode(&cfg)
+	case "json":
+		err = json.NewDecoder(bytes.NewReader(data)).Decode(&cfg)
+	default:
+		err = fmt.Errorf("unsupported file format: %s", fileType)
+	}
+	return cfg, err
+}
+
+// applyGlobalParams merges AgentsTimeout/PluginsTimeout and GlobalParameters into every step
+func applyGlobalParams(cfg *JobConfig, agt cfg.AgentsConfig) {
+	globalParams := agt.GlobalParameters
+	if len(cfg.Jobs) == 0 || (len(globalParams) == 0 && agt.AgentsTimeout == 0 && agt.PluginsTimeout == 0) {
+		return
+	}
+	for i := range cfg.Jobs {
+		// Defaults for timeouts
+		if cfg.Jobs[i].AgentsTimeout == 0 {
+			cfg.Jobs[i].AgentsTimeout = agt.AgentsTimeout
 		}
-		for _, path := range paths {
-			// Check if the path is wildcard
-			files, err := filepath.Glob(path)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error finding rule files:", err)
-				return err
+		if cfg.Jobs[i].PluginsTimeout == 0 {
+			cfg.Jobs[i].PluginsTimeout = agt.PluginsTimeout
+		}
+		// Ensure step params/config map exists, then merge global params
+		for j := range cfg.Jobs[i].Steps {
+			// Ensure "params" map exists
+			if _, ok := cfg.Jobs[i].Steps[j]["params"]; !ok {
+				cfg.Jobs[i].Steps[j]["params"] = make(map[interface{}]interface{})
 			}
-
-			// Process all files in the directory
-			if len(files) > 0 {
-				// Iterate over all files in the directory
-				for _, filePath := range files {
-					fileType := cmn.GetFileExt(filePath)
-					if (fileType != "yaml") && (fileType != "json") && (fileType != "") && (fileType != "yml") {
-						// Ignore unsupported file types
-						continue
-					}
-					cmn.DebugMsg(cmn.DbgLvlDebug, "Loading agents definition file: %s", filePath)
-
-					// Load the configuration file
-					file, err := os.Open(filePath) //nolint:gosec // The path here is handled by the service not an end-user
-					if err != nil {
-						return fmt.Errorf("failed to open config file: %v", err)
-					}
-					defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
-
-					// Transform file into a string for interpolation
-					fileStr, err := io.ReadAll(file)
-					if err != nil {
-						return fmt.Errorf("failed to read config file: %v", err)
-					}
-
-					// Interpolate environment variables and process includes
-					interpolatedData := cmn.InterpolateEnvVars(string(fileStr))
-
-					// transform the string back into a reader
-					readCloser := io.NopCloser(strings.NewReader(interpolatedData))
-					defer readCloser.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
-
-					// Decode the configuration file
-					var agtConfigStorage JobConfig
-					if strings.HasSuffix(filePath, ".yaml") || strings.HasSuffix(filePath, ".yml") {
-						err = yaml.NewDecoder(readCloser).Decode(&agtConfigStorage)
-					} else if strings.HasSuffix(filePath, ".json") {
-						err = json.NewDecoder(readCloser).Decode(&agtConfigStorage)
-					} else {
-						return fmt.Errorf("unsupported file format: %s", filePath)
-					}
-					if err != nil {
-						return fmt.Errorf("failed to parse config file: %v", err)
-					}
-
-					// Add the global parameters to the configuration
-					if len(globalParams) > 0 {
-						for i := 0; i < len(agtConfigStorage.Jobs); i++ {
-							if agtConfigStorage.Jobs[i].AgentsTimeout == 0 {
-								agtConfigStorage.Jobs[i].AgentsTimeout = agtConfig.AgentsTimeout
-							}
-							if agtConfigStorage.Jobs[i].PluginsTimeout == 0 {
-								agtConfigStorage.Jobs[i].PluginsTimeout = agtConfig.PluginsTimeout
-							}
-							for j := 0; j < len(agtConfigStorage.Jobs[i].Steps); j++ {
-								// Check if each Job's step has a params field
-								if _, ok := agtConfigStorage.Jobs[i].Steps[0]["params"]; !ok {
-									// If not, create the "params" key with an empty map[interface{}]interface{}
-									agtConfigStorage.Jobs[i].Steps[0]["params"] = make(map[interface{}]interface{})
-								}
-								// Check if each job's step has a "config" field in params, if not add it
-								if _, ok := agtConfigStorage.Jobs[i].Steps[j]["params"].(map[interface{}]interface{})[StrConfig]; !ok {
-									agtConfigStorage.Jobs[i].Steps[j]["params"].(map[interface{}]interface{})[StrConfig] = make(map[interface{}]interface{})
-								}
-							}
-
-							// Add the global parameters to the configuration
-							for j := 0; j < len(agtConfigStorage.Jobs[i].Steps); j++ {
-								for k, v := range globalParams {
-									// Check if the params field has a k field
-									if _, ok := agtConfigStorage.Jobs[i].Steps[j]["params"]; !ok {
-										// If not, create the "params" key with an empty map[interface{}]interface{}
-										agtConfigStorage.Jobs[i].Steps[j]["params"] = make(map[interface{}]interface{})
-									}
-									// Ensure the type assertion works
-									if paramMap, ok := agtConfigStorage.Jobs[i].Steps[j]["params"].(map[interface{}]interface{}); ok {
-										// Convert globalParams into map[interface{}]interface{} before merging
-										paramMap[k] = v
-									} else {
-										// Handle unexpected types
-										cmn.DebugMsg(cmn.DbgLvlError, "params field is not of type map[interface{}]interface{}, but is %T", agtConfigStorage.Jobs[i].Steps[j]["params"])
-									}
-								}
-							}
-						}
-					}
-
-					// Add the configuration to the list
-					jc.Jobs = append(jc.Jobs, agtConfigStorage.Jobs...)
+			// Ensure "config" inside params exists
+			if _, ok := cfg.Jobs[i].Steps[j]["params"].(map[interface{}]interface{})[StrConfig]; !ok {
+				cfg.Jobs[i].Steps[j]["params"].(map[interface{}]interface{})[StrConfig] = make(map[interface{}]interface{})
+			}
+			// Merge global parameters into params
+			if paramMap, ok := cfg.Jobs[i].Steps[j]["params"].(map[interface{}]interface{}); ok {
+				for k, v := range globalParams {
+					paramMap[k] = v
 				}
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "params field is not map[interface{}]interface{} but %T", cfg.Jobs[i].Steps[j]["params"])
 			}
 		}
 	}
+}
 
+// --- LOCAL loader (extracted from your current code) ---
+
+func loadAgentsFromLocal(paths []string) ([]JobConfig, error) {
+	if len(paths) == 0 {
+		paths = []string{"./agents/*.yaml"}
+	}
+
+	var out []JobConfig
+	for _, path := range paths {
+		// Expand wildcards
+		files, err := filepath.Glob(path)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error finding agent files: %v", err)
+			return nil, err
+		}
+		if len(files) == 0 {
+			continue
+		}
+
+		for _, filePath := range files {
+			ext := cmn.GetFileExt(filePath) // no dot, e.g., "yaml"
+			if ext != "" && ext != "yaml" && ext != "yml" && ext != "json" {
+				continue
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug, "Loading agents definition file: %s", filePath)
+
+			f, err := os.Open(filePath) //nolint:gosec
+			if err != nil {
+				return nil, fmt.Errorf("failed to open config file: %w", err)
+			}
+			data, rerr := io.ReadAll(f)
+			_ = f.Close()
+			if rerr != nil {
+				return nil, fmt.Errorf("failed to read config file: %w", rerr)
+			}
+
+			// Interpolate env vars
+			interpolated := cmn.InterpolateEnvVars(string(data))
+			cfg, err := parseAgentsBytes([]byte(interpolated), filepath.Ext(filePath))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse config file %s: %w", filePath, err)
+			}
+			out = append(out, cfg)
+		}
+	}
+	return out, nil
+}
+
+// --- REMOTE loader (mirrors your plugins/rules remote approach) ---
+
+func loadAgentsFromRemote(agt cfg.AgentsConfig) ([]JobConfig, error) {
+	if agt.Path == nil {
+		return nil, fmt.Errorf("agents path is empty")
+	}
+
+	var out []JobConfig
+	for _, path := range agt.Path {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+		if ext != "yaml" && ext != "yml" && ext != "json" {
+			// ignore unsupported types
+			continue
+		}
+
+		// protocol selection (http/https, ftp/ftps, s3); mirrors your existing code
+		var proto string
+		switch strings.ToLower(strings.TrimSpace(agt.Type)) {
+		case "http":
+			proto = "http"
+		case "ftp":
+			proto = "ftp"
+		default:
+			proto = "s3"
+		}
+		if agt.SSLMode == cmn.EnableStr && proto == "http" {
+			proto = "https"
+		}
+		if agt.SSLMode == cmn.EnableStr && proto == "ftp" {
+			proto = "ftps"
+		}
+
+		// URL compose
+		var url string
+		if agt.Port != "" && agt.Port != "80" && agt.Port != "443" {
+			url = fmt.Sprintf("%s://%s:%s/%s", proto, agt.Host, agt.Port, path)
+		} else {
+			url = fmt.Sprintf("%s://%s/%s", proto, agt.Host, path)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Downloading agents definition from %s", url)
+
+		// Download
+		body, err := cmn.FetchRemoteFile(url, agt.Timeout, agt.SSLMode)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch agents from %s: %w", url, err)
+		}
+
+		// Env interpolation, then parse
+		interpolated := cmn.InterpolateEnvVars(body)
+		cfg, err := parseAgentsBytes([]byte(interpolated), filepath.Ext(path))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse remote agents from %s: %w", url, err)
+		}
+		out = append(out, cfg)
+	}
+	return out, nil
+}
+
+// --- Public method with remote support ---
+
+// LoadConfig loads YAML/JSON Agent Definitions from local paths or remote hosts (http/ftp/s3)
+// and applies global parameters/timeouts from each AgentsConfig entry.
+func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
+	for _, agt := range agtConfigs {
+		var chunks []JobConfig
+		var err error
+
+		if strings.TrimSpace(agt.Host) == "" {
+			// LOCAL
+			paths := agt.Path
+			if len(paths) == 0 {
+				paths = []string{"./agents/*.yaml"}
+			}
+			chunks, err = loadAgentsFromLocal(paths)
+			if err != nil {
+				return err
+			}
+		} else {
+			// REMOTE
+			chunks, err = loadAgentsFromRemote(agt)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Normalize and merge global params for each loaded chunk, then append
+		for idx := range chunks {
+			applyGlobalParams(&chunks[idx], agt)
+			jc.Jobs = append(jc.Jobs, chunks[idx].Jobs...)
+		}
+	}
 	return nil
 }
 

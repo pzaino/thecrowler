@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -113,8 +114,8 @@ func recursiveInclude(yamlContent string, baseDir string, reader FileReader) (st
 	return yamlContent, nil
 }
 
-// getConfigFile reads and unmarshals a configuration file with the given name.
-// It checks if the file exists, reads its contents, and unmarshals it into a Config struct.
+// getConfigFile reads and unmarshal a configuration file with the given name.
+// It checks if the file exists, reads its contents, and unmarshal it into a Config struct.
 // If the file does not exist or an error occurs during reading or unmarshaling, an error is returned.
 func getConfigFile(confName string) (Config, error) {
 
@@ -156,7 +157,7 @@ func NewConfig() *Config {
 		Remote: Remote{
 			Host:    cmn.LoalhostStr,
 			Path:    "/",
-			Port:    0,
+			Port:    "0",
 			Region:  cmn.NowhereStr,
 			Token:   "",
 			Secret:  "",
@@ -440,7 +441,8 @@ func LoadConfig(confName string) (Config, error) {
 		return Config{}, fmt.Errorf("configuration file is empty")
 	}
 
-	if (config.Remote != (Remote{})) && (config.Remote.Type == "remote") {
+	if (config.Remote != (Remote{})) && (strings.ToLower(strings.TrimSpace(config.Remote.Type)) == "remote" || strings.ToLower(strings.TrimSpace(config.Remote.Type)) == "http") {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "Remote configuration detected, fetching remote configuration")
 		// This local configuration references a remote configuration
 		// Load the remote configuration
 		fetcher := &CMNFetcher{}
@@ -480,24 +482,52 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 		return Config{}, fmt.Errorf("remote configuration is empty")
 	}
 
+	// Check if there is a DebugLevel in the config
+	if cfg.DebugLevel != 0 {
+		config.DebugLevel = cfg.DebugLevel
+		cmn.SetDebugLevel(cmn.DbgLevel(config.DebugLevel))
+	}
+
+	// Interpolate remote fields
+	cfg.Remote.Host = cmn.InterpolateEnvVars(cfg.Remote.Host)
+	cfg.Remote.Port = cmn.InterpolateEnvVars(cfg.Remote.Port)
+	cfg.Remote.Path = cmn.InterpolateEnvVars(cfg.Remote.Path)
+	cfg.Remote.Region = cmn.InterpolateEnvVars(cfg.Remote.Region)
+	cfg.Remote.Token = cmn.InterpolateEnvVars(cfg.Remote.Token)
+	cfg.Remote.Secret = cmn.InterpolateEnvVars(cfg.Remote.Secret)
+	cfg.Remote.Type = cmn.InterpolateEnvVars(cfg.Remote.Type)
+	cfg.Remote.SSLMode = cmn.InterpolateEnvVars(cfg.Remote.SSLMode)
+
 	// Check if the remote configuration contains valid values
 	err := cfg.validateRemote()
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Remote configuration is invalid: %v", err)
 		return Config{}, err
 	}
 
-	// Create a RESTClient object
+	// Ensure Path is correctly formatted
 	if strings.TrimSpace(config.Remote.Path) == "/" {
 		config.Remote.Path = ""
 	}
-	url := fmt.Sprintf("http://%s/%s", config.Remote.Host, config.Remote.Path)
-	rulesetBody, err := fetcher.FetchRemoteFile(url, config.Remote.Timeout, config.Remote.SSLMode)
+
+	// Build the URL
+	url := ""
+	if cfg.Remote.Port != "80" && cfg.Remote.Port != "443" && cfg.Remote.Port != "0" {
+		url = fmt.Sprintf("http://%s:%s/%s", cfg.Remote.Host, cfg.Remote.Port, cfg.Remote.Path)
+	} else {
+		url = fmt.Sprintf("http://%s/%s", cfg.Remote.Host, cfg.Remote.Path)
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Fetching remote configuration from: '%s'", url)
+
+	// Fetch the remote configuration file
+	rulesetBody, err := fetcher.FetchRemoteFile(url, cfg.Remote.Timeout, cfg.Remote.SSLMode)
 	if err != nil {
 		return config, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
 	}
 
 	// Process ENV variables
 	interpolatedData := cmn.InterpolateEnvVars(rulesetBody)
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Remote configuration file content: %s", interpolatedData)
 
 	// If the configuration file has been found and is not empty, unmarshal it
 	interpolatedData = strings.TrimSpace(interpolatedData)
@@ -584,8 +614,11 @@ func (c *Config) validateRemotePath() {
 }
 
 func (c *Config) validateRemotePort() {
-	if c.Remote.Port < 1 || c.Remote.Port > 65535 {
-		c.Remote.Port = 8081
+	// convert string to int
+	portStr := strings.TrimSpace(c.Remote.Port)
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		c.Remote.Port = "8086"
 	}
 }
 
