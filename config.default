@@ -142,13 +142,13 @@ selenium:
     host: localhost # Selenium host/container DNS
     port: 4444 # Selenium hub/standalone port
     sslmode: disable # enable | disable (TLS to Selenium)
-    headless: true # Headless browser sessions
+    headless: false # Headless browser sessions
     name: default # Logical VDI name (used by Engine pinning)
     location: "" # Freeform location tag (e.g., "eu-west")
     language: "" # Preferred UI language/locale
     path: "" # Optional: path to browser binary (usually empty in containers)
     driver_path: "" # Optional: custom driver binary path
-    use_service: true # Use OS/browser service manager where applicable
+    use_service: false # Use OS/browser service manager where applicable
     download_path: "./downloads" # Temporary download dir inside the container (exists in image)
     proxy_url: "" # http(s)://user:pass@host:port – route all traffic via proxy
     sys_manager: # Optional sidecar/system manager for the VDI
@@ -273,7 +273,7 @@ http_headers:
 # --------------------------
 # Rulesets loader (where to load YAML rules)
 # --------------------------
-rulesets_schema_path: "./schemas/rulesets.schema.json" # Path to ruleset JSON Schema (used for rules validation)
+rulesets_schema_path: "./schemas/crowler-rulesets-schema.json" # Path to ruleset JSON Schema (used for rules validation)
 
 rulesets:
   - type: local # local | http | s3 (you can mix multiple entries)
