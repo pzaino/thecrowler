@@ -289,7 +289,10 @@ func loadRulesFromRemote(schema *jsonschema.Schema, config cfg.RulesetConfig) (*
 	for _, path := range config.Path {
 
 		fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
-		if fileType != "yaml" && fileType != "json" {
+		if len(fileType) > 0 && fileType[0] == '.' {
+			fileType = fileType[1:]
+		}
+		if fileType != "yaml" && fileType != "yml" && fileType != "json" {
 			// Ignore unsupported file types
 			continue
 		}
