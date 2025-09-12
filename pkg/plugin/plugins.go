@@ -235,6 +235,8 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 		}
 		return pluginsSet, nil
 	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Preparing to load plugins from remote host %s", config.Host)
 	// Plugins are stored remotely
 	plugins, err := LoadPluginsFromRemote(config)
 	if err != nil {
@@ -265,25 +267,26 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 
 // LoadPluginsFromRemote loads plugins from a distribution server either on the local net or the
 // internet.
-// TODO: This function needs improvements, it's not very efficient (a server call for each plugin)
 func LoadPluginsFromRemote(config cfg.PluginConfig) ([]*JSPlugin, error) {
 	var plugins []*JSPlugin
 
 	// Construct the URL to download the plugins from
 	for _, path := range config.Path {
 		fileType := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
-		if fileType != "js" {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Loading plugin from remote path: '%s' and of type '%s'", path, fileType)
+		if fileType != "js" && fileType != ".js" {
 			// Ignore unsupported file types
 			continue
 		}
 
 		// Set the protocol:
 		proto := ""
-		if config.Type == "http" {
+		switch strings.ToLower(strings.TrimSpace(config.Type)) {
+		case "http":
 			proto = "http"
-		} else if config.Type == "ftp" {
+		case "ftp":
 			proto = "ftp"
-		} else {
+		default:
 			proto = "s3"
 		}
 

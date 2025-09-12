@@ -441,7 +441,7 @@ func LoadConfig(confName string) (Config, error) {
 		return Config{}, fmt.Errorf("configuration file is empty")
 	}
 
-	if (config.Remote != (Remote{})) && (strings.ToLower(strings.TrimSpace(config.Remote.Type)) == "remote" || strings.ToLower(strings.TrimSpace(config.Remote.Type)) == "http") {
+	if (config.Remote != (Remote{})) && (strings.ToLower(strings.TrimSpace(config.Remote.Type)) != "local") && (strings.TrimSpace(config.Remote.Type) != "") {
 		cmn.DebugMsg(cmn.DbgLvlDebug1, "Remote configuration detected, fetching remote configuration")
 		// This local configuration references a remote configuration
 		// Load the remote configuration
