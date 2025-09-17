@@ -655,6 +655,7 @@ func processEvent(event cdb.Event) {
 		iCfg["plugins_register"] = PluginRegister
 		iCfg["event"] = event
 		iCfg["meta_data"] = metaData
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Event] Source meta_data: %v", metaData)
 
 		for _, ac := range a {
 			// Execute the agents
