@@ -590,14 +590,16 @@ func processEvent(event cdb.Event) {
 
 	// Check if the event is associated with a source_id > 0
 	metaData := make(map[string]interface{})
+	var source *cdb.Source
+	var err error
+	configMap := make(map[string]interface{})
 	if event.SourceID > 0 {
 		// Retrieve the source details
-		source, err := cdb.GetSourceByID(&dbHandler, event.SourceID)
+		source, err = cdb.GetSourceByID(&dbHandler, event.SourceID)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v (probably source removed already by the system or the user)", err)
 		} else {
 			// extract the source details -> meta_data
-			var configMap map[string]interface{}
 			if err := json.Unmarshal(*source.Config, &configMap); err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling config: %v", err)
 				metaData = nil
@@ -655,7 +657,7 @@ func processEvent(event cdb.Event) {
 		iCfg["plugins_register"] = PluginRegister
 		iCfg["event"] = event
 		iCfg["meta_data"] = metaData
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessEvent] Source meta_data: %v", metaData)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessEvent] Source Config: %v", configMap)
 
 		for _, ac := range a {
 			// Execute the agents
