@@ -3034,7 +3034,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 
 	var err error
 	// Get the page and process the interval
-	maxRetries := 0
+	maxRetries := 5 // Default retries on redirect
 	cfgSource := ctx.srcCfg["crawling_config"]
 	cfgSourceMap, ok := cfgSource.(map[string]interface{})
 	if ok {
