@@ -932,7 +932,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	}
 
 	// Get the initial URL
-	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx)
+	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx, -1)
 	if err != nil {
 		// Check if we have alternative links to try
 		srcCfg := ctx.srcCfg["crawling_config"]
@@ -955,7 +955,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 								if !found {
 									// Try to get the content of the alternative link
 									cmn.DebugMsg(cmn.DbgLvlDebug, "Trying alternative link: %s", patternStr)
-									pageSource, docType, err = getURLContent(patternStr, ctx.wd, -1, ctx)
+									pageSource, docType, err = getURLContent(patternStr, ctx.wd, -1, ctx, -1)
 									if err == nil {
 										cmn.DebugMsg(cmn.DbgLvlDebug, "Successfully crawled alternative link: %s", patternStr)
 										break // Exit the loop if we successfully crawled an alternative link
@@ -3011,7 +3011,7 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
-func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext) (vdi.WebDriver, string, error) {
+func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id int) (vdi.WebDriver, string, error) {
 	if ctx == nil {
 		return nil, "", errors.New("ProcessContext is nil")
 	}
@@ -3170,7 +3170,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if ctx.config.Crawler.CollectXHR {
 			err = addXHRHook(&wd)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to add XHR hook: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: Failed to add XHR hook: %v", id, err)
 			}
 		}
 
@@ -3202,11 +3202,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 			}
 		}
 		if gotRedirectedToUURL {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Unwanted redirect detected: %s != %s", currentURL, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Unwanted redirect detected: %s != %s", currentURL, url)
 			if retries == maxRetries && maxRetries > 0 {
 				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
 			continue
 		}
 
@@ -3216,7 +3216,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		// Case 1: valid (or log_only, which you treat as valid after logging)
 		if status.Valid {
 			if status.Action == VALogOnly {
-				cmn.DebugMsg(cmn.DbgLvlWarn, "load_validation: log_only for URL %s", url)
+				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-Worker] %d: load_validation -> log_only for URL %s", id, url)
 			}
 			PageLoadOk = true
 		} else {
@@ -3259,18 +3259,18 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 		if retries == maxRetries && maxRetries > 0 {
 			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
 	}
 
 	// Get Session Cookies
 	err = getCookies(ctx, &wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to get cookies: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: failed to get cookies: %v", id, err)
 	}
 
 	// Get the Mime Type of the page
 	docType := inferDocumentType(url, &wd)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Document Type: %s", docType)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Document Type: %s", id, docType)
 
 	if docTypeIsHTML(docType) {
 		// Check current URL
@@ -3286,7 +3286,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext)
 	// Get Post-Actions Cookies (if any)
 	err = getCookies(ctx, &wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to get post-actions cookies: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: failed to get post-actions cookies: %v", id, err)
 	}
 
 	/*
@@ -4082,14 +4082,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			continue
 		}
 
-		/* The following is in GetURLContent now:
-		if processCtx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
-			processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
-			// Reset cookies on each request
-			_ = ResetSiteSession(processCtx)
-		}
-		*/
-
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
@@ -4253,7 +4245,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// If we are not already on the right page that should contain url.Link, navigate to it
 	if (url.PageURL != pageURL) && (url.PageURL+"/" != pageURL) {
 		// Navigate to the page if not already there
-		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
+		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx, id)
 		if err != nil {
 			return err
 		}
@@ -4461,7 +4453,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	}
 	if (url.PageURL != pageURL) && (url.PageURL+"/" != pageURL) {
 		// Navigate to the page if not already there
-		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx)
+		_, _, err := getURLContent(url.PageURL, processCtx.wd, 0, processCtx, id)
 		if err != nil {
 			return err
 		}
@@ -4652,7 +4644,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Get the HTML content of the page
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Getting HTML content for '%s'\n", id, url)
 	startTime := time.Now()
-	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx)
+	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx, id)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
 		return err
