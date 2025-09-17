@@ -366,7 +366,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 			for k, v := range iCfg {
 				configMap[k] = v
 				if k == "meta_data" {
-					cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Agents] Merged meta_data into job config: %v", v)
+					cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Agents] Merged meta_data into job config: %v", v)
 				}
 			}
 		}

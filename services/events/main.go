@@ -581,7 +581,7 @@ func processEvent(event cdb.Event) {
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
 		return
 	}
 
@@ -655,7 +655,7 @@ func processEvent(event cdb.Event) {
 		iCfg["plugins_register"] = PluginRegister
 		iCfg["event"] = event
 		iCfg["meta_data"] = metaData
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Event] Source meta_data: %v", metaData)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessEvent] Source meta_data: %v", metaData)
 
 		for _, ac := range a {
 			// Execute the agents
