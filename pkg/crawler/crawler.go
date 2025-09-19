@@ -3106,7 +3106,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			ctx.RefreshCrawlingTimer()
 		}
 
-		PageLoadOk := false
+		PageLoadOk := true
 		ctx.Status.LastRetry.Add(1) // Increment the report retry count
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
