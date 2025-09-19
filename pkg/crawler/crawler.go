@@ -3199,6 +3199,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		}
 		gotRedirectedToUURL := false
 		if ctx.compiledUURLs != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Checking for unwanted URLs (%d patterns) for URL: '%s'", id, len(ctx.compiledUURLs), currentURL)
 			for _, UURL := range ctx.compiledUURLs {
 				if UURL.MatchString(currentURL) {
 					gotRedirectedToUURL = true
@@ -3208,7 +3209,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		}
 		if gotRedirectedToUURL {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Unwanted redirect detected: %s != %s", currentURL, url)
-			if retries == maxRetries && maxRetries > 0 {
+			if retries >= maxRetries {
 				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 			}
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
