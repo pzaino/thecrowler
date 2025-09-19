@@ -3110,7 +3110,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			ctx.RefreshCrawlingTimer()
 		}
 
-		PageLoadOk := true
+		PageLoadOk := false
 		ctx.Status.LastRetry.Add(1) // Increment the report retry count
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
@@ -3219,6 +3219,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
 			continue
 		}
+		PageLoadOk = true
 
 		// We are on an allowed URL. Run page-load validation here.
 		status, _ := ApplyLoadValidation(ctx, &wd, level)
