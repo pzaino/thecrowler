@@ -293,11 +293,10 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 		processCtx.srcCfg = sourceConfig
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-CrawlWebsite] Source configuration extracted: %v", processCtx.srcCfg)
-		for k, v := range processCtx.srcCfg {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-CrawlWebsite] Source configuration key: %s, value: %v", k, v)
-		}
+		crawlingConfig := make(map[string]interface{})
+		crawlingConfig, _ = processCtx.srcCfg["crawling_config"].(map[string]interface{})
 		// Check if we have UnwantedURLs in the source configuration (and if so compile the patterns)
-		unwantedURLs, ok := processCtx.srcCfg["unwanted_urls"]
+		unwantedURLs, ok := crawlingConfig["unwanted_urls"]
 		if ok {
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-CrawlWebsite] Found unwanted_urls in source configuration: %v", unwantedURLs)
 			if unwantedURLsSlice, ok := unwantedURLs.([]interface{}); ok {
