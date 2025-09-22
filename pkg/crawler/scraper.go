@@ -44,10 +44,12 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	_ = vdi.Refresh(ctx)
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
+
+	// Extracted data will be stored here
 	extractedData := make(map[string]interface{})
 
+	// Errors tracking
 	errContainer := []error{}
-
 	ErrorState := false
 	ErrorMsg := ""
 
@@ -111,7 +113,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 					}
 
 					// Break early if not extracting all occurrences or using a plugin_call selector
-					if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall {
+					if !getAllOccurrences || (strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall) {
 						break
 					}
 				}
@@ -151,6 +153,21 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 			// Otherwise, store as an array
 			extractedData[key] = allExtracted
 		}
+	}
+	// Check if the RUle has a PostProcessing section
+	if len(rule.PostProcessing) != 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rule's post-processing steps to the extracted data")
+		data := cmn.ConvertMapToJSON(extractedData)
+		for _, step := range rule.PostProcessing {
+			ApplyPostProcessingStep(ctx, &step, &data)
+		}
+		// Check if data has double "{{" and "}}" at the beginning and end
+		if strings.HasPrefix(string(data), "{{") && strings.HasSuffix(string(data), "}}") {
+			data = data[1:]
+			data = data[:len(data)-1]
+		}
+		// update the extractedData with the post-processed data
+		extractedData = cmn.ConvertJSONToMap(data)
 	}
 	endTime := time.Now()
 	// Log the time taken to extract the data for this element
@@ -939,12 +956,6 @@ func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingS
 	// Call processData with the parsed object
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
-*/
-/*
-	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
-		errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
-		return errors.New(errMsg)
-	}
 */
 func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) error {
 	var err error
