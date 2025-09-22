@@ -154,7 +154,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 			extractedData[key] = allExtracted
 		}
 	}
-	// Check if the RUle has a PostProcessing section
+	// Check if the Rule has a PostProcessing section
 	if len(rule.PostProcessing) != 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rule's post-processing steps to the extracted data")
 		data := cmn.ConvertMapToJSON(extractedData)
@@ -760,6 +760,8 @@ func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, d
 		ppStepSetEnv(ctx, step, data)
 	case strPluginCall:
 		ppStepPluginCall(ctx, step, data)
+	case "external_api":
+		ppStepExternalAPI(ctx, step, data)
 	default:
 		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
 	}
@@ -852,6 +854,15 @@ func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
 		if !strings.Contains(string(*data), key) {
 			cmn.DebugMsg(cmn.DbgLvlError, "Key %v is missing from the data", key)
 		}
+	}
+}
+
+// ppStepExternalAPI applies the "external_api" post-processing step to the provided data.
+func ppStepExternalAPI(_ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
+	// Implement the API call here
+	err := processAPITransformation(step, data)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "There was an error while running a rule post-processing external API call: %v", err)
 	}
 }
 
