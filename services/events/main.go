@@ -586,9 +586,9 @@ func processInternalEvent(event cdb.Event) {
 
 	if event.Action == actionInsert {
 		// Retry logic with linear backoff
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 		var err error
 		for i := 0; i < maxRetries; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 			_, err = cdb.CreateEvent(ctx, &dbHandler, event)
 			cancel() // Cancel the context to free resources
 			if err == nil {
@@ -772,9 +772,8 @@ func processEvent(event cdb.Event) {
 
 func removeHandledEvent(eventID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_, err := dbHandler.ExecContext(ctx, `DELETE FROM Events WHERE event_sha256 = $1`, eventID)
-	cancel()
-	if err != nil {
+	defer cancel()
+	if _, err := dbHandler.ExecContext(ctx, `DELETE FROM Events WHERE event_sha256 = $1`, eventID); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to remove event: %v", err)
 	}
 }
