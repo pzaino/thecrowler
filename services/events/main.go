@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -263,12 +264,12 @@ func initAPIv1() {
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 
 	// Events API endpoints
-	createEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(createEventHandler)))
-	checkEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(checkEventHandler)))
-	updateEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateEventHandler)))
-	removeEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventHandler)))
-	removeEventsBeforeWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventsBeforeHandler)))
-	listEventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(listEventsHandler)))
+	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
+	checkEventWithMiddlewares := withAll(http.HandlerFunc(checkEventHandler))
+	updateEventWithMiddlewares := withAll(http.HandlerFunc(updateEventHandler))
+	removeEventWithMiddlewares := withAll(http.HandlerFunc(removeEventHandler))
+	removeEventsBeforeWithMiddlewares := withAll(http.HandlerFunc(removeEventsBeforeHandler))
+	listEventsWithMiddlewares := withAll(http.HandlerFunc(listEventsHandler))
 
 	baseAPI := "/v1/event/"
 
@@ -281,9 +282,9 @@ func initAPIv1() {
 
 	// Handle uploads
 
-	uploadRulesetHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadRulesetHandler)))
-	uploadPluginHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadPluginHandler)))
-	uploadAgentHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadAgentHandler)))
+	uploadRulesetHandlerWithMiddlewares := withAll(http.HandlerFunc(uploadRulesetHandler))
+	uploadPluginHandlerWithMiddlewares := withAll(http.HandlerFunc(uploadPluginHandler))
+	uploadAgentHandlerWithMiddlewares := withAll(http.HandlerFunc(uploadAgentHandler))
 
 	baseAPI = "/v1/upload/"
 
@@ -303,6 +304,24 @@ func getLimiter(ip string) *rate.Limiter {
 		clientLimiters[ip] = limiter
 	}
 	return limiter
+}
+
+func withAll(m http.Handler) http.Handler {
+	return RecoverMiddleware(SecurityHeadersMiddleware(RateLimitMiddleware(m)))
+}
+
+// RecoverMiddleware captures panics from handlers and returns 500 instead of crashing the process.
+func RecoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				// log the panic with stack for post-mortem
+				cmn.DebugMsg(cmn.DbgLvlError, "HTTP panic: %v\n%s", rec, debug.Stack())
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RateLimitMiddleware is a middleware for rate limiting
@@ -534,12 +553,19 @@ func handleNotification(payload string) {
 // eventWorker is a goroutine that processes events from the jobQueue
 func eventWorker() {
 	for event := range jobQueue {
-		// Check if event.Action is empty
-		if event.Action != "" {
-			processInternalEvent(event)
-		} else {
-			processEvent(event)
-		}
+		func(e cdb.Event) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Worker panic on event %s: %v\n%s", e.ID, rec, debug.Stack())
+					// continue; this job is dropped, but the worker survives
+				}
+			}()
+			if strings.TrimSpace(e.Action) != "" {
+				processInternalEvent(e)
+			} else {
+				processEvent(e)
+			}
+		}(event)
 	}
 }
 
