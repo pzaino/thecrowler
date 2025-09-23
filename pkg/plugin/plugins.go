@@ -516,6 +516,11 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
 
 	go func(timeout time.Duration) {
+		// Check if timeout is valid, greater than 0 and less than 1 hour
+		if timeout <= 0 || timeout > 3600 {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid Plugin's timeout value %d, using default of 30 seconds", timeout)
+			timeout = 30 // Default to 30 seconds
+		}
 		time.Sleep(timeout * time.Second) // Wait for the timeout
 		vm.Interrupt <- func() {
 			cmn.DebugMsg(cmn.DbgLvlError, "JavaScript execution timeout")
