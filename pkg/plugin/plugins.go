@@ -490,7 +490,9 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler) (map[string]interface{}, error) {
 	// Consts
 	const (
-		errMsg01 = "Error getting result from JS plugin: %v"
+		errMsg01       = "Error getting result from JS plugin: %v"
+		defaultTimeout = 30 * time.Second
+		maxTimeout     = 1 * time.Hour
 	)
 
 	// Create a new VM
@@ -513,22 +515,38 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the VM successfully: %v", params)
 
+	// Normalize timeout from seconds to time.Duration
+	d := time.Duration(timeout) * time.Second
+	if d <= 0 || d > maxTimeout {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin timeout %s, using default %s", d, defaultTimeout)
+		d = defaultTimeout
+	}
+
 	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
 
-	go func(timeout time.Duration) {
-		// Check if timeout is valid, greater than 0 and less than 1 hour
-		if timeout <= 0 || timeout > 3600 {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid Plugin's timeout value %d, using default of 30 seconds", timeout)
-			timeout = 30 // Default to 30 seconds
+	// Optional: allow cancellation by closing done when we're finished
+	done := make(chan struct{})
+	go func(d time.Duration) {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			// Try not to block if nobody is reading Interrupt
+			select {
+			case vm.Interrupt <- func() {
+				cmn.DebugMsg(cmn.DbgLvlError, "JavaScript execution timeout after %s", d)
+			}:
+			default:
+				// channel already has an interrupt pending
+			}
+		case <-done:
+			return
 		}
-		time.Sleep(timeout * time.Second) // Wait for the timeout
-		vm.Interrupt <- func() {
-			cmn.DebugMsg(cmn.DbgLvlError, "JavaScript execution timeout")
-		}
-	}(time.Duration(timeout))
+	}(d)
 
 	// Run the script
 	rval, err := vm.Run(p.Script)
+	close(done) // We are done, close the done channel to stop the timeout goroutine
 	if err != nil {
 		return nil, err
 	}
@@ -541,6 +559,8 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		}
 		result = rval
 	}
+
+	// Export the result
 	resultMap, err := result.Export()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
