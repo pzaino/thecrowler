@@ -225,12 +225,13 @@ network_info:
 # --------------------------
 events:
   host: 0.0.0.0 # Listen address for Events Manager API
-  port: 9090 # Port for events API
+  port: 8082 # Port for events API
   timeout: 30 # Request timeout (seconds)
   sslmode: disable # enable | disable
   cert_file: "" # If sslmode=enable
   key_file: "" # If sslmode=enable
-  rate_limit: 20/s # Throttle (string allowed)
+  automatic_events_removal: "on_success"
+  rate_limit: "1200,1200" # Throttle (string allowed) 1200 requests per second with a burst of 1200 requests
   readheader_timeout: 30 # Seconds to read headers
   write_timeout: 30 # Seconds to write responses
 
