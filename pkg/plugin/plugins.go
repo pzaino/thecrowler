@@ -497,6 +497,13 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	result := make(map[string]interface{})
 
+	// Final safety net: never let a panic escape this function.
+	defer func() {
+		if r := recover(); r != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "execEnginePlugin recovered from panic: %v", r)
+		}
+	}()
+
 	// Create a new VM
 	vm := otto.New()
 
