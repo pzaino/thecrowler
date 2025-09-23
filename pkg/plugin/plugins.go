@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -488,7 +489,6 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 }
 
 func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler) (map[string]interface{}, error) {
-	// Consts
 	const (
 		errMsg01       = "Error getting result from JS plugin: %v"
 		defaultTimeout = 30 * time.Second
@@ -497,47 +497,68 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	// Create a new VM
 	vm := otto.New()
-	err := removeJSFunctions(vm)
-	if err != nil {
+
+	// Per VM context and interrupt channel
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	vm.Interrupt = make(chan func(), 1)
+
+	// Remove dangerous globals
+	if err := removeJSFunctions(vm); err != nil {
 		return nil, err
 	}
 
-	// Add CROWler JSAPI to the VM
-	err = setCrowlerJSAPI(vm, db)
-	if err != nil {
+	// Track timers created by JS helpers like setTimeout so we can stop them when the VM ends
+	var (
+		timersMu sync.Mutex
+		timers   []*time.Timer
+	)
+	addTimer := func(t *time.Timer) {
+		timersMu.Lock()
+		timers = append(timers, t)
+		timersMu.Unlock()
+	}
+	stopAllTimers := func() {
+		timersMu.Lock()
+		for _, t := range timers {
+			t.Stop()
+		}
+		timers = nil
+		timersMu.Unlock()
+	}
+	defer stopAllTimers()
+
+	// Install CROWler JS extensions
+	if err := setCrowlerJSAPI(ctx, vm, db, addTimer); err != nil {
 		return nil, err
 	}
 
-	// Set the params
-	err = vm.Set("params", params)
-	if err != nil {
+	// Pass params into the VM
+	if err := vm.Set("params", params); err != nil {
 		return nil, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the VM successfully: %v", params)
 
-	// Normalize timeout from seconds to time.Duration
+	// Normalize timeout
 	d := time.Duration(timeout) * time.Second
 	if d <= 0 || d > maxTimeout {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin timeout %s, using default %s", d, defaultTimeout)
 		d = defaultTimeout
 	}
 
-	vm.Interrupt = make(chan func(), 1) // Set an interrupt channel
-
-	// Optional: allow cancellation by closing done when we're finished
+	// Hard execution timeout. Interrupt the VM with a panic that Otto will catch.
+	// vm.Run will then return an error instead of hanging.
 	done := make(chan struct{})
 	go func(d time.Duration) {
 		timer := time.NewTimer(d)
 		defer timer.Stop()
 		select {
 		case <-timer.C:
-			// Try not to block if nobody is reading Interrupt
 			select {
-			case vm.Interrupt <- func() {
-				cmn.DebugMsg(cmn.DbgLvlError, "JavaScript execution timeout after %s", d)
-			}:
+			case vm.Interrupt <- func() { panic(fmt.Sprintf("JavaScript execution timeout after %s", d)) }:
 			default:
-				// channel already has an interrupt pending
+				// Interrupt channel not accepted. Drop to avoid blocking.
 			}
 		case <-done:
 			return
@@ -546,12 +567,18 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	// Run the script
 	rval, err := vm.Run(p.Script)
-	close(done) // We are done, close the done channel to stop the timeout goroutine
+
+	// VM finished. Prevent any further callbacks
+	close(done)
+	cancel()
+	stopAllTimers()
+
 	if err != nil {
+		// This includes the timeout path where we panicked via Interrupt
 		return nil, err
 	}
 
-	// Get the result
+	// Gather result
 	result, err := vm.Get("result")
 	if err != nil || !result.IsDefined() {
 		if err != nil {
@@ -560,19 +587,17 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		result = rval
 	}
 
-	// Export the result
-	resultMap, err := result.Export()
+	exported, err := result.Export()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
-	resultValue, ok := resultMap.(map[string]interface{})
+	m, ok := exported.(map[string]interface{})
 	if !ok {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
-		return nil, err
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, fmt.Errorf("result is %T, want map[string]interface{}", exported))
+		return nil, fmt.Errorf("engine plugin result type mismatch")
 	}
-
-	return resultValue, nil
+	return m, nil
 }
 
 // removeJSFunctions removes the JS functions from the VM
@@ -614,7 +639,7 @@ func removeJSFunctions(vm *otto.Otto) error {
 }
 
 // setCrowlerJSAPI sets the CROWler JS API functions
-func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
+func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTimer func(*time.Timer)) error {
 	// Extends Otto JS VM with CROWler JS API functions
 
 	// Common functions
@@ -628,7 +653,7 @@ func setCrowlerJSAPI(vm *otto.Otto, db *cdb.Handler) error {
 	if err := addJSAPIISODate(vm); err != nil {
 		return err
 	}
-	if err := addJSAPISetTimeout(vm); err != nil {
+	if err := addJSAPISetTimeout(ctx, vm, addTimer); err != nil {
 		return err
 	}
 	if err := addJSAPILoadLocalFile(vm); err != nil {
@@ -3043,25 +3068,37 @@ func addJSAPIISODate(vm *otto.Otto) error {
 //	setTimeout(function() {
 //		console.log("Hello, world!");
 //	}, 1000);
-func addJSAPISetTimeout(vm *otto.Otto) error {
+func addJSAPISetTimeout(ctx context.Context, vm *otto.Otto, addTimer func(*time.Timer)) error {
 	return vm.Set("setTimeout", func(call otto.FunctionCall) otto.Value {
-		// First argument: function or expression to evaluate.
-		callback := call.Argument(0)
-		if !callback.IsFunction() {
+		cb := call.Argument(0)
+		if !cb.IsFunction() {
 			return returnError(vm, "Error, this function requires a function as the first argument.")
 		}
-
-		// Second argument: delay in milliseconds.
-		delay, err := call.Argument(1).ToInteger()
-		if err != nil {
+		delayMs, err := call.Argument(1).ToInteger()
+		if err != nil || delayMs < 0 {
 			return returnError(vm, "Error, this function requires a delay in milliseconds as the second argument.")
 		}
 
-		// Call the function after the specified delay.
-		go func() {
-			time.Sleep(time.Duration(delay) * time.Millisecond)
-			_, _ = callback.Call(otto.UndefinedValue())
-		}()
+		d := time.Duration(delayMs) * time.Millisecond
+		t := time.AfterFunc(d, func() {
+			// if VM is already done, drop
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			// enqueue work onto the VM goroutine
+			select {
+			case vm.Interrupt <- func() {
+				if _, err := cb.Call(otto.UndefinedValue()); err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "setTimeout callback error: %v", err)
+				}
+			}:
+			default:
+				// Interrupt channel is full or VM not actively running
+			}
+		})
+		addTimer(t)
 		return otto.UndefinedValue()
 	})
 }
