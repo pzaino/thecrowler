@@ -495,6 +495,8 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		maxTimeout     = 1 * time.Hour
 	)
 
+	result := make(map[string]interface{})
+
 	// Create a new VM
 	vm := otto.New()
 
@@ -506,7 +508,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	// Remove dangerous globals
 	if err := removeJSFunctions(vm); err != nil {
-		return nil, err
+		return result, err
 	}
 
 	// Track timers created by JS helpers like setTimeout so we can stop them when the VM ends
@@ -531,12 +533,12 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	// Install CROWler JS extensions
 	if err := setCrowlerJSAPI(ctx, vm, db, addTimer); err != nil {
-		return nil, err
+		return result, err
 	}
 
 	// Pass params into the VM
 	if err := vm.Set("params", params); err != nil {
-		return nil, err
+		return result, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the VM successfully: %v", params)
 
@@ -575,29 +577,29 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	if err != nil {
 		// This includes the timeout path where we panicked via Interrupt
-		return nil, err
+		return result, err
 	}
 
 	// Gather result
-	result, err := vm.Get("result")
-	if err != nil || !result.IsDefined() {
+	resultRaw, err := vm.Get("result")
+	if err != nil || !resultRaw.IsDefined() {
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		}
-		result = rval
+		resultRaw = rval
 	}
 
-	exported, err := result.Export()
+	exported, err := resultRaw.Export()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
-	m, ok := exported.(map[string]interface{})
+	result, ok := exported.(map[string]interface{})
 	if !ok {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, fmt.Errorf("result is %T, want map[string]interface{}", exported))
-		return nil, fmt.Errorf("engine plugin result type mismatch")
+		return result, fmt.Errorf("engine plugin result type mismatch")
 	}
-	return m, nil
+	return result, nil
 }
 
 // removeJSFunctions removes the JS functions from the VM
