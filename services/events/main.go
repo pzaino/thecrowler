@@ -745,7 +745,9 @@ func processEvent(event cdb.Event) {
 }
 
 func removeHandledEvent(eventID string) {
-	_, err := dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err := dbHandler.ExecContext(ctx, `DELETE FROM Events WHERE event_sha256 = $1`, eventID)
+	cancel()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to remove event: %v", err)
 	}
