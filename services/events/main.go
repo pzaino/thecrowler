@@ -2,11 +2,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -550,28 +552,67 @@ func processInternalEvent(event cdb.Event) {
 		return
 	}
 
-	if event.Action == actionInsert {
-		const maxRetries = 5
-		const baseDelay = 10 * time.Millisecond
+	const (
+		maxRetries  = 5
+		baseDelay   = 20 * time.Millisecond
+		callTimeout = 5 * time.Second
+	)
 
+	if event.Action == actionInsert {
+		// Retry logic with linear backoff
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 		var err error
 		for i := 0; i < maxRetries; i++ {
-			_, err = cdb.CreateEvent(&dbHandler, event)
+			_, err = cdb.CreateEvent(ctx, &dbHandler, event)
+			cancel() // Cancel the context to free resources
 			if err == nil {
 				return // success!
 			}
 
+			if !isRetryable(err) {
+				cmn.DebugMsg(cmn.DbgLvlError, "CreateEvent non-retryable error: %v", err)
+				return
+			}
+
 			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
 
-			// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
-			// if !isRetryable(err) { break }
+			// jittered exponential backoff
+			sleep := time.Duration(1<<i) * baseDelay
+			if sleep > 2*time.Second {
+				sleep = 2 * time.Second
+			}
+			jitter := time.Duration(rand.Int63n(int64(sleep / 2)))
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v. Backing off %s",
+				i+1, maxRetries, err, sleep+jitter)
+			time.Sleep(sleep + jitter)
 
-			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
 		}
 
 		// Final failure
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
 	}
+}
+
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Example: Check for specific error messages or types
+	retryableErrors := []string{
+		"deadlock detected",
+		"could not serialize access",
+		"connection refused",
+		"connection reset by peer",
+		"temporary network error",
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	for _, retryable := range retryableErrors {
+		if strings.Contains(errMsg, retryable) {
+			return true
+		}
+	}
+	return false
 }
 
 // Process the event
@@ -787,7 +828,9 @@ func uploadRulesetHandler(w http.ResponseWriter, r *http.Request) {
 			"content":  escapeJSON(string(data)),
 		},
 	}
-	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
@@ -853,7 +896,9 @@ func uploadPluginHandler(w http.ResponseWriter, r *http.Request) {
 			"content":  escapeJSON(string(data)),
 		},
 	}
-	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
@@ -915,7 +960,9 @@ func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
 			"content":  escapeJSON(string(data)),
 		},
 	}
-	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
 		return
 	}

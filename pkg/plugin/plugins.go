@@ -1461,7 +1461,9 @@ func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Insert the event into the database
-		eID, err := cdb.CreateEvent(db, event)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		eID, err := cdb.CreateEvent(ctx, db, event)
+		cancel()
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting event into database: %v", err)
 			return otto.UndefinedValue()

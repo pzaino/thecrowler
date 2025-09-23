@@ -16,6 +16,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -64,7 +65,7 @@ func InitializeScheduler(db *Handler) {
 
 // CreateEvent creates a new event in the database.
 // It receives in input an Event struct and returns the Event UID and an error if the operation fails.
-func CreateEvent(db *Handler, e Event) (string, error) {
+func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 	// get the current timestamp
 	if e.Timestamp == "" {
 		e.Timestamp = time.Now().Format(time.RFC3339)
@@ -75,7 +76,7 @@ func CreateEvent(db *Handler, e Event) (string, error) {
 	e.ID = uid
 
 	// Execute the query
-	_, err := (*db).Exec(`
+	_, err := (*db).ExecContext(ctx, `
 		INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
 		e.ID, e.SourceID, e.Type, e.Severity, e.Timestamp, cmn.ConvertMapToString(e.Details))
@@ -93,7 +94,9 @@ func CreateEventWithRetries(db *Handler, event Event) (string, error) {
 
 	var err error
 	for i := 0; i < maxRetries; i++ {
-		eID, err := CreateEvent(db, event)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		eID, err := CreateEvent(ctx, db, event)
+		cancel()
 		if err == nil {
 			return eID, nil // success!
 		}

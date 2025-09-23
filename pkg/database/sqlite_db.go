@@ -17,6 +17,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -73,6 +74,11 @@ func (handler *SQLiteHandler) ExecuteQuery(query string, args ...interface{}) (*
 // Exec executes a commands on the database
 func (handler *SQLiteHandler) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return handler.db.Exec(query, args...)
+}
+
+// ExecContext executes a command on the database with a context
+func (handler *SQLiteHandler) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return handler.db.ExecContext(ctx, query, args...)
 }
 
 // DBMS returns the database management system

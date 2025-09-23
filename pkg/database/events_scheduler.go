@@ -17,6 +17,7 @@ package database
 
 import (
 	"container/heap"
+	"context"
 	"strconv"
 	"strings"
 	"sync"
@@ -169,7 +170,9 @@ func processEvent(db *Handler, event *ScheduledEvent) error {
 		return err
 	}
 
-	_, err = CreateEvent(db, evt)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err = CreateEvent(ctx, db, evt)
+	cancel()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error creating event %s: %v", event.EventID, err)
 		return err

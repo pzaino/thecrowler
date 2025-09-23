@@ -824,7 +824,9 @@ func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) 
 	}
 
 	// Use PostgreSQL placeholders ($1, $2, etc.) and include event_timestamp
-	_, err = cdb.CreateEvent(&db, event)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err = cdb.CreateEvent(ctx, &db, event)
+	cancel()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting event into database: %v", err)
 		return err

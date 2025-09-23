@@ -1149,8 +1149,8 @@ func (c *Config) validateRulesets() {
 
 func (c *Config) validatePlugins() {
 	// Check Plugins
-	if c.Plugins.PluginsTimeout < 1 {
-		c.Plugins.PluginsTimeout = 15
+	if c.Plugins.PluginsTimeout < 1 || c.Plugins.PluginsTimeout > 300 {
+		c.Plugins.PluginsTimeout = 30
 	}
 	for i := range c.Plugins.Plugins {
 		if strings.TrimSpace(c.Plugins.Plugins[i].Type) == "" {
