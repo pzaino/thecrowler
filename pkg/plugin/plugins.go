@@ -556,23 +556,35 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		d = defaultTimeout
 	}
 
+	// Utility: start goroutines safely.
+	safeGo := func(f func()) {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "background goroutine recovered: %v", r)
+				}
+			}()
+			f()
+		}()
+	}
+
 	// Hard execution timeout. Interrupt the VM with a panic that Otto will catch.
 	// vm.Run will then return an error instead of hanging.
 	done := make(chan struct{})
-	go func(d time.Duration) {
+	safeGo(func() {
 		timer := time.NewTimer(d)
 		defer timer.Stop()
 		select {
 		case <-timer.C:
+			// Non-blocking send to avoid deadlock if VM already ended.
 			select {
 			case vm.Interrupt <- func() { panic(fmt.Sprintf("JavaScript execution timeout after %s", d)) }:
 			default:
-				// Interrupt channel not accepted. Drop to avoid blocking.
 			}
 		case <-done:
 			return
 		}
-	}(d)
+	})
 
 	// Run the script
 	rval, err := vm.Run(p.Script)
