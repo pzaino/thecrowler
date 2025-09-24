@@ -668,11 +668,10 @@ func processInternalEvent(event cdb.Event) {
 			if sleep > 2*time.Second {
 				sleep = 2 * time.Second
 			}
-			jitter := time.Duration(rand.Int63n(int64(sleep / 2)))
+			jitter := time.Duration(rand.Int63n(int64(sleep / 2))) // nolint:gosec // we want a random jitter here, the non particularly good rand function is not a problem
 			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v. Backing off %s",
 				i+1, maxRetries, err, sleep+jitter)
 			time.Sleep(sleep + jitter)
-
 		}
 
 		// Final failure
