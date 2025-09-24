@@ -523,7 +523,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	if config.API.ReturnContent {
 		queryBody = `
 		SELECT DISTINCT
-			wo.title, si.page_url, si.summary, wo.object_content AS content
+			si.title, si.page_url, si.summary, wo.object_content, si.detected_type, si.detected_language, '' AS content
 		FROM
 			SearchIndex si
 		LEFT JOIN
@@ -539,7 +539,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	} else {
 		queryBody = `
 		SELECT DISTINCT
-			wo.title, si.page_url, si.summary, '' as content
+			si.title, si.page_url, si.summary, si.detected_type, si.detected_language, '' AS content
 		FROM
 			SearchIndex si
 		LEFT JOIN
