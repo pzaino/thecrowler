@@ -280,7 +280,7 @@ func CORSHeadersMiddleware(next http.Handler) http.Handler {
 		// You can restrict this to specific domains in production
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		// For preflight requests
 		if r.Method == http.MethodOptions {
