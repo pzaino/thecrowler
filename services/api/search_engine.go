@@ -590,19 +590,23 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	// Iterate over the results
 	var results SearchResult
 	for rows.Next() {
-		var title, link, summary, snippet string
-		if err := rows.Scan(&title, &link, &summary, &snippet); err != nil {
+		var title, link, summary, snippet, docType, lang string
+		if err := rows.Scan(&title, &link, &summary, &docType, &lang, &snippet); err != nil {
 			return SearchResult{}, err
 		}
 		results.Items = append(results.Items, struct {
 			Title   string `json:"title"`
 			Link    string `json:"link"`
 			Summary string `json:"summary"`
+			DocType string `json:"type"`
+			Lang    string `json:"lang"`
 			Snippet string `json:"snippet"`
 		}{
 			Title:   title,
 			Link:    link,
 			Summary: summary,
+			DocType: docType,
+			Lang:    lang,
 			Snippet: snippet,
 		})
 	}

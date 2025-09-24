@@ -92,6 +92,8 @@ type SearchResult struct {
 		Title   string `json:"title"`   // Title of the page
 		Link    string `json:"link"`    // URL of the page
 		Summary string `json:"summary"` // Summary of the page
+		DocType string `json:"type"`    // Type of the document (e.g., "text/html")
+		Lang    string `json:"lang"`    // Language of the document (e.g., "en")
 		Snippet string `json:"snippet"` // Snippet of the page
 	} `json:"items"` // List of results
 }
