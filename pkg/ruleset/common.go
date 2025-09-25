@@ -415,13 +415,10 @@ func PreparePathForSearch(path string) (string, error) {
 // returns false if it's not a URL or a pattern to match URLs otherwise returns true.
 func IsURL(urlStr string) bool {
 	urlStr = strings.TrimSpace(urlStr)
-	if urlStr == "" {
+	switch urlStr {
+	case "":
 		return false
-	} else if urlStr == "*" {
-		return true
-	} else if urlStr == ".*" {
-		return true
-	} else if urlStr == "^https?://.*$" {
+	case "*", ".*", "^https?://.*$":
 		return true
 	}
 
