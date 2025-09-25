@@ -418,7 +418,7 @@ func IsURL(urlStr string) bool {
 	switch urlStr {
 	case "":
 		return false
-	case "*", ".*", "^https?://.*$":
+	case "*", ".*", "^https?://.*$", "https?://.*":
 		return true
 	}
 
