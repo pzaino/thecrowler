@@ -111,7 +111,7 @@ crawler:
     sslmode: disable # enable | disable
     cert_file: "" # Required if sslmode=enable
     key_file: "" # Required if sslmode=enable
-    rate_limit: 20/s # e.g., "20/s" – basic throttle string
+    rate_limit: "100,100" # e.g., "100,100" max 100 req per second with a max burst of 100
     readheader_timeout: 30 # Seconds to read headers
     write_timeout: 30 # Seconds for writes
 
@@ -125,7 +125,7 @@ api:
   sslmode: disable # enable | disable
   cert_file: "" # If sslmode=enable
   key_file: "" # If sslmode=enable
-  rate_limit: 20/s # Throttle (string supports simple formats)
+  rate_limit: "1000,1000" # Throttle (string allowed) 1000 requests per second with a burst of 1000 requests
   readheader_timeout: 30 # Seconds to read headers
   write_timeout: 30 # Seconds to write responses
   enable_console: true # Enable built-in API console (dev only)
@@ -143,7 +143,7 @@ selenium:
     port: 4444 # Selenium hub/standalone port
     sslmode: disable # enable | disable (TLS to Selenium)
     headless: false # Headless browser sessions
-    name: default # Logical VDI name (used by Engine pinning)
+    name: crowler-vdi-1 # Logical VDI name (used by Engine pinning)
     location: "" # Freeform location tag (e.g., "eu-west")
     language: "" # Preferred UI language/locale
     path: "" # Optional: path to browser binary (usually empty in containers)
@@ -268,7 +268,7 @@ http_headers:
   timeout: 30 # Seconds per request
   follow_redirects: true # Follow 3xx during discovery
   ssl_discovery:
-    enabled: false  # Probe TLS/SSL info (certs, params)
+    enabled: false # Probe TLS/SSL info (certs, params)
   proxies: [] # Optional list of HTTP proxies (objects if enabled; keep empty here)
 
 # --------------------------

@@ -419,6 +419,10 @@ func IsURL(urlStr string) bool {
 		return false
 	} else if urlStr == "*" {
 		return true
+	} else if urlStr == ".*" {
+		return true
+	} else if urlStr == "^https?://.*$" {
+		return true
 	}
 
 	var re *regexp.Regexp
