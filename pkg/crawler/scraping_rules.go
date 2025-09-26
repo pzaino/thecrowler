@@ -178,7 +178,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 
 	var err error
 	for _, r := range rg.GetScrapingRules() {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule Group: %v", r.RuleName)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule: %v", r.RuleName)
 		// Execute the rule
 		var scrapedData string
 		scrapedData, err = executeScrapingRule(ctx, &r, wd)
