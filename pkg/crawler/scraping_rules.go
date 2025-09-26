@@ -91,7 +91,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 	// Retrieve the rule group by URL
 	rgl, err := ctx.re.GetAllRulesGroupByURL(url)
 	if (err == nil) && (len(rgl) != 0) {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-FindRules] Found %d Rulegroups for URL with the URL '%v'", url, len(rgl))
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-FindRules] Found %d Rulegroups for URL with the URL '%v'", len(rgl), url)
 		for _, rg := range rgl {
 			// Execute all the rules in the rule group (the following function also set the Env and clears it)
 			var data string
@@ -172,6 +172,7 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *v
 
 func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *vdi.WebDriver) (string, error) {
 	scrapedDataDoc := ""
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule Group: %v", rg.GroupName)
 
 	// Set the environment
 	rg.SetEnv(ctx.GetContextID())
