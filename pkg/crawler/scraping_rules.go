@@ -172,13 +172,13 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *v
 
 func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *vdi.WebDriver) (string, error) {
 	scrapedDataDoc := ""
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule Group: %v", rg.GroupName)
 
 	// Set the environment
 	rg.SetEnv(ctx.GetContextID())
 
 	var err error
 	for _, r := range rg.GetScrapingRules() {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule Group: %v", r.RuleName)
 		// Execute the rule
 		var scrapedData string
 		scrapedData, err = executeScrapingRule(ctx, &r, wd)
