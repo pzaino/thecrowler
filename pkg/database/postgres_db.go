@@ -179,6 +179,11 @@ func (handler *PostgresHandler) Exec(query string, args ...interface{}) (sql.Res
 	return handler.db.Exec(query, args...)
 }
 
+// ExecContext executes a commands on the database with a context
+func (handler *PostgresHandler) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return handler.db.ExecContext(ctx, query, args...)
+}
+
 // DBMS returns the database management system
 func (handler *PostgresHandler) DBMS() string {
 	return handler.dbms

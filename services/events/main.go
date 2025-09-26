@@ -2,17 +2,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,7 +57,9 @@ var (
 
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
-	jobQueue       = make(chan cdb.Event, 120000) // buffered queue
+	jobQueue       = make(chan cdb.Event, 120000)  // buffered requests queue
+	internalQ      = make(chan cdb.Event, 10_000)  // buffered small; DB-only work
+	externalQ      = make(chan cdb.Event, 100_000) // buffered larger; JS+DB work
 )
 
 func main() {
@@ -116,6 +121,8 @@ func main() {
 	for i := 0; i < runtime.NumCPU(); i++ {
 		go eventWorker()
 	}
+	startInternalWorkers(runtime.NumCPU())     // internal events workers
+	startExternalWorkers(runtime.NumCPU() * 2) // external events workers
 
 	// Start the event listener (on a separate go routine)
 	go cdb.ListenForEvents(&dbHandler, handleNotification)
@@ -261,12 +268,12 @@ func initAPIv1() {
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 
 	// Events API endpoints
-	createEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(createEventHandler)))
-	checkEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(checkEventHandler)))
-	updateEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateEventHandler)))
-	removeEventWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventHandler)))
-	removeEventsBeforeWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeEventsBeforeHandler)))
-	listEventsWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(listEventsHandler)))
+	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
+	checkEventWithMiddlewares := withAll(http.HandlerFunc(checkEventHandler))
+	updateEventWithMiddlewares := withAll(http.HandlerFunc(updateEventHandler))
+	removeEventWithMiddlewares := withAll(http.HandlerFunc(removeEventHandler))
+	removeEventsBeforeWithMiddlewares := withAll(http.HandlerFunc(removeEventsBeforeHandler))
+	listEventsWithMiddlewares := withAll(http.HandlerFunc(listEventsHandler))
 
 	baseAPI := "/v1/event/"
 
@@ -279,9 +286,9 @@ func initAPIv1() {
 
 	// Handle uploads
 
-	uploadRulesetHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadRulesetHandler)))
-	uploadPluginHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadPluginHandler)))
-	uploadAgentHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(uploadAgentHandler)))
+	uploadRulesetHandlerWithMiddlewares := withAll(http.HandlerFunc(uploadRulesetHandler))
+	uploadPluginHandlerWithMiddlewares := withAll(http.HandlerFunc(uploadPluginHandler))
+	uploadAgentHandlerWithMiddlewares := withAll(http.HandlerFunc(uploadAgentHandler))
 
 	baseAPI = "/v1/upload/"
 
@@ -301,6 +308,24 @@ func getLimiter(ip string) *rate.Limiter {
 		clientLimiters[ip] = limiter
 	}
 	return limiter
+}
+
+func withAll(m http.Handler) http.Handler {
+	return RecoverMiddleware(SecurityHeadersMiddleware(RateLimitMiddleware(m)))
+}
+
+// RecoverMiddleware captures panics from handlers and returns 500 instead of crashing the process.
+func RecoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				// log the panic with stack for post-mortem
+				cmn.DebugMsg(cmn.DbgLvlError, "HTTP panic: %v\n%s", rec, debug.Stack())
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RateLimitMiddleware is a middleware for rate limiting
@@ -529,15 +554,79 @@ func handleNotification(payload string) {
 	}
 }
 
+func startInternalWorkers(n int) {
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for e := range internalQ {
+				safe(func() { processInternalEvent(e) }, e)
+			}
+		}()
+	}
+}
+
+func startExternalWorkers(n int) {
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for e := range externalQ {
+				safe(func() { processEvent(e) }, e)
+			}
+		}()
+	}
+}
+
+func safe(fn func(), e cdb.Event) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Worker panic on event %s: %v\n%s", e.ID, rec, debug.Stack())
+		}
+	}()
+	fn()
+}
+
 // eventWorker is a goroutine that processes events from the jobQueue
 func eventWorker() {
 	for event := range jobQueue {
-		// Check if event.Action is empty
-		if event.Action != "" {
-			processInternalEvent(event)
-		} else {
-			processEvent(event)
-		}
+		func(e cdb.Event) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Worker panic on event %s: %v\n%s", e.ID, rec, debug.Stack())
+					// continue; this job is dropped, but the worker survives
+				}
+			}()
+			if strings.TrimSpace(e.Action) != "" {
+				// processInternalEvent(e)
+				// internal job
+				_ = enqueueWithTimeout(internalQ, e, 200*time.Millisecond)
+			} else {
+				// processEvent(e)
+				// plugin/agent job
+				_ = enqueueWithTimeout(externalQ, e, 200*time.Millisecond)
+			}
+		}(event)
+	}
+}
+
+func enqueueWithTimeout(q chan cdb.Event, e cdb.Event, t time.Duration) bool {
+	if t <= 0 {
+		// Enqueue without timeout
+		q <- e
+		return true
+	}
+	// Enqueue with timeout
+	timer := time.NewTimer(t)
+	defer timer.Stop()
+	select {
+	case q <- e:
+		return true
+	case <-timer.C:
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Queue full; dropping event %s (type=%s)", e.ID, e.Type)
+		return false
 	}
 }
 
@@ -550,28 +639,66 @@ func processInternalEvent(event cdb.Event) {
 		return
 	}
 
-	if event.Action == actionInsert {
-		const maxRetries = 5
-		const baseDelay = 10 * time.Millisecond
+	const (
+		maxRetries  = 5
+		baseDelay   = 20 * time.Millisecond
+		callTimeout = 5 * time.Second
+	)
 
+	if event.Action == actionInsert {
+		// Retry logic with linear backoff
 		var err error
 		for i := 0; i < maxRetries; i++ {
-			_, err = cdb.CreateEvent(&dbHandler, event)
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			_, err = cdb.CreateEvent(ctx, &dbHandler, event)
+			cancel() // Cancel the context to free resources
 			if err == nil {
 				return // success!
 			}
 
+			if !isRetryable(err) {
+				cmn.DebugMsg(cmn.DbgLvlError, "CreateEvent non-retryable error: %v", err)
+				return
+			}
+
 			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
 
-			// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
-			// if !isRetryable(err) { break }
-
-			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
+			// jittered exponential backoff
+			sleep := time.Duration(1<<i) * baseDelay
+			if sleep > 2*time.Second {
+				sleep = 2 * time.Second
+			}
+			jitter := time.Duration(rand.Int63n(int64(sleep / 2))) // nolint:gosec // we want a random jitter here, the non particularly good rand function is not a problem
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v. Backing off %s",
+				i+1, maxRetries, err, sleep+jitter)
+			time.Sleep(sleep + jitter)
 		}
 
 		// Final failure
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
 	}
+}
+
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Example: Check for specific error messages or types
+	retryableErrors := []string{
+		"deadlock detected",
+		"could not serialize access",
+		"connection refused",
+		"connection reset by peer",
+		"temporary network error",
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	for _, retryable := range retryableErrors {
+		if strings.Contains(errMsg, retryable) {
+			return true
+		}
+	}
+	return false
 }
 
 // Process the event
@@ -581,7 +708,7 @@ func processEvent(event cdb.Event) {
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
 		return
 	}
 
@@ -590,14 +717,16 @@ func processEvent(event cdb.Event) {
 
 	// Check if the event is associated with a source_id > 0
 	metaData := make(map[string]interface{})
+	var source *cdb.Source
+	var err error
+	configMap := make(map[string]interface{})
 	if event.SourceID > 0 {
 		// Retrieve the source details
-		source, err := cdb.GetSourceByID(&dbHandler, event.SourceID)
+		source, err = cdb.GetSourceByID(&dbHandler, event.SourceID)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v (probably source removed already by the system or the user)", err)
 		} else {
 			// extract the source details -> meta_data
-			var configMap map[string]interface{}
 			if err := json.Unmarshal(*source.Config, &configMap); err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling config: %v", err)
 				metaData = nil
@@ -655,6 +784,7 @@ func processEvent(event cdb.Event) {
 		iCfg["plugins_register"] = PluginRegister
 		iCfg["event"] = event
 		iCfg["meta_data"] = metaData
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessEvent] Source Config: %v", configMap)
 
 		for _, ac := range a {
 			// Execute the agents
@@ -701,8 +831,9 @@ func processEvent(event cdb.Event) {
 }
 
 func removeHandledEvent(eventID string) {
-	_, err := dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, eventID)
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := dbHandler.ExecContext(ctx, `DELETE FROM Events WHERE event_sha256 = $1`, eventID); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to remove event: %v", err)
 	}
 }
@@ -784,7 +915,9 @@ func uploadRulesetHandler(w http.ResponseWriter, r *http.Request) {
 			"content":  escapeJSON(string(data)),
 		},
 	}
-	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
@@ -850,7 +983,9 @@ func uploadPluginHandler(w http.ResponseWriter, r *http.Request) {
 			"content":  escapeJSON(string(data)),
 		},
 	}
-	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
@@ -912,7 +1047,9 @@ func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
 			"content":  escapeJSON(string(data)),
 		},
 	}
-	if _, err := cdb.CreateEvent(&dbHandler, event); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
 		return
 	}

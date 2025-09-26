@@ -22,6 +22,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -377,7 +378,9 @@ func createEvent(db cdb.Handler, event cdb.Event) {
 
 		var err error
 		for i := 0; i < maxRetries; i++ {
-			_, err = cdb.CreateEvent(&db, event)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err = cdb.CreateEvent(ctx, &db, event)
+			cancel()
 			if err == nil {
 				return // success!
 			}
@@ -1261,9 +1264,9 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time:", time.Now())
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location:", time.Local.String())
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name:", cmn.GetMicroServiceName())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%s'", time.Local.String())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name: '%s'", cmn.GetMicroServiceName())
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Crawler.Control.Host, config.Crawler.Control.Port)
 	var rStatus error

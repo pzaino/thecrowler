@@ -44,10 +44,12 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	_ = vdi.Refresh(ctx)
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
+
+	// Extracted data will be stored here
 	extractedData := make(map[string]interface{})
 
+	// Errors tracking
 	errContainer := []error{}
-
 	ErrorState := false
 	ErrorMsg := ""
 
@@ -72,7 +74,9 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 					case string:
 						// Directly append string values
 						allExtracted = append(allExtracted, v)
-
+					case float64:
+						// Directly append numeric values
+						allExtracted = append(allExtracted, v)
 					case map[string]interface{}:
 						// Directly append map values (as sub-documents)
 						// Safely convert the map to JSON and store it directly in extractedData
@@ -89,6 +93,8 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 							switch item := item.(type) {
 							case string:
 								allExtracted = append(allExtracted, item)
+							case float64:
+								allExtracted = append(allExtracted, item)
 							case map[string]interface{}:
 								// Safely convert the map to JSON and store it directly in extractedData
 								jsonStr, err := json.Marshal(item)
@@ -99,7 +105,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 								allExtracted = append(allExtracted, string(jsonStr))
 							default:
 								// Log unexpected types and skip them
-								cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", item)
+								cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-ApplyRule] Unexpected type in extracted content: %T", item)
 								errContainer = append(errContainer, errors.New("unexpected type in extracted content"))
 							}
 						}
@@ -111,7 +117,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 					}
 
 					// Break early if not extracting all occurrences or using a plugin_call selector
-					if !getAllOccurrences || strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall {
+					if !getAllOccurrences || (strings.ToLower(strings.TrimSpace(selectors[i].SelectorType)) == strPluginCall) {
 						break
 					}
 				}
@@ -151,6 +157,21 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 			// Otherwise, store as an array
 			extractedData[key] = allExtracted
 		}
+	}
+	// Check if the Rule has a PostProcessing section
+	if len(rule.PostProcessing) != 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rule's post-processing steps to the extracted data")
+		data := cmn.ConvertMapToJSON(extractedData)
+		for _, step := range rule.PostProcessing {
+			ApplyPostProcessingStep(ctx, &step, &data)
+		}
+		// Check if data has double "{{" and "}}" at the beginning and end
+		if strings.HasPrefix(string(data), "{{") && strings.HasSuffix(string(data), "}}") {
+			data = data[1:]
+			data = data[:len(data)-1]
+		}
+		// update the extractedData with the post-processed data
+		extractedData = cmn.ConvertJSONToMap(data)
 	}
 	endTime := time.Now()
 	// Log the time taken to extract the data for this element
@@ -743,6 +764,8 @@ func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, d
 		ppStepSetEnv(ctx, step, data)
 	case strPluginCall:
 		ppStepPluginCall(ctx, step, data)
+	case "external_api":
+		ppStepExternalAPI(ctx, step, data)
 	default:
 		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
 	}
@@ -835,6 +858,15 @@ func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
 		if !strings.Contains(string(*data), key) {
 			cmn.DebugMsg(cmn.DbgLvlError, "Key %v is missing from the data", key)
 		}
+	}
+}
+
+// ppStepExternalAPI applies the "external_api" post-processing step to the provided data.
+func ppStepExternalAPI(_ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
+	// Implement the API call here
+	err := processAPITransformation(step, data)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "There was an error while running a rule post-processing external API call: %v", err)
 	}
 }
 
@@ -939,12 +971,6 @@ func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingS
 	// Call processData with the parsed object
 	var result = processData(dataObj);
 	result; // This will be the return value of vm.Run(jsCode)
-*/
-/*
-	if err = vm.Set("jsonDataString", string(jsonData)); err != nil {
-		errMsg := fmt.Sprintf("Error setting jsonDataString in JS VM: %v", err)
-		return errors.New(errMsg)
-	}
 */
 func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) error {
 	var err error

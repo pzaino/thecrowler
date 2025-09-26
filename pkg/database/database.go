@@ -16,6 +16,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -44,6 +45,7 @@ type Handler interface {
 	Ping() error
 	ExecuteQuery(query string, args ...interface{}) (*sql.Rows, error)
 	Exec(query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	DBMS() string
 	Begin() (*sql.Tx, error)
 	Commit(tx *sql.Tx) error

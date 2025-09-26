@@ -229,21 +229,13 @@ func initAPIv1() {
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 
 	// Query handlers
-	searchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(searchHandler)))
-	scrImgSrchHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(scrImgSrchHandler)))
-	netInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(netInfoHandler)))
-	httpInfoHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(httpInfoHandler)))
-	webObjectHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webObjectHandler)))
-	webCorrelatedSitesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webCorrelatedSitesHandler)))
-	webScrapedDataHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(webScrapedDataHandler)))
-
-	http.Handle("/v1/search/general", searchHandlerWithMiddlewares)
-	http.Handle("/v1/search/netinfo", netInfoHandlerWithMiddlewares)
-	http.Handle("/v1/search/httpinfo", httpInfoHandlerWithMiddlewares)
-	http.Handle("/v1/search/screenshot", scrImgSrchHandlerWithMiddlewares)
-	http.Handle("/v1/search/webobject", webObjectHandlerWithMiddlewares)
-	http.Handle("/v1/search/correlated_sites", webCorrelatedSitesHandlerWithMiddlewares)
-	http.Handle("/v1/search/collected_data", webScrapedDataHandlerWithMiddlewares)
+	http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
+	http.Handle("/v1/search/netinfo", withPublicMiddlewares(netInfoHandler))
+	http.Handle("/v1/search/httpinfo", withPublicMiddlewares(httpInfoHandler))
+	http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
+	http.Handle("/v1/search/webobject", withPublicMiddlewares(webObjectHandler))
+	http.Handle("/v1/search/correlated_sites", withPublicMiddlewares(webCorrelatedSitesHandler))
+	http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
@@ -270,6 +262,47 @@ func initAPIv1() {
 		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
 		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
 	}
+}
+
+func withPublicMiddlewares(h http.HandlerFunc) http.Handler {
+	return RecoverMiddleware(
+		CORSHeadersMiddleware(
+			SecurityHeadersMiddleware(
+				RateLimitMiddleware(h),
+			),
+		),
+	)
+}
+
+// CORSHeadersMiddleware enables CORS for requests
+func CORSHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// You can restrict this to specific domains in production
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// For preflight requests
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RecoverMiddleware recovers from panics and returns a 500 error
+func RecoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Recovered from panic: %v", rec)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RateLimitMiddleware is a middleware for rate limiting

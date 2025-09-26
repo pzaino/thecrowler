@@ -340,7 +340,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 
 	// Iterate over job groups
 	for _, jobGroup := range j.Jobs {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing Job Group: %s", jobGroup.Name)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Executing Job Group: %s", jobGroup.Name)
 
 		// Add iCfg to the first step as StrConfig field
 		// this is the "base" configuration that will be passed to all steps
@@ -365,11 +365,14 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 			// Merge iCfg into configMap
 			for k, v := range iCfg {
 				configMap[k] = v
+				if k == "meta_data" {
+					cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Agents] Merged meta_data into job config: %v", v)
+				}
 			}
 		}
 
 		// log the configuration for debugging purposes
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Job Group Configuration: %v", jobGroup)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group Configuration: %v", jobGroup)
 
 		// Check if the group should run in parallel
 		if strings.ToLower(strings.TrimSpace(jobGroup.Process)) == "parallel" {
@@ -380,9 +383,9 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 			go func(jg []map[string]interface{}) {
 				defer wg.Done()
 				if err := executeJobGroup(je, jg); err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Failed to execute job group '%s': %v", jobGroup.Name, err)
+					cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Agents] Failed to execute job group '%s': %v", jobGroup.Name, err)
 				}
-				cmn.DebugMsg(cmn.DbgLvlDebug, "Job Group '%s' completed successfully", jobGroup.Name)
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
 			}(jobGroup.Steps)
 
 		} else {
@@ -390,7 +393,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 			if err := executeJobGroup(je, jobGroup.Steps); err != nil {
 				return fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Job Group '%s' completed successfully", jobGroup.Name)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
 		}
 	}
 

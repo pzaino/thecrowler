@@ -523,7 +523,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	if config.API.ReturnContent {
 		queryBody = `
 		SELECT DISTINCT
-			si.title, si.page_url, si.summary, wo.object_content AS content
+			si.title, si.page_url, si.summary, si.detected_type, si.detected_lang, wo.object_content AS content
 		FROM
 			SearchIndex si
 		LEFT JOIN
@@ -539,9 +539,13 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	} else {
 		queryBody = `
 		SELECT DISTINCT
-			si.title, si.page_url, si.summary, '' as content
+			si.title, si.page_url, si.summary, si.detected_type, si.detected_lang, '' AS content
 		FROM
 			SearchIndex si
+		LEFT JOIN
+			WebObjectsIndex woi ON si.index_id = woi.index_id
+		LEFT JOIN
+			WebObjects wo ON woi.object_id = wo.object_id
 		LEFT JOIN
 			KeywordIndex ki ON si.index_id = ki.index_id
 		LEFT JOIN
@@ -586,19 +590,23 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	// Iterate over the results
 	var results SearchResult
 	for rows.Next() {
-		var title, link, summary, snippet string
-		if err := rows.Scan(&title, &link, &summary, &snippet); err != nil {
+		var title, link, summary, snippet, docType, lang string
+		if err := rows.Scan(&title, &link, &summary, &docType, &lang, &snippet); err != nil {
 			return SearchResult{}, err
 		}
 		results.Items = append(results.Items, struct {
 			Title   string `json:"title"`
 			Link    string `json:"link"`
 			Summary string `json:"summary"`
+			DocType string `json:"type"`
+			Lang    string `json:"lang"`
 			Snippet string `json:"snippet"`
 		}{
 			Title:   title,
 			Link:    link,
 			Summary: summary,
+			DocType: docType,
+			Lang:    lang,
 			Snippet: snippet,
 		})
 	}

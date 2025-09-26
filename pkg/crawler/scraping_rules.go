@@ -91,6 +91,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 	// Retrieve the rule group by URL
 	rgl, err := ctx.re.GetAllRulesGroupByURL(url)
 	if (err == nil) && (len(rgl) != 0) {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-FindRules] Found %d Rulegroups for URL with the URL '%v'", len(rgl), url) // We can't count the number of Scraping rules in the returned RGL
 		for _, rg := range rgl {
 			// Execute all the rules in the rule group (the following function also set the Env and clears it)
 			var data string
@@ -177,6 +178,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 
 	var err error
 	for _, r := range rg.GetScrapingRules() {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule: %v", r.RuleName)
 		// Execute the rule
 		var scrapedData string
 		scrapedData, err = executeScrapingRule(ctx, &r, wd)
@@ -423,6 +425,16 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 
 		case bool:
 			// Handle boolean values and ensure they're keyed
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]interface{}), v)
+			} else {
+				processedData[key] = v
+			}
+
+		case float64:
+			// Handle numeric values and ensure they're keyed
 			// Check if the key is already in the map
 			if _, exists := processedData[key]; exists {
 				// Append the data to the existing key

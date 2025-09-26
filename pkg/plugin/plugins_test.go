@@ -2,6 +2,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -326,7 +327,9 @@ func TestSetCrowlerJSAPI(t *testing.T) {
 	var db *cdb.Handler
 	db = nil
 
-	err := setCrowlerJSAPI(vm, db)
+	ctx, cancel := context.WithCancel(context.Background())
+	err := setCrowlerJSAPI(ctx, vm, db, nil)
+	cancel()
 	if err != nil {
 		t.Errorf("setCrowlerJSAPI returned an error: %v", err)
 	}

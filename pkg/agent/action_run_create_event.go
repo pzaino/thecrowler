@@ -16,6 +16,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -112,7 +113,9 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		event.Details, _ = eDetailsProcessed.(map[string]interface{})
 	}
 
-	result, err := cdb.CreateEvent(&dbHandler, event)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	result, err := cdb.CreateEvent(ctx, &dbHandler, event)
+	cancel()
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("failed to create event: %v", err)
