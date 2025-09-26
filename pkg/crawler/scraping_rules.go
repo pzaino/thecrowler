@@ -433,6 +433,16 @@ func processExtractedData(extractedData map[string]interface{}) map[string]inter
 				processedData[key] = v
 			}
 
+		case float64:
+			// Handle numeric values and ensure they're keyed
+			// Check if the key is already in the map
+			if _, exists := processedData[key]; exists {
+				// Append the data to the existing key
+				processedData[key] = append(processedData[key].([]interface{}), v)
+			} else {
+				processedData[key] = v
+			}
+
 		default:
 			// Fallback for unexpected types
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
