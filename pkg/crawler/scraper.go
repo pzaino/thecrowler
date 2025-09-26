@@ -74,7 +74,9 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 					case string:
 						// Directly append string values
 						allExtracted = append(allExtracted, v)
-
+					case float64:
+						// Directly append numeric values
+						allExtracted = append(allExtracted, v)
 					case map[string]interface{}:
 						// Directly append map values (as sub-documents)
 						// Safely convert the map to JSON and store it directly in extractedData
@@ -91,6 +93,8 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 							switch item := item.(type) {
 							case string:
 								allExtracted = append(allExtracted, item)
+							case float64:
+								allExtracted = append(allExtracted, item)
 							case map[string]interface{}:
 								// Safely convert the map to JSON and store it directly in extractedData
 								jsonStr, err := json.Marshal(item)
@@ -101,7 +105,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 								allExtracted = append(allExtracted, string(jsonStr))
 							default:
 								// Log unexpected types and skip them
-								cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", item)
+								cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-ApplyRule] Unexpected type in extracted content: %T", item)
 								errContainer = append(errContainer, errors.New("unexpected type in extracted content"))
 							}
 						}
