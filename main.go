@@ -1264,9 +1264,9 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time:", time.Now())
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location:", time.Local.String())
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name:", cmn.GetMicroServiceName())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%s'", time.Local.String())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name: '%s'", cmn.GetMicroServiceName())
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Crawler.Control.Host, config.Crawler.Control.Port)
 	var rStatus error
