@@ -99,3 +99,40 @@ func SafeEscapeJSONString(s any) string {
 	ss = strings.ReplaceAll(ss, "'", "\\'")
 	return ss
 }
+
+// SanitizeJSON removes double commas from a JSON string, ignoring those within quotes
+func SanitizeJSON(input string) string {
+	var out strings.Builder
+	inQuotes := false
+	escape := false
+
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+
+		// Track quotes, respecting escape characters
+		if c == '"' && !escape {
+			inQuotes = !inQuotes
+		}
+
+		// If we see a double comma and we are outside quotes, skip one
+		if !inQuotes && c == ',' && i+1 < len(input) && input[i+1] == ',' {
+			// Write only one comma
+			out.WriteByte(',')
+			// Skip the next one
+			i++
+			continue
+		}
+
+		// Add current character
+		out.WriteByte(c)
+
+		// Track escape state
+		if c == '\\' && !escape {
+			escape = true
+		} else {
+			escape = false
+		}
+	}
+
+	return out.String()
+}
