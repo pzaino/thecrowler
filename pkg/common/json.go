@@ -109,24 +109,23 @@ func SanitizeJSON(input string) string {
 	for i := 0; i < len(input); i++ {
 		c := input[i]
 
-		// Track quotes, respecting escape characters
+		// Toggle quotes (ignore escaped quotes)
 		if c == '"' && !escape {
 			inQuotes = !inQuotes
 		}
 
-		// If we see a double comma and we are outside quotes, skip one
-		if !inQuotes && c == ',' && i+1 < len(input) && input[i+1] == ',' {
-			// Write only one comma
+		if !inQuotes && c == ',' {
+			// Collapse consecutive commas into one
 			out.WriteByte(',')
-			// Skip the next one
-			i++
+			for i+1 < len(input) && input[i+1] == ',' {
+				i++ // skip extra commas
+			}
 			continue
 		}
 
-		// Add current character
 		out.WriteByte(c)
 
-		// Track escape state
+		// Escape tracking
 		if c == '\\' && !escape {
 			escape = true
 		} else {
