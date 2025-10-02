@@ -16,8 +16,10 @@
 package common
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -100,37 +102,76 @@ func SafeEscapeJSONString(s any) string {
 	return ss
 }
 
-// SanitizeJSON removes double commas from a JSON string, ignoring those within quotes
+// SanitizeJSON attempts to fix common JSON errors:
+// - duplicate commas (,,)
+// - trailing commas before } or ]
+// - unquoted object keys
+// - single quotes for strings
 func SanitizeJSON(input string) string {
+	// 1. Collapse consecutive commas outside of quotes
+	input = collapseCommas(input)
+
+	// 2. Remove trailing commas before } or ]
+	input = strings.ReplaceAll(input, ",}", "}")
+	input = strings.ReplaceAll(input, ",]", "]")
+
+	// 3. Quote unquoted keys:  {foo:123} → {"foo":123}
+	re := regexp.MustCompile(`([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)`)
+	input = re.ReplaceAllString(input, `${1}"${2}"${3}`)
+
+	// 4. Convert single-quoted strings to double-quoted
+	//    Match: '...'
+	reStr := regexp.MustCompile(`'([^'\\]*(?:\\.[^'\\]*)*)'`)
+	input = reStr.ReplaceAllStringFunc(input, func(m string) string {
+		// Replace outer quotes with "
+		return `"` + strings.ReplaceAll(m[1:len(m)-1], `"`, `\"`) + `"`
+	})
+
+	// 5. Try strict unmarshal → re-marshal
+	var tmp interface{}
+	if err := json.Unmarshal([]byte(input), &tmp); err != nil {
+		// Fallback: return best-effort cleaned version
+		return input
+	}
+
+	// 6. Re-encode into strict JSON
+	buf := new(bytes.Buffer)
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(tmp)
+
+	return strings.TrimSpace(buf.String())
+}
+
+// collapseCommas collapses consecutive commas outside of quotes.
+func collapseCommas(s string) string {
 	var out strings.Builder
 	inQuotes := false
 	escape := false
 
-	for i := 0; i < len(input); i++ {
-		c := input[i]
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 
-		// Toggle quotes (ignore escaped quotes)
 		if c == '"' && !escape {
 			inQuotes = !inQuotes
 		}
 
+		if c == '\\' && !escape {
+			escape = true
+			out.WriteByte(c)
+			continue
+		}
+		escape = false
+
 		if !inQuotes && c == ',' {
-			// Collapse consecutive commas into one
 			out.WriteByte(',')
-			for i+1 < len(input) && input[i+1] == ',' {
-				i++ // skip extra commas
+			for i+1 < len(s) && s[i+1] == ',' {
+				i++
 			}
 			continue
 		}
 
 		out.WriteByte(c)
-
-		// Escape tracking
-		if c == '\\' && !escape {
-			escape = true
-		} else {
-			escape = false
-		}
 	}
 
 	return out.String()

@@ -256,7 +256,7 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 
 		jsonData, err := json.Marshal(cleanedData)
 		if err != nil {
-			errList = append(errList, fmt.Errorf("marshalling JSON: %v", err))
+			errList = append(errList, fmt.Errorf("marshalling JSON: '%v', for JSON: %v", err, cleanedData))
 		}
 		if len(r.PostProcessing) != 0 {
 			runPostProcessingSteps(ctx, &r.PostProcessing, &jsonData)
@@ -279,6 +279,7 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 		return jsonDocument, fmt.Errorf("executing scraping rule: %v", errStr)
 	}
 
+	// log the jsonDocument for debugging purposes
 	return jsonDocument, nil
 }
 
