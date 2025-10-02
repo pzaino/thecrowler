@@ -3688,7 +3688,16 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
-		title, _ = (*webPage).Title()
+		titleTmp, _ := (*webPage).Title()
+		titleTmp = strings.TrimSpace(titleTmp)
+		if titleTmp == "" {
+			// Try to get the title from the <title> tag
+			titleTmp = strings.TrimSpace(doc.Find("title").Text())
+		}
+		if titleTmp != "" {
+			title = titleTmp
+		}
+
 		// To get the summary, we extract the content of the "description" meta tag
 		// if description tag is not found, we extract the content of og:description tag
 		// if og:description tag is not found, we extract the content of twitter:description tag
