@@ -3674,7 +3674,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			//cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data: %v", scrapedData)
 			err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v, full data: %v", err, scrapedData)
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "unmarshalling scraped data: %v, full data: %v, so removing impurities", err, scrapedData)
 				// Try to remove impurities from the scraped data
 				scrapedData = removeImpurities(scrapedData)
 				err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
