@@ -1079,6 +1079,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	if err != nil {
 		return fmt.Errorf("error executing JS plugin: %v", err)
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Custom JS plugin returned value of type: %T", value)
 
 	// Validate the plugin result
 	switch v := value.(type) {
