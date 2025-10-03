@@ -16,6 +16,7 @@
 package common
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -98,4 +99,95 @@ func SafeEscapeJSONString(s any) string {
 	ss = strings.ReplaceAll(ss, "\"", "\\\"")
 	ss = strings.ReplaceAll(ss, "'", "\\'")
 	return ss
+}
+
+// SanitizeJSON tries to fix common JSON issues like unescaped quotes, duplicate commas, trailing commas
+func SanitizeJSON(input string) string {
+	var out strings.Builder
+	inString := false
+	escape := false
+
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+
+		if escape {
+			out.WriteByte(c)
+			escape = false
+			continue
+		}
+
+		if c == '\\' {
+			escape = true
+			out.WriteByte(c)
+			continue
+		}
+
+		if c == '"' {
+			inString = !inString
+			out.WriteByte(c)
+			continue
+		}
+
+		if !inString {
+			// --- outside of string ---
+
+			// collapse duplicate commas
+			if c == ',' {
+				out.WriteByte(',')
+				for i+1 < len(input) && input[i+1] == ',' {
+					i++
+				}
+				continue
+			}
+
+			// drop trailing commas before } or ]
+			if c == ',' && i+1 < len(input) && (input[i+1] == '}' || input[i+1] == ']') {
+				continue
+			}
+
+			out.WriteByte(c)
+		} else {
+			// --- inside string ---
+
+			// repair unescaped quotes like She"s → She\"s
+			if c == '"' {
+				prev := byte(0)
+				next := byte(0)
+				if i > 0 {
+					prev = input[i-1]
+				}
+				if i+1 < len(input) {
+					next = input[i+1]
+				}
+				if isAlphaNum(prev) && isAlphaNum(next) {
+					out.WriteString("\\\"")
+					continue
+				}
+			}
+
+			out.WriteByte(c)
+		}
+	}
+
+	candidate := out.String()
+
+	// try to validate it
+	var tmp interface{}
+	if err := json.Unmarshal([]byte(candidate), &tmp); err == nil {
+		// re-encode to strict JSON
+		buf := new(bytes.Buffer)
+		enc := json.NewEncoder(buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(tmp)
+		return strings.TrimSpace(buf.String())
+	}
+
+	// fallback: return original if still invalid
+	return input
+}
+
+func isAlphaNum(c byte) bool {
+	return (c >= 'A' && c <= 'Z') ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= '0' && c <= '9')
 }

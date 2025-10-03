@@ -3668,12 +3668,13 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			}
 		}
 		if scrapedData != "" {
+			scrapedData = cmn.SanitizeJSON(scrapedData)
 			// put ScrapedData into a map
 			scrapedMap := make(map[string]interface{})
 			//cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data: %v", scrapedData)
 			err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling scraped data: %v, full data: %v", err, scrapedData)
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ExtractPageInfo] Discovered some JSON impurities while unmarshalling scraped data: '%v', full data: %v, so removing impurities", err, scrapedData)
 				// Try to remove impurities from the scraped data
 				scrapedData = removeImpurities(scrapedData)
 				err = json.Unmarshal([]byte(scrapedData), &scrapedMap)
@@ -3688,7 +3689,16 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
-		title, _ = (*webPage).Title()
+		titleTmp, _ := (*webPage).Title()
+		titleTmp = strings.TrimSpace(titleTmp)
+		if titleTmp == "" {
+			// Try to get the title from the <title> tag
+			titleTmp = strings.TrimSpace(doc.Find("title").Text())
+		}
+		if titleTmp != "" {
+			title = titleTmp
+		}
+
 		// To get the summary, we extract the content of the "description" meta tag
 		// if description tag is not found, we extract the content of og:description tag
 		// if og:description tag is not found, we extract the content of twitter:description tag

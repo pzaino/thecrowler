@@ -605,7 +605,13 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		}
-		resultRaw = rval
+		resultRaw, err = vm.Get("results")
+		if err != nil || !resultRaw.IsDefined() {
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+			}
+			resultRaw = rval
+		}
 	}
 
 	exported, err := resultRaw.Export()
@@ -613,11 +619,67 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
-	result, ok := exported.(map[string]interface{})
-	if !ok {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, fmt.Errorf("result is %T, want map[string]interface{}", exported))
-		return result, fmt.Errorf("engine plugin result type mismatch")
+	//cmn.DebugMsg(cmn.DbgLvlDebug5, "Exported value from VM: %T", exported)
+
+	// Convert exported correctly:
+	result, err = normalizeVMExport(exported)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		return result, err
 	}
+
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
+	return result, nil
+}
+
+func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	switch v := exported.(type) {
+	case map[string]interface{}:
+		// Directly use it
+		for k, val := range v {
+			result[k] = val
+		}
+
+	case []map[string]interface{}:
+		// Store the slice under a reserved key
+		result["items"] = v
+
+	case []interface{}:
+		// Try to see if all items are maps
+		allMaps := true
+		maps := make([]map[string]interface{}, 0, len(v))
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				maps = append(maps, m)
+			} else {
+				allMaps = false
+				break
+			}
+		}
+		if allMaps {
+			result["items"] = maps
+		} else {
+			result["items"] = v // just store raw slice
+		}
+
+	case string:
+		// Try to parse as JSON
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &m); err == nil {
+			for k, val := range m {
+				result[k] = val
+			}
+		} else {
+			// Not JSON → store as value
+			result["value"] = v
+		}
+
+	default:
+		return nil, fmt.Errorf("unexpected type %T from Otto VM", v)
+	}
+
 	return result, nil
 }
 

@@ -190,6 +190,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rulesgroup's post-processing steps to the extracted data")
 		// Convert the JSON data to a map
 		var extractedData map[string]interface{}
+		scrapedDataDoc = cmn.SanitizeJSON(scrapedDataDoc)
 		err = json.Unmarshal([]byte("{"+scrapedDataDoc+"}"), &extractedData)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling JSON: %v, for JSON: %v", err, scrapedDataDoc)
@@ -255,7 +256,7 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 
 		jsonData, err := json.Marshal(cleanedData)
 		if err != nil {
-			errList = append(errList, fmt.Errorf("marshalling JSON: %v", err))
+			errList = append(errList, fmt.Errorf("marshalling JSON: '%v', for JSON: %v", err, cleanedData))
 		}
 		if len(r.PostProcessing) != 0 {
 			runPostProcessingSteps(ctx, &r.PostProcessing, &jsonData)
@@ -278,6 +279,7 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 		return jsonDocument, fmt.Errorf("executing scraping rule: %v", errStr)
 	}
 
+	// log the jsonDocument for debugging purposes
 	return jsonDocument, nil
 }
 

@@ -184,7 +184,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	}
 
 	// Log the full scraped content for debugging purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Full scraped content (at ApplyRule level): %v", extractedData)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ApplyRule] Full scraped content (at ApplyRule level): %v", extractedData)
 
 	if ErrorState {
 		// If there was a (critical) error, return the error message
@@ -1106,6 +1106,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		return fmt.Errorf("plugin returned an unsupported type: %T", v)
 	}
 
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Received data from custom JS plugin: %s", string(*data))
 	return nil
 }
 
