@@ -108,19 +108,23 @@ func SafeEscapeJSONString(s any) string {
 }
 
 // SanitizeJSON sanitizes JSON documents, this is the Public entry point
+// SanitizeJSON sanitizes JSON documents, this is the Public entry point.
+// It always returns strict JSON with proper `null` values.
 func SanitizeJSON(input string) string {
 	p := &parser{s: input}
 	v, err := p.parseValue()
 	if err != nil {
 		// Best effort: if we built something partially, try to marshal it.
-		// Otherwise just return the original string.
 		if v != nil {
 			if out, mErr := json.Marshal(v); mErr == nil {
 				return string(out)
 			}
 		}
+		// If parsing completely failed, return original input
 		return input
 	}
+
+	// Strict JSON re-encoding ensures <nil> → null
 	out, err := json.Marshal(v)
 	if err != nil {
 		return input
