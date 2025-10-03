@@ -110,6 +110,28 @@ func SanitizeJSON(input string) string {
 	for i := 0; i < len(input); i++ {
 		c := input[i]
 
+		// Look ahead for forbidden values like "null"
+		if !inString && c == '"' {
+			// Look ahead for the closing quote
+			end := i + 1
+			for end < len(input) {
+				if input[end] == '"' && input[end-1] != '\\' {
+					break
+				}
+				end++
+			}
+			if end < len(input) {
+				// Extract the string content
+				content := input[i+1 : end]
+				if content == "null" {
+					// Replace the whole string with bare null
+					out.WriteString("null")
+					i = end // skip closing quote
+					continue
+				}
+			}
+		}
+
 		if escape {
 			out.WriteByte(c)
 			escape = false
