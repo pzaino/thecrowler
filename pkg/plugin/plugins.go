@@ -619,52 +619,67 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Exported value from VM: %T", exported)
+	//cmn.DebugMsg(cmn.DbgLvlDebug5, "Exported value from VM: %T", exported)
 
 	// Convert exported correctly:
-	switch v := exported.(type) {
-	case map[string]interface{}:
-		result = v
-
-	case []map[string]interface{}:
-		// You expect []map[string]interface{}, but otto usually gives []interface{}
-		if len(v) > 0 {
-			// convert the slice into a single map by merging all maps
-			for _, m := range v {
-				for k, val := range m {
-					result[k] = val
-				}
-			}
-		}
-
-	case []interface{}:
-		// You expect []map[string]interface{}, but otto usually gives []interface{}
-		tmp := []map[string]interface{}{}
-		for _, item := range v {
-			if m, ok := item.(map[string]interface{}); ok {
-				tmp = append(tmp, m)
-			}
-		}
-		if len(tmp) > 0 {
-			// up to you if you want to return the slice or flatten it
-			// e.g. merge into single map, or just return tmp[0]
-			result = tmp[0]
-		}
-
-	case string:
-		// Otto sometimes exports JSON as string → decode it
-		var m map[string]interface{}
-		if err := json.Unmarshal([]byte(v), &m); err == nil {
-			result = m
-		} else {
-			return nil, fmt.Errorf("unexpected string from otto: %q", v)
-		}
-
-	default:
-		return nil, fmt.Errorf("unexpected type %T from Plugin", v)
+	result, err = normalizeVMExport(exported)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		return result, err
 	}
 
 	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
+	return result, nil
+}
+
+func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	switch v := exported.(type) {
+	case map[string]interface{}:
+		// Directly use it
+		for k, val := range v {
+			result[k] = val
+		}
+
+	case []map[string]interface{}:
+		// Store the slice under a reserved key
+		result["items"] = v
+
+	case []interface{}:
+		// Try to see if all items are maps
+		allMaps := true
+		maps := make([]map[string]interface{}, 0, len(v))
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				maps = append(maps, m)
+			} else {
+				allMaps = false
+				break
+			}
+		}
+		if allMaps {
+			result["items"] = maps
+		} else {
+			result["items"] = v // just store raw slice
+		}
+
+	case string:
+		// Try to parse as JSON
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &m); err == nil {
+			for k, val := range m {
+				result[k] = val
+			}
+		} else {
+			// Not JSON → store as value
+			result["value"] = v
+		}
+
+	default:
+		return nil, fmt.Errorf("unexpected type %T from Otto VM", v)
+	}
+
 	return result, nil
 }
 
