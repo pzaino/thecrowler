@@ -619,25 +619,38 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Exported value from VM: %T", exported)
 
-	// Check if result is a map[string]interface{} or a []map[string]interface{}
-	if reflect.TypeOf(exported).Kind() == reflect.Slice {
-		slice, ok := exported.([]interface{})
-		if ok {
-			// Convert []interface{} to map[string]interface{}
-			str := cmn.ConvertSliceInfToString(slice)
-			strMap := cmn.ConvertStringToMap(str)
-			result = strMap
+	// Convert exported correctly:
+	switch v := exported.(type) {
+	case map[string]interface{}:
+		result = v
+
+	case []interface{}:
+		// You expect []map[string]interface{}, but otto usually gives []interface{}
+		tmp := []map[string]interface{}{}
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				tmp = append(tmp, m)
+			}
 		}
-	} else if reflect.TypeOf(exported).Kind() == reflect.Map {
-		result, ok := exported.(map[string]interface{})
-		if !ok {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, fmt.Errorf("result is %T, want map[string]interface{}", exported))
-			return result, fmt.Errorf("engine plugin result type mismatch")
+		if len(tmp) > 0 {
+			// up to you if you want to return the slice or flatten it
+			// e.g. merge into single map, or just return tmp[0]
+			result = tmp[0]
 		}
-	} else {
-		cmn.DebugMsg(cmn.DbgLvlError, errMsg01, fmt.Errorf("result is %T, want map[string]interface{} or []map[string]interface{}", exported))
-		return result, fmt.Errorf("engine plugin result type mismatch")
+
+	case string:
+		// Otto sometimes exports JSON as string → decode it
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &m); err == nil {
+			result = m
+		} else {
+			return nil, fmt.Errorf("unexpected string from otto: %q", v)
+		}
+
+	default:
+		return nil, fmt.Errorf("unexpected type %T from otto", v)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
