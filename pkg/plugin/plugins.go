@@ -626,6 +626,17 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	case map[string]interface{}:
 		result = v
 
+	case []map[string]interface{}:
+		// You expect []map[string]interface{}, but otto usually gives []interface{}
+		if len(v) > 0 {
+			// convert the slice into a single map by merging all maps
+			for _, m := range v {
+				for k, val := range m {
+					result[k] = val
+				}
+			}
+		}
+
 	case []interface{}:
 		// You expect []map[string]interface{}, but otto usually gives []interface{}
 		tmp := []map[string]interface{}{}
@@ -650,10 +661,10 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		}
 
 	default:
-		return nil, fmt.Errorf("unexpected type %T from otto", v)
+		return nil, fmt.Errorf("unexpected type %T from Plugin", v)
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
+	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
 	return result, nil
 }
 
