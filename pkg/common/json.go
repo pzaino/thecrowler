@@ -127,7 +127,7 @@ func SanitizeJSON(input string) string {
 	})
 
 	// 5. Fix unescaped quotes inside strings
-	input = fixUnescapedQuotes(input)
+	input = fixBrokenInnerQuotes(input)
 
 	// 6. Try strict JSON decode+encode
 	var tmp interface{}
@@ -170,8 +170,8 @@ func collapseCommas(s string) string {
 	return out.String()
 }
 
-// fixUnescapedQuotes escapes stray quotes inside JSON strings
-func fixUnescapedQuotes(s string) string {
+// fixBrokenInnerQuotes escapes quotes inside strings like She"s -> She\"s
+func fixBrokenInnerQuotes(s string) string {
 	var out strings.Builder
 	inQuotes := false
 	escape := false
@@ -184,22 +184,26 @@ func fixUnescapedQuotes(s string) string {
 			out.WriteByte(c)
 			continue
 		}
+
 		if inQuotes && c == '"' && !escape {
-			// Look ahead: if next rune is a letter/number, treat this as unescaped
-			if i+1 < len(s) && ((s[i+1] >= 'a' && s[i+1] <= 'z') ||
-				(s[i+1] >= 'A' && s[i+1] <= 'Z') ||
-				(s[i+1] >= '0' && s[i+1] <= '9')) {
+			// Heuristic: check surrounding chars, if alphanumeric both sides → escape it
+			if i > 0 && i+1 < len(s) &&
+				((s[i-1] >= 'a' && s[i-1] <= 'z') || (s[i-1] >= 'A' && s[i-1] <= 'Z')) &&
+				((s[i+1] >= 'a' && s[i+1] <= 'z') || (s[i+1] >= 'A' && s[i+1] <= 'Z')) {
 				out.WriteString("\\\"")
 				continue
 			}
 		}
+
 		if c == '\\' && !escape {
 			escape = true
 			out.WriteByte(c)
 			continue
 		}
 		escape = false
+
 		out.WriteByte(c)
 	}
+
 	return out.String()
 }
