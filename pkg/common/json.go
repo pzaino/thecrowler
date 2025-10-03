@@ -153,6 +153,13 @@ func SanitizeJSON(input string) string {
 		if !inString {
 			// --- outside of string ---
 
+			// detect "colon followed by comma" → insert null
+			if c == ':' && i+1 < len(input) && input[i+1] == ',' {
+				out.WriteByte(':')
+				out.WriteString("null")
+				continue
+			}
+
 			// collapse duplicate commas
 			if c == ',' {
 				// skip any extra commas
