@@ -102,39 +102,38 @@ func SafeEscapeJSONString(s any) string {
 	return ss
 }
 
-// SanitizeJSON attempts to fix common JSON errors:
+// SanitizeJSON fixes:
 // - duplicate commas (,,)
-// - trailing commas before } or ]
-// - unquoted object keys
-// - single quotes for strings
+// - trailing commas
+// - unquoted keys
+// - single quotes
+// - unescaped quotes inside strings (e.g. it"s -> it\"s)
 func SanitizeJSON(input string) string {
-	// 1. Collapse consecutive commas outside of quotes
+	// 1. Collapse consecutive commas
 	input = collapseCommas(input)
 
-	// 2. Remove trailing commas before } or ]
+	// 2. Remove trailing commas
 	input = strings.ReplaceAll(input, ",}", "}")
 	input = strings.ReplaceAll(input, ",]", "]")
 
-	// 3. Quote unquoted keys:  {foo:123} → {"foo":123}
+	// 3. Quote unquoted keys
 	re := regexp.MustCompile(`([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)`)
 	input = re.ReplaceAllString(input, `${1}"${2}"${3}`)
 
-	// 4. Convert single-quoted strings to double-quoted
-	//    Match: '...'
+	// 4. Convert single-quoted strings
 	reStr := regexp.MustCompile(`'([^'\\]*(?:\\.[^'\\]*)*)'`)
 	input = reStr.ReplaceAllStringFunc(input, func(m string) string {
-		// Replace outer quotes with "
 		return `"` + strings.ReplaceAll(m[1:len(m)-1], `"`, `\"`) + `"`
 	})
 
-	// 5. Try strict unmarshal → re-marshal
+	// 5. Fix unescaped quotes inside strings
+	input = fixUnescapedQuotes(input)
+
+	// 6. Try strict JSON decode+encode
 	var tmp interface{}
 	if err := json.Unmarshal([]byte(input), &tmp); err != nil {
-		// Fallback: return best-effort cleaned version
-		return input
+		return input // best-effort
 	}
-
-	// 6. Re-encode into strict JSON
 	buf := new(bytes.Buffer)
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
@@ -143,8 +142,36 @@ func SanitizeJSON(input string) string {
 	return strings.TrimSpace(buf.String())
 }
 
-// collapseCommas collapses consecutive commas outside of quotes.
 func collapseCommas(s string) string {
+	var out strings.Builder
+	inQuotes := false
+	escape := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' && !escape {
+			inQuotes = !inQuotes
+		}
+		if c == '\\' && !escape {
+			escape = true
+			out.WriteByte(c)
+			continue
+		}
+		escape = false
+		if !inQuotes && c == ',' {
+			out.WriteByte(',')
+			for i+1 < len(s) && s[i+1] == ',' {
+				i++
+			}
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
+}
+
+// fixUnescapedQuotes escapes stray quotes inside JSON strings
+func fixUnescapedQuotes(s string) string {
 	var out strings.Builder
 	inQuotes := false
 	escape := false
@@ -154,25 +181,25 @@ func collapseCommas(s string) string {
 
 		if c == '"' && !escape {
 			inQuotes = !inQuotes
+			out.WriteByte(c)
+			continue
 		}
-
+		if inQuotes && c == '"' && !escape {
+			// Look ahead: if next rune is a letter/number, treat this as unescaped
+			if i+1 < len(s) && ((s[i+1] >= 'a' && s[i+1] <= 'z') ||
+				(s[i+1] >= 'A' && s[i+1] <= 'Z') ||
+				(s[i+1] >= '0' && s[i+1] <= '9')) {
+				out.WriteString("\\\"")
+				continue
+			}
+		}
 		if c == '\\' && !escape {
 			escape = true
 			out.WriteByte(c)
 			continue
 		}
 		escape = false
-
-		if !inQuotes && c == ',' {
-			out.WriteByte(',')
-			for i+1 < len(s) && s[i+1] == ',' {
-				i++
-			}
-			continue
-		}
-
 		out.WriteByte(c)
 	}
-
 	return out.String()
 }

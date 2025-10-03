@@ -3668,7 +3668,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			}
 		}
 		if scrapedData != "" {
-			//scrapedData = cmn.SanitizeJSON(scrapedData)
+			scrapedData = cmn.SanitizeJSON(scrapedData)
 			// put ScrapedData into a map
 			scrapedMap := make(map[string]interface{})
 			//cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data: %v", scrapedData)
