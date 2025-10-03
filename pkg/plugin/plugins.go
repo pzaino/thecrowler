@@ -605,7 +605,13 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		}
-		resultRaw = rval
+		resultRaw, err = vm.Get("results")
+		if err != nil || !resultRaw.IsDefined() {
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+			}
+			resultRaw = rval
+		}
 	}
 
 	exported, err := resultRaw.Export()
