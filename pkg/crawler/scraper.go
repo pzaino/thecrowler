@@ -1106,6 +1106,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		return fmt.Errorf("plugin returned an unsupported type: %T", v)
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Received data from custom JS plugin: %s", string(*data))
 	return nil
 }
 
