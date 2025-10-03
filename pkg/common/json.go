@@ -208,38 +208,33 @@ func (p *parser) parseObject() (map[string]interface{}, error) {
 			return obj, errors.New("unterminated object")
 		}
 
-		// Key can be quoted or identifier
+		// Key
 		key, err := p.parseKey()
 		if err != nil {
-			// Try to recover by skipping spurious commas
-			if p.peek() == ',' {
-				for !p.eof() && p.peek() == ',' {
-					p.i++
-					p.skipWS()
-				}
-				continue
+			// Try to skip until comma or closing brace
+			p.syncToNextDelimiter()
+			if !p.eof() && p.peek() == '}' {
+				p.i++
+				return obj, nil
 			}
-			return obj, err
+			continue
 		}
 
 		p.skipWS()
 		if p.eof() {
+			obj[key] = nil
 			return obj, errors.New("expected : after key")
 		}
+
 		if p.peek() != ':' {
-			if p.peek() == ',' || p.peek() == '}' {
-				// Key without value → null
-				obj[key] = nil
-			} else {
-				// Unknown situation: skip until delimiter, but preserve key with null
-				obj[key] = nil
-				p.syncToNextDelimiter()
-			}
+			// Missing value → set null and resync
+			obj[key] = nil
+			p.syncToNextDelimiter()
 		} else {
 			p.i++ // skip ':'
 			val, err := p.parseValue()
 			if err != nil {
-				// Don’t bail — preserve key and continue
+				// Broken value → set null and resync
 				obj[key] = nil
 				p.syncToNextDelimiter()
 			} else {
@@ -247,16 +242,8 @@ func (p *parser) parseObject() (map[string]interface{}, error) {
 			}
 		}
 
-		val, err := p.parseValue()
-		if err != nil {
-			// Be lenient: set null if value cannot be parsed here
-			obj[key] = nil
-		} else {
-			obj[key] = val
-		}
-
 		p.skipWS()
-		// Accept 0 or more commas, ignore trailing commas
+		// Skip one or more commas
 		for !p.eof() && p.peek() == ',' {
 			p.i++
 			p.skipWS()
@@ -264,10 +251,6 @@ func (p *parser) parseObject() (map[string]interface{}, error) {
 		if !p.eof() && p.peek() == '}' {
 			p.i++
 			return obj, nil
-		}
-		// If not closing brace, loop to read next pair
-		if p.eof() {
-			return obj, errors.New("unterminated object")
 		}
 	}
 }
