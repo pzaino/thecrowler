@@ -628,6 +628,9 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, fmt.Errorf("result is %T, want map[string]interface{}", exported))
 			return result, fmt.Errorf("engine plugin result type mismatch")
 		}
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlError, errMsg01, fmt.Errorf("result is %T, want map[string]interface{} or []map[string]interface{}", exported))
+		return result, fmt.Errorf("engine plugin result type mismatch")
 	}
 	return result, nil
 }
