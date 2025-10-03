@@ -273,19 +273,19 @@ func (p *parser) parseArray() ([]interface{}, error) {
 		if p.eof() {
 			return arr, errors.New("unterminated array")
 		}
-		// Parse value
+
+		// Try to parse a value
 		val, err := p.parseValue()
-		if err == nil {
-			arr = append(arr, val)
-		} else {
-			// If cannot parse value, attempt to skip until next delimiter
-			// and append null to keep shape
+		if err != nil {
+			// On error → append null and resync
 			arr = append(arr, nil)
 			p.syncToNextDelimiter()
+		} else {
+			arr = append(arr, val)
 		}
 
 		p.skipWS()
-		// Accept 0 or more commas, ignore trailing commas
+		// Skip one or more commas
 		for !p.eof() && p.peek() == ',' {
 			p.i++
 			p.skipWS()
