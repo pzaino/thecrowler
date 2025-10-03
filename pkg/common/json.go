@@ -101,6 +101,7 @@ func SafeEscapeJSONString(s any) string {
 	return ss
 }
 
+// SanitizeJSON tries to fix common JSON issues like unescaped quotes, duplicate commas, trailing commas
 func SanitizeJSON(input string) string {
 	var out strings.Builder
 	inString := false
