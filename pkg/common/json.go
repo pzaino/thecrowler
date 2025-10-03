@@ -111,20 +111,20 @@ func SafeEscapeJSONString(s any) string {
 // SanitizeJSON sanitizes JSON documents, this is the Public entry point.
 // It always returns strict JSON with proper `null` values.
 func SanitizeJSON(input string) string {
-	p := &parser{s: input}
-	v, err := p.parseValue()
-	if err != nil {
-		// Best effort: if we built something partially, try to marshal it.
-		if v != nil {
-			if out, mErr := json.Marshal(v); mErr == nil {
-				return string(out)
-			}
-		}
-		// If parsing completely failed, return original input
+	var tmp interface{}
+	if err := json.Unmarshal([]byte(input), &tmp); err == nil {
+		// Input is already valid JSON, return as-is
 		return input
 	}
 
-	// Strict JSON re-encoding ensures <nil> → null
+	// Otherwise, try lenient parser
+	p := &parser{s: input}
+	v, err := p.parseValue()
+	if err != nil {
+		// Best effort: return original input if parsing fails completely
+		return input
+	}
+
 	out, err := json.Marshal(v)
 	if err != nil {
 		return input
@@ -227,20 +227,24 @@ func (p *parser) parseObject() (map[string]interface{}, error) {
 			return obj, errors.New("expected : after key")
 		}
 		if p.peek() != ':' {
-			// If a comma appears, assume missing value null and continue
-			if p.peek() == ',' {
+			if p.peek() == ',' || p.peek() == '}' {
+				// Key without value → null
 				obj[key] = nil
-				for !p.eof() && p.peek() == ',' {
-					p.i++
-				}
-				continue
+			} else {
+				// Unknown situation: skip until delimiter, but preserve key with null
+				obj[key] = nil
+				p.syncToNextDelimiter()
 			}
-			// Try to be lenient: insert missing colon if obvious
-			// but if not, abort key
-			// As a last resort, set null and try to continue
-			obj[key] = nil
 		} else {
-			p.i++ // skip :
+			p.i++ // skip ':'
+			val, err := p.parseValue()
+			if err != nil {
+				// Don’t bail — preserve key and continue
+				obj[key] = nil
+				p.syncToNextDelimiter()
+			} else {
+				obj[key] = val
+			}
 		}
 
 		val, err := p.parseValue()
