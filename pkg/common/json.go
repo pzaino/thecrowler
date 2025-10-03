@@ -155,10 +155,19 @@ func SanitizeJSON(input string) string {
 
 			// collapse duplicate commas
 			if c == ',' {
-				out.WriteByte(',')
+				// skip any extra commas
 				for i+1 < len(input) && input[i+1] == ',' {
 					i++
 				}
+				// if next char closes an object/array, skip this comma
+				if i+1 < len(input) && (input[i+1] == '}' || input[i+1] == ']') {
+					continue
+				}
+				// if next char is another comma, colon, or end of string, skip it
+				if i+1 < len(input) && (input[i+1] == ',' || input[i+1] == ':') {
+					continue
+				}
+				out.WriteByte(',')
 				continue
 			}
 
