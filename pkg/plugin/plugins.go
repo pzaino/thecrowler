@@ -619,7 +619,6 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
 		return nil, err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", exported)
 
 	// Check if result is a map[string]interface{} or a []map[string]interface{}
 	if reflect.TypeOf(exported).Kind() == reflect.Slice {
@@ -640,6 +639,8 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		cmn.DebugMsg(cmn.DbgLvlError, errMsg01, fmt.Errorf("result is %T, want map[string]interface{} or []map[string]interface{}", exported))
 		return result, fmt.Errorf("engine plugin result type mismatch")
 	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
 	return result, nil
 }
 
