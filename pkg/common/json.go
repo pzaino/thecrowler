@@ -110,6 +110,28 @@ func SanitizeJSON(input string) string {
 	for i := 0; i < len(input); i++ {
 		c := input[i]
 
+		// Look ahead for forbidden values like "null"
+		if !inString && c == '"' {
+			// Look ahead for the closing quote
+			end := i + 1
+			for end < len(input) {
+				if input[end] == '"' && input[end-1] != '\\' {
+					break
+				}
+				end++
+			}
+			if end < len(input) {
+				// Extract the string content
+				content := input[i+1 : end]
+				if content == "null" {
+					// Replace the whole string with bare null
+					out.WriteString("null")
+					i = end // skip closing quote
+					continue
+				}
+			}
+		}
+
 		if escape {
 			out.WriteByte(c)
 			escape = false
@@ -131,12 +153,28 @@ func SanitizeJSON(input string) string {
 		if !inString {
 			// --- outside of string ---
 
+			// detect "colon followed by comma" → insert null
+			if c == ':' && i+1 < len(input) && input[i+1] == ',' {
+				out.WriteByte(':')
+				out.WriteString("null")
+				continue
+			}
+
 			// collapse duplicate commas
 			if c == ',' {
-				out.WriteByte(',')
+				// skip any extra commas
 				for i+1 < len(input) && input[i+1] == ',' {
 					i++
 				}
+				// if next char closes an object/array, skip this comma
+				if i+1 < len(input) && (input[i+1] == '}' || input[i+1] == ']') {
+					continue
+				}
+				// if next char is another comma, colon, or end of string, skip it
+				if i+1 < len(input) && (input[i+1] == ',' || input[i+1] == ':') {
+					continue
+				}
+				out.WriteByte(',')
 				continue
 			}
 
