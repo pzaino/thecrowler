@@ -454,22 +454,31 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	// "Reports" go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
-		ticker := time.NewTicker(time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
+		interval := time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute
+		next := time.Now().Add(interval)
+
+		for {
 			anyPipelineStillRunning := false
 			for idx := range *plStatus {
 				status := &(*plStatus)[idx]
-				if status.PipelineRunning.Load() <= 1 {
+				if status.PipelineRunning.Load() > 0 {
 					anyPipelineStillRunning = true
 					break
 				}
 			}
+
+			// Run the log
 			logStatus(plStatus)
+
+			// Exit condition
 			if !anyPipelineStillRunning && !RampUpRunning.Load() {
 				PipelinesRunning.Store(false)
 				break
 			}
+
+			// Sleep until the exact next interval boundary
+			time.Sleep(time.Until(next))
+			next = next.Add(interval)
 		}
 	}(wb.PipelineStatus)
 
