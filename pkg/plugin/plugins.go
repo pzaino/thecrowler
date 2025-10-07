@@ -676,6 +676,16 @@ func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
 			result["value"] = v
 		}
 
+	case nil:
+		// Nothing to do
+		result["value"] = nil
+
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64,
+		bool:
+		result["value"] = v
+
 	default:
 		return nil, fmt.Errorf("unexpected type %T from Otto VM", v)
 	}
