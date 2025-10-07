@@ -1868,7 +1868,7 @@ BEGIN
                 )
               )
         ORDER BY s.created_at ASC, s.source_id ASC
-        FOR UPDATE
+        FOR UPDATE SKIP LOCKED
         LIMIT limit_val
     )
     UPDATE Sources
