@@ -57,23 +57,41 @@ func ConvertMapInfInf(input map[interface{}]interface{}) map[string]interface{} 
 	return output
 }
 
-// ConvertInfToMap converts an interface{} to a map[string]interface{}
+// ConvertInfToMap converts interface{} values to map[string]interface{},
+// handling both map[string]interface{} and map[interface{}]interface{} cases recursively.
 func ConvertInfToMap(input interface{}) map[string]interface{} {
 	output := make(map[string]interface{})
-	for key, value := range input.(map[interface{}]interface{}) {
-		strKey, ok := key.(string)
-		if !ok {
-			panic(fmt.Sprintf("Key %v is not a string", key))
+
+	switch val := input.(type) {
+	case map[string]interface{}:
+		for k, v := range val {
+			switch inner := v.(type) {
+			case map[string]interface{}, map[interface{}]interface{}:
+				output[k] = ConvertInfToMap(inner)
+			default:
+				output[k] = inner
+			}
 		}
 
-		// Recursively convert nested maps
-		switch value := value.(type) {
-		case map[interface{}]interface{}:
-			output[strKey] = ConvertMapInfInf(value)
-		default:
-			output[strKey] = value
+	case map[interface{}]interface{}:
+		for k, v := range val {
+			strKey, ok := k.(string)
+			if !ok {
+				strKey = fmt.Sprintf("%v", k)
+			}
+			switch inner := v.(type) {
+			case map[string]interface{}, map[interface{}]interface{}:
+				output[strKey] = ConvertInfToMap(inner)
+			default:
+				output[strKey] = inner
+			}
 		}
+
+	default:
+		// not a map at all, wrap it so you can inspect it later
+		output["_value"] = val
 	}
+
 	return output
 }
 
