@@ -460,7 +460,7 @@ func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, para
 func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *vdi.WebDriver) (map[string]interface{}, error) {
 	// Consts
 	const (
-		errMsg01 = "Error getting result from JS plugin: %v"
+		errMsg01 = "[DEBUG-VDI-Plugin] Error getting result from JS plugin: %v"
 	)
 
 	// Transform params to []interface{}
@@ -480,14 +480,14 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	if err != nil {
 		resultMap := cmn.ConvertInfToMap(result)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "VDI Plugin execution result (on error): %v", resultMap)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-VDI-Plugin] execution result (on error): %v", resultMap)
 		return resultMap, err
 	}
 
 	// Get the result
 	resultMap := cmn.ConvertInfToMap(result)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "VDI Plugin execution result: %v", resultMap)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-VDI-Plugin] VDI Plugin execution result: %v", resultMap)
 
 	return resultMap, nil
 }
