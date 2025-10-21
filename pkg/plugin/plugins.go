@@ -478,12 +478,16 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	// Run the script wd.ExecuteScript(script, args)
 	result, err := (*wd).ExecuteScript(p.Script, paramsArr)
 	if err != nil {
+		resultMap := cmn.ConvertInfToMap(result)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
-		return nil, err
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "VDI Plugin execution result (on error): %v", resultMap)
+		return resultMap, err
 	}
 
 	// Get the result
 	resultMap := cmn.ConvertInfToMap(result)
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "VDI Plugin execution result: %v", resultMap)
 
 	return resultMap, nil
 }
