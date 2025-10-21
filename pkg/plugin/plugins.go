@@ -409,17 +409,21 @@ func NewJSPlugin(script string) *JSPlugin {
 	pVerRegEx := "^//\\s*[@]?version\\s*\\:?\\s*([^\n]+)"
 	pTypeRegEx := "^//\\s*[@]?type\\s*\\:\\s*([^\n]+)"
 	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
+	pAsyncTagRegEx := "^//\\s*[@]?async\\s*\\:\\s*([^\n]+)"
 	re1 := regexp.MustCompile(pNameRegEx)
 	re2 := regexp.MustCompile(pDescRegEx)
 	re3 := regexp.MustCompile(pTypeRegEx)
 	re4 := regexp.MustCompile(pEventTypeRegEx)
 	re5 := regexp.MustCompile(pVerRegEx)
+	re6 := regexp.MustCompile(pAsyncTagRegEx)
+
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
 	pEventType := ""
 	pVersion := ""
+	pAsync := false
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
 		if re1.MatchString(line) {
@@ -437,6 +441,12 @@ func NewJSPlugin(script string) *JSPlugin {
 		if re5.MatchString(line) {
 			pVersion = strings.TrimSpace(re5.FindStringSubmatch(line)[1])
 		}
+		if re6.MatchString(line) {
+			asyncStr := strings.ToLower(strings.TrimSpace(re6.FindStringSubmatch(line)[1]))
+			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
+				pAsync = true
+			}
+		}
 	}
 
 	return &JSPlugin{
@@ -444,6 +454,7 @@ func NewJSPlugin(script string) *JSPlugin {
 		Description: pDesc,
 		Version:     pVersion,
 		PType:       pType,
+		Async:       pAsync,
 		Script:      script,
 		EventType:   pEventType,
 	}
@@ -470,13 +481,24 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	}
 
 	// Setup a timeout for the script
-	err := (*wd).SetAsyncScriptTimeout(time.Duration(timeout) * time.Second)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+	if p.Async {
+		err := (*wd).SetAsyncScriptTimeout(time.Duration(timeout) * time.Second)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		}
 	}
 
 	// Run the script wd.ExecuteScript(script, args)
-	result, err := (*wd).ExecuteScript(p.Script, paramsArr)
+	var result interface{}
+	var err error
+	if p.Async {
+		// Still call ExecuteScript for async scripts for now, because
+		// The current VDI backend still does not support calling
+		// POST /session/:id/execute/async directly.
+		result, err = (*wd).ExecuteScript(p.Script, paramsArr)
+	} else {
+		result, err = (*wd).ExecuteScript(p.Script, paramsArr)
+	}
 	if err != nil {
 		resultMap := cmn.ConvertInfToMap(result)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
