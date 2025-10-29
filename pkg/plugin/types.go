@@ -21,6 +21,7 @@ type JSPlugin struct {
 	Description string `json:"description" yaml:"description"` // Description of the plugin
 	Version     string `json:"version" yaml:"version"`         // Version of the plugin
 	PType       string `json:"type" yaml:"type"`               // Type of the plugin
+	Async       bool   `json:"async" yaml:"async"`             // Is the plugin asynchronous
 	Script      string `json:"script" yaml:"script"`           // Script for the plugin
 	EventType   string `json:"event_type" yaml:"event_type"`   // Event type for the plugin. Plugins can register to handle an event.
 }

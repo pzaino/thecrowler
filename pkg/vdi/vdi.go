@@ -545,7 +545,12 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Append user-agent separately as it's a constant value
 	args = append(args, "--user-agent="+userAgent)
 
-	args = append(args, "--incognito") // Run in incognito mode
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--incognito")                              // Run in incognito mode
+		args = append(args, "--disable-client-side-phishing-detection") // Disable client-side phishing detection
+		args = append(args, "--disable-component-update")               // Disable component updates
+		args = append(args, "--disable-features=UserAgentClientHint")   // Disable background networking
+	}
 
 	// CDP Config for Chrome/Chromium
 	var cdpActive bool

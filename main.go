@@ -58,6 +58,8 @@ var (
 	configFile  *string       // Configuration file path
 	config      cfg.Config    // Configuration "object"
 	configMutex sync.RWMutex  // Mutex to protect the configuration
+	sysReadyMtx sync.RWMutex  // Mutex to protect the SysReady variable
+	sysReady    int           // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
 	// GRulesEngine Global rules engine
 	GRulesEngine rules.RuleEngine // GRulesEngine Global rules engine
 
@@ -103,6 +105,26 @@ type WorkBlock struct {
 // HealthCheck is a struct that holds the health status of the application.
 type HealthCheck struct {
 	Status string `json:"status"`
+}
+
+// ReadyCheck is a struct that holds the system readiness status.
+type ReadyCheck struct {
+	Status string `json:"ready"`
+}
+
+func setSysReady(newStatus int) {
+	if newStatus < 0 || newStatus > 2 {
+		return
+	}
+	sysReadyMtx.Lock()
+	defer sysReadyMtx.Unlock()
+	sysReady = newStatus
+}
+
+func getSysReady() int {
+	sysReadyMtx.RLock()
+	defer sysReadyMtx.RUnlock()
+	return sysReady
 }
 
 // NewVDIPool is a function that creates a new VDI pool with the given configurations.
@@ -1050,6 +1072,8 @@ func initAll(configFile *string, config *cfg.Config,
 	db *cdb.Handler, vdiInstances *vdi.Pool,
 	RulesEngine *rules.RuleEngine, lmt **rate.Limiter) error {
 	var err error
+	currentSysReady := getSysReady()
+	setSysReady(1) // Indicate system is starting up or being restarted
 
 	// Reload the configuration file
 	*config, err = cfg.LoadConfig(*configFile)
@@ -1094,21 +1118,9 @@ func initAll(configFile *string, config *cfg.Config,
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
 	// Reinitialize the VDI instances available to this engine
-	/*
-		*vdiInstances = make(chan vdi.SeleniumInstance, len(config.Selenium))
-		for _, seleniumConfig := range config.Selenium {
-			selService, err := vdi.NewVDIService(seleniumConfig)
-			if err != nil {
-				return fmt.Errorf("creating VDI Instances: %s", err)
-			}
-			*vdiInstances <- vdi.SeleniumInstance{
-				Service: selService,
-				Config:  seleniumConfig,
-			}
-		}
-	*/
 	err = NewVDIPool(vdiInstances, config.Selenium)
 	if err != nil {
+		setSysReady(0) // Indicate system is NOT ready
 		return fmt.Errorf("creating VDI pool: %s", err)
 	}
 
@@ -1138,10 +1150,13 @@ func initAll(configFile *string, config *cfg.Config,
 	// Start the crawler
 	crowler.StartCrawler(*config)
 
+	setSysReady(currentSysReady) // Restore previous system ready state
 	return nil
 }
 
 func main() {
+	setSysReady(1) // Indicate system is starting
+
 	// Reading command line arguments
 	configFile = flag.String("config", "./config.yaml", "Path to the configuration file")
 	flag.Parse()
@@ -1280,10 +1295,13 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Crawler.Control.Host, config.Crawler.Control.Port)
 	var rStatus error
 	if strings.ToLower(strings.TrimSpace(config.Crawler.Control.SSLMode)) == cmn.EnableStr {
+		setSysReady(2) // Indicate system is ready
 		rStatus = srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile)
 	} else {
+		setSysReady(2) // Indicate system is ready
 		rStatus = srv.ListenAndServe()
 	}
+	setSysReady(0) // Indicate system is NOT ready
 	statusMsg := "Server stopped."
 	if rStatus != nil {
 		statusMsg = fmt.Sprintf("Server stopped with error: %v", rStatus)
@@ -1386,8 +1404,12 @@ func updateDebugLevel(newLevel string) {
 func initAPIv1() {
 	// Health check
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
+	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
+	http.Handle("/v1/health/", healthCheckWithMiddlewares)
+	http.Handle("/v1/ready", readyCheckWithMiddlewares)
+	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
 	// Config Check
 	configCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(configCheckHandler)))
@@ -1443,6 +1465,29 @@ func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 
 	// Respond with the health status
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func readyCheckHandler(w http.ResponseWriter, _ *http.Request) {
+	sysReadyMtx.RLock()
+	defer sysReadyMtx.RUnlock()
+
+	msg := ""
+	switch sysReady {
+	case 1: // Starting up
+		msg = "STARTING UP"
+	case 2: // Ready
+		msg = "READY"
+	default:
+		msg = "NOT READY"
+	}
+
+	// Create a JSON document with the readiness status
+	readyStatus := ReadyCheck{
+		Status: msg,
+	}
+
+	// Respond with the readiness status
+	handleErrorAndRespond(w, nil, readyStatus, "Error in ready Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 func configCheckHandler(w http.ResponseWriter, _ *http.Request) {
