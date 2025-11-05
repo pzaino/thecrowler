@@ -18,7 +18,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,11 +47,32 @@ var (
 	configFile  *string
 	dbSemaphore chan struct{} // Semaphore for the database connection
 	dbHandler   cdb.Handler
+
+	sysReadyMtx sync.RWMutex // Mutex to protect the SysReady variable
+	sysReady    int          // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
 )
+
+func setSysReady(newStatus int) {
+	if newStatus < 0 || newStatus > 2 {
+		return
+	}
+	sysReadyMtx.Lock()
+	defer sysReadyMtx.Unlock()
+	sysReady = newStatus
+}
+
+func getSysReady() int {
+	sysReadyMtx.RLock()
+	defer sysReadyMtx.RUnlock()
+	return sysReady
+}
 
 func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	// Reading the configuration file
 	var err error
+	currentSysReady := getSysReady()
+	setSysReady(1) // Indicate system is starting up or being restarted
+
 	*config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Error reading config file: %v", err)
@@ -112,10 +132,13 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
 
+	setSysReady(currentSysReady) // Restore previous system ready state
 	return nil
 }
 
 func main() {
+	setSysReady(1) // Indicate system is starting
+
 	// Parse the command line arguments
 	configFile = flag.String("config", "./config.yaml", "Path to the configuration file")
 	flag.Parse()
@@ -210,23 +233,31 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time:", time.Now())
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location:", time.Local.String())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Awaiting for requests...")
 	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == cmn.EnableStr {
-		log.Fatal(srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
+		setSysReady(2) // Indicate system is ready
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServeTLS(config.API.CertFile, config.API.KeyFile))
+	} else {
+		setSysReady(2) // Indicate system is ready
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
 	}
-	log.Fatal(srv.ListenAndServe())
+	setSysReady(0) // Indicate system is NOT ready
 }
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
 	// Health check
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
+	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
+	http.Handle("/v1/health/", healthCheckWithMiddlewares)
+	http.Handle("/v1/ready", readyCheckWithMiddlewares)
+	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
 	// Query handlers
 	http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
@@ -337,6 +368,29 @@ func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 
 	// Respond with the health status
 	handleErrorAndRespond(w, nil, healthStatus, "Error in health Check: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+func readyCheckHandler(w http.ResponseWriter, _ *http.Request) {
+	sysReadyMtx.RLock()
+	defer sysReadyMtx.RUnlock()
+
+	msg := ""
+	switch sysReady {
+	case 1: // Starting up
+		msg = "STARTING UP"
+	case 2: // Ready
+		msg = "READY"
+	default:
+		msg = "NOT READY"
+	}
+
+	// Create a JSON document with the readiness status
+	readyStatus := ReadyCheck{
+		Status: msg,
+	}
+
+	// Respond with the readiness status
+	handleErrorAndRespond(w, nil, readyStatus, "Error in ready Check: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 // searchHandler handles the traditional search requests
