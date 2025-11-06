@@ -15,7 +15,10 @@
 // Package config contains the configuration file parsing logic.
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // FileStorageAPI is a generic File Storage API configuration
 type FileStorageAPI struct {
@@ -48,66 +51,149 @@ type Database struct {
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	QueryTimer            int            `json:"query_timer" yaml:"query_timer"` // Time to wait before querying the next source (in seconds)
-	Workers               int            `json:"workers" yaml:"workers"`         // Number of crawler workers
-	Engine                []CustomEngine `json:"engine" yaml:"engine"`           // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
-	VDIName               string         // Name of the VDI to use (this is useful when using custom configurations per each source)
-	SourcePriority        string         // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
-	Platform              string         `json:"platform" yaml:"platform"`                                                 // Platform to use (e.g., "desktop", "mobile")
-	BrowserPlatform       string         `json:"browser_platform" yaml:"browser_platform"`                                 // Browser platform to use (e.g., "desktop", "mobile")
-	Interval              string         `json:"interval" yaml:"interval"`                                                 // Interval between crawler requests (in seconds)
-	Timeout               int            `json:"timeout" yaml:"timeout"`                                                   // Timeout for crawler requests (in seconds)
-	Maintenance           int            `json:"maintenance" yaml:"maintenance"`                                           // Interval between crawler maintenance tasks (in seconds)
-	SourceScreenshot      bool           `json:"source_screenshot" yaml:"source_screenshot"`                               // Whether to take a screenshot of the source page or not
-	FullSiteScreenshot    bool           `json:"full_site_screenshot" yaml:"full_site_screenshot"`                         // Whether to take a screenshot of the full site or not
-	ScreenshotMaxHeight   int            `json:"screenshot_max_height" yaml:"screenshot_max_height"`                       // Maximum height of the screenshot
-	ScreenshotSectionWait int            `json:"screenshot_section_wait" yaml:"screenshot_section_wait"`                   // Time to wait before taking a screenshot of a section in seconds
-	MaxDepth              int            `json:"max_depth" yaml:"max_depth"`                                               // Maximum depth to crawl
-	MaxLinks              int            `json:"max_links" yaml:"max_links"`                                               // Maximum number of links to crawl per Source
-	MaxSources            int            `json:"max_sources" yaml:"max_sources"`                                           // Maximum number of sources to crawl
-	InitialRampUp         int            `json:"initial_ramp_up" yaml:"initial_ramp_up"`                                   // Initial ramp-up time for the crawler (in seconds) (to help proxies to warm up) 0 = no ramp-up, -1 = automatic ramp-up
-	Delay                 string         `json:"delay" yaml:"delay"`                                                       // Delay between requests (in seconds)
-	BrowsingMode          string         `json:"browsing_mode" yaml:"browsing_mode"`                                       // Browsing type (e.g., "recursive", "human", "fuzzing")
-	MaxRetries            int            `json:"max_retries" yaml:"max_retries"`                                           // Maximum number of retries
-	MaxRedirects          int            `json:"max_redirects" yaml:"max_redirects"`                                       // Maximum number of redirects
-	MaxRequests           int            `json:"max_requests" yaml:"max_requests"`                                         // Maximum number of requests
-	ChangeUserAgent       string         `json:"change_useragent" yaml:"change_useragent"`                                 // Change user agent for each request (e.g., "never", "always", "on_start")
-	ForceSFSSameOrigin    bool           `json:"force_sec_fetch_site_same_origin" yaml:"force_sec_fetch_site_same_origin"` // a technique to work around websites that requires sec-fetch-site same-origin for all pages but the home page
-	ResetCookiesPolicy    string         `json:"reset_cookies_policy" yaml:"reset_cookies_policy"`                         // Cookies policy (e.g., "none", "on-request", "on-start", "when-done", "always")
-	NoThirdPartyCookies   bool           `json:"no_third_party_cookies" yaml:"no_third_party_cookies"`                     // Whether to accept third-party cookies or not
-	CrawlingInterval      string         `json:"crawling_interval" yaml:"crawling_interval"`                               // Time to wait before re-crawling a source
-	CrawlingIfError       string         `json:"crawling_if_error" yaml:"crawling_if_error"`                               // Whether to re-crawl a source if an error occurs
-	CrawlingIfOk          string         `json:"crawling_if_ok" yaml:"crawling_if_ok"`                                     // Whether to re-crawl a source if the crawling is successful
-	ProcessingTimeout     string         `json:"processing_timeout" yaml:"processing_timeout"`                             // Timeout for processing the source
-	RequestImages         bool           `json:"request_images" yaml:"request_images"`                                     // Whether to request the images or not
-	RequestCSS            bool           `json:"request_css" yaml:"request_css"`                                           // Whether to request the CSS or not
-	RequestScripts        bool           `json:"request_scripts" yaml:"request_scripts"`                                   // Whether to request the scripts or not
-	RequestPlugins        bool           `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
-	RequestFrames         bool           `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
-	PreventDuplicateURLs  bool           `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
-	CollectHTML           bool           `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
-	CollectImages         bool           `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
-	CollectFiles          bool           `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not
-	CollectContent        bool           `json:"collect_content" yaml:"collect_content"`                                   // Whether to collect the content or not
-	CollectKeywords       bool           `json:"collect_keywords" yaml:"collect_keywords"`                                 // Whether to collect the keywords or not
-	CollectMetaTags       bool           `json:"collect_metatags" yaml:"collect_metatags"`                                 // Whether to collect the metatags or not
-	CollectPerfMetrics    bool           `json:"collect_performance" yaml:"collect_performance"`                           // Whether to collect the performance metrics or not
-	CollectPageEvents     bool           `json:"collect_events" yaml:"collect_events"`                                     // Whether to collect the page events or not
-	CollectXHR            bool           `json:"collect_xhr" yaml:"collect_xhr"`                                           // Whether to collect the XHR requests or not
-	FilterXHR             []string       `json:"filter_xhr" yaml:"filter_xhr"`                                             // Filter XHR mime_types
-	CollectLinks          bool           `json:"collect_links" yaml:"collect_links"`                                       // Whether to collect the links or not
-	ReportInterval        int            `json:"report_time" yaml:"report_time"`                                           // Time to wait before sending the report (in minutes)
-	CheckForRobots        bool           `json:"check_for_robots" yaml:"check_for_robots"`                                 // Whether to check for robots.txt or not
-	CreateEventWhenDone   bool           `json:"create_event_when_done" yaml:"create_event_when_done"`                     // Whether to create an event when the crawling is done or not
-	Control               ControlConfig  `json:"control" yaml:"control"`                                                   // Control/COnsole internal API
+	QueryTimer            int             `json:"query_timer" yaml:"query_timer"` // Time to wait before querying the next source (in seconds)
+	Workers               int             `json:"workers" yaml:"workers"`         // Number of crawler workers
+	Engine                []CustomEngine  `json:"engine" yaml:"engine"`           // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
+	VDIName               string          // Name of the VDI to use (this is useful when using custom configurations per each source)
+	Schedule              *EngineSchedule // Optional schedule configuration for this engine
+	SourcePriority        string          // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
+	Platform              string          `json:"platform" yaml:"platform"`                                                 // Platform to use (e.g., "desktop", "mobile")
+	BrowserPlatform       string          `json:"browser_platform" yaml:"browser_platform"`                                 // Browser platform to use (e.g., "desktop", "mobile")
+	Interval              string          `json:"interval" yaml:"interval"`                                                 // Interval between crawler requests (in seconds)
+	Timeout               int             `json:"timeout" yaml:"timeout"`                                                   // Timeout for crawler requests (in seconds)
+	Maintenance           int             `json:"maintenance" yaml:"maintenance"`                                           // Interval between crawler maintenance tasks (in seconds)
+	SourceScreenshot      bool            `json:"source_screenshot" yaml:"source_screenshot"`                               // Whether to take a screenshot of the source page or not
+	FullSiteScreenshot    bool            `json:"full_site_screenshot" yaml:"full_site_screenshot"`                         // Whether to take a screenshot of the full site or not
+	ScreenshotMaxHeight   int             `json:"screenshot_max_height" yaml:"screenshot_max_height"`                       // Maximum height of the screenshot
+	ScreenshotSectionWait int             `json:"screenshot_section_wait" yaml:"screenshot_section_wait"`                   // Time to wait before taking a screenshot of a section in seconds
+	MaxDepth              int             `json:"max_depth" yaml:"max_depth"`                                               // Maximum depth to crawl
+	MaxLinks              int             `json:"max_links" yaml:"max_links"`                                               // Maximum number of links to crawl per Source
+	MaxSources            int             `json:"max_sources" yaml:"max_sources"`                                           // Maximum number of sources to crawl
+	InitialRampUp         int             `json:"initial_ramp_up" yaml:"initial_ramp_up"`                                   // Initial ramp-up time for the crawler (in seconds) (to help proxies to warm up) 0 = no ramp-up, -1 = automatic ramp-up
+	Delay                 string          `json:"delay" yaml:"delay"`                                                       // Delay between requests (in seconds)
+	BrowsingMode          string          `json:"browsing_mode" yaml:"browsing_mode"`                                       // Browsing type (e.g., "recursive", "human", "fuzzing")
+	MaxRetries            int             `json:"max_retries" yaml:"max_retries"`                                           // Maximum number of retries
+	MaxRedirects          int             `json:"max_redirects" yaml:"max_redirects"`                                       // Maximum number of redirects
+	MaxRequests           int             `json:"max_requests" yaml:"max_requests"`                                         // Maximum number of requests
+	ChangeUserAgent       string          `json:"change_useragent" yaml:"change_useragent"`                                 // Change user agent for each request (e.g., "never", "always", "on_start")
+	ForceSFSSameOrigin    bool            `json:"force_sec_fetch_site_same_origin" yaml:"force_sec_fetch_site_same_origin"` // a technique to work around websites that requires sec-fetch-site same-origin for all pages but the home page
+	ResetCookiesPolicy    string          `json:"reset_cookies_policy" yaml:"reset_cookies_policy"`                         // Cookies policy (e.g., "none", "on-request", "on-start", "when-done", "always")
+	NoThirdPartyCookies   bool            `json:"no_third_party_cookies" yaml:"no_third_party_cookies"`                     // Whether to accept third-party cookies or not
+	CrawlingInterval      string          `json:"crawling_interval" yaml:"crawling_interval"`                               // Time to wait before re-crawling a source
+	CrawlingIfError       string          `json:"crawling_if_error" yaml:"crawling_if_error"`                               // Whether to re-crawl a source if an error occurs
+	CrawlingIfOk          string          `json:"crawling_if_ok" yaml:"crawling_if_ok"`                                     // Whether to re-crawl a source if the crawling is successful
+	ProcessingTimeout     string          `json:"processing_timeout" yaml:"processing_timeout"`                             // Timeout for processing the source
+	RequestImages         bool            `json:"request_images" yaml:"request_images"`                                     // Whether to request the images or not
+	RequestCSS            bool            `json:"request_css" yaml:"request_css"`                                           // Whether to request the CSS or not
+	RequestScripts        bool            `json:"request_scripts" yaml:"request_scripts"`                                   // Whether to request the scripts or not
+	RequestPlugins        bool            `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
+	RequestFrames         bool            `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
+	PreventDuplicateURLs  bool            `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
+	CollectHTML           bool            `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
+	CollectImages         bool            `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
+	CollectFiles          bool            `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not
+	CollectContent        bool            `json:"collect_content" yaml:"collect_content"`                                   // Whether to collect the content or not
+	CollectKeywords       bool            `json:"collect_keywords" yaml:"collect_keywords"`                                 // Whether to collect the keywords or not
+	CollectMetaTags       bool            `json:"collect_metatags" yaml:"collect_metatags"`                                 // Whether to collect the metatags or not
+	CollectPerfMetrics    bool            `json:"collect_performance" yaml:"collect_performance"`                           // Whether to collect the performance metrics or not
+	CollectPageEvents     bool            `json:"collect_events" yaml:"collect_events"`                                     // Whether to collect the page events or not
+	CollectXHR            bool            `json:"collect_xhr" yaml:"collect_xhr"`                                           // Whether to collect the XHR requests or not
+	FilterXHR             []string        `json:"filter_xhr" yaml:"filter_xhr"`                                             // Filter XHR mime_types
+	CollectLinks          bool            `json:"collect_links" yaml:"collect_links"`                                       // Whether to collect the links or not
+	ReportInterval        int             `json:"report_time" yaml:"report_time"`                                           // Time to wait before sending the report (in minutes)
+	CheckForRobots        bool            `json:"check_for_robots" yaml:"check_for_robots"`                                 // Whether to check for robots.txt or not
+	CreateEventWhenDone   bool            `json:"create_event_when_done" yaml:"create_event_when_done"`                     // Whether to create an event when the crawling is done or not
+	Control               ControlConfig   `json:"control" yaml:"control"`                                                   // Control/COnsole internal API
 }
 
 // CustomEngine represents a custom engine configuration
 type CustomEngine struct {
-	Name           string   `json:"name" yaml:"name"`                       // Name of the custom engine (e.g., "chromium", "firefox", "selenium")
-	QueryTimer     int      `json:"query_timer" yaml:"query_timer"`         // Time to wait before querying the next source (in seconds)
-	SourcePriority []string `json:"source_priority" yaml:"source_priority"` // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
-	VDIName        []string `json:"vdi_name" yaml:"vdi_name"`               // Name of the VDI to use (this is useful when using custom configurations per each source)
+	Name           string          `json:"name" yaml:"name"`                             // Name of the custom engine (e.g., "chromium", "firefox", "selenium")
+	QueryTimer     int             `json:"query_timer" yaml:"query_timer"`               // Time to wait before querying the next source (in seconds)
+	SourcePriority []string        `json:"source_priority" yaml:"source_priority"`       // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
+	VDIName        []string        `json:"vdi_name" yaml:"vdi_name"`                     // Name of the VDI to use (this is useful when using custom configurations per each source)
+	Schedule       *EngineSchedule `json:"schedule,omitempty" yaml:"schedule,omitempty"` // Optional schedule configuration
+}
+
+// EngineSchedule defines when a CROWler engine instance is allowed to operate
+type EngineSchedule struct {
+	ActiveDates *ActiveDateRange `json:"active_dates,omitempty" yaml:"active_dates,omitempty"` // Optional date range (ISO8601)
+	Weekdays    []string         `json:"weekdays,omitempty" yaml:"weekdays,omitempty"`         // Optional list of active weekdays
+	TimeRange   *TimeRange       `json:"time_range,omitempty" yaml:"time_range,omitempty"`     // Optional daily working hours
+	Timezone    string           `json:"timezone,omitempty" yaml:"timezone,omitempty"`         // Optional IANA timezone (e.g. "Europe/London")
+}
+
+// ActiveDateRange represents a start and end datetime period
+type ActiveDateRange struct {
+	From string `json:"from" yaml:"from"` // Start date-time (ISO8601)
+	To   string `json:"to" yaml:"to"`     // End date-time (ISO8601)
+}
+
+// TimeRange represents daily working hours (24-hour HH:MM)
+type TimeRange struct {
+	From string `json:"from" yaml:"from"` // Start time (HH:MM)
+	To   string `json:"to" yaml:"to"`     // End time (HH:MM)
+}
+
+// IsActive determines whether the engine should be active at the given time.
+// It respects the configured timezone, active date range, weekdays, and daily time range.
+func (s *EngineSchedule) IsActive(now time.Time) bool {
+	if s == nil {
+		return true // No schedule → always active
+	}
+
+	// Load timezone (defaults to system)
+	loc := time.Local
+	if s.Timezone != "" {
+		if tz, err := time.LoadLocation(s.Timezone); err == nil {
+			loc = tz
+		}
+	}
+	now = now.In(loc)
+
+	// --- 1. Check active date range ---
+	if s.ActiveDates != nil {
+		start, err1 := time.ParseInLocation(time.RFC3339, s.ActiveDates.From, loc)
+		end, err2 := time.ParseInLocation(time.RFC3339, s.ActiveDates.To, loc)
+		if err1 == nil && err2 == nil {
+			if now.Before(start) || now.After(end) {
+				return false
+			}
+		}
+	}
+
+	// --- 2. Check weekday restriction ---
+	if len(s.Weekdays) > 0 {
+		currentDay := strings.ToLower(now.Weekday().String())
+		if !containsIgnoreCase(s.Weekdays, currentDay) {
+			return false
+		}
+	}
+
+	// --- 3. Check daily time range ---
+	if s.TimeRange != nil {
+		layout := "15:04"
+		start, err1 := time.ParseInLocation(layout, s.TimeRange.From, loc)
+		end, err2 := time.ParseInLocation(layout, s.TimeRange.To, loc)
+		if err1 == nil && err2 == nil {
+			current, _ := time.ParseInLocation(layout, now.Format(layout), loc)
+			if current.Before(start) || current.After(end) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// containsIgnoreCase checks if a slice contains a string (case-insensitive)
+func containsIgnoreCase(list []string, target string) bool {
+	for _, item := range list {
+		if strings.EqualFold(item, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // ControlConfig represents the internal control API configuration

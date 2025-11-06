@@ -278,8 +278,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 // and kickstart the crawling process for each of them
 func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
-	// Initialize the pipeline status
-	//PipelineStatus := make([]crowler.Status, config.Crawler.MaxSources)
+	// Initialize the pipeline status slice
 	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
 	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
@@ -292,6 +291,13 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	defer configMutex.RUnlock()
 	for {
 		configMutex.RLock()
+
+		if !config.Crawler.Schedule.IsActive(time.Now()) {
+			// We are not active right now, so we can handle signals for reloading the configuration
+			configMutex.RUnlock()
+			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
+			continue
+		}
 
 		// Retrieve the sources to crawl
 		sourcesToCrawl, err := retrieveAvailableSources(*db, 0)
@@ -576,6 +582,23 @@ func crawlSources(wb *WorkBlock) uint64 {
 				}
 			default:
 				refillLock.Lock()
+
+				// First let's check if we are still in an active schedule:
+				configMutex.RLock()
+				if !wb.Config.Crawler.Schedule.IsActive(time.Now()) {
+					// Not active, so we can close the channel and exit
+					configMutex.RUnlock()
+					BatchCompleted.Store(true)
+					closeChanOnce.Do(func() {
+						close(sourceChan)
+						cmn.DebugMsg(cmn.DbgLvlInfo, "Crawling schedule is no longer active — closing pipeline.")
+					})
+					refillLock.Unlock()
+					return
+				}
+				configMutex.RUnlock()
+
+				// We are in active schedule, so check if we need to refill the source channel
 				if (wb.sel.Available() > 0) && (len(sourceChan) < lowWater) {
 					// We need to refill the source channel
 					need := highWater - len(sourceChan)
