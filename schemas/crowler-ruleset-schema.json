@@ -94,6 +94,13 @@
                                     "description": "A unique name identifying the scraping rule.",
                                     "type": "string"
                                 },
+                                "scope": {
+                                    "title": "Rule Scope",
+                                    "description": "Defines where this rule applies ('any', 'website', 'api', 'file', 'db', or 'data').",
+                                    "type": "string",
+                                    "enum": ["any", "website", "api", "file", "db", "data"],
+                                    "default": "any"
+                                },
                                 "pre_conditions": {
                                     "title": "Pre-Conditions",
                                     "description": "Conditions that must be met for the rule to be considered for execution.",
@@ -365,6 +372,13 @@
                                     "description": "A unique name identifying the action rule.",
                                     "type": "string"
                                 },
+                                "scope": {
+                                    "title": "Rule Scope",
+                                    "description": "Defines where this rule applies ('any', 'website', 'api', 'file', 'db', or 'data').",
+                                    "type": "string",
+                                    "enum": ["any", "website", "api", "file", "db", "data"],
+                                    "default": "any"
+                                },
                                 "url": {
                                     "type": "string",
                                     "format": "uri",
@@ -490,6 +504,11 @@
                                             "value": {
                                                 "type": "string",
                                                 "description": "The value within the selector that we need to match for the action. (this is NOT the value to input!)"
+                                            },
+                                            "details": {
+                                                "type": "object",
+                                                "description": "Detailed configuration for the plugin_call selector type. This is used to pass parameters to the plugin being called. To do that you must create an object called `parameters` here in details and then place the plugin parameters as key-value pairs inside the parameters object.",
+                                                "additionalProperties": true
                                             }
                                         },
                                         "required": [
@@ -568,6 +587,13 @@
                                     "title": "Rule Name",
                                     "description": "A unique name identifying the detection rule.",
                                     "type": "string"
+                                },
+                                "scope": {
+                                    "title": "Rule Scope",
+                                    "description": "Defines where this rule applies ('any', 'website', 'api', 'file', 'db', or 'data').",
+                                    "type": "string",
+                                    "enum": ["any", "website", "api", "file", "db", "data"],
+                                    "default": "any"
                                 },
                                 "object_name": {
                                     "title": "Object Name",
@@ -919,6 +945,13 @@
                                 "rule_name": {
                                     "type": "string",
                                     "description": "A unique name identifying the crawling rule."
+                                },
+                                "scope": {
+                                    "title": "Rule Scope",
+                                    "description": "Defines where this rule applies ('any', 'website', 'api', 'file', 'db', or 'data').",
+                                    "type": "string",
+                                    "enum": ["any", "website", "api", "file", "db", "data"],
+                                    "default": "any"
                                 },
                                 "request_type": {
                                     "type": "string",

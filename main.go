@@ -713,12 +713,6 @@ func crawlSources(wb *WorkBlock) uint64 {
 				if !BatchCompleted.Load() {
 					var ok bool
 					// Fetch next available source in the queue:
-					/*source, ok = <-sourceChan
-					if !ok {
-						// Channel is closed, let's check if we need to quit or not:
-						cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
-						return
-					}*/
 					select {
 					case source, ok = <-sourceChan:
 						if !ok {

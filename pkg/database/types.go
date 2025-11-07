@@ -19,6 +19,10 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 const (
@@ -63,6 +67,67 @@ type Source struct {
 
 	// The following fields are not stored in the database but are used internally.
 	Status int
+}
+
+// GetConfigMap unmarshals the raw JSON Config into a map for flexible lookup.
+func (s *Source) GetConfigMap() (map[string]interface{}, error) {
+	if s.Config == nil {
+		return nil, fmt.Errorf("source config is nil")
+	}
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(*s.Config, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal source config: %w", err)
+	}
+	return cfg, nil
+}
+
+const (
+	website = "website"
+)
+
+// GetSourceType returns the source type ("website", "api", "file", "db") from Config.
+// If missing or invalid, defaults to "website" for backward compatibility.
+func (s *Source) GetSourceType() string {
+	cfg, err := s.GetConfigMap()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "GetSourceType: %v", err)
+		return website
+	}
+
+	crawlingCfgRaw, ok := cfg["crawling_config"]
+	if !ok {
+		return website
+	}
+	crawlingCfg, ok := crawlingCfgRaw.(map[string]interface{})
+	if !ok {
+		return website
+	}
+
+	st, ok := crawlingCfg["source_type"].(string)
+	if !ok || st == "" {
+		return website
+	}
+
+	return strings.ToLower(strings.TrimSpace(st))
+}
+
+// GetSourceName safely extracts the source_name field from the config if present.
+func (s *Source) GetSourceName() string {
+	cfg, err := s.GetConfigMap()
+	if err != nil {
+		return ""
+	}
+	if name, ok := cfg["source_name"].(string); ok {
+		return name
+	}
+	return ""
+}
+
+// IsAPI tells whether the source type is 'api' or general 'data'.
+func (s *Source) IsAPI() bool {
+	st := s.GetSourceType()
+	return st == "api" || st == "data"
 }
 
 // Event represents the structure of the Events table
