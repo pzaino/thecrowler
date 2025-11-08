@@ -192,6 +192,7 @@ func NewConfig() *Config {
 					SourcePriority: []string{
 						"",
 					},
+					Schedule: nil,
 				},
 			},
 			Platform:              "desktop",
@@ -724,6 +725,7 @@ func (c *Config) setEngineInstance() {
 			// If the engine name is the same as the hostname, then we set it as the current engine
 			c.Crawler.QueryTimer = engine.QueryTimer
 
+			// Get the assigned VDIs to this engine:
 			VDINames := ""
 			for i, vdi := range engine.VDIName {
 				vdi = strings.ToLower(strings.TrimSpace(vdi))
@@ -736,6 +738,7 @@ func (c *Config) setEngineInstance() {
 			}
 			c.Crawler.VDIName = strings.TrimSpace(VDINames)
 
+			// Get the event's priorities assigned to this engine:
 			SourcePriorities := ""
 			for i, sourcePriority := range engine.SourcePriority {
 				sourcePriority = strings.ToLower(strings.TrimSpace(sourcePriority))
@@ -747,6 +750,10 @@ func (c *Config) setEngineInstance() {
 				}
 			}
 			c.Crawler.SourcePriority = strings.TrimSpace(SourcePriorities)
+
+			// Get the scheduling assigned to this engine:
+			c.Crawler.Schedule = engine.Schedule
+
 			return
 		}
 	}

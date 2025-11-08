@@ -342,6 +342,11 @@ type HealthCheck struct {
 	Status string `json:"status"`
 }
 
+// ReadyCheck is a struct that holds the readiness status of the application.
+type ReadyCheck struct {
+	Status string `json:"status"`
+}
+
 // IsEmpty returns true if the response is empty
 func (r *HTTPInfoResponse) IsEmpty() bool {
 	return len(r.Items) == 0

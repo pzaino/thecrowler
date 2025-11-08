@@ -305,6 +305,109 @@
                     "crowler-vdi-japan-1"
                   ]
                 }
+              },
+              "schedule": {
+                "title": "CROWler Engine Working Schedule",
+                "description": "Defines when this CROWler Engine instance should operate. Supports either a date range or recurring weekdays, and a daily time range.",
+                "type": "object",
+                "properties": {
+                  "timezone": {
+                    "title": "Timezone",
+                    "description": "IANA timezone identifier used for schedule evaluation (e.g., 'Europe/London', 'America/New_York'). If omitted, system timezone is used.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z_]+(?:/[A-Za-z_]+)+$",
+                    "examples": [
+                      "Europe/London",
+                      "America/New_York",
+                      "Asia/Tokyo"
+                    ]
+                  },
+                  "active_dates": {
+                    "title": "Active Date Range",
+                    "description": "Defines the date range when the engine is allowed to run. If omitted, the engine is considered always active.",
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Start date and time for activation (ISO8601).",
+                        "examples": [
+                          "2025-11-06T09:00:00Z"
+                        ]
+                      },
+                      "to": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "End date and time for deactivation (ISO8601).",
+                        "examples": [
+                          "2025-12-01T18:00:00Z"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "weekdays": {
+                    "title": "Active Weekdays",
+                    "description": "Defines which days of the week the engine can operate. If omitted, the engine can run on any day.",
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday",
+                        "saturday",
+                        "sunday"
+                      ]
+                    },
+                    "examples": [
+                      [
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday"
+                      ]
+                    ]
+                  },
+                  "time_range": {
+                    "title": "Active Time Range",
+                    "description": "Defines the time window (in 24-hour HH:MM format) when the engine can operate during active days.",
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                        "description": "Start time of the working window.",
+                        "examples": [
+                          "08:00",
+                          "09:30"
+                        ]
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                        "description": "End time of the working window.",
+                        "examples": [
+                          "17:00",
+                          "18:00"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             }
           },

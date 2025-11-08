@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -40,12 +41,29 @@ const (
 	events
 )
 
-func genHealthURL(t serviceType) string {
+const (
+	healthEndpoint = "health"
+	readyEndpoint  = "ready"
+)
+
+func genHealthURL(t serviceType, st string) string {
 	// Define the health check endpoint
 	rval := ""
+
+	st = strings.ToLower(strings.TrimSpace(st))
+	checkType := ""
+	switch st {
+	case healthEndpoint:
+		checkType = healthEndpoint
+	case readyEndpoint:
+		checkType = readyEndpoint
+	default:
+		checkType = healthEndpoint
+	}
+
 	switch t {
 	case crowler:
-		rval = fmt.Sprintf("%s:%d/v1/health", config.Crawler.Control.Host, config.Crawler.Control.Port)
+		rval = fmt.Sprintf("%s:%d/v1/%s", config.Crawler.Control.Host, config.Crawler.Control.Port, checkType)
 		if config.Crawler.Control.SSLMode == cmn.EnableStr {
 			rval = fmt.Sprintf("https://%s", rval)
 		} else {
@@ -54,14 +72,14 @@ func genHealthURL(t serviceType) string {
 	case vdi:
 		//rval, err = fmt.Sprintf("%s:%d/v1/health", config.VDI.Host, config.VDI.Port)
 	case api:
-		rval = fmt.Sprintf("%s:%d/v1/health", config.API.Host, config.API.Port)
+		rval = fmt.Sprintf("%s:%d/v1/%s", config.API.Host, config.API.Port, checkType)
 		if config.API.SSLMode == cmn.EnableStr {
 			rval = fmt.Sprintf("https://%s", rval)
 		} else {
 			rval = fmt.Sprintf("http://%s", rval)
 		}
 	case events:
-		rval = fmt.Sprintf("%s:%d/v1/health", config.Events.Host, config.Events.Port)
+		rval = fmt.Sprintf("%s:%d/v1/%s", config.Events.Host, config.Events.Port, checkType)
 		if config.Events.SSLMode == cmn.EnableStr {
 			rval = fmt.Sprintf("https://%s", rval)
 		} else {
@@ -74,6 +92,7 @@ func genHealthURL(t serviceType) string {
 func main() {
 	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
 	service := flag.String("service", "crowler", "Service to check (crowler, vdi, api)")
+	checkType := flag.String("type", healthEndpoint, "Type of check to perform (health, ready)")
 
 	cmn.InitLogger("healthCheck")
 
@@ -105,7 +124,7 @@ func main() {
 	}
 
 	// Define the health check endpoint
-	healthURL := genHealthURL(serviceToCheck)
+	healthURL := genHealthURL(serviceToCheck, *checkType)
 	if healthURL == "" {
 		os.Exit(0)
 	}

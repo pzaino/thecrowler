@@ -126,9 +126,50 @@ func tokenize(input string) tokens {
 		case unicode.IsSpace(r) && !inQuotes:
 			handleSpace(&tokens, &currentToken, specType)
 			specType = 0
-		case (r == '|' || r == '&') && (!inQuotes && !inEscape):
+		case r == '|' && (!inQuotes && !inEscape):
 			handlePipeAnd(&tokens, &currentToken, r, specType, runes, &i)
 			specType = 0
+		case r == '&' && (!inQuotes && !inEscape):
+			// Peek next rune to decide whether this is logic AND or control specifier
+			next := rune(0)
+			if i+1 < len(runes) {
+				next = runes[i+1]
+			}
+
+			// Handle "&&" as logical AND
+			if next == '&' {
+				handlePipeAnd(&tokens, &currentToken, r, specType, runes, &i)
+				specType = 0
+				continue
+			}
+
+			// Handle standalone "&" surrounded by spaces (logic AND)
+			if (i > 0 && unicode.IsSpace(runes[i-1])) && (i+1 < len(runes) && unicode.IsSpace(next)) {
+				handlePipeAnd(&tokens, &currentToken, r, specType, runes, &i)
+				specType = 0
+				continue
+			}
+
+			// Otherwise, treat as control specifier (e.g. &limit:10)
+			handleRemainingToken(&tokens, &currentToken, specType)
+			currentToken.Reset()
+			currentToken.WriteRune(r)
+
+			// Capture modifier until next space or operator
+			if i+1 < len(runes) {
+				j := i + 1
+				for ; j < len(runes); j++ {
+					if unicode.IsSpace(runes[j]) || runes[j] == '&' || runes[j] == '|' {
+						break
+					}
+					currentToken.WriteRune(runes[j])
+				}
+				tokens = append(tokens, token{tValue: currentToken.String(), tType: strconv.Itoa(specType)})
+				currentToken.Reset()
+				i = j - 1
+				specType = 0
+				continue
+			}
 		case (r == ';' || r == '+') && (!inQuotes && !inEscape):
 			handleLogicalAnd(&tokens, &currentToken, specType)
 			specType = 0
@@ -273,7 +314,7 @@ func getDefaultFields() []string {
 // queryBody represent the SQL query body, while input is the "raw" dorking input.
 func parseAdvancedQuery(queryBody string, input string, parsingType string) (SearchQuery, error) {
 	defaultFields := getDefaultFields()
-	tokens := tokenize(input)
+	tokensData := tokenize(input)
 	var SQLQuery SearchQuery
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Query Body: %v", input)
 
@@ -291,27 +332,63 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 	var details Details
 	isJSONField := false // Track whether we are handling a JSON field
 
-	for i, token := range tokens {
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetched token: %s, n: %d", token, i)
+	for i := 0; i < len(tokensData); i++ {
+		tokenData := &tokensData[i]
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetched token: %s, n: %d", tokenData.tValue, i)
 		if skipNextToken {
 			skipNextToken = false
 			continue
 		}
 
+		// Normalize combined tokens like "term&limit:20"
+		if strings.Contains(tokenData.tValue, "&limit:") {
+			parts := strings.SplitN(tokenData.tValue, "&limit:", 2)
+			tokenData.tValue = parts[0] // update the real slice element
+			if len(parts) == 2 {
+				if n, err := strconv.Atoi(parts[1]); err == nil {
+					limit = n
+				}
+			}
+		}
+
+		if strings.Contains(tokenData.tValue, "&offset:") {
+			parts := strings.SplitN(tokenData.tValue, "&offset:", 2)
+			tokenData.tValue = parts[0]
+			if len(parts) == 2 {
+				if n, err := strconv.Atoi(parts[1]); err == nil {
+					offset = n
+				}
+			}
+		}
+
+		// Split numeric+specifier combos like "3&limit:5"
+		if strings.Contains(tokenData.tValue, "&") && !strings.HasPrefix(tokenData.tValue, "&") {
+			parts := strings.SplitN(tokenData.tValue, "&", 2)
+			tokenData.tValue = parts[0]
+			if len(parts) > 1 {
+				newToken := token{tValue: "&" + parts[1]}
+				// Safe insert: extend slice with the new token
+				tokensData = append(tokensData[:i+1], append([]token{newToken}, tokensData[i+1:]...)...)
+				// Re-run loop for the new token
+				continue
+			}
+		}
+
+		// Process the token
 		switch {
-		case token.tValue == "":
+		case tokenData.tValue == "":
 			// Skip empty tokens
 			continue
 
-		case token.tValue == ";":
+		case tokenData.tValue == ";":
 			// Move to the next group
 			queryGroup++
 			queryParts = append(queryParts, []string{})
 
-		case strings.HasPrefix(token.tValue, "@"):
+		case strings.HasPrefix(tokenData.tValue, "@"):
 			// Handling the JSON field (@test_field:)
 			isJSONField = true
-			jsonPath := strings.TrimSuffix(strings.TrimPrefix(token.tValue, "@"), ":")
+			jsonPath := strings.TrimSuffix(strings.TrimPrefix(tokenData.tValue, "@"), ":")
 			jsonPath = strings.Trim(jsonPath, " ")
 
 			// Split the JSON path into components
@@ -362,55 +439,83 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 
 			currentField = jsonFieldQuery // Set the JSON field as the current field
 
-		case token.tValue == "&limit:":
-			// Check if the next token is a number
-			if len(tokens) > i+1 {
-				var err error
-				limit, err = strconv.Atoi(tokens[i+1].tValue)
-				if err != nil {
-					return SearchQuery{}, errors.New("invalid limit value")
+		case tokenData.tValue == "&offset:":
+			if len(tokensData) > i+1 {
+				nextVal := tokensData[i+1].tValue
+				if strings.Contains(nextVal, "&") {
+					parts := strings.SplitN(nextVal, "&", 2)
+					if len(parts) > 0 {
+						if n, err := strconv.Atoi(parts[0]); err == nil {
+							offset = n
+						}
+					}
+					if len(parts) == 2 {
+						tokensData[i+1].tValue = "&" + parts[1]
+					} else {
+						tokensData[i+1].tValue = ""
+					}
+					skipNextToken = false
+				} else {
+					if n, err := strconv.Atoi(nextVal); err == nil {
+						offset = n
+					}
+					tokensData[i+1].tValue = ""
+					skipNextToken = true
 				}
 			}
-			skipNextToken = true
 			continue
 
-		case token.tValue == "&offset:":
-			// Check if the next token is a number
-			if len(tokens) > i+1 {
-				var err error
-				offset, err = strconv.Atoi(tokens[i+1].tValue)
-				if err != nil {
-					return SearchQuery{}, errors.New("invalid offset value")
+		case tokenData.tValue == "&limit:":
+			if len(tokensData) > i+1 {
+				nextVal := tokensData[i+1].tValue
+				if strings.Contains(nextVal, "&") {
+					parts := strings.SplitN(nextVal, "&", 2)
+					if len(parts) > 0 {
+						if n, err := strconv.Atoi(parts[0]); err == nil {
+							limit = n
+						}
+					}
+					if len(parts) == 2 {
+						tokensData[i+1].tValue = "&" + parts[1]
+					} else {
+						tokensData[i+1].tValue = ""
+					}
+					skipNextToken = false
+				} else {
+					if n, err := strconv.Atoi(nextVal); err == nil {
+						limit = n
+					}
+					tokensData[i+1].tValue = ""
+					skipNextToken = true
 				}
 			}
-			skipNextToken = true
 			continue
 
-		case strings.HasPrefix(token.tValue, "&details.") || token.tValue == "&details:":
+		case strings.HasPrefix(tokenData.tValue, "&details.") || tokenData.tValue == "&details:":
 			// Check if the next token is a number
-			if len(tokens) > i+1 {
-				details.Value = tokens[i+1].tValue
+			if len(tokensData) > i+1 {
+				details.Value = tokensData[i+1].tValue
 			}
 			// Extract the path
-			path := strings.Split(token.tValue, ".")
+			path := strings.Split(tokenData.tValue, ".")
 			details.Path = path[0:]
 			skipNextToken = true
 			continue
 
-		case isFieldSpecifier(token.tValue):
+		case isFieldSpecifier(tokenData.tValue):
 			// Handle general fields (e.g., title:)
-			currentField = strings.TrimSuffix(token.tValue, ":")
+			currentField = strings.TrimSuffix(tokenData.tValue, ":")
 			queryGroup++
 			queryParts = append(queryParts, []string{}) // Initialize the new group
 			isJSONField = false                         // Reset the JSON field flag
 
-		case token.tValue == "&", token.tValue == "|", token.tValue == "&&", token.tValue == "||":
+		case tokenData.tValue == "&", tokenData.tValue == "|", tokenData.tValue == "&&", tokenData.tValue == "||":
 			// Handle logical operators AND/OR
 			if queryGroup == -1 {
 				queryGroup = 0
 				queryParts = append(queryParts, []string{})
 			}
-			if token.tValue == "&&" {
+			if tokenData.tValue == "&&" {
 				queryParts[queryGroup] = append(queryParts[queryGroup], "AND")
 			} else {
 				queryParts[queryGroup] = append(queryParts[queryGroup], "OR")
@@ -432,7 +537,7 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				// Handle JSON field value (use a separate jsonParamCounter)
 				condition := fmt.Sprintf("%s LIKE $%d", currentField, generalParamCounter)
 				addCondition(condition)
-				queryParams = append(queryParams, "%"+token.tValue+"%")
+				queryParams = append(queryParams, "%"+tokenData.tValue+"%")
 				generalParamCounter++ // Increase the JSON parameter counter
 			} else {
 				// Handle non-JSON field value
@@ -443,7 +548,7 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				}
 				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
 				addCondition(combinedCondition)
-				queryParams = append(queryParams, "%"+strings.ToLower(token.tValue)+"%")
+				queryParams = append(queryParams, "%"+strings.ToLower(tokenData.tValue)+"%")
 				generalParamCounter++ // Increase the parameter counter for general fields
 			}
 		}
