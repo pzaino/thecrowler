@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,31 +82,60 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 
 // extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
 func extractQueryOrBody(r *http.Request) (string, error) {
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+		defer r.Body.Close() // nolint:errcheck
 		if err != nil {
 			return "", err
 		}
 		return string(body), nil
 	}
 
-	// Process it as GET request
+	// Handle GET requests
 	query := r.URL.Query().Get("q")
 	if query == "" {
 		return "", fmt.Errorf("query parameter 'q' is required")
 	}
-	offset := r.URL.Query().Get("offset")
-	if offset != "" {
-		query += "&offset:" + offset
+
+	// Decode in case 'q' itself contains encoded data
+	if decodedQuery, err := url.QueryUnescape(query); err == nil {
+		query = decodedQuery
 	}
-	limit := r.URL.Query().Get("limit")
-	if limit != "" {
-		query += "&limit:" + limit
+
+	params := []string{}
+
+	// Validate and append 'offset'
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil {
+			return "", fmt.Errorf("invalid offset value: must be an integer")
+		}
+		if offset < 0 {
+			return "", fmt.Errorf("invalid offset value: must be non-negative")
+		}
+		params = append(params, "offset:"+url.QueryEscape(offsetStr))
 	}
-	details := r.URL.Query().Get("details")
-	if details != "" {
-		query += "&details:" + details
+
+	// Validate and append 'limit'
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil {
+			return "", fmt.Errorf("invalid limit value: must be an integer")
+		}
+		if limit < 0 {
+			return "", fmt.Errorf("invalid limit value: must be non-negative")
+		}
+		params = append(params, "limit:"+url.QueryEscape(limitStr))
+	}
+
+	// Append optional 'details'
+	if details := r.URL.Query().Get("details"); details != "" {
+		params = append(params, "details:"+url.QueryEscape(details))
+	}
+
+	// Combine query and validated params
+	if len(params) > 0 {
+		query = fmt.Sprintf("%s&%s", query, strings.Join(params, "&"))
 	}
 
 	return query, nil
