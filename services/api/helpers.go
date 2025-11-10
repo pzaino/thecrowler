@@ -80,11 +80,10 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 }
 
 // extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
-// extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
 func extractQueryOrBody(r *http.Request) (string, error) {
 	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
+		defer r.Body.Close() // nolint:errcheck // No need to check for error on close on defer
 		if err != nil {
 			return "", err
 		}
