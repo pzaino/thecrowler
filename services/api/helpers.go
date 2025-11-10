@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -79,32 +80,43 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 }
 
 // extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
+// extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
 func extractQueryOrBody(r *http.Request) (string, error) {
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+		defer r.Body.Close()
 		if err != nil {
 			return "", err
 		}
 		return string(body), nil
 	}
 
-	// Process it as GET request
+	// Handle GET requests
 	query := r.URL.Query().Get("q")
 	if query == "" {
 		return "", fmt.Errorf("query parameter 'q' is required")
 	}
-	offset := r.URL.Query().Get("offset")
-	if offset != "" {
-		query += "&offset:" + offset
+
+	// Decode in case 'q' itself contains encoded data
+	decodedQuery, err := url.QueryUnescape(query)
+	if err == nil {
+		query = decodedQuery
 	}
-	limit := r.URL.Query().Get("limit")
-	if limit != "" {
-		query += "&limit:" + limit
+
+	// Append optional params (these are already decoded by r.URL.Query())
+	params := []string{}
+	if offset := r.URL.Query().Get("offset"); offset != "" {
+		params = append(params, "offset="+url.QueryEscape(offset))
 	}
-	details := r.URL.Query().Get("details")
-	if details != "" {
-		query += "&details:" + details
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		params = append(params, "limit="+url.QueryEscape(limit))
+	}
+	if details := r.URL.Query().Get("details"); details != "" {
+		params = append(params, "details="+url.QueryEscape(details))
+	}
+
+	if len(params) > 0 {
+		query = fmt.Sprintf("%s&%s", query, strings.Join(params, "&"))
 	}
 
 	return query, nil
