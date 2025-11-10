@@ -115,7 +115,7 @@ func tokenize(input string) tokens {
 			handleRemainingToken(&tokens, &currentToken, specType)
 			specType = 1 // JSON field specifier
 			currentToken.WriteRune(r)
-		case r == ':' && (!inQuotes && !inEscape):
+		case (r == ':' || r == '=') && (!inQuotes && !inEscape):
 			if isValidSpecifier(currentToken.String()) {
 				// end of a Dorcking field specifier
 				completeFieldSpecifier(&tokens, &currentToken, specType)
@@ -341,8 +341,13 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 		}
 
 		// Normalize combined tokens like "term&limit:20"
-		if strings.Contains(tokenData.tValue, "&limit:") {
-			parts := strings.SplitN(tokenData.tValue, "&limit:", 2)
+		if strings.Contains(tokenData.tValue, "&limit:") || strings.Contains(tokenData.tValue, "&offset=") {
+			var parts []string
+			if strings.Contains(tokenData.tValue, "&limit=") {
+				parts = strings.SplitN(tokenData.tValue, "&limit=", 2)
+			} else {
+				parts = strings.SplitN(tokenData.tValue, "&limit:", 2)
+			}
 			tokenData.tValue = parts[0] // update the real slice element
 			if len(parts) == 2 {
 				if n, err := strconv.Atoi(parts[1]); err == nil {
@@ -351,8 +356,13 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 			}
 		}
 
-		if strings.Contains(tokenData.tValue, "&offset:") {
-			parts := strings.SplitN(tokenData.tValue, "&offset:", 2)
+		if strings.Contains(tokenData.tValue, "&offset:") || strings.Contains(tokenData.tValue, "&offset=") {
+			var parts []string
+			if strings.Contains(tokenData.tValue, "&offset=") {
+				parts = strings.SplitN(tokenData.tValue, "&offset=", 2)
+			} else {
+				parts = strings.SplitN(tokenData.tValue, "&offset:", 2)
+			}
 			tokenData.tValue = parts[0]
 			if len(parts) == 2 {
 				if n, err := strconv.Atoi(parts[1]); err == nil {
