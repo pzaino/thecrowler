@@ -70,7 +70,7 @@ require (
 
 require (
 	github.com/Knetic/govaluate v3.0.0+incompatible
-	github.com/antchfx/htmlquery v1.3.4
+	github.com/antchfx/htmlquery v1.3.5
 	github.com/aws/aws-sdk-go-v2 v1.39.6
 	github.com/aws/aws-sdk-go-v2/config v1.31.16
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.21
