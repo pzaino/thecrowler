@@ -92,7 +92,6 @@
             TAG="${{ github.event.inputs.release_tag }}"
             NAME="${{ matrix.service.name }}"
             DOCKERFILE="${{ matrix.service.dockerfile }}"
-            SHA=$(git rev-parse --short HEAD)
 
             if [ "$NAME" = "crowler-db" ]; then
               EXTRA_ARGS="--build-arg TIMEZONE=UTC"
@@ -100,10 +99,10 @@
               EXTRA_ARGS=""
             fi
 
-            echo "Building image for $NAME (tag=$TAG, sha=$SHA)"
+            echo "Building image for $NAME (tag=$TAG)"
 
             if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              echo "[DRY RUN] Would build $NAME:$TAG and $NAME:$SHA"
+              echo "[DRY RUN] Would build $NAME:$TAG"
             else
               docker buildx build \
                 --platform linux/amd64,linux/arm64 \
@@ -112,9 +111,9 @@
                 --cache-from=type=registry,ref=$REGISTRY/$IMAGE_OWNER/$NAME:cache \
                 --cache-to=type=registry,ref=$REGISTRY/$IMAGE_OWNER/$NAME:cache,mode=max \
                 -t $REGISTRY/$IMAGE_OWNER/$NAME:$TAG \
-                -t $REGISTRY/$IMAGE_OWNER/$NAME:$SHA \
                 --push .
             fi
+
         - name: Tag release as latest
           if: ${{ github.event.inputs.dry_run != 'true' }}
           run: |
