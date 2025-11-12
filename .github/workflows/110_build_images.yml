@@ -9,7 +9,7 @@
     workflow_dispatch:
       inputs:
         release_tag:
-          description: "GitHub release tag to build from (e.g., v1.5.0)"
+          description: "Git reference (tag or branch) to build from (e.g., main or v1.5.0)"
           required: true
         dry_run:
           description: "Dry run (do not push images)"
@@ -19,10 +19,21 @@
   env:
     REGISTRY: docker.io
     IMAGE_OWNER: zfpsystems
+    DOCKER_BUILDKIT: 1
+    BUILDKIT_PROGRESS: plain
 
   jobs:
     build-images:
       runs-on: ubuntu-latest
+
+      strategy:
+        fail-fast: false
+        matrix:
+          service:
+            - { name: crowler-api, dockerfile: Dockerfile.searchapi }
+            - { name: crowler-events, dockerfile: Dockerfile.events }
+            - { name: crowler-engine, dockerfile: Dockerfile.thecrowler }
+            - { name: crowler-db, dockerfile: Dockerfile.db }
 
       steps:
         - name: Harden the runner (Audit all outbound calls)
@@ -30,30 +41,35 @@
           with:
             egress-policy: audit
 
-        - name: Checkout repo at release tag
+        - name: Checkout source ref (branch or tag)
           uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
           with:
-            ref: ${{ github.event.inputs.release_tag }}
             fetch-depth: 0
+            ref: ${{ github.event.inputs.release_tag }}
 
-        - name: Verify release tag exists
+        - name: Verify ref exists
           run: |
-            TAG="${{ github.event.inputs.release_tag }}"
-            if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-              echo "ERROR: Tag $TAG does not exist!"
+            REF="${{ github.event.inputs.release_tag }}"
+            if ! git rev-parse "$REF" >/dev/null 2>&1; then
+              echo "ERROR: Ref $REF does not exist!"
               exit 1
             fi
 
         - name: Validate Docker tag format
           run: |
             TAG="${{ github.event.inputs.release_tag }}"
-            if ! [[ "$TAG" =~ ^[a-z0-9_.-]+$ ]]; then
-              echo "ERROR: Docker tag must be lowercase letters, digits, dots, underscores, or hyphens."
+            if ! [[ "$TAG" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+              echo "ERROR: Docker tag must be alphanumeric, dots, underscores, or hyphens."
               exit 1
             fi
 
-        - name: Set up Docker Buildx
+        - name: Set up QEMU for cross-platform
+          uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+        - name: Set up Docker Buildx with cache
           uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+          with:
+            install: true
 
         - name: Log in to Docker Hub
           if: ${{ github.event.inputs.dry_run != 'true' }}
@@ -61,9 +77,6 @@
           with:
             username: ${{ secrets.DOCKER_USERNAME }}
             password: ${{ secrets.DOCKER_PAT }}
-
-        - name: Set up QEMU for cross-platform
-          uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
         - name: Prepare config.yaml
           run: |
@@ -74,56 +87,32 @@
               echo "config.yaml already exists, skipping rename."
             fi
 
-        - name: Build & Push crowler-api
+        - name: Build & Push ${{ matrix.service.name }}
           run: |
-            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              echo "[DRY RUN] Would build crowler-api:${{ github.event.inputs.release_tag }} and latest"
+            TAG="${{ github.event.inputs.release_tag }}"
+            NAME="${{ matrix.service.name }}"
+            DOCKERFILE="${{ matrix.service.dockerfile }}"
+            SHA=$(git rev-parse --short HEAD)
+
+            if [ "$NAME" = "crowler-db" ]; then
+              EXTRA_ARGS="--build-arg TIMEZONE=UTC"
             else
-              docker buildx build \
-                --platform linux/amd64,linux/arm64 \
-                -f Dockerfile.searchapi \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-api:${{ github.event.inputs.release_tag }} \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-api:latest \
-                --push .
+              EXTRA_ARGS=""
             fi
 
-        - name: Build & Push crowler-events
-          run: |
-            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              echo "[DRY RUN] Would build crowler-events:${{ github.event.inputs.release_tag }} and latest"
-            else
-              docker buildx build \
-                --platform linux/amd64,linux/arm64 \
-                -f Dockerfile.events \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-events:${{ github.event.inputs.release_tag }} \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-events:latest \
-                --push .
-            fi
+            echo "Building image for $NAME (tag=$TAG, sha=$SHA)"
 
-        - name: Build & Push crowler-engine
-          run: |
             if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              echo "[DRY RUN] Would build crowler-engine:${{ github.event.inputs.release_tag }} and latest"
+              echo "[DRY RUN] Would build $NAME:$TAG and $NAME:$SHA"
             else
               docker buildx build \
                 --platform linux/amd64,linux/arm64 \
-                -f Dockerfile.thecrowler \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-engine:${{ github.event.inputs.release_tag }} \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-engine:latest \
-                --push .
-            fi
-
-        - name: Build & Push crowler-db
-          run: |
-            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              echo "[DRY RUN] Would build crowler-db:${{ github.event.inputs.release_tag }} and latest"
-            else
-              docker buildx build \
-                --platform linux/amd64,linux/arm64 \
-                --build-arg TIMEZONE=UTC \
-                -f Dockerfile.db \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-db:${{ github.event.inputs.release_tag }} \
-                -t $REGISTRY/$IMAGE_OWNER/crowler-db:latest \
+                -f "$DOCKERFILE" \
+                $EXTRA_ARGS \
+                --cache-from=type=registry,ref=$REGISTRY/$IMAGE_OWNER/$NAME:cache \
+                --cache-to=type=registry,ref=$REGISTRY/$IMAGE_OWNER/$NAME:cache,mode=max \
+                -t $REGISTRY/$IMAGE_OWNER/$NAME:$TAG \
+                -t $REGISTRY/$IMAGE_OWNER/$NAME:$SHA \
                 --push .
             fi
 
