@@ -115,6 +115,16 @@
                 -t $REGISTRY/$IMAGE_OWNER/$NAME:$SHA \
                 --push .
             fi
+        - name: Tag release as latest
+          if: ${{ github.event.inputs.dry_run != 'true' }}
+          run: |
+            NAME="${{ matrix.service.name }}"
+            TAG="${{ github.event.inputs.release_tag }}"
+
+            echo "Updating $NAME:latest -> $TAG"
+            docker pull $REGISTRY/$IMAGE_OWNER/$NAME:$TAG
+            docker tag $REGISTRY/$IMAGE_OWNER/$NAME:$TAG $REGISTRY/$IMAGE_OWNER/$NAME:latest
+            docker push $REGISTRY/$IMAGE_OWNER/$NAME:latest
 
         - name: Log out from Docker Hub
           if: ${{ github.event.inputs.dry_run != 'true' }}
