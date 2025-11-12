@@ -60,7 +60,7 @@
           uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
           with:
             username: ${{ secrets.DOCKER_USERNAME }}
-            password: ${{ secrets.DOCKER_PASSWORD }}
+            password: ${{ secrets.DOCKER_PAT }}
 
         - name: Set up QEMU for cross-platform
           uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
@@ -126,3 +126,7 @@
                 -t $REGISTRY/$IMAGE_OWNER/crowler-db:latest \
                 --push .
             fi
+
+        - name: Log out from Docker Hub
+          if: ${{ github.event.inputs.dry_run != 'true' }}
+          run: docker logout
