@@ -3661,7 +3661,11 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		return nil
 	}
 
-	currentURL, _ := (*webPage).CurrentURL()
+	currentURL, err := (*webPage).CurrentURL()
+	if err != nil {
+		currentURL = PageCache.URL
+	}
+	currentURL = strings.TrimSpace(currentURL)
 
 	// Detect Object Type
 	objType := docType
@@ -3728,14 +3732,12 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		if titleTmp == "" {
 			var titleRegex = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 			// Last-resort extraction: regex over raw HTML (handles broken DOM snapshots)
-			if strings.TrimSpace(title) == "" {
-				rawTitle := ""
-				if m := titleRegex.FindStringSubmatch(htmlContent); len(m) > 1 {
-					rawTitle = strings.TrimSpace(html.UnescapeString(m[1]))
-				}
-				if rawTitle != "" {
-					titleTmp = rawTitle
-				}
+			rawTitle := ""
+			if m := titleRegex.FindStringSubmatch(htmlContent); len(m) > 1 {
+				rawTitle = strings.TrimSpace(html.UnescapeString(m[1]))
+			}
+			if rawTitle != "" {
+				titleTmp = rawTitle
 			}
 		}
 		if titleTmp != "" {
