@@ -2926,6 +2926,21 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 	_ = (*wd).DeleteAllCookies()
 }
 
+func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		val, err := wd.ExecuteScript("return document.readyState", nil)
+		if err == nil {
+			state := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", val)))
+			if state == "complete" {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("document.readyState never reached 'complete' within timeout")
+}
+
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id int) (vdi.WebDriver, string, error) {
@@ -3202,7 +3217,17 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	docType := inferDocumentType(url, &wd)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Document Type: %s", id, docType)
 
-	if docTypeIsHTML(docType) {
+	if docTypeIsHTML(docType) || strings.TrimSpace(docType) == "" {
+		// WaitForDomComplete
+		startTime := time.Now()
+		err = waitForDomComplete(wd, 5*time.Second)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: waitForDomComplete error: %v", id, err)
+		}
+		elapsed := time.Since(startTime)
+		// Sum elapsed to last wait time
+		ctx.Status.LastWait += elapsed.Seconds()
+
 		// Check current URL
 		_, err := wd.CurrentURL()
 		if err != nil {
