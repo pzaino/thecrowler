@@ -3742,9 +3742,11 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		}
 		if titleTmp == "" {
 			val, _ := webPageCopy.ExecuteScript("return document.title", nil)
-			titleTmpJS := strings.TrimSpace(fmt.Sprintf("%v", val))
-			if titleTmpJS != "" {
-				titleTmp = titleTmpJS
+			if val != nil {
+				titleTmpJS := strings.TrimSpace(fmt.Sprintf("%v", val))
+				if (titleTmpJS != "") && (titleTmpJS != "null") && (titleTmpJS != "undefined") && (titleTmpJS != "<nil>") {
+					titleTmp = titleTmpJS
+				}
 			}
 		}
 		if titleTmp != "" {
