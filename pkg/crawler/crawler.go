@@ -1550,7 +1550,14 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (uint
 			(page_url, title, summary, detected_lang, detected_type, last_updated_at)
 		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (page_url) DO UPDATE
-		SET title = EXCLUDED.title, summary = EXCLUDED.summary, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
+		SET
+			title = COALESCE(NULLIF(EXCLUDED.title, ''), SearchIndex.title),
+			summary = COALESCE(NULLIF(EXCLUDED.summary, ''), SearchIndex.summary),
+
+			detected_lang = COALESCE(NULLIF(EXCLUDED.detected_lang, ''), SearchIndex.detected_lang),
+			detected_type = COALESCE(NULLIF(EXCLUDED.detected_type, ''), SearchIndex.detected_type),
+
+			last_updated_at = NOW()
 		RETURNING index_id`,
 		url, (*pageInfo).Title, (*pageInfo).Summary,
 		strLeft((*pageInfo).DetectedLang, 8), strLeft((*pageInfo).DetectedType, 255)).Scan(&indexID)
