@@ -3559,8 +3559,11 @@ func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
 }
 
 func looksLikeHTML(body []byte) bool {
-	s := strings.ToLower(string(body))
-	if strings.Contains(s, "<html") || strings.Contains(s, "<!doctype html") {
+	s := strings.ToLower(strings.TrimSpace(string(body)))
+	if strings.Contains(s, "<html") ||
+		strings.Contains(s, "<!doctype html") ||
+		strings.Contains(s, "<head") ||
+		strings.Contains(s, "<body") {
 		return true
 	}
 	return false
@@ -3852,7 +3855,7 @@ func convertLangStrToLangCode(lang string) string {
 // inferDocumentType returns the document type based on the file extension
 func inferDocumentType(url string, wd *vdi.WebDriver) string {
 	// Try to infer the document type from the page content
-	if wd != nil && *wd != nil {
+	if (wd != nil) && (*wd != nil) {
 		doc, err := (*wd).PageSource()
 		if err == nil {
 			if looksLikeHTML([]byte(doc)) {
