@@ -3612,7 +3612,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 
 	// Get the HTML content of the page
 	if docTypeIsHTML(objType) || strings.TrimSpace((docType)) == "" {
-		htmlContent, _ = (*webPage).PageSource()
+		htmlContent, _ = webPageCopy.PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content, during Page Info Extraction: %v", err)
@@ -3654,7 +3654,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
 		// Get the title of the page (if any)
-		titleTmp, _ := (*webPage).Title()
+		titleTmp, _ := webPageCopy.Title()
 		titleTmp = strings.TrimSpace(titleTmp)
 		if titleTmp == "" {
 			// Try to get the title from the <title> tag
@@ -3720,6 +3720,17 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		// Download the web object and store it in the database
 		if err := (*webPage).Get(currentURL); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to download web object: %v", err)
+		}
+	}
+
+	// Final step: if Title is still empty then use the first 255 characters of the summary if that if not empty itself
+	if strings.TrimSpace(title) == "" {
+		if strings.TrimSpace(summary) != "" {
+			if len(summary) > 255 {
+				title = summary[:255]
+			} else {
+				title = summary
+			}
 		}
 	}
 
