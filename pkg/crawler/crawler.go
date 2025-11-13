@@ -3493,56 +3493,72 @@ func moveMouseRandomly(wd vdi.WebDriver) {
 func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	driver := ctx.wd
 
-	minDelay := 3.0
+	const minDelay = 3.0
 	if delay < minDelay {
 		delay = minDelay
 	}
 
-	divider := math.Log10(delay+1) * 10
+	// Divider formula for human-like polling rate
+	divider := math.Log10(delay+1) * 10.0
+	timeout := float64(ctx.config.Crawler.Timeout)
 
-	if divider >= float64(ctx.config.Crawler.Timeout) {
-		divider = float64(ctx.config.Crawler.Timeout) - 1
+	if timeout > 0 && divider >= timeout {
+		divider = timeout - 1.0
+	}
+	if divider <= 0 {
+		divider = 1.0
 	}
 
-	waitDuration := time.Duration(delay) * time.Second
-	pollInterval := time.Duration(delay/divider) * time.Second
+	waitDuration := time.Duration(delay * float64(time.Second))
 
-	if pollInterval <= 0 {
-		pollInterval = 100 * time.Millisecond
+	// Poll interval (keep-alive pings)
+	pollSec := delay / divider
+	if pollSec <= 0 {
+		pollSec = 0.2 // sane fallback
 	}
+	pollInterval := time.Duration(pollSec * float64(time.Second))
 
-	startTime := time.Now()
-	var loopErr error
+	start := time.Now()
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %.3f seconds...", delay)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %v seconds...", delay)
+	// Prevent the compiler from optimizing away keep-alive calls
+	var seleniumKeepAliveSink any
 
-	for time.Since(startTime) < waitDuration {
-		_, err := driver.Title()
-		if err != nil {
-			loopErr = err
+	for {
+		elapsed := time.Since(start)
+		if elapsed >= waitDuration {
 			break
 		}
 
-		time.Sleep(pollInterval)
+		// Keep-alive: must NOT be optimized out
+		val, _ := driver.Title()
+		seleniumKeepAliveSink = val
 
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
+
+		remaining := waitDuration - time.Since(start)
+		if remaining <= 0 {
+			break
+		}
+		if pollInterval > remaining {
+			time.Sleep(remaining)
+		} else {
+			time.Sleep(pollInterval)
+		}
+	}
+	if seleniumKeepAliveSink == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Wait] Selenium keep-alive sink is nil (should not happen)")
 	}
 
-	// enforce minimum required wait
-	elapsed := time.Since(startTime)
-	if elapsed < time.Duration(minDelay)*time.Second {
-		remaining := time.Duration(minDelay)*time.Second - elapsed
-		time.Sleep(remaining)
-		elapsed = time.Since(startTime)
-	}
-
+	// Simulated human mouse move
 	moveMouseRandomly(driver)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", elapsed.Seconds())
+	total := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %.3f seconds", total.Seconds())
 
-	return elapsed, loopErr
+	return total, nil
 }
 
 func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
