@@ -3560,6 +3560,7 @@ func docTypeIsHTML(mime string) bool {
 
 	if mime == mimeHTML ||
 		mime == "application/html" ||
+		mime == "text/htm" ||
 		mime == "text/xhtml" ||
 		mime == "text/html5" ||
 		mime == "application/html5" ||
