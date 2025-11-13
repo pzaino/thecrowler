@@ -3493,42 +3493,56 @@ func moveMouseRandomly(wd vdi.WebDriver) {
 func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	driver := ctx.wd
 
-	if delay < 3 {
-		delay = 3
+	minDelay := 3.0
+	if delay < minDelay {
+		delay = minDelay
 	}
 
-	divider := math.Log10(delay+1) * 10 // Adjust multiplier as needed
+	divider := math.Log10(delay+1) * 10
 
 	if divider >= float64(ctx.config.Crawler.Timeout) {
 		divider = float64(ctx.config.Crawler.Timeout) - 1
 	}
 
 	waitDuration := time.Duration(delay) * time.Second
-	pollInterval := time.Duration(delay/divider) * time.Second // Check every pollInterval seconds to keep alive
+	pollInterval := time.Duration(delay/divider) * time.Second
+
+	if pollInterval <= 0 {
+		pollInterval = 100 * time.Millisecond
+	}
 
 	startTime := time.Now()
+	var loopErr error
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %v seconds...", delay)
+
 	for time.Since(startTime) < waitDuration {
-		// Perform a lightweight interaction to keep the session alive
 		_, err := driver.Title()
 		if err != nil {
-			totalDelay := time.Since(startTime)
-			return totalDelay, err
+			loopErr = err
+			break
 		}
+
 		time.Sleep(pollInterval)
-		// refresh session timeout
+
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
 	}
-	// Move the mouse using rBee
-	moveMouseRandomly(driver)
-	// Get the total delay
-	totalDelay := time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", totalDelay.Seconds())
 
-	return totalDelay, nil
+	// enforce minimum required wait
+	elapsed := time.Since(startTime)
+	if elapsed < time.Duration(minDelay)*time.Second {
+		remaining := time.Duration(minDelay)*time.Second - elapsed
+		time.Sleep(remaining)
+		elapsed = time.Since(startTime)
+	}
+
+	moveMouseRandomly(driver)
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", elapsed.Seconds())
+
+	return elapsed, loopErr
 }
 
 func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
