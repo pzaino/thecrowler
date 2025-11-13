@@ -3610,7 +3610,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 	webPageCopy := *webPage
 
 	// Get the HTML content of the page
-	if docTypeIsHTML(objType) {
+	if docTypeIsHTML(objType) || strings.TrimSpace((docType)) == "" {
 		htmlContent, _ = (*webPage).PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
