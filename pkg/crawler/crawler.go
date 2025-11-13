@@ -3740,6 +3740,13 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 				titleTmp = rawTitle
 			}
 		}
+		if titleTmp == "" {
+			val, _ := webPageCopy.ExecuteScript("return document.title", nil)
+			titleTmpJS := strings.TrimSpace(fmt.Sprintf("%v", val))
+			if titleTmpJS != "" {
+				titleTmp = titleTmpJS
+			}
+		}
 		if titleTmp != "" {
 			title = titleTmp
 		} else {
@@ -3797,7 +3804,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			metaTags = extractMetaTags(doc)
 		}
 	} else {
-		// Download the web object and store it in the database
+		// Download the non-HTML web object and store it in the database
 		if err := (*webPage).Get(currentURL); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to download web object: %v", err)
 		}
