@@ -1550,10 +1550,17 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (uint
 			(page_url, title, summary, detected_lang, detected_type, last_updated_at)
 		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (page_url) DO UPDATE
-		SET title = EXCLUDED.title, summary = EXCLUDED.summary, detected_lang = EXCLUDED.detected_lang, detected_type = EXCLUDED.detected_type, last_updated_at = NOW()
+		SET
+			title = COALESCE(NULLIF(BTRIM(EXCLUDED.title), ''), SearchIndex.title),
+    		summary = COALESCE(NULLIF(BTRIM(EXCLUDED.summary), ''), SearchIndex.summary),
+
+    		detected_lang = COALESCE(NULLIF(BTRIM(EXCLUDED.detected_lang), ''), SearchIndex.detected_lang),
+    		detected_type = COALESCE(NULLIF(BTRIM(EXCLUDED.detected_type), ''), SearchIndex.detected_type),
+
+			last_updated_at = NOW()
 		RETURNING index_id`,
 		url, (*pageInfo).Title, (*pageInfo).Summary,
-		strLeft((*pageInfo).DetectedLang, 8), strLeft((*pageInfo).DetectedType, 8)).Scan(&indexID)
+		strLeft((*pageInfo).DetectedLang, 8), strLeft((*pageInfo).DetectedType, 255)).Scan(&indexID)
 	if err != nil {
 		return 0, err // Handle error appropriately
 	}
@@ -2926,6 +2933,21 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 	_ = (*wd).DeleteAllCookies()
 }
 
+func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		val, err := wd.ExecuteScript("return document.readyState", nil)
+		if err == nil {
+			state := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", val)))
+			if state == "complete" {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("document.readyState never reached 'complete' within timeout")
+}
+
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id int) (vdi.WebDriver, string, error) {
@@ -3202,7 +3224,17 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	docType := inferDocumentType(url, &wd)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Document Type: %s", id, docType)
 
-	if docTypeIsHTML(docType) {
+	if docTypeIsHTML(docType) || strings.TrimSpace(docType) == "" {
+		// WaitForDomComplete
+		startTime := time.Now()
+		err = waitForDomComplete(wd, 5*time.Second)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: waitForDomComplete error: %v", id, err)
+		}
+		elapsed := time.Since(startTime)
+		// Sum elapsed to last wait time
+		ctx.Status.LastWait += elapsed.Seconds()
+
 		// Check current URL
 		_, err := wd.CurrentURL()
 		if err != nil {
@@ -3468,42 +3500,72 @@ func moveMouseRandomly(wd vdi.WebDriver) {
 func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	driver := ctx.wd
 
-	if delay < 3 {
-		delay = 3
+	const minDelay = 3.0
+	if delay < minDelay {
+		delay = minDelay
 	}
 
-	divider := math.Log10(delay+1) * 10 // Adjust multiplier as needed
+	// Divider formula for human-like polling rate
+	divider := math.Log10(delay+1) * 10.0
+	timeout := float64(ctx.config.Crawler.Timeout)
 
-	if divider >= float64(ctx.config.Crawler.Timeout) {
-		divider = float64(ctx.config.Crawler.Timeout) - 1
+	if timeout > 0 && divider >= timeout {
+		divider = timeout - 1.0
+	}
+	if divider <= 0 {
+		divider = 1.0
 	}
 
-	waitDuration := time.Duration(delay) * time.Second
-	pollInterval := time.Duration(delay/divider) * time.Second // Check every pollInterval seconds to keep alive
+	waitDuration := time.Duration(delay * float64(time.Second))
 
-	startTime := time.Now()
+	// Poll interval (keep-alive pings)
+	pollSec := delay / divider
+	if pollSec <= 0 {
+		pollSec = 0.2 // sane fallback
+	}
+	pollInterval := time.Duration(pollSec * float64(time.Second))
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %v seconds...", delay)
-	for time.Since(startTime) < waitDuration {
-		// Perform a lightweight interaction to keep the session alive
-		_, err := driver.Title()
-		if err != nil {
-			totalDelay := time.Since(startTime)
-			return totalDelay, err
+	start := time.Now()
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %.3f seconds...", delay)
+
+	// Prevent the compiler from optimizing away keep-alive calls
+	var seleniumKeepAliveSink any
+
+	for {
+		elapsed := time.Since(start)
+		if elapsed >= waitDuration {
+			break
 		}
-		time.Sleep(pollInterval)
-		// refresh session timeout
+
+		// Keep-alive: must NOT be optimized out
+		val, _ := driver.Title()
+		seleniumKeepAliveSink = val
+
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
-	}
-	// Move the mouse using rBee
-	moveMouseRandomly(driver)
-	// Get the total delay
-	totalDelay := time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %v seconds", totalDelay.Seconds())
 
-	return totalDelay, nil
+		remaining := waitDuration - time.Since(start)
+		if remaining <= 0 {
+			break
+		}
+		if pollInterval > remaining {
+			time.Sleep(remaining)
+		} else {
+			time.Sleep(pollInterval)
+		}
+	}
+	if seleniumKeepAliveSink == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Wait] Selenium keep-alive sink is nil (should not happen)")
+	}
+
+	// Simulated human mouse move
+	moveMouseRandomly(driver)
+
+	total := time.Since(start)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waited for %.3f seconds", total.Seconds())
+
+	return total, nil
 }
 
 func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
@@ -3534,8 +3596,11 @@ func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
 }
 
 func looksLikeHTML(body []byte) bool {
-	s := strings.ToLower(string(body))
-	if strings.Contains(s, "<html") || strings.Contains(s, "<!doctype html") {
+	s := strings.ToLower(strings.TrimSpace(string(body)))
+	if strings.Contains(s, "<html") ||
+		strings.Contains(s, "<!doctype html") ||
+		strings.Contains(s, "<head") ||
+		strings.Contains(s, "<body") {
 		return true
 	}
 	return false
@@ -3560,6 +3625,7 @@ func docTypeIsHTML(mime string) bool {
 
 	if mime == mimeHTML ||
 		mime == "application/html" ||
+		mime == "text/htm" ||
 		mime == "text/xhtml" ||
 		mime == "text/html5" ||
 		mime == "application/html5" ||
@@ -3610,8 +3676,8 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 	webPageCopy := *webPage
 
 	// Get the HTML content of the page
-	if docTypeIsHTML(objType) {
-		htmlContent, _ = (*webPage).PageSource()
+	if docTypeIsHTML(objType) || strings.TrimSpace((docType)) == "" {
+		htmlContent, _ = webPageCopy.PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content, during Page Info Extraction: %v", err)
@@ -3653,11 +3719,24 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
 		// Get the title of the page (if any)
-		titleTmp, _ := (*webPage).Title()
+		titleTmp, _ := webPageCopy.Title()
 		titleTmp = strings.TrimSpace(titleTmp)
 		if titleTmp == "" {
 			// Try to get the title from the <title> tag
 			titleTmp = strings.TrimSpace(doc.Find("title").Text())
+		}
+		if titleTmp == "" {
+			var titleRegex = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+			// Last-resort extraction: regex over raw HTML (handles broken DOM snapshots)
+			if strings.TrimSpace(title) == "" {
+				rawTitle := ""
+				if m := titleRegex.FindStringSubmatch(htmlContent); len(m) > 1 {
+					rawTitle = strings.TrimSpace(html.UnescapeString(m[1]))
+				}
+				if rawTitle != "" {
+					titleTmp = rawTitle
+				}
+			}
 		}
 		if titleTmp != "" {
 			title = titleTmp
@@ -3719,6 +3798,17 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		// Download the web object and store it in the database
 		if err := (*webPage).Get(currentURL); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to download web object: %v", err)
+		}
+	}
+
+	// Final step: if Title is still empty then use the first 255 characters of the summary if that if not empty itself
+	if strings.TrimSpace(title) == "" {
+		if strings.TrimSpace(summary) != "" {
+			if len(summary) > 255 {
+				title = summary[:255]
+			} else {
+				title = summary
+			}
 		}
 	}
 
@@ -3815,7 +3905,7 @@ func convertLangStrToLangCode(lang string) string {
 // inferDocumentType returns the document type based on the file extension
 func inferDocumentType(url string, wd *vdi.WebDriver) string {
 	// Try to infer the document type from the page content
-	if wd != nil && *wd != nil {
+	if (wd != nil) && (*wd != nil) {
 		doc, err := (*wd).PageSource()
 		if err == nil {
 			if looksLikeHTML([]byte(doc)) {

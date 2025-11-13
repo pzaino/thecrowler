@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     page_url TEXT NOT NULL UNIQUE,              -- Using TEXT for long URLs
     title VARCHAR(255),                         -- Page title might be NULL
     summary TEXT NOT NULL,                      -- Assuming summary is always required
-    detected_type VARCHAR(8),                   -- (content type) denormalized for fast searches
+    detected_type VARCHAR(255),                 -- (content type) denormalized for fast searches
     detected_lang VARCHAR(8)                    -- (URI language) denormalized for fast searches
 );
 
