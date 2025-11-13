@@ -3533,10 +3533,56 @@ func getCookies(ctx *ProcessContext, wd *vdi.WebDriver) error {
 	return nil
 }
 
-func docTypeIsHTML(mime string) bool {
-	if strings.Contains(mime, "text/") || strings.Contains(mime, "application/xhtml+xml") {
+func looksLikeHTML(body []byte) bool {
+	s := strings.ToLower(string(body))
+	if strings.Contains(s, "<html") || strings.Contains(s, "<!doctype html") {
 		return true
 	}
+	return false
+}
+
+func docTypeIsHTML(mime string) bool {
+	if strings.TrimSpace(mime) == "" {
+		return false
+	}
+
+	const (
+		mimeHTML = "text/html"
+	)
+
+	mimeTmp := strings.ToLower(strings.TrimSpace(strings.Split(mime, ";")[0]))
+
+	if mimeTmp != "" {
+		mime = mimeTmp
+	} else {
+		mime = strings.ToLower(strings.TrimSpace(mime))
+	}
+
+	if mime == mimeHTML ||
+		mime == "application/html" ||
+		mime == "text/xhtml" ||
+		mime == "text/html5" ||
+		mime == "application/html5" ||
+		mime == "text/plain" ||
+		mime == "text/css" ||
+		mime == "application/xhtml+xml" {
+		return true
+	}
+
+	// XHTML incorrectly served as XML
+	if mime == "text/xml" || mime == "application/xml" {
+		// Heuristic: treat as XHTML or HTML only if file extension or content later confirms it
+		// Returning false here is safer unless you run a content sniffer.
+		return false
+	}
+
+	// Some dynamic pages sent as generic types
+	if mime == "application/x-httpd-php" ||
+		mime == "application/x-php" {
+		// Usually returns HTML output
+		return true
+	}
+
 	return false
 }
 
@@ -3606,6 +3652,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
 
+		// Get the title of the page (if any)
 		titleTmp, _ := (*webPage).Title()
 		titleTmp = strings.TrimSpace(titleTmp)
 		if titleTmp == "" {
@@ -3614,6 +3661,18 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		}
 		if titleTmp != "" {
 			title = titleTmp
+		} else {
+			// Try to check if a page has an h1 tag and use it as title
+			h1Text := strings.TrimSpace(doc.Find("h1").First().Text())
+			if h1Text != "" {
+				title = h1Text
+			} else {
+				// Try to search for an h2 tag instead
+				h2Text := strings.TrimSpace(doc.Find("h2").First().Text())
+				if h2Text != "" {
+					title = h2Text
+				}
+			}
 		}
 
 		// To get the summary, we extract the content of the "description" meta tag
@@ -3755,12 +3814,24 @@ func convertLangStrToLangCode(lang string) string {
 
 // inferDocumentType returns the document type based on the file extension
 func inferDocumentType(url string, wd *vdi.WebDriver) string {
+	// Try to infer the document type from the page content
+	if wd != nil && *wd != nil {
+		doc, err := (*wd).PageSource()
+		if err == nil {
+			if looksLikeHTML([]byte(doc)) {
+				return "text/html"
+			}
+		}
+	}
+
+	// Try to infer the document type from the file extension
 	extension := strings.TrimSpace(strings.ToLower(filepath.Ext(url)))
 	if extension != "" {
 		if docType, ok := docTypeMap[extension]; ok {
 			return strings.ToLower(strings.TrimSpace(docType))
 		}
 	}
+
 	// If the extension is not recognized, try to infer the document type from the content type
 	script := `return document.contentType;`
 	contentType, err := (*wd).ExecuteScript(script, nil)
