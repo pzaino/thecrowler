@@ -64,6 +64,8 @@ type Source struct {
 	Flags uint
 	// Config is a JSON object containing the configuration for the source.
 	Config *json.RawMessage // we use json.RawMessage to avoid unmarshalling the JSON object
+	// Enabled/Disabled indicates whether the source is enabled or disabled.
+	Disabled bool
 
 	// The following fields are not stored in the database but are used internally.
 	Status int
