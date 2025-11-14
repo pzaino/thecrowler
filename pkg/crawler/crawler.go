@@ -1709,8 +1709,12 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		INSERT INTO WebObjects (object_hash, object_content, object_html, details)
 		VALUES ($1, $2, $3, $4::jsonb)
 		ON CONFLICT (object_hash) DO UPDATE
-		SET object_content = EXCLUDED.object_content,
-	    	details = EXCLUDED.details
+		SET
+			object_content = COALESCE(NULLIF(BTRIM(EXCLUDED.object_content), ''), WebObjects.object_content),
+			details = COALESCE(
+				NULLIF(EXCLUDED.details, '{}'::jsonb),
+				WebObjects.details
+			)
 		RETURNING object_id;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
 		return err
@@ -1765,7 +1769,11 @@ func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo) error {
 		INSERT INTO NetInfo (details_hash, details)
 		VALUES ($1, $2::jsonb)
 		ON CONFLICT (details_hash) DO UPDATE
-		SET details = EXCLUDED.details
+		SET
+			details = COALESCE(
+				NULLIF(EXCLUDED.details, '{}'::jsonb),
+				NetInfo.details
+			)
 		RETURNING netinfo_id;
 	`, hash, details).Scan(&netinfoID)
 	if err != nil {
@@ -1806,8 +1814,12 @@ func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails) err
         INSERT INTO HTTPInfo (details_hash, details)
         VALUES ($1, $2::jsonb)
         ON CONFLICT (details_hash) DO UPDATE
-        SET details = EXCLUDED.details
-        RETURNING httpinfo_id;
+		SET
+			details = COALESCE(
+				NULLIF(EXCLUDED.details, '{}'::jsonb),
+				HTTPInfo.details
+			)
+		RETURNING httpinfo_id;
     `, hash, details).Scan(&httpinfoID)
 	if err != nil {
 		return err
@@ -1857,10 +1869,28 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 			err = tx.QueryRow(`
                 INSERT INTO MetaTags (name, content)
                 VALUES ($1, $2)
-                ON CONFLICT (name, content) DO UPDATE SET name = EXCLUDED.name
+                ON CONFLICT (name, content) DO NOTHING
                 RETURNING metatag_id;`, name, content).Scan(&metatagID)
 			if err != nil {
 				return err // Handle error appropriately
+			}
+		}
+
+		if err != nil {
+			// One valid case: DO NOTHING means RETURNING finds no row
+			// So you need to handle that gracefully
+			if err == sql.ErrNoRows {
+				// Retrieve existing ID
+				err = tx.QueryRow(`
+					SELECT metatag_id FROM MetaTags
+					WHERE name = $1 AND content = $2
+				`,
+					strings.TrimSpace(name),
+					strings.TrimSpace(content),
+				).Scan(&metatagID)
+			}
+			if err != nil {
+				return err
 			}
 		}
 
@@ -1941,9 +1971,18 @@ func insertKeywordWithRetries(tx *sql.Tx, keyword string) (int, error) {
 
 	for i := 0; i < maxRetries; i++ {
 		err := tx.QueryRow(`INSERT INTO Keywords (keyword)
-                            VALUES ($1) ON CONFLICT (keyword) DO UPDATE
-                            SET keyword = EXCLUDED.keyword RETURNING keyword_id`, keyword).
+                            VALUES ($1) ON CONFLICT (keyword) DO NOTHING
+                            RETURNING keyword_id`, keyword).
 			Scan(&keywordID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				// Keyword already exists, fetch its ID
+				err = tx.QueryRow(`
+					SELECT keyword_id FROM Keywords WHERE keyword = $1
+				`, strings.TrimSpace(keyword)).Scan(&keywordID)
+			}
+		}
+
 		if err != nil {
 			if strings.Contains(err.Error(), "deadlock detected") {
 				if i == maxRetries-1 {
@@ -3661,7 +3700,11 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		return nil
 	}
 
-	currentURL, _ := (*webPage).CurrentURL()
+	currentURL, err := (*webPage).CurrentURL()
+	if err != nil {
+		currentURL = PageCache.URL
+	}
+	currentURL = strings.TrimSpace(currentURL)
 
 	// Detect Object Type
 	objType := docType
@@ -3728,13 +3771,20 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		if titleTmp == "" {
 			var titleRegex = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 			// Last-resort extraction: regex over raw HTML (handles broken DOM snapshots)
-			if strings.TrimSpace(title) == "" {
-				rawTitle := ""
-				if m := titleRegex.FindStringSubmatch(htmlContent); len(m) > 1 {
-					rawTitle = strings.TrimSpace(html.UnescapeString(m[1]))
-				}
-				if rawTitle != "" {
-					titleTmp = rawTitle
+			rawTitle := ""
+			if m := titleRegex.FindStringSubmatch(htmlContent); len(m) > 1 {
+				rawTitle = strings.TrimSpace(html.UnescapeString(m[1]))
+			}
+			if rawTitle != "" {
+				titleTmp = rawTitle
+			}
+		}
+		if titleTmp == "" {
+			val, _ := webPageCopy.ExecuteScript("return document.title", nil)
+			if val != nil {
+				titleTmpJS := strings.TrimSpace(fmt.Sprintf("%v", val))
+				if (titleTmpJS != "") && (titleTmpJS != "null") && (titleTmpJS != "undefined") && (titleTmpJS != "<nil>") {
+					titleTmp = titleTmpJS
 				}
 			}
 		}
@@ -3795,7 +3845,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			metaTags = extractMetaTags(doc)
 		}
 	} else {
-		// Download the web object and store it in the database
+		// Download the non-HTML web object and store it in the database
 		if err := (*webPage).Get(currentURL); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to download web object: %v", err)
 		}
