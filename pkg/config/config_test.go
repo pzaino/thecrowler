@@ -1658,19 +1658,6 @@ func TestSourceConfigIsEmpty(t *testing.T) {
 	if !isEmpty {
 		t.Errorf("%s", errExpectedTrue)
 	}
-
-	// Create a non-nil SourceConfig with a non-nil ExecutionPlan
-	sc = &SourceConfig{
-		ExecutionPlan: []ExecutionPlanItem{},
-	}
-
-	// Call the IsEmpty function with the non-nil SourceConfig
-	isEmpty = sc.IsEmpty()
-
-	// Check if the IsEmpty function returns false for a non-nil SourceConfig with a non-nil ExecutionPlan
-	if isEmpty {
-		t.Errorf("%s", errExpectedFalse)
-	}
 }
 
 type MockFetcher struct {

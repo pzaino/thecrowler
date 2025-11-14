@@ -39,35 +39,60 @@ const (
 )
 
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var sqlQuery string
-	var sqlParams addSourceRequest
+	var params addSourceRequest
+
 	if qType == getQuery {
-		sqlParams.URL = cmn.NormalizeURL(query)
-		//sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status) VALUES ($1, NULL, 'pending')"
-		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, category_id, usr_id, status, restricted, disabled, flags, config) VALUES ($1, NULL, 0, 0, 'pending', 2, false, 0, '{}')"
+		// Simple GET-style request, only URL provided
+		params.URL = strings.TrimSpace(cmn.NormalizeURL(query))
+
+		// Apply defaults
+		params.Status = "pending"
+		params.Restricted = 2
+		params.Disabled = false
+		params.Flags = 0
+		params.CategoryID = 0
+		params.UsrID = 0
+		params.Config = cfg.SourceConfig{} // empty/default
 	} else {
-		// extract the parameters from the query
-		extractAddSourceParams(query, &sqlParams)
-		// Normalize the URL
-		sqlParams.URL = cmn.NormalizeURL(sqlParams.URL)
-		// Prepare the SQL query
-		sqlQuery = "INSERT INTO Sources (url, last_crawled_at, status, restricted, disabled, flags, config, category_id, usr_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8) RETURNING source_id;"
+		// extract AddSource parameters from JSON
+		extractAddSourceParams(query, &params)
+
+		params.URL = strings.TrimSpace(cmn.NormalizeURL(params.URL))
+		if params.URL == "" {
+			return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("invalid URL")
+		}
 	}
 
-	if sqlParams.URL == "" {
-		return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("invalid URL")
+	// Validate & reformat config (same as your logic)
+	if !params.Config.IsEmpty() {
+		if err := validateAndReformatConfig(&params.Config); err != nil {
+			return ConsoleResponse{Message: "Invalid config"}, err
+		}
 	}
 
-	// Perform the addSource operation
-	results, err := addSource(sqlQuery, sqlParams, db)
+	// Convert request into cdb.Source struct
+	dbSource := cdb.Source{
+		URL:        params.URL,              // from addSourceRequest.URL
+		Name:       "",                      // console does not specify Name
+		Priority:   "",                      // console does not specify Priority
+		CategoryID: params.CategoryID,       // Source category ID (uint64)
+		UsrID:      params.UsrID,            // Source user ID (uint64)
+		Restricted: uint(params.Restricted), // nolint:gosec // This is a controlled value // Restriction level (int --> uint)
+		Disabled:   params.Disabled,         // bool (0 by default)
+		Flags:      uint(params.Flags),      // nolint:gosec // This is a controlled value // Source flags (int --> uint)
+		// Status is intentionally NOT set from console
+	}
+
+	// Use your new SAFE CreateSource() logic
+	sourceID, err := cdb.CreateSource(db, &dbSource, params.Config)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "adding the source: %v", err)
-		return results, err
+		return ConsoleResponse{
+			Message: "Failed to add the source",
+		}, err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, results.Message)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Website inserted with: %s", query)
-	return results, nil
+	msg := fmt.Sprintf("Website inserted successfully with ID: %d", sourceID)
+	return ConsoleResponse{Message: msg}, nil
 }
 
 func extractAddSourceParams(query string, params *addSourceRequest) {
@@ -111,48 +136,6 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field: %v", err)
 		}
 	}
-}
-
-func addSource(sqlQuery string, params addSourceRequest, db *cdb.Handler) (ConsoleResponse, error) {
-	var results ConsoleResponse
-	results.Message = "Failed to add the source"
-
-	// Check if Config is empty and set to default JSON if it is
-	if !params.Config.IsEmpty() {
-		// Validate and potentially reformat the existing Config JSON
-		err := validateAndReformatConfig(&params.Config)
-		if err != nil {
-			return results, fmt.Errorf("failed to validate and reformat Config: %w", err)
-		}
-	}
-
-	// Get the JSON string for the Config field
-	configJSON, err := json.Marshal(params.Config)
-	if err != nil {
-		return results, err
-	}
-
-	// Execute the SQL statement
-	qResults, err := (*db).ExecuteQuery(sqlQuery, params.URL, params.Status, params.Restricted, params.Disabled, params.Flags, string(configJSON), params.CategoryID, params.UsrID)
-	if err != nil {
-		return results, err
-	}
-
-	// Get the ID of the inserted website
-	var id uint64
-	for qResults.Next() {
-		err = qResults.Scan(&id)
-		if err != nil {
-			results.Message = "Failed to get the ID of the inserted website"
-			return results, err
-		}
-	}
-
-	// Create the response message adding the id of the inserted source
-	msg := fmt.Sprintf("Website inserted successfully with ID: %d", id)
-
-	results.Message = msg
-	return results, nil
 }
 
 /*

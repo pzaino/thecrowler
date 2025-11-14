@@ -1549,7 +1549,39 @@ func (sc *SourceConfig) IsEmpty() bool {
 		return true
 	}
 
-	if sc.ExecutionPlan != nil {
+	// All string fields must be empty
+	if sc.Version != "" ||
+		sc.FormatVersion != "" ||
+		sc.Author != "" ||
+		sc.Description != "" ||
+		sc.SourceName != "" {
+		return false
+	}
+
+	// CreatedAt must be zero time
+	if !sc.CreatedAt.IsZero() {
+		return false
+	}
+
+	if !sc.CrawlingConfig.IsEmpty() {
+		return false
+	}
+
+	// ExecutionPlan must be nil or empty
+	if len(sc.ExecutionPlan) != 0 {
+		if len(sc.ExecutionPlan) == 1 && !sc.ExecutionPlan[0].IsEmpty() {
+			return true
+		}
+		return false
+	}
+
+	// Custom must be nil or empty
+	if len(sc.Custom) != 0 {
+		return false
+	}
+
+	// MetaData must be nil or empty
+	if len(sc.MetaData) != 0 {
 		return false
 	}
 

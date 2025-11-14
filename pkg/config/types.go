@@ -619,6 +619,11 @@ type CrawlingConfig struct {
 	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (web, api, file) (validate:"required,oneof=website api file db")
 }
 
+// IsEmpty returns true if the CrawlingConfig is empty
+func (c CrawlingConfig) IsEmpty() bool {
+	return c.Site == "" && c.URLReferrer == "" && len(c.AlternativeLinks) == 0 && c.RetriesOnRedirect == 0 && len(c.UnwantedURLs) == 0 && c.SourceType == ""
+}
+
 // ExecutionPlanItem represents the execution plan item for a source
 type ExecutionPlanItem struct {
 	Label                string                 `json:"label" yaml:"label" validate:"required"`
