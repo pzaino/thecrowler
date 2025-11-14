@@ -40,8 +40,10 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 // CreateSource inserts a new source into the database with detailed configuration validation and marshaling.
 func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
 	// Validate source config
-	if err := validateSourceConfig(config); err != nil {
-		return 0, fmt.Errorf("invalid source configuration: %v", err)
+	if !config.IsEmpty() {
+		if err := validateSourceConfig(config); err != nil {
+			return 0, fmt.Errorf("invalid source configuration: %v", err)
+		}
 	}
 
 	// Marshal config JSON
@@ -59,7 +61,7 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 
 	query := `
         INSERT INTO Sources
-            (url, name, priority, category_id, usr_id, restricted, flags, config)
+            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (url) DO UPDATE
         SET
