@@ -39,25 +39,100 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 
 // CreateSource inserts a new source into the database with detailed configuration validation and marshaling.
 func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
-	// Validate the SourceConfig
-	err := validateSourceConfig(config)
-	if err != nil {
+	// Validate source config
+	if err := validateSourceConfig(config); err != nil {
 		return 0, fmt.Errorf("invalid source configuration: %v", err)
 	}
 
-	// Marshal the SourceConfig into JSONB format
+	// Marshal config JSON
 	details, err := json.Marshal(config)
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal source configuration: %v", err)
 	}
 
+	// Trim strings to guarantee consistency
+	url := strings.TrimSpace(source.URL)
+	name := strings.TrimSpace(source.Name)
+	priority := strings.TrimSpace(source.Priority)
+
 	var sourceID uint64
+
 	query := `
-        INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config)
+        INSERT INTO Sources
+            (url, name, priority, category_id, usr_id, restricted, flags, config)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING source_id
+        ON CONFLICT (url) DO UPDATE
+        SET
+            -- update name only if not processing AND non-empty trimmed string
+            name = CASE
+                WHEN Sources.status <> 'processing'
+                     AND BTRIM(EXCLUDED.name) <> ''
+                THEN EXCLUDED.name
+                ELSE Sources.name
+            END,
+
+            -- update priority only if not processing AND non-empty trimmed string
+            priority = CASE
+                WHEN Sources.status <> 'processing'
+                     AND BTRIM(EXCLUDED.priority) <> ''
+                THEN EXCLUDED.priority
+                ELSE Sources.priority
+            END,
+
+            -- update integers only if not processing
+            category_id = CASE
+                WHEN Sources.status <> 'processing'
+                THEN EXCLUDED.category_id
+                ELSE Sources.category_id
+            END,
+
+            usr_id = CASE
+                WHEN Sources.status <> 'processing'
+                THEN EXCLUDED.usr_id
+                ELSE Sources.usr_id
+            END,
+
+            restricted = CASE
+                WHEN Sources.status <> 'processing'
+                THEN EXCLUDED.restricted
+                ELSE Sources.restricted
+            END,
+
+            flags = CASE
+                WHEN Sources.status <> 'processing'
+                THEN EXCLUDED.flags
+                ELSE Sources.flags
+            END,
+
+            -- config updated only when:
+            -- 1) NOT processing
+            -- 2) new config is meaningful
+            -- 3) new config differs from existing config
+            config = CASE
+                WHEN Sources.status <> 'processing'
+                     AND EXCLUDED.config IS NOT NULL
+                     AND EXCLUDED.config <> '{}'::jsonb
+                     AND md5(EXCLUDED.config::text) <> md5(Sources.config::text)
+                THEN EXCLUDED.config
+                ELSE Sources.config
+            END,
+
+            last_updated_at = NOW()
+        RETURNING source_id;
     `
-	err = (*db).QueryRow(query, source.URL, source.Name, source.Priority, source.CategoryID, source.UsrID, source.Restricted, source.Flags, details).Scan(&sourceID)
+
+	err = (*db).QueryRow(
+		query,
+		url,
+		name,
+		priority,
+		source.CategoryID,
+		source.UsrID,
+		source.Restricted,
+		source.Flags,
+		details,
+	).Scan(&sourceID)
+
 	if err != nil {
 		return 0, fmt.Errorf("failed to create source: %v", err)
 	}
