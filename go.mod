@@ -3,7 +3,7 @@ module github.com/pzaino/thecrowler
 go 1.24.7
 
 require (
-	github.com/PuerkitoBio/goquery v1.10.3
+	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/lib/pq v1.10.9
 	gopkg.in/yaml.v2 v2.4.0
 )
