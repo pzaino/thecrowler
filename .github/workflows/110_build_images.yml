@@ -117,10 +117,13 @@
             NAME="${{ matrix.service.name }}"
             TAG="${{ github.event.inputs.release_tag }}"
 
-            echo "Creating multi-arch latest tag for $NAME"
+            echo "Waiting 5 seconds before creating manifest..."
+            sleep 5
+
             docker buildx imagetools create \
               --tag $REGISTRY/$IMAGE_OWNER/$NAME:latest \
               $REGISTRY/$IMAGE_OWNER/$NAME:$TAG
+
 
         - name: Log out from Docker Hub
           if: ${{ github.event.inputs.dry_run != 'true' }}
