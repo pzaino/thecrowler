@@ -280,6 +280,13 @@ func (l *PostgresListener) Connect(c cfg.Config, minReconnectInterval, maxReconn
 		}
 
 		for pqNotify := range l.listener.Notify {
+			// Try to avoid Invalid Memory addresses in case of listener closure
+			if pqNotify == nil {
+				continue
+			}
+			if l.notify == nil {
+				continue
+			}
 			l.notify <- &PostgresNotification{
 				channel: pqNotify.Channel,
 				extra:   pqNotify.Extra,
