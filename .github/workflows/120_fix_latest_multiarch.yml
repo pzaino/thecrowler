@@ -13,6 +13,9 @@
             default: "false"
             required: false
 
+    permissions:
+        contents: read
+
     env:
       REGISTRY: docker.io
       IMAGE_OWNER: zfpsystems
