@@ -106,6 +106,9 @@
                 --cache-to=type=registry,ref=$REGISTRY/$IMAGE_OWNER/$NAME:cache,mode=max \
                 -t $REGISTRY/$IMAGE_OWNER/$NAME:$TAG \
                 --push .
+
+              echo "Waiting 10 seconds to avoid Docker Hub throttling..."
+              sleep 10
             fi
 
         - name: Tag release as latest (multi-arch manifest)
