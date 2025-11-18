@@ -916,6 +916,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 		// Create a channel that will signal when the VDI is no longer needed
 		releaseVDI := make(chan vdi.SeleniumInstance, 1) // Make it buffered
 
+		// Start the crawling in a separate goroutine
 		go func() {
 			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
 		}()
