@@ -21,7 +21,7 @@ require (
 	github.com/evanw/esbuild v0.27.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.44.0
+	golang.org/x/crypto v0.45.0
 )
 
 require golang.org/x/sync v0.18.0 // indirect
