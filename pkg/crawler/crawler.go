@@ -3612,6 +3612,9 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 		// Keep-alive: must NOT be optimized out
 		val, _ := driver.Title()
 		seleniumKeepAliveSink = val
+		if seleniumKeepAliveSink.(string) != "" {
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Wait] Sent keep-alive ping to Selenium, page title: %s", seleniumKeepAliveSink)
+		}
 
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
