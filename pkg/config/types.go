@@ -89,6 +89,7 @@ type Crawler struct {
 	RequestPlugins        bool            `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
 	RequestFrames         bool            `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
 	PreventDuplicateURLs  bool            `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
+	RefreshContent        bool            `json:"refresh_content" yaml:"refresh_content"`                                   // Whether to refresh the content of the page or not
 	CollectHTML           bool            `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
 	CollectImages         bool            `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
 	CollectFiles          bool            `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not

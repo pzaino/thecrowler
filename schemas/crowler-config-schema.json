@@ -692,6 +692,11 @@
           "description": "This is a flag that tells the CROWler to prevent crawling of duplicate URLs. This can be useful to reduce redundant work and save resources. It's a tag that is not reliable 100%, but it can help to reduce the number of duplicate URLs that the CROWler will crawl.",
           "type": "boolean"
         },
+        "refresh_content": {
+          "title": "CROWler Engine Refresh Content",
+          "description": "This is a flag that tells the CROWler to refresh data for each page, not create multiple collection's copies. When enabled, the CROWler will delete the current data for a page in the DB and recollect anew. This is useful to create solutions that only store 'current' data vs solutions that need 'historical data' (e.g., for change detection).",
+          "type": "boolean"
+        },
         "collect_html": {
           "title": "CROWler Engine Collect Page's HTML",
           "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source.",

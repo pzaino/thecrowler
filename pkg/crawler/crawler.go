@@ -1325,7 +1325,7 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
 	(*pageInfo).Config = &ctx.config
-	return indexPage(*ctx.db, ctx.source.URL, pageInfo)
+	return indexPage(ctx, ctx.source.URL, pageInfo)
 }
 
 // IndexNetInfo indexes the network information of a source in the database
@@ -1372,12 +1372,22 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // this function (and so treat it as a critical section) should be enough for now.
 // Another thought is, the mutex also helps slow down the crawling process, which
 // is a good thing. You don't want to overwhelm the Source site with requests.
-func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
-	// Acquire a lock to ensure that only one goroutine is accessing the database
-	//indexPageMutex.Lock()
-	//defer indexPageMutex.Unlock()
+func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
+	if pageInfo == nil {
+		return 0, errors.New("pageInfo cannot be nil")
+	}
+
+	if ctx == nil {
+		return 0, errors.New("process context cannot be nil")
+	}
+
+	if (url == "") || (len(strings.TrimSpace(url)) == 0) {
+		return 0, errors.New("url cannot be empty")
+	}
 
 	pageInfo.URL = url
+
+	db := *ctx.db
 
 	// Before updating the source state, check if the database connection is still alive
 	err := db.CheckConnection(config)
@@ -1405,6 +1415,17 @@ func indexPage(db cdb.Handler, url string, pageInfo *PageInfo) (uint64, error) {
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] SearchIndex updated with indexID: %d", indexID)
+
+	if ctx.config.Crawler.RefreshContent {
+		// We need to delete existing webObjects for this indexID
+		err = deleteWebObjects(tx, indexID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error deleting existing WebObjects for indexID %d: %v", indexID, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "deleting existing WebObjects: %v", err)
+			rollbackTransaction(tx)
+			return 0, err
+		}
+	}
 
 	// Insert or update the page in WebObjects
 	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
@@ -1583,6 +1604,18 @@ func strLeft(s string, x int) string {
 		return s
 	}
 	return string(runes[:x])
+}
+
+// deleteWebObjects deletes web object entries associated with a given index ID from the database.
+func deleteWebObjects(tx *sql.Tx, indexID uint64) error {
+	_, err := tx.Exec(`
+		DELETE FROM WebObjects
+		WHERE object_id IN (
+			SELECT object_id
+			FROM WebObjectsIndex
+			WHERE index_id = $1
+		)`, indexID)
+	return err
 }
 
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
@@ -4546,7 +4579,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Index the page after collecting data
 	pageCache.Config = &processCtx.config
-	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
+	_, err = indexPage(processCtx, url.Link, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
@@ -4732,7 +4765,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 
 	// Index the page
 	pageCache.Config = &processCtx.config
-	_, err = indexPage(*processCtx.db, url.Link, &pageCache)
+	_, err = indexPage(processCtx, url.Link, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url.Link, err)
 	}
@@ -4945,7 +4978,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	pageCache.Config = &processCtx.config
 	processCtx.getURLMutex.Unlock()
 	startTime = time.Now()
-	_, err = indexPage(*processCtx.db, currentURL, &pageCache)
+	_, err = indexPage(processCtx, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
