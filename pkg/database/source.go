@@ -61,8 +61,8 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 
 	query := `
         INSERT INTO Sources
-            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new')
         ON CONFLICT (url) DO UPDATE
         SET
             -- update name only if not processing AND non-empty trimmed string
@@ -123,6 +123,12 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 				WHEN Sources.status <> 'processing'
 				THEN EXCLUDED.disabled
 				ELSE Sources.disabled
+			END,
+
+			status = CASE
+				WHEN Sources.status = 'processing'
+				THEN Sources.status
+				ELSE EXCLUDED.status
 			END,
 
             last_updated_at = NOW()
