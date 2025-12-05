@@ -1425,7 +1425,7 @@ func processHeartbeatEvent(event cdb.Event) {
 		Timestamp: time.Now().Format(time.RFC3339),
 		Details:   make(map[string]interface{}),
 	}
-	responseEvent.Details["original_event_id"] = event.ID
+	responseEvent.Details["parent_event_id"] = event.ID
 	responseEvent.Details["origin_type"] = "crowler-engine"
 	responseEvent.Details["origin_name"] = cmn.GetMicroServiceName()
 	responseEvent.Details["origin_time"] = time.Now().Format(time.RFC3339)
