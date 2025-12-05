@@ -1422,6 +1422,7 @@ func processHeartbeatEvent(event cdb.Event) {
 	// Prepare the response event
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
+		Severity:  "crowler_system_info",
 		Timestamp: time.Now().Format(time.RFC3339),
 		Details:   make(map[string]interface{}),
 	}

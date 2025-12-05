@@ -287,7 +287,7 @@ func handleNotification(payload string) {
 func processHeartbeatEvent(event cdb.Event) {
 	resp := cdb.Event{
 		Type:      "crowler_heartbeat_response",
-		Severity:  "info",
+		Severity:  "crowler_system_info",
 		Timestamp: time.Now().Format(time.RFC3339),
 		Details: map[string]any{
 			"parent_event_id": event.ID,

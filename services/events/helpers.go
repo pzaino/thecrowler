@@ -96,7 +96,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		Action:        "",
 		SourceID:      0,
 		Type:          hbType,
-		Severity:      "low",
+		Severity:      "crowler_system_info",
 		Timestamp:     now.Format(time.RFC3339),
 		CreatedAt:     now.Format(time.RFC3339),
 		LastUpdatedAt: now.Format(time.RFC3339),
