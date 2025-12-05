@@ -101,10 +101,10 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		CreatedAt:     now.Format(time.RFC3339),
 		LastUpdatedAt: now.Format(time.RFC3339),
 		Details: map[string]interface{}{
-			"origin":    "events-manager",
-			"container": cmn.GetMicroServiceName(),
-			"sent_at":   now.Format(time.RFC3339),
-			"request":   "heartbeat_ping",
+			"origin_type": "events-manager",
+			"origin_name": cmn.GetMicroServiceName(),
+			"sent_at":     now.Format(time.RFC3339),
+			"type":        "heartbeat_request",
 		},
 	}
 

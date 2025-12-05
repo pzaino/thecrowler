@@ -1425,7 +1425,12 @@ func processHeartbeatEvent(event cdb.Event) {
 		Timestamp: time.Now().Format(time.RFC3339),
 		Details:   make(map[string]interface{}),
 	}
-
+	responseEvent.Details["original_event_id"] = event.ID
+	responseEvent.Details["origin_type"] = "crowler-engine"
+	responseEvent.Details["origin_name"] = cmn.GetMicroServiceName()
+	responseEvent.Details["origin_time"] = time.Now().Format(time.RFC3339)
+	responseEvent.Details["status"] = "ok"
+	responseEvent.Details["type"] = "heartbeat_response"
 	// Add the current pipeline status to the response event
 	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
 
