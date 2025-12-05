@@ -1434,6 +1434,8 @@ func processHeartbeatEvent(event cdb.Event) {
 	// Add the current pipeline status to the response event
 	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
 
+	responseEvent.Action = "new"
+
 	// Send the response event to the database
 	createEvent(dbHandler, responseEvent, 1)
 }
