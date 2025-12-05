@@ -424,6 +424,9 @@ type EventsConfig struct {
 	ReadTimeout       int    `json:"read_timeout" yaml:"read_timeout"`                         // ReadTimeout is the maximum duration for reading the entire request
 	WriteTimeout      int    `json:"write_timeout" yaml:"write_timeout"`                       // WriteTimeout
 	EventRemoval      string `json:"automatic_events_removal" yaml:"automatic_events_removal"` // Automatic events removal from the database (always, fails, success, never or "")
+	HeartbeatEnabled  bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`               // Whether to enable heartbeat or not
+	HeartbeatInterval string `json:"heartbeat_interval" yaml:"heartbeat_interval"`             // Heartbeat interval (in seconds)
+	HeartbeatTimeout  string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`               // Heartbeat timeout (in seconds)
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper

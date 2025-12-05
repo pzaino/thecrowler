@@ -191,6 +191,11 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
+	// Start heartbeat loop if enabled
+	if config.Events.HeartbeatEnabled {
+		go startHeartbeatLoop(&dbHandler, config)
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
 		setSysReady(2) // Indicate system is ready
@@ -757,8 +762,13 @@ func isRetryable(err error) bool {
 	return false
 }
 
-// Process the event
+// Process the "external" event
 func processEvent(event cdb.Event) {
+
+	if maybeHandleHeartbeatResponse(event) {
+		return
+	}
+
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 

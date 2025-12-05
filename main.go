@@ -53,6 +53,30 @@ import (
 	_ "github.com/lib/pq"
 )
 
+type PipelineStatusReport struct {
+	PipelineID      uint64  `json:"pipeline_id"`
+	Source          string  `json:"source"`
+	SourceID        uint64  `json:"source_id"`
+	VDIID           string  `json:"vdi_id"`
+	PipelineStatus  string  `json:"pipeline_status"`
+	CrawlingStatus  string  `json:"crawling_status"`
+	NetInfoStatus   string  `json:"netinfo_status"`
+	HTTPInfoStatus  string  `json:"httpinfo_status"`
+	RunningTime     string  `json:"running_time"`
+	TotalPages      int64   `json:"total_pages"`
+	TotalErrors     int64   `json:"total_errors"`
+	TotalLinks      int64   `json:"total_links"`
+	TotalSkipped    int64   `json:"total_skipped"`
+	TotalDuplicates int64   `json:"total_duplicates"`
+	TotalLinksToGo  int64   `json:"total_links_to_go"`
+	TotalScrapes    int64   `json:"total_scrapes"`
+	TotalActions    int64   `json:"total_actions"`
+	LastRetry       int64   `json:"last_retry"`
+	LastWait        float64 `json:"last_wait"`
+	LastDelay       float64 `json:"last_delay"`
+	CollectionState string  `json:"collection_state"`
+}
+
 var (
 	limiter     *rate.Limiter // Rate limiter
 	configFile  *string       // Configuration file path
@@ -62,6 +86,10 @@ var (
 	sysReady    int           // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
 	// GRulesEngine Global rules engine
 	GRulesEngine rules.RuleEngine // GRulesEngine Global rules engine
+	// Global DB handler
+	dbHandler cdb.Handler
+	// Global Pipeline Status (read only!!!!!)
+	sysPipelineStatus *[]crowler.Status
 
 	// Prometheus metrics
 	totalPages = prometheus.NewGaugeVec(
@@ -280,6 +308,8 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status slice
 	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
+	// Assign the global pipeline status pointer
+	sysPipelineStatus = &PipelineStatus
 	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
@@ -1108,6 +1138,7 @@ func initAll(configFile *string, config *cfg.Config,
 	if err != nil {
 		return fmt.Errorf("creating database handler: %s", err)
 	}
+	dbHandler = *db
 
 	// Set the rate limiter
 	var rl, bl int
@@ -1347,6 +1378,9 @@ func processEvent(event cdb.Event) {
 	case "system_event":
 		// System event
 		processSystemEvent(event)
+	case "crowler_heartbeat":
+		// Heartbeat event
+		processHeartbeatEvent(event)
 	default:
 		// Ignore event
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, not interested in this type: %s", event.Type)
@@ -1377,6 +1411,93 @@ func processSystemEvent(event cdb.Event) {
 		// Ignore event
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, not interested in this action: %s", action)
 	}
+}
+
+// processHeartbeatEvent will generate a new event with a response which contains the current pipeline status
+func processHeartbeatEvent(event cdb.Event) {
+	// Prepare the response event
+	responseEvent := cdb.Event{
+		Type:      "crowler_heartbeat_response",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Details:   make(map[string]interface{}),
+	}
+
+	// Add the current pipeline status to the response event
+	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
+
+	// Send the response event to the database
+	createEvent(dbHandler, responseEvent)
+}
+
+func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport {
+	reports := make([]PipelineStatusReport, 0, len(*PipelineStatus))
+
+	for idx := 0; idx < len(*PipelineStatus); idx++ {
+		status := &(*PipelineStatus)[idx]
+
+		// Skip non running
+		if status.PipelineRunning.Load() == 0 {
+			continue
+		}
+
+		var totalRunningTime time.Duration
+		if status.EndTime.IsZero() {
+			totalRunningTime = time.Since(status.StartTime)
+		} else {
+			totalRunningTime = status.EndTime.Sub(status.StartTime)
+		}
+
+		totalLinksToGo := status.TotalLinks.Load() -
+			(status.TotalPages.Load() + status.TotalSkipped.Load() + status.TotalDuplicates.Load())
+		if totalLinksToGo < 0 {
+			totalLinksToGo = 0
+		}
+
+		// Stale detection (same logic as in logStatus)
+		if (status.PipelineRunning.Load() == 1) &&
+			(totalRunningTime > 2*time.Minute) &&
+			(status.CrawlingRunning.Load() == 0) &&
+			(status.NetInfoRunning.Load() == 0) &&
+			(status.HTTPInfoRunning.Load() == 0) {
+
+			status.DetectedState.Store(1)
+		} else {
+			if (status.DetectedState.Load() & 0x01) != 0 {
+				tmp := status.DetectedState.Load() & 0xfffe
+				status.DetectedState.Store(tmp)
+			}
+		}
+
+		reports = append(reports, PipelineStatusReport{
+			PipelineID:      status.PipelineID + 1,
+			Source:          status.Source,
+			SourceID:        status.SourceID,
+			VDIID:           status.VDIID,
+			PipelineStatus:  StatusStr(int(status.PipelineRunning.Load())),
+			CrawlingStatus:  StatusStr(int(status.CrawlingRunning.Load())),
+			NetInfoStatus:   StatusStr(int(status.NetInfoRunning.Load())),
+			HTTPInfoStatus:  StatusStr(int(status.HTTPInfoRunning.Load())),
+			RunningTime:     totalRunningTime.String(),
+			TotalPages:      int64(status.TotalPages.Load()),
+			TotalErrors:     int64(status.TotalErrors.Load()),
+			TotalLinks:      int64(status.TotalLinks.Load()),
+			TotalSkipped:    int64(status.TotalSkipped.Load()),
+			TotalDuplicates: int64(status.TotalDuplicates.Load()),
+			TotalLinksToGo:  int64(totalLinksToGo),
+			TotalScrapes:    int64(status.TotalScraped.Load()),
+			TotalActions:    int64(status.TotalActions.Load()),
+			LastRetry:       int64(status.LastRetry.Load()),
+			LastWait:        status.LastWait,
+			LastDelay:       status.LastDelay,
+			CollectionState: CollectionState(int(status.DetectedState.Load())),
+		})
+
+		if status.PipelineRunning.Load() >= 2 {
+			status.PipelineRunning.Store(0)
+		}
+	}
+
+	return reports
 }
 
 func updateDebugLevel(newLevel string) {

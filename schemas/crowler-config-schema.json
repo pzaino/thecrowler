@@ -1182,6 +1182,33 @@
             "never",
             ""
           ]
+        },
+        "heartbeat_enabled": {
+          "title": "CROWler Events Manager Heartbeat Enabled",
+          "description": "This is a flag that tells the CROWler to enable the Events Manager heartbeat. The heartbeat is a periodic signal sent by the Events Manager to the entire fleet to indicate and collect that it is operational. This is useful for monitoring purposes.",
+          "type": "boolean"
+        },
+        "heartbeat_interval": {
+          "title": "CROWler Events Manager Heartbeat Interval",
+          "description": "This is the interval for the Events Manager heartbeat. It is the amount of time between each heartbeat signal sent by the Events Manager to the entire fleet.",
+          "type": "string",
+          "examples": [
+            "30s",
+            "1m",
+            "5m",
+            "60 seconds"
+          ]
+        },
+        "heartbeat_timeout": {
+          "title": "CROWler Events Manager Heartbeat Timeout",
+          "description": "This is the timeout for the Events Manager heartbeat. It is the maximum amount of time that the CROWler Events Manager will wait for the the fleet heartbeat responses before closing the response collection.",
+          "type": "string",
+          "examples": [
+            "10s",
+            "30s",
+            "1m",
+            "60 seconds"
+          ]
         }
       },
       "additionalProperties": false
