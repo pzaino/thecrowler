@@ -1367,14 +1367,16 @@ func handleNotification(payload string) {
 	}
 
 	// Log the event for debug purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received of type '%s': %+v", event, strings.ToLower(strings.TrimSpace(event.Type)))
+	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received of type '%s': %+v", strings.ToLower(strings.TrimSpace(event.Type)), event)
 
 	// Process the Event
 	processEvent(event)
 }
 
 func processEvent(event cdb.Event) {
-	switch strings.ToLower(strings.TrimSpace(event.Type)) {
+	event_type := strings.ToLower(strings.TrimSpace(event.Type))
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing event of type: %s", event_type)
+	switch event_type {
 	case "crowler_heartbeat":
 		// Heartbeat event
 		processHeartbeatEvent(event)
