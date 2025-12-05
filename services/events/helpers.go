@@ -93,10 +93,13 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 
 	// Create heartbeat event
 	event := cdb.Event{
-		SourceID:  0,
-		Type:      hbType,
-		Severity:  "low",
-		Timestamp: now.Format(time.RFC3339),
+		Action:        "heartbeat_check",
+		SourceID:      0,
+		Type:          hbType,
+		Severity:      "low",
+		Timestamp:     now.Format(time.RFC3339),
+		CreatedAt:     now.Format(time.RFC3339),
+		LastUpdatedAt: now.Format(time.RFC3339),
 		Details: map[string]interface{}{
 			"origin":  "events-manager",
 			"sent_at": now.Format(time.RFC3339),
