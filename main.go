@@ -1367,7 +1367,7 @@ func handleNotification(payload string) {
 	}
 
 	// Log the event for debug purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received: %+v", event)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received of type '%s': %+v", event, strings.ToLower(strings.TrimSpace(event.Type)))
 
 	// Process the Event
 	processEvent(event)
