@@ -155,7 +155,7 @@ func maybeHandleHeartbeatResponse(event cdb.Event) bool {
 	}
 
 	// Only capture "crowler_heartbeat_response"
-	if event.Type != "crowler_heartbeat_response" {
+	if strings.ToLower(strings.TrimSpace(event.Type)) != "crowler_heartbeat_response" {
 		return false
 	}
 

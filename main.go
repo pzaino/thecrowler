@@ -1375,12 +1375,12 @@ func handleNotification(payload string) {
 
 func processEvent(event cdb.Event) {
 	switch strings.ToLower(strings.TrimSpace(event.Type)) {
-	case "system_event":
-		// System event
-		processSystemEvent(event)
 	case "crowler_heartbeat":
 		// Heartbeat event
 		processHeartbeatEvent(event)
+	case "system_event":
+		// System event
+		processSystemEvent(event)
 	default:
 		// Ignore event
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, not interested in this type: %s", event.Type)
