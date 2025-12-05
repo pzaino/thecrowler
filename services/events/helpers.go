@@ -103,7 +103,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		Details: map[string]interface{}{
 			"origin_type": "events-manager",
 			"origin_name": cmn.GetMicroServiceName(),
-			"sent_at":     now.Format(time.RFC3339),
+			"origin_time": now.Format(time.RFC3339),
 			"type":        "heartbeat_request",
 		},
 	}
@@ -175,8 +175,8 @@ func maybeHandleHeartbeatResponse(event cdb.Event) bool {
 	}
 
 	// Identify responder
-	responder := fmt.Sprintf("src-%d", event.SourceID)
-	if name, ok := event.Details["agent_name"].(string); ok {
+	responder := fmt.Sprintf("src-%s", event.ID)
+	if name, ok := event.Details["origin_name"].(string); ok {
 		responder = name
 	}
 
