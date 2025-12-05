@@ -16,6 +16,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -233,6 +235,11 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
+	// ---------------------------------------------------------
+	// Start Event Listener (Search API participates in heartbeats)
+	// ---------------------------------------------------------
+	go cdb.ListenForEvents(&dbHandler, handleNotification)
+
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
@@ -247,6 +254,122 @@ func main() {
 	}
 	setSysReady(0) // Indicate system is NOT ready
 }
+
+// ---------------------------------------------------------
+// Event Listener for the Search API
+// ---------------------------------------------------------
+
+func handleNotification(payload string) {
+	var event cdb.Event
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "API: Failed to decode incoming event: %v", err)
+		return
+	}
+
+	eventType := strings.ToLower(strings.TrimSpace(event.Type))
+	cmn.DebugMsg(cmn.DbgLvlDebug, "API: Received event of type '%s'", eventType)
+
+	switch eventType {
+	case "system_event":
+		processSystemEvent(event)
+	case "crowler_heartbeat":
+		processHeartbeatEvent(event)
+	default:
+		// Ignore all other events
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "API: Ignoring event type '%s'", eventType)
+	}
+}
+
+// ---------------------------------------------------------
+// Heartbeat response logic for The CROWler Search API
+// ---------------------------------------------------------
+
+func processHeartbeatEvent(event cdb.Event) {
+	resp := cdb.Event{
+		Type:      "crowler_heartbeat_response",
+		Severity:  "info",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Details: map[string]any{
+			"parent_event_id": event.ID,
+			"type":            "heartbeat_response",
+			"status":          "ok",
+			"origin_name":     cmn.GetMicroServiceName(),
+			"origin_type":     "crowler-api",
+			"origin_time":     time.Now().Format(time.RFC3339),
+			"pipeline_status": []any{}, // search API has no pipelines
+		},
+	}
+
+	// Best effort: don't block API operations
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := cdb.CreateEvent(ctx, &dbHandler, resp)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "API: Failed to send heartbeat response: %v", err)
+		return
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "API: Heartbeat response sent")
+}
+
+func processSystemEvent(event cdb.Event) {
+	action, _ := event.Details["action"].(string)
+	action = strings.ToLower(strings.TrimSpace(action))
+
+	switch action {
+	case "update_debug_level":
+		if lv, ok := event.Details["level"].(string); ok {
+			newLevel := strings.ToLower(strings.TrimSpace(lv))
+			go updateDebugLevel(newLevel)
+		}
+	default:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "API: Ignoring system_event action '%s'", action)
+	}
+}
+
+func updateDebugLevel(newLevel string) {
+	// Get configuration lock
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	var dbgLvl cmn.DbgLevel
+	switch newLevel {
+	case "debug":
+		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug")
+	case "debug1":
+		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug1")
+	case "debug2":
+		config.DebugLevel = 2
+		cmn.SetDebugLevelFromString("debug2")
+	case "debug3":
+		config.DebugLevel = 3
+		cmn.SetDebugLevelFromString("debug3")
+	case "debug4":
+		config.DebugLevel = 4
+		cmn.SetDebugLevelFromString("debug4")
+	case "debug5":
+		config.DebugLevel = 5
+		cmn.SetDebugLevelFromString("debug5")
+	case "info":
+		config.DebugLevel = 0
+		cmn.SetDebugLevelFromString("info")
+	default:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, invalid debug level specified: %s", newLevel)
+		return
+	}
+
+	// Update the debug level
+	dbgLvl = cmn.DbgLevel(config.DebugLevel)
+	cmn.SetDebugLevel(dbgLvl)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Debug level updated to: %d", cmn.GetDebugLevel())
+}
+
+// --------------------------------------------
+// API v1 Handlers and Middlewares
+//--------------------------------------------
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
