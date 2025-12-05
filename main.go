@@ -389,7 +389,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 				"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
-		createEvent(*db, event)
+		createEvent(*db, event, 0)
 		totSrc := crawlSources(&workBlock) // Start the crawling of this batch of sources
 		event = cdb.Event{
 			Action:   "new",
@@ -403,7 +403,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 				"final_batch_size": totSrc,
 			},
 		}
-		createEvent(*db, event)
+		createEvent(*db, event, 0)
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Crawled '%d' sources in this batch", totSrc)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
@@ -422,10 +422,10 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func createEvent(db cdb.Handler, event cdb.Event) {
+func createEvent(db cdb.Handler, event cdb.Event, flags int) {
 	event.Action = strings.ToLower(strings.TrimSpace(event.Action))
 
-	if event.Action == "" {
+	if (event.Action == "") && (flags&1 == 0) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Action field is empty, ignoring event")
 		return
 	}
@@ -1375,7 +1375,7 @@ func handleNotification(payload string) {
 
 func processEvent(event cdb.Event) {
 	eventType := strings.ToLower(strings.TrimSpace(event.Type))
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing event of type: %s", eventType)
+	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing event of type: %s", eventType)
 	switch eventType {
 	case "crowler_heartbeat":
 		// Heartbeat event
@@ -1417,6 +1417,8 @@ func processSystemEvent(event cdb.Event) {
 
 // processHeartbeatEvent will generate a new event with a response which contains the current pipeline status
 func processHeartbeatEvent(event cdb.Event) {
+	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
+
 	// Prepare the response event
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
@@ -1428,7 +1430,7 @@ func processHeartbeatEvent(event cdb.Event) {
 	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
 
 	// Send the response event to the database
-	createEvent(dbHandler, responseEvent)
+	createEvent(dbHandler, responseEvent, 1)
 }
 
 func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport {
