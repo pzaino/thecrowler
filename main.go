@@ -1374,9 +1374,9 @@ func handleNotification(payload string) {
 }
 
 func processEvent(event cdb.Event) {
-	event_type := strings.ToLower(strings.TrimSpace(event.Type))
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing event of type: %s", event_type)
-	switch event_type {
+	eventType := strings.ToLower(strings.TrimSpace(event.Type))
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing event of type: %s", eventType)
+	switch eventType {
 	case "crowler_heartbeat":
 		// Heartbeat event
 		processHeartbeatEvent(event)
