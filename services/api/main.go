@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -52,6 +53,11 @@ var (
 
 	sysReadyMtx sync.RWMutex // Mutex to protect the SysReady variable
 	sysReady    int          // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
+
+	// Counters for monitoring (atomic)
+	totalRequests atomic.Int64
+	totalErrors   atomic.Int64
+	totalSuccess  atomic.Int64
 )
 
 func setSysReady(newStatus int) {
@@ -285,6 +291,15 @@ func handleNotification(payload string) {
 // ---------------------------------------------------------
 
 func processHeartbeatEvent(event cdb.Event) {
+	// SearchAPI has a single pipeline with info, so let's respond accordingly
+	pipelineResults := make([]any, 0)
+	pipelineResults = append(pipelineResults, map[string]any{
+		"pipeline_name":   "search_api_pipeline",
+		"pipeline_status": "ready",
+		"Total Requests":  totalRequests.Load(),
+		"Total Errors":    totalErrors.Load(),
+		"Total Success":   totalSuccess.Load(),
+	})
 	resp := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
@@ -296,7 +311,7 @@ func processHeartbeatEvent(event cdb.Event) {
 			"origin_name":     cmn.GetMicroServiceName(),
 			"origin_type":     "crowler-api",
 			"origin_time":     time.Now().Format(time.RFC3339),
-			"pipeline_status": []any{}, // search API has no pipelines
+			"pipeline_status": pipelineResults,
 		},
 	}
 
@@ -548,12 +563,18 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 		)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 
 		handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -575,8 +596,10 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -598,12 +621,18 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -625,8 +654,10 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -648,12 +679,18 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -676,8 +713,10 @@ func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing scraped_data search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -699,12 +738,18 @@ func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -727,17 +772,25 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, retCode)
 		} else {
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -760,8 +813,10 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -783,12 +838,18 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -811,8 +872,10 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -834,12 +897,18 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -858,11 +927,17 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performAddSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -881,11 +956,17 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performRemoveSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -904,11 +985,17 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -927,11 +1014,17 @@ func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performVacuumSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -950,11 +1043,17 @@ func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performGetURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -968,11 +1067,17 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 		successCode := http.StatusOK
 
 		results, err := performGetAllURLStatus(getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
