@@ -142,7 +142,9 @@ func heartbeatTimeoutWatcher(db *cdb.Handler, state *HeartbeatState) {
 
 	// Produce report and cleanup now
 	report := finishHeartbeatState(state)
-	logHeartbeatReport(report)
+	if config.Events.HeartbeatLog {
+		logHeartbeatReport(report)
+	}
 
 	// Delete events (parent + responses)
 	cleanupHeartbeatEvents(db, state.ParentID)

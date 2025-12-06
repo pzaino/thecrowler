@@ -427,6 +427,7 @@ type EventsConfig struct {
 	HeartbeatEnabled  bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`               // Whether to enable heartbeat or not
 	HeartbeatInterval string `json:"heartbeat_interval" yaml:"heartbeat_interval"`             // Heartbeat interval (in seconds)
 	HeartbeatTimeout  string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`               // Heartbeat timeout (in seconds)
+	HeartbeatLog      bool   `json:"heartbeat_log" yaml:"heartbeat_log"`                       // Whether to log heartbeat or not
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper
