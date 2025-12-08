@@ -273,7 +273,7 @@ func handleNotification(payload string) {
 	}
 
 	eventType := strings.ToLower(strings.TrimSpace(event.Type))
-	cmn.DebugMsg(cmn.DbgLvlDebug, "API: Received event of type '%s'", eventType)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 
 	switch eventType {
 	case "system_event":
@@ -325,7 +325,7 @@ func processHeartbeatEvent(event cdb.Event) {
 		return
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "API: Heartbeat response sent")
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Heartbeat response sent")
 }
 
 func processSystemEvent(event cdb.Event) {
