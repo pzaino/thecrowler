@@ -53,6 +53,31 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// PipelineStatusReport is a struct that holds the status report of a crawling pipeline.
+type PipelineStatusReport struct {
+	PipelineID      uint64  `json:"pipeline_id"`
+	Source          string  `json:"source"`
+	SourceID        uint64  `json:"source_id"`
+	VDIID           string  `json:"vdi_id"`
+	PipelineStatus  string  `json:"pipeline_status"`
+	CrawlingStatus  string  `json:"crawling_status"`
+	NetInfoStatus   string  `json:"netinfo_status"`
+	HTTPInfoStatus  string  `json:"httpinfo_status"`
+	RunningTime     string  `json:"running_time"`
+	TotalPages      int64   `json:"total_pages"`
+	TotalErrors     int64   `json:"total_errors"`
+	TotalLinks      int64   `json:"total_links"`
+	TotalSkipped    int64   `json:"total_skipped"`
+	TotalDuplicates int64   `json:"total_duplicates"`
+	TotalLinksToGo  int64   `json:"total_links_to_go"`
+	TotalScrapes    int64   `json:"total_scrapes"`
+	TotalActions    int64   `json:"total_actions"`
+	LastRetry       int64   `json:"last_retry"`
+	LastWait        float64 `json:"last_wait"`
+	LastDelay       float64 `json:"last_delay"`
+	CollectionState string  `json:"collection_state"`
+}
+
 var (
 	limiter     *rate.Limiter // Rate limiter
 	configFile  *string       // Configuration file path
@@ -62,6 +87,10 @@ var (
 	sysReady    int           // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
 	// GRulesEngine Global rules engine
 	GRulesEngine rules.RuleEngine // GRulesEngine Global rules engine
+	// Global DB handler
+	dbHandler cdb.Handler
+	// Global Pipeline Status (read only!!!!!)
+	sysPipelineStatus *[]crowler.Status
 
 	// Prometheus metrics
 	totalPages = prometheus.NewGaugeVec(
@@ -280,6 +309,8 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Checking sources...")
 	// Initialize the pipeline status slice
 	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
+	// Assign the global pipeline status pointer
+	sysPipelineStatus = &PipelineStatus
 	// Set the maintenance time
 	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
@@ -359,7 +390,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 				"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
-		createEvent(*db, event)
+		createEvent(*db, event, 0)
 		totSrc := crawlSources(&workBlock) // Start the crawling of this batch of sources
 		event = cdb.Event{
 			Action:   "new",
@@ -373,7 +404,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 				"final_batch_size": totSrc,
 			},
 		}
-		createEvent(*db, event)
+		createEvent(*db, event, 0)
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Crawled '%d' sources in this batch", totSrc)
 
 		// We have completed all jobs, so we can handle signals for reloading the configuration
@@ -392,10 +423,10 @@ func performDatabaseMaintenance(db cdb.Handler) {
 	}
 }
 
-func createEvent(db cdb.Handler, event cdb.Event) {
+func createEvent(db cdb.Handler, event cdb.Event, flags int) {
 	event.Action = strings.ToLower(strings.TrimSpace(event.Action))
 
-	if event.Action == "" {
+	if (event.Action == "") && (flags&1 == 0) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Action field is empty, ignoring event")
 		return
 	}
@@ -1014,6 +1045,12 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		// Update the metrics
 		updateMetrics(status)
 
+		// If the pipeline is completed or errored, delete metrics from Pushgateway
+		if status.PipelineRunning.Load() == 2 || status.PipelineRunning.Load() == 3 {
+			// Delete before resetting
+			deleteMetricsFor(status)
+		}
+
 		// Reset the status if the pipeline has completed (display only the last report)
 		if status.PipelineRunning.Load() >= 2 {
 			status.PipelineRunning.Store(0)
@@ -1025,36 +1062,111 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 	}
 }
 
+var (
+	gaugeTotalPages      = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_pages"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalLinks      = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_links"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalSkipped    = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_skipped"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalDuplicates = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_duplicates"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalErrors     = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_errors"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalScraped    = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_scraped"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalActions    = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_actions"}, []string{"engine", "pipeline_id", "source"})
+	gaugeTotalFuzzing    = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_fuzzing"}, []string{"engine", "pipeline_id", "source"})
+	gaugeCurrentDepth    = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_current_depth"}, []string{"engine", "pipeline_id", "source"})
+	gaugeLastRetry       = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_last_retry"}, []string{"engine", "pipeline_id", "source"})
+	gaugeLastWait        = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_last_wait"}, []string{"engine", "pipeline_id", "source"})
+	gaugeLastDelay       = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_last_delay"}, []string{"engine", "pipeline_id", "source"})
+	gaugePipelineRunning = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_pipeline_running"}, []string{"engine", "pipeline_id", "source"})
+	gaugeCrawlingRunning = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_crawling_running"}, []string{"engine", "pipeline_id", "source"})
+	gaugeNetInfoRunning  = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_netinfo_running"}, []string{"engine", "pipeline_id", "source"})
+	gaugeHTTPInfoRunning = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_httpinfo_running"}, []string{"engine", "pipeline_id", "source"})
+	gaugeDetectedState   = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_detected_state"}, []string{"engine", "pipeline_id", "source"})
+)
+
+func deleteMetricsFor(status *crowler.Status) {
+	if !config.Prometheus.Enabled {
+		return
+	}
+
+	engine := cmn.GetMicroServiceName()
+	pid := fmt.Sprintf("%d", status.PipelineID)
+	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
+
+	// Job only; no grouping labels
+	if err := push.New(url, "crowler_engine").Delete(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Could not delete metrics for engine=%s pipeline=%s: %v", engine, pid, err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Metrics deleted for engine=%s pipeline=%s", engine, pid)
+	}
+}
+
 func updateMetrics(status *crowler.Status) {
 	if !config.Prometheus.Enabled {
 		return
 	}
 
-	// Update the metrics
+	engine := cmn.GetMicroServiceName()
+	pid := fmt.Sprintf("%d", status.PipelineID)
+	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
+
 	labels := prometheus.Labels{
-		"pipeline_id": fmt.Sprintf("%d", status.PipelineID),
+		"engine":      engine,
+		"pipeline_id": pid,
 		"source":      status.Source,
 	}
-	totalPages.With(labels).Set(float64(status.TotalPages.Load()))
-	totalLinks.With(labels).Set(float64(status.TotalLinks.Load()))
-	totalErrors.With(labels).Set(float64(status.TotalErrors.Load()))
+
+	// Update all metrics from Status
+	gaugeTotalPages.With(labels).Set(float64(status.TotalPages.Load()))
+	gaugeTotalLinks.With(labels).Set(float64(status.TotalLinks.Load()))
+	gaugeTotalSkipped.With(labels).Set(float64(status.TotalSkipped.Load()))
+	gaugeTotalDuplicates.With(labels).Set(float64(status.TotalDuplicates.Load()))
+	gaugeTotalErrors.With(labels).Set(float64(status.TotalErrors.Load()))
+	gaugeTotalScraped.With(labels).Set(float64(status.TotalScraped.Load()))
+	gaugeTotalActions.With(labels).Set(float64(status.TotalActions.Load()))
+	gaugeTotalFuzzing.With(labels).Set(float64(status.TotalFuzzing.Load()))
+	gaugeCurrentDepth.With(labels).Set(float64(status.CurrentDepth.Load()))
+	gaugeLastRetry.With(labels).Set(float64(status.LastRetry.Load()))
+	gaugeLastWait.With(labels).Set(status.LastWait)
+	gaugeLastDelay.With(labels).Set(status.LastDelay)
+	gaugePipelineRunning.With(labels).Set(float64(status.PipelineRunning.Load()))
+	gaugeCrawlingRunning.With(labels).Set(float64(status.CrawlingRunning.Load()))
+	gaugeNetInfoRunning.With(labels).Set(float64(status.NetInfoRunning.Load()))
+	gaugeHTTPInfoRunning.With(labels).Set(float64(status.HTTPInfoRunning.Load()))
+	gaugeDetectedState.With(labels).Set(float64(status.DetectedState.Load()))
+
+	// Prepare push collector (NO grouping labels)
+	p := push.New(url, "crowler_engine").
+		Collector(gaugeTotalPages).
+		Collector(gaugeTotalLinks).
+		Collector(gaugeTotalSkipped).
+		Collector(gaugeTotalDuplicates).
+		Collector(gaugeTotalErrors).
+		Collector(gaugeTotalScraped).
+		Collector(gaugeTotalActions).
+		Collector(gaugeTotalFuzzing).
+		Collector(gaugeCurrentDepth).
+		Collector(gaugeLastRetry).
+		Collector(gaugeLastWait).
+		Collector(gaugeLastDelay).
+		Collector(gaugePipelineRunning).
+		Collector(gaugeCrawlingRunning).
+		Collector(gaugeNetInfoRunning).
+		Collector(gaugeHTTPInfoRunning).
+		Collector(gaugeDetectedState)
 
 	// Push metrics
-	if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
-		Collector(totalPages).
-		// Add other collectors...
-		Grouping("pipeline_id", fmt.Sprintf("%d", status.PipelineID)).
-		Push(); err != nil {
+	if err := p.Push(); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Could not push metrics: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Metrics pushed for engine=%s pipeline=%s", engine, pid)
 	}
 
-	// Delete metrics if pipeline is complete
-	if status.PipelineRunning.Load() == 2 || status.PipelineRunning.Load() == 3 {
-		// Use the configured pushgateway URL
-		if err := push.New("http://"+config.Prometheus.Host+":"+strconv.Itoa(config.Prometheus.Port), "crowler_engine").
-			Grouping("pipeline_id", fmt.Sprintf("%d", status.PipelineID)).
-			Delete(); err != nil {
+	// Remove metrics when pipeline completes
+	running := status.PipelineRunning.Load()
+	if running == 2 || running == 3 {
+		if err := push.New(url, "crowler_engine").Delete(); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Could not delete metrics: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Metrics deleted for engine=%s pipeline=%s", engine, pid)
 		}
 	}
 }
@@ -1108,6 +1220,7 @@ func initAll(configFile *string, config *cfg.Config,
 	if err != nil {
 		return fmt.Errorf("creating database handler: %s", err)
 	}
+	dbHandler = *db
 
 	// Set the rate limiter
 	var rl, bl int
@@ -1336,14 +1449,19 @@ func handleNotification(payload string) {
 	}
 
 	// Log the event for debug purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received: %+v", event)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "New Event Received of type '%s': %+v", strings.ToLower(strings.TrimSpace(event.Type)), event)
 
 	// Process the Event
 	processEvent(event)
 }
 
 func processEvent(event cdb.Event) {
-	switch strings.ToLower(strings.TrimSpace(event.Type)) {
+	eventType := strings.ToLower(strings.TrimSpace(event.Type))
+	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing event of type: %s", eventType)
+	switch eventType {
+	case "crowler_heartbeat":
+		// Heartbeat event
+		processHeartbeatEvent(event)
 	case "system_event":
 		// System event
 		processSystemEvent(event)
@@ -1377,6 +1495,103 @@ func processSystemEvent(event cdb.Event) {
 		// Ignore event
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, not interested in this action: %s", action)
 	}
+}
+
+// processHeartbeatEvent will generate a new event with a response which contains the current pipeline status
+func processHeartbeatEvent(event cdb.Event) {
+	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
+
+	// Prepare the response event
+	responseEvent := cdb.Event{
+		Type:      "crowler_heartbeat_response",
+		Severity:  "crowler_system_info",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Details:   make(map[string]interface{}),
+	}
+	responseEvent.Details["parent_event_id"] = event.ID
+	responseEvent.Details["origin_type"] = "crowler-engine"
+	responseEvent.Details["origin_name"] = cmn.GetMicroServiceName()
+	responseEvent.Details["origin_time"] = time.Now().Format(time.RFC3339)
+	responseEvent.Details["status"] = "ok"
+	responseEvent.Details["type"] = "heartbeat_response"
+	// Add the current pipeline status to the response event
+	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
+
+	responseEvent.Action = "new"
+
+	// Send the response event to the database
+	createEvent(dbHandler, responseEvent, 1)
+}
+
+func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport {
+	reports := make([]PipelineStatusReport, 0, len(*PipelineStatus))
+
+	for idx := 0; idx < len(*PipelineStatus); idx++ {
+		status := &(*PipelineStatus)[idx]
+
+		// Skip non running
+		if status.PipelineRunning.Load() == 0 {
+			continue
+		}
+
+		var totalRunningTime time.Duration
+		if status.EndTime.IsZero() {
+			totalRunningTime = time.Since(status.StartTime)
+		} else {
+			totalRunningTime = status.EndTime.Sub(status.StartTime)
+		}
+
+		totalLinksToGo := status.TotalLinks.Load() -
+			(status.TotalPages.Load() + status.TotalSkipped.Load() + status.TotalDuplicates.Load())
+		if totalLinksToGo < 0 {
+			totalLinksToGo = 0
+		}
+
+		// Stale detection (same logic as in logStatus)
+		if (status.PipelineRunning.Load() == 1) &&
+			(totalRunningTime > 2*time.Minute) &&
+			(status.CrawlingRunning.Load() == 0) &&
+			(status.NetInfoRunning.Load() == 0) &&
+			(status.HTTPInfoRunning.Load() == 0) {
+
+			status.DetectedState.Store(1)
+		} else {
+			if (status.DetectedState.Load() & 0x01) != 0 {
+				tmp := status.DetectedState.Load() & 0xfffe
+				status.DetectedState.Store(tmp)
+			}
+		}
+
+		reports = append(reports, PipelineStatusReport{
+			PipelineID:      status.PipelineID + 1,
+			Source:          status.Source,
+			SourceID:        status.SourceID,
+			VDIID:           status.VDIID,
+			PipelineStatus:  StatusStr(int(status.PipelineRunning.Load())),
+			CrawlingStatus:  StatusStr(int(status.CrawlingRunning.Load())),
+			NetInfoStatus:   StatusStr(int(status.NetInfoRunning.Load())),
+			HTTPInfoStatus:  StatusStr(int(status.HTTPInfoRunning.Load())),
+			RunningTime:     totalRunningTime.String(),
+			TotalPages:      int64(status.TotalPages.Load()),
+			TotalErrors:     int64(status.TotalErrors.Load()),
+			TotalLinks:      int64(status.TotalLinks.Load()),
+			TotalSkipped:    int64(status.TotalSkipped.Load()),
+			TotalDuplicates: int64(status.TotalDuplicates.Load()),
+			TotalLinksToGo:  int64(totalLinksToGo),
+			TotalScrapes:    int64(status.TotalScraped.Load()),
+			TotalActions:    int64(status.TotalActions.Load()),
+			LastRetry:       int64(status.LastRetry.Load()),
+			LastWait:        status.LastWait,
+			LastDelay:       status.LastDelay,
+			CollectionState: CollectionState(int(status.DetectedState.Load())),
+		})
+
+		if status.PipelineRunning.Load() >= 2 {
+			status.PipelineRunning.Store(0)
+		}
+	}
+
+	return reports
 }
 
 func updateDebugLevel(newLevel string) {

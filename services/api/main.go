@@ -16,6 +16,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -25,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,6 +35,8 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 	"golang.org/x/time/rate"
 )
 
@@ -50,6 +55,11 @@ var (
 
 	sysReadyMtx sync.RWMutex // Mutex to protect the SysReady variable
 	sysReady    int          // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
+
+	// Counters for monitoring (atomic)
+	totalRequests atomic.Int64
+	totalErrors   atomic.Int64
+	totalSuccess  atomic.Int64
 )
 
 func setSysReady(newStatus int) {
@@ -165,16 +175,19 @@ func main() {
 			case syscall.SIGTERM:
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
+				updateMetrics()
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
+				updateMetrics()
 				os.Exit(0)
 
 			case syscall.SIGHUP:
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
+				updateMetrics()
 				configMutex.Lock()
 				err := initAll(configFile, &config, &limiter)
 				if err != nil {
@@ -233,6 +246,28 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
+	// ---------------------------------------------------------
+	// Start Event Listener (Search API participates in heartbeats)
+	// ---------------------------------------------------------
+	go cdb.ListenForEvents(&dbHandler, handleNotification)
+
+	// ---------------------------------------------------------
+	// Start Prometheus metrics updater
+	// ---------------------------------------------------------
+	if config.Prometheus.Enabled {
+		// Init immediate metrics update
+		updateMetrics()
+		// Start periodic metrics update
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+
+			for range ticker.C {
+				updateMetrics()
+			}
+		}()
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
@@ -247,6 +282,197 @@ func main() {
 	}
 	setSysReady(0) // Indicate system is NOT ready
 }
+
+// ---------------------------------------------------------
+// Event Listener for the Search API
+// ---------------------------------------------------------
+
+func handleNotification(payload string) {
+	var event cdb.Event
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "API: Failed to decode incoming event: %v", err)
+		return
+	}
+
+	eventType := strings.ToLower(strings.TrimSpace(event.Type))
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
+
+	switch eventType {
+	case "system_event":
+		processSystemEvent(event)
+	case "crowler_heartbeat":
+		processHeartbeatEvent(event)
+	default:
+		// Ignore all other events
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "API: Ignoring event type '%s'", eventType)
+	}
+}
+
+// ---------------------------------------------------------
+// Heartbeat response logic for The CROWler Search API
+// ---------------------------------------------------------
+
+func processHeartbeatEvent(event cdb.Event) {
+	// SearchAPI has a single pipeline with info, so let's respond accordingly
+	pipelineResults := make([]any, 0)
+	pipelineResults = append(pipelineResults, map[string]any{
+		"pipeline_name":   "search_api_pipeline",
+		"pipeline_status": "ready",
+		"Total Requests":  totalRequests.Load(),
+		"Total Errors":    totalErrors.Load(),
+		"Total Success":   totalSuccess.Load(),
+	})
+	resp := cdb.Event{
+		Type:      "crowler_heartbeat_response",
+		Severity:  "crowler_system_info",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Details: map[string]any{
+			"parent_event_id": event.ID,
+			"type":            "heartbeat_response",
+			"status":          "ok",
+			"origin_name":     cmn.GetMicroServiceName(),
+			"origin_type":     "crowler-api",
+			"origin_time":     time.Now().Format(time.RFC3339),
+			"pipeline_status": pipelineResults,
+		},
+	}
+
+	// Best effort: don't block API operations
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := cdb.CreateEvent(ctx, &dbHandler, resp)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "API: Failed to send heartbeat response: %v", err)
+		return
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Heartbeat response sent")
+}
+
+func processSystemEvent(event cdb.Event) {
+	action, _ := event.Details["action"].(string)
+	action = strings.ToLower(strings.TrimSpace(action))
+
+	switch action {
+	case "update_debug_level":
+		if lv, ok := event.Details["level"].(string); ok {
+			newLevel := strings.ToLower(strings.TrimSpace(lv))
+			go updateDebugLevel(newLevel)
+		}
+	default:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "API: Ignoring system_event action '%s'", action)
+	}
+}
+
+func updateDebugLevel(newLevel string) {
+	// Get configuration lock
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	var dbgLvl cmn.DbgLevel
+	switch newLevel {
+	case "debug":
+		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug")
+	case "debug1":
+		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug1")
+	case "debug2":
+		config.DebugLevel = 2
+		cmn.SetDebugLevelFromString("debug2")
+	case "debug3":
+		config.DebugLevel = 3
+		cmn.SetDebugLevelFromString("debug3")
+	case "debug4":
+		config.DebugLevel = 4
+		cmn.SetDebugLevelFromString("debug4")
+	case "debug5":
+		config.DebugLevel = 5
+		cmn.SetDebugLevelFromString("debug5")
+	case "info":
+		config.DebugLevel = 0
+		cmn.SetDebugLevelFromString("info")
+	default:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, invalid debug level specified: %s", newLevel)
+		return
+	}
+
+	// Update the debug level
+	dbgLvl = cmn.DbgLevel(config.DebugLevel)
+	cmn.SetDebugLevel(dbgLvl)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Debug level updated to: %d", cmn.GetDebugLevel())
+}
+
+// -------------------------------------------
+// Handle Prometheus Push-Gateway Metrics
+//--------------------------------------------
+
+var (
+	gaugeSearchTotalRequests = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_search_total_requests",
+			Help: "Total number of search requests",
+		},
+		[]string{"engine"},
+	)
+
+	gaugeSearchTotalErrors = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_search_total_errors",
+			Help: "Total number of search errors",
+		},
+		[]string{"engine"},
+	)
+
+	gaugeSearchTotalSuccess = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_search_total_success",
+			Help: "Total number of successful searches",
+		},
+		[]string{"engine"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(
+		gaugeSearchTotalRequests,
+		gaugeSearchTotalErrors,
+		gaugeSearchTotalSuccess,
+	)
+}
+
+func updateMetrics() {
+	if !config.Prometheus.Enabled {
+		return
+	}
+
+	engine := cmn.GetMicroServiceName()
+	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
+
+	labels := prometheus.Labels{
+		"engine": engine,
+	}
+
+	gaugeSearchTotalRequests.With(labels).Set(float64(totalRequests.Load()))
+	gaugeSearchTotalErrors.With(labels).Set(float64(totalErrors.Load()))
+	gaugeSearchTotalSuccess.With(labels).Set(float64(totalSuccess.Load()))
+
+	p := push.New(url, "crowler_search_api").
+		Collector(gaugeSearchTotalRequests).
+		Collector(gaugeSearchTotalErrors).
+		Collector(gaugeSearchTotalSuccess)
+
+	if err := p.Push(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "SearchAPI: Could not push metrics: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "SearchAPI: Metrics pushed for engine=%s", engine)
+	}
+}
+
+// -------------------------------------------
+// API v1 Handlers and Middlewares
+//--------------------------------------------
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
@@ -425,12 +651,18 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 		)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 
 		handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -452,8 +684,10 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -475,12 +709,18 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -502,8 +742,10 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -525,12 +767,18 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -553,8 +801,10 @@ func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing scraped_data search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -576,12 +826,18 @@ func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -604,17 +860,25 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, retCode)
 		} else {
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -637,8 +901,10 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -660,12 +926,18 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -688,8 +960,10 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 			var retCode int
 			if config.API.Return404 {
 				retCode = http.StatusNotFound
+				totalErrors.Add(1)
 			} else {
 				retCode = successCode
+				totalSuccess.Add(1)
 			}
 			handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, retCode)
 		} else {
@@ -711,12 +985,18 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			)
+			if err != nil {
+				totalErrors.Add(1)
+			} else {
+				totalSuccess.Add(1)
+			}
 			handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
 		}
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -735,11 +1015,17 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performAddSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -758,11 +1044,17 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performRemoveSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -781,11 +1073,17 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -804,11 +1102,17 @@ func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performVacuumSource(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -827,11 +1131,17 @@ func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		results, err := performGetURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }
@@ -845,11 +1155,17 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 		successCode := http.StatusOK
 
 		results, err := performGetAllURLStatus(getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
 		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
 }

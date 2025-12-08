@@ -89,6 +89,7 @@ type Crawler struct {
 	RequestPlugins        bool            `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
 	RequestFrames         bool            `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
 	PreventDuplicateURLs  bool            `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
+	RefreshContent        bool            `json:"refresh_content" yaml:"refresh_content"`                                   // Whether to refresh the content of the page or not
 	CollectHTML           bool            `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
 	CollectImages         bool            `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
 	CollectFiles          bool            `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not
@@ -423,6 +424,10 @@ type EventsConfig struct {
 	ReadTimeout       int    `json:"read_timeout" yaml:"read_timeout"`                         // ReadTimeout is the maximum duration for reading the entire request
 	WriteTimeout      int    `json:"write_timeout" yaml:"write_timeout"`                       // WriteTimeout
 	EventRemoval      string `json:"automatic_events_removal" yaml:"automatic_events_removal"` // Automatic events removal from the database (always, fails, success, never or "")
+	HeartbeatEnabled  bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`               // Whether to enable heartbeat or not
+	HeartbeatInterval string `json:"heartbeat_interval" yaml:"heartbeat_interval"`             // Heartbeat interval (in seconds)
+	HeartbeatTimeout  string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`               // Heartbeat timeout (in seconds)
+	HeartbeatLog      bool   `json:"heartbeat_log" yaml:"heartbeat_log"`                       // Whether to log heartbeat or not
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper

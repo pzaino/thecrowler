@@ -692,6 +692,11 @@
           "description": "This is a flag that tells the CROWler to prevent crawling of duplicate URLs. This can be useful to reduce redundant work and save resources. It's a tag that is not reliable 100%, but it can help to reduce the number of duplicate URLs that the CROWler will crawl.",
           "type": "boolean"
         },
+        "refresh_content": {
+          "title": "CROWler Engine Refresh Content",
+          "description": "This is a flag that tells the CROWler to refresh data for each page, not create multiple collection's copies. When enabled, the CROWler will delete the current data for a page in the DB and recollect anew. This is useful to create solutions that only store 'current' data vs solutions that need 'historical data' (e.g., for change detection).",
+          "type": "boolean"
+        },
         "collect_html": {
           "title": "CROWler Engine Collect Page's HTML",
           "description": "This is a flag that tells the CROWler to collect the HTML of a website. This is also useful for debugging purposes. This collection is automatic and for each page of a Source.",
@@ -1176,6 +1181,33 @@
             "on_success",
             "never",
             ""
+          ]
+        },
+        "heartbeat_enabled": {
+          "title": "CROWler Events Manager Heartbeat Enabled",
+          "description": "This is a flag that tells the CROWler to enable the Events Manager heartbeat. The heartbeat is a periodic signal sent by the Events Manager to the entire fleet to indicate and collect that it is operational. This is useful for monitoring purposes.",
+          "type": "boolean"
+        },
+        "heartbeat_interval": {
+          "title": "CROWler Events Manager Heartbeat Interval",
+          "description": "This is the interval for the Events Manager heartbeat. It is the amount of time between each heartbeat signal sent by the Events Manager to the entire fleet.",
+          "type": "string",
+          "examples": [
+            "30s",
+            "1m",
+            "5m",
+            "60 seconds"
+          ]
+        },
+        "heartbeat_timeout": {
+          "title": "CROWler Events Manager Heartbeat Timeout",
+          "description": "This is the timeout for the Events Manager heartbeat. It is the maximum amount of time that the CROWler Events Manager will wait for the the fleet heartbeat responses before closing the response collection.",
+          "type": "string",
+          "examples": [
+            "10s",
+            "30s",
+            "1m",
+            "60 seconds"
           ]
         }
       },

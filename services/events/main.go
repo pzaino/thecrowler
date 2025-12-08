@@ -30,6 +30,9 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 )
 
 const (
@@ -92,6 +95,9 @@ func main() {
 	cmn.InitLogger("TheCROWlerEventsAPI")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Events API is starting...")
 
+	// Register metrics
+	registerMetrics()
+
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
 	signals := make(chan os.Signal, 1)
@@ -148,6 +154,16 @@ func main() {
 	// Start the event listener (on a separate go routine)
 	go cdb.ListenForEvents(&dbHandler, handleNotification)
 
+	// Setup prometheus push gateway if enabled
+	if config.Prometheus.Enabled && strings.TrimSpace(config.Prometheus.Host) != "" {
+		go func() {
+			for {
+				updateMetrics()
+				time.Sleep(3 * time.Second)
+			}
+		}()
+	}
+
 	srv := &http.Server{
 		Addr: config.Events.Host + ":" + fmt.Sprintf("%d", config.Events.Port),
 
@@ -190,6 +206,11 @@ func main() {
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
+
+	// Start heartbeat loop if enabled
+	if config.Events.HeartbeatEnabled {
+		go startHeartbeatLoop(&dbHandler, config)
+	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
@@ -602,11 +623,13 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 // Handle the notification received
 func handleNotification(payload string) {
 	var event cdb.Event
+	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
 		// Put the event in the jobQueue
 		jobQueue <- event
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
+		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	}
 }
 
@@ -694,6 +717,7 @@ func processInternalEvent(event cdb.Event) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Action field is empty, ignoring event")
 		return
 	}
+	mEventsTotalInternal.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 
 	const (
 		maxRetries  = 5
@@ -714,6 +738,7 @@ func processInternalEvent(event cdb.Event) {
 
 			if !isRetryable(err) {
 				cmn.DebugMsg(cmn.DbgLvlError, "CreateEvent non-retryable error: %v", err)
+				mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 				return
 			}
 
@@ -732,6 +757,7 @@ func processInternalEvent(event cdb.Event) {
 
 		// Final failure
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
+		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	}
 }
 
@@ -757,16 +783,24 @@ func isRetryable(err error) bool {
 	return false
 }
 
-// Process the event
+// Process the "external" event
 func processEvent(event cdb.Event) {
+
+	if maybeHandleHeartbeatResponse(event) {
+		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
+		return
+	}
+
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
+		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 		return
 	}
+	mEventsTotalExternal.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 
 	// Set a shared state for the event processing
 	processingResult := []string{}
@@ -857,6 +891,7 @@ func processEvent(event cdb.Event) {
 					}
 				}
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to execute agent '%s': %v", jobs, err)
+				mEventsTotalErrors.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 			} else {
 				processingResult = append(processingResult, "success")
 			}
@@ -1120,4 +1155,155 @@ func validateAgent(data []byte) error {
 	}
 	// Validate against schema if necessary
 	return nil
+}
+
+// --------------------------------------------
+// Handle Prometheus Push Gateway integration
+// --------------------------------------------
+
+// Prometheus Metrics for Events Manager
+var (
+	mEventsTotalReceived = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crowler_events_total_received",
+			Help: "Total number of events received, from DB or API",
+		},
+		[]string{"engine"},
+	)
+
+	mEventsTotalProcessed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crowler_events_total_processed",
+			Help: "Total number of events fully processed",
+		},
+		[]string{"engine"},
+	)
+
+	mEventsTotalInternal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crowler_events_total_internal",
+			Help: "Total events processed as internal events",
+		},
+		[]string{"engine"},
+	)
+
+	mEventsTotalExternal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crowler_events_total_external",
+			Help: "Total events processed by plugins or agents",
+		},
+		[]string{"engine"},
+	)
+
+	mEventsTotalErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crowler_events_total_errors",
+			Help: "Total number of errors while processing events",
+		},
+		[]string{"engine"},
+	)
+
+	mEventsTotalDropped = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crowler_events_total_dropped",
+			Help: "Events dropped because queues were full",
+		},
+		[]string{"engine"},
+	)
+
+	mQueueJobLength = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_queue_jobs",
+			Help: "Current number of items in jobQueue",
+		},
+		[]string{"engine"},
+	)
+
+	mQueueInternalLength = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_queue_internal",
+			Help: "Current number of items in internalQ",
+		},
+		[]string{"engine"},
+	)
+
+	mQueueExternalLength = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_queue_external",
+			Help: "Current number of items in externalQ",
+		},
+		[]string{"engine"},
+	)
+
+	mWorkersRunning = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_workers_running",
+			Help: "Number of workers active",
+		},
+		[]string{"engine"},
+	)
+
+	mSysReady = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_ready_state",
+			Help: "System readiness state (0=down,1=starting,2=ready)",
+		},
+		[]string{"engine"},
+	)
+)
+
+func registerMetrics() {
+	prometheus.MustRegister(
+		mEventsTotalReceived,
+		mEventsTotalProcessed,
+		mEventsTotalInternal,
+		mEventsTotalExternal,
+		mEventsTotalErrors,
+		mEventsTotalDropped,
+		mQueueJobLength,
+		mQueueInternalLength,
+		mQueueExternalLength,
+		mWorkersRunning,
+		mSysReady,
+	)
+}
+
+func updateMetrics() {
+	if !config.Prometheus.Enabled {
+		return
+	}
+
+	engine := cmn.GetMicroServiceName()
+	labels := prometheus.Labels{"engine": engine}
+
+	// Queue sizes
+	mQueueJobLength.With(labels).Set(float64(len(jobQueue)))
+	mQueueInternalLength.With(labels).Set(float64(len(internalQ)))
+	mQueueExternalLength.With(labels).Set(float64(len(externalQ)))
+
+	// Workers running: not exact number but proportional
+	mWorkersRunning.With(labels).Set(float64(runtime.NumGoroutine()))
+
+	// Ready state
+	mSysReady.With(labels).Set(float64(getSysReady()))
+
+	// Pushgateway
+	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
+
+	p := push.New(url, "crowler_events").
+		Collector(mQueueJobLength).
+		Collector(mQueueInternalLength).
+		Collector(mQueueExternalLength).
+		Collector(mWorkersRunning).
+		Collector(mSysReady).
+		Collector(mEventsTotalReceived).
+		Collector(mEventsTotalProcessed).
+		Collector(mEventsTotalInternal).
+		Collector(mEventsTotalExternal).
+		Collector(mEventsTotalErrors).
+		Collector(mEventsTotalDropped)
+
+	if err := p.Push(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "EventsAPI Prometheus push failed: %v", err)
+	}
 }
