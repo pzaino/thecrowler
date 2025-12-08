@@ -459,7 +459,6 @@ func updateMetrics() {
 	gaugeSearchTotalSuccess.With(labels).Set(float64(totalSuccess.Load()))
 
 	p := push.New(url, "crowler_search_api").
-		Grouping("engine", engine).
 		Collector(gaugeSearchTotalRequests).
 		Collector(gaugeSearchTotalErrors).
 		Collector(gaugeSearchTotalSuccess)

@@ -800,6 +800,7 @@ func processEvent(event cdb.Event) {
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 		return
 	}
+	mEventsTotalExternal.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 
 	// Set a shared state for the event processing
 	processingResult := []string{}
@@ -890,6 +891,7 @@ func processEvent(event cdb.Event) {
 					}
 				}
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to execute agent '%s': %v", jobs, err)
+				mEventsTotalErrors.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 			} else {
 				processingResult = append(processingResult, "success")
 			}
@@ -1289,7 +1291,6 @@ func updateMetrics() {
 	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
 
 	p := push.New(url, "crowler_events").
-		Grouping("engine", engine).
 		Collector(mQueueJobLength).
 		Collector(mQueueInternalLength).
 		Collector(mQueueExternalLength).
