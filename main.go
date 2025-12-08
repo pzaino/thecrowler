@@ -1109,10 +1109,8 @@ func updateMetrics(status *crowler.Status) {
 	gaugeHTTPInfoRunning.With(labels).Set(float64(status.HTTPInfoRunning.Load()))
 	gaugeDetectedState.With(labels).Set(float64(status.DetectedState.Load()))
 
-	// Prepare push collector
+	// Prepare push collector (NO grouping labels)
 	p := push.New(url, "crowler_engine").
-		Grouping("engine", engine).
-		Grouping("pipeline_id", pid).
 		Collector(gaugeTotalPages).
 		Collector(gaugeTotalLinks).
 		Collector(gaugeTotalSkipped).
@@ -1138,13 +1136,10 @@ func updateMetrics(status *crowler.Status) {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Metrics pushed for engine=%s pipeline=%s", engine, pid)
 	}
 
-	// When pipeline is complete: remove metrics from Pushgateway
+	// Remove metrics when pipeline completes
 	running := status.PipelineRunning.Load()
 	if running == 2 || running == 3 {
-		if err := push.New(url, "crowler_engine").
-			Grouping("engine", engine).
-			Grouping("pipeline_id", pid).
-			Delete(); err != nil {
+		if err := push.New(url, "crowler_engine").Delete(); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Could not delete metrics: %v", err)
 		} else {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "Metrics deleted for engine=%s pipeline=%s", engine, pid)
