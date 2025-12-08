@@ -35,6 +35,8 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 	"golang.org/x/time/rate"
 )
 
@@ -173,16 +175,19 @@ func main() {
 			case syscall.SIGTERM:
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
+				updateMetrics()
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
+				updateMetrics()
 				os.Exit(0)
 
 			case syscall.SIGHUP:
 				// Handle SIGHUP
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGHUP received, will reload configuration as soon as all pending jobs are completed...")
+				updateMetrics()
 				configMutex.Lock()
 				err := initAll(configFile, &config, &limiter)
 				if err != nil {
@@ -245,6 +250,23 @@ func main() {
 	// Start Event Listener (Search API participates in heartbeats)
 	// ---------------------------------------------------------
 	go cdb.ListenForEvents(&dbHandler, handleNotification)
+
+	// ---------------------------------------------------------
+	// Start Prometheus metrics updater
+	// ---------------------------------------------------------
+	if config.Prometheus.Enabled {
+		// Init immediate metrics update
+		updateMetrics()
+		// Start periodic metrics update
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+
+			for range ticker.C {
+				updateMetrics()
+			}
+		}()
+	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
@@ -382,7 +404,74 @@ func updateDebugLevel(newLevel string) {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Debug level updated to: %d", cmn.GetDebugLevel())
 }
 
-// --------------------------------------------
+// -------------------------------------------
+// Handle Prometheus Push-Gateway Metrics
+//--------------------------------------------
+
+var (
+	gaugeSearchTotalRequests = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_search_total_requests",
+			Help: "Total number of search requests",
+		},
+		[]string{"engine"},
+	)
+
+	gaugeSearchTotalErrors = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_search_total_errors",
+			Help: "Total number of search errors",
+		},
+		[]string{"engine"},
+	)
+
+	gaugeSearchTotalSuccess = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_search_total_success",
+			Help: "Total number of successful searches",
+		},
+		[]string{"engine"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(
+		gaugeSearchTotalRequests,
+		gaugeSearchTotalErrors,
+		gaugeSearchTotalSuccess,
+	)
+}
+
+func updateMetrics() {
+	if !config.Prometheus.Enabled {
+		return
+	}
+
+	engine := cmn.GetMicroServiceName()
+	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
+
+	labels := prometheus.Labels{
+		"engine": engine,
+	}
+
+	gaugeSearchTotalRequests.With(labels).Set(float64(totalRequests.Load()))
+	gaugeSearchTotalErrors.With(labels).Set(float64(totalErrors.Load()))
+	gaugeSearchTotalSuccess.With(labels).Set(float64(totalSuccess.Load()))
+
+	p := push.New(url, "crowler_search_api").
+		Grouping("engine", engine).
+		Collector(gaugeSearchTotalRequests).
+		Collector(gaugeSearchTotalErrors).
+		Collector(gaugeSearchTotalSuccess)
+
+	if err := p.Push(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "SearchAPI: Could not push metrics: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "SearchAPI: Metrics pushed for engine=%s", engine)
+	}
+}
+
+// -------------------------------------------
 // API v1 Handlers and Middlewares
 //--------------------------------------------
 

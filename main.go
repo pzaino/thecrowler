@@ -53,6 +53,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// PipelineStatusReport is a struct that holds the status report of a crawling pipeline.
 type PipelineStatusReport struct {
 	PipelineID      uint64  `json:"pipeline_id"`
 	Source          string  `json:"source"`
@@ -1044,6 +1045,12 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		// Update the metrics
 		updateMetrics(status)
 
+		// If the pipeline is completed or errored, delete metrics from Pushgateway
+		if status.PipelineRunning.Load() == 2 || status.PipelineRunning.Load() == 3 {
+			// Delete before resetting
+			deleteMetricsFor(status)
+		}
+
 		// Reset the status if the pipeline has completed (display only the last report)
 		if status.PipelineRunning.Load() >= 2 {
 			status.PipelineRunning.Store(0)
@@ -1074,6 +1081,23 @@ var (
 	gaugeHTTPInfoRunning = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_httpinfo_running"}, []string{"engine", "pipeline_id", "source"})
 	gaugeDetectedState   = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_detected_state"}, []string{"engine", "pipeline_id", "source"})
 )
+
+func deleteMetricsFor(status *crowler.Status) {
+	if !config.Prometheus.Enabled {
+		return
+	}
+
+	engine := cmn.GetMicroServiceName()
+	pid := fmt.Sprintf("%d", status.PipelineID)
+	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
+
+	// Job only; no grouping labels
+	if err := push.New(url, "crowler_engine").Delete(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Could not delete metrics for engine=%s pipeline=%s: %v", engine, pid, err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Metrics deleted for engine=%s pipeline=%s", engine, pid)
+	}
+}
 
 func updateMetrics(status *crowler.Status) {
 	if !config.Prometheus.Enabled {
