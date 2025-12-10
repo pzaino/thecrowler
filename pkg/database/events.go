@@ -17,6 +17,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -66,21 +68,45 @@ func InitializeScheduler(db *Handler) {
 // CreateEvent creates a new event in the database.
 // It receives in input an Event struct and returns the Event UID and an error if the operation fails.
 func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
-	// get the current timestamp
+	// Fill timestamp if missing
 	if e.Timestamp == "" {
 		e.Timestamp = time.Now().Format(time.RFC3339)
 	}
 
-	// Generate a unique identifier for the event
+	// Generate deterministic SHA256 UID
 	uid := GenerateEventUID(e)
 	e.ID = uid
 
-	// Execute the query
-	_, err := (*db).ExecContext(ctx, `
-		INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		e.ID, e.SourceID, e.Type, e.Severity, e.Timestamp, cmn.ConvertMapToString(e.Details))
+	// Start a transaction
+	tx, err := (*db).BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelReadCommitted,
+	})
 	if err != nil {
+		return "", err
+	}
+
+	// Always rollback unless commit succeeds
+	defer func() { _ = tx.Rollback() }()
+
+	// Exec inside the transaction
+	_, err = tx.ExecContext(ctx, `
+        INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details)
+        VALUES ($1, $2, $3, $4, $5, $6)
+    `,
+		e.ID,
+		e.SourceID,
+		e.Type,
+		e.Severity,
+		e.Timestamp,
+		cmn.ConvertMapToString(e.Details),
+	)
+
+	if err != nil {
+		return "", err
+	}
+
+	// Commit
+	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 
@@ -103,8 +129,15 @@ func CreateEventWithRetries(db *Handler, event Event) (string, error) {
 
 		cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
 
-		// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
-		// if !isRetryable(err) { break }
+		// classify non-retryable errors
+		if pgErr, ok := err.(*pgconn.PgError); ok {
+			switch pgErr.Code {
+			case "23505": // duplicate key
+				return "", err
+			case "22P02", "23514": // bad input, constraint fail
+				return "", err
+			}
+		}
 
 		time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
 	}

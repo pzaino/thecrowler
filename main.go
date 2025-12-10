@@ -22,7 +22,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -431,25 +430,11 @@ func createEvent(db cdb.Handler, event cdb.Event, flags int) {
 		return
 	}
 
-	if event.Action == "new" {
-		const maxRetries = 5
-		const baseDelay = 10 * time.Millisecond
+	if event.Action == "new" { // nolint:goconst // it's ok here to have a duplicate "new"
 
-		var err error
-		for i := 0; i < maxRetries; i++ {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, err = cdb.CreateEvent(ctx, &db, event)
-			cancel()
-			if err == nil {
-				return // success!
-			}
-
-			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
-
-			// TODO: only retry on known transient DB errors (e.g., connection refused, timeout)
-			// if !isRetryable(err) { break }
-
-			time.Sleep(time.Duration(i+1) * baseDelay) // linear backoff (or switch to exponential if needed)
+		_, err := cdb.CreateEventWithRetries(&db, event)
+		if err == nil {
+			return // success!
 		}
 
 		// Final failure

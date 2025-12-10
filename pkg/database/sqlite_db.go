@@ -91,6 +91,11 @@ func (handler *SQLiteHandler) Begin() (*sql.Tx, error) {
 	return handler.db.Begin()
 }
 
+// BeginTx starts a transaction with the given context and options
+func (handler *SQLiteHandler) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return handler.db.BeginTx(ctx, opts)
+}
+
 // Commit commits a transaction
 func (handler *SQLiteHandler) Commit(tx *sql.Tx) error {
 	return tx.Commit()

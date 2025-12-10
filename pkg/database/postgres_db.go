@@ -194,6 +194,11 @@ func (handler *PostgresHandler) Begin() (*sql.Tx, error) {
 	return handler.db.Begin()
 }
 
+// BeginTx starts a transaction with a context and options
+func (handler *PostgresHandler) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return handler.db.BeginTx(ctx, opts)
+}
+
 // Commit commits a transaction
 func (handler *PostgresHandler) Commit(tx *sql.Tx) error {
 	return tx.Commit()

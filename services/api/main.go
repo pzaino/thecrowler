@@ -16,7 +16,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -337,11 +336,7 @@ func processHeartbeatEvent(event cdb.Event) {
 		},
 	}
 
-	// Best effort: don't block API operations
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := cdb.CreateEvent(ctx, &dbHandler, resp)
+	_, err := cdb.CreateEventWithRetries(&dbHandler, resp)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "API: Failed to send heartbeat response: %v", err)
 		return
