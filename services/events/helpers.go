@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -108,10 +107,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	uid, err := cdb.CreateEvent(ctx, db, event)
+	uid, err := cdb.CreateEventWithRetries(db, event)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to create event: %v", err)
 		heartbeatMu.Lock()

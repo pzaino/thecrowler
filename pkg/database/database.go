@@ -48,6 +48,7 @@ type Handler interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	DBMS() string
 	Begin() (*sql.Tx, error)
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 	Commit(tx *sql.Tx) error
 	Rollback(tx *sql.Tx) error
 	QueryRow(query string, args ...interface{}) *sql.Row
