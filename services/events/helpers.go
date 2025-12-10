@@ -35,6 +35,9 @@ var durationUnits = map[string]time.Duration{
 	"hrs":     time.Hour,
 	"hour":    time.Hour,
 	"hours":   time.Hour,
+	"d":       24 * time.Hour,
+	"day":     24 * time.Hour,
+	"days":    24 * time.Hour,
 }
 
 // handleErrorAndRespond encapsulates common error handling and JSON response logic.
@@ -276,9 +279,17 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 }
 
 func canScheduleDBMaintenance() bool {
+	// Check if we have an interval
+	if strings.TrimSpace(config.Events.SysDBMaintenance) == "" {
+		return false
+	}
+
+	// Get schedule time from config
+	interval := parseDuration(config.Events.SysDBMaintenance)
+
 	// Never schedule if last run was less than 1 hour ago
 	if !lastDBMaintenance.IsZero() {
-		if time.Since(lastDBMaintenance) < time.Hour {
+		if time.Since(lastDBMaintenance) < interval {
 			return false
 		}
 	}
@@ -332,13 +343,13 @@ func parseDuration(s string) time.Duration {
 
 		n, err := strconv.ParseFloat(nStr, 64)
 		if err != nil {
-			i += 1
+			i++
 			continue
 		}
 
 		unit, ok := durationUnits[uStr]
 		if !ok {
-			i += 1
+			i++
 			continue
 		}
 
