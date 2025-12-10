@@ -33,9 +33,14 @@ type HeartbeatState struct {
 	DoneChan  chan struct{}
 }
 
+// HeartbeatReport is the structure of the heartbeat report.
 type HeartbeatReport struct {
 	ParentID   string      `json:"parent_id"`
 	Total      int         `json:"total"`
 	Responders []string    `json:"responders"`
 	Raw        []cdb.Event `json:"raw_responses"`
 }
+
+var (
+	lastDBMaintenance time.Time
+)

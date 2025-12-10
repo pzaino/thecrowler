@@ -187,9 +187,84 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 	res := make([]cdb.Event, 0, len(state.Responses))
 	names := make([]string, 0, len(state.Responses))
 
+	const running = "running"
+
 	for k, v := range state.Responses {
 		names = append(names, k)
 		res = append(res, v)
+	}
+
+	// Update the active_fleet_nodes metric
+	mActiveFleetNodes.Set(float64(len(state.Responses)))
+
+	// Determine whether all nodes are idle
+	allIdle := true
+
+	for _, evt := range state.Responses {
+		statusRaw, ok := evt.Details["pipeline_status"]
+		if !ok {
+			continue
+		}
+
+		arr, ok := statusRaw.([]interface{})
+		if !ok {
+			continue
+		}
+
+		if len(arr) == 0 {
+			// empty = idle
+			continue
+		}
+
+		// If any pipeline entry is active, the fleet is NOT idle
+		for _, elem := range arr {
+			obj, ok := elem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			ps, _ := obj["PipelineStatus"].(string)
+			ps = strings.ToLower(strings.TrimSpace(ps))
+			crawling, _ := obj["CrawlingStatus"].(string)
+			crawling = strings.ToLower(strings.TrimSpace(crawling))
+			netinfo, _ := obj["NetInfoStatus"].(string)
+			netinfo = strings.ToLower(strings.TrimSpace(netinfo))
+			httpinfo, _ := obj["HTTPInfoStatus"].(string)
+			httpinfo = strings.ToLower(strings.TrimSpace(httpinfo))
+
+			// If any subsystem is running we are not idle
+			if ps == running || crawling == running || netinfo == running || httpinfo == running {
+				allIdle = false
+				break
+			}
+		}
+	}
+
+	if allIdle {
+		if canScheduleDBMaintenance() {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "HEARTBEAT ANALYSIS: Entire fleet appears idle, scheduling DB optimization...")
+
+			// build an internal event to request DB maintenance
+			maintenanceEvent := cdb.Event{
+				Action:    "db_maintenance",
+				Type:      "system_event",
+				Severity:  "low",
+				Timestamp: time.Now().Format(time.RFC3339),
+				Details: map[string]interface{}{
+					"action": "db_maintenance",
+					"reason": "all_fleet_idle",
+					"time":   time.Now().Format(time.RFC3339),
+				},
+			}
+
+			// schedule internal event asynchronously
+			go func(ev cdb.Event) {
+				_, err := cdb.CreateEventWithRetries(&dbHandler, ev)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Failed to create DB maintenance event: %v", err)
+				}
+			}(maintenanceEvent)
+		}
 	}
 
 	return HeartbeatReport{
@@ -198,6 +273,19 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 		Responders: names,
 		Raw:        res,
 	}
+}
+
+func canScheduleDBMaintenance() bool {
+	// Never schedule if last run was less than 1 hour ago
+	if !lastDBMaintenance.IsZero() {
+		if time.Since(lastDBMaintenance) < time.Hour {
+			return false
+		}
+	}
+
+	// OK to schedule
+	lastDBMaintenance = time.Now()
+	return true
 }
 
 func logHeartbeatReport(r HeartbeatReport) {

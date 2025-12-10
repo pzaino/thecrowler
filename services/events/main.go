@@ -759,6 +759,62 @@ func processInternalEvent(event cdb.Event) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	}
+
+	if event.Action == "db_maintenance" {
+		err := performDBMaintenance(dbHandler)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Database maintenance failed: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Database maintenance completed successfully")
+		}
+		// remove the event after maintenance
+		_, err = dbHandler.Exec(`DELETE FROM Events WHERE event_sha256 = $1`, event.ID)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to remove DB maintenance event: %v", err)
+		}
+	}
+}
+
+// This function is responsible for performing database maintenance
+// to keep it lean and fast. Note: it's specific for PostgreSQL.
+func performDBMaintenance(db cdb.Handler) error {
+	if db.DBMS() == cdb.DBSQLiteStr {
+		return nil
+	}
+
+	// Define the maintenance commands
+	var maintenanceCommands []string
+
+	if db.DBMS() == cdb.DBPostgresStr {
+		maintenanceCommands = []string{
+			"VACUUM Keywords",
+			"VACUUM MetaTags",
+			"VACUUM WebObjects",
+			"VACUUM SearchIndex",
+			"VACUUM KeywordIndex",
+			"VACUUM MetaTagsIndex",
+			"VACUUM WebObjectsIndex",
+			"REINDEX TABLE WebObjects",
+			"REINDEX TABLE SearchIndex",
+			"REINDEX TABLE KeywordIndex",
+			"REINDEX TABLE WebObjectsIndex",
+			"REINDEX TABLE MetaTagsIndex",
+			"REINDEX TABLE NetInfoIndex",
+			"REINDEX TABLE HTTPInfoIndex",
+			"REINDEX TABLE SourceInformationSeedIndex",
+			"REINDEX TABLE SourceOwnerIndex",
+			"REINDEX TABLE SourceSearchIndex",
+		}
+	}
+
+	for _, cmd := range maintenanceCommands {
+		_, err := db.Exec(cmd)
+		if err != nil {
+			return fmt.Errorf("error executing maintenance command (%s): %w", cmd, err)
+		}
+	}
+
+	return nil
 }
 
 func isRetryable(err error) bool {
@@ -1250,6 +1306,13 @@ var (
 		},
 		[]string{"engine"},
 	)
+
+	mActiveFleetNodes = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "crowler_active_fleet_nodes",
+			Help: "Number of nodes that responded to the latest heartbeat",
+		},
+	)
 )
 
 func registerMetrics() {
@@ -1265,6 +1328,7 @@ func registerMetrics() {
 		mQueueExternalLength,
 		mWorkersRunning,
 		mSysReady,
+		mActiveFleetNodes,
 	)
 }
 
@@ -1301,7 +1365,8 @@ func updateMetrics() {
 		Collector(mEventsTotalInternal).
 		Collector(mEventsTotalExternal).
 		Collector(mEventsTotalErrors).
-		Collector(mEventsTotalDropped)
+		Collector(mEventsTotalDropped).
+		Collector(mActiveFleetNodes)
 
 	if err := p.Push(); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "EventsAPI Prometheus push failed: %v", err)
