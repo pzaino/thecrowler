@@ -129,7 +129,7 @@ func CreateEventWithRetries(db *Handler, event Event) (string, error) {
 
 		cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent failed (attempt %d/%d): %v", i+1, maxRetries, err)
 
-		// classify non-retryable
+		// classify non-retryable errors
 		if pgErr, ok := err.(*pgconn.PgError); ok {
 			switch pgErr.Code {
 			case "23505": // duplicate key
