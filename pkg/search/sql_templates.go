@@ -1,3 +1,4 @@
+// Package search implements the search functionality for TheCrowler.
 package search
 
 // Base query used for SearchIndex search.

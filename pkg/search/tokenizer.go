@@ -1,3 +1,4 @@
+// Package search implements the search functionality for TheCrowler.
 package search
 
 import (
@@ -14,7 +15,7 @@ import (
 // (Please note: NOT the result of the search itself)
 type ParsedQuery struct {
 	sqlQuery  string
-	sqlParams []interface{}
+	sqlParams []any
 	limit     int
 	offset    int
 	details   Details
@@ -168,7 +169,7 @@ func isValidSpecifier(spec string) bool {
 	if strings.HasPrefix(spec, "@") {
 		return true
 	}
-	//nolint:goconst
+	// nolint:goconst // no need to go ballistic on constants here
 	return spec == "title" || spec == "summary" || spec == "content" || spec == "details" || spec == "&details" || spec == "offset" || spec == "&offset" || spec == "limit" || spec == "&limit" || spec == "file_type"
 }
 
@@ -258,9 +259,9 @@ func (s *Searcher) getDefaultFields() []string {
 	return defaultFields
 }
 
-// parseAdvancedQuery interpret the "dorcking" query language and returns the SQL query and its parameters.
+// ParseAdvancedQuery interpret the "dorcking" query language and returns the SQL query and its parameters.
 // queryBody represent the SQL query body, while input is the "raw" dorking input.
-func (s *Searcher) parseAdvancedQuery(queryBody string, input string, parsingType string) (ParsedQuery, error) {
+func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingType string) (ParsedQuery, error) {
 	defaultFields := s.getDefaultFields()
 	tokensData := tokenize(input)
 	var SQLQuery ParsedQuery
