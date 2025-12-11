@@ -18,6 +18,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -617,7 +618,33 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					return
 				}
 				if n != nil {
-					handleNotification(n.Extra())
+					// Step 1: Decode metadata
+					var meta struct {
+						EventSHA256    string `json:"event_sha256"`
+						EventTimestamp string `json:"event_timestamp"`
+					}
+
+					if err := json.Unmarshal([]byte(n.Extra()), &meta); err != nil {
+						cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode event metadata: %v", err)
+						continue
+					}
+
+					// Step 2: Fetch full event from DB
+					event, err := GetEventBySHA256(db, meta.EventSHA256)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event %s: %v", meta.EventSHA256, err)
+						continue
+					}
+
+					// Step 3: Convert to JSON
+					fullJSON, err := json.Marshal(event)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlError, "Failed to marshal full event: %v", err)
+						continue
+					}
+
+					// Step 4: Pass it to existing handler (NO code change there)
+					handleNotification(string(fullJSON))
 				}
 			case <-stop:
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Shutting down the events handler...")
@@ -631,4 +658,21 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 	}()
 
 	<-stop // Wait for shutdown signal
+}
+
+// GetEventBySHA256 retrieves an event from the database by its SHA256 hash.
+func GetEventBySHA256(db *Handler, id string) (Event, error) {
+	var e Event
+	err := (*db).QueryRow(`
+        SELECT source_id, event_type, event_severity, event_timestamp, details
+        FROM events
+        WHERE event_sha256 = $1
+    `, id).Scan(&e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+
+	if err != nil {
+		return e, err
+	}
+
+	e.ID = id
+	return e, nil
 }
