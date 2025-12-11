@@ -28,7 +28,7 @@ type PluginResponse struct {
 type HeartbeatState struct {
 	ParentID  string
 	SentAt    time.Time
-	TimeoutAt time.Time
+	Timeout   time.Duration
 	Responses map[string]cdb.Event // keyed by agent or source
 	DoneChan  chan struct{}
 }

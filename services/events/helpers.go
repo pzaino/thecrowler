@@ -91,7 +91,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 
 	state := &HeartbeatState{
 		SentAt:    now,
-		TimeoutAt: now.Add(eventResponseTimeout),
+		Timeout:   eventResponseTimeout,
 		Responses: make(map[string]cdb.Event),
 		DoneChan:  make(chan struct{}),
 	}
@@ -131,11 +131,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 }
 
 func heartbeatTimeoutWatcher(db *cdb.Handler, state *HeartbeatState) {
-	now := time.Now()
-
-	if now.Before(state.TimeoutAt) {
-		time.Sleep(state.TimeoutAt.Sub(now))
-	}
+	time.Sleep(state.Timeout)
 
 	heartbeatMu.Lock()
 	defer heartbeatMu.Unlock()
