@@ -84,9 +84,14 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	hbType := "crowler_heartbeat"
 	now := time.Now()
 
+	eventResponseTimeout := parseDuration(config.Events.HeartbeatTimeout)
+	if eventResponseTimeout < time.Second*5 {
+		eventResponseTimeout = time.Second * 5
+	}
+
 	state := &HeartbeatState{
 		SentAt:    now,
-		TimeoutAt: now.Add(parseDuration(config.Events.HeartbeatTimeout)),
+		TimeoutAt: now.Add(eventResponseTimeout),
 		Responses: make(map[string]cdb.Event),
 		DoneChan:  make(chan struct{}),
 	}
