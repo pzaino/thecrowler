@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -630,7 +631,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					}
 
 					// Step 2: Fetch full event from DB
-					event, err := GetEventBySHA256(db, meta.EventSHA256)
+					event, err := fetchEventWithRetry(db, meta.EventSHA256, 5, 20*time.Millisecond)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event %s: %v", meta.EventSHA256, err)
 						continue
@@ -675,4 +676,24 @@ func GetEventBySHA256(db *Handler, id string) (Event, error) {
 
 	e.ID = id
 	return e, nil
+}
+
+func fetchEventWithRetry(db *Handler, id string, attempts int, delay time.Duration) (Event, error) {
+	var evt Event
+	var err error
+
+	for i := 0; i < attempts; i++ {
+		evt, err = GetEventBySHA256(db, id)
+		if err == nil {
+			return evt, nil
+		}
+
+		if errors.Is(err, sql.ErrNoRows) {
+			time.Sleep(delay)
+			continue
+		}
+
+		return evt, err
+	}
+	return evt, err
 }
