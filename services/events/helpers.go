@@ -75,6 +75,7 @@ func startHeartbeatLoop(db *cdb.Handler, config cfg.Config) {
 }
 
 func startHeartbeat(db *cdb.Handler, config cfg.Config) {
+	const heartbeatDefaultRespTimeout = 30 * time.Second
 	heartbeatMu.Lock()
 	if activeHeartbeat != nil {
 		heartbeatMu.Unlock()
@@ -86,17 +87,17 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 
 	var eventResponseTimeout time.Duration
 	if strings.TrimSpace(config.Events.HeartbeatTimeout) == "" {
-		eventResponseTimeout = 15 * time.Second
+		eventResponseTimeout = heartbeatDefaultRespTimeout
 	} else {
 		eventResponseTimeout = parseDuration(config.Events.HeartbeatTimeout)
 		// Empty or invalid → 0 or negative
 		if eventResponseTimeout <= 0 {
-			eventResponseTimeout = 15 * time.Second
+			eventResponseTimeout = heartbeatDefaultRespTimeout
 		}
 
 		// Minimum 5 seconds
 		if eventResponseTimeout < time.Second*5 {
-			eventResponseTimeout = time.Second * 15
+			eventResponseTimeout = heartbeatDefaultRespTimeout
 		}
 	}
 
