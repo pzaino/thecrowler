@@ -1141,7 +1141,8 @@ func updateMetrics(status *crowler.Status) {
 		Collector(gaugeCrawlingRunning).
 		Collector(gaugeNetInfoRunning).
 		Collector(gaugeHTTPInfoRunning).
-		Collector(gaugeDetectedState)
+		Collector(gaugeDetectedState).
+		Collector(totalPipelinesRunning)
 
 	// Push metrics
 	if err := p.Push(); err != nil {
