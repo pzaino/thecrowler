@@ -632,7 +632,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					}
 
 					// Step 2: Fetch full event from DB
-					event, err := fetchEventWithRetry(db, meta.EventSHA256, 5, 20*time.Millisecond)
+					event, err := fetchEventWithRetry(db, meta.EventSHA256, 5, 10*time.Millisecond)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event %s: %v", meta.EventSHA256, err)
 						continue
@@ -664,15 +664,28 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 
 // GetEventBySHA256 retrieves an event from the database by its SHA256 hash.
 func GetEventBySHA256(db *Handler, id string) (Event, error) {
-	var e Event
+	var (
+		e       Event
+		details []byte
+	)
+
 	err := (*db).QueryRow(`
         SELECT source_id, event_type, event_severity, event_timestamp, details
         FROM events
         WHERE event_sha256 = $1
-    `, id).Scan(&e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &e.Details)
+    `, id).Scan(&e.SourceID, &e.Type, &e.Severity, &e.Timestamp, &details)
 
 	if err != nil {
 		return e, err
+	}
+
+	// Decode JSON details
+	if len(details) > 0 {
+		if err := json.Unmarshal(details, &e.Details); err != nil {
+			return e, fmt.Errorf("failed to decode event details: %w", err)
+		}
+	} else {
+		e.Details = make(map[string]interface{})
 	}
 
 	e.ID = id
