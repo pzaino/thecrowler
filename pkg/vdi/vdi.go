@@ -870,6 +870,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed", err)
 		return nil, err
 	}
+	// Inject anti-detection patch
+	err = InjectAntiDetectionPatches(&wd, userAgent, pConfig.Crawler.Platform)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed: %v", err)
+	}
 
 	// Post-connection settings
 	if !*ctx.GetVDIReturnedFlag() {
@@ -1273,6 +1278,85 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
 		}
 	}
+}
+
+// InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
+func InjectAntiDetectionPatches(driver *WebDriver, uaString string, platform string) error {
+
+	script := fmt.Sprintf(`
+Object.defineProperty(navigator, 'webdriver', {
+    get: () => undefined
+});
+
+Object.defineProperty(navigator, 'userAgent', {
+    get: () => "%s"
+});
+
+Object.defineProperty(navigator, 'platform', {
+    get: () => "%s"
+});
+
+if (navigator.userAgentData) {
+    Object.defineProperty(navigator.userAgentData, 'platform', { value: "%s" });
+    Object.defineProperty(navigator.userAgentData, 'mobile', { value: false });
+    Object.defineProperty(navigator.userAgentData, 'brands', {
+        value: [
+            { brand: "Chromium", version: "132" },
+            { brand: "Not-A.Brand", version: "8" }
+        ]
+    });
+}
+
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [
+        { name: "Chrome PDF Viewer" },
+        { name: "Chromium PDF Plugin" }
+    ]
+});
+
+Object.defineProperty(navigator, 'mimeTypes', {
+    get: () => [
+        { type: "application/pdf", suffixes: "pdf", description: "PDF" }
+    ]
+});
+
+delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+(function() {
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return "Intel Inc.";
+        if (param === 37446) return "Mesa Intel(R) UHD Graphics";
+        return getParameter.call(this, param);
+    };
+})();
+
+(function() {
+    const original = AudioBuffer.prototype.getChannelData;
+    AudioBuffer.prototype.getChannelData = function() {
+        const data = original.apply(this, arguments);
+        for (let i = 0; i < data.length; i += 100) {
+            data[i] = data[i] + (Math.random() * 0.0000001);
+        }
+        return data;
+    };
+})();
+
+// Debug
+console.log("loaded");
+`, uaString, platform, platform)
+
+	args := make(map[string]any)
+	args["source"] = script
+
+	_, err := (*driver).ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", args)
+	if err != nil {
+		return fmt.Errorf("failed to inject stealth patches: %w", err)
+	}
+
+	return nil
 }
 
 // Refresh Session

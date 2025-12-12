@@ -1,3 +1,4 @@
+// Package search implements the search functionality for TheCrowler.
 package search
 
 import (
@@ -5,7 +6,8 @@ import (
 	//cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
-func (s *Searcher) execParsed(p *ParsedQuery) (*QueryResult, error) {
+// ExecParsed executes a parsed query and returns the results.
+func (s *Searcher) ExecParsed(p *ParsedQuery) (*QueryResult, error) {
 	sqlQuery := p.sqlQuery
 	params := p.sqlParams
 

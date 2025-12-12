@@ -35,6 +35,9 @@ var durationUnits = map[string]time.Duration{
 	"hrs":     time.Hour,
 	"hour":    time.Hour,
 	"hours":   time.Hour,
+	"d":       24 * time.Hour,
+	"day":     24 * time.Hour,
+	"days":    24 * time.Hour,
 }
 
 // handleErrorAndRespond encapsulates common error handling and JSON response logic.
@@ -72,6 +75,7 @@ func startHeartbeatLoop(db *cdb.Handler, config cfg.Config) {
 }
 
 func startHeartbeat(db *cdb.Handler, config cfg.Config) {
+	const heartbeatDefaultRespTimeout = 15 * time.Second
 	heartbeatMu.Lock()
 	if activeHeartbeat != nil {
 		heartbeatMu.Unlock()
@@ -81,9 +85,25 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	hbType := "crowler_heartbeat"
 	now := time.Now()
 
+	var eventResponseTimeout time.Duration
+	if strings.TrimSpace(config.Events.HeartbeatTimeout) == "" {
+		eventResponseTimeout = heartbeatDefaultRespTimeout
+	} else {
+		eventResponseTimeout = parseDuration(config.Events.HeartbeatTimeout)
+		// Empty or invalid → 0 or negative
+		if eventResponseTimeout <= 0 {
+			eventResponseTimeout = heartbeatDefaultRespTimeout
+		}
+
+		// Minimum 5 seconds
+		if eventResponseTimeout < time.Second*5 {
+			eventResponseTimeout = heartbeatDefaultRespTimeout
+		}
+	}
+
 	state := &HeartbeatState{
 		SentAt:    now,
-		TimeoutAt: now.Add(parseDuration(config.Events.HeartbeatTimeout)),
+		Timeout:   eventResponseTimeout,
 		Responses: make(map[string]cdb.Event),
 		DoneChan:  make(chan struct{}),
 	}
@@ -123,11 +143,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 }
 
 func heartbeatTimeoutWatcher(db *cdb.Handler, state *HeartbeatState) {
-	now := time.Now()
-
-	if now.Before(state.TimeoutAt) {
-		time.Sleep(state.TimeoutAt.Sub(now))
-	}
+	time.Sleep(state.Timeout)
 
 	heartbeatMu.Lock()
 	defer heartbeatMu.Unlock()
@@ -187,9 +203,84 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 	res := make([]cdb.Event, 0, len(state.Responses))
 	names := make([]string, 0, len(state.Responses))
 
+	const running = "running"
+
 	for k, v := range state.Responses {
 		names = append(names, k)
 		res = append(res, v)
+	}
+
+	// Update the active_fleet_nodes metric
+	mActiveFleetNodes.Set(float64(len(state.Responses)))
+
+	// Determine whether all nodes are idle
+	allIdle := true
+
+	for _, evt := range state.Responses {
+		statusRaw, ok := evt.Details["pipeline_status"]
+		if !ok {
+			continue
+		}
+
+		arr, ok := statusRaw.([]interface{})
+		if !ok {
+			continue
+		}
+
+		if len(arr) == 0 {
+			// empty = idle
+			continue
+		}
+
+		// If any pipeline entry is active, the fleet is NOT idle
+		for _, elem := range arr {
+			obj, ok := elem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			ps, _ := obj["PipelineStatus"].(string)
+			ps = strings.ToLower(strings.TrimSpace(ps))
+			crawling, _ := obj["CrawlingStatus"].(string)
+			crawling = strings.ToLower(strings.TrimSpace(crawling))
+			netinfo, _ := obj["NetInfoStatus"].(string)
+			netinfo = strings.ToLower(strings.TrimSpace(netinfo))
+			httpinfo, _ := obj["HTTPInfoStatus"].(string)
+			httpinfo = strings.ToLower(strings.TrimSpace(httpinfo))
+
+			// If any subsystem is running we are not idle
+			if ps == running || crawling == running || netinfo == running || httpinfo == running {
+				allIdle = false
+				break
+			}
+		}
+	}
+
+	if allIdle {
+		if canScheduleDBMaintenance() {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "HEARTBEAT ANALYSIS: Entire fleet appears idle, scheduling DB optimization...")
+
+			// build an internal event to request DB maintenance
+			maintenanceEvent := cdb.Event{
+				Action:    "db_maintenance",
+				Type:      "system_event",
+				Severity:  "low",
+				Timestamp: time.Now().Format(time.RFC3339),
+				Details: map[string]interface{}{
+					"action": "db_maintenance",
+					"reason": "all_fleet_idle",
+					"time":   time.Now().Format(time.RFC3339),
+				},
+			}
+
+			// schedule internal event asynchronously
+			go func(ev cdb.Event) {
+				_, err := cdb.CreateEventWithRetries(&dbHandler, ev)
+				if err != nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "Failed to create DB maintenance event: %v", err)
+				}
+			}(maintenanceEvent)
+		}
 	}
 
 	return HeartbeatReport{
@@ -198,6 +289,27 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 		Responders: names,
 		Raw:        res,
 	}
+}
+
+func canScheduleDBMaintenance() bool {
+	// Check if we have an interval
+	if strings.TrimSpace(config.Events.SysDBMaintenance) == "" {
+		return false
+	}
+
+	// Get schedule time from config
+	interval := parseDuration(config.Events.SysDBMaintenance)
+
+	// Never schedule if last run was less than 1 hour ago
+	if !lastDBMaintenance.IsZero() {
+		if time.Since(lastDBMaintenance) < interval {
+			return false
+		}
+	}
+
+	// OK to schedule
+	lastDBMaintenance = time.Now()
+	return true
 }
 
 func logHeartbeatReport(r HeartbeatReport) {
@@ -244,13 +356,13 @@ func parseDuration(s string) time.Duration {
 
 		n, err := strconv.ParseFloat(nStr, 64)
 		if err != nil {
-			i += 1
+			i++
 			continue
 		}
 
 		unit, ok := durationUnits[uStr]
 		if !ok {
-			i += 1
+			i++
 			continue
 		}
 

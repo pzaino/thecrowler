@@ -1449,21 +1449,18 @@ $$;
 CREATE OR REPLACE FUNCTION notify_new_event()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Notify the channel "new_event" with event details (serialized as JSON)
     PERFORM pg_notify(
         'new_event',
         json_build_object(
-            'event_sha256', COALESCE(NEW.event_sha256, ''),
-            'source_id', COALESCE(NEW.source_id, 0),
-            'event_type', COALESCE(NEW.event_type, ''),
-            'event_severity', COALESCE(NEW.event_severity, ''),
-            'event_timestamp', COALESCE(NEW.event_timestamp, NOW()),
-            'details', COALESCE(NEW.details, '{}'::jsonb)
-        )::TEXT
+            'event_sha256', NEW.event_sha256,
+            'source_id', NEW.source_id,
+            'event_timestamp', NEW.event_timestamp
+        )::text
     );
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Create a trigger to call the function on INSERT
 DO $$

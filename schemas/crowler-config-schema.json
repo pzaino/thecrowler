@@ -1209,6 +1209,21 @@
             "1m",
             "60 seconds"
           ]
+        },
+        "heartbeat_log": {
+          "title": "CROWler Events Manager Heartbeat Log",
+          "description": "This is a flag that tells the CROWler Events Manager to log the heartbeat responses from the fleet. This is useful for monitoring purposes.",
+          "type": "boolean"
+        },
+        "sys_db_maintenance_schedule": {
+          "title": "CROWler Events Manager DB Maintenance Interval scheduling",
+          "description": "This option allows to schedule the Events Manager interval database operations. This operation maintains the DB in optima state and it's triggered only when the entire fleet is not processing sources or requests. The format of this parameters is string and can be read as 'every <X> minutes/hours/days'. For example, 'every 60 minutes' or 'every 1 hours' or 'every 1 days'.",
+          "type": "string",
+          "examples": [
+            "60 minutes",
+            "1 hour",
+            "1 days"
+          ]
         }
       },
       "additionalProperties": false

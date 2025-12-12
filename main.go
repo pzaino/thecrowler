@@ -90,31 +90,6 @@ var (
 	dbHandler cdb.Handler
 	// Global Pipeline Status (read only!!!!!)
 	sysPipelineStatus *[]crowler.Status
-
-	// Prometheus metrics
-	totalPages = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "crowler_total_pages",
-			Help: "Total number of pages crawled.",
-		},
-		[]string{"pipeline_id", "source"},
-	)
-	totalLinks = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "crowler_total_links",
-			Help: "Total number of links collected.",
-		},
-		[]string{"pipeline_id", "source"},
-	)
-	totalErrors = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "crowler_total_errors",
-			Help: "Total number of errors encountered.",
-		},
-		[]string{"pipeline_id", "source"},
-	)
-	// TODO: Define more prometheus metrics here...
-
 )
 
 // WorkBlock is a struct that holds all the necessary information to instantiate a new
@@ -1042,12 +1017,42 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		}
 	}
 	report += sepRLine + "\n"
+	totalPipelinesRunning.Set(float64(runningPipelines))
 	if runningPipelines > 0 {
 		cmn.DebugMsg(cmn.DbgLvlInfo, report)
 	}
 }
 
 var (
+	// Prometheus metrics
+	totalPages = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_pages",
+			Help: "Total number of pages crawled.",
+		},
+		[]string{"pipeline_id", "source"},
+	)
+	totalLinks = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_links",
+			Help: "Total number of links collected.",
+		},
+		[]string{"pipeline_id", "source"},
+	)
+	totalErrors = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_errors",
+			Help: "Total number of errors encountered.",
+		},
+		[]string{"pipeline_id", "source"},
+	)
+	totalPipelinesRunning = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "crowler_total_pipelines_running",
+			Help: "Total number of pipelines currently running.",
+		},
+	)
+
 	gaugeTotalPages      = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_pages"}, []string{"engine", "pipeline_id", "source"})
 	gaugeTotalLinks      = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_links"}, []string{"engine", "pipeline_id", "source"})
 	gaugeTotalSkipped    = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_skipped"}, []string{"engine", "pipeline_id", "source"})

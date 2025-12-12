@@ -413,21 +413,22 @@ type SysMngConfig struct {
 
 // EventsConfig represents the events handler service configuration
 type EventsConfig struct {
-	Host              string `json:"host" yaml:"host"`                                         // Hostname of the events handler server
-	Port              int    `json:"port" yaml:"port"`                                         // Port number of the events handler server
-	Timeout           int    `json:"timeout" yaml:"timeout"`                                   // Timeout for events handler requests (in seconds)
-	SSLMode           string `json:"sslmode" yaml:"sslmode"`                                   // SSL mode for events handler connection (e.g., "disable")
-	CertFile          string `json:"cert_file" yaml:"cert_file"`                               // Path to the SSL certificate file
-	KeyFile           string `json:"key_file" yaml:"key_file"`                                 // Path to the SSL key file
-	RateLimit         string `json:"rate_limit" yaml:"rate_limit"`                             // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
-	ReadHeaderTimeout int    `json:"readheader_timeout" yaml:"readheader_timeout"`             // ReadHeaderTimeout is the amount of time allowed to read request headers.
-	ReadTimeout       int    `json:"read_timeout" yaml:"read_timeout"`                         // ReadTimeout is the maximum duration for reading the entire request
-	WriteTimeout      int    `json:"write_timeout" yaml:"write_timeout"`                       // WriteTimeout
-	EventRemoval      string `json:"automatic_events_removal" yaml:"automatic_events_removal"` // Automatic events removal from the database (always, fails, success, never or "")
-	HeartbeatEnabled  bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`               // Whether to enable heartbeat or not
-	HeartbeatInterval string `json:"heartbeat_interval" yaml:"heartbeat_interval"`             // Heartbeat interval (in seconds)
-	HeartbeatTimeout  string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`               // Heartbeat timeout (in seconds)
-	HeartbeatLog      bool   `json:"heartbeat_log" yaml:"heartbeat_log"`                       // Whether to log heartbeat or not
+	Host              string `json:"host" yaml:"host"`                                               // Hostname of the events handler server
+	Port              int    `json:"port" yaml:"port"`                                               // Port number of the events handler server
+	Timeout           int    `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
+	SSLMode           string `json:"sslmode" yaml:"sslmode"`                                         // SSL mode for events handler connection (e.g., "disable")
+	CertFile          string `json:"cert_file" yaml:"cert_file"`                                     // Path to the SSL certificate file
+	KeyFile           string `json:"key_file" yaml:"key_file"`                                       // Path to the SSL key file
+	RateLimit         string `json:"rate_limit" yaml:"rate_limit"`                                   // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout int    `json:"readheader_timeout" yaml:"readheader_timeout"`                   // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int    `json:"read_timeout" yaml:"read_timeout"`                               // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int    `json:"write_timeout" yaml:"write_timeout"`                             // WriteTimeout
+	EventRemoval      string `json:"automatic_events_removal" yaml:"automatic_events_removal"`       // Automatic events removal from the database (always, fails, success, never or "")
+	HeartbeatEnabled  bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`                     // Whether to enable heartbeat or not
+	HeartbeatInterval string `json:"heartbeat_interval" yaml:"heartbeat_interval"`                   // Heartbeat interval (in seconds)
+	HeartbeatTimeout  string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`                     // Heartbeat timeout (in seconds)
+	HeartbeatLog      bool   `json:"heartbeat_log" yaml:"heartbeat_log"`                             // Whether to log heartbeat or not
+	SysDBMaintenance  string `json:"sys_db_maintenance_schedule" yaml:"sys_db_maintenance_schedule"` // System database maintenance interval (in hours)
 }
 
 // Rules represents the rules configuration sources for the crawler and the scrapper

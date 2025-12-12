@@ -28,14 +28,19 @@ type PluginResponse struct {
 type HeartbeatState struct {
 	ParentID  string
 	SentAt    time.Time
-	TimeoutAt time.Time
+	Timeout   time.Duration
 	Responses map[string]cdb.Event // keyed by agent or source
 	DoneChan  chan struct{}
 }
 
+// HeartbeatReport is the structure of the heartbeat report.
 type HeartbeatReport struct {
 	ParentID   string      `json:"parent_id"`
 	Total      int         `json:"total"`
 	Responders []string    `json:"responders"`
 	Raw        []cdb.Event `json:"raw_responses"`
 }
+
+var (
+	lastDBMaintenance time.Time
+)
