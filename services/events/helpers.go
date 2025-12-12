@@ -86,7 +86,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 
 	eventResponseTimeout := parseDuration(config.Events.HeartbeatTimeout)
 	if eventResponseTimeout < time.Second*5 {
-		eventResponseTimeout = time.Second * 5
+		eventResponseTimeout = time.Second * 15
 	}
 
 	state := &HeartbeatState{
