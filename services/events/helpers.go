@@ -75,7 +75,7 @@ func startHeartbeatLoop(db *cdb.Handler, config cfg.Config) {
 }
 
 func startHeartbeat(db *cdb.Handler, config cfg.Config) {
-	const heartbeatDefaultRespTimeout = 30 * time.Second
+	const heartbeatDefaultRespTimeout = 15 * time.Second
 	heartbeatMu.Lock()
 	if activeHeartbeat != nil {
 		heartbeatMu.Unlock()
