@@ -35,7 +35,7 @@
 > #    && apt-get install -y golang
 > 
 > # Choose the Go version you want
-> ENV GOLANG_VERSION=1.23.4
+> ENV GOLANG_VERSION=1.24.11
 > RUN apt-get update && apt-get install -y wget ca-certificates
 > 
 > # Download the official tarball from go.dev, verify, then install
