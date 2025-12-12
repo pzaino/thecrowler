@@ -1449,10 +1449,10 @@ $$;
 CREATE OR REPLACE FUNCTION notify_new_event()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Notify the channel "new_event" with minimal metadata
     PERFORM pg_notify(
         'new_event',
         json_build_object(
+            'event_sha256', NEW.event_sha256,
             'source_id', NEW.source_id,
             'event_timestamp', NEW.event_timestamp
         )::text
@@ -1460,6 +1460,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Create a trigger to call the function on INSERT
 DO $$
