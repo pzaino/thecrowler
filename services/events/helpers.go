@@ -84,15 +84,20 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	hbType := "crowler_heartbeat"
 	now := time.Now()
 
-	eventResponseTimeout := parseDuration(config.Events.HeartbeatTimeout)
-	// Empty or invalid → 0 or negative
-	if eventResponseTimeout <= 0 {
+	var eventResponseTimeout time.Duration
+	if strings.TrimSpace(config.Events.HeartbeatTimeout) == "" {
 		eventResponseTimeout = 15 * time.Second
-	}
+	} else {
+		eventResponseTimeout = parseDuration(config.Events.HeartbeatTimeout)
+		// Empty or invalid → 0 or negative
+		if eventResponseTimeout <= 0 {
+			eventResponseTimeout = 15 * time.Second
+		}
 
-	// Minimum 5 seconds
-	if eventResponseTimeout < time.Second*5 {
-		eventResponseTimeout = time.Second * 15
+		// Minimum 5 seconds
+		if eventResponseTimeout < time.Second*5 {
+			eventResponseTimeout = time.Second * 15
+		}
 	}
 
 	state := &HeartbeatState{
