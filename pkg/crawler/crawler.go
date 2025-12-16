@@ -1880,6 +1880,17 @@ func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails) err
 	return nil
 }
 
+func truncateUTF8(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes])
+}
+
 // insertMetaTags inserts meta tags into the database for a given index ID.
 // It takes a transaction, index ID, and a map of meta tags as parameters.
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
@@ -1888,15 +1899,22 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 	for _, metatag := range metaTags {
 		var name string
 		if len(metatag.Name) > 256 {
-			name = metatag.Name[:256]
+			name = truncateUTF8(metatag.Name, 256)
 		} else {
 			name = metatag.Name
 		}
 		var content string
 		if len(metatag.Content) > 1024 {
-			content = metatag.Content[:1024]
+			content = truncateUTF8(metatag.Content, 1024)
 		} else {
 			content = metatag.Content
+		}
+
+		if !utf8.ValidString(name) {
+			name = strings.ToValidUTF8(name, "")
+		}
+		if !utf8.ValidString(content) {
+			content = strings.ToValidUTF8(content, "")
 		}
 
 		var metatagID int64
@@ -1906,7 +1924,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
             SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2;`, name, content).Scan(&metatagID)
 
 		// If not found, insert the new metatag and get its ID
-		if err != nil {
+		if err == sql.ErrNoRows {
 			err = tx.QueryRow(`
                 INSERT INTO MetaTags (name, content)
                 VALUES ($1, $2)
@@ -1919,7 +1937,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 
 		if err != nil {
 			// One valid case: DO NOTHING means RETURNING finds no row
-			// So you need to handle that gracefully
+			// So we need to handle that gracefully
 			if err == sql.ErrNoRows {
 				// Retrieve existing ID
 				err = tx.QueryRow(`

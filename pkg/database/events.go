@@ -632,7 +632,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					}
 
 					// Step 2: Fetch full event from DB
-					event, err := fetchEventWithRetry(db, meta.EventSHA256, 5, 10*time.Millisecond)
+					event, err := fetchEventWithRetry(db, meta.EventSHA256, 10, 20*time.Millisecond)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event %s: %v", meta.EventSHA256, err)
 						continue
@@ -685,7 +685,7 @@ func GetEventBySHA256(db *Handler, id string) (Event, error) {
 			return e, fmt.Errorf("failed to decode event details: %w", err)
 		}
 	} else {
-		e.Details = make(map[string]interface{})
+		e.Details = make(map[string]any)
 	}
 
 	e.ID = id
@@ -695,6 +695,9 @@ func GetEventBySHA256(db *Handler, id string) (Event, error) {
 func fetchEventWithRetry(db *Handler, id string, attempts int, delay time.Duration) (Event, error) {
 	var evt Event
 	var err error
+	if attempts <= 0 {
+		attempts = 5
+	}
 
 	for i := 0; i < attempts; i++ {
 		evt, err = GetEventBySHA256(db, id)
