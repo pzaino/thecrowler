@@ -1917,7 +1917,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
             SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2;`, name, content).Scan(&metatagID)
 
 		// If not found, insert the new metatag and get its ID
-		if err != nil {
+		if err == sql.ErrNoRows {
 			err = tx.QueryRow(`
                 INSERT INTO MetaTags (name, content)
                 VALUES ($1, $2)
@@ -1930,7 +1930,7 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 
 		if err != nil {
 			// One valid case: DO NOTHING means RETURNING finds no row
-			// So you need to handle that gracefully
+			// So we need to handle that gracefully
 			if err == sql.ErrNoRows {
 				// Retrieve existing ID
 				err = tx.QueryRow(`
