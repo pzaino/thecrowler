@@ -1739,16 +1739,24 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 
 	// Step 1: Insert into WebObjects
 	err = tx.QueryRow(`
+		WITH upsert AS (
 		INSERT INTO WebObjects (object_hash, object_content, object_html, details)
 		VALUES ($1, $2, $3, $4::jsonb)
 		ON CONFLICT (object_hash) DO UPDATE
 		SET
-			object_content = COALESCE(NULLIF(BTRIM(EXCLUDED.object_content), ''), WebObjects.object_content),
+			object_content = COALESCE(
+				NULLIF(BTRIM(EXCLUDED.object_content), ''),
+				WebObjects.object_content
+			),
 			details = COALESCE(
 				NULLIF(EXCLUDED.details, '{}'::jsonb),
 				WebObjects.details
 			)
-		RETURNING object_id;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
+		RETURNING object_id
+	)
+	SELECT object_id
+	FROM upsert
+	FOR UPDATE;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
 		return err
 	}
