@@ -1880,6 +1880,17 @@ func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails) err
 	return nil
 }
 
+func truncateUTF8(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes])
+}
+
 // insertMetaTags inserts meta tags into the database for a given index ID.
 // It takes a transaction, index ID, and a map of meta tags as parameters.
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
@@ -1888,13 +1899,13 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 	for _, metatag := range metaTags {
 		var name string
 		if len(metatag.Name) > 256 {
-			name = metatag.Name[:256]
+			name = truncateUTF8(metatag.Name, 256)
 		} else {
 			name = metatag.Name
 		}
 		var content string
 		if len(metatag.Content) > 1024 {
-			content = metatag.Content[:1024]
+			content = truncateUTF8(metatag.Content, 1024)
 		} else {
 			content = metatag.Content
 		}
