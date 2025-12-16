@@ -1781,8 +1781,28 @@ $$;
 -- Ensure that the ON CASCADE DELETE is defined correctly:
 ALTER TABLE Screenshots DROP CONSTRAINT IF EXISTS screenshots_index_id_fkey;
 ALTER TABLE Screenshots ADD CONSTRAINT screenshots_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
-ALTER TABLE webobjectsindex DROP CONSTRAINT IF EXISTS webobjectsindex_index_id_fkey;
-ALTER TABLE webobjectsindex ADD CONSTRAINT webobjectsindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
+
+ALTER TABLE webobjectsindex
+DROP CONSTRAINT IF EXISTS webobjectsindex_object_id_fkey;
+ALTER TABLE webobjectsindex
+DROP CONSTRAINT IF EXISTS webobjectsindex_object_id_fkey1;
+ALTER TABLE webobjectsindex
+DROP CONSTRAINT IF EXISTS webobjectsindex_index_id_fkey;
+ALTER TABLE webobjectsindex
+DROP CONSTRAINT IF EXISTS webobjectsindex_index_id_fkey1;
+ALTER TABLE webobjectsindex
+ADD CONSTRAINT webobjectsindex_object_id_fkey
+FOREIGN KEY (object_id)
+REFERENCES webobjects(object_id)
+ON DELETE CASCADE;
+
+ALTER TABLE webobjectsindex
+ADD CONSTRAINT webobjectsindex_index_id_fkey
+FOREIGN KEY (index_id)
+REFERENCES searchindex(index_id)
+ON DELETE CASCADE;
+
+
 ALTER TABLE metatagsindex DROP CONSTRAINT IF EXISTS metatagsindex_index_id_fkey;
 ALTER TABLE metatagsindex ADD CONSTRAINT metatagsindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
 ALTER TABLE keywordindex DROP CONSTRAINT IF EXISTS keywordindex_index_id_fkey;

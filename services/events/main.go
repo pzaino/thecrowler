@@ -852,7 +852,7 @@ func processEvent(event cdb.Event) {
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 		return
 	}
