@@ -1910,6 +1910,13 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 			content = metatag.Content
 		}
 
+		if !utf8.ValidString(name) {
+			name = strings.ToValidUTF8(name, "")
+		}
+		if !utf8.ValidString(content) {
+			content = strings.ToValidUTF8(content, "")
+		}
+
 		var metatagID int64
 
 		// Try to find the metatag ID first
