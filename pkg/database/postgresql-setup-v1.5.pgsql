@@ -1453,6 +1453,7 @@ BEGIN
         'new_event',
         json_build_object(
             'event_sha256', NEW.event_sha256,
+            'event_type', NEW.event_type,
             'source_id', NEW.source_id,
             'event_timestamp', NEW.event_timestamp
         )::text
