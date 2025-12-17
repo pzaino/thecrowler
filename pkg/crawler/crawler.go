@@ -2004,6 +2004,10 @@ func insertKeywords(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
 			continue
 		}
 
+		if !utf8.ValidString(kw) {
+			kw = strings.ToValidUTF8(kw, "")
+		}
+
 		keywordID, err := insertKeyword(tx, kw)
 		if err != nil {
 			return err
