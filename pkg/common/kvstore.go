@@ -22,10 +22,19 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // KVStore is the global key-value store
-var KVStore *KeyValueStore
+var (
+	KVStore *KeyValueStore
+)
+
+const (
+	counterName = "counter"
+)
 
 // Properties defines the additional attributes for each key-value entry.
 type Properties struct {
@@ -40,8 +49,317 @@ type Properties struct {
 
 // Entry represents a key-value pair along with its properties.
 type Entry struct {
-	Value      interface{}
+	Value      any
 	Properties Properties
+}
+
+// CounterValue represents a counter with leasing capabilities.
+type CounterValue struct {
+	// Hard limit
+	Max int64 `json:"max"`
+
+	// Current total acquired slots
+	Current int64 `json:"current"`
+
+	// Active leases by ID
+	Leases map[string]CounterLease `json:"leases"`
+
+	// Monotonic version for reconciliation
+	Version uint64 `json:"version"`
+
+	// Optional, for future RPS windowing
+	Window *CounterWindow `json:"window,omitempty"`
+}
+
+// CounterLease represents a lease on a counter.
+type CounterLease struct {
+	// Number of slots acquired
+	Slots int64 `json:"slots"`
+
+	// Owner identity (engine ID, worker ID, etc.)
+	Owner string `json:"owner"`
+
+	// When the lease was acquired
+	AcquiredAt time.Time `json:"acquired_at"`
+
+	// Lease expiration
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// CounterWindow represents a time window for "rate limiting" or other similar purposes.
+type CounterWindow struct {
+	WindowSize  time.Duration `json:"window_size"`
+	WindowStart time.Time     `json:"window_start"`
+	Count       int64         `json:"count"`
+}
+
+// CreateCounter creates a new counter in the key-value store.
+func (kv *KeyValueStore) CreateCounter(
+	key string,
+	maxVal int64,
+	source string,
+) error {
+	if kv == nil {
+		return errors.New("key-value store is nil")
+	}
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+
+	if maxVal <= 0 {
+		return errors.New("counter max must be > 0")
+	}
+
+	fullKey := createKeyWithCtx(key, "")
+	_, exists := kv.store[fullKey]
+	if exists {
+		return errors.New("counter already exists")
+	}
+
+	counter := CounterValue{
+		Max:     maxVal,
+		Current: 0,
+		Leases:  make(map[string]CounterLease),
+		Version: 1,
+	}
+
+	kv.store[fullKey] = Entry{
+		Value: counter,
+		Properties: Properties{
+			Persistent:   true,
+			Static:       true,
+			SessionValid: false,
+			Shared:       true,
+			Source:       source,
+			CtxID:        "",
+			Type:         counterName,
+		},
+	}
+
+	if kv.sharedCallback != nil {
+		go kv.sharedCallback("set", key, counter, kv.store[fullKey].Properties)
+	}
+
+	return nil
+}
+
+// WithCounter is a helper function to safely access and modify a counter entry.
+// we can't return the counter value directly because we need to ensure thread safety
+// Important Note: WithCounter should only be used for mutations, not for read-only access.
+// For read-only access, use Get and type assert the value to CounterValue.
+func (kv *KeyValueStore) WithCounter(
+	key string,
+	fn func(entry *Entry, cv *CounterValue) error,
+) error {
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+
+	fullKey := createKeyWithCtx(key, "")
+	entry, ok := kv.store[fullKey]
+	if !ok {
+		return errors.New("counter not found")
+	}
+
+	if entry.Properties.Type != counterName {
+		return errors.New("key is not a counter")
+	}
+
+	cv, ok := entry.Value.(CounterValue)
+	if !ok {
+		return errors.New("counter corrupted")
+	}
+
+	// mutate safely
+	if err := fn(&entry, &cv); err != nil {
+		return err
+	}
+
+	// write back explicitly
+	entry.Value = cv
+	kv.store[fullKey] = entry
+
+	return nil
+}
+
+// TryAcquire attempts to acquire `slots` capacity from the named counter.
+// It is non-blocking and atomic.
+// On success it returns (leaseID, true, nil).
+// If capacity is insufficient it returns ("", false, nil).
+// Errors are returned only for invalid usage or corrupted state.
+func (kv *KeyValueStore) TryAcquire(
+	key string,
+	slots int64,
+	ttl time.Duration,
+	owner string,
+) (string, bool, error) {
+	if kv == nil {
+		return "", false, errors.New("key-value store is nil")
+	}
+
+	if strings.TrimSpace(key) == "" {
+		return "", false, errors.New("counter key is empty")
+	}
+	if slots <= 0 {
+		return "", false, errors.New("slots must be > 0")
+	}
+	if ttl <= 0 {
+		return "", false, errors.New("ttl must be > 0")
+	}
+
+	now := time.Now()
+	var leaseID string
+	acquired := false
+
+	var props Properties
+	var val any
+	err := kv.WithCounter(key, func(entry *Entry, cv *CounterValue) error {
+		// --- Sanity checks ---
+		if cv.Max <= 0 {
+			return errors.New("counter max is invalid")
+		}
+		if cv.Current < 0 {
+			return errors.New("counter current is negative")
+		}
+		if cv.Current > cv.Max {
+			return errors.New("counter current exceeds max")
+		}
+
+		// --- Lazy cleanup of expired leases ---
+		cleaned := false
+		for id, lease := range cv.Leases {
+			if now.After(lease.ExpiresAt) {
+				cv.Current -= lease.Slots
+				delete(cv.Leases, id)
+				cleaned = true
+			}
+		}
+		if cleaned {
+			cv.Version++
+		}
+
+		// Re-check invariant after cleanup
+		if cv.Current < 0 {
+			return errors.New("counter corrupted after lease cleanup")
+		}
+
+		available := cv.Max - cv.Current
+		if available < slots {
+			// Not enough capacity, fail without modifying state
+			acquired = false
+			return nil
+		}
+
+		// --- Acquire new lease ---
+		leaseID = uuid.NewString() // or your preferred ID generator
+
+		cv.Leases[leaseID] = CounterLease{
+			Slots:      slots,
+			Owner:      owner,
+			AcquiredAt: now,
+			ExpiresAt:  now.Add(ttl),
+		}
+
+		cv.Current += slots
+		cv.Version++
+
+		// Get updated entry info for callback
+		props = entry.Properties
+		val = entry.Value
+
+		// Mark as successfully acquired
+		acquired = true
+		return nil
+	})
+
+	if err != nil {
+		return "", false, err
+	}
+
+	if !acquired {
+		return "", false, nil
+	}
+
+	// Notify other nodes only on successful acquisition
+	if kv.sharedCallback != nil {
+		kv.sharedCallback(
+			"update",
+			key,
+			val,
+			props,
+		)
+	}
+
+	return leaseID, true, nil
+}
+
+// Release releases a previously acquired lease from the named counter.
+// It is atomic and non-blocking.
+// It returns an error if the counter or lease does not exist or if state is corrupted.
+func (kv *KeyValueStore) Release(
+	key string,
+	leaseID string,
+) error {
+	if kv == nil {
+		return errors.New("key-value store is nil")
+	}
+
+	if strings.TrimSpace(key) == "" {
+		return errors.New("counter key is empty")
+	}
+	if strings.TrimSpace(leaseID) == "" {
+		return errors.New("leaseID is empty")
+	}
+
+	var (
+		released bool
+		props    Properties
+		val      any
+	)
+
+	err := kv.WithCounter(key, func(entry *Entry, cv *CounterValue) error {
+		lease, exists := cv.Leases[leaseID]
+		if !exists {
+			return errors.New("lease not found")
+		}
+
+		// Remove lease
+		delete(cv.Leases, leaseID)
+
+		// Update counters
+		cv.Current -= lease.Slots
+		if cv.Current < 0 {
+			return errors.New("counter corrupted: current < 0 after release")
+		}
+
+		cv.Version++
+
+		// Capture updated state for callback
+		props = entry.Properties
+		val = entry.Value
+
+		released = true
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if !released {
+		// This should never happen, but keep it defensive
+		return errors.New("release failed without error")
+	}
+
+	// Notify other nodes
+	if kv.sharedCallback != nil {
+		kv.sharedCallback(
+			"update",
+			key,
+			val,
+			props,
+		)
+	}
+
+	return nil
 }
 
 // SharedCallback is a callback function type for shared key-value store operations.
@@ -172,12 +490,17 @@ func (kv *KeyValueStore) Increment(key, ctxID string, step int64) (int64, error)
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
+		// If the key does not exist, create it with the step value
 		entry = Entry{
 			Value:      step,
 			Properties: NewKVStoreEmptyProperty(),
 		}
 		kv.store[fullKey] = entry
 		return step, nil
+	}
+
+	if entry.Properties.Type == "counter" {
+		return 0, errors.New("counter values must use TryAcquire/Release")
 	}
 
 	var valInt int64
@@ -187,6 +510,8 @@ func (kv *KeyValueStore) Increment(key, ctxID string, step int64) (int64, error)
 	case int64:
 		valInt = v
 	case float64:
+		valInt = int64(v)
+	case float32:
 		valInt = int64(v)
 	default:
 		return 0, fmt.Errorf("value is not numeric")
@@ -209,8 +534,24 @@ func (kv *KeyValueStore) Decrement(key, ctxID string, step int64) (int64, error)
 	return kv.Increment(key, ctxID, -step)
 }
 
+func (kv *KeyValueStore) getProperties(key string, ctxID string) (Properties, error) {
+	if kv == nil {
+		kv = NewKeyValueStore()
+	}
+
+	fullKey := createKeyWithCtx(key, ctxID)
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	entry, exists := kv.store[fullKey]
+	if !exists {
+		return Properties{}, errors.New("key not found for context")
+	}
+	return entry.Properties, nil
+}
+
 // Get retrieves the value (which could be string or []string) and properties for a given key and context.
-func (kv *KeyValueStore) Get(key string, ctxID string) (interface{}, Properties, error) {
+func (kv *KeyValueStore) Get(key string, ctxID string) (any, Properties, error) {
 	if kv == nil {
 		kv = NewKeyValueStore()
 	}
@@ -288,6 +629,10 @@ func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 
 	if _, exists := kv.store[fullKey]; !exists {
 		return errors.New("key not found for context")
+	}
+
+	if kv.store[fullKey].Properties.Type == counterName {
+		return errors.New("cannot delete counter")
 	}
 
 	// Check if the entry should be removed
@@ -403,15 +748,31 @@ func (kv *KeyValueStore) DeleteAll() {
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
 
+	foundCounters := false
+
 	// Check for all shared entries and call the shared callback to notify the cluster
 	for key, entry := range kv.store {
+		if entry.Properties.Type == counterName {
+			foundCounters = true
+			continue // skip deleting counters
+		}
 		if entry.Properties.Shared && kv.sharedCallback != nil {
 			go kv.sharedCallback("delete", key, entry.Value, entry.Properties)
 		}
 	}
 
 	// Clear the store
-	kv.store = make(map[string]Entry)
+	if !foundCounters {
+		kv.store = make(map[string]Entry)
+		return
+	}
+	// We have Counters, so we need to delete entries one by one
+	for key := range kv.store {
+		if kv.store[key].Properties.Type == counterName {
+			continue // skip deleting counters
+		}
+		delete(kv.store, key)
+	}
 }
 
 // DeleteAllByCID clears all key-value pairs for a given context from the store.
@@ -421,8 +782,12 @@ func (kv *KeyValueStore) DeleteAllByCID(ctxID string) {
 	}
 	kv.mutex.Lock()
 	defer kv.mutex.Unlock()
+
 	ctxID = strings.TrimSpace(ctxID)
 	for key := range kv.store {
+		if kv.store[key].Properties.Type == counterName {
+			continue // skip deleting counters
+		}
 		if strings.HasSuffix(key, ":"+ctxID) {
 			// If the entry is shared, call the shared callback
 			if kv.store[key].Properties.Shared && kv.sharedCallback != nil {
@@ -473,6 +838,11 @@ func (kv *KeyValueStore) AllKeys() []string {
 
 	keys := make([]string, 0, len(kv.store))
 	for key := range kv.store {
+		if kv.store[key].Properties.CtxID == "" {
+			keys = append(keys, key[:len(key)-1]) // strip trailing colon
+			continue
+		}
+
 		// Remove the context ID from the key
 		key = key[:len(key)-len(kv.store[key].Properties.CtxID)-1]
 		keys = append(keys, key)
