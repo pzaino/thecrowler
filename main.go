@@ -1017,7 +1017,11 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		}
 	}
 	report += sepRLine + "\n"
-	totalPipelinesRunning.Set(float64(runningPipelines))
+	engine := cmn.GetMicroServiceName()
+	labels := prometheus.Labels{
+		"engine": engine,
+	}
+	totalPipelinesRunning.With(labels).Set(float64(runningPipelines))
 	if runningPipelines > 0 {
 		cmn.DebugMsg(cmn.DbgLvlInfo, report)
 	}
@@ -1046,11 +1050,12 @@ var (
 		},
 		[]string{"pipeline_id", "source"},
 	)
-	totalPipelinesRunning = prometheus.NewGauge(
+	totalPipelinesRunning = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "crowler_total_pipelines_running",
 			Help: "Total number of pipelines currently running.",
 		},
+		[]string{"engine"},
 	)
 
 	gaugeTotalPages      = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "crowler_total_pages"}, []string{"engine", "pipeline_id", "source"})

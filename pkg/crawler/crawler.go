@@ -1970,8 +1970,18 @@ func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
 		keyword = keyword[:256]
 	}
 	keyword = strings.TrimSpace(keyword)
+	if !utf8.ValidString(keyword) {
+		keyword = strings.ToValidUTF8(keyword, "")
+	}
 	if keyword == "" {
-		return 0, fmt.Errorf("empty keyword")
+		return 0, fmt.Errorf("Invalid keyword")
+	}
+
+	// Serialize per keyword
+	if _, err := tx.Exec(`
+		SELECT pg_advisory_xact_lock(hashtext($1))
+	`, keyword); err != nil {
+		return 0, err
 	}
 
 	var keywordID int
@@ -2000,12 +2010,11 @@ func insertKeywords(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
 
 	for _, kw := range pageInfo.Keywords {
 		kw = strings.TrimSpace(kw)
-		if kw == "" {
-			continue
-		}
-
 		if !utf8.ValidString(kw) {
 			kw = strings.ToValidUTF8(kw, "")
+		}
+		if kw == "" {
+			continue
 		}
 
 		keywordID, err := insertKeyword(tx, kw)
