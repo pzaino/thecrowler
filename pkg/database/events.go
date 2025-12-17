@@ -632,7 +632,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					}
 
 					// Step 2: Fetch full event from DB
-					event, err := fetchEventWithRetry(db, meta.EventSHA256, 10, 20*time.Millisecond)
+					event, err := fetchEventWithRetry(db, meta.EventSHA256, 20, 50*time.Millisecond)
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event %s: %v", meta.EventSHA256, err)
 						continue
