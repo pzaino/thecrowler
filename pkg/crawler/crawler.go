@@ -1451,7 +1451,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Insert into KeywordIndex
 	if pageInfo.Config.Crawler.CollectKeywords {
-		err = insertKeywords(tx, db, indexID, pageInfo)
+		err = insertKeywords(tx, indexID, pageInfo)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting keywords for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
@@ -1965,28 +1965,55 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 	return nil
 }
 
+func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
+	if len(keyword) > 256 {
+		keyword = keyword[:256]
+	}
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return 0, fmt.Errorf("empty keyword")
+	}
+
+	var keywordID int
+	err := tx.QueryRow(`
+		INSERT INTO Keywords (keyword)
+		VALUES ($1)
+		ON CONFLICT (keyword)
+		DO UPDATE SET keyword = EXCLUDED.keyword
+		RETURNING keyword_id;
+	`, keyword).Scan(&keywordID)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return keywordID, nil
+}
+
 // insertKeywords inserts keywords extracted from a web page into the database.
 // It takes a transaction `tx` and a database connection `db` as parameters.
 // The `indexID` parameter represents the ID of the index associated with the keywords.
 // The `pageInfo` parameter contains information about the web page.
 // It returns an error if there is any issue with inserting the keywords into the database.
-func insertKeywords(tx *sql.Tx, db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
+func insertKeywords(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Inserting keywords for indexID: %d", indexID)
-	for _, keyword := range pageInfo.Keywords {
-		if len(keyword) == 0 || strings.TrimSpace(keyword) == "" {
+
+	for _, kw := range pageInfo.Keywords {
+		kw = strings.TrimSpace(kw)
+		if kw == "" {
 			continue
 		}
-		keyword = strings.TrimSpace(keyword)
 
-		keywordID, err := insertKeywordWithRetries(tx, keyword)
+		keywordID, err := insertKeyword(tx, kw)
 		if err != nil {
 			return err
 		}
-		// Use ON CONFLICT DO NOTHING to ignore the insert if the keyword_id and index_id combination already exists
+
 		_, err = tx.Exec(`
-            INSERT INTO KeywordIndex (keyword_id, index_id)
-            VALUES ($1, $2)
-            ON CONFLICT (keyword_id, index_id) DO NOTHING;`, keywordID, indexID)
+			INSERT INTO KeywordIndex (keyword_id, index_id)
+			VALUES ($1, $2)
+			ON CONFLICT (keyword_id, index_id) DO NOTHING;
+		`, keywordID, indexID)
 		if err != nil {
 			return err
 		}
@@ -2015,6 +2042,7 @@ func commitTransaction(tx *sql.Tx) error {
 	return nil
 }
 
+/*
 // insertKeywordWithRetries is responsible for storing the extracted keywords in the database
 // It's written to be efficient and avoid deadlocks, but this right now is not required
 // because indexPage uses a mutex to ensure that only one goroutine is indexing a page
@@ -2059,6 +2087,7 @@ func insertKeywordWithRetries(tx *sql.Tx, keyword string) (int, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Failed to insert keyword after retries: '%s'", keyword)
 	return 0, fmt.Errorf("failed to insert keyword after retries: %s", keyword)
 }
+*/
 
 func addXHRHook(wd *vdi.WebDriver) error {
 	if wd == nil {
