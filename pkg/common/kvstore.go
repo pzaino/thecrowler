@@ -666,7 +666,8 @@ func (kv *KeyValueStore) getProperties(key string, ctxID string) (Properties, er
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return Properties{}, errors.New(ErrKVKeyNotFound)
+		msg := fmt.Sprintf("key '%s' not found for context '%s'", key, ctxID)
+		return Properties{}, errors.New(msg)
 	}
 	return entry.Properties, nil
 }
@@ -683,7 +684,8 @@ func (kv *KeyValueStore) Get(key string, ctxID string) (any, Properties, error) 
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return nil, Properties{}, errors.New(ErrKVKeyNotFound)
+		msg := fmt.Sprintf("key '%s' not found for context '%s'", key, ctxID)
+		return nil, Properties{}, errors.New(msg)
 	}
 	return entry.Value, entry.Properties, nil
 }
