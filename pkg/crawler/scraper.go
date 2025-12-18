@@ -1074,7 +1074,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(pluginName)
 	if !exists {
-		return fmt.Errorf("plugin %s not found", pluginName)
+		return fmt.Errorf("plugin '%s' not found", pluginName)
 	}
 
 	// Execute the plugin
@@ -1090,7 +1090,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		// Serialize map to JSON and assign to *data
 		jsonResult, err := json.Marshal(v)
 		if err != nil {
-			return fmt.Errorf("error marshalling plugin output to JSON: %v", err)
+			return fmt.Errorf("error marshalling plugin '%s' output to JSON: %v", pluginName, err)
 		}
 		if jsonResult != nil {
 			*data = jsonResult
@@ -1099,7 +1099,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	case string:
 		// Validate if the string is JSON
 		if !json.Valid([]byte(v)) {
-			return fmt.Errorf("plugin returned an invalid JSON string")
+			return fmt.Errorf("plugin '%s' returned an invalid JSON string", pluginName)
 		}
 		v = strings.TrimSpace(v)
 		if v != "" {
@@ -1107,7 +1107,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 		}
 
 	default:
-		return fmt.Errorf("plugin returned an unsupported type: %T", v)
+		return fmt.Errorf("plugin '%s' returned an unsupported type: %T", pluginName, v)
 	}
 
 	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Received data from custom JS plugin: %s", string(*data))
