@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -622,6 +623,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					// Step 1: Decode metadata
 					var meta struct {
 						EventSHA256    string `json:"event_sha256"`
+						EventType      string `json:"event_type"`
 						SourceID       uint64 `json:"source_id"`
 						EventTimestamp string `json:"event_timestamp"`
 					}
@@ -632,9 +634,19 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 					}
 
 					// Step 2: Fetch full event from DB
-					event, err := fetchEventWithRetry(db, meta.EventSHA256, 20, 50*time.Millisecond)
+					event, err := fetchEventWithRetry(db, meta.EventSHA256, 30, 50*time.Millisecond)
 					if err != nil {
-						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event %s: %v", meta.EventSHA256, err)
+						if errors.Is(err, sql.ErrNoRows) {
+							et := strings.ToLower(strings.TrimSpace(meta.EventType))
+							if strings.HasPrefix(et, "crowler_") ||
+								strings.HasPrefix(et, "system_") {
+								cmn.DebugMsg(cmn.DbgLvlError, "System event '%s' of type '%s' was removed before listener could fetch it:  %v", meta.EventSHA256, et, err)
+							} else {
+								cmn.DebugMsg(cmn.DbgLvlDebug2, "Event '%s' of type '%s' possibly already processed and removed from queue: %v", meta.EventSHA256, et, err)
+							}
+						} else {
+							cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event '%s' of type '%s': %v", meta.EventSHA256, meta.EventType, err)
+						}
 						continue
 					}
 

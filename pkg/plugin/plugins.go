@@ -796,6 +796,18 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTim
 	if err := addJSAPIIncrDecrKV(vm); err != nil {
 		return err
 	}
+	if err := addJSAPICounterCreate(vm); err != nil {
+		return err
+	}
+	if err := addJSAPICounterTryAcquire(vm); err != nil {
+		return err
+	}
+	if err := addJSAPICounterRelease(vm); err != nil {
+		return err
+	}
+	if err := addJSAPICounterGet(vm); err != nil {
+		return err
+	}
 	if err := addJSAPISleep(vm); err != nil {
 		return err
 	}
@@ -3498,6 +3510,150 @@ func normalizeKVValues(value interface{}) interface{} {
 		// Primitive types (string, bool, int, float) stay as is
 		return v
 	}
+}
+
+func addJSAPICounterCreate(vm *otto.Otto) error {
+	return vm.Set("createCounter", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+
+		cfgArg := call.Argument(1)
+		if !cfgArg.IsDefined() {
+			return returnError(vm, "missing counter config")
+		}
+
+		cfgMap, err := cfgArg.Export()
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+
+		m, ok := cfgMap.(map[string]interface{})
+		if !ok {
+			return returnError(vm, "invalid counter config")
+		}
+
+		var max int64
+		var source string
+
+		if v, ok := m["max"].(float64); ok {
+			max = int64(v)
+		}
+		if max <= 0 {
+			return returnError(vm, "counter max must be > 0")
+		}
+
+		if s, ok := m["source"].(string); ok {
+			source = s
+		} else {
+			source = "js_plugin"
+		}
+
+		// Create global counter (CtxID is always "")
+		err = cmn.KVStore.CreateCounterBase(key, max, source)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+
+		return otto.TrueValue()
+	})
+}
+
+func addJSAPICounterTryAcquire(vm *otto.Otto) error {
+	return vm.Set("tryAcquireCounter", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+
+		cfgArg := call.Argument(1)
+		if !cfgArg.IsDefined() {
+			return returnError(vm, "missing acquire config")
+		}
+
+		cfgMap, err := cfgArg.Export()
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+
+		m, ok := cfgMap.(map[string]interface{})
+		if !ok {
+			return returnError(vm, "invalid acquire config")
+		}
+
+		var (
+			slots int64
+			ttl   time.Duration
+			owner string
+		)
+
+		if v, ok := m["slots"].(float64); ok {
+			slots = int64(v)
+		}
+		if slots <= 0 {
+			return returnError(vm, "slots must be > 0")
+		}
+
+		if v, ok := m["ttl_ms"].(float64); ok {
+			ttl = time.Duration(v) * time.Millisecond
+		}
+		if ttl <= 0 {
+			return returnError(vm, "ttl_ms must be > 0")
+		}
+
+		if v, ok := m["owner"].(string); ok {
+			owner = v
+		} else {
+			return returnError(vm, "owner is required")
+		}
+
+		leaseID, okAcquire, err := cmn.KVStore.TryAcquire(
+			key,
+			slots,
+			ttl,
+			owner,
+		)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+
+		result := map[string]interface{}{
+			"ok":       okAcquire,
+			"lease_id": leaseID,
+		}
+
+		jsVal, _ := vm.ToValue(result)
+		return jsVal
+	})
+}
+
+func addJSAPICounterRelease(vm *otto.Otto) error {
+	return vm.Set("releaseCounter", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+		leaseID, _ := call.Argument(1).ToString()
+
+		if strings.TrimSpace(key) == "" {
+			return returnError(vm, "counter key is empty")
+		}
+		if strings.TrimSpace(leaseID) == "" {
+			return returnError(vm, "lease_id is required")
+		}
+
+		if err := cmn.KVStore.Release(key, leaseID); err != nil {
+			return returnError(vm, err.Error())
+		}
+
+		return otto.TrueValue()
+	})
+}
+
+func addJSAPICounterGet(vm *otto.Otto) error {
+	return vm.Set("getCounter", func(call otto.FunctionCall) otto.Value {
+		key, _ := call.Argument(0).ToString()
+
+		info, err := cmn.KVStore.GetCounterInfo(key)
+		if err != nil {
+			return returnError(vm, err.Error())
+		}
+
+		js, _ := vm.ToValue(info)
+		return js
+	})
 }
 
 // addJSAPISleep adds a sleep(ms) function to the VM

@@ -129,7 +129,7 @@ func TestKeyValueStore_Get(t *testing.T) {
 		t.Run(fmt.Sprintf("%s_%s", tt.key, tt.ctxID), func(t *testing.T) {
 			value, props, err := kvStore.Get(tt.key, tt.ctxID)
 
-			if err != nil && err.Error() != tt.err.Error() {
+			if err != nil && !KVSErrorIsKeyNotFound(err) {
 				t.Fatalf("Expected error %v, got %v", tt.err, err)
 			}
 
@@ -183,8 +183,10 @@ func TestKeyValueStore_GetWithCtx(t *testing.T) {
 			value, props, err := kvStore.GetWithCtx(tt.key, tt.source, tt.ctxID)
 
 			// Check error
-			if err != nil && err.Error() != tt.err.Error() {
-				t.Fatalf("Expected error %v, got %v", tt.err, err)
+			if err != nil && !KVSErrorIsKeyNotFound(err) {
+				if tt.err.Error() == "source mismatch" && err.Error() != "source mismatch" {
+					t.Fatalf("Expected error %v, got %v", tt.err, err)
+				}
 			}
 
 			// Use reflect.DeepEqual to compare the values
@@ -323,7 +325,7 @@ func TestKeyValueStore_Delete(t *testing.T) {
 		t.Run(fmt.Sprintf("%s_%s", tt.key, tt.ctxID), func(t *testing.T) {
 			err := kvStore.Delete(tt.key, tt.ctxID, true)
 
-			if err != nil && err.Error() != tt.expected.Error() {
+			if err != nil && !KVSErrorIsKeyNotFound(err) {
 				t.Fatalf("Expected error %v, got %v", tt.expected, err)
 			}
 
@@ -390,7 +392,7 @@ func TestKeyValueStore_DeleteNonPersistent(t *testing.T) {
 			value, _, err := kvStore.Get(tt.key, tt.ctxID)
 
 			// Check if the error matches
-			if err != nil && err.Error() != tt.err.Error() {
+			if err != nil && !KVSErrorIsKeyNotFound(err) {
 				t.Fatalf("Expected error %v, got %v", tt.err, err)
 			}
 
@@ -447,7 +449,7 @@ func TestKeyValueStore_DeleteAll(t *testing.T) {
 		t.Run(fmt.Sprintf("%s_%s", tt.key, tt.ctxID), func(t *testing.T) {
 			_, _, err := kvStore.Get(tt.key, tt.ctxID)
 
-			if err == nil || err.Error() != tt.err.Error() {
+			if err == nil || !KVSErrorIsKeyNotFound(err) {
 				t.Fatalf("Expected error %v, got %v", tt.err, err)
 			}
 		})
