@@ -1081,7 +1081,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	var value interface{}
 	value, err = plugin.Execute(&ctx.wd, ctx.db, ctx.config.Plugins.PluginsTimeout, params)
 	if err != nil {
-		return fmt.Errorf("error executing JS plugin: %v", err)
+		return fmt.Errorf("error executing JS plugin '%s': %v", pluginName, err)
 	}
 
 	// Validate the plugin result
