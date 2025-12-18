@@ -33,8 +33,38 @@ var (
 )
 
 const (
+	// private
 	counterName = "counter"
+
+	// Public constants for shared callback actions
+
+	// ActionKVSCSet Set action
+	ActionKVSCSet = "set"
+	// ActionKVSCUpdate Update action
+	ActionKVSCUpdate = "update"
+	// ActionKVSCDelete Delete action
+	ActionKVSCDelete = "delete"
+
+	// ErrKVKeyNotFound is the generic message for key not found errors
+	ErrKVKeyNotFound = "key not found in key-value store"
 )
+
+// KVSErrorIsKeyNotFound checks if the given error indicates that a key was not found in the key-value store.
+func KVSErrorIsKeyNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(strings.TrimSpace(err.Error()))
+
+	if errMsg == ErrKVKeyNotFound {
+		return true
+	}
+	if strings.HasPrefix(errMsg, "key") && strings.Contains(err.Error(), "not found") {
+		return true
+	}
+
+	return strings.Contains(err.Error(), ErrKVKeyNotFound)
+}
 
 // Properties defines the additional attributes for each key-value entry.
 type Properties struct {
@@ -636,7 +666,7 @@ func (kv *KeyValueStore) getProperties(key string, ctxID string) (Properties, er
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return Properties{}, errors.New("key not found for context")
+		return Properties{}, errors.New(ErrKVKeyNotFound)
 	}
 	return entry.Properties, nil
 }
@@ -653,7 +683,7 @@ func (kv *KeyValueStore) Get(key string, ctxID string) (any, Properties, error) 
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return nil, Properties{}, errors.New("key not found for context")
+		return nil, Properties{}, errors.New(ErrKVKeyNotFound)
 	}
 	return entry.Value, entry.Properties, nil
 }
@@ -671,7 +701,8 @@ func (kv *KeyValueStore) GetBySource(key string, source string) (interface{}, Pr
 			return entry.Value, entry.Properties, nil
 		}
 	}
-	return nil, Properties{}, errors.New("key not found for the specified source")
+	msg := fmt.Sprintf("key '%s' not found for source '%s'", key, source)
+	return nil, Properties{}, errors.New(msg)
 }
 
 // GetWithCtx retrieves the value for a given key, considering both Source and CtxID if provided.
@@ -685,7 +716,8 @@ func (kv *KeyValueStore) GetWithCtx(key string, source string, ctxID string) (in
 
 	entry, exists := kv.store[fullKey]
 	if !exists {
-		return nil, Properties{}, errors.New("key not found")
+		msg := fmt.Sprintf("key '%s' not found for context '%s'", key, ctxID)
+		return nil, Properties{}, errors.New(msg)
 	}
 
 	if source != "" && entry.Properties.Source != source {
@@ -719,7 +751,8 @@ func (kv *KeyValueStore) Delete(key string, ctxID string, flags ...bool) error {
 	defer kv.mutex.Unlock()
 
 	if _, exists := kv.store[fullKey]; !exists {
-		return errors.New("key not found for context")
+		msg := fmt.Sprintf("key '%s' not found for context '%s'", key, ctxID)
+		return errors.New(msg)
 	}
 
 	if kv.store[fullKey].Properties.Type == counterName {

@@ -337,8 +337,12 @@ func executeCCPluginActionRule(ctx *ProcessContext, r *rules.ActionRule, data *[
 									// Get the value from the KVStore
 									v, _, err = cmn.KVStore.Get(key, ctx.GetContextID())
 									if err != nil {
-										cmn.DebugMsg(cmn.DbgLvlError, "Error getting value from KVStore: %v", err)
-										v = ""
+										if cmn.KVSErrorIsKeyNotFound(err) {
+											cmn.DebugMsg(cmn.DbgLvlDebug2, "JS Plugin required key not found in KVStore, did you create it? %v", err)
+											v = ""
+										} else {
+											cmn.DebugMsg(cmn.DbgLvlError, "getting value from KVStore for JS Plugin: %v", err)
+										}
 									} else {
 										cmn.DebugMsg(cmn.DbgLvlDebug5, "Value from KVStore for '%s': %v", k, v)
 									}
@@ -395,8 +399,12 @@ func processCCCustomJSStep(ctx *ProcessContext, step *rules.PostProcessingStep, 
 							// Get the value from the KVStore
 							v, _, err = cmn.KVStore.Get(key, ctx.GetContextID())
 							if err != nil {
-								cmn.DebugMsg(cmn.DbgLvlError, "Error getting value from KVStore: %v", err)
-								v = ""
+								if cmn.KVSErrorIsKeyNotFound(err) {
+									cmn.DebugMsg(cmn.DbgLvlDebug2, "JS Plugin required key not found in KVStore, did you create it? %v", err)
+									v = ""
+								} else {
+									cmn.DebugMsg(cmn.DbgLvlError, "getting value from KVStore for JS Plugin: %v", err)
+								}
 							} else {
 								cmn.DebugMsg(cmn.DbgLvlDebug5, "Value from KVStore for '%s': %v", k, v)
 							}
