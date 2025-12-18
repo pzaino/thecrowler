@@ -71,6 +71,15 @@ type CounterValue struct {
 	Window *CounterWindow `json:"window,omitempty"`
 }
 
+// CounterInfo provides a summary of the counter's state.
+type CounterInfo struct {
+	Max       int64  `json:"max"`
+	Current   int64  `json:"current"`
+	Available int64  `json:"available"`
+	Leases    int    `json:"leases"`
+	Version   uint64 `json:"version"`
+}
+
 // CounterLease represents a lease on a counter.
 type CounterLease struct {
 	// Number of slots acquired
@@ -94,7 +103,46 @@ type CounterWindow struct {
 }
 
 // CreateCounter creates a new counter in the key-value store.
+// It returns true if the counter was created, false if it already exists.
 func (kv *KeyValueStore) CreateCounter(
+	key string,
+	counterValue CounterValue,
+	source string,
+) bool {
+	if kv == nil {
+		return false
+	}
+	kv.mutex.Lock()
+	defer kv.mutex.Unlock()
+
+	fullKey := createKeyWithCtx(key, "")
+	_, exists := kv.store[fullKey]
+	if exists {
+		return false
+	}
+
+	kv.store[fullKey] = Entry{
+		Value: counterValue,
+		Properties: Properties{
+			Persistent:   true,
+			Static:       true,
+			SessionValid: false,
+			Shared:       true,
+			Source:       source,
+			CtxID:        "",
+			Type:         counterName,
+		},
+	}
+
+	if kv.sharedCallback != nil {
+		go kv.sharedCallback("set", key, counterValue, kv.store[fullKey].Properties)
+	}
+
+	return true
+}
+
+// CreateCounterBase creates a new counter in the key-value store.
+func (kv *KeyValueStore) CreateCounterBase(
 	key string,
 	maxVal int64,
 	source string,
@@ -360,6 +408,49 @@ func (kv *KeyValueStore) Release(
 	}
 
 	return nil
+}
+
+// GetCounterInfo returns a safe, read-only snapshot of a counter state.
+func (kv *KeyValueStore) GetCounterInfo(key string) (*CounterInfo, error) {
+	if kv == nil {
+		return nil, errors.New("key-value store is nil")
+	}
+
+	if strings.TrimSpace(key) == "" {
+		return nil, errors.New("counter key is empty")
+	}
+
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	fullKey := createKeyWithCtx(key, "")
+	entry, exists := kv.store[fullKey]
+	if !exists {
+		return nil, errors.New("counter not found")
+	}
+
+	if entry.Properties.Type != counterName {
+		return nil, errors.New("key is not a counter")
+	}
+
+	cv, ok := entry.Value.(CounterValue)
+	if !ok {
+		return nil, errors.New("counter value corrupted")
+	}
+
+	if cv.Current < 0 || cv.Current > cv.Max {
+		return nil, errors.New("counter invariant violated")
+	}
+
+	info := &CounterInfo{
+		Max:       cv.Max,
+		Current:   cv.Current,
+		Available: cv.Max - cv.Current,
+		Leases:    len(cv.Leases),
+		Version:   cv.Version,
+	}
+
+	return info, nil
 }
 
 // SharedCallback is a callback function type for shared key-value store operations.
