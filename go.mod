@@ -77,7 +77,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.6
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.94.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.0
 	github.com/clbanning/mxj/v2 v2.7.0
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
