@@ -147,6 +147,11 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	// Reload plugins
 	apiPlugins = plg.NewJSPluginRegister().
 		LoadPluginsFromConfig(config, "api_plugin")
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"API PLUGINS: loaded %d plugins",
+		len(apiPlugins.Registry),
+	)
 
 	setSysReady(currentSysReady) // Restore previous system ready state
 	return nil
@@ -533,8 +538,22 @@ func registerAPIPluginRoutes(mux *http.ServeMux) {
 		if api == nil {
 			continue
 		}
+		if api.EndPoint == "" || len(api.Methods) == 0 {
+			continue
+		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "API PLUGIN FOUND: name=%s type=%s endpoint=%v",
+			name,
+			plugin.PType,
+			func() string {
+				if plugin.API == nil {
+					return "<nil>"
+				}
+				return plugin.API.EndPoint
+			}())
 
 		for _, method := range api.Methods {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Registering API plugin routes")
 			handler := withAPIPluginMiddlewares(
 				makeAPIPluginHandler(plugin, method),
 			)
