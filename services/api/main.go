@@ -557,26 +557,24 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]str
 			api.Methods = []string{"GET"}
 		}
 
-		for _, method := range api.Methods {
-			// Check if the plugin is already registered
-			alreadyRegistered := false
-			for _, registered := range *currentRegisteredPlugins {
-				if registered == name+"_"+method {
-					alreadyRegistered = true
-					break
-				}
+		// Check if the plugin is already registered
+		alreadyRegistered := false
+		for _, registered := range *currentRegisteredPlugins {
+			if registered == name {
+				alreadyRegistered = true
+				break
 			}
-			if alreadyRegistered {
-				continue
-			}
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Registering API plugin routes")
-			handler := withAPIPluginMiddlewares(
-				makeAPIPluginHandler(plugin, method),
-			)
-
-			mux.Handle(api.EndPoint, handler)
-			(*currentRegisteredPlugins) = append((*currentRegisteredPlugins), name+"_"+method)
 		}
+		if alreadyRegistered {
+			continue
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Registering API plugin routes")
+		handler := withAPIPluginMiddlewares(
+			makeAPIPluginHandler(plugin),
+		)
+
+		mux.Handle(api.EndPoint, handler)
+		(*currentRegisteredPlugins) = append((*currentRegisteredPlugins), name)
 	}
 }
 

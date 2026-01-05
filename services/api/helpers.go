@@ -161,14 +161,29 @@ func PrepareInput(input string) string {
 	return input
 }
 
-func makeAPIPluginHandler(plugin plg.JSPlugin, method string) http.HandlerFunc {
+func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
+	allowed := map[string]bool{}
+	if plugin.API != nil {
+		for _, m := range plugin.API.Methods {
+			allowed[strings.ToUpper(m)] = true
+		}
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != method {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if !allowed[r.Method] {
+			w.Header().Set("Allow", strings.Join(plugin.API.Methods, ", "))
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Extract body or query (reuse existing logic)
+		cmn.DebugMsg(
+			cmn.DbgLvlDebug2,
+			"API PLUGIN HIT: %s %s (%s)",
+			r.Method,
+			r.URL.Path,
+			plugin.Name,
+		)
+
 		input, err := extractQueryOrBody(r)
 		if err != nil {
 			handleErrorAndRespond(
@@ -182,7 +197,6 @@ func makeAPIPluginHandler(plugin plg.JSPlugin, method string) http.HandlerFunc {
 			return
 		}
 
-		// Build plugin context (same philosophy as Events)
 		ctx := map[string]interface{}{
 			"http": map[string]interface{}{
 				"method": r.Method,
@@ -193,10 +207,9 @@ func makeAPIPluginHandler(plugin plg.JSPlugin, method string) http.HandlerFunc {
 			"input": PrepareInput(input),
 		}
 
-		// Execute plugin
 		result, err := plugin.Execute(
-			nil, // no DB handler for now
-			nil, // no DB handler
+			nil,
+			nil,
 			config.API.Timeout,
 			ctx,
 		)
@@ -213,7 +226,6 @@ func makeAPIPluginHandler(plugin plg.JSPlugin, method string) http.HandlerFunc {
 			return
 		}
 
-		// Return plugin result as JSON
 		handleErrorAndRespond(
 			w,
 			nil,
