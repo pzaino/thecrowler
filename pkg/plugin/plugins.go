@@ -420,21 +420,21 @@ func NewJSPlugin(script string) *JSPlugin {
 	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
 	pAsyncTagRegEx := "^//\\s*[@]?async\\s*\\:\\s*([^\n]+)"
 	pAPIEndPointRegEx := "^//\\s*[@]?api_endpoint\\s*\\:\\s*([^\n]+)"
-	pAPIMethodRegEx := "^//\\s*[@]?api_method\\s*\\:\\s*([^\n]+)"
+	pAPIMethodRegEx := "^//\\s*[@]?api_methods\\s*\\:\\s*([^\n]+)"
 	pAPIAuthRegEx := "^//\\s*[@]?api_auth\\s*\\:\\s*([^\n]+)"
-	pAPIAuthTyepRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
+	pAPIAuthTypeRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
 
-	re1 := regexp.MustCompile(pNameRegEx)
-	re2 := regexp.MustCompile(pDescRegEx)
-	re3 := regexp.MustCompile(pTypeRegEx)
-	re4 := regexp.MustCompile(pEventTypeRegEx)
-	re5 := regexp.MustCompile(pVerRegEx)
-	re6 := regexp.MustCompile(pAsyncTagRegEx)
+	re01 := regexp.MustCompile(pNameRegEx)
+	re02 := regexp.MustCompile(pDescRegEx)
+	re03 := regexp.MustCompile(pTypeRegEx)
+	re04 := regexp.MustCompile(pEventTypeRegEx)
+	re05 := regexp.MustCompile(pVerRegEx)
+	re06 := regexp.MustCompile(pAsyncTagRegEx)
 
-	re7 := regexp.MustCompile(pAPIEndPointRegEx)
-	re8 := regexp.MustCompile(pAPIMethodRegEx)
-	re9 := regexp.MustCompile(pAPIAuthRegEx)
-	re10 := regexp.MustCompile(pAPIAuthTyepRegEx)
+	re07 := regexp.MustCompile(pAPIEndPointRegEx)
+	re08 := regexp.MustCompile(pAPIMethodRegEx)
+	re09 := regexp.MustCompile(pAPIAuthRegEx)
+	re10 := regexp.MustCompile(pAPIAuthTypeRegEx)
 
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
@@ -450,14 +450,14 @@ func NewJSPlugin(script string) *JSPlugin {
 	apiAuthType := none
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
-		if re1.MatchString(line) {
-			pName = strings.TrimSpace(re1.FindStringSubmatch(line)[1])
+		if re01.MatchString(line) {
+			pName = strings.TrimSpace(re01.FindStringSubmatch(line)[1])
 		}
-		if re2.MatchString(line) {
-			pDesc = strings.TrimSpace(re2.FindStringSubmatch(line)[1])
+		if re02.MatchString(line) {
+			pDesc = strings.TrimSpace(re02.FindStringSubmatch(line)[1])
 		}
-		if re3.MatchString(line) {
-			pTypeStr := strings.ToLower(strings.TrimSpace(re3.FindStringSubmatch(line)[1]))
+		if re03.MatchString(line) {
+			pTypeStr := strings.ToLower(strings.TrimSpace(re03.FindStringSubmatch(line)[1]))
 			if pTypeStr == vdiPlugin ||
 				pTypeStr == enginePlugin ||
 				pTypeStr == apiPlugin ||
@@ -468,26 +468,26 @@ func NewJSPlugin(script string) *JSPlugin {
 				pType = enginePlugin
 			}
 		}
-		if re4.MatchString(line) {
-			pEventType = strings.ToLower(strings.TrimSpace(re4.FindStringSubmatch(line)[1]))
+		if re04.MatchString(line) {
+			pEventType = strings.ToLower(strings.TrimSpace(re04.FindStringSubmatch(line)[1]))
 		}
-		if re5.MatchString(line) {
-			pVersion = strings.TrimSpace(re5.FindStringSubmatch(line)[1])
+		if re05.MatchString(line) {
+			pVersion = strings.TrimSpace(re05.FindStringSubmatch(line)[1])
 		}
-		if re6.MatchString(line) {
-			asyncStr := strings.ToLower(strings.TrimSpace(re6.FindStringSubmatch(line)[1]))
+		if re06.MatchString(line) {
+			asyncStr := strings.ToLower(strings.TrimSpace(re06.FindStringSubmatch(line)[1]))
 			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
 				pAsync = true
 			}
 		}
-		if re7.MatchString(line) {
-			apiEndPointStr := strings.TrimSpace(re7.FindStringSubmatch(line)[1])
+		if re07.MatchString(line) {
+			apiEndPointStr := strings.TrimSpace(re07.FindStringSubmatch(line)[1])
 			if apiEndPointStr != "" {
 				apiEndPoint = strings.TrimSpace(apiEndPointStr)
 			}
 		}
-		if re8.MatchString(line) {
-			apiMethodStr := strings.TrimSpace(re8.FindStringSubmatch(line)[1])
+		if re08.MatchString(line) {
+			apiMethodStr := strings.TrimSpace(re08.FindStringSubmatch(line)[1])
 			if apiMethodStr != "" {
 				// Split multiple endpoints by comma
 				for method := range strings.SplitSeq(apiMethodStr, ",") {
@@ -508,8 +508,8 @@ func NewJSPlugin(script string) *JSPlugin {
 				}
 			}
 		}
-		if re9.MatchString(line) {
-			apiAuthStr := strings.TrimSpace(re9.FindStringSubmatch(line)[1])
+		if re09.MatchString(line) {
+			apiAuthStr := strings.TrimSpace(re09.FindStringSubmatch(line)[1])
 			if apiAuthStr != "" {
 				apiAuthStr = strings.ToLower(strings.TrimSpace(apiAuthStr))
 				if apiAuthStr == "required" ||

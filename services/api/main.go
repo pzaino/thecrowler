@@ -552,6 +552,10 @@ func registerAPIPluginRoutes(mux *http.ServeMux) {
 				return plugin.API.EndPoint
 			}())
 
+		if len(api.Methods) == 0 {
+			api.Methods = []string{"GET"}
+		}
+
 		for _, method := range api.Methods {
 			cmn.DebugMsg(cmn.DbgLvlDebug2, "Registering API plugin routes")
 			handler := withAPIPluginMiddlewares(
