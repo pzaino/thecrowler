@@ -529,10 +529,10 @@ func initAPIv1() {
 
 	// Register API plugin routes
 	registeredPlugins := []string{}
-	registerAPIPluginRoutes(http.DefaultServeMux, registeredPlugins)
+	registerAPIPluginRoutes(http.DefaultServeMux, &registeredPlugins)
 }
 
-func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins []string) {
+func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]string) {
 	for _, name := range apiPlugins.Order {
 		plugin := apiPlugins.Registry[name]
 		api := plugin.API
@@ -560,7 +560,7 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins []stri
 		for _, method := range api.Methods {
 			// Check if the plugin is already registered
 			alreadyRegistered := false
-			for _, registered := range currentRegisteredPlugins {
+			for _, registered := range *currentRegisteredPlugins {
 				if registered == name+"_"+method {
 					alreadyRegistered = true
 					break
@@ -575,7 +575,7 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins []stri
 			)
 
 			mux.Handle(api.EndPoint, handler)
-			currentRegisteredPlugins = append(currentRegisteredPlugins, name+"_"+method)
+			(*currentRegisteredPlugins) = append((*currentRegisteredPlugins), name+"_"+method)
 		}
 	}
 }
