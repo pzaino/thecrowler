@@ -56,6 +56,7 @@ const (
 	vdiPlugin     = "vdi_plugin"
 	enginePlugin  = "engine_plugin"
 	eventPlugin   = "event_plugin"
+	apiPlugin     = "api_plugin"
 	none          = "none"
 	all           = "all"
 
@@ -228,6 +229,10 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 						if plugin.PType != vdiPlugin {
 							pluginsSet = append(pluginsSet, plugin)
 						}
+					} else if pType == apiPlugin {
+						if plugin.PType == apiPlugin {
+							pluginsSet = append(pluginsSet, plugin)
+						}
 					}
 				}
 			} else {
@@ -255,6 +260,10 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 				}
 			} else if pType == enginePlugin {
 				if plugin.PType != vdiPlugin {
+					pluginsSet = append(pluginsSet, plugin)
+				}
+			} else if pType == apiPlugin {
+				if plugin.PType == apiPlugin {
 					pluginsSet = append(pluginsSet, plugin)
 				}
 			}
@@ -410,12 +419,22 @@ func NewJSPlugin(script string) *JSPlugin {
 	pTypeRegEx := "^//\\s*[@]?type\\s*\\:\\s*([^\n]+)"
 	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
 	pAsyncTagRegEx := "^//\\s*[@]?async\\s*\\:\\s*([^\n]+)"
+	pAPIEndPointRegEx := "^//\\s*[@]?api_endpoint\\s*\\:\\s*([^\n]+)"
+	pAPIMethodRegEx := "^//\\s*[@]?api_method\\s*\\:\\s*([^\n]+)"
+	pAPIAuthRegEx := "^//\\s*[@]?api_auth\\s*\\:\\s*([^\n]+)"
+	pAPIAuthTyepRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
+
 	re1 := regexp.MustCompile(pNameRegEx)
 	re2 := regexp.MustCompile(pDescRegEx)
 	re3 := regexp.MustCompile(pTypeRegEx)
 	re4 := regexp.MustCompile(pEventTypeRegEx)
 	re5 := regexp.MustCompile(pVerRegEx)
 	re6 := regexp.MustCompile(pAsyncTagRegEx)
+
+	re7 := regexp.MustCompile(pAPIEndPointRegEx)
+	re8 := regexp.MustCompile(pAPIMethodRegEx)
+	re9 := regexp.MustCompile(pAPIAuthRegEx)
+	re10 := regexp.MustCompile(pAPIAuthTyepRegEx)
 
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
@@ -424,6 +443,11 @@ func NewJSPlugin(script string) *JSPlugin {
 	pEventType := ""
 	pVersion := ""
 	pAsync := false
+	apiEndPoint := ""
+	apiMethods := []string{}
+	apiAuth := ""
+	const none = "none"
+	apiAuthType := none
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
 		if re1.MatchString(line) {
@@ -433,7 +457,16 @@ func NewJSPlugin(script string) *JSPlugin {
 			pDesc = strings.TrimSpace(re2.FindStringSubmatch(line)[1])
 		}
 		if re3.MatchString(line) {
-			pType = strings.ToLower(strings.TrimSpace(re3.FindStringSubmatch(line)[1]))
+			pTypeStr := strings.ToLower(strings.TrimSpace(re3.FindStringSubmatch(line)[1]))
+			if pTypeStr == vdiPlugin ||
+				pTypeStr == enginePlugin ||
+				pTypeStr == apiPlugin ||
+				pTypeStr == eventPlugin {
+				pType = pTypeStr
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
+				pType = enginePlugin
+			}
 		}
 		if re4.MatchString(line) {
 			pEventType = strings.ToLower(strings.TrimSpace(re4.FindStringSubmatch(line)[1]))
@@ -447,6 +480,60 @@ func NewJSPlugin(script string) *JSPlugin {
 				pAsync = true
 			}
 		}
+		if re7.MatchString(line) {
+			apiEndPointStr := strings.TrimSpace(re7.FindStringSubmatch(line)[1])
+			if apiEndPointStr != "" {
+				apiEndPoint = strings.TrimSpace(apiEndPointStr)
+			}
+		}
+		if re8.MatchString(line) {
+			apiMethodStr := strings.TrimSpace(re8.FindStringSubmatch(line)[1])
+			if apiMethodStr != "" {
+				// Split multiple endpoints by comma
+				for method := range strings.SplitSeq(apiMethodStr, ",") {
+					method = strings.ToUpper(strings.TrimSpace(method))
+					if method == "" {
+						continue
+					}
+					if method != httpMethodGet &&
+						method != "POST" &&
+						method != "PUT" &&
+						method != "DELETE" &&
+						method != "PATCH" &&
+						method != "HEAD" &&
+						method != "OPTIONS" {
+						continue
+					}
+					apiMethods = append(apiMethods, method)
+				}
+			}
+		}
+		if re9.MatchString(line) {
+			apiAuthStr := strings.TrimSpace(re9.FindStringSubmatch(line)[1])
+			if apiAuthStr != "" {
+				apiAuthStr = strings.ToLower(strings.TrimSpace(apiAuthStr))
+				if apiAuthStr == "required" ||
+					apiAuthStr == "optional" ||
+					apiAuthStr == none {
+					apiAuth = apiAuthStr
+				} else {
+					apiAuth = none
+				}
+			}
+		}
+		if re10.MatchString(line) {
+			apiAuthTypeStr := strings.TrimSpace(re10.FindStringSubmatch(line)[1])
+			if apiAuthTypeStr != "" {
+				apiAuthTypeStr = strings.ToLower(strings.TrimSpace(apiAuthTypeStr))
+				if apiAuthTypeStr == "jwt" ||
+					apiAuthTypeStr == "apikey" ||
+					apiAuthTypeStr == none {
+					apiAuthType = apiAuthTypeStr
+				} else {
+					apiAuthType = none
+				}
+			}
+		}
 	}
 
 	return &JSPlugin{
@@ -457,6 +544,12 @@ func NewJSPlugin(script string) *JSPlugin {
 		Async:       pAsync,
 		Script:      script,
 		EventType:   pEventType,
+		API: &APIMetadata{
+			EndPoint: apiEndPoint,
+			Methods:  apiMethods,
+			Auth:     apiAuth,
+			AuthType: apiAuthType,
+		},
 	}
 }
 

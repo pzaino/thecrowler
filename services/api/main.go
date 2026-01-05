@@ -33,6 +33,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -59,6 +60,8 @@ var (
 	totalRequests atomic.Int64
 	totalErrors   atomic.Int64
 	totalSuccess  atomic.Int64
+
+	apiPlugins *plg.JSPluginRegister
 )
 
 func setSysReady(newStatus int) {
@@ -140,6 +143,10 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
+
+	// Reload plugins
+	apiPlugins = plg.NewJSPluginRegister().
+		LoadPluginsFromConfig(config, "api_plugin")
 
 	setSysReady(currentSysReady) // Restore previous system ready state
 	return nil
@@ -514,6 +521,35 @@ func initAPIv1() {
 		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
 		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
 	}
+
+	// Register API plugin routes
+	registerAPIPluginRoutes(http.DefaultServeMux)
+}
+
+func registerAPIPluginRoutes(mux *http.ServeMux) {
+	for _, name := range apiPlugins.Order {
+		plugin := apiPlugins.Registry[name]
+		api := plugin.API
+		if api == nil {
+			continue
+		}
+
+		for _, method := range api.Methods {
+			handler := withAPIPluginMiddlewares(
+				makeAPIPluginHandler(plugin, method),
+			)
+
+			mux.Handle(api.EndPoint, handler)
+		}
+	}
+}
+
+func withAPIPluginMiddlewares(h http.HandlerFunc) http.Handler {
+	return RecoverMiddleware(
+		SecurityHeadersMiddleware(
+			RateLimitMiddleware(h),
+		),
+	)
 }
 
 func withPublicMiddlewares(h http.HandlerFunc) http.Handler {

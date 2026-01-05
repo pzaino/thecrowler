@@ -12,6 +12,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
 func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
@@ -158,4 +159,68 @@ func PrepareInput(input string) string {
 	// trim spaces
 	input = strings.TrimSpace(input)
 	return input
+}
+
+func makeAPIPluginHandler(plugin plg.JSPlugin, method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract body or query (reuse existing logic)
+		input, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(
+				w,
+				err,
+				nil,
+				"Invalid request",
+				http.StatusBadRequest,
+				0,
+			)
+			return
+		}
+
+		// Build plugin context (same philosophy as Events)
+		ctx := map[string]interface{}{
+			"http": map[string]interface{}{
+				"method": r.Method,
+				"path":   r.URL.Path,
+				"query":  r.URL.RawQuery,
+				"header": r.Header,
+			},
+			"input": PrepareInput(input),
+		}
+
+		// Execute plugin
+		result, err := plugin.Execute(
+			nil, // no DB handler for now
+			nil, // no DB handler
+			config.API.Timeout,
+			ctx,
+		)
+
+		if err != nil {
+			handleErrorAndRespond(
+				w,
+				err,
+				nil,
+				"Plugin execution failed",
+				http.StatusInternalServerError,
+				0,
+			)
+			return
+		}
+
+		// Return plugin result as JSON
+		handleErrorAndRespond(
+			w,
+			nil,
+			result,
+			"",
+			0,
+			http.StatusOK,
+		)
+	}
 }
