@@ -328,7 +328,7 @@ func TestSetCrowlerJSAPI(t *testing.T) {
 	db = nil
 
 	ctx, cancel := context.WithCancel(context.Background())
-	err := setCrowlerJSAPI(ctx, vm, db, nil)
+	err := setCrowlerJSAPI(ctx, vm, db, nil, nil)
 	cancel()
 	if err != nil {
 		t.Errorf("setCrowlerJSAPI returned an error: %v", err)

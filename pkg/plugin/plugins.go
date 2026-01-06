@@ -607,6 +607,18 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	return resultMap, nil
 }
 
+type pluginEventSub struct {
+	id     string
+	ch     <-chan cdb.Event
+	cancel func()
+}
+
+type pluginRuntime struct {
+	mu   sync.Mutex
+	subs map[string]*pluginEventSub
+	done <-chan struct{} // closed when VM exits
+}
+
 func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler) (map[string]interface{}, error) {
 	const (
 		errMsg01       = "Error getting result from JS plugin: %v"
@@ -629,6 +641,23 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	// Per VM context and interrupt channel
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Per-plugin runtime state
+	ctxDone := ctx.Done()
+	rt := &pluginRuntime{
+		subs: make(map[string]*pluginEventSub),
+		done: ctxDone,
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		rt.mu.Lock()
+		for _, s := range rt.subs {
+			s.cancel()
+		}
+		rt.subs = nil
+		rt.mu.Unlock()
+	}()
 
 	vm.Interrupt = make(chan func(), 1)
 
@@ -658,7 +687,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	defer stopAllTimers()
 
 	// Install CROWler JS extensions
-	if err := setCrowlerJSAPI(ctx, vm, db, addTimer); err != nil {
+	if err := setCrowlerJSAPI(ctx, vm, db, addTimer, rt); err != nil {
 		return result, err
 	}
 
@@ -851,7 +880,10 @@ func removeJSFunctions(vm *otto.Otto) error {
 }
 
 // setCrowlerJSAPI sets the CROWler JS API functions
-func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTimer func(*time.Timer)) error {
+func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
+	db *cdb.Handler, addTimer func(*time.Timer),
+	rt *pluginRuntime,
+) error {
 	// Extends Otto JS VM with CROWler JS API functions
 
 	// Common functions
@@ -929,6 +961,9 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTim
 		return err
 	}
 	if err := addJSAPIScheduleEvent(vm, db); err != nil {
+		return err
+	}
+	if err := addJSAPIEventBus(vm, db, rt); err != nil {
 		return err
 	}
 
@@ -1811,6 +1846,131 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 		return success
 	})
 	return err
+}
+
+func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
+
+	// subscribeEvents(filter, buffer)
+	if err := vm.Set("subscribeEvents", func(call otto.FunctionCall) otto.Value {
+		filterArg := call.Argument(0)
+		bufArg := call.Argument(1)
+
+		buffer := int64(16)
+		if bufArg.IsDefined() {
+			if v, err := bufArg.ToInteger(); err == nil && v > 0 {
+				buffer = v
+			}
+		}
+
+		var filter cdb.EventFilter
+		if filterArg.IsObject() {
+			if raw, err := filterArg.Export(); err == nil {
+				m, ok := raw.(map[string]interface{})
+				if !ok {
+					return otto.NullValue()
+				}
+
+				if v, ok := m["type_prefix"].(string); ok {
+					filter.TypePrefix = v
+				}
+				if v, ok := m["source_id"].(float64); ok {
+					id := uint64(v)
+					filter.SourceID = &id
+				}
+			}
+		}
+
+		// Initialize the global event bus if not already done
+		cdb.InitGlobalEventBus(db)
+
+		id, ch, cancel := cdb.GlobalEventBus.Subscribe(filter, int(buffer))
+
+		rt.mu.Lock()
+		rt.subs[id] = &pluginEventSub{
+			id:     id,
+			ch:     ch,
+			cancel: cancel,
+		}
+		rt.mu.Unlock()
+
+		val, _ := vm.ToValue(id)
+		return val
+	}); err != nil {
+		return err
+	}
+
+	// pollEvent(subId, timeoutMs)
+	if err := vm.Set("pollEvent", func(call otto.FunctionCall) otto.Value {
+		subID, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.NullValue()
+		}
+
+		timeoutMs := int64(0)
+		if call.Argument(1).IsDefined() {
+			timeoutMs, _ = call.Argument(1).ToInteger()
+		}
+
+		rt.mu.Lock()
+		sub := rt.subs[subID]
+		rt.mu.Unlock()
+
+		if sub == nil {
+			return otto.NullValue()
+		}
+
+		var timer *time.Timer
+		var timerCh <-chan time.Time
+
+		if timeoutMs > 0 {
+			timer = time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
+			timerCh = timer.C
+		}
+
+		select {
+		case ev, ok := <-sub.ch:
+			if timer != nil {
+				timer.Stop()
+			}
+			if !ok {
+				return otto.NullValue()
+			}
+			val, _ := vm.ToValue(ev)
+			return val
+
+		case <-timerCh:
+			return otto.NullValue()
+		case <-rt.done:
+			return otto.NullValue()
+		}
+	}); err != nil {
+		return err
+	}
+
+	// unsubscribeEvents(subId)
+	if err := vm.Set("unsubscribeEvents", func(call otto.FunctionCall) otto.Value {
+		subID, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.FalseValue()
+		}
+
+		rt.mu.Lock()
+		sub := rt.subs[subID]
+		if sub != nil {
+			delete(rt.subs, subID)
+		}
+		rt.mu.Unlock()
+
+		if sub != nil {
+			sub.cancel()
+			return otto.TrueValue()
+		}
+		return otto.FalseValue()
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // addJSAPIDebugLevel adds a method to fetch the current debug level to the VM

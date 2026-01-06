@@ -15,6 +15,10 @@
 // Package plugin provides the plugin functionality for the CROWler.
 package plugin
 
+import (
+	cdb "github.com/pzaino/thecrowler/pkg/database"
+)
+
 // APIMetadata struct to hold Plugins API metadata (for api_plugin type)
 type APIMetadata struct {
 	EndPoint string   `json:"api_endpoint" yaml:"api_endpoint"`   // API endpoint for the plugin
@@ -39,4 +43,17 @@ type JSPlugin struct {
 type JSPluginRegister struct {
 	Registry map[string]JSPlugin // Registry of JS plugins
 	Order    []string            // Order of the plugins in registration order
+}
+
+// PlgRuntime struct to hold the runtime information of a plugin
+type PlgRuntime struct {
+	PluginName string
+	Subs       map[string]EventSubscription
+}
+
+// EventSubscription struct to hold the event subscription information
+type EventSubscription struct {
+	ID     string
+	Ch     <-chan cdb.Event
+	Cancel func()
 }
