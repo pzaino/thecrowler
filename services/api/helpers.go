@@ -255,6 +255,14 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 		return
 	}
 
+	// Read input ONCE, synchronously
+	input, err := extractQueryOrBody(r)
+	if err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	input = PrepareInput(input)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -267,14 +275,8 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	errCh := make(chan error)
 
 	// Run plugin asynchronously
-	go func() {
+	go func(input string) {
 		defer close(doneCh)
-
-		input, err := extractQueryOrBody(r)
-		if err != nil {
-			errCh <- err
-			return
-		}
 
 		ctx := map[string]interface{}{
 			"http": map[string]interface{}{
@@ -283,7 +285,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 				"query":  r.URL.RawQuery,
 				"header": r.Header,
 			},
-			"input": PrepareInput(input),
+			"input": input,
 			"progress": func(msg map[string]interface{}) {
 				select {
 				case progressCh <- msg:
@@ -292,7 +294,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			},
 		}
 
-		_, err = plugin.Execute(
+		_, err := plugin.Execute(
 			nil,
 			nil,
 			config.API.Timeout,
@@ -302,7 +304,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			errCh <- err
 			return
 		}
-	}()
+	}(input)
 
 	keepAlive := time.NewTicker(10 * time.Second)
 	defer keepAlive.Stop()
