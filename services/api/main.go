@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -61,7 +62,9 @@ var (
 	totalErrors   atomic.Int64
 	totalSuccess  atomic.Int64
 
-	apiPlugins *plg.JSPluginRegister
+	apiPlugins         *plg.JSPluginRegister
+	allowedAPIPlugins  map[string]bool
+	allowedAPINetworks []*net.IPNet
 )
 
 func setSysReady(newStatus int) {
@@ -153,7 +156,29 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		len(apiPlugins.Registry),
 	)
 
+	// Initialize allowed API CIDRs
+	initAllowedAPICIDRs()
+
 	setSysReady(currentSysReady) // Restore previous system ready state
+	return nil
+}
+
+func initAllowedAPICIDRs() error {
+	for _, cidr := range config.API.AllowedIPs {
+		_, netw, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "invalid CIDR in API config: '%s' skipping.", cidr)
+			continue
+		}
+		allowedAPINetworks = append(allowedAPINetworks, netw)
+	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"API CIDR filter enabled (%d networks)",
+		len(allowedAPINetworks),
+	)
+
 	return nil
 }
 
@@ -529,7 +554,32 @@ func initAPIv1() {
 
 	// Register API plugin routes
 	registeredPlugins := []string{}
-	registerAPIPluginRoutes(http.DefaultServeMux, &registeredPlugins)
+	if config.API.Plugins.Enabled {
+		initAllowedAPIPlugins()
+		registerAPIPluginRoutes(http.DefaultServeMux, &registeredPlugins)
+	}
+}
+
+func initAllowedAPIPlugins() {
+	allowedAPIPlugins = make(map[string]bool)
+
+	if !config.API.Plugins.Enabled {
+		return
+	}
+
+	for _, name := range config.API.Plugins.Allowed {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		allowedAPIPlugins[name] = true
+	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"API PLUGINS: allowlist loaded (%d plugins)",
+		len(allowedAPIPlugins),
+	)
 }
 
 func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]string) {
@@ -541,6 +591,18 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]str
 		}
 		if api.EndPoint == "" || len(api.Methods) == 0 {
 			continue
+		}
+
+		// Enforce allowlist
+		if len(allowedAPIPlugins) > 0 {
+			if !allowedAPIPlugins[plugin.Name] {
+				cmn.DebugMsg(
+					cmn.DbgLvlInfo,
+					"API PLUGIN SKIPPED (not allowed): %s",
+					plugin.Name,
+				)
+				continue
+			}
 		}
 
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "API PLUGIN FOUND: name=%s type=%s endpoint=%v",
@@ -580,17 +642,59 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]str
 
 func withAPIPluginMiddlewares(h http.HandlerFunc) http.Handler {
 	return RecoverMiddleware(
-		SecurityHeadersMiddleware(
-			RateLimitMiddleware(h),
+		CIDRFilterMiddleware(
+			SecurityHeadersMiddleware(
+				RateLimitMiddleware(h),
+			),
 		),
 	)
 }
 
+// CIDRFilterMiddleware filters requests based on allowed CIDR ranges
+func CIDRFilterMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If no CIDRs configured, allow all
+		if len(allowedAPINetworks) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ipStr := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(ipStr); err == nil {
+			ipStr = host
+		}
+
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		for _, netw := range allowedAPINetworks {
+			if netw.Contains(ip) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		cmn.DebugMsg(
+			cmn.DbgLvlDebug,
+			"API CIDR DENY: %s %s",
+			ipStr,
+			r.URL.Path,
+		)
+
+		http.Error(w, "Forbidden", http.StatusForbidden)
+	})
+}
+
 func withPublicMiddlewares(h http.HandlerFunc) http.Handler {
 	return RecoverMiddleware(
-		CORSHeadersMiddleware(
-			SecurityHeadersMiddleware(
-				RateLimitMiddleware(h),
+		CIDRFilterMiddleware(
+			CORSHeadersMiddleware(
+				SecurityHeadersMiddleware(
+					RateLimitMiddleware(h),
+				),
 			),
 		),
 	)

@@ -1451,6 +1451,22 @@ func (c *GeoLookupConfig) validate() {
 	}
 }
 
+func (api *API) IsEmpty() bool {
+	if api == nil {
+		return true
+	}
+	if api.Host != "" ||
+		api.Port != 0 ||
+		api.Timeout != 0 ||
+		api.RateLimit != "" ||
+		api.ReadHeaderTimeout != 0 ||
+		api.ReadTimeout != 0 ||
+		api.WriteTimeout != 0 {
+		return false
+	}
+	return true
+}
+
 // IsEmpty checks if the given config is empty.
 // It returns true if the config is empty, false otherwise.
 func IsEmpty(config Config) bool {
@@ -1465,7 +1481,7 @@ func IsEmpty(config Config) bool {
 		return false
 	}
 
-	if config.API != (API{}) {
+	if !config.API.IsEmpty() {
 		return false
 	}
 
@@ -1606,7 +1622,7 @@ func (c *Config) IsEmpty() bool {
 		return false
 	}
 
-	if c.API != (API{}) {
+	if !c.API.IsEmpty() {
 		return false
 	}
 

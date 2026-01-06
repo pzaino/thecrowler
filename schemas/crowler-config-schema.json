@@ -936,6 +936,57 @@
           "title": "CROWler General/Search API Return 404",
           "description": "This is a flag that tells the CROWler to return 404 status code if a query has no results. This is mostly a secure measure to avoid leaking information about the CROWler's internal structure. If you are not exposing the General API to the public, you can disable this option.",
           "type": "boolean"
+        },
+        "allowed_ips": {
+          "title": "CROWler General/Search API Allowed IPs",
+          "description": "This is an array of IP addresses and CDIRs (both IPv4 and IPv6) that are allowed to access the General/Search API. If empty, all IP addresses are allowed.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))?)|(([0-9a-fA-F]{1,4}\\:{1,2}){7}[0-9a-fA-F]{1,4}(\\/([0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?)$",
+            "examples": [
+              "192.168.101.1/32",
+              "172.31.10.0/24"
+            ]
+          }
+        },
+        "plugins": {
+          "title": "CROWler General/Search API Plugins Configuration",
+          "description": "This is the plugins configuration for the General/Search API. It is used to configure the plugins that the CROWler General API will use to extend its functionality.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "title": "CROWler General/Search API Plugins Enabled",
+              "description": "This is a flag that tells the CROWler General API to enable plugins.",
+              "type": "boolean"
+            },
+            "timeout": {
+              "title": "CROWler General/Search API Plugins Timeout",
+              "description": "This is the timeout (in seconds) for each plugin. It is the maximum amount of time that the CROWler General API will wait for a plugin to respond.",
+              "type": "integer",
+              "minimum": 5,
+              "examples": [
+                30
+              ]
+            },
+            "allow": {
+              "title": "CROWler General/Search API Plugins Allow List",
+              "description": "This is an array of plugins that are allowed to be used by the CROWler General API. If empty, all plugins are allowed.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "examples": [
+                  "plugin1",
+                  "plugin2"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "directory"
+          ]
         }
       },
       "additionalProperties": false,
