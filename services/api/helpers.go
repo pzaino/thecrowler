@@ -265,8 +265,12 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Del("Content-Length")
 
-	fmt.Fprintf(w, "event: status\ndata: started\n\n")
+	_, err = fmt.Fprintf(w, "event: status\ndata: started\n\n")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+	}
 	flusher.Flush()
 
 	progressCh := make(chan map[string]interface{})
