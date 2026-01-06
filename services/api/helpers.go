@@ -184,16 +184,95 @@ func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
 			plugin.Name,
 		)
 
+		// Streaming (SSE) mode
+		if r.Header.Get("Accept") == "text/event-stream" {
+			handleStreamingAPIPlugin(w, r, plugin)
+			return
+		}
+
+		// Normal request-response mode
+		handleNormalAPIPlugin(w, r, plugin)
+	}
+}
+
+func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
+	input, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(
+			w,
+			err,
+			nil,
+			"Invalid request",
+			http.StatusBadRequest,
+			0,
+		)
+		return
+	}
+
+	ctx := map[string]interface{}{
+		"http": map[string]interface{}{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"query":  r.URL.RawQuery,
+			"header": r.Header,
+		},
+		"input": PrepareInput(input),
+	}
+
+	result, err := plugin.Execute(
+		nil,
+		nil,
+		config.API.Timeout,
+		ctx,
+	)
+
+	if err != nil {
+		handleErrorAndRespond(
+			w,
+			err,
+			nil,
+			"Plugin execution failed",
+			http.StatusInternalServerError,
+			0,
+		)
+		return
+	}
+
+	handleErrorAndRespond(
+		w,
+		nil,
+		result,
+		"",
+		0,
+		http.StatusOK,
+	)
+}
+
+func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	fmt.Fprintf(w, "event: status\ndata: started\n\n")
+	flusher.Flush()
+
+	progressCh := make(chan map[string]interface{})
+	doneCh := make(chan struct{})
+	errCh := make(chan error)
+
+	// Run plugin asynchronously
+	go func() {
+		defer close(doneCh)
+
 		input, err := extractQueryOrBody(r)
 		if err != nil {
-			handleErrorAndRespond(
-				w,
-				err,
-				nil,
-				"Invalid request",
-				http.StatusBadRequest,
-				0,
-			)
+			errCh <- err
 			return
 		}
 
@@ -205,34 +284,58 @@ func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
 				"header": r.Header,
 			},
 			"input": PrepareInput(input),
+			"progress": func(msg map[string]interface{}) {
+				select {
+				case progressCh <- msg:
+				default:
+				}
+			},
 		}
 
-		result, err := plugin.Execute(
+		_, err = plugin.Execute(
 			nil,
 			nil,
 			config.API.Timeout,
 			ctx,
 		)
-
 		if err != nil {
-			handleErrorAndRespond(
-				w,
-				err,
-				nil,
-				"Plugin execution failed",
-				http.StatusInternalServerError,
-				0,
+			errCh <- err
+			return
+		}
+	}()
+
+	keepAlive := time.NewTicker(10 * time.Second)
+	defer keepAlive.Stop()
+
+	for {
+		select {
+		case msg := <-progressCh:
+			b, _ := json.Marshal(msg)
+			fmt.Fprintf(w, "event: progress\ndata: %s\n\n", b)
+			flusher.Flush()
+
+		case err := <-errCh:
+			fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+			flusher.Flush()
+			return
+
+		case <-doneCh:
+			fmt.Fprintf(w, "event: done\ndata: completed\n\n")
+			flusher.Flush()
+			return
+
+		case <-keepAlive.C:
+			fmt.Fprintf(w, "event: keepalive\ndata: ping\n\n")
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug2,
+				"SSE client disconnected: %s (%s)",
+				r.RemoteAddr,
+				plugin.Name,
 			)
 			return
 		}
-
-		handleErrorAndRespond(
-			w,
-			nil,
-			result,
-			"",
-			0,
-			http.StatusOK,
-		)
 	}
 }
