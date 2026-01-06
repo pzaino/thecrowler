@@ -278,7 +278,10 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	resultCh := make(chan interface{}, 1)
 	errCh := make(chan error, 1)
 
+	pluginDone := make(chan struct{})
+
 	go func(input string) {
+		defer close(pluginDone)
 		ctx := map[string]interface{}{
 			"http": map[string]interface{}{
 				"method": r.Method,
@@ -311,7 +314,9 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 
 	keepAlive := time.NewTicker(10 * time.Second)
 	defer keepAlive.Stop()
+	exitReason := "completed"
 
+loop:
 	for {
 		select {
 		case msg := <-progressCh:
@@ -335,7 +340,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
 			}
 			flusher.Flush()
-			return
+			break loop
 
 		case err := <-errCh:
 			_, err = fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
@@ -343,7 +348,8 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
 			}
 			flusher.Flush()
-			return
+			exitReason = "error"
+			break loop
 
 		case <-keepAlive.C:
 			_, err = fmt.Fprintf(w, "event: keepalive\ndata: ping\n\n")
@@ -359,7 +365,17 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 				r.RemoteAddr,
 				plugin.Name,
 			)
-			return
+			exitReason = "client_disconnect"
+			break loop
 		}
 	}
+
+	<-pluginDone // 2. wait until plugin is 100% done
+
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug2,
+		"SSE handler exit (%s): %s",
+		exitReason,
+		plugin.Name,
+	)
 }
