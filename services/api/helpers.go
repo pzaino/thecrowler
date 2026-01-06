@@ -266,6 +266,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Del("Content-Length")
+	w.WriteHeader(http.StatusOK)
 
 	_, err = fmt.Fprintf(w, "event: status\ndata: started\n\n")
 	if err != nil {
@@ -315,25 +316,40 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 		select {
 		case msg := <-progressCh:
 			b, _ := json.Marshal(msg)
-			fmt.Fprintf(w, "event: progress\ndata: %s\n\n", b)
+			_, err = fmt.Fprintf(w, "event: progress\ndata: %s\n\n", b)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
 			flusher.Flush()
 
 		case result := <-resultCh:
 			b, _ := json.Marshal(result)
-			fmt.Fprintf(w, "event: result\ndata: %s\n\n", b)
+			_, err = fmt.Fprintf(w, "event: result\ndata: %s\n\n", b)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
 			flusher.Flush()
 
-			fmt.Fprintf(w, "event: done\ndata: completed\n\n")
+			_, err = fmt.Fprintf(w, "event: done\ndata: completed\n\n")
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
 			flusher.Flush()
 			return
 
 		case err := <-errCh:
-			fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+			_, err = fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
 			flusher.Flush()
 			return
 
 		case <-keepAlive.C:
-			fmt.Fprintf(w, "event: keepalive\ndata: ping\n\n")
+			_, err = fmt.Fprintf(w, "event: keepalive\ndata: ping\n\n")
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
 			flusher.Flush()
 
 		case <-r.Context().Done():
