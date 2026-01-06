@@ -255,7 +255,6 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 		return
 	}
 
-	// Read input ONCE, synchronously
 	input, err := extractQueryOrBody(r)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -271,13 +270,10 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	flusher.Flush()
 
 	progressCh := make(chan map[string]interface{})
-	doneCh := make(chan struct{})
-	errCh := make(chan error)
+	resultCh := make(chan interface{}, 1)
+	errCh := make(chan error, 1)
 
-	// Run plugin asynchronously
 	go func(input string) {
-		defer close(doneCh)
-
 		ctx := map[string]interface{}{
 			"http": map[string]interface{}{
 				"method": r.Method,
@@ -294,7 +290,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			},
 		}
 
-		_, err := plugin.Execute(
+		result, err := plugin.Execute(
 			nil,
 			nil,
 			config.API.Timeout,
@@ -304,6 +300,8 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			errCh <- err
 			return
 		}
+
+		resultCh <- result
 	}(input)
 
 	keepAlive := time.NewTicker(10 * time.Second)
@@ -316,13 +314,17 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			fmt.Fprintf(w, "event: progress\ndata: %s\n\n", b)
 			flusher.Flush()
 
-		case err := <-errCh:
-			fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+		case result := <-resultCh:
+			b, _ := json.Marshal(result)
+			fmt.Fprintf(w, "event: result\ndata: %s\n\n", b)
+			flusher.Flush()
+
+			fmt.Fprintf(w, "event: done\ndata: completed\n\n")
 			flusher.Flush()
 			return
 
-		case <-doneCh:
-			fmt.Fprintf(w, "event: done\ndata: completed\n\n")
+		case err := <-errCh:
+			fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
 			flusher.Flush()
 			return
 
