@@ -222,7 +222,7 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 	result, err := plugin.Execute(
 		nil,
 		&dbHandler,
-		config.API.Timeout,
+		config.API.Plugins.Timeout,
 		ctx,
 	)
 
@@ -293,7 +293,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 		result, err := plugin.Execute(
 			nil,
 			&dbHandler,
-			config.API.Timeout,
+			config.API.Plugins.Timeout,
 			ctx,
 		)
 		if err != nil {
