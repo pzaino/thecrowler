@@ -262,6 +262,15 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	}
 	input = PrepareInput(input)
 
+	_, err = io.Copy(io.Discard, r.Body)
+	if (err != nil) && (err != io.EOF) {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error reading request body: %v", err)
+	}
+	err = r.Body.Close()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error closing request body: %v", err)
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
