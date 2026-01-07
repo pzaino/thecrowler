@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -57,6 +58,7 @@ const (
 	enginePlugin  = "engine_plugin"
 	eventPlugin   = "event_plugin"
 	apiPlugin     = "api_plugin"
+	libPlugin     = "lib_plugin"
 	none          = "none"
 	all           = "all"
 
@@ -82,6 +84,12 @@ func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 		name = plugin.Name
 	}
 	name = strings.TrimSpace(name)
+
+	// Add the register point to the Plugin `InRegisters` if not present yet
+	found := slices.Contains(plugin.InRegisters, reg)
+	if !found {
+		plugin.InRegisters = append(plugin.InRegisters, reg)
+	}
 
 	// Register the plugin
 	reg.Registry[name] = plugin
@@ -233,6 +241,9 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 						if plugin.PType == apiPlugin {
 							pluginsSet = append(pluginsSet, plugin)
 						}
+					} else if pType == libPlugin {
+						// Lib plugins are always loaded, so filter does not apply!
+						pluginsSet = append(pluginsSet, plugin)
 					}
 				}
 			} else {
@@ -266,6 +277,9 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 				if plugin.PType == apiPlugin {
 					pluginsSet = append(pluginsSet, plugin)
 				}
+			} else if pType == libPlugin {
+				// Lib plugins are always loaded, so filter does not apply!
+				pluginsSet = append(pluginsSet, plugin)
 			}
 		}
 	} else {
@@ -558,7 +572,14 @@ func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, para
 	if p.PType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
-	return execEnginePlugin(p, timeout, params, db)
+	// So this must be either an API, Event or Engine Plugin:
+
+	// First let's initialize a RunTime for it and its callstack:
+	rt := &pluginRuntime{
+		subs: make(map[string]*pluginEventSub),
+	}
+	rt.current = p
+	return execEnginePlugin(p, timeout, params, db, rt)
 }
 
 func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *vdi.WebDriver) (map[string]interface{}, error) {
@@ -613,13 +634,73 @@ type pluginEventSub struct {
 	cancel func()
 }
 
+//
+// Execution Engine for API plugins, Engine plugins and Event Plugins
+//
+
 type pluginRuntime struct {
-	mu   sync.Mutex
+	mu sync.Mutex
+
+	// event subscriptions
 	subs map[string]*pluginEventSub
+
+	// call stack for cycle detection
+	callStack []*JSPlugin
+	// currently executing plugin
+	current *JSPlugin
+
+	// VM lifecycle
 	done <-chan struct{} // closed when VM exits
 }
 
-func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler) (map[string]interface{}, error) {
+func (rt *pluginRuntime) push(p *JSPlugin) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	for _, prev := range rt.callStack {
+		if prev == p {
+			return fmt.Errorf("plugin call cycle detected: %s", p.Name)
+		}
+	}
+
+	rt.callStack = append(rt.callStack, p)
+	rt.current = p
+	return nil
+}
+
+func (rt *pluginRuntime) pop() {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if len(rt.callStack) == 0 {
+		return
+	}
+
+	rt.callStack = rt.callStack[:len(rt.callStack)-1]
+	if len(rt.callStack) > 0 {
+		rt.current = rt.callStack[len(rt.callStack)-1]
+	} else {
+		rt.current = nil
+	}
+}
+
+func (rt *pluginRuntime) depth() int {
+	rt.mu.Lock()
+	d := len(rt.callStack)
+	rt.mu.Unlock()
+	return d
+}
+
+func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
+	for _, reg := range caller.InRegisters {
+		if p, ok := reg.GetPlugin(name); ok {
+			return &p, true
+		}
+	}
+	return nil, false
+}
+
+func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler, rt *pluginRuntime) (map[string]interface{}, error) {
 	const (
 		errMsg01       = "Error getting result from JS plugin: %v"
 		defaultTimeout = 30 * time.Second
@@ -643,11 +724,11 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	defer cancel()
 
 	// Per-plugin runtime state
-	ctxDone := ctx.Done()
-	rt := &pluginRuntime{
-		subs: make(map[string]*pluginEventSub),
-		done: ctxDone,
+	rt.done = ctx.Done()
+	if err := rt.push(p); err != nil {
+		return nil, err
 	}
+	defer rt.pop()
 
 	// Ensure cleanup on exit
 	defer func() {
@@ -886,6 +967,11 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 ) error {
 	// Extends Otto JS VM with CROWler JS API functions
 
+	// Extend Plugin calling function (this allow safe plugin-to-plugin calls)
+	if err := addJSAPICallPlugin(vm, db, rt); err != nil {
+		return err
+	}
+
 	// Common functions
 
 	if err := addJSAPIDebugLevel(vm); err != nil {
@@ -1025,6 +1111,86 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	}
 
 	return nil
+}
+
+func addJSAPICallPlugin(
+	vm *otto.Otto,
+	db *cdb.Handler,
+	rt *pluginRuntime,
+) error {
+
+	return vm.Set("callPlugin", func(call otto.FunctionCall) otto.Value {
+
+		// ---- arguments ----
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		params := map[string]interface{}{}
+		if call.Argument(1).IsObject() {
+			if exported, e := call.Argument(1).Export(); e == nil {
+				if m, ok := exported.(map[string]interface{}); ok {
+					params = m
+				}
+			}
+		}
+
+		timeout := 0
+		if call.Argument(2).IsDefined() {
+			if t, e := call.Argument(2).ToInteger(); e == nil {
+				timeout = int(t)
+			}
+		}
+
+		// ---- resolve callee ----
+
+		caller := rt.current
+		if caller == nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		callee, ok := resolvePluginFromCaller(caller, name)
+		if !ok {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// ---- stack management ----
+
+		if err := rt.push(callee); err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return v
+		}
+		defer rt.pop()
+
+		const maxDepth = 16
+		if rt.depth() > maxDepth {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": "maximum plugin call depth exceeded",
+			})
+			return v
+		}
+
+		// ---- execute ----
+		rt := &pluginRuntime{
+			subs: make(map[string]*pluginEventSub),
+		}
+		rt.current = callee
+		res, execErr := execEnginePlugin(callee, timeout, params, db, rt)
+		if execErr != nil {
+			v, _ := vm.ToValue(res)
+			return v
+		}
+
+		v, _ := vm.ToValue(res)
+		return v
+	})
 }
 
 // addJSHTTPRequest adds the httpRequest function to the VM

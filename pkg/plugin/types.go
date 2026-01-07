@@ -37,18 +37,13 @@ type JSPlugin struct {
 	Script      string       `json:"script" yaml:"script"`                                 // Script for the plugin
 	EventType   string       `json:"event_type" yaml:"event_type"`                         // Event type for the plugin. Plugins can register to handle an event.
 	API         *APIMetadata `json:"api_metadata,omitempty" yaml:"api_metadata,omitempty"` // API metadata for api_plugin type
+	InRegisters []*JSPluginRegister
 }
 
 // JSPluginRegister struct to hold the JS plugins
 type JSPluginRegister struct {
 	Registry map[string]JSPlugin // Registry of JS plugins
 	Order    []string            // Order of the plugins in registration order
-}
-
-// PlgRuntime struct to hold the runtime information of a plugin
-type PlgRuntime struct {
-	PluginName string
-	Subs       map[string]EventSubscription
 }
 
 // EventSubscription struct to hold the event subscription information
