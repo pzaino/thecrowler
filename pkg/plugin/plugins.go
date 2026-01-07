@@ -861,6 +861,135 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	return result, nil
 }
 
+// Plugin Unit-Tests support types and code
+
+// PluginTestOptions represents the options for executing a plugin test
+type PluginTestOptions struct {
+	Timeout int
+	Params  map[string]interface{}
+}
+
+// PluginTestResult represents the result of a plugin test
+type PluginTestResult struct {
+	Name   string
+	Passed bool
+	Error  string
+}
+
+const PlgTestHarness = `
+var __crowler_test_results = [];
+
+function test(name, fn) {
+	try {
+		fn();
+		__crowler_test_results.push({ name: name, ok: true });
+	} catch (e) {
+		__crowler_test_results.push({
+			name: name,
+			ok: false,
+			error: String(e)
+		});
+	}
+}
+
+function assertTrue(cond, msg) {
+	if (!cond) throw new Error(msg || "assertTrue failed");
+}
+
+function assertEqual(a, b, msg) {
+	if (a !== b) {
+		throw new Error(msg || ("assertEqual failed: " + a + " !== " + b));
+	}
+}
+`
+
+// ExecEnginePluginTest executes the specified engine plugin test script
+func ExecEnginePluginTest(
+	p *JSPlugin,
+	testScript string,
+	db *cdb.Handler,
+	opts PluginTestOptions,
+) ([]PluginTestResult, error) {
+
+	if p == nil {
+		return nil, fmt.Errorf("nil plugin")
+	}
+
+	// Prepare runtime exactly like production
+	rt := &pluginRuntime{
+		subs: make(map[string]*pluginEventSub),
+	}
+	rt.current = p
+
+	// Compose script
+	fullScript := PlgTestHarness + "\n\n" +
+		p.Script + "\n\n" +
+		testScript + "\n\n" +
+		"result = __crowler_test_results;"
+
+	// Clone plugin with injected script
+	testPlugin := *p
+	testPlugin.Script = fullScript
+
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30
+	}
+
+	params := opts.Params
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+
+	rawResult, err := execEnginePlugin(
+		&testPlugin,
+		timeout,
+		params,
+		db,
+		rt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse results
+	rawTests, ok := rawResult["__crowler_test_results"]
+	if !ok {
+		// execEnginePlugin normalized `result`, so it may already be the array
+		if arr, ok := rawResult["result"]; ok {
+			rawTests = arr
+		} else {
+			return nil, fmt.Errorf("no test results returned")
+		}
+	}
+
+	list, ok := rawTests.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid test result format")
+	}
+
+	results := make([]PluginTestResult, 0, len(list))
+
+	for _, r := range list {
+		m, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, _ := m["name"].(string)
+		okVal, _ := m["ok"].(bool)
+		errMsg, _ := m["error"].(string)
+
+		results = append(results, PluginTestResult{
+			Name:   name,
+			Passed: okVal,
+			Error:  errMsg,
+		})
+	}
+
+	return results, nil
+}
+
 func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
