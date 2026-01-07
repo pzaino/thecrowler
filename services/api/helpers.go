@@ -283,7 +283,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	}
 	flusher.Flush()
 
-	progressCh := make(chan map[string]interface{})
+	progressCh := make(chan map[string]interface{}, 16)
 	resultCh := make(chan interface{}, 1)
 	errCh := make(chan error, 1)
 
