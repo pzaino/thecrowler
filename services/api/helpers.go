@@ -361,9 +361,10 @@ loop:
 		case <-r.Context().Done():
 			cmn.DebugMsg(
 				cmn.DbgLvlDebug2,
-				"SSE client disconnected: %s (%s)",
+				"SSE client disconnected: %s (%s): %v",
 				r.RemoteAddr,
 				plugin.Name,
+				r.Context().Err(),
 			)
 			exitReason = "client_disconnect"
 			break loop
