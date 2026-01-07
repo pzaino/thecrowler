@@ -248,6 +248,14 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 	)
 }
 
+func setWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	if wd, ok := w.(interface {
+		SetWriteDeadline(time.Time) error
+	}); ok {
+		_ = wd.SetWriteDeadline(time.Now().Add(d))
+	}
+}
+
 func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -274,9 +282,11 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Del("Content-Length")
+	w.Header().Set("X-Accel-Buffering", "no") // nginx
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.WriteHeader(http.StatusOK)
 
+	setWriteDeadline(w, 5*time.Second)
 	_, err = fmt.Fprintf(w, "event: status\ndata: started\n\n")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
@@ -330,6 +340,7 @@ loop:
 		select {
 		case msg := <-progressCh:
 			b, _ := json.Marshal(msg)
+			setWriteDeadline(w, 5*time.Second)
 			_, err = fmt.Fprintf(w, "event: progress\ndata: %s\n\n", b)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
@@ -338,12 +349,14 @@ loop:
 
 		case result := <-resultCh:
 			b, _ := json.Marshal(result)
+			setWriteDeadline(w, 5*time.Second)
 			_, err = fmt.Fprintf(w, "event: result\ndata: %s\n\n", b)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
 			}
 			flusher.Flush()
 
+			setWriteDeadline(w, 5*time.Second)
 			_, err = fmt.Fprintf(w, "event: done\ndata: completed\n\n")
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
@@ -352,6 +365,7 @@ loop:
 			break loop
 
 		case err := <-errCh:
+			setWriteDeadline(w, 5*time.Second)
 			_, err = fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
@@ -361,6 +375,7 @@ loop:
 			break loop
 
 		case <-keepAlive.C:
+			setWriteDeadline(w, 5*time.Second)
 			_, err = fmt.Fprint(w, ": ping\n\n")
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
