@@ -361,7 +361,7 @@ loop:
 			break loop
 
 		case <-keepAlive.C:
-			_, err = fmt.Fprintf(w, "event: keepalive\ndata: ping\n\n")
+			_, err = fmt.Fprint(w, ": ping\n\n")
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
 			}
