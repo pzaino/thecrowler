@@ -59,12 +59,17 @@ const (
 	eventPlugin   = "event_plugin"
 	apiPlugin     = "api_plugin"
 	libPlugin     = "lib_plugin"
+	testPlugin    = "test_plugin"
 	none          = "none"
 	all           = "all"
 
 	postgresDBMS = "postgres"
 	mysqlDBMS    = "mysql"
 	sqliteDBMS   = "sqlite"
+)
+
+var (
+	TestMode = false
 )
 
 // NewJSPluginRegister returns a new JSPluginRegister
@@ -244,6 +249,10 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 					} else if pType == libPlugin {
 						// Lib plugins are always loaded, so filter does not apply!
 						pluginsSet = append(pluginsSet, plugin)
+					} else if pType == testPlugin {
+						if TestMode {
+							pluginsSet = append(pluginsSet, plugin)
+						}
 					}
 				}
 			} else {
@@ -280,6 +289,10 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 			} else if pType == libPlugin {
 				// Lib plugins are always loaded, so filter does not apply!
 				pluginsSet = append(pluginsSet, plugin)
+			} else if pType == testPlugin {
+				if TestMode {
+					pluginsSet = append(pluginsSet, plugin)
+				}
 			}
 		}
 	} else {
@@ -475,7 +488,9 @@ func NewJSPlugin(script string) *JSPlugin {
 			if pTypeStr == vdiPlugin ||
 				pTypeStr == enginePlugin ||
 				pTypeStr == apiPlugin ||
-				pTypeStr == eventPlugin {
+				pTypeStr == eventPlugin ||
+				pTypeStr == libPlugin ||
+				pTypeStr == testPlugin {
 				pType = pTypeStr
 			} else {
 				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
@@ -863,22 +878,46 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 // Plugin Unit-Tests support types and code
 
+// TestFile represent a plugin's test file
+type TestFile struct {
+	Path string
+	Name string // parsed from first non-empty line: // name: ...
+	Body string
+}
+
 // PluginTestOptions represents the options for executing a plugin test
-type PluginTestOptions struct {
+type TestOptions struct {
 	Timeout int
 	Params  map[string]interface{}
 }
 
 // PluginTestResult represents the result of a plugin test
-type PluginTestResult struct {
+type TestResult struct {
 	Name   string
 	Passed bool
 	Error  string
 }
 
+// PlgTestHarness is the JavaScript code that provides the test harness for plugin unit tests
 const PlgTestHarness = `
+/*
+ * Internal array used by the test runner to collect test results.
+ * Each entry has the form:
+ *   { name: <string>, ok: <boolean>, error?: <string> }
+ */
 var __crowler_test_results = [];
 
+/*
+ * Define a single test case.
+ *
+ * @param name {string} - Human-readable test name
+ * @param fn   {function} - Function containing the test logic
+ *
+ * Usage:
+ *   test("adds numbers", function () {
+ *       assertEqual(add(1, 2), 3);
+ *   });
+ */
 function test(name, fn) {
 	try {
 		fn();
@@ -892,13 +931,254 @@ function test(name, fn) {
 	}
 }
 
+/*
+ * Assert that a condition is true.
+ *
+ * @param cond {boolean}
+ * @param msg  {string} Optional error message
+ */
 function assertTrue(cond, msg) {
 	if (!cond) throw new Error(msg || "assertTrue failed");
 }
 
+/*
+ * Assert that a condition is false.
+ *
+ * @param cond {boolean}
+ * @param msg  {string} Optional error message
+ */
+function assertFalse(cond, msg) {
+	if (cond) throw new Error(msg || "assertFalse failed");
+}
+
+/*
+ * Assert strict equality (===) between two values.
+ *
+ * @param a
+ * @param b
+ * @param msg {string} Optional error message
+ */
 function assertEqual(a, b, msg) {
 	if (a !== b) {
 		throw new Error(msg || ("assertEqual failed: " + a + " !== " + b));
+	}
+}
+
+/*
+ * Assert strict inequality (!==) between two values.
+ *
+ * @param a
+ * @param b
+ * @param msg {string} Optional error message
+ */
+function assertNotEqual(a, b, msg) {
+	if (a === b) {
+		throw new Error(msg || ("assertNotEqual failed: " + a + " === " + b));
+	}
+}
+
+/*
+ * Assert that a function throws an exception.
+ *
+ * @param fn  {function} Function expected to throw
+ * @param msg {string} Optional error message
+ */
+function assertThrows(fn, msg) {
+	var threw = false;
+	try {
+		fn();
+	} catch (e) {
+		threw = true;
+	}
+	if (!threw) {
+		throw new Error(msg || "assertThrows failed");
+	}
+}
+
+/*
+ * Assert deep equality by JSON stringification.
+ *
+ * WARNING:
+ * - Object key order matters
+ * - Not suitable for cyclic structures
+ *
+ * Use assertJSONEqual for order-insensitive object comparison.
+ */
+function assertDeepEqual(a, b, msg) {
+	var sa = JSON.stringify(a);
+	var sb = JSON.stringify(b);
+	if (sa !== sb) {
+		throw new Error(msg || ("assertDeepEqual failed: " + sa + " !== " + sb));
+	}
+}
+
+/*
+ * Assert JavaScript typeof.
+ *
+ * @param val
+ * @param type {string} e.g. "string", "number", "object"
+ * @param msg  {string} Optional error message
+ */
+function assertType(val, type, msg) {
+	if (typeof val !== type) {
+		throw new Error(
+			msg || ("assertType failed: expected " + type + ", got " + typeof val)
+		);
+	}
+}
+
+/*
+ * Assert that a value is not undefined.
+ */
+function assertDefined(val, msg) {
+	if (typeof val === "undefined") {
+		throw new Error(msg || "assertDefined failed");
+	}
+}
+
+/*
+ * Assert that a value is undefined.
+ */
+function assertUndefined(val, msg) {
+	if (typeof val !== "undefined") {
+		throw new Error(msg || "assertUndefined failed");
+	}
+}
+
+/*
+ * Assert that a value is a plain object (not null, not array).
+ */
+function assertIsObject(val, msg) {
+	if (val === null || typeof val !== "object" || Array.isArray(val)) {
+		throw new Error(msg || "assertIsObject failed");
+	}
+}
+
+/*
+ * Assert that a value is an array.
+ */
+function assertIsArray(val, msg) {
+	if (!Array.isArray(val)) {
+		throw new Error(msg || "assertIsArray failed");
+	}
+}
+
+/*
+ * Internal helper to normalize JSON objects by sorting keys recursively.
+ * Used by assertJSONEqual.
+ */
+function __normalizeJSON(value) {
+	if (Array.isArray(value)) {
+		return value.map(__normalizeJSON);
+	}
+	if (value && typeof value === "object") {
+		var keys = Object.keys(value).sort();
+		var out = {};
+		for (var i = 0; i < keys.length; i++) {
+			out[keys[i]] = __normalizeJSON(value[keys[i]]);
+		}
+		return out;
+	}
+	return value;
+}
+
+/*
+ * Assert deep JSON equality with key-order normalization.
+ *
+ * Recommended for comparing API responses and plugin-generated JSON.
+ */
+function assertJSONEqual(a, b, msg) {
+	var na = JSON.stringify(__normalizeJSON(a));
+	var nb = JSON.stringify(__normalizeJSON(b));
+	if (na !== nb) {
+		throw new Error(msg || ("assertJSONEqual failed: " + na + " !== " + nb));
+	}
+}
+
+/*
+ * Assert that an object contains a given key.
+ */
+function assertHasKey(obj, key, msg) {
+	if (!obj || typeof obj !== "object" || !(key in obj)) {
+		throw new Error(msg || ("assertHasKey failed: missing key '" + key + "'"));
+	}
+}
+
+/*
+ * Internal helper to resolve a dotted/bracketed path.
+ *
+ * Supported syntax:
+ *   "a.b.c"
+ *   "items[0].author.name"
+ */
+function __getPath(obj, path) {
+	var parts = path.replace(/\\[(\\d+)\\]/g, ".$1").split(".");
+	var cur = obj;
+
+	for (var i = 0; i < parts.length; i++) {
+		if (cur === undefined || cur === null) return undefined;
+		cur = cur[parts[i]];
+	}
+	return cur;
+}
+
+/*
+ * Assert that a JSON path exists.
+ */
+function assertHasPath(obj, path, msg) {
+	var val = __getPath(obj, path);
+	if (typeof val === "undefined") {
+		throw new Error(
+			msg || ("assertHasPath failed: missing path '" + path + "'")
+		);
+	}
+}
+
+/*
+ * Assert that a JSON path exists and equals a specific value.
+ */
+function assertPathEqual(obj, path, expected, msg) {
+	var val = __getPath(obj, path);
+	if (typeof val === "undefined") {
+		throw new Error(
+			msg || ("assertPathEqual failed: missing path '" + path + "'")
+		);
+	}
+	if (val !== expected) {
+		throw new Error(
+			msg || ("assertPathEqual failed at '" + path + "': " + val + " !== " + expected)
+		);
+	}
+}
+
+/*
+ * Assert that a JSON path exists and has a specific typeof.
+ */
+function assertPathType(obj, path, type, msg) {
+	var val = __getPath(obj, path);
+	if (typeof val === "undefined") {
+		throw new Error(
+			msg || ("assertPathType failed: missing path '" + path + "'")
+		);
+	}
+	if (typeof val !== type) {
+		throw new Error(
+			msg || ("assertPathType failed at '" + path + "': expected " + type + ", got " + typeof val)
+		);
+	}
+}
+
+/*
+ * Assert that an array has an exact length.
+ */
+function assertArrayLength(arr, expected, msg) {
+	if (!Array.isArray(arr)) {
+		throw new Error(msg || "assertArrayLength failed: not an array");
+	}
+	if (arr.length !== expected) {
+		throw new Error(
+			msg || ("assertArrayLength failed: " + arr.length + " !== " + expected)
+		);
 	}
 }
 `
@@ -908,8 +1188,8 @@ func ExecEnginePluginTest(
 	p *JSPlugin,
 	testScript string,
 	db *cdb.Handler,
-	opts PluginTestOptions,
-) ([]PluginTestResult, error) {
+	opts TestOptions,
+) ([]TestResult, error) {
 
 	if p == nil {
 		return nil, fmt.Errorf("nil plugin")
@@ -949,38 +1229,53 @@ func ExecEnginePluginTest(
 		rt,
 	)
 	if err != nil {
+		//cmn.DebugMsg(cmn.DbgLvlDebug3, "Error executing plugin test: %v", err)
 		return nil, err
 	}
+	//cmn.DebugMsg(cmn.DbgLvlInfo, "Raw plugin test result: %v", rawResult)
 
 	// Parse results
-	rawTests, ok := rawResult["__crowler_test_results"]
-	if !ok {
-		// execEnginePlugin normalized `result`, so it may already be the array
-		if arr, ok := rawResult["result"]; ok {
-			rawTests = arr
-		} else {
-			return nil, fmt.Errorf("no test results returned")
-		}
+	var rawTests interface{}
+
+	if v, ok := rawResult["items"]; ok {
+		rawTests = v
+	} else if v, ok := rawResult["__crowler_test_results"]; ok {
+		rawTests = v
+	} else if v, ok := rawResult["result"]; ok {
+		rawTests = v
+	} else {
+		return nil, fmt.Errorf("no test results returned")
 	}
 
-	list, ok := rawTests.([]interface{})
-	if !ok {
+	var list []map[string]interface{}
+
+	switch v := rawTests.(type) {
+	case []map[string]interface{}:
+		list = v
+
+	case []interface{}:
+		list = make([]map[string]interface{}, 0, len(v))
+		for _, e := range v {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid test result entry type")
+			}
+			list = append(list, m)
+		}
+
+	default:
 		return nil, fmt.Errorf("invalid test result format")
 	}
 
-	results := make([]PluginTestResult, 0, len(list))
+	results := make([]TestResult, 0, len(list))
 
 	for _, r := range list {
-		m, ok := r.(map[string]interface{})
-		if !ok {
-			continue
-		}
 
-		name, _ := m["name"].(string)
-		okVal, _ := m["ok"].(bool)
-		errMsg, _ := m["error"].(string)
+		name, _ := r["name"].(string)
+		okVal, _ := r["ok"].(bool)
+		errMsg, _ := r["error"].(string)
 
-		results = append(results, PluginTestResult{
+		results = append(results, TestResult{
 			Name:   name,
 			Passed: okVal,
 			Error:  errMsg,
@@ -988,6 +1283,30 @@ func ExecEnginePluginTest(
 	}
 
 	return results, nil
+}
+
+// DiscoverTestsFromPlugins discovers test functions from the registered test plugins
+func DiscoverTestsFromPlugins(reg *JSPluginRegister) []TestFile {
+	var tests []TestFile
+
+	for _, pluginName := range reg.Order {
+		plugin, _ := reg.GetPlugin(pluginName)
+
+		// Check if the plugin type is "test_plugin"
+		if plugin.PType != testPlugin {
+			continue
+		}
+
+		// Add plugin to the TestFile list
+		testFile := TestFile{
+			Name: plugin.Name,
+			Body: plugin.Script,
+			Path: "test_plugin",
+		}
+		tests = append(tests, testFile)
+	}
+
+	return tests
 }
 
 func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {

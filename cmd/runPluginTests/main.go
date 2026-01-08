@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -15,11 +16,9 @@ import (
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
-type testFile struct {
-	Path string
-	Name string // parsed from first non-empty line: // name: ...
-	Body string
-}
+const (
+	testPlugin = "test_plugin"
+)
 
 type cliOptions struct {
 	ConfigPath  string
@@ -70,7 +69,7 @@ func pluginNameFromTestFile(path string) string {
 
 func buildTestPlan(
 	reg *plg.JSPluginRegister,
-	tests []testFile,
+	tests []plg.TestFile,
 ) (*TestPlan, error) {
 
 	if reg == nil {
@@ -86,11 +85,18 @@ func buildTestPlan(
 	// Copy plugins into a plain map for stable access
 	for _, name := range reg.Order {
 		p := reg.Registry[name]
-		plan.Plugins[name] = p
+		//fmt.Printf("Loaded plugin: %s (type: %s)\n", name, p.PType)
+		if p.PType != testPlugin {
+			plan.Plugins[name] = p
+		}
 	}
 
 	for _, tf := range tests {
 		pluginName := pluginNameFromTestFile(tf.Path)
+		if tf.Path == testPlugin {
+			pluginName = tf.Name
+		}
+		//fmt.Printf("Discovered test file: %s (plugin: %s)\n", tf.Path, pluginName)
 		if pluginName == "" {
 			// Ignore files that do not follow *.tests.js
 			continue
@@ -103,14 +109,25 @@ func buildTestPlan(
 			Body:       tf.Body,
 		}
 
-		if _, ok := plan.Plugins[pluginName]; !ok {
+		pluginNameProcessed := pluginName
+		if tf.Path == testPlugin {
+			// remove "_tests" suffix if present
+			pluginNameProcessed = strings.TrimSuffix(pluginNameProcessed, "_tests")
+			//fmt.Printf("  -> special test plugin detected, mapped to plugin: %s\n", pluginNameProcessed)
+		}
+
+		if _, ok := plan.Plugins[pluginNameProcessed]; !ok {
 			// Plugin not loaded: record and skip execution
-			plan.MissingPlugins[pluginName] = struct{}{}
+			plan.MissingPlugins[pluginNameProcessed] = struct{}{}
 			continue
 		}
 
-		plan.TestsByPlugin[pluginName] =
-			append(plan.TestsByPlugin[pluginName], tc)
+		plan.TestsByPlugin[pluginNameProcessed] =
+			append(plan.TestsByPlugin[pluginNameProcessed], tc)
+
+		// Remove current plugin from plugins because it's a test-only file
+		delete(plan.Plugins, pluginName)
+		delete(reg.Registry, pluginName)
 	}
 
 	return plan, nil
@@ -118,6 +135,9 @@ func buildTestPlan(
 
 func main() {
 	opts := parseFlags()
+
+	// Immediately set Plugin's mode to TestMode
+	plg.TestMode = true
 
 	// Keep failures explicit and non-panicky for CI.
 	if err := run(opts); err != nil {
@@ -196,14 +216,23 @@ func run(opts cliOptions) error {
 		return err
 	}
 
+	// Discover tests from loaded plugins
+	tests = append(tests, plg.DiscoverTestsFromPlugins(reg)...)
+
 	// Build test plan mapping tests to loaded plugins
 	plan, err := buildTestPlan(reg, tests)
 	if err != nil {
 		return fmt.Errorf("building test plan failed: %w", err)
 	}
 
+	execOrder := make([]string, 0, len(plan.Plugins))
+	for name := range plan.Plugins {
+		execOrder = append(execOrder, name)
+	}
+	sort.Strings(execOrder) // optional, for stable output
+
 	// Output plan
-	printTestPlan(plan, reg.Order)
+	printTestPlan(plan, execOrder)
 
 	if opts.ListOnly {
 		return nil
@@ -258,9 +287,9 @@ func loadExtraPlugins(reg *plg.JSPluginRegister, globs []string, pType string) e
 	return nil
 }
 
-func discoverTests(globs []string) ([]testFile, error) {
+func discoverTests(globs []string) ([]plg.TestFile, error) {
 	seen := make(map[string]struct{})
-	var out []testFile
+	var out []plg.TestFile
 
 	for _, g := range globs {
 		g = strings.TrimSpace(g)
@@ -286,7 +315,7 @@ func discoverTests(globs []string) ([]testFile, error) {
 
 			body := string(b)
 			name := parseNameFromHeader(body, path) // reuse plugin naming convention logic :contentReference[oaicite:4]{index=4}
-			out = append(out, testFile{Path: path, Name: name, Body: body})
+			out = append(out, plg.TestFile{Path: path, Name: name, Body: body})
 		}
 	}
 
@@ -422,7 +451,7 @@ func runTestPlan(
 				&plugin,
 				tc.Body,
 				db,
-				plg.PluginTestOptions{
+				plg.TestOptions{
 					Timeout: timeout, // seconds, configurable later
 					Params:  map[string]interface{}{},
 				},
