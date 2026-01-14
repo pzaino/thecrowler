@@ -74,34 +74,34 @@ func main() {
 	defer db.Close()
 
 	rows, err := db.Query(`
-		SELECT
-			s.source_id,
-			s.url              AS source_url,
+	SELECT
+		s.source_id,
+		s.url AS source_url,
 
-			si.index_id,
-			si.page_url,
-			si.created_at,
-			si.last_updated_at,
+		si.index_id,
+		si.page_url,
+		si.created_at,
+		si.last_updated_at,
 
-			wo.object_id,
-			wo.object_type,
-			wo.object_link,
-			wo.object_hash,
-			wo.object_content,
-			wo.object_html,
-			wo.details,
-			wo.created_at,
-			wo.last_updated_at
-		FROM Sources s
-		JOIN SourceSearchIndex ssi
-			ON ssi.source_id = s.source_id
-		JOIN SearchIndex si
-			ON si.index_id = ssi.index_id
-		JOIN WebObjectsIndex woi
-			ON woi.index_id = si.index_id
-		JOIN WebObjects wo
-			ON wo.object_id = woi.object_id
-		ORDER BY s.source_id, si.index_id, wo.object_id;
+		wo.object_id,
+		wo.object_type,
+		wo.object_link,
+		wo.object_hash,
+		wo.object_content,
+		wo.object_html,
+		wo.details,
+		wo.created_at,
+		wo.last_updated_at
+	FROM Sources s
+	JOIN SourceSearchIndex ssi
+		ON ssi.source_id = s.source_id
+	JOIN SearchIndex si
+		ON si.index_id = ssi.index_id
+	LEFT JOIN WebObjectsIndex woi
+		ON woi.index_id = si.index_id
+	LEFT JOIN WebObjects wo
+		ON wo.object_id = woi.object_id
+	ORDER BY s.source_id, si.index_id, wo.object_id;
 	`)
 	if err != nil {
 		log.Fatal(err)
