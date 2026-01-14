@@ -217,9 +217,6 @@ func main() {
 	// Start the event janitor (cleans up expired events from the DB)
 	go startEventJanitor(&dbHandler, time.Minute)
 
-	// Start the daily event janitor (cleans up old expired events from the DB)
-	go startDailyEventJanitor(&dbHandler)
-
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
 		setSysReady(2) // Indicate system is ready
@@ -235,44 +232,27 @@ func startEventJanitor(db *cdb.Handler, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for range ticker.C {
-			cleanExpiredEvents(db)
+			cleanupExpiredEvents(db)
 		}
 	}()
 }
 
-func startDailyEventJanitor(db *cdb.Handler) {
-	go func() {
-		// Run once shortly after startup
-		runDailyEventJanitor(db)
-
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			runDailyEventJanitor(db)
-		}
-	}()
-}
-
-func cleanExpiredEvents(db *cdb.Handler) {
-	const batchSize = 500
-
+func cleanupExpiredEvents(db *cdb.Handler) {
 	res, err := (*db).Exec(`
 		DELETE FROM Events
 		WHERE expires_at IS NOT NULL
-		  AND expires_at < now() - interval '5 minutes'
-		LIMIT $1
-	`, batchSize)
-
+		  AND expires_at < now()
+	`)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Event janitor failed: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Event cleanup failed: %v", err)
 		return
 	}
 
-	rows, _ := res.RowsAffected()
-	if rows > 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug,
-			"Event janitor removed %d expired events", rows)
+			"Event cleanup removed %d expired events", rows)
 	}
 }
 
