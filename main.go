@@ -1294,7 +1294,8 @@ func main() {
 	// Initialize the logger
 	cmn.InitLogger("TheCROWler")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Engine is starting...")
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node   ID: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetMicroServiceName())
 
 	// Define db before we set signal handlers
 	var db cdb.Handler

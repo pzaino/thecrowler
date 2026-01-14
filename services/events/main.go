@@ -96,7 +96,8 @@ func main() {
 	// Initialize the logger
 	cmn.InitLogger("TheCROWlerEventsAPI")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Events API is starting...")
-	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "  Node ID: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetMicroServiceName())
 
 	// Register metrics
 	registerMetrics()
