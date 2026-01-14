@@ -28,6 +28,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v2"
 )
 
@@ -430,6 +431,12 @@ func NewConfig() *Config {
 // LoadConfig is responsible for loading the configuration file
 // and return the Config struct
 func LoadConfig(confName string) (Config, error) {
+	// If there is an ".env" file in the current directory, load it
+	// Load .env if present
+	if err := godotenv.Load(); err != nil {
+		// Not fatal: .env is optional in production
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "No .env file found, using environment variables")
+	}
 
 	// Get the configuration file
 	config, err := getConfigFile(confName)
