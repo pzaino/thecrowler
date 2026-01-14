@@ -1293,7 +1293,8 @@ func main() {
 
 	// Initialize the logger
 	cmn.InitLogger("TheCROWler")
-	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Engine is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetEngineID())
 
 	// Define db before we set signal handlers
 	var db cdb.Handler

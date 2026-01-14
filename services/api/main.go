@@ -192,6 +192,7 @@ func main() {
 	// Initialize the logger
 	cmn.InitLogger("TheCROWlerAPI")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler API is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetEngineID())
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
