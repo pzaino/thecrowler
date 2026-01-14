@@ -4042,7 +4042,7 @@ func addJSAPIISODate(vm *otto.Otto) error {
 	return vm.Set("ISODate", func(call otto.FunctionCall) otto.Value {
 		var t time.Time
 		if len(call.ArgumentList) == 0 {
-			t = time.Now().UTC()
+			t = time.Now()
 		} else {
 			dateStr, _ := call.Argument(0).ToString()
 			parsedTime, err := time.Parse(time.RFC3339, dateStr)

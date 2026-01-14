@@ -31,7 +31,7 @@ func mockRuleset(name string) Ruleset {
 	return Ruleset{
 		FormatVersion: "1.0",
 		Author:        "Tester",
-		CreatedAt:     CustomTime{Time: time.Now().UTC()},
+		CreatedAt:     CustomTime{Time: time.Now()},
 		Description:   "A test ruleset",
 		Name:          name,
 		RuleGroups:    []RuleGroup{},

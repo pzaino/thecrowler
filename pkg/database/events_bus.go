@@ -118,7 +118,7 @@ func (b *EventBus) Publish(e Event) {
 func (b *EventBus) nextID() string {
 	n := atomic.AddUint64(&b.seq, 1)
 	// tiny unique-enough ID: time + counter (no deps)
-	return strings.Join([]string{time.Now().UTC().Format(time.RFC3339Nano), "sub", itoaU64(n)}, ":")
+	return strings.Join([]string{time.Now().Format(time.RFC3339Nano), "sub", itoaU64(n)}, ":")
 }
 
 func normalizeFilter(f EventFilter) EventFilter {

@@ -853,7 +853,7 @@ func DefaultActionConfig(url string) cfg.SourceConfig {
 	return cfg.SourceConfig{
 		FormatVersion: "1.0",
 		Author:        "The CROWler team",
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     time.Now(),
 		Description:   "Default configuration",
 		SourceName:    "Example Source",
 		CrawlingConfig: cfg.CrawlingConfig{

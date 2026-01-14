@@ -686,7 +686,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take the current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -700,7 +700,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take the current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	// Iterate over the results
 	var results SearchResult
@@ -765,7 +765,7 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -779,7 +779,7 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	// Iterate over the results
 	var results ScreenshotResponse
@@ -933,7 +933,7 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -947,7 +947,7 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	// Iterate over the results
 	var results WebObjectResponse
@@ -1105,7 +1105,7 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -1119,7 +1119,7 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	// Iterate over the results
 	var results ScrapedDataResponse
@@ -1298,7 +1298,7 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -1312,7 +1312,7 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	var results CorrelatedSitesResponse
 	for rows.Next() {
@@ -1507,7 +1507,7 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -1521,7 +1521,7 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	var results NetInfoResponse
 	for rows.Next() {
@@ -1673,7 +1673,7 @@ func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoRe
 	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
-	start := time.Now().UTC()
+	start := time.Now()
 
 	// Execute the query
 	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
@@ -1687,7 +1687,7 @@ func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoRe
 	cmn.DebugMsg(cmn.DbgLvlDebug1, queryExecTime, elapsed)
 
 	// Take current timer (to monitor encapsulation performance)
-	start = time.Now().UTC()
+	start = time.Now()
 
 	var results HTTPInfoResponse
 	for rows.Next() {

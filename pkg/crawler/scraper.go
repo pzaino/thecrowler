@@ -53,7 +53,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	ErrorState := false
 	ErrorMsg := ""
 
-	startTime := time.Now().UTC()
+	startTime := time.Now()
 	// Iterate over the rule's elements to be extracted
 	for e := 0; e < len(rule.Elements); e++ {
 		key := rule.Elements[e].Key
@@ -173,7 +173,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 		// update the extractedData with the post-processed data
 		extractedData = cmn.ConvertJSONToMap(data)
 	}
-	endTime := time.Now().UTC()
+	endTime := time.Now()
 	// Log the time taken to extract the data for this element
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "Time taken to execute rule '%s': %v", rule.RuleName, endTime.Sub(startTime))
 

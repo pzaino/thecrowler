@@ -75,7 +75,7 @@ func InitializeScheduler(db *Handler) {
 func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 	// Fill timestamp if missing
 	if e.Timestamp == "" {
-		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+		e.Timestamp = time.Now().Format(time.RFC3339)
 	}
 
 	// Generate deterministic SHA256 UID
@@ -170,11 +170,11 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error)
 	schedTime, err := time.Parse(time.RFC3339, scheduleTime)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing schedule time:", err)
-		return time.Now().UTC(), err
+		return time.Now(), err
 	}
 
 	// Ensure the schedule time is not in the past
-	now := time.Now().UTC()
+	now := time.Now()
 	if schedTime.Before(now) {
 		return schedTime, fmt.Errorf("Schedule time is in the past")
 	}
@@ -211,11 +211,11 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	schedTime, err := time.Parse(time.RFC3339, scheduleTime)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing schedule time: %v", err)
-		return time.Now().UTC(), err
+		return time.Now(), err
 	}
 
 	// Ensure the schedule time is not in the past
-	if schedTime.Before(time.Now().UTC()) {
+	if schedTime.Before(time.Now()) {
 		return schedTime, fmt.Errorf("schedule time is in the past")
 	}
 

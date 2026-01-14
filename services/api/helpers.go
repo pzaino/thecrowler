@@ -252,7 +252,7 @@ func setWriteDeadline(w http.ResponseWriter, d time.Duration) {
 	if wd, ok := w.(interface {
 		SetWriteDeadline(time.Time) error
 	}); ok {
-		_ = wd.SetWriteDeadline(time.Now().UTC().Add(d))
+		_ = wd.SetWriteDeadline(time.Now().Add(d))
 	}
 }
 

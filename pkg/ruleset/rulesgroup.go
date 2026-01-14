@@ -77,7 +77,7 @@ func (rg *RuleGroup) IsValid() bool {
 	}
 
 	// Get the current time
-	now := time.Now().UTC()
+	now := time.Now()
 
 	// Log the validation details
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "Validating group: %s", rg.GroupName)

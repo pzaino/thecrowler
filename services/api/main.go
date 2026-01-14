@@ -304,7 +304,7 @@ func main() {
 		}()
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now().UTC())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.API.Host, config.API.Port)
@@ -361,15 +361,15 @@ func processHeartbeatEvent(event cdb.Event) {
 	resp := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		ExpiresAt: time.Now().UTC().Add(1 * time.Minute).Format(time.RFC3339),
+		Timestamp: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Minute).Format(time.RFC3339),
 		Details: map[string]any{
 			"parent_event_id": event.ID,
 			"type":            "heartbeat_response",
 			"status":          "ok",
 			"origin_name":     cmn.GetMicroServiceName(),
 			"origin_type":     "crowler-api",
-			"origin_time":     time.Now().UTC().Format(time.RFC3339),
+			"origin_time":     time.Now().Format(time.RFC3339),
 			"pipeline_status": pipelineResults,
 		},
 	}

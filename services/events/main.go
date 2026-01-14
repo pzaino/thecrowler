@@ -206,7 +206,7 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now().UTC())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
 	// Start heartbeat loop if enabled

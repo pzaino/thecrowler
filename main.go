@@ -285,7 +285,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
 	// Assign the global pipeline status pointer
 	sysPipelineStatus = &PipelineStatus
-	now := time.Now().UTC()
+	now := time.Now()
 	// Set the maintenance time
 	maintenanceTime := now.Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
@@ -298,7 +298,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	for {
 		configMutex.RLock()
 
-		if !config.Crawler.Schedule.IsActive(time.Now().UTC()) {
+		if !config.Crawler.Schedule.IsActive(time.Now()) {
 			// We are not active right now, so we can handle signals for reloading the configuration
 			configMutex.RUnlock()
 			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
@@ -323,7 +323,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			}
 
 			// Perform database maintenance if it's time
-			now := time.Now().UTC()
+			now := time.Now()
 			if now.After(maintenanceTime) {
 				performDatabaseMaintenance(*db)
 				maintenanceTime = now.Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
@@ -362,7 +362,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			Details: map[string]interface{}{
 				"uid":                batchUID,
 				"node":               cmn.GetMicroServiceName(),
-				"time":               time.Now().UTC(),
+				"time":               time.Now(),
 				"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
@@ -376,7 +376,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			Details: map[string]interface{}{
 				"uid":              batchUID,
 				"node":             cmn.GetMicroServiceName(),
-				"time":             time.Now().UTC(),
+				"time":             time.Now(),
 				"final_batch_size": totSrc,
 			},
 		}
@@ -461,7 +461,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	)
 	TotalSources.Store(0)
 	BatchCompleted.Store(false)
-	LastActivity.Store(time.Now().UTC())
+	LastActivity.Store(time.Now())
 	PipelinesRunning.Store(true)
 	RampUpRunning.Store(true)
 	BusyInstances.Store(0)
@@ -476,7 +476,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	// "Reports" go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		interval := time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute
-		now := time.Now().UTC()
+		now := time.Now()
 		next := now.Add(interval)
 
 		for {
@@ -552,7 +552,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 		// ensure LastActivity sane
 		if v := LastActivity.Load(); v == nil {
-			LastActivity.Store(time.Now().UTC())
+			LastActivity.Store(time.Now())
 		}
 
 		for {
@@ -579,7 +579,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 				// First let's check if we are still in an active schedule:
 				configMutex.RLock()
-				if !wb.Config.Crawler.Schedule.IsActive(time.Now().UTC()) {
+				if !wb.Config.Crawler.Schedule.IsActive(time.Now()) {
 					// Not active, so we can close the channel and exit
 					configMutex.RUnlock()
 					BatchCompleted.Store(true)
@@ -605,7 +605,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
 					} else if len(newSources) > 0 {
-						LastActivity.Store(time.Now().UTC()) // Reset activity
+						LastActivity.Store(time.Now()) // Reset activity
 						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
 						if !BatchCompleted.Load() {
 							for _, src := range newSources {
@@ -657,7 +657,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	// Function to refresh the last activity timestamp (from external functions)
 	RefreshLastActivity := func() {
-		LastActivity.Store(time.Now().UTC())
+		LastActivity.Store(time.Now())
 	}
 
 	// Get engine name and if it has an ID at the end use it as a multiplier
@@ -675,11 +675,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
 	// First batch load into the queue: (initial load)
-	LastActivity.Store(time.Now().UTC()) // Reset activity
+	LastActivity.Store(time.Now()) // Reset activity
 	for _, source := range *wb.sources {
 		sourceChan <- source
 	}
-	LastActivity.Store(time.Now().UTC()) // Reset activity
+	LastActivity.Store(time.Now()) // Reset activity
 
 	for vdiID := 0; vdiID < maxPipelines; vdiID++ {
 		RefreshLastActivity() // Reset activity
@@ -759,7 +759,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					}
 				}
 
-				now := time.Now().UTC()
+				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
 					PipelineID:      uint64(statusIdx), //nolint:gosec // it's safe here.
 					Source:          source.URL,
@@ -824,7 +824,7 @@ func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {
 	pollInterval := time.Duration(delay/divider) * time.Second // Check every pollInterval seconds to keep alive
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-RampUp] Waiting for %v seconds...", delay)
-	startTime := time.Now().UTC()
+	startTime := time.Now()
 	for time.Since(startTime) < waitDuration {
 		// Perform a controlled sleep so we can refresh the session timeout if needed
 		time.Sleep(pollInterval)
@@ -1418,7 +1418,7 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now().UTC())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%s'", time.Local.String())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name: '%s'", cmn.GetMicroServiceName())
 
@@ -1501,7 +1501,7 @@ func processHeartbeatEvent(event cdb.Event) {
 	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
 
 	// Prepare the response event
-	now := time.Now().UTC()
+	now := time.Now()
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",

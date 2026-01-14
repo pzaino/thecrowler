@@ -503,7 +503,7 @@ func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	return cfg.SourceConfig{
 		FormatVersion: "1.0",
 		Author:        "Your Name",
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     time.Now(),
 		Description:   "Default configuration",
 		SourceName:    "Example Source",
 		CrawlingConfig: cfg.CrawlingConfig{

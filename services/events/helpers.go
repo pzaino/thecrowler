@@ -85,7 +85,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	}
 
 	hbType := "crowler_heartbeat"
-	now := time.Now().UTC()
+	now := time.Now()
 
 	var eventResponseTimeout time.Duration
 	if strings.TrimSpace(config.Events.HeartbeatTimeout) == "" {
@@ -268,11 +268,11 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 				Action:    "db_maintenance",
 				Type:      "system_event",
 				Severity:  "low",
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				Timestamp: time.Now().Format(time.RFC3339),
 				Details: map[string]interface{}{
 					"action": "db_maintenance",
 					"reason": "all_fleet_idle",
-					"time":   time.Now().UTC().Format(time.RFC3339),
+					"time":   time.Now().Format(time.RFC3339),
 				},
 			}
 
@@ -311,7 +311,7 @@ func canScheduleDBMaintenance() bool {
 	}
 
 	// OK to schedule
-	lastDBMaintenance = time.Now().UTC()
+	lastDBMaintenance = time.Now()
 	return true
 }
 

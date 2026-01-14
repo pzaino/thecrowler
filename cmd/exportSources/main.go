@@ -143,7 +143,7 @@ func main() {
 	}
 
 	export := Export{
-		ExportedAt: time.Now().UTC(),
+		ExportedAt: time.Now(),
 	}
 
 	for _, src := range sourceMap {

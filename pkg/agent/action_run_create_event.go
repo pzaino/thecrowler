@@ -96,7 +96,7 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		}
 		event.Timestamp = t.Format("2006-01-02 15:04:05")
 	} else {
-		now := time.Now().UTC()
+		now := time.Now()
 		event.Timestamp = string(now.Format("2006-01-02 15:04:05"))
 	}
 	// Check if there is a Severity params
