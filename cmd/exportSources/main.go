@@ -23,9 +23,9 @@ type Export struct {
 
 // Source represents a source with its pages and web objects.
 type Source struct {
-	SourceID  uint64 `json:"source_id"`
-	SourceURL string `json:"source_url"`
-	Pages     []Page `json:"pages"`
+	SourceID  uint64  `json:"source_id"`
+	SourceURL string  `json:"source_url"`
+	Pages     []*Page `json:"pages"`
 }
 
 // Page represents a page with its web objects.
@@ -181,7 +181,11 @@ func main() {
 				PageURL: pageURL,
 			}
 			pageMap[indexID] = pg
-			src.Pages = append(src.Pages, *pg)
+			src.Pages = append(src.Pages, pg)
+		}
+
+		if obj.ObjectID == 0 {
+			continue
 		}
 
 		pg.Objects = append(pg.Objects, obj)
