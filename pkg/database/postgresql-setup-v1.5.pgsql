@@ -1230,6 +1230,7 @@ BEGIN
         WHERE expires_at IS NOT NULL;
     END IF;
 END
+$$;
 
 -- Creates an index for the Events event_type column
 DO $$
