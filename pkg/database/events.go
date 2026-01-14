@@ -15,6 +15,8 @@
 // Package database is responsible for handling the database setup, configuration and abstraction.
 package database
 
+// Path: pkg/database/events.go
+
 import (
 	"context"
 	"database/sql"
@@ -73,7 +75,7 @@ func InitializeScheduler(db *Handler) {
 func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 	// Fill timestamp if missing
 	if e.Timestamp == "" {
-		e.Timestamp = time.Now().Format(time.RFC3339)
+		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	// Generate deterministic SHA256 UID
@@ -91,16 +93,27 @@ func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 	// Always rollback unless commit succeeds
 	defer func() { _ = tx.Rollback() }()
 
+	var ExpiresAt sql.NullTime
+	if strings.TrimSpace(e.ExpiresAt) != "" {
+		parsedTime, err := time.Parse(time.RFC3339, e.ExpiresAt)
+		if err == nil {
+			ExpiresAt = sql.NullTime{Time: parsedTime, Valid: true}
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "CreateEvent: invalid ExpiresAt format '%s', ignoring: %v", e.ExpiresAt, err)
+		}
+	}
+
 	// Exec inside the transaction
 	_, err = tx.ExecContext(ctx, `
-        INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, expires_at, details)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
     `,
 		e.ID,
 		e.SourceID,
 		e.Type,
 		e.Severity,
 		e.Timestamp,
+		ExpiresAt,
 		cmn.ConvertMapToString(e.Details),
 	)
 
@@ -157,11 +170,11 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error)
 	schedTime, err := time.Parse(time.RFC3339, scheduleTime)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing schedule time:", err)
-		return time.Now(), err
+		return time.Now().UTC(), err
 	}
 
 	// Ensure the schedule time is not in the past
-	now := time.Now()
+	now := time.Now().UTC()
 	if schedTime.Before(now) {
 		return schedTime, fmt.Errorf("Schedule time is in the past")
 	}
@@ -198,11 +211,11 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	schedTime, err := time.Parse(time.RFC3339, scheduleTime)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error parsing schedule time: %v", err)
-		return time.Now(), err
+		return time.Now().UTC(), err
 	}
 
 	// Ensure the schedule time is not in the past
-	if schedTime.Before(time.Now()) {
+	if schedTime.Before(time.Now().UTC()) {
 		return schedTime, fmt.Errorf("schedule time is in the past")
 	}
 

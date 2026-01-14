@@ -283,7 +283,7 @@ func (kv *KeyValueStore) TryAcquire(
 		return "", false, errors.New("ttl must be > 0")
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	var leaseID string
 	acquired := false
 

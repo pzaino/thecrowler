@@ -128,7 +128,7 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 
 		queueLock.Lock()
 		nextEvent := (*pq)[0]
-		now := time.Now()
+		now := time.Now().UTC()
 
 		if nextEvent.NextRun.After(now) {
 			timer.Reset(time.Until(nextEvent.NextRun))

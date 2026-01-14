@@ -285,10 +285,11 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
 	// Assign the global pipeline status pointer
 	sysPipelineStatus = &PipelineStatus
+	now := time.Now().UTC()
 	// Set the maintenance time
-	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
+	maintenanceTime := now.Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
-	resourceReleaseTime := time.Now().Add(time.Duration(5) * time.Minute)
+	resourceReleaseTime := now.Add(time.Duration(5) * time.Minute)
 	// Flag used to avoid repeating 0 sources found constantly
 	gotSources := true // set to true by default for first source check (so it will log the first time)
 
@@ -297,7 +298,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	for {
 		configMutex.RLock()
 
-		if !config.Crawler.Schedule.IsActive(time.Now()) {
+		if !config.Crawler.Schedule.IsActive(time.Now().UTC()) {
 			// We are not active right now, so we can handle signals for reloading the configuration
 			configMutex.RUnlock()
 			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
@@ -322,18 +323,19 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			}
 
 			// Perform database maintenance if it's time
-			if time.Now().After(maintenanceTime) {
+			now := time.Now().UTC()
+			if now.After(maintenanceTime) {
 				performDatabaseMaintenance(*db)
-				maintenanceTime = time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
+				maintenanceTime = now.Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 				cmn.DebugMsg(cmn.DbgLvlDebug2, "Database maintenance every: %d", config.Crawler.Maintenance)
 			}
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.RUnlock()
-			if time.Now().After(resourceReleaseTime) {
+			if now.After(resourceReleaseTime) {
 				// Release unneeded resources:
 				runtime.GC()         // Run the garbage collector
 				debug.FreeOSMemory() // Force release of unused memory to the OS
-				resourceReleaseTime = time.Now().Add(time.Duration(5) * time.Minute)
+				resourceReleaseTime = now.Add(time.Duration(5) * time.Minute)
 			}
 			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
@@ -360,7 +362,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			Details: map[string]interface{}{
 				"uid":                batchUID,
 				"node":               cmn.GetMicroServiceName(),
-				"time":               time.Now(),
+				"time":               time.Now().UTC(),
 				"initial_batch_size": len(sourcesToCrawl),
 			},
 		}
@@ -374,7 +376,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			Details: map[string]interface{}{
 				"uid":              batchUID,
 				"node":             cmn.GetMicroServiceName(),
-				"time":             time.Now(),
+				"time":             time.Now().UTC(),
 				"final_batch_size": totSrc,
 			},
 		}
@@ -459,7 +461,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	)
 	TotalSources.Store(0)
 	BatchCompleted.Store(false)
-	LastActivity.Store(time.Now())
+	LastActivity.Store(time.Now().UTC())
 	PipelinesRunning.Store(true)
 	RampUpRunning.Store(true)
 	BusyInstances.Store(0)
@@ -474,7 +476,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 	// "Reports" go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		interval := time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute
-		next := time.Now().Add(interval)
+		now := time.Now().UTC()
+		next := now.Add(interval)
 
 		for {
 			anyPipelineStillRunning := false
@@ -549,7 +552,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 		// ensure LastActivity sane
 		if v := LastActivity.Load(); v == nil {
-			LastActivity.Store(time.Now())
+			LastActivity.Store(time.Now().UTC())
 		}
 
 		for {
@@ -576,7 +579,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 				// First let's check if we are still in an active schedule:
 				configMutex.RLock()
-				if !wb.Config.Crawler.Schedule.IsActive(time.Now()) {
+				if !wb.Config.Crawler.Schedule.IsActive(time.Now().UTC()) {
 					// Not active, so we can close the channel and exit
 					configMutex.RUnlock()
 					BatchCompleted.Store(true)
@@ -602,7 +605,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					if err != nil {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
 					} else if len(newSources) > 0 {
-						LastActivity.Store(time.Now()) // Reset activity
+						LastActivity.Store(time.Now().UTC()) // Reset activity
 						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
 						if !BatchCompleted.Load() {
 							for _, src := range newSources {
@@ -654,7 +657,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	// Function to refresh the last activity timestamp (from external functions)
 	RefreshLastActivity := func() {
-		LastActivity.Store(time.Now())
+		LastActivity.Store(time.Now().UTC())
 	}
 
 	// Get engine name and if it has an ID at the end use it as a multiplier
@@ -672,11 +675,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
 	// First batch load into the queue: (initial load)
-	LastActivity.Store(time.Now()) // Reset activity
+	LastActivity.Store(time.Now().UTC()) // Reset activity
 	for _, source := range *wb.sources {
 		sourceChan <- source
 	}
-	LastActivity.Store(time.Now()) // Reset activity
+	LastActivity.Store(time.Now().UTC()) // Reset activity
 
 	for vdiID := 0; vdiID < maxPipelines; vdiID++ {
 		RefreshLastActivity() // Reset activity
@@ -756,7 +759,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					}
 				}
 
-				now := time.Now()
+				now := time.Now().UTC()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
 					PipelineID:      uint64(statusIdx), //nolint:gosec // it's safe here.
 					Source:          source.URL,
@@ -821,7 +824,7 @@ func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {
 	pollInterval := time.Duration(delay/divider) * time.Second // Check every pollInterval seconds to keep alive
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-RampUp] Waiting for %v seconds...", delay)
-	startTime := time.Now()
+	startTime := time.Now().UTC()
 	for time.Since(startTime) < waitDuration {
 		// Perform a controlled sleep so we can refresh the session timeout if needed
 		time.Sleep(pollInterval)
@@ -1415,7 +1418,7 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now().UTC())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%s'", time.Local.String())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Engine Name: '%s'", cmn.GetMicroServiceName())
 
@@ -1498,16 +1501,18 @@ func processHeartbeatEvent(event cdb.Event) {
 	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
 
 	// Prepare the response event
+	now := time.Now().UTC()
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
-		Timestamp: time.Now().Format(time.RFC3339),
+		Timestamp: now.Format(time.RFC3339),
+		ExpiresAt: now.Add(1 * time.Minute).Format(time.RFC3339),
 		Details:   make(map[string]interface{}),
 	}
 	responseEvent.Details["parent_event_id"] = event.ID
 	responseEvent.Details["origin_type"] = "crowler-engine"
 	responseEvent.Details["origin_name"] = cmn.GetMicroServiceName()
-	responseEvent.Details["origin_time"] = time.Now().Format(time.RFC3339)
+	responseEvent.Details["origin_time"] = now.Format(time.RFC3339)
 	responseEvent.Details["status"] = "ok"
 	responseEvent.Details["type"] = "heartbeat_response"
 	// Add the current pipeline status to the response event

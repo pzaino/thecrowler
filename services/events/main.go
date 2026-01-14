@@ -1,6 +1,8 @@
 // Package main (events) implements the CROWler Events Handler engine.
 package main
 
+// Path: services/events/main.go
+
 import (
 	"context"
 	"encoding/json"
@@ -204,13 +206,19 @@ func main() {
 	// Set the handlers
 	initAPIv1()
 
-	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now().UTC())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
 	// Start heartbeat loop if enabled
 	if config.Events.HeartbeatEnabled {
 		go startHeartbeatLoop(&dbHandler, config)
 	}
+
+	// Start the event janitor (cleans up expired events from the DB)
+	go startEventJanitor(&dbHandler, time.Minute)
+
+	// Start the daily event janitor (cleans up old expired events from the DB)
+	go startDailyEventJanitor(&dbHandler)
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
@@ -221,6 +229,70 @@ func main() {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
 	}
 	setSysReady(0) // Indicate system is NOT ready
+}
+
+func startEventJanitor(db *cdb.Handler, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for range ticker.C {
+			cleanExpiredEvents(db)
+		}
+	}()
+}
+
+func startDailyEventJanitor(db *cdb.Handler) {
+	go func() {
+		// Run once shortly after startup
+		runDailyEventJanitor(db)
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			runDailyEventJanitor(db)
+		}
+	}()
+}
+
+func cleanExpiredEvents(db *cdb.Handler) {
+	const batchSize = 500
+
+	res, err := (*db).Exec(`
+		DELETE FROM Events
+		WHERE expires_at IS NOT NULL
+		  AND expires_at < now() - interval '5 minutes'
+		LIMIT $1
+	`, batchSize)
+
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Event janitor failed: %v", err)
+		return
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"Event janitor removed %d expired events", rows)
+	}
+}
+
+func runDailyEventJanitor(db *cdb.Handler) {
+	res, err := (*db).Exec(`
+		DELETE FROM Events
+		WHERE expires_at IS NOT NULL
+		  AND expires_at < now() - interval '1 day'
+	`)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Daily event janitor failed: %v", err)
+		return
+	}
+
+	rows, err := res.RowsAffected()
+	if err == nil && rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlInfo,
+			"Daily event janitor removed %d expired events", rows)
+	}
 }
 
 func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {

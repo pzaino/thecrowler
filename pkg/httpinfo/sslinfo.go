@@ -391,7 +391,7 @@ func checkCertificateValidity(certChain []*x509.Certificate) (bool, error) {
 	// Check if the certificate is valid:
 	var isCertValid bool
 	// retrieve the current time
-	currentTime := time.Now()
+	currentTime := time.Now().UTC()
 	// retrieve certificate expiration time
 	certExpiration := certChain[0].NotAfter
 	// compare the current time with the certificate expiration time
@@ -464,7 +464,7 @@ func checkCertificateExpired(certChain []*x509.Certificate) (bool, error) {
 	// Check if the certificate is expired:
 	var isCertExpired bool
 	// retrieve the current time
-	currentTime := time.Now()
+	currentTime := time.Now().UTC()
 	// retrieve certificate expiration time
 	certExpiration := certChain[0].NotAfter
 	// compare the current time with the certificate expiration time
@@ -727,7 +727,7 @@ func checkCertExpirationDate(cert *x509.Certificate) (bool, error) {
 	// extract certificate expiry date:
 	expiryDate := cert.NotAfter
 	// compare certificate expiry date with today's date:
-	if expiryDate.Before(time.Now()) {
+	if expiryDate.Before(time.Now().UTC()) {
 		return false, nil
 	}
 	return true, nil

@@ -586,7 +586,7 @@ func (jc JARMCollector) sendPacket(packet []byte, host string, port string) ([]b
 	defer conn.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Set timeout
-	err = conn.SetDeadline(time.Now().Add(20 * time.Second))
+	err = conn.SetDeadline(time.Now().UTC().Add(20 * time.Second))
 	if err != nil {
 		return nil, fmt.Errorf("set deadline error: %v", err)
 	}

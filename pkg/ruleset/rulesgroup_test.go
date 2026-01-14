@@ -34,7 +34,7 @@ func createTestRuleGroup(validFrom, validTo time.Time, isEnabled bool) RuleGroup
 }
 
 func TestRuleGroupIsValid(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 	oneHourBefore := now.Add(-1 * time.Hour)
 	oneHourAfter := now.Add(1 * time.Hour)
 

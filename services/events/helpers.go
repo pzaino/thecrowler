@@ -1,6 +1,8 @@
 // Package main (events) implements the CROWler Events Handler engine.
 package main
 
+// Path: services/events/helpers.go
+
 import (
 	"encoding/json"
 	"fmt"
@@ -83,7 +85,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	}
 
 	hbType := "crowler_heartbeat"
-	now := time.Now()
+	now := time.Now().UTC()
 
 	var eventResponseTimeout time.Duration
 	if strings.TrimSpace(config.Events.HeartbeatTimeout) == "" {
@@ -119,6 +121,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		Timestamp:     now.Format(time.RFC3339),
 		CreatedAt:     now.Format(time.RFC3339),
 		LastUpdatedAt: now.Format(time.RFC3339),
+		ExpiresAt:     now.Add(eventResponseTimeout).Format(time.RFC3339),
 		Details: map[string]interface{}{
 			"origin_type": "events-manager",
 			"origin_name": cmn.GetMicroServiceName(),
@@ -159,7 +162,7 @@ func heartbeatTimeoutWatcher(db *cdb.Handler, state *HeartbeatState) {
 	}
 
 	// Delete events (parent + responses)
-	cleanupHeartbeatEvents(db, state.ParentID)
+	// cleanupHeartbeatEvents(db, state.ParentID) // no longer needed, we have a janitor routine now
 
 	activeHeartbeat = nil
 }
@@ -265,11 +268,11 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 				Action:    "db_maintenance",
 				Type:      "system_event",
 				Severity:  "low",
-				Timestamp: time.Now().Format(time.RFC3339),
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				Details: map[string]interface{}{
 					"action": "db_maintenance",
 					"reason": "all_fleet_idle",
-					"time":   time.Now().Format(time.RFC3339),
+					"time":   time.Now().UTC().Format(time.RFC3339),
 				},
 			}
 
@@ -308,7 +311,7 @@ func canScheduleDBMaintenance() bool {
 	}
 
 	// OK to schedule
-	lastDBMaintenance = time.Now()
+	lastDBMaintenance = time.Now().UTC()
 	return true
 }
 

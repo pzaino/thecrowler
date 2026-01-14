@@ -490,7 +490,7 @@ func StrIsHTML(s string) bool {
 	return hasElement
 }
 
-// runPostProcessingSteps runs the post processing steps
+// runPostProcessingSteps runs the post processing (post_processing) steps
 func runPostProcessingSteps(ctx *ProcessContext, pps *[]rules.PostProcessingStep, jsonData *[]byte) {
 	for _, pp := range *pps {
 		// Execute the post processing step
@@ -503,7 +503,7 @@ func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	return cfg.SourceConfig{
 		FormatVersion: "1.0",
 		Author:        "Your Name",
-		CreatedAt:     time.Now(),
+		CreatedAt:     time.Now().UTC(),
 		Description:   "Default configuration",
 		SourceName:    "Example Source",
 		CrawlingConfig: cfg.CrawlingConfig{

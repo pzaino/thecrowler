@@ -108,7 +108,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	if processCtx == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to create a new ProcessContext")
 		UpdateSourceState(args.DB, args.Src.URL, errors.New("failed to create a new ProcessContext"))
-		args.Status.EndTime = time.Now()
+		args.Status.EndTime = time.Now().UTC()
 		args.Status.PipelineRunning.Store(3) // Set the pipeline status to error
 		args.Status.TotalErrors.Add(1)
 		args.Status.LastError = "failed to create a new ProcessContext"
@@ -119,7 +119,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	// We have process context, so we can proceed:
 
 	// Pipeline has started
-	processCtx.Status.StartTime = time.Now()
+	processCtx.Status.StartTime = time.Now().UTC()
 	processCtx.Status.PipelineRunning.Store(1) // Set the pipeline status to running
 	processCtx.SelInstance = sel
 	processCtx.CollectedCookies = make(map[string]interface{})
@@ -183,7 +183,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			processCtx.Status.PipelineRunning.Store(2)
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
-		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.EndTime = time.Now().UTC()
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Finished crawling website: %s", args.Src.URL)
 		return
 	}
@@ -191,7 +191,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	// Initialize the Selenium instance
 	if err = processCtx.ConnectToVDI(sel); err != nil {
 		UpdateSourceState(args.DB, args.Src.URL, err)
-		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.EndTime = time.Now().UTC()
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.TotalErrors.Add(1)
 		processCtx.Status.LastError = err.Error()
@@ -284,7 +284,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		pageSource, tErr := processCtx.CrawlInitialURL(sel)
 		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
-			processCtx.Status.EndTime = time.Now()
+			processCtx.Status.EndTime = time.Now().UTC()
 			processCtx.Status.CrawlingRunning.Store(3)
 			processCtx.Status.PipelineRunning.Store(3)
 			processCtx.Status.TotalErrors.Add(1)
@@ -306,7 +306,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
 			cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
-			processCtx.Status.EndTime = time.Now()
+			processCtx.Status.EndTime = time.Now().UTC()
 			processCtx.Status.CrawlingRunning.Store(3)
 			processCtx.Status.PipelineRunning.Store(3)
 			processCtx.Status.TotalErrors.Add(1)
@@ -365,7 +365,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", tErr)
 			if processCtx != nil {
 				if processCtx.Status != nil {
-					processCtx.Status.EndTime = time.Now()
+					processCtx.Status.EndTime = time.Now().UTC()
 					processCtx.Status.CrawlingRunning.Store(3)
 					processCtx.Status.PipelineRunning.Store(3)
 					processCtx.Status.TotalErrors.Add(1)
@@ -449,7 +449,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 						// Check if the error contains errCriticalError
 						if strings.Contains(err.Error(), errCriticalError) {
 							// Update source with error state
-							processCtx.Status.EndTime = time.Now()
+							processCtx.Status.EndTime = time.Now().UTC()
 							processCtx.Status.CrawlingRunning.Store(3)
 							processCtx.Status.PipelineRunning.Store(3)
 							processCtx.Status.TotalErrors.Add(1)
@@ -508,7 +508,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.wgNetInfo.Wait()
 
 		// Pipeline has completed
-		processCtx.Status.EndTime = time.Now()
+		processCtx.Status.EndTime = time.Now().UTC()
 		processCtx.Status.PipelineRunning.Store(2)
 	}()
 
@@ -666,7 +666,7 @@ func closeSession(ctx *ProcessContext,
 		ctx.Status.PipelineRunning.Store(3)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
-	ctx.Status.EndTime = time.Now()
+	ctx.Status.EndTime = time.Now().UTC()
 	UpdateSourceState(args.DB, args.Src.URL, err)
 
 	// Create a database event to indicate the crawl has completed
@@ -917,7 +917,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Detect page technologies
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Starting technology detection for URL: %s", url)
-	startTime := time.Now()
+	startTime := time.Now().UTC()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageInfo.DetectedTech = (*detectedTech)
@@ -931,7 +931,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Continue with extracting page info and indexing
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting page info for URL: %s", url)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	err = extractPageInfo(&pageSource, ctx, docType, &pageInfo)
 	if err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
@@ -952,7 +952,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Extract Links from the page HTML
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting links from page HTML for URL: %s", url)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, url)
 	elapsed = time.Since(startTime)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting links took %s", elapsed)
@@ -963,7 +963,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Generate Keywords from the page content
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Generating keywords for URL: %s", url)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	pageInfo.Keywords = extractKeywords(pageInfo)
 	elapsed = time.Since(startTime)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Generating keywords took %s", elapsed)
@@ -975,7 +975,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	// Collect Navigation Timing metrics
 	if ctx.config.Crawler.CollectPerfMetrics {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting navigation metrics for URL: %s", url)
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		collectNavigationMetrics(&ctx.wd, &pageInfo)
 		elapsed = time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting navigation metrics took %s", elapsed)
@@ -988,7 +988,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	// Collect Page logs
 	if ctx.config.Crawler.CollectPageEvents {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting page logs for URL: %s", url)
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		collectPageLogs(&pageSource, &pageInfo)
 		elapsed = time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting page logs took %s", elapsed)
@@ -1001,7 +1001,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	// Collect XHR
 	if ctx.config.Crawler.CollectXHR {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Collecting XHR for '%s'...\n", url)
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		collectXHR(ctx, &pageInfo)
 		elapsed = time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Successfully collected XHR for '%s' in %v\n", url, elapsed)
@@ -1024,7 +1024,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Index the page
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Indexing page for URL: %s", url)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "indexing page: %v", err)
@@ -3074,8 +3074,8 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 }
 
 func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
 		val, err := wd.ExecuteScript("return document.readyState", nil)
 		if err == nil {
 			state := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", val)))
@@ -3366,7 +3366,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 
 	if docTypeIsHTML(docType) || strings.TrimSpace(docType) == "" {
 		// WaitForDomComplete
-		startTime := time.Now()
+		startTime := time.Now().UTC()
 		err = waitForDomComplete(wd, 5*time.Second)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: waitForDomComplete error: %v", id, err)
@@ -3665,7 +3665,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	}
 	pollInterval := time.Duration(pollSec * float64(time.Second))
 
-	start := time.Now()
+	start := time.Now().UTC()
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Waiting for %.3f seconds...", delay)
 
 	// Prevent the compiler from optimizing away keep-alive calls
@@ -4898,7 +4898,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Get the HTML content of the page
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Getting HTML content for '%s'\n", id, url)
-	startTime := time.Now()
+	startTime := time.Now().UTC()
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx, id)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
@@ -4931,7 +4931,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Detect Page/Website technologies
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Detecting technologies for '%s'\n", id, currentURL)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
@@ -4945,7 +4945,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Extract page information
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page information for '%s'\n", id, currentURL)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
 	if err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
@@ -4962,7 +4962,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Get Page Information
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page links for '%s'\n", id, currentURL)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
@@ -4975,7 +4975,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Generate Keywords
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page keywords for '%s'\n", id, currentURL)
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	pageCache.Keywords = extractKeywords(pageCache)
 	elapsed = time.Since(startTime)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
@@ -4987,7 +4987,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting navigation metrics for '%s'\n", id, currentURL)
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
 		elapsed = time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s' in %v\n", id, currentURL, elapsed)
@@ -5000,7 +5000,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting page logs for '%s'\n", id, currentURL)
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		collectPageLogs(&htmlContent, &pageCache)
 		elapsed = time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s' in %v\n", id, currentURL, elapsed)
@@ -5013,7 +5013,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting XHR for '%s'\n", id, currentURL)
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		collectXHR(processCtx, &pageCache)
 		elapsed = time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s' in %v\n", id, currentURL, elapsed)
@@ -5048,7 +5048,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
 	processCtx.getURLMutex.Unlock()
-	startTime = time.Now()
+	startTime = time.Now().UTC()
 	_, err = indexPage(processCtx, currentURL, &pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
@@ -5063,7 +5063,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
-		startTime = time.Now()
+		startTime = time.Now().UTC()
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)

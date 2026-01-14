@@ -121,7 +121,7 @@ var rulesets = []Ruleset{
 
 func TestCustomTimeIsEmpty(t *testing.T) {
 	// Create a non-empty CustomTime
-	nonEmptyTime := time.Now()
+	nonEmptyTime := time.Now().UTC()
 	ct := CustomTime{Time: nonEmptyTime}
 
 	// Verify that IsEmpty returns false for a non-empty CustomTime
@@ -262,8 +262,8 @@ func TestIsValid(t *testing.T) {
 	validRuleset.RuleGroups = []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: CustomTime{Time: time.Now().UTC()},
+			ValidTo:   CustomTime{Time: time.Now().UTC().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -282,8 +282,8 @@ func TestIsValid(t *testing.T) {
 	invalidRuleset.RuleGroups = []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: CustomTime{Time: time.Now().UTC()},
+			ValidTo:   CustomTime{Time: time.Now().UTC().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -311,8 +311,8 @@ func TestRulesetIsEmpty(t *testing.T) {
 	nonEmptyRuleset.RuleGroups = []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: CustomTime{Time: time.Now().UTC()},
+			ValidTo:   CustomTime{Time: time.Now().UTC().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -339,8 +339,8 @@ func TestRulesetGetAllRuleGroups(t *testing.T) {
 	ruleGroups := []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: CustomTime{Time: time.Now().UTC()},
+			ValidTo:   CustomTime{Time: time.Now().UTC().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -350,8 +350,8 @@ func TestRulesetGetAllRuleGroups(t *testing.T) {
 		},
 		{
 			GroupName: "Group2",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: CustomTime{Time: time.Now().UTC()},
+			ValidTo:   CustomTime{Time: time.Now().UTC().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{

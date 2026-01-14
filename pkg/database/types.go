@@ -150,6 +150,8 @@ type Event struct {
 	Severity string `json:"event_severity" yaml:"event_severity"`
 	// Timestamp is the timestamp of the event.
 	Timestamp string `json:"event_timestamp" yaml:"event_timestamp"`
+	// ExpiresAt is the expiration timestamp of the event.
+	ExpiresAt string `json:"event_expires_at" yaml:"event_expires_at"`
 	// Details is the details of the event.
 	Details map[string]interface{} `json:"details" yaml:"details"`
 }

@@ -161,7 +161,7 @@ func insertCategory(db *sqlx.DB, category Category, parentID *int64) {
 	var categoryID int64
 	query := `INSERT INTO Categories (name, description, parent_id, created_at)
               VALUES ($1, $2, $3, $4) RETURNING category_id`
-	err := db.QueryRowx(query, category.Name, category.Description, parentID, time.Now()).Scan(&categoryID)
+	err := db.QueryRowx(query, category.Name, category.Description, parentID, time.Now().UTC()).Scan(&categoryID)
 	if err != nil {
 		fmt.Printf("Error inserting category: %v\n", err)
 		return

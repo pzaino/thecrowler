@@ -78,7 +78,7 @@ func TestIsGroupValid(t *testing.T) {
 	//const layoutTo = "2023-12-31"
 
 	LayoutToFuture := rs.CustomTime{
-		Time: time.Now().AddDate(0, 0, 1),
+		Time: time.Now().UTC().AddDate(0, 0, 1),
 	}
 
 	// Test cases

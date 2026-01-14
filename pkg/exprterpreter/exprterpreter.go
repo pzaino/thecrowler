@@ -200,33 +200,33 @@ func handleRandomCommand(args []EncodedCmd) (string, error) {
 // handleTimeCommand processes the 'time' command given its arguments.
 func handleTimeCommand(args []EncodedCmd) (string, error) {
 	if len(args) == 0 {
-		return time.Now().String(), fmt.Errorf("time command expects 1 argument, got %d", len(args))
+		return time.Now().UTC().String(), fmt.Errorf("time command expects 1 argument, got %d", len(args))
 	}
 
 	// Process arguments recursively
 	timeFormat, err := InterpretCmd(args[0])
 	if err != nil {
-		return time.Now().String(), err
+		return time.Now().UTC().String(), err
 	}
 	timeToken := strings.ToLower(strings.TrimSpace(timeFormat))
 	switch timeToken {
 	case "unix":
-		uxTimeStr := strconv.FormatInt(time.Now().Unix(), 10)
+		uxTimeStr := strconv.FormatInt(time.Now().UTC().Unix(), 10)
 		return uxTimeStr, nil
 	case "unixnano":
-		uxTimeStr := strconv.FormatInt(time.Now().UnixNano(), 10)
+		uxTimeStr := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
 		return uxTimeStr, nil
 	case "rfc3339":
-		return time.Now().Format(time.RFC3339), nil
+		return time.Now().UTC().Format(time.RFC3339), nil
 	case "now":
-		return time.Now().String(), nil
+		return time.Now().UTC().String(), nil
 	default:
 		// Check if timeFormat is valid to be used with time.Format
 		_, err = time.Parse(timeFormat, "2006-01-02T15:04:05Z07:00")
 		if err != nil {
-			return time.Now().String(), fmt.Errorf("invalid time format: %s", timeFormat)
+			return time.Now().UTC().String(), fmt.Errorf("invalid time format: %s", timeFormat)
 		}
-		return string(time.Now().Format(timeFormat)), nil
+		return string(time.Now().UTC().Format(timeFormat)), nil
 	}
 }
 

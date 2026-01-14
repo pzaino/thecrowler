@@ -44,7 +44,7 @@ func ProcessDataSource(args *Pars) {
 		return
 	}
 
-	processCtx.Status.StartTime = time.Now()
+	processCtx.Status.StartTime = time.Now().UTC()
 	processCtx.Status.PipelineRunning.Store(1)
 
 	// Combine configuration
@@ -92,7 +92,7 @@ func ProcessDataSource(args *Pars) {
 	//processDataSourceScrapingRules(processCtx, args.Src.URL)
 
 	// Finalize
-	processCtx.Status.EndTime = time.Now()
+	processCtx.Status.EndTime = time.Now().UTC()
 	processCtx.Status.PipelineRunning.Store(2)
 	UpdateSourceState(args.DB, args.Src.URL, nil)
 
@@ -107,7 +107,7 @@ func ProcessDataSource(args *Pars) {
 			Details: map[string]interface{}{
 				"uid":                batchUID,
 				"node":               cmn.GetMicroServiceName(),
-				"time":               time.Now(),
+				"time":               time.Now().UTC(),
 				"initial_batch_size": 1,
 			},
 		}
