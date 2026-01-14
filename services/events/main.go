@@ -69,6 +69,9 @@ var (
 	jobQueue       = make(chan cdb.Event, 120000)  // buffered requests queue
 	internalQ      = make(chan cdb.Event, 10_000)  // buffered small; DB-only work
 	externalQ      = make(chan cdb.Event, 100_000) // buffered larger; JS+DB work
+
+	// Main Instance's name array
+	mainInstance = []string{"crowler-events", "crowler-events-0"}
 )
 
 func setSysReady(newStatus int) {
@@ -217,7 +220,12 @@ func main() {
 	}
 
 	// Start the event janitor (cleans up expired events from the DB)
-	go startEventJanitor(&dbHandler, time.Minute)
+	instance := strings.ToLower(strings.TrimSpace(cmn.GetMicroServiceName()))
+	if instance == mainInstance[0] ||
+		instance == mainInstance[1] { // TODO: I need to improve this and allow the user to select which instance
+		// We are on the first instance, start the events janitor
+		go startEventJanitor(&dbHandler, time.Minute)
+	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {

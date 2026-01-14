@@ -260,29 +260,35 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 	}
 
 	if allIdle {
-		if canScheduleDBMaintenance() {
-			cmn.DebugMsg(cmn.DbgLvlInfo, "HEARTBEAT ANALYSIS: Entire fleet appears idle, scheduling DB optimization...")
+		// Check if we are the main instance of events manager
+		instance := strings.ToLower(strings.TrimSpace(cmn.GetMicroServiceName()))
+		if instance == mainInstance[0] ||
+			instance == mainInstance[1] {
+			// yes we are the main instance
+			if canScheduleDBMaintenance() {
+				cmn.DebugMsg(cmn.DbgLvlInfo, "HEARTBEAT ANALYSIS: Entire fleet appears idle, scheduling DB optimization...")
 
-			// build an internal event to request DB maintenance
-			maintenanceEvent := cdb.Event{
-				Action:    "db_maintenance",
-				Type:      "system_event",
-				Severity:  "low",
-				Timestamp: time.Now().Format(time.RFC3339),
-				Details: map[string]interface{}{
-					"action": "db_maintenance",
-					"reason": "all_fleet_idle",
-					"time":   time.Now().Format(time.RFC3339),
-				},
-			}
-
-			// schedule internal event asynchronously
-			go func(ev cdb.Event) {
-				_, err := cdb.CreateEventWithRetries(&dbHandler, ev)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Failed to create DB maintenance event: %v", err)
+				// build an internal event to request DB maintenance
+				maintenanceEvent := cdb.Event{
+					Action:    "db_maintenance",
+					Type:      "system_event",
+					Severity:  "low",
+					Timestamp: time.Now().Format(time.RFC3339),
+					Details: map[string]interface{}{
+						"action": "db_maintenance",
+						"reason": "all_fleet_idle",
+						"time":   time.Now().Format(time.RFC3339),
+					},
 				}
-			}(maintenanceEvent)
+
+				// schedule internal event asynchronously
+				go func(ev cdb.Event) {
+					_, err := cdb.CreateEventWithRetries(&dbHandler, ev)
+					if err != nil {
+						cmn.DebugMsg(cmn.DbgLvlError, "Failed to create DB maintenance event: %v", err)
+					}
+				}(maintenanceEvent)
+			}
 		}
 	}
 
