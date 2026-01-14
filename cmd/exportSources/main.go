@@ -30,19 +30,22 @@ type Source struct {
 
 // Page represents a page with its web objects.
 type Page struct {
-	URLID   uint64      `json:"url_id"`
+	IndexID uint64      `json:"index_id"`
 	PageURL string      `json:"page_url"`
 	Objects []WebObject `json:"objects"`
 }
 
 // WebObject represents a web object extracted from a page.
 type WebObject struct {
-	ObjectID   uint64          `json:"object_id"`
-	Type       string          `json:"type"`
-	Name       string          `json:"name"`
-	Confidence float64         `json:"confidence"`
-	Data       json.RawMessage `json:"data"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ObjectID      uint64          `json:"object_id"`
+	ObjectType    string          `json:"object_type"`
+	ObjectLink    string          `json:"object_link"`
+	ObjectHash    string          `json:"object_hash"`
+	ObjectContent *string         `json:"object_content,omitempty"`
+	ObjectHTML    *string         `json:"object_html,omitempty"`
+	Details       json.RawMessage `json:"details"`
+	CreatedAt     time.Time       `json:"created_at"`
+	LastUpdatedAt *time.Time      `json:"last_updated_at,omitempty"`
 }
 
 func main() {
@@ -73,19 +76,32 @@ func main() {
 	rows, err := db.Query(`
 		SELECT
 			s.source_id,
-			s.url,
-			u.url_id,
-			u.url,
+			s.url              AS source_url,
+
+			si.index_id,
+			si.page_url,
+			si.created_at,
+			si.last_updated_at,
+
 			wo.object_id,
 			wo.object_type,
-			wo.object_name,
-			wo.confidence,
-			wo.data,
-			wo.created_at
-		FROM sources s
-		JOIN urls u ON u.source_id = s.source_id
-		JOIN web_objects wo ON wo.url_id = u.url_id
-		ORDER BY s.source_id, u.url_id, wo.object_id;
+			wo.object_link,
+			wo.object_hash,
+			wo.object_content,
+			wo.object_html,
+			wo.details,
+			wo.created_at,
+			wo.last_updated_at
+		FROM Sources s
+		JOIN SourceSearchIndex ssi
+			ON ssi.source_id = s.source_id
+		JOIN SearchIndex si
+			ON si.index_id = ssi.index_id
+		JOIN WebObjectsIndex woi
+			ON woi.index_id = si.index_id
+		JOIN WebObjects wo
+			ON wo.object_id = woi.object_id
+		ORDER BY s.source_id, si.index_id, wo.object_id;
 	`)
 	if err != nil {
 		log.Fatal(err)
@@ -99,25 +115,54 @@ func main() {
 		var (
 			sourceID  uint64
 			sourceURL string
-			urlID     uint64
-			pageURL   string
-			obj       WebObject
+
+			indexID           uint64
+			pageURL           string
+			pageCreatedAt     time.Time
+			pageLastUpdatedAt sql.NullTime
+
+			obj WebObject
+
+			objCreatedAt     time.Time
+			objLastUpdatedAt sql.NullTime
+
+			objContent sql.NullString
+			objHTML    sql.NullString
 		)
 
 		err := rows.Scan(
 			&sourceID,
 			&sourceURL,
-			&urlID,
+
+			&indexID,
 			&pageURL,
+			&pageCreatedAt,
+			&pageLastUpdatedAt,
+
 			&obj.ObjectID,
-			&obj.Type,
-			&obj.Name,
-			&obj.Confidence,
-			&obj.Data,
-			&obj.CreatedAt,
+			&obj.ObjectType,
+			&obj.ObjectLink,
+			&obj.ObjectHash,
+			&objContent,
+			&objHTML,
+			&obj.Details,
+			&objCreatedAt,
+			&objLastUpdatedAt,
 		)
 		if err != nil {
 			log.Fatal(err)
+		}
+
+		if objContent.Valid {
+			obj.ObjectContent = &objContent.String
+		}
+		if objHTML.Valid {
+			obj.ObjectHTML = &objHTML.String
+		}
+		obj.CreatedAt = objCreatedAt
+		if objLastUpdatedAt.Valid {
+			t := objLastUpdatedAt.Time
+			obj.LastUpdatedAt = &t
 		}
 
 		src, ok := sourceMap[sourceID]
@@ -129,21 +174,25 @@ func main() {
 			sourceMap[sourceID] = src
 		}
 
-		pg, ok := pageMap[urlID]
+		pg, ok := pageMap[indexID]
 		if !ok {
 			pg = &Page{
-				URLID:   urlID,
+				IndexID: indexID,
 				PageURL: pageURL,
 			}
-			pageMap[urlID] = pg
+			pageMap[indexID] = pg
 			src.Pages = append(src.Pages, *pg)
 		}
 
 		pg.Objects = append(pg.Objects, obj)
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+
 	export := Export{
-		ExportedAt: time.Now(),
+		ExportedAt: time.Now().UTC(),
 	}
 
 	for _, src := range sourceMap {
