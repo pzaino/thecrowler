@@ -41,6 +41,13 @@ type HeartbeatReport struct {
 	Raw        []cdb.Event `json:"raw_responses"`
 }
 
+// ScheduleEventRequest represents a request to schedule an event.
+type ScheduleEventRequest struct {
+	Event      cdb.Event `json:"event"`
+	ScheduleAt string    `json:"schedule_at"`
+	Recurrence string    `json:"recurrence"`
+}
+
 var (
 	lastDBMaintenance time.Time
 )

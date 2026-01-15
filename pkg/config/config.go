@@ -433,7 +433,7 @@ func NewConfig() *Config {
 func LoadConfig(confName string) (Config, error) {
 	// If there is an ".env" file in the current directory, load it
 	// Load .env if present
-	if err := godotenv.Load(); err != nil {
+	if err := godotenv.Load(".env", ".ENV"); err != nil {
 		// Not fatal: .env is optional in production
 		cmn.DebugMsg(cmn.DbgLvlDebug1, "No .env file found, using environment variables")
 	}

@@ -18,6 +18,7 @@ package database
 import (
 	"container/heap"
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,7 @@ type ScheduledEvent struct {
 	EventID    string
 	NextRun    time.Time
 	Recurrence string
+	Event      Event
 }
 
 // EventQueue is a priority queue of scheduled events.
@@ -90,7 +92,7 @@ func StartScheduler(db *Handler) {
 
 // loadEventsFromDB loads scheduled events from the database into the priority queue.
 func loadEventsFromDB(db *Handler, pq *EventQueue) error {
-	rows, err := (*db).ExecuteQuery("SELECT event_id, next_run, recurrence_interval FROM EventSchedules WHERE active")
+	rows, err := (*db).ExecuteQuery("SELECT event_id, next_run, recurrence_interval, details FROM EventSchedules WHERE active")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error loading events from DB: %v", err)
 		return err
@@ -99,11 +101,18 @@ func loadEventsFromDB(db *Handler, pq *EventQueue) error {
 
 	for rows.Next() {
 		var event ScheduledEvent
-		if err := rows.Scan(&event.EventID, &event.NextRun, &event.Recurrence); err != nil {
+		var payload []byte
+		if err := rows.Scan(&event.EventID, &event.NextRun, &event.Recurrence, &payload); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Error scanning row: %v", err)
 			continue
 		}
+		if err := json.Unmarshal(payload, &event.Event); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Error unmarshaling event payload: %v", err)
+			continue
+		}
+		queueLock.Lock()
 		heap.Push(pq, &event)
+		queueLock.Unlock()
 	}
 
 	if err := rows.Err(); err != nil {
@@ -116,11 +125,14 @@ func loadEventsFromDB(db *Handler, pq *EventQueue) error {
 
 // schedulerLoop continuously processes events from the queue.
 func schedulerLoop(db *Handler, pq *EventQueue) {
-	timer := time.NewTimer(time.Hour * 24) // Start with a large timeout
+	timer := time.NewTimer(time.Hour * 24)
 	defer timer.Stop()
 
 	for {
-		if pq.Len() == 0 {
+		queueLock.Lock()
+		empty := pq.Len() == 0
+		queueLock.Unlock()
+		if empty {
 			timer.Reset(time.Hour * 24)
 			<-timer.C
 			continue
@@ -130,12 +142,24 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		nextEvent := (*pq)[0]
 		now := time.Now()
 
+		var d time.Duration
 		if nextEvent.NextRun.After(now) {
-			timer.Reset(time.Until(nextEvent.NextRun))
+			d = time.Until(nextEvent.NextRun)
+			if d < 0 {
+				d = 0
+			}
 		} else {
-			timer.Reset(0)
+			d = 0
 		}
 		queueLock.Unlock()
+
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(d)
 
 		<-timer.C
 
@@ -143,35 +167,62 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		nextEvent = heap.Pop(pq).(*ScheduledEvent)
 		queueLock.Unlock()
 
+		// Execute the scheduled event
 		if err := processEvent(db, nextEvent); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error processing event %s: %v", nextEvent.EventID, err)
-		} else if nextEvent.Recurrence != "" {
-			nextEvent.NextRun = calculateNextRun(nextEvent.NextRun, nextEvent.Recurrence)
-			heap.Push(pq, nextEvent)
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"Error processing event %s: %v",
+				nextEvent.EventID,
+				err,
+			)
+			continue
+		}
 
-			if err := updateScheduleInDB(db, nextEvent); err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Error updating schedule for event %s: %v", nextEvent.EventID, err)
+		// One-shot event: deactivate schedule and do NOT requeue
+		rec := strings.ToLower(strings.TrimSpace(nextEvent.Recurrence))
+		if rec == "" || rec == "never" {
+
+			_, err := (*db).Exec(
+				"UPDATE EventSchedules SET active = false WHERE event_id = $1",
+				nextEvent.EventID,
+			)
+			if err != nil {
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"Failed to deactivate one-shot schedule %s: %v",
+					nextEvent.EventID,
+					err,
+				)
 			}
+			continue
+		}
+
+		// Recurring event: compute next run and requeue
+		nextEvent.NextRun = calculateNextRun(nextEvent.NextRun, nextEvent.Recurrence)
+
+		queueLock.Lock()
+		heap.Push(pq, nextEvent)
+		queueLock.Unlock()
+
+		if err := updateScheduleInDB(db, nextEvent); err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"Error updating schedule for event %s: %v",
+				nextEvent.EventID,
+				err,
+			)
 		}
 	}
 }
 
 // processEvent processes a single event, ensuring no duplicate entries in the Events table.
 func processEvent(db *Handler, event *ScheduledEvent) error {
-	existingEvent, err := GetEvent(db, event.EventID)
-	if err == nil && existingEvent.ID == event.EventID {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Event %s already exists, skipping", event.EventID)
-		return nil
-	}
-
-	evt, err := GetEvent(db, event.EventID)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve event %s: %v", event.EventID, err)
-		return err
-	}
+	evt := event.Event
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_, err = CreateEvent(ctx, db, evt)
+	evt.Timestamp = time.Now().Format(time.RFC3339)
+	evt.Action = ""
+	_, err := CreateEvent(ctx, db, evt)
 	cancel()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error creating event %s: %v", event.EventID, err)
@@ -184,7 +235,7 @@ func processEvent(db *Handler, event *ScheduledEvent) error {
 
 // updateScheduleInDB updates the next run time of a recurring event in the database.
 func updateScheduleInDB(db *Handler, event *ScheduledEvent) error {
-	_, err := (*db).ExecuteQuery(
+	_, err := (*db).Exec(
 		"UPDATE EventSchedules SET next_run = $1 WHERE event_id = $2",
 		event.NextRun, event.EventID,
 	)
