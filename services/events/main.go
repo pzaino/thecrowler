@@ -1,6 +1,8 @@
 // Package main (events) implements the CROWler Events Handler engine.
 package main
 
+// Path: services/events/main.go
+
 import (
 	"context"
 	"encoding/json"
@@ -67,6 +69,9 @@ var (
 	jobQueue       = make(chan cdb.Event, 120000)  // buffered requests queue
 	internalQ      = make(chan cdb.Event, 10_000)  // buffered small; DB-only work
 	externalQ      = make(chan cdb.Event, 100_000) // buffered larger; JS+DB work
+
+	// Main Instance's name array
+	mainInstance = []string{"crowler-events", "crowler-events-0"}
 )
 
 func setSysReady(newStatus int) {
@@ -94,6 +99,8 @@ func main() {
 	// Initialize the logger
 	cmn.InitLogger("TheCROWlerEventsAPI")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Events API is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "  Node ID: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetMicroServiceName())
 
 	// Register metrics
 	registerMetrics()
@@ -212,6 +219,14 @@ func main() {
 		go startHeartbeatLoop(&dbHandler, config)
 	}
 
+	// Start the event janitor (cleans up expired events from the DB)
+	instance := strings.ToLower(strings.TrimSpace(cmn.GetMicroServiceName()))
+	if instance == mainInstance[0] ||
+		instance == mainInstance[1] { // TODO: I need to improve this and allow the user to select which instance
+		// We are on the first instance, start the events janitor
+		go startEventJanitor(&dbHandler, time.Minute)
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
 		setSysReady(2) // Indicate system is ready
@@ -221,6 +236,53 @@ func main() {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
 	}
 	setSysReady(0) // Indicate system is NOT ready
+}
+
+func startEventJanitor(db *cdb.Handler, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for range ticker.C {
+			cleanupExpiredEvents(db)
+		}
+	}()
+}
+
+func cleanupExpiredEvents(db *cdb.Handler) {
+	res, err := (*db).Exec(`
+		DELETE FROM Events
+		WHERE expires_at IS NOT NULL
+		  AND expires_at < now()
+	`)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Event cleanup failed: %v", err)
+		return
+	}
+
+	rows, err := res.RowsAffected()
+	if err == nil && rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"Event cleanup removed %d expired events", rows)
+	}
+}
+
+func runDailyEventJanitor(db *cdb.Handler) {
+	res, err := (*db).Exec(`
+		DELETE FROM Events
+		WHERE expires_at IS NOT NULL
+		  AND expires_at < now() - interval '1 day'
+	`)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Daily event janitor failed: %v", err)
+		return
+	}
+
+	rows, err := res.RowsAffected()
+	if err == nil && rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlInfo,
+			"Daily event janitor removed %d expired events", rows)
+	}
 }
 
 func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {

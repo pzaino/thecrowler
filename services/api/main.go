@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,6 +34,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -59,6 +61,10 @@ var (
 	totalRequests atomic.Int64
 	totalErrors   atomic.Int64
 	totalSuccess  atomic.Int64
+
+	apiPlugins         *plg.JSPluginRegister
+	allowedAPIPlugins  map[string]bool
+	allowedAPINetworks []*net.IPNet
 )
 
 func setSysReady(newStatus int) {
@@ -141,7 +147,38 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
 
+	// Reload plugins
+	apiPlugins = plg.NewJSPluginRegister().
+		LoadPluginsFromConfig(config, "api_plugin")
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"API PLUGINS: loaded %d plugins",
+		len(apiPlugins.Registry),
+	)
+
+	// Initialize allowed API CIDRs
+	initAllowedAPICIDRs()
+
 	setSysReady(currentSysReady) // Restore previous system ready state
+	return nil
+}
+
+func initAllowedAPICIDRs() error {
+	for _, cidr := range config.API.AllowedIPs {
+		_, netw, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "invalid CIDR in API config: '%s' skipping.", cidr)
+			continue
+		}
+		allowedAPINetworks = append(allowedAPINetworks, netw)
+	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"API CIDR filter enabled (%d networks)",
+		len(allowedAPINetworks),
+	)
+
 	return nil
 }
 
@@ -155,6 +192,8 @@ func main() {
 	// Initialize the logger
 	cmn.InitLogger("TheCROWlerAPI")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler API is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node   ID: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetMicroServiceName())
 
 	// Setting up a channel to listen for termination signals
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Setting up termination signals listener...")
@@ -325,6 +364,7 @@ func processHeartbeatEvent(event cdb.Event) {
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
 		Timestamp: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Minute).Format(time.RFC3339),
 		Details: map[string]any{
 			"parent_event_id": event.ID,
 			"type":            "heartbeat_response",
@@ -514,13 +554,150 @@ func initAPIv1() {
 		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
 		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
 	}
+
+	// Register API plugin routes
+	registeredPlugins := []string{}
+	if config.API.Plugins.Enabled {
+		initAllowedAPIPlugins()
+		registerAPIPluginRoutes(http.DefaultServeMux, &registeredPlugins)
+	}
+}
+
+func initAllowedAPIPlugins() {
+	allowedAPIPlugins = make(map[string]bool)
+
+	if !config.API.Plugins.Enabled {
+		return
+	}
+
+	for _, name := range config.API.Plugins.Allowed {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		allowedAPIPlugins[name] = true
+	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"API PLUGINS: allowlist loaded (%d plugins)",
+		len(allowedAPIPlugins),
+	)
+}
+
+func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]string) {
+	for _, name := range apiPlugins.Order {
+		plugin := apiPlugins.Registry[name]
+		api := plugin.API
+		if api == nil {
+			continue
+		}
+		if api.EndPoint == "" || len(api.Methods) == 0 {
+			continue
+		}
+
+		// Enforce allowlist
+		if len(allowedAPIPlugins) > 0 {
+			if !allowedAPIPlugins[plugin.Name] {
+				cmn.DebugMsg(
+					cmn.DbgLvlInfo,
+					"API PLUGIN SKIPPED (not allowed): %s",
+					plugin.Name,
+				)
+				continue
+			}
+		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "API PLUGIN FOUND: name=%s type=%s endpoint=%v",
+			name,
+			plugin.PType,
+			func() string {
+				if plugin.API == nil {
+					return "<nil>"
+				}
+				return plugin.API.EndPoint
+			}())
+
+		if len(api.Methods) == 0 {
+			api.Methods = []string{"GET"}
+		}
+
+		// Check if the plugin is already registered
+		alreadyRegistered := false
+		for _, registered := range *currentRegisteredPlugins {
+			if registered == name {
+				alreadyRegistered = true
+				break
+			}
+		}
+		if alreadyRegistered {
+			continue
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Registering API plugin routes")
+		handler := withAPIPluginMiddlewares(
+			makeAPIPluginHandler(plugin),
+		)
+
+		mux.Handle(api.EndPoint, handler)
+		(*currentRegisteredPlugins) = append((*currentRegisteredPlugins), name)
+	}
+}
+
+func withAPIPluginMiddlewares(h http.HandlerFunc) http.Handler {
+	return RecoverMiddleware(
+		CIDRFilterMiddleware(
+			SecurityHeadersMiddleware(
+				RateLimitMiddleware(h),
+			),
+		),
+	)
+}
+
+// CIDRFilterMiddleware filters requests based on allowed CIDR ranges
+func CIDRFilterMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If no CIDRs configured, allow all
+		if len(allowedAPINetworks) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ipStr := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(ipStr); err == nil {
+			ipStr = host
+		}
+
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		for _, netw := range allowedAPINetworks {
+			if netw.Contains(ip) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		cmn.DebugMsg(
+			cmn.DbgLvlDebug,
+			"API CIDR DENY: %s %s",
+			ipStr,
+			r.URL.Path,
+		)
+
+		http.Error(w, "Forbidden", http.StatusForbidden)
+	})
 }
 
 func withPublicMiddlewares(h http.HandlerFunc) http.Handler {
 	return RecoverMiddleware(
-		CORSHeadersMiddleware(
-			SecurityHeadersMiddleware(
-				RateLimitMiddleware(h),
+		CIDRFilterMiddleware(
+			CORSHeadersMiddleware(
+				SecurityHeadersMiddleware(
+					RateLimitMiddleware(h),
+				),
 			),
 		),
 	)

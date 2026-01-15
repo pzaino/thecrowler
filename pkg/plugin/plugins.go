@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -56,12 +57,19 @@ const (
 	vdiPlugin     = "vdi_plugin"
 	enginePlugin  = "engine_plugin"
 	eventPlugin   = "event_plugin"
+	apiPlugin     = "api_plugin"
+	libPlugin     = "lib_plugin"
+	testPlugin    = "test_plugin"
 	none          = "none"
 	all           = "all"
 
 	postgresDBMS = "postgres"
 	mysqlDBMS    = "mysql"
 	sqliteDBMS   = "sqlite"
+)
+
+var (
+	TestMode = false
 )
 
 // NewJSPluginRegister returns a new JSPluginRegister
@@ -81,6 +89,12 @@ func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 		name = plugin.Name
 	}
 	name = strings.TrimSpace(name)
+
+	// Add the register point to the Plugin `InRegisters` if not present yet
+	found := slices.Contains(plugin.InRegisters, reg)
+	if !found {
+		plugin.InRegisters = append(plugin.InRegisters, reg)
+	}
 
 	// Register the plugin
 	reg.Registry[name] = plugin
@@ -228,6 +242,17 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 						if plugin.PType != vdiPlugin {
 							pluginsSet = append(pluginsSet, plugin)
 						}
+					} else if pType == apiPlugin {
+						if plugin.PType == apiPlugin {
+							pluginsSet = append(pluginsSet, plugin)
+						}
+					} else if pType == libPlugin {
+						// Lib plugins are always loaded, so filter does not apply!
+						pluginsSet = append(pluginsSet, plugin)
+					} else if pType == testPlugin {
+						if TestMode {
+							pluginsSet = append(pluginsSet, plugin)
+						}
 					}
 				}
 			} else {
@@ -255,6 +280,17 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 				}
 			} else if pType == enginePlugin {
 				if plugin.PType != vdiPlugin {
+					pluginsSet = append(pluginsSet, plugin)
+				}
+			} else if pType == apiPlugin {
+				if plugin.PType == apiPlugin {
+					pluginsSet = append(pluginsSet, plugin)
+				}
+			} else if pType == libPlugin {
+				// Lib plugins are always loaded, so filter does not apply!
+				pluginsSet = append(pluginsSet, plugin)
+			} else if pType == testPlugin {
+				if TestMode {
 					pluginsSet = append(pluginsSet, plugin)
 				}
 			}
@@ -410,12 +446,22 @@ func NewJSPlugin(script string) *JSPlugin {
 	pTypeRegEx := "^//\\s*[@]?type\\s*\\:\\s*([^\n]+)"
 	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
 	pAsyncTagRegEx := "^//\\s*[@]?async\\s*\\:\\s*([^\n]+)"
-	re1 := regexp.MustCompile(pNameRegEx)
-	re2 := regexp.MustCompile(pDescRegEx)
-	re3 := regexp.MustCompile(pTypeRegEx)
-	re4 := regexp.MustCompile(pEventTypeRegEx)
-	re5 := regexp.MustCompile(pVerRegEx)
-	re6 := regexp.MustCompile(pAsyncTagRegEx)
+	pAPIEndPointRegEx := "^//\\s*[@]?api_endpoint\\s*\\:\\s*([^\n]+)"
+	pAPIMethodRegEx := "^//\\s*[@]?api_methods\\s*\\:\\s*([^\n]+)"
+	pAPIAuthRegEx := "^//\\s*[@]?api_auth\\s*\\:\\s*([^\n]+)"
+	pAPIAuthTypeRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
+
+	re01 := regexp.MustCompile(pNameRegEx)
+	re02 := regexp.MustCompile(pDescRegEx)
+	re03 := regexp.MustCompile(pTypeRegEx)
+	re04 := regexp.MustCompile(pEventTypeRegEx)
+	re05 := regexp.MustCompile(pVerRegEx)
+	re06 := regexp.MustCompile(pAsyncTagRegEx)
+
+	re07 := regexp.MustCompile(pAPIEndPointRegEx)
+	re08 := regexp.MustCompile(pAPIMethodRegEx)
+	re09 := regexp.MustCompile(pAPIAuthRegEx)
+	re10 := regexp.MustCompile(pAPIAuthTypeRegEx)
 
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
@@ -424,27 +470,97 @@ func NewJSPlugin(script string) *JSPlugin {
 	pEventType := ""
 	pVersion := ""
 	pAsync := false
+	apiEndPoint := ""
+	apiMethods := []string{}
+	apiAuth := ""
+	const none = "none"
+	apiAuthType := none
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
-		if re1.MatchString(line) {
-			pName = strings.TrimSpace(re1.FindStringSubmatch(line)[1])
+		if re01.MatchString(line) {
+			pName = strings.TrimSpace(re01.FindStringSubmatch(line)[1])
 		}
-		if re2.MatchString(line) {
-			pDesc = strings.TrimSpace(re2.FindStringSubmatch(line)[1])
+		if re02.MatchString(line) {
+			pDesc = strings.TrimSpace(re02.FindStringSubmatch(line)[1])
 		}
-		if re3.MatchString(line) {
-			pType = strings.ToLower(strings.TrimSpace(re3.FindStringSubmatch(line)[1]))
+		if re03.MatchString(line) {
+			pTypeStr := strings.ToLower(strings.TrimSpace(re03.FindStringSubmatch(line)[1]))
+			if pTypeStr == vdiPlugin ||
+				pTypeStr == enginePlugin ||
+				pTypeStr == apiPlugin ||
+				pTypeStr == eventPlugin ||
+				pTypeStr == libPlugin ||
+				pTypeStr == testPlugin {
+				pType = pTypeStr
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
+				pType = enginePlugin
+			}
 		}
-		if re4.MatchString(line) {
-			pEventType = strings.ToLower(strings.TrimSpace(re4.FindStringSubmatch(line)[1]))
+		if re04.MatchString(line) {
+			pEventType = strings.ToLower(strings.TrimSpace(re04.FindStringSubmatch(line)[1]))
 		}
-		if re5.MatchString(line) {
-			pVersion = strings.TrimSpace(re5.FindStringSubmatch(line)[1])
+		if re05.MatchString(line) {
+			pVersion = strings.TrimSpace(re05.FindStringSubmatch(line)[1])
 		}
-		if re6.MatchString(line) {
-			asyncStr := strings.ToLower(strings.TrimSpace(re6.FindStringSubmatch(line)[1]))
+		if re06.MatchString(line) {
+			asyncStr := strings.ToLower(strings.TrimSpace(re06.FindStringSubmatch(line)[1]))
 			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
 				pAsync = true
+			}
+		}
+		if re07.MatchString(line) {
+			apiEndPointStr := strings.TrimSpace(re07.FindStringSubmatch(line)[1])
+			if apiEndPointStr != "" {
+				apiEndPoint = strings.TrimSpace(apiEndPointStr)
+			}
+		}
+		if re08.MatchString(line) {
+			apiMethodStr := strings.TrimSpace(re08.FindStringSubmatch(line)[1])
+			if apiMethodStr != "" {
+				// Split multiple endpoints by comma
+				for method := range strings.SplitSeq(apiMethodStr, ",") {
+					method = strings.ToUpper(strings.TrimSpace(method))
+					if method == "" {
+						continue
+					}
+					if method != httpMethodGet &&
+						method != "POST" &&
+						method != "PUT" &&
+						method != "DELETE" &&
+						method != "PATCH" &&
+						method != "HEAD" &&
+						method != "OPTIONS" {
+						continue
+					}
+					apiMethods = append(apiMethods, method)
+				}
+			}
+		}
+		if re09.MatchString(line) {
+			apiAuthStr := strings.TrimSpace(re09.FindStringSubmatch(line)[1])
+			if apiAuthStr != "" {
+				apiAuthStr = strings.ToLower(strings.TrimSpace(apiAuthStr))
+				if apiAuthStr == "required" ||
+					apiAuthStr == "optional" ||
+					apiAuthStr == none {
+					apiAuth = apiAuthStr
+				} else {
+					apiAuth = none
+				}
+			}
+		}
+		if re10.MatchString(line) {
+			apiAuthTypeStr := strings.TrimSpace(re10.FindStringSubmatch(line)[1])
+			if apiAuthTypeStr != "" {
+				apiAuthTypeStr = strings.ToLower(strings.TrimSpace(apiAuthTypeStr))
+				if apiAuthTypeStr == "jwt" ||
+					apiAuthTypeStr == "apikey" ||
+					apiAuthTypeStr == none {
+					apiAuthType = apiAuthTypeStr
+				} else {
+					apiAuthType = none
+				}
 			}
 		}
 	}
@@ -457,6 +573,12 @@ func NewJSPlugin(script string) *JSPlugin {
 		Async:       pAsync,
 		Script:      script,
 		EventType:   pEventType,
+		API: &APIMetadata{
+			EndPoint: apiEndPoint,
+			Methods:  apiMethods,
+			Auth:     apiAuth,
+			AuthType: apiAuthType,
+		},
 	}
 }
 
@@ -465,7 +587,14 @@ func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, para
 	if p.PType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
-	return execEnginePlugin(p, timeout, params, db)
+	// So this must be either an API, Event or Engine Plugin:
+
+	// First let's initialize a RunTime for it and its callstack:
+	rt := &pluginRuntime{
+		subs: make(map[string]*pluginEventSub),
+	}
+	rt.current = p
+	return execEnginePlugin(p, timeout, params, db, rt)
 }
 
 func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *vdi.WebDriver) (map[string]interface{}, error) {
@@ -514,7 +643,79 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	return resultMap, nil
 }
 
-func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler) (map[string]interface{}, error) {
+type pluginEventSub struct {
+	id     string
+	ch     <-chan cdb.Event
+	cancel func()
+}
+
+//
+// Execution Engine for API plugins, Engine plugins and Event Plugins
+//
+
+type pluginRuntime struct {
+	mu sync.Mutex
+
+	// event subscriptions
+	subs map[string]*pluginEventSub
+
+	// call stack for cycle detection
+	callStack []*JSPlugin
+	// currently executing plugin
+	current *JSPlugin
+
+	// VM lifecycle
+	done <-chan struct{} // closed when VM exits
+}
+
+func (rt *pluginRuntime) push(p *JSPlugin) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	for _, prev := range rt.callStack {
+		if prev == p {
+			return fmt.Errorf("plugin call cycle detected: %s", p.Name)
+		}
+	}
+
+	rt.callStack = append(rt.callStack, p)
+	rt.current = p
+	return nil
+}
+
+func (rt *pluginRuntime) pop() {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if len(rt.callStack) == 0 {
+		return
+	}
+
+	rt.callStack = rt.callStack[:len(rt.callStack)-1]
+	if len(rt.callStack) > 0 {
+		rt.current = rt.callStack[len(rt.callStack)-1]
+	} else {
+		rt.current = nil
+	}
+}
+
+func (rt *pluginRuntime) depth() int {
+	rt.mu.Lock()
+	d := len(rt.callStack)
+	rt.mu.Unlock()
+	return d
+}
+
+func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
+	for _, reg := range caller.InRegisters {
+		if p, ok := reg.GetPlugin(name); ok {
+			return &p, true
+		}
+	}
+	return nil, false
+}
+
+func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler, rt *pluginRuntime) (map[string]interface{}, error) {
 	const (
 		errMsg01       = "Error getting result from JS plugin: %v"
 		defaultTimeout = 30 * time.Second
@@ -536,6 +737,23 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	// Per VM context and interrupt channel
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Per-plugin runtime state
+	rt.done = ctx.Done()
+	if err := rt.push(p); err != nil {
+		return nil, err
+	}
+	defer rt.pop()
+
+	// Ensure cleanup on exit
+	defer func() {
+		rt.mu.Lock()
+		for _, s := range rt.subs {
+			s.cancel()
+		}
+		rt.subs = nil
+		rt.mu.Unlock()
+	}()
 
 	vm.Interrupt = make(chan func(), 1)
 
@@ -565,7 +783,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	defer stopAllTimers()
 
 	// Install CROWler JS extensions
-	if err := setCrowlerJSAPI(ctx, vm, db, addTimer); err != nil {
+	if err := setCrowlerJSAPI(ctx, vm, db, addTimer, rt); err != nil {
 		return result, err
 	}
 
@@ -656,6 +874,439 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Exported result from VM: %v", result)
 	return result, nil
+}
+
+// Plugin Unit-Tests support types and code
+
+// TestFile represent a plugin's test file
+type TestFile struct {
+	Path string
+	Name string // parsed from first non-empty line: // name: ...
+	Body string
+}
+
+// PluginTestOptions represents the options for executing a plugin test
+type TestOptions struct {
+	Timeout int
+	Params  map[string]interface{}
+}
+
+// PluginTestResult represents the result of a plugin test
+type TestResult struct {
+	Name   string
+	Passed bool
+	Error  string
+}
+
+// PlgTestHarness is the JavaScript code that provides the test harness for plugin unit tests
+const PlgTestHarness = `
+/*
+ * Internal array used by the test runner to collect test results.
+ * Each entry has the form:
+ *   { name: <string>, ok: <boolean>, error?: <string> }
+ */
+var __crowler_test_results = [];
+
+/*
+ * Define a single test case.
+ *
+ * @param name {string} - Human-readable test name
+ * @param fn   {function} - Function containing the test logic
+ *
+ * Usage:
+ *   test("adds numbers", function () {
+ *       assertEqual(add(1, 2), 3);
+ *   });
+ */
+function test(name, fn) {
+	try {
+		fn();
+		__crowler_test_results.push({ name: name, ok: true });
+	} catch (e) {
+		__crowler_test_results.push({
+			name: name,
+			ok: false,
+			error: String(e)
+		});
+	}
+}
+
+/*
+ * Assert that a condition is true.
+ *
+ * @param cond {boolean}
+ * @param msg  {string} Optional error message
+ */
+function assertTrue(cond, msg) {
+	if (!cond) throw new Error(msg || "assertTrue failed");
+}
+
+/*
+ * Assert that a condition is false.
+ *
+ * @param cond {boolean}
+ * @param msg  {string} Optional error message
+ */
+function assertFalse(cond, msg) {
+	if (cond) throw new Error(msg || "assertFalse failed");
+}
+
+/*
+ * Assert strict equality (===) between two values.
+ *
+ * @param a
+ * @param b
+ * @param msg {string} Optional error message
+ */
+function assertEqual(a, b, msg) {
+	if (a !== b) {
+		throw new Error(msg || ("assertEqual failed: " + a + " !== " + b));
+	}
+}
+
+/*
+ * Assert strict inequality (!==) between two values.
+ *
+ * @param a
+ * @param b
+ * @param msg {string} Optional error message
+ */
+function assertNotEqual(a, b, msg) {
+	if (a === b) {
+		throw new Error(msg || ("assertNotEqual failed: " + a + " === " + b));
+	}
+}
+
+/*
+ * Assert that a function throws an exception.
+ *
+ * @param fn  {function} Function expected to throw
+ * @param msg {string} Optional error message
+ */
+function assertThrows(fn, msg) {
+	var threw = false;
+	try {
+		fn();
+	} catch (e) {
+		threw = true;
+	}
+	if (!threw) {
+		throw new Error(msg || "assertThrows failed");
+	}
+}
+
+/*
+ * Assert deep equality by JSON stringification.
+ *
+ * WARNING:
+ * - Object key order matters
+ * - Not suitable for cyclic structures
+ *
+ * Use assertJSONEqual for order-insensitive object comparison.
+ */
+function assertDeepEqual(a, b, msg) {
+	var sa = JSON.stringify(a);
+	var sb = JSON.stringify(b);
+	if (sa !== sb) {
+		throw new Error(msg || ("assertDeepEqual failed: " + sa + " !== " + sb));
+	}
+}
+
+/*
+ * Assert JavaScript typeof.
+ *
+ * @param val
+ * @param type {string} e.g. "string", "number", "object"
+ * @param msg  {string} Optional error message
+ */
+function assertType(val, type, msg) {
+	if (typeof val !== type) {
+		throw new Error(
+			msg || ("assertType failed: expected " + type + ", got " + typeof val)
+		);
+	}
+}
+
+/*
+ * Assert that a value is not undefined.
+ */
+function assertDefined(val, msg) {
+	if (typeof val === "undefined") {
+		throw new Error(msg || "assertDefined failed");
+	}
+}
+
+/*
+ * Assert that a value is undefined.
+ */
+function assertUndefined(val, msg) {
+	if (typeof val !== "undefined") {
+		throw new Error(msg || "assertUndefined failed");
+	}
+}
+
+/*
+ * Assert that a value is a plain object (not null, not array).
+ */
+function assertIsObject(val, msg) {
+	if (val === null || typeof val !== "object" || Array.isArray(val)) {
+		throw new Error(msg || "assertIsObject failed");
+	}
+}
+
+/*
+ * Assert that a value is an array.
+ */
+function assertIsArray(val, msg) {
+	if (!Array.isArray(val)) {
+		throw new Error(msg || "assertIsArray failed");
+	}
+}
+
+/*
+ * Internal helper to normalize JSON objects by sorting keys recursively.
+ * Used by assertJSONEqual.
+ */
+function __normalizeJSON(value) {
+	if (Array.isArray(value)) {
+		return value.map(__normalizeJSON);
+	}
+	if (value && typeof value === "object") {
+		var keys = Object.keys(value).sort();
+		var out = {};
+		for (var i = 0; i < keys.length; i++) {
+			out[keys[i]] = __normalizeJSON(value[keys[i]]);
+		}
+		return out;
+	}
+	return value;
+}
+
+/*
+ * Assert deep JSON equality with key-order normalization.
+ *
+ * Recommended for comparing API responses and plugin-generated JSON.
+ */
+function assertJSONEqual(a, b, msg) {
+	var na = JSON.stringify(__normalizeJSON(a));
+	var nb = JSON.stringify(__normalizeJSON(b));
+	if (na !== nb) {
+		throw new Error(msg || ("assertJSONEqual failed: " + na + " !== " + nb));
+	}
+}
+
+/*
+ * Assert that an object contains a given key.
+ */
+function assertHasKey(obj, key, msg) {
+	if (!obj || typeof obj !== "object" || !(key in obj)) {
+		throw new Error(msg || ("assertHasKey failed: missing key '" + key + "'"));
+	}
+}
+
+/*
+ * Internal helper to resolve a dotted/bracketed path.
+ *
+ * Supported syntax:
+ *   "a.b.c"
+ *   "items[0].author.name"
+ */
+function __getPath(obj, path) {
+	var parts = path.replace(/\\[(\\d+)\\]/g, ".$1").split(".");
+	var cur = obj;
+
+	for (var i = 0; i < parts.length; i++) {
+		if (cur === undefined || cur === null) return undefined;
+		cur = cur[parts[i]];
+	}
+	return cur;
+}
+
+/*
+ * Assert that a JSON path exists.
+ */
+function assertHasPath(obj, path, msg) {
+	var val = __getPath(obj, path);
+	if (typeof val === "undefined") {
+		throw new Error(
+			msg || ("assertHasPath failed: missing path '" + path + "'")
+		);
+	}
+}
+
+/*
+ * Assert that a JSON path exists and equals a specific value.
+ */
+function assertPathEqual(obj, path, expected, msg) {
+	var val = __getPath(obj, path);
+	if (typeof val === "undefined") {
+		throw new Error(
+			msg || ("assertPathEqual failed: missing path '" + path + "'")
+		);
+	}
+	if (val !== expected) {
+		throw new Error(
+			msg || ("assertPathEqual failed at '" + path + "': " + val + " !== " + expected)
+		);
+	}
+}
+
+/*
+ * Assert that a JSON path exists and has a specific typeof.
+ */
+function assertPathType(obj, path, type, msg) {
+	var val = __getPath(obj, path);
+	if (typeof val === "undefined") {
+		throw new Error(
+			msg || ("assertPathType failed: missing path '" + path + "'")
+		);
+	}
+	if (typeof val !== type) {
+		throw new Error(
+			msg || ("assertPathType failed at '" + path + "': expected " + type + ", got " + typeof val)
+		);
+	}
+}
+
+/*
+ * Assert that an array has an exact length.
+ */
+function assertArrayLength(arr, expected, msg) {
+	if (!Array.isArray(arr)) {
+		throw new Error(msg || "assertArrayLength failed: not an array");
+	}
+	if (arr.length !== expected) {
+		throw new Error(
+			msg || ("assertArrayLength failed: " + arr.length + " !== " + expected)
+		);
+	}
+}
+`
+
+// ExecEnginePluginTest executes the specified engine plugin test script
+func ExecEnginePluginTest(
+	p *JSPlugin,
+	testScript string,
+	db *cdb.Handler,
+	opts TestOptions,
+) ([]TestResult, error) {
+
+	if p == nil {
+		return nil, fmt.Errorf("nil plugin")
+	}
+
+	// Prepare runtime exactly like production
+	rt := &pluginRuntime{
+		subs: make(map[string]*pluginEventSub),
+	}
+	rt.current = p
+
+	// Compose script
+	fullScript := PlgTestHarness + "\n\n" +
+		p.Script + "\n\n" +
+		testScript + "\n\n" +
+		"result = __crowler_test_results;"
+
+	// Clone plugin with injected script
+	testPlugin := *p
+	testPlugin.Script = fullScript
+
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30
+	}
+
+	params := opts.Params
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+
+	rawResult, err := execEnginePlugin(
+		&testPlugin,
+		timeout,
+		params,
+		db,
+		rt,
+	)
+	if err != nil {
+		//cmn.DebugMsg(cmn.DbgLvlDebug3, "Error executing plugin test: %v", err)
+		return nil, err
+	}
+	//cmn.DebugMsg(cmn.DbgLvlInfo, "Raw plugin test result: %v", rawResult)
+
+	// Parse results
+	var rawTests interface{}
+
+	if v, ok := rawResult["items"]; ok {
+		rawTests = v
+	} else if v, ok := rawResult["__crowler_test_results"]; ok {
+		rawTests = v
+	} else if v, ok := rawResult["result"]; ok {
+		rawTests = v
+	} else {
+		return nil, fmt.Errorf("no test results returned")
+	}
+
+	var list []map[string]interface{}
+
+	switch v := rawTests.(type) {
+	case []map[string]interface{}:
+		list = v
+
+	case []interface{}:
+		list = make([]map[string]interface{}, 0, len(v))
+		for _, e := range v {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid test result entry type")
+			}
+			list = append(list, m)
+		}
+
+	default:
+		return nil, fmt.Errorf("invalid test result format")
+	}
+
+	results := make([]TestResult, 0, len(list))
+
+	for _, r := range list {
+
+		name, _ := r["name"].(string)
+		okVal, _ := r["ok"].(bool)
+		errMsg, _ := r["error"].(string)
+
+		results = append(results, TestResult{
+			Name:   name,
+			Passed: okVal,
+			Error:  errMsg,
+		})
+	}
+
+	return results, nil
+}
+
+// DiscoverTestsFromPlugins discovers test functions from the registered test plugins
+func DiscoverTestsFromPlugins(reg *JSPluginRegister) []TestFile {
+	var tests []TestFile
+
+	for _, pluginName := range reg.Order {
+		plugin, _ := reg.GetPlugin(pluginName)
+
+		// Check if the plugin type is "test_plugin"
+		if plugin.PType != testPlugin {
+			continue
+		}
+
+		// Add plugin to the TestFile list
+		testFile := TestFile{
+			Name: plugin.Name,
+			Body: plugin.Script,
+			Path: "test_plugin",
+		}
+		tests = append(tests, testFile)
+	}
+
+	return tests
 }
 
 func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
@@ -758,8 +1409,16 @@ func removeJSFunctions(vm *otto.Otto) error {
 }
 
 // setCrowlerJSAPI sets the CROWler JS API functions
-func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTimer func(*time.Timer)) error {
+func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
+	db *cdb.Handler, addTimer func(*time.Timer),
+	rt *pluginRuntime,
+) error {
 	// Extends Otto JS VM with CROWler JS API functions
+
+	// Extend Plugin calling function (this allow safe plugin-to-plugin calls)
+	if err := addJSAPICallPlugin(vm, db, rt); err != nil {
+		return err
+	}
 
 	// Common functions
 
@@ -838,6 +1497,9 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTim
 	if err := addJSAPIScheduleEvent(vm, db); err != nil {
 		return err
 	}
+	if err := addJSAPIEventBus(vm, db, rt); err != nil {
+		return err
+	}
 
 	// CROWler DB API functions
 
@@ -897,6 +1559,86 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto, db *cdb.Handler, addTim
 	}
 
 	return nil
+}
+
+func addJSAPICallPlugin(
+	vm *otto.Otto,
+	db *cdb.Handler,
+	rt *pluginRuntime,
+) error {
+
+	return vm.Set("callPlugin", func(call otto.FunctionCall) otto.Value {
+
+		// ---- arguments ----
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		params := map[string]interface{}{}
+		if call.Argument(1).IsObject() {
+			if exported, e := call.Argument(1).Export(); e == nil {
+				if m, ok := exported.(map[string]interface{}); ok {
+					params = m
+				}
+			}
+		}
+
+		timeout := 0
+		if call.Argument(2).IsDefined() {
+			if t, e := call.Argument(2).ToInteger(); e == nil {
+				timeout = int(t)
+			}
+		}
+
+		// ---- resolve callee ----
+
+		caller := rt.current
+		if caller == nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		callee, ok := resolvePluginFromCaller(caller, name)
+		if !ok {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// ---- stack management ----
+
+		if err := rt.push(callee); err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return v
+		}
+		defer rt.pop()
+
+		const maxDepth = 16
+		if rt.depth() > maxDepth {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": "maximum plugin call depth exceeded",
+			})
+			return v
+		}
+
+		// ---- execute ----
+		rt := &pluginRuntime{
+			subs: make(map[string]*pluginEventSub),
+		}
+		rt.current = callee
+		res, execErr := execEnginePlugin(callee, timeout, params, db, rt)
+		if execErr != nil {
+			v, _ := vm.ToValue(res)
+			return v
+		}
+
+		v, _ := vm.ToValue(res)
+		return v
+	})
 }
 
 // addJSHTTPRequest adds the httpRequest function to the VM
@@ -1718,6 +2460,131 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 		return success
 	})
 	return err
+}
+
+func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
+
+	// subscribeEvents(filter, buffer)
+	if err := vm.Set("subscribeEvents", func(call otto.FunctionCall) otto.Value {
+		filterArg := call.Argument(0)
+		bufArg := call.Argument(1)
+
+		buffer := int64(16)
+		if bufArg.IsDefined() {
+			if v, err := bufArg.ToInteger(); err == nil && v > 0 {
+				buffer = v
+			}
+		}
+
+		var filter cdb.EventFilter
+		if filterArg.IsObject() {
+			if raw, err := filterArg.Export(); err == nil {
+				m, ok := raw.(map[string]interface{})
+				if !ok {
+					return otto.NullValue()
+				}
+
+				if v, ok := m["type_prefix"].(string); ok {
+					filter.TypePrefix = v
+				}
+				if v, ok := m["source_id"].(float64); ok {
+					id := uint64(v)
+					filter.SourceID = &id
+				}
+			}
+		}
+
+		// Initialize the global event bus if not already done
+		cdb.InitGlobalEventBus(db)
+
+		id, ch, cancel := cdb.GlobalEventBus.Subscribe(filter, int(buffer))
+
+		rt.mu.Lock()
+		rt.subs[id] = &pluginEventSub{
+			id:     id,
+			ch:     ch,
+			cancel: cancel,
+		}
+		rt.mu.Unlock()
+
+		val, _ := vm.ToValue(id)
+		return val
+	}); err != nil {
+		return err
+	}
+
+	// pollEvent(subId, timeoutMs)
+	if err := vm.Set("pollEvent", func(call otto.FunctionCall) otto.Value {
+		subID, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.NullValue()
+		}
+
+		timeoutMs := int64(0)
+		if call.Argument(1).IsDefined() {
+			timeoutMs, _ = call.Argument(1).ToInteger()
+		}
+
+		rt.mu.Lock()
+		sub := rt.subs[subID]
+		rt.mu.Unlock()
+
+		if sub == nil {
+			return otto.NullValue()
+		}
+
+		var timer *time.Timer
+		var timerCh <-chan time.Time
+
+		if timeoutMs > 0 {
+			timer = time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
+			timerCh = timer.C
+		}
+
+		select {
+		case ev, ok := <-sub.ch:
+			if timer != nil {
+				timer.Stop()
+			}
+			if !ok {
+				return otto.NullValue()
+			}
+			val, _ := vm.ToValue(ev)
+			return val
+
+		case <-timerCh:
+			return otto.NullValue()
+		case <-rt.done:
+			return otto.NullValue()
+		}
+	}); err != nil {
+		return err
+	}
+
+	// unsubscribeEvents(subId)
+	if err := vm.Set("unsubscribeEvents", func(call otto.FunctionCall) otto.Value {
+		subID, err := call.Argument(0).ToString()
+		if err != nil {
+			return otto.FalseValue()
+		}
+
+		rt.mu.Lock()
+		sub := rt.subs[subID]
+		if sub != nil {
+			delete(rt.subs, subID)
+		}
+		rt.mu.Unlock()
+
+		if sub != nil {
+			sub.cancel()
+			return otto.TrueValue()
+		}
+		return otto.FalseValue()
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // addJSAPIDebugLevel adds a method to fetch the current debug level to the VM
@@ -3175,7 +4042,7 @@ func addJSAPIISODate(vm *otto.Otto) error {
 	return vm.Set("ISODate", func(call otto.FunctionCall) otto.Value {
 		var t time.Time
 		if len(call.ArgumentList) == 0 {
-			t = time.Now().UTC()
+			t = time.Now()
 		} else {
 			dateStr, _ := call.Argument(0).ToString()
 			parsedTime, err := time.Parse(time.RFC3339, dateStr)

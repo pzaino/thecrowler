@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS Events (
     event_severity VARCHAR(50) NOT NULL,
     event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     event_recurrence VARCHAR(64),
+    expires_at TIMESTAMP,
     details JSONB NOT NULL
 );
 
@@ -1216,6 +1217,17 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_events_source_id') THEN
         CREATE INDEX idx_events_source_id ON Events(source_id);
+    END IF;
+END
+$$;
+
+-- Creates an index for the Events expires_at column
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_events_expires_at') THEN
+        CREATE INDEX idx_events_expires_at
+        ON Events (expires_at)
+        WHERE expires_at IS NOT NULL;
     END IF;
 END
 $$;

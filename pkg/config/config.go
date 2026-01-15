@@ -28,6 +28,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v2"
 )
 
@@ -430,6 +431,12 @@ func NewConfig() *Config {
 // LoadConfig is responsible for loading the configuration file
 // and return the Config struct
 func LoadConfig(confName string) (Config, error) {
+	// If there is an ".env" file in the current directory, load it
+	// Load .env if present
+	if err := godotenv.Load(); err != nil {
+		// Not fatal: .env is optional in production
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "No .env file found, using environment variables")
+	}
 
 	// Get the configuration file
 	config, err := getConfigFile(confName)
@@ -443,7 +450,7 @@ func LoadConfig(confName string) (Config, error) {
 	}
 
 	if (config.Remote != (Remote{})) && (strings.ToLower(strings.TrimSpace(config.Remote.Type)) != "local") && (strings.TrimSpace(config.Remote.Type) != "") {
-		cmn.DebugMsg(cmn.DbgLvlDebug1, "Remote configuration detected, fetching remote configuration")
+		cmn.DebugMsg(cmn.DbgLvlInfo, "Remote configuration detected, fetching remote configuration")
 		// This local configuration references a remote configuration
 		// Load the remote configuration
 		fetcher := &CMNFetcher{}
@@ -490,14 +497,14 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	}
 
 	// Interpolate remote fields
-	cfg.Remote.Host = cmn.InterpolateEnvVars(cfg.Remote.Host)
+	cfg.Remote.Host = strings.TrimSpace(cmn.InterpolateEnvVars(cfg.Remote.Host))
 	cfg.Remote.Port = cmn.InterpolateEnvVars(cfg.Remote.Port)
-	cfg.Remote.Path = cmn.InterpolateEnvVars(cfg.Remote.Path)
+	cfg.Remote.Path = strings.TrimSpace(cmn.InterpolateEnvVars(cfg.Remote.Path))
 	cfg.Remote.Region = cmn.InterpolateEnvVars(cfg.Remote.Region)
 	cfg.Remote.Token = cmn.InterpolateEnvVars(cfg.Remote.Token)
 	cfg.Remote.Secret = cmn.InterpolateEnvVars(cfg.Remote.Secret)
-	cfg.Remote.Type = cmn.InterpolateEnvVars(cfg.Remote.Type)
-	cfg.Remote.SSLMode = cmn.InterpolateEnvVars(cfg.Remote.SSLMode)
+	cfg.Remote.Type = strings.ToLower(strings.TrimSpace(cmn.InterpolateEnvVars(cfg.Remote.Type)))
+	cfg.Remote.SSLMode = strings.ToLower(strings.TrimSpace(cmn.InterpolateEnvVars(cfg.Remote.SSLMode)))
 
 	// Check if the remote configuration contains valid values
 	err := cfg.validateRemote()
@@ -507,8 +514,8 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	}
 
 	// Ensure Path is correctly formatted
-	if strings.TrimSpace(config.Remote.Path) == "/" {
-		config.Remote.Path = ""
+	if strings.TrimSpace(cfg.Remote.Path) == "/" {
+		cfg.Remote.Path = ""
 	}
 
 	// Build the URL
@@ -516,18 +523,22 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 	if cfg.Remote.Port != "80" && cfg.Remote.Port != "443" && cfg.Remote.Port != "0" {
 		url = fmt.Sprintf("http://%s:%s/%s", cfg.Remote.Host, cfg.Remote.Port, cfg.Remote.Path)
 	} else {
-		url = fmt.Sprintf("http://%s/%s", cfg.Remote.Host, cfg.Remote.Path)
+		path := ""
+		if cfg.Remote.Path != "/" && cfg.Remote.Path != "" {
+			path = cfg.Remote.Path
+		}
+		url = fmt.Sprintf("http://%s/%s", cfg.Remote.Host, path)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Fetching remote configuration from: '%s'", url)
 
 	// Fetch the remote configuration file
-	rulesetBody, err := fetcher.FetchRemoteFile(url, cfg.Remote.Timeout, cfg.Remote.SSLMode)
+	remoteConfig, err := fetcher.FetchRemoteFile(url, cfg.Remote.Timeout, cfg.Remote.SSLMode)
 	if err != nil {
 		return config, fmt.Errorf("failed to fetch rules from %s: %v", url, err)
 	}
 
 	// Process ENV variables
-	interpolatedData := cmn.InterpolateEnvVars(rulesetBody)
+	interpolatedData := cmn.InterpolateEnvVars(remoteConfig)
 	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Remote configuration file content: %s", interpolatedData)
 
 	// If the configuration file has been found and is not empty, unmarshal it
@@ -1451,6 +1462,22 @@ func (c *GeoLookupConfig) validate() {
 	}
 }
 
+func (api *API) IsEmpty() bool {
+	if api == nil {
+		return true
+	}
+	if api.Host != "" ||
+		api.Port != 0 ||
+		api.Timeout != 0 ||
+		api.RateLimit != "" ||
+		api.ReadHeaderTimeout != 0 ||
+		api.ReadTimeout != 0 ||
+		api.WriteTimeout != 0 {
+		return false
+	}
+	return true
+}
+
 // IsEmpty checks if the given config is empty.
 // It returns true if the config is empty, false otherwise.
 func IsEmpty(config Config) bool {
@@ -1465,7 +1492,7 @@ func IsEmpty(config Config) bool {
 		return false
 	}
 
-	if config.API != (API{}) {
+	if !config.API.IsEmpty() {
 		return false
 	}
 
@@ -1606,7 +1633,7 @@ func (c *Config) IsEmpty() bool {
 		return false
 	}
 
-	if c.API != (API{}) {
+	if !c.API.IsEmpty() {
 		return false
 	}
 

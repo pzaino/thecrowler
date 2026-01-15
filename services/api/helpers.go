@@ -12,6 +12,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
 func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
@@ -158,4 +159,248 @@ func PrepareInput(input string) string {
 	// trim spaces
 	input = strings.TrimSpace(input)
 	return input
+}
+
+func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
+	allowed := map[string]bool{}
+	if plugin.API != nil {
+		for _, m := range plugin.API.Methods {
+			allowed[strings.ToUpper(m)] = true
+		}
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !allowed[r.Method] {
+			w.Header().Set("Allow", strings.Join(plugin.API.Methods, ", "))
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		cmn.DebugMsg(
+			cmn.DbgLvlDebug2,
+			"API PLUGIN HIT: %s %s (%s)",
+			r.Method,
+			r.URL.Path,
+			plugin.Name,
+		)
+
+		// Streaming (SSE) mode
+		if r.Header.Get("Accept") == "text/event-stream" {
+			handleStreamingAPIPlugin(w, r, plugin)
+			return
+		}
+
+		// Normal request-response mode
+		handleNormalAPIPlugin(w, r, plugin)
+	}
+}
+
+func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
+	input, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(
+			w,
+			err,
+			nil,
+			"Invalid request",
+			http.StatusBadRequest,
+			0,
+		)
+		return
+	}
+
+	ctx := map[string]interface{}{
+		"http": map[string]interface{}{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"query":  r.URL.RawQuery,
+			"header": r.Header,
+		},
+		"input": PrepareInput(input),
+	}
+
+	result, err := plugin.Execute(
+		nil,
+		&dbHandler,
+		config.API.Plugins.Timeout,
+		ctx,
+	)
+
+	if err != nil {
+		handleErrorAndRespond(
+			w,
+			err,
+			nil,
+			"Plugin execution failed",
+			http.StatusInternalServerError,
+			0,
+		)
+		return
+	}
+
+	handleErrorAndRespond(
+		w,
+		nil,
+		result,
+		"",
+		0,
+		http.StatusOK,
+	)
+}
+
+func setWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	if wd, ok := w.(interface {
+		SetWriteDeadline(time.Time) error
+	}); ok {
+		_ = wd.SetWriteDeadline(time.Now().Add(d))
+	}
+}
+
+func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	input, err := extractQueryOrBody(r)
+	if err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	input = PrepareInput(input)
+
+	_, err = io.Copy(io.Discard, r.Body)
+	if (err != nil) && (err != io.EOF) {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error reading request body: %v", err)
+	}
+	err = r.Body.Close()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error closing request body: %v", err)
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // nginx
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.WriteHeader(http.StatusOK)
+
+	setWriteDeadline(w, 5*time.Second)
+	_, err = fmt.Fprintf(w, "event: status\ndata: started\n\n")
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+	}
+	flusher.Flush()
+
+	progressCh := make(chan map[string]interface{}, 16)
+	resultCh := make(chan interface{}, 1)
+	errCh := make(chan error, 1)
+
+	pluginDone := make(chan struct{})
+
+	go func(input string) {
+		defer close(pluginDone)
+		ctx := map[string]interface{}{
+			"http": map[string]interface{}{
+				"method": r.Method,
+				"path":   r.URL.Path,
+				"query":  r.URL.RawQuery,
+				"header": r.Header,
+			},
+			"input": input,
+			"progress": func(msg map[string]interface{}) {
+				select {
+				case progressCh <- msg:
+				default:
+				}
+			},
+		}
+
+		result, err := plugin.Execute(
+			nil,
+			&dbHandler,
+			config.API.Plugins.Timeout,
+			ctx,
+		)
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		resultCh <- result
+	}(input)
+
+	keepAlive := time.NewTicker(10 * time.Second)
+	defer keepAlive.Stop()
+	exitReason := "completed"
+
+loop:
+	for {
+		select {
+		case msg := <-progressCh:
+			b, _ := json.Marshal(msg)
+			setWriteDeadline(w, 5*time.Second)
+			_, err = fmt.Fprintf(w, "event: progress\ndata: %s\n\n", b)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
+			flusher.Flush()
+
+		case result := <-resultCh:
+			b, _ := json.Marshal(result)
+			setWriteDeadline(w, 5*time.Second)
+			_, err = fmt.Fprintf(w, "event: result\ndata: %s\n\n", b)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
+			flusher.Flush()
+
+			setWriteDeadline(w, 5*time.Second)
+			_, err = fmt.Fprintf(w, "event: done\ndata: completed\n\n")
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
+			flusher.Flush()
+			break loop
+
+		case err := <-errCh:
+			setWriteDeadline(w, 5*time.Second)
+			_, err = fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
+			flusher.Flush()
+			exitReason = "error"
+			break loop
+
+		case <-keepAlive.C:
+			setWriteDeadline(w, 5*time.Second)
+			_, err = fmt.Fprint(w, ": ping\n\n")
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error writing to SSE: %v", err)
+			}
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug2,
+				"SSE client disconnected: %s (%s): %v",
+				r.RemoteAddr,
+				plugin.Name,
+				r.Context().Err(),
+			)
+			exitReason = "client_disconnect"
+			break loop
+		}
+	}
+
+	<-pluginDone // 2. wait until plugin is 100% done
+
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug2,
+		"SSE handler exit (%s): %s",
+		exitReason,
+		plugin.Name,
+	)
 }

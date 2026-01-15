@@ -285,10 +285,11 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 	PipelineStatus := make([]crowler.Status, 0, len(config.Selenium))
 	// Assign the global pipeline status pointer
 	sysPipelineStatus = &PipelineStatus
+	now := time.Now()
 	// Set the maintenance time
-	maintenanceTime := time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
+	maintenanceTime := now.Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 	// Set the resource release time
-	resourceReleaseTime := time.Now().Add(time.Duration(5) * time.Minute)
+	resourceReleaseTime := now.Add(time.Duration(5) * time.Minute)
 	// Flag used to avoid repeating 0 sources found constantly
 	gotSources := true // set to true by default for first source check (so it will log the first time)
 
@@ -322,18 +323,19 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 			}
 
 			// Perform database maintenance if it's time
-			if time.Now().After(maintenanceTime) {
+			now := time.Now()
+			if now.After(maintenanceTime) {
 				performDatabaseMaintenance(*db)
-				maintenanceTime = time.Now().Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
+				maintenanceTime = now.Add(time.Duration(config.Crawler.Maintenance) * time.Minute)
 				cmn.DebugMsg(cmn.DbgLvlDebug2, "Database maintenance every: %d", config.Crawler.Maintenance)
 			}
 			// We are about to go to sleep, so we can handle signals for reloading the configuration
 			configMutex.RUnlock()
-			if time.Now().After(resourceReleaseTime) {
+			if now.After(resourceReleaseTime) {
 				// Release unneeded resources:
 				runtime.GC()         // Run the garbage collector
 				debug.FreeOSMemory() // Force release of unused memory to the OS
-				resourceReleaseTime = time.Now().Add(time.Duration(5) * time.Minute)
+				resourceReleaseTime = now.Add(time.Duration(5) * time.Minute)
 			}
 			time.Sleep(time.Duration(config.Crawler.QueryTimer) * time.Second)
 			continue
@@ -474,7 +476,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 	// "Reports" go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
 		interval := time.Duration(wb.Config.Crawler.ReportInterval) * time.Minute
-		next := time.Now().Add(interval)
+		now := time.Now()
+		next := now.Add(interval)
 
 		for {
 			anyPipelineStillRunning := false
@@ -1290,7 +1293,9 @@ func main() {
 
 	// Initialize the logger
 	cmn.InitLogger("TheCROWler")
-	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Engine is starting...")
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node   ID: %s", cmn.GetEngineID())
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetMicroServiceName())
 
 	// Define db before we set signal handlers
 	var db cdb.Handler
@@ -1498,16 +1503,18 @@ func processHeartbeatEvent(event cdb.Event) {
 	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
 
 	// Prepare the response event
+	now := time.Now()
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
-		Timestamp: time.Now().Format(time.RFC3339),
+		Timestamp: now.Format(time.RFC3339),
+		ExpiresAt: now.Add(1 * time.Minute).Format(time.RFC3339),
 		Details:   make(map[string]interface{}),
 	}
 	responseEvent.Details["parent_event_id"] = event.ID
 	responseEvent.Details["origin_type"] = "crowler-engine"
 	responseEvent.Details["origin_name"] = cmn.GetMicroServiceName()
-	responseEvent.Details["origin_time"] = time.Now().Format(time.RFC3339)
+	responseEvent.Details["origin_time"] = now.Format(time.RFC3339)
 	responseEvent.Details["status"] = "ok"
 	responseEvent.Details["type"] = "heartbeat_response"
 	// Add the current pipeline status to the response event

@@ -490,7 +490,7 @@ func StrIsHTML(s string) bool {
 	return hasElement
 }
 
-// runPostProcessingSteps runs the post processing steps
+// runPostProcessingSteps runs the post processing (post_processing) steps
 func runPostProcessingSteps(ctx *ProcessContext, pps *[]rules.PostProcessingStep, jsonData *[]byte) {
 	for _, pp := range *pps {
 		// Execute the post processing step

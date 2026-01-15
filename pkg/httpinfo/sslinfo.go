@@ -96,7 +96,7 @@ func NewSSLInfoFactory() *SSLInfoFactoryImpl {
 
 /*
 func getTimeInCertReportFormat() string {
-	now := time.Now().UTC()
+	now := time.Now()
 	return now.Format(YYYYMMDD)
 }
 */
