@@ -214,11 +214,6 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
-	// Start heartbeat loop if enabled
-	if config.Events.HeartbeatEnabled {
-		go startHeartbeatLoop(&dbHandler, config)
-	}
-
 	// Start the event janitor (cleans up expired events from the DB)
 	instance := strings.ToLower(strings.TrimSpace(cmn.GetMicroServiceName()))
 	if instance == mainInstance[0] ||
@@ -227,6 +222,10 @@ func main() {
 		go startEventJanitor(&dbHandler, time.Minute)
 		// Start events scheduler
 		cdb.StartScheduler(&dbHandler)
+		// Start heartbeat loop if enabled
+		if config.Events.HeartbeatEnabled {
+			go startHeartbeatLoop(&dbHandler, config)
+		}
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
