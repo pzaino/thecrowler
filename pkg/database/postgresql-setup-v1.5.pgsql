@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS EventSchedules (
     recurrence_interval VARCHAR(50),
     next_run TIMESTAMP NOT NULL,
     last_run TIMESTAMP,
-    active BOOLEAN DEFAULT TRUE
+    active BOOLEAN DEFAULT TRUE,
     details JSONB NOT NULL
 );
 
