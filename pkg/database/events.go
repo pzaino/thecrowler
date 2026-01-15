@@ -682,8 +682,14 @@ func listenForEventsLoop(db *Handler, stop <-chan struct{}, handleNotification f
 					continue
 				}
 
+				// Define retry parameters
+				// TODO: total needs to become a user parameter
+				total := 8 * time.Second
+				delay := 50 * time.Millisecond
+				maxRetries := int(total / delay)
+
 				// Step 2: Fetch full event from DB
-				event, err := fetchEventWithRetry(db, meta.EventSHA256, 30, 50*time.Millisecond)
+				event, err := fetchEventWithRetry(db, meta.EventSHA256, maxRetries, delay)
 				if err != nil {
 					if errors.Is(err, sql.ErrNoRows) {
 						et := strings.ToLower(strings.TrimSpace(meta.EventType))
