@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS EventSchedules (
     next_run TIMESTAMP NOT NULL,
     last_run TIMESTAMP,
     active BOOLEAN DEFAULT TRUE
+    details JSONB NOT NULL
 );
 
 ----------------------------------------

@@ -225,6 +225,8 @@ func main() {
 		instance == mainInstance[1] { // TODO: I need to improve this and allow the user to select which instance
 		// We are on the first instance, start the events janitor
 		go startEventJanitor(&dbHandler, time.Minute)
+		// Start events scheduler
+		cdb.StartScheduler(&dbHandler)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
@@ -385,6 +387,7 @@ func initAPIv1() {
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
+	scheduleEventWithMiddlewares := withAll(http.HandlerFunc(scheduleEventHandler))
 	checkEventWithMiddlewares := withAll(http.HandlerFunc(checkEventHandler))
 	updateEventWithMiddlewares := withAll(http.HandlerFunc(updateEventHandler))
 	removeEventWithMiddlewares := withAll(http.HandlerFunc(removeEventHandler))
@@ -394,6 +397,7 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
+	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
@@ -536,6 +540,60 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
+}
+
+func scheduleEventHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ScheduleEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(req.ScheduleAt) == "" {
+		http.Error(w, "Missing schedule_at", http.StatusBadRequest)
+		return
+	}
+
+	// Generate deterministic ID now
+	req.Event.ID = cdb.GenerateEventUID(req.Event)
+
+	scheduledTime, err := cdb.ScheduleEvent(
+		&dbHandler,
+		req.Event,
+		req.ScheduleAt,
+		req.Recurrence,
+	)
+	if err != nil {
+		handleErrorAndRespond(
+			w,
+			err,
+			nil,
+			"Failed to schedule event: ",
+			http.StatusInternalServerError,
+			http.StatusOK,
+		)
+		return
+	}
+
+	response := map[string]string{
+		"message":        "Event scheduled successfully",
+		"event_id":       req.Event.ID,
+		"scheduled_time": scheduledTime.Format(time.RFC3339),
+	}
+
+	handleErrorAndRespond(
+		w,
+		nil,
+		response,
+		"",
+		http.StatusInternalServerError,
+		http.StatusCreated,
+	)
 }
 
 func removeEventHandler(w http.ResponseWriter, r *http.Request) {
