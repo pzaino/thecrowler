@@ -684,8 +684,8 @@ func listenForEventsLoop(db *Handler, stop <-chan struct{}, handleNotification f
 
 				// Define retry parameters
 				// TODO: total needs to become a user parameter
-				total := 10 * time.Second        // total wait time
-				delay := 100 * time.Millisecond  // delay between retries
+				total := 15 * time.Second        // total wait time
+				delay := 120 * time.Millisecond  // delay between retries
 				maxRetries := int(total / delay) // maximum number of retries
 
 				// Step 2: Fetch full event from DB
