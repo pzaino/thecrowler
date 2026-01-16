@@ -262,8 +262,7 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 	if allIdle {
 		// Check if we are the main instance of events manager
 		instance := strings.ToLower(strings.TrimSpace(cmn.GetMicroServiceName()))
-		if instance == mainInstance[0] ||
-			instance == mainInstance[1] {
+		if instance == config.Events.MasterEventsManager {
 			// yes we are the main instance
 			if canScheduleDBMaintenance() {
 				cmn.DebugMsg(cmn.DbgLvlInfo, "HEARTBEAT ANALYSIS: Entire fleet appears idle, scheduling DB optimization...")
