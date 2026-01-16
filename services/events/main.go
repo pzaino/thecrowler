@@ -70,7 +70,6 @@ var (
 	internalQ      = make(chan cdb.Event, 10_000)  // buffered small; DB-only work
 	externalQ      = make(chan cdb.Event, 100_000) // buffered larger; JS+DB work
 
-	// Main Instance's name array
 	mainInstance = []string{"crowler-events", "crowler-events-0"}
 )
 
@@ -158,9 +157,6 @@ func main() {
 	startInternalWorkers(runtime.NumCPU())     // internal events workers
 	startExternalWorkers(runtime.NumCPU() * 2) // external events workers
 
-	// Start the event listener (on a separate go routine)
-	go cdb.ListenForEvents(&dbHandler, handleNotification)
-
 	// Setup prometheus push gateway if enabled
 	if config.Prometheus.Enabled && strings.TrimSpace(config.Prometheus.Host) != "" {
 		go func() {
@@ -214,14 +210,29 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "System time: '%v'", time.Now())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Local location: '%v'", time.Local.String())
 
-	// Start the event janitor (cleans up expired events from the DB)
 	instance := strings.ToLower(strings.TrimSpace(cmn.GetMicroServiceName()))
-	if instance == mainInstance[0] ||
-		instance == mainInstance[1] { // TODO: I need to improve this and allow the user to select which instance
-		// We are on the first instance, start the events janitor
+
+	if strings.TrimSpace(config.Events.MasterEventsManager) == "" {
+		if instance == mainInstance[0] || instance == mainInstance[1] {
+			config.Events.MasterEventsManager = instance
+		} else {
+			config.Events.MasterEventsManager = mainInstance[0]
+		}
+	}
+
+	config.Events.MasterEventsManager = strings.ToLower(strings.TrimSpace(config.Events.MasterEventsManager))
+
+	// Start the event janitor (cleans up expired events from the DB)
+	if instance == config.Events.MasterEventsManager {
+		// We are on the Master Instance, start the events janitor
 		go startEventJanitor(&dbHandler, time.Minute)
+
+		// Start the event listener (on a separate go routine)
+		go cdb.ListenForEvents(&dbHandler, handleNotification)
+
 		// Start events scheduler
 		cdb.StartScheduler(&dbHandler)
+
 		// Start heartbeat loop if enabled
 		if config.Events.HeartbeatEnabled {
 			go startHeartbeatLoop(&dbHandler, config)
