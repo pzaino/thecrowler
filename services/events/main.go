@@ -1185,7 +1185,8 @@ func uploadRulesetHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Generate and broadcast event with file content in details
 	event := cdb.Event{
-		Type: "new_ruleset",
+		Type:      "new_ruleset",
+		ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 		Details: map[string]interface{}{
 			"filename": header.Filename,
 			"type":     "ruleset",
@@ -1253,7 +1254,8 @@ func uploadPluginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Generate and broadcast event with file content in details
 	event := cdb.Event{
-		Type: "new_plugin",
+		Type:      "new_plugin",
+		ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 		Details: map[string]interface{}{
 			"filename": header.Filename,
 			"type":     "plugin",
@@ -1317,7 +1319,8 @@ func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Generate and broadcast event with file content in details
 	event := cdb.Event{
-		Type: "new_agent",
+		Type:      "new_agent",
+		ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 		Details: map[string]interface{}{
 			"filename": header.Filename,
 			"type":     "agent",

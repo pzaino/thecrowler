@@ -100,10 +100,11 @@ func ProcessDataSource(args *Pars) {
 	if processCtx.config.Crawler.CreateEventWhenDone {
 
 		evt := cdb.Event{
-			Action:   "new",
-			Type:     "started_batch_crawling",
-			SourceID: 0,
-			Severity: config.Crawler.SourcePriority,
+			Action:    "new",
+			Type:      "started_batch_crawling",
+			SourceID:  0,
+			Severity:  config.Crawler.SourcePriority,
+			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 			Details: map[string]interface{}{
 				"uid":                batchUID,
 				"node":               cmn.GetMicroServiceName(),

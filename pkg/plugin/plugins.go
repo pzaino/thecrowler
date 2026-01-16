@@ -2352,10 +2352,11 @@ func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
 
 		// Create a new event object
 		event := cdb.Event{
-			SourceID: sourceID,
-			Type:     eventType,
-			Severity: severity,
-			Details:  details,
+			SourceID:  sourceID,
+			Type:      eventType,
+			Severity:  severity,
+			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
+			Details:   details,
 		}
 
 		// Insert the event into the database
@@ -2437,10 +2438,11 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 
 		// Create the event when the timer fires
 		event := cdb.Event{
-			SourceID: sourceID,
-			Type:     eventType,
-			Severity: severity,
-			Details:  details,
+			SourceID:  sourceID,
+			Type:      eventType,
+			Severity:  severity,
+			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
+			Details:   details,
 		}
 
 		// Schedule the event creation

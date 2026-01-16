@@ -107,6 +107,12 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 	} else {
 		event.Severity = "MEDIUM"
 	}
+	// ExpiresAt
+	if params["expires_at"] != nil {
+		eExpiresAt, _ := params["expires_at"].(string)
+		eExpiresAt = resolveResponseString(eventMap, eExpiresAt)
+		event.ExpiresAt = eExpiresAt
+	}
 	// Check if there is a Details params
 	if params["details"] != nil {
 		eDetails, _ := params["details"].(map[string]interface{})
