@@ -26,23 +26,16 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 
-**Project status:** **Still under active development! (aka WIP)** However, most of it is
-already usable. Alpha testers welcome!
-Full stats on daily work [here](https://githubtracker.com/pzaino/thecrowler).
-
-**Please Note**: This is the new official repo for the project, the old C++
-and Rust repositories are now closed and no longer available/maintained.
-Please use this one for any new development.
-
 ## What is it?
 
-The CROWler is an open-source, feature-rich web crawler and Content Discovery
-Development Platform, designed with a unique philosophy at its core: to be as
-gentle and low-noise as possible. In other words, The CROWler tries to stand
-out by ensuring minimal impact on the websites it crawls while maximizing
-convenience for its users.
+The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform
+designed for advanced web crawling, scraping, detection, and automation using real browsers,
+rulesets, plugins, and agents.
 
-Additionally, the system is equipped with an powerful search API, providing
+**Project status:** Still under active development (WIP). Most components are usable.
+Beta testers welcome. Full [daily progress stats](https://githubtracker.com/pzaino/thecrowler).
+
+Additionally, the system is equipped with a powerful search API, providing
 a streamlined interface for data queries. This feature ensures easy
 integration and access to indexed data for various applications.
 
@@ -55,10 +48,63 @@ Events and more. These components work together to provide a comprehensive
 platform to develop your own solutions for content discovery, data extraction,
 and more.
 
+## What Makes the CROWler Different
+
+- **Real browsers, not abstractions**
+  The CROWler uses actual browser engines (Chromium, Chrome, Firefox) instead of
+  simplified request pipelines.
+
+- **Declarative rulesets**
+  Crawling, scraping, detection, and actions are defined in versioned YAML/JSON rulesets.
+
+- **First-class detection logic**
+  Technologies, frameworks, objects, and vulnerabilities are detected using user-defined rules.
+
+- **Event-driven automation**
+  Crawling and detection events can trigger agents, plugins, and workflows.
+
+- **Extensible by design**
+  JavaScript plugins can extend the engine, browser, API, and event system.
+
+- **You own the data and infrastructure**
+  The CROWler is fully self-hosted and auditable.
+
+## Who Is the CROWler For?
+
+The CROWler is designed for:
+
+- Engineers and developers
+- Security researchers
+- Intelligence and OSINT teams
+- Advanced data collection pipelines
+- Organizations that require full control and auditability
+
+It is **not** designed as a point-and-click scraping SaaS or a turnkey data service.
+
+## Design Philosophy
+
+The CROWler is built on a few core principles:
+
+- Control is better than abstraction
+- Logic should be explicit and "inspectable"
+- Automation should be event-driven
+- Intelligence should be user-defined
+- Infrastructure and data ownership matter
+
+## Getting Started
+
+- Documentation: [doc/](doc/)
+- GPT-based Support [Chatbot](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support)
+- Configuration examples: [config.default](config.default)
+- Ruleset schemas: [schemas/](schemas/)
+- Plugin examples: [plugins/](plugins/)
+
+Start with the installation guide (below) and the minimal configuration example.
+
 ## Table of contents
 
-- [Features](#features)
-- [What problem does it solves?](#what-problem-does-it-solves)
+- [Features](#features-overview)
+- [What problem does it solve?](#what-problem-does-it-solve)
 - [How do I pronounce the name?](#how-do-i-pronounce-the-name)
 - [How to use it?](#how-to-use-it)
   - [Prerequisites](#prerequisites)
@@ -75,52 +121,79 @@ and more.
 - [Disclaimer](#disclaimer)
 - [Top Contributors](#top-contributors)
 
-### Features
+## Features (Overview)
 
-- **Low-noise**: The CROWler is designed to be as gentle as possible when
-crawling websites. It respects robots.txt, and it's designed to try to appear
-as a human user to the websites it crawls.
-- **Customizable Crawling**: Tailor your crawling experience like never before.
-Specify URLs and configure individual crawling parameters to fit your precise
-needs. Whether it's a single page or an expansive domain, The CROWler adapts to
-your scope with unmatched flexibility.
-- **Scope Variability**: Define your crawling boundaries with precision. Choose
-from:
-  - Singular URL Crawling
-  - Domain-wide Crawling (combining L3, L2, and L1 domains)
-  - L2 and L1 Domain Crawling
-  - L1 Domain Crawling (e.g., everything within ".com")
-  - Full Recursive Crawling, venturing beyond initial boundaries to explore
-  connected URLs
-- **Advanced Detection Capabilities**: Discover a wealth of information with
-features that go beyond basic crawling:
-  - URL and Content Discovery
-  - Page Content, Metadata, XHR, fetch, and more
-  - Keywords extraction and analysis, Language Detection
-  - Insightful HTTP Headers, Network Info, WHOIS, DNS, and Geo-localization
-  Data
-- **Sophisticated Ruleset**: To leverage rules-based activities and logic
-  customization, The CROWler offers:
-  - Scraping rules: To extract precisely what you need from websites
-  - Actions rules: To interact with websites in a more dynamic way
-  - Detection rules: To identify specific patterns or elements on a page,
-    technologies used, etc.
-  - Crawling rules: To define how the crawler should behave in different
-    situations (for instance both recursive and non-recursive crawling,
-    fuzzing, etc.)
-- **Plugin System**: Extend The CROWler's capabilities with a robust plugin system
-  architecture, allowing developers to create entirely new solutions and/or integrate seamlessly with existing ones.
-  - Plugins can be executed in the browser context, enabling rich interactions with web pages.
-  - They can also be executed in the engine context, allowing for deeper integration with the crawling process.
-  - Plugins are written in JavaScript and Javascript has been extended to support ETL (Extract, Transform, Load) operations as well as Event-driven programming, multiple DBs (PostgreSQL, MongoDB, Neo4J, MySQL, SQLite) and there are also extensions to use CSV and other file types directly and seamlessly.
-  - Plugins can also be controlled via the new Agents Architecture as well as the Events API.
-- **Powerful Search Engine Integration**: Utilize an API-driven search engine
-equipped with dorking capabilities and comprehensive content search, opening
-new avenues for data analysis and insight.
+The CROWler is a **full-spectrum Content Discovery and Intelligence platform**.
+Its capabilities span crawling, interaction, detection, automation, security,
+and large-scale data analysis.
 
-For more information on the features, see the [features](doc/features.md) page.
+Below is a **high-level overview** of the main feature areas.
+For a complete and detailed breakdown, see: **[doc/features.md](doc/features.md)**
 
-### What problem does it solves?
+### Web Crawling & Interaction
+
+- Recursive and scoped crawling (URL, domain, subdomain, recursive)
+- Real browser rendering (Chromium, Chrome, Firefox)
+- Human Behavior Simulation (HBS)
+- Dynamic JavaScript content handling
+- Custom User-Agent, request filtering, and bandwidth control
+
+### Search & Discovery
+
+- High-performance API-based search engine
+- Advanced query operators and dorking
+- Entity extraction and correlation
+- Result export (CSV, JSON)
+
+### Scraping & Data Processing
+
+- Declarative scraping rules (CSS, XPath, regex)
+- Post-processing, transformation, and enrichment
+- Plugin- and AI-based data pipelines
+
+### Detection & Intelligence
+
+- Technology, framework, and library detection
+- Vulnerability and security header analysis
+- TLS/SSL fingerprinting (JA3, JA4, certificates)
+- Integration with external intelligence sources
+
+### Rules, Actions & Automation
+
+- Declarative rulesets (crawl, scrape, action, detection)
+- System-level action execution via real browsers
+- Event-driven workflows and scheduling
+
+### Extensibility
+
+- JavaScript plugin system (engine, browser, API, event)
+- Custom API endpoints
+- Agent-controlled execution
+
+### Agents & AI
+
+- Traditional and AI agents
+- Event-driven agent orchestration
+- Pre-deployed containerized AI models (CUDA / non-CUDA)
+- Multi-model AI workflows
+
+### Security & Cybersecurity
+
+- Network reconnaissance (DNS, WHOIS, service discovery)
+- Fuzzing and security testing
+- Native support for third-party security services
+
+### Deployment & Scalability
+
+- Microservices architecture
+- Horizontal scaling of engines, VDIs, APIs
+- Docker-based deployment
+- On-prem, cloud, and hybrid environments
+
+**Full feature list and detailed explanations:**
+[doc/features.md](doc/features.md)
+
+### What problem does it solve?
 
 The CROWler is designed to solve a set of problems about web crawling, content
  discovery, technology detection and data extraction.
@@ -156,6 +229,8 @@ Putting it all together, it sounds like "**thuh KROH-lər**"
 
 ### What ChatGPT thinks about the CROWLer ;)
 
+(The following section is intentionally light-hearted and non-authoritative.)
+
 "The CROWler is not just a tool; it's a commitment to ethical, efficient, and
 effective web crawling. Whether you're conducting academic research, market
 analysis, or enhancing your cybersecurity posture, The CROWler delivers with
@@ -174,8 +249,7 @@ it here, just for fun. BTW it does make me fell like I want to add:
 
 ### Prerequisites
 
-The CROWler is designed to be micro-services based, so you'll need to install the
-following:
+The CROWler is designed as a microservices-based system, allowing independent scaling, isolation, and orchestration of engines, VDIs, APIs, and event management.
 
 - [Docker](https://docs.docker.com/install/)
 - [Docker Compose](https://docs.docker.com/compose/install/)
