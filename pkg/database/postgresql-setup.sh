@@ -3,19 +3,19 @@ set -e
 
 export PGPASSWORD="$POSTGRES_PASSWORD"
 
-if [ -n "${CROWLER_DB_SHARED_BUFFERS:-}" ]; then
+if [ -z "${CROWLER_DB_SHARED_BUFFERS:-}" ]; then
     CROWLER_DB_SHARED_BUFFERS="128MB"
 fi
-if [ -n "${CROWLER_DB_WORK_MEM:-}" ]; then
+if [ -z "${CROWLER_DB_WORK_MEM:-}" ]; then
     CROWLER_DB_WORK_MEM="4MB"
 fi
-if [ -n "${CROWLER_DB_MAINTENANCE_WORK_MEM:-}" ]; then
+if [ -z "${CROWLER_DB_MAINTENANCE_WORK_MEM:-}" ]; then
     CROWLER_DB_MAINTENANCE_WORK_MEM="64MB"
 fi
-if [ -n "${CROWLER_DB_EFFECTIVE_CACHE_SIZE:-}" ]; then
+if [ -z "${CROWLER_DB_EFFECTIVE_CACHE_SIZE:-}" ]; then
     CROWLER_DB_EFFECTIVE_CACHE_SIZE="4GB"
 fi
-if [ -n "${CROWLER_DB_AUTOVACUUM_WORK_MEM:-}" ]; then
+if [ -z "${CROWLER_DB_AUTOVACUUM_WORK_MEM:-}" ]; then
     CROWLER_DB_AUTOVACUUM_WORK_MEM="-1"
 fi
 
