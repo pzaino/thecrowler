@@ -2036,8 +2036,8 @@ GRANT INSERT, SELECT ON events TO :CROWLER_DB_USER;
 --------------------------------------------------------------------------------
 -- DB Paramaeters tuning
 
-ALTER SYSTEM SET shared_buffers = :DB_SHARED_BUFFERS;
-ALTER SYSTEM SET work_mem = :DB_WORK_MEM;
-ALTER SYSTEM SET maintenance_work_mem = :DB_MAINTENANCE_WORK_MEM;
-ALTER SYSTEM SET effective_cache_size = :DB_EFFECTIVE_CACHE_SIZE;
-ALTER SYSTEM SET autovacuum_work_mem = :DB_AUTOVACUUM_WORK_MEM;
+ALTER SYSTEM SET shared_buffers = :'DB_SHARED_BUFFERS';
+ALTER SYSTEM SET work_mem = :'DB_WORK_MEM';
+ALTER SYSTEM SET maintenance_work_mem = :'DB_MAINTENANCE_WORK_MEM';
+ALTER SYSTEM SET effective_cache_size = :'DB_EFFECTIVE_CACHE_SIZE';
+ALTER SYSTEM SET autovacuum_work_mem = :'DB_AUTOVACUUM_WORK_MEM';
