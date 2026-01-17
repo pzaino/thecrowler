@@ -734,10 +734,11 @@ func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) 
 
 	// Create a new event
 	event := cdb.Event{
-		SourceID: sourceID,
-		Type:     "crawl_completed",
-		Severity: cdb.EventSeverityInfo,
-		Details:  statusMap,
+		SourceID:  sourceID,
+		Type:      "crawl_completed",
+		Severity:  cdb.EventSeverityInfo,
+		ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
+		Details:   statusMap,
 	}
 
 	// Use PostgreSQL placeholders ($1, $2, etc.) and include event_timestamp
@@ -3205,11 +3206,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 						"message": fmt.Sprintf("failed to create a new WebDriver session: %v", err),
 					}
 					e := cdb.Event{
-						Action:   "new",
-						SourceID: ctx.source.ID,
-						Type:     "vdi_failed_to_get_url",
-						Severity: ctx.source.Priority,
-						Details:  details,
+						Action:    "new",
+						SourceID:  ctx.source.ID,
+						Type:      "vdi_failed_to_get_url",
+						Severity:  ctx.source.Priority,
+						ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
+						Details:   details,
 					}
 					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
@@ -3229,11 +3231,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 						"message": fmt.Sprintf("failed to navigate to %s: %v", url, err),
 					}
 					e := cdb.Event{
-						Action:   "new",
-						SourceID: ctx.source.ID,
-						Type:     "vdi_failed_to_get_url",
-						Severity: ctx.source.Priority,
-						Details:  details,
+						Action:    "new",
+						SourceID:  ctx.source.ID,
+						Type:      "vdi_failed_to_get_url",
+						Severity:  ctx.source.Priority,
+						ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
+						Details:   details,
 					}
 					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 					return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
@@ -3245,11 +3248,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					"message": fmt.Sprintf("failed to navigate to %s: %v", url, err),
 				}
 				e := cdb.Event{
-					Action:   "new",
-					SourceID: ctx.source.ID,
-					Type:     "vdi_failed_to_get_url",
-					Severity: ctx.source.Priority,
-					Details:  details,
+					Action:    "new",
+					SourceID:  ctx.source.ID,
+					Type:      "vdi_failed_to_get_url",
+					Severity:  ctx.source.Priority,
+					ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
+					Details:   details,
 				}
 				_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 				return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)

@@ -355,10 +355,11 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		// Create a new WorkBlock for the crawling job
 		batchUID := cmn.GenerateUID()
 		event := cdb.Event{
-			Action:   "new",
-			Type:     "started_batch_crawling",
-			SourceID: 0,
-			Severity: config.Crawler.SourcePriority,
+			Action:    "new",
+			Type:      "started_batch_crawling",
+			SourceID:  0,
+			Severity:  config.Crawler.SourcePriority,
+			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 			Details: map[string]interface{}{
 				"uid":                batchUID,
 				"node":               cmn.GetMicroServiceName(),
@@ -369,10 +370,11 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		createEvent(*db, event, 0)
 		totSrc := crawlSources(&workBlock) // Start the crawling of this batch of sources
 		event = cdb.Event{
-			Action:   "new",
-			Type:     "completed_batch_crawling",
-			SourceID: 0,
-			Severity: config.Crawler.SourcePriority,
+			Action:    "new",
+			Type:      "completed_batch_crawling",
+			SourceID:  0,
+			Severity:  config.Crawler.SourcePriority,
+			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 			Details: map[string]interface{}{
 				"uid":              batchUID,
 				"node":             cmn.GetMicroServiceName(),
