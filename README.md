@@ -94,7 +94,7 @@ The CROWler is built on a few core principles:
 ## Getting Started
 
 - Documentation: [doc/](doc/)
-- GPT-based Support [Chatbot](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support)
+- GPT-based Support [Chatbot](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support) (You must be logged in on CHatGPT to use it properly, CustomGPTs have very limited access otherwise)
 - Configuration examples: [config.default](config.default)
 - Ruleset schemas: [schemas/](schemas/)
 - Plugin examples: [plugins/](plugins/)
