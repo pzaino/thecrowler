@@ -358,7 +358,7 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 - **VSCode Integration**: CROWler can be integrated with Visual Studio Code (VSCode) via its schemas allowing users to manage and edit CROWler configurations, rulesets, and scripts directly within the VSCode environment.
   - *Benefits*: Enhances developer productivity by providing a seamless workflow for managing CROWler projects within a popular code editor.
 - **CI/CD Integration**: CROWler can be integrated into Continuous Integration and Continuous Deployment (CI/CD) pipelines via both:
-  - the freely available Syntax Checked plugin (for rules, configuration and plugins) in GitHub market place.
+  - the freely available Syntax Checker GitHub Action (for rules, configuration and plugins) in GitHub market place. [link to the Syntax Checker action](https://github.com/marketplace/actions/crowler-validation-action).
   - the Plugins Unit Testing tool, also available as a GitHub action in the marketplace.
   - *Benefits*: Streamlines the development and deployment process, ensuring that changes to CROWler configurations are tested and deployed efficiently.
 - **ChatGPT AI Chatbot service**: CROWler has a dedicated ChatGPT AI Chatbot service for interactive support and assistance.
