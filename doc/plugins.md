@@ -17,9 +17,11 @@ A plugin is a JavaScript file that must start with a set of header comments to d
 - **Plugin Name:** Indicated by `// @name:`
 - **Description:** Indicated by `// @description:`
 - **Plugin Type:** Indicated by `// @type:`
-  (Valid values include: `engine_plugin`, `vdi_plugin`, or `event_plugin`)
+  (Valid values include: `engine_plugin`, `vdi_plugin`, `api_plugin`, `lib_plugin` or `event_plugin`. There is also a special type of plugin called `test_plugin` used for unit testing purposes.)
 - **Version (optional):** Indicated by `// @version:`
 - **Event Type (optional):** Indicated by `// @event_type:`
+
+Some plugin types may require additional headers based on their functionality.
 
 ### Example Plugin Header
 
@@ -33,7 +35,13 @@ A plugin is a JavaScript file that must start with a set of header comments to d
 
 Note: The `@event_type` header is only required for `engine_plugin` type plugins and specifies the event that triggers the plugin execution. The events types can be decided by the user, so they can be customized to fit the specific needs. There are some pre-defined event types like:
 
+- `crawl_started`: Triggered when the crawling process for a given Source starts.
 - `crawl_completed`: Triggered when the crawling process for a given Source is completed.
+- `started_batch_crawling`: Triggered when a batch crawling process starts.
+- `completed_batch_crawling`: Triggered when a batch crawling process completes.
+- `crowler_heartbeat`: Triggered periodically as a heartbeat signal from the CROWler.
+- `crowler_heartbeat_response`: Triggered in response to a heartbeat signal.
+- `vdi_failed_to_get_url`: Triggered when the Virtual Desktop Image (VDI) fails to retrieve a URL.
 - `system_event`: Triggered when a system event occurs (e.g., a new Source is added).
 
 ---
