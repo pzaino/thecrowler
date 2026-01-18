@@ -25,6 +25,7 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 - [Event-Driven Architecture](#features-group-18-event-driven-architecture)
 - [AI and traditional Agents](#features-group-19-ai-and-traditional-agents)
 - [3rd party services Data Integration](#features-group-20-3rd-party-services-data-integration)
+- [Dev Tools Integration](#features-group-21-dev-tools-integration)
 
 ## (Features Group 1) Web Crawling
 
@@ -194,6 +195,16 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 ## (Features Group 10) Plugin Support
 
 - **JavaScript Plugins**: Supports custom JavaScript plugins for extending functionality.
+  - Plugins can extend pretty much everything in the CROWler, including:
+    - Crawling Rules
+    - Scrape Rules
+    - Action Rules
+    - Detection Rules
+    - Postprocessing Steps
+    - Events
+    - AI Agents
+    - Traditional Agents
+    - API (adding new endpoints)
   - *Benefits*: Allows customization and enhancement of CROWler's capabilities to meet specific needs.
 
 ## (Features Group 11) Data Storage and Management
@@ -341,5 +352,16 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
   VirusTotal (File)
   Hybrid Analysis (File)
   Cuckoo (File)
+
+## (Features Group 21) Dev Tools Integration
+
+- **VSCode Integration**: CROWler can be integrated with Visual Studio Code (VSCode) via its schemas allowing users to manage and edit CROWler configurations, rulesets, and scripts directly within the VSCode environment.
+  - *Benefits*: Enhances developer productivity by providing a seamless workflow for managing CROWler projects within a popular code editor.
+- **CI/CD Integration**: CROWler can be integrated into Continuous Integration and Continuous Deployment (CI/CD) pipelines via both:
+  - the freely available Syntax Checked plugin (for rules, configuration and plugins) in GitHub market place.
+  - the Plugins Unit Testing tool, also available as a GitHub action in the marketplace.
+  - *Benefits*: Streamlines the development and deployment process, ensuring that changes to CROWler configurations are tested and deployed efficiently.
+- **ChatGPT AI Chatbot service**: CROWler has a dedicated ChatGPT AI Chatbot service for interactive support and assistance.
+  - *Benefits*: Provides users with instant access to help and guidance while using CROWler, improving the user experience.
 
 ---
