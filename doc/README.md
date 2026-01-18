@@ -25,6 +25,8 @@ deployed in a containerized environment.
   - [What are teh CROWler's "sources"?](./sources.md)
   - [Rulesets](./rulesets.md)
 - [API](./api.md)
+- [Plugins](./plugins.md)
+- [Traditional and modern Agents](./crowler_agents_reference.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Test Policy](./test_policy.md)
 - [License](../LICENSE.md)
