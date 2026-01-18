@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,7 @@ import (
 	"unicode/utf8"
 
 	gohtml "golang.org/x/net/html"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/abadojack/whatlanggo"
@@ -2001,6 +2003,40 @@ func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
 	return keywordID, nil
 }
 
+func uniqueStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+
+	for _, s := range in {
+		// Trim only prefix/suffix whitespace
+		s = strings.TrimSpace(s)
+
+		// Ensure valid UTF-8 (otherwise normalization can behave oddly)
+		if !utf8.ValidString(s) {
+			s = strings.ToValidUTF8(s, "")
+		}
+		if s == "" {
+			continue
+		}
+
+		// Canonical Unicode normalization:
+		// makes "é" (U+00E9) and "e\u0301" equivalent.
+		s = norm.NFC.String(s)
+
+		if s == "" {
+			continue
+		}
+
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+
+	return out
+}
+
 // insertKeywords inserts keywords extracted from a web page into the database.
 // It takes a transaction `tx` and a database connection `db` as parameters.
 // The `indexID` parameter represents the ID of the index associated with the keywords.
@@ -2009,11 +2045,13 @@ func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
 func insertKeywords(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Inserting keywords for indexID: %d", indexID)
 
+	// Filter duplicated keywords
+	pageInfo.Keywords = uniqueStrings(pageInfo.Keywords)
+
+	// Sort keywords to ensure consistent insertion order
+	sort.Strings(pageInfo.Keywords)
+
 	for _, kw := range pageInfo.Keywords {
-		kw = strings.TrimSpace(kw)
-		if !utf8.ValidString(kw) {
-			kw = strings.ToValidUTF8(kw, "")
-		}
 		if kw == "" {
 			continue
 		}
