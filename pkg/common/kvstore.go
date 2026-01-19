@@ -188,6 +188,7 @@ func (kv *KeyValueStore) CreateCounterBase(
 	}
 
 	fullKey := createKeyWithCtx(key, "")
+	DebugMsg(DbgLvlDebug3, "[DEBUG-KVStore] CreateCounterBase creating key: %s", fullKey)
 	_, exists := kv.store[fullKey]
 	if exists {
 		return errors.New("counter already exists")
@@ -232,6 +233,7 @@ func (kv *KeyValueStore) WithCounter(
 	defer kv.mutex.Unlock()
 
 	fullKey := createKeyWithCtx(key, "")
+	DebugMsg(DbgLvlDebug3, "[DEBUG-KVStore] WithCounter accessing key: %s", fullKey)
 	entry, ok := kv.store[fullKey]
 	if !ok {
 		if strings.HasSuffix(fullKey, ":") {
