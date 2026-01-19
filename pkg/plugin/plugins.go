@@ -4429,6 +4429,9 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 func addJSAPICounterTryAcquire(vm *otto.Otto) error {
 	return vm.Set("tryAcquireCounter", func(call otto.FunctionCall) otto.Value {
 		key, _ := call.Argument(0).ToString()
+		if strings.TrimSpace(key) == "" {
+			return returnError(vm, "counter key is empty")
+		}
 
 		cfgArg := call.Argument(1)
 		if !cfgArg.IsDefined() {
