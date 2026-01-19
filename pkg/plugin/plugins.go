@@ -4383,7 +4383,10 @@ func normalizeKVValues(value interface{}) interface{} {
 
 func addJSAPICounterCreate(vm *otto.Otto) error {
 	return vm.Set("createCounter", func(call otto.FunctionCall) otto.Value {
-		key, _ := call.Argument(0).ToString()
+		key, err := call.Argument(0).ToString()
+		if err != nil || key == "" {
+			return returnError(vm, "counter key is required")
+		}
 
 		cfgArg := call.Argument(1)
 		if !cfgArg.IsDefined() {
@@ -4400,25 +4403,63 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 			return returnError(vm, "invalid counter config")
 		}
 
-		var max int64
-		var source string
-
-		if v, ok := m["max"].(float64); ok {
-			max = int64(v)
+		// ---- max ----
+		rawMax, ok := m["max"]
+		if !ok {
+			return returnError(vm, "counter max is required")
 		}
+
+		var max int64
+		switch v := rawMax.(type) {
+		case otto.Value:
+			if !v.IsNumber() {
+				return returnError(vm, "counter max must be a number")
+			}
+			i, err := v.ToInteger()
+			if err != nil || i <= 0 {
+				return returnError(vm, "counter max must be > 0")
+			}
+			max = i
+
+		case int:
+			max = int64(v)
+		case int64:
+			max = v
+		case float64:
+			max = int64(v)
+
+		default:
+			return returnError(vm, "counter max must be a number")
+		}
+
 		if max <= 0 {
 			return returnError(vm, "counter max must be > 0")
 		}
 
-		if s, ok := m["source"].(string); ok {
-			source = s
-		} else {
-			source = "js_plugin"
+		// ---- source ----
+		source := "js_plugin"
+		if rawSource, ok := m["source"]; ok {
+			switch v := rawSource.(type) {
+			case string:
+				if v != "" {
+					source = v
+				}
+
+			case otto.Value:
+				if v.IsString() {
+					s, err := v.ToString()
+					if err == nil && s != "" {
+						source = s
+					}
+				}
+
+			default:
+				return returnError(vm, "counter source must be a string")
+			}
 		}
 
 		// Create global counter (CtxID is always "")
-		err = cmn.KVStore.CreateCounterBase(key, max, source)
-		if err != nil {
+		if err := cmn.KVStore.CreateCounterBase(key, max, source); err != nil {
 			return returnError(vm, err.Error())
 		}
 
