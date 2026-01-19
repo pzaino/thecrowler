@@ -4455,24 +4455,80 @@ func addJSAPICounterTryAcquire(vm *otto.Otto) error {
 			owner string
 		)
 
-		if v, ok := m["slots"].(float64); ok {
-			slots = int64(v)
+		raw, ok := m["slots"]
+		if !ok {
+			return returnError(vm, "slots is missing")
 		}
+
+		switch v := raw.(type) {
+		case int:
+			slots = int64(v)
+		case int64:
+			slots = v
+		case float64:
+			slots = int64(v)
+		case float32:
+			slots = int64(v)
+		default:
+			return returnError(vm, "slots must be a number")
+		}
+
 		if slots <= 0 {
 			return returnError(vm, "slots must be > 0")
 		}
 
-		if v, ok := m["ttl_ms"].(float64); ok {
-			ttl = time.Duration(v) * time.Millisecond
+		raw2, ok := m["ttl_ms"]
+		if !ok {
+			return returnError(vm, "ttl_ms is required")
 		}
+
+		switch v := raw2.(type) {
+		case otto.Value:
+			if !v.IsNumber() {
+				return returnError(vm, "ttl_ms must be a number")
+			}
+			i, err := v.ToInteger()
+			if err != nil || i <= 0 {
+				return returnError(vm, "ttl_ms must be > 0")
+			}
+			ttl = time.Duration(i) * time.Millisecond
+
+		case int:
+			ttl = time.Duration(v) * time.Millisecond
+		case int64:
+			ttl = time.Duration(v) * time.Millisecond
+		case float64:
+			ttl = time.Duration(int64(v)) * time.Millisecond
+
+		default:
+			return returnError(vm, "ttl_ms must be a number")
+		}
+
 		if ttl <= 0 {
 			return returnError(vm, "ttl_ms must be > 0")
 		}
 
-		if v, ok := m["owner"].(string); ok {
-			owner = v
-		} else {
+		raw3, ok := m["owner"]
+		if !ok {
 			return returnError(vm, "owner is required")
+		}
+
+		switch v := raw3.(type) {
+		case string:
+			owner = v
+
+		case otto.Value:
+			if !v.IsString() {
+				return returnError(vm, "owner must be a string")
+			}
+			s, err := v.ToString()
+			if err != nil || s == "" {
+				return returnError(vm, "owner must be a non-empty string")
+			}
+			owner = s
+
+		default:
+			return returnError(vm, "owner must be a string")
 		}
 
 		leaseID, okAcquire, err := cmn.KVStore.TryAcquire(
