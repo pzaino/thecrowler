@@ -2294,6 +2294,35 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 	return nil
 }
 
+// isDBSafeText returns false if the data cannot be stored
+// as JSON/text in a DB.
+func isDBSafeText(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return checkTextBytes([]byte(v))
+	case []byte:
+		return checkTextBytes(v)
+	default:
+		return false
+	}
+}
+
+// checkTextBytes returns false if the data cannot be stored
+// as JSON/text in a DB.
+func checkTextBytes(b []byte) bool {
+	// TEXT / JSONB cannot contain NUL bytes
+	if bytes.IndexByte(b, 0x00) != -1 {
+		return false
+	}
+
+	// JSON text must be valid UTF-8
+	if !utf8.Valid(b) {
+		return false
+	}
+
+	return true
+}
+
 func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
 	for {
 		select {
@@ -2376,6 +2405,11 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 						contentType = detectedContentType
 					}
 
+					// Check if decodedPostData is DBSafeText
+					if !isDBSafeText(decodedPostData) {
+						decodedPostData = "[binary data omitted]"
+					}
+
 					// Store Response Metadata
 					for i := range *collectedRequests {
 						if (*collectedRequests)[i]["requestId"] == requestID {
@@ -2402,6 +2436,11 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 
 					// Decode Response Body (if Base64)
 					decodedBody, detectedType := decodeBodyContent(wd, responseBody, isBase64, "")
+
+					// Check if decodedPostData is DBSafeText
+					if !isDBSafeText(decodedBody) {
+						decodedBody = "[binary data omitted]"
+					}
 
 					// Store Response Body
 					for i := range *collectedRequests {
@@ -2489,6 +2528,11 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 				respStatus, _ := resp["status"].(float64)
 				responseBody, _ := resp["response_body"].(string)
 				decodedRespBody, detectedType = decodeBodyContent(wd, responseBody, false, "")
+
+				// Check if decodedPostData is DBSafeText
+				if !isDBSafeText(decodedRespBody) {
+					decodedRespBody = "[binary data omitted]"
+				}
 
 				// Match method, status, and normalized URL
 				if (method == respMethod) &&
@@ -2733,6 +2777,11 @@ func storeResponseMetadata(ctx *ProcessContext, message map[string]interface{}, 
 		contentType = detectedType
 	}
 
+	// Check if decodedPostData is DBSafeText
+	if !isDBSafeText(respBodyDecoded) {
+		respBodyDecoded = "[binary data omitted]"
+	}
+
 	// add to collectedResponses
 	*collectedResponses = append(*collectedResponses, map[string]interface{}{
 		"object_type":           "response",
@@ -2769,6 +2818,11 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}
 
 		// Decode if necessary
 		decodedBody, detectedType := decodeBodyContent(wd, body, isBase64, "")
+
+		// Check if decodedPostData is DBSafeText
+		if !isDBSafeText(decodedBody) {
+			decodedBody = "[binary data omitted]"
+		}
 
 		// Store response body inside the original request
 		requestMap := request.(map[string]interface{})
