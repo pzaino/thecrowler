@@ -234,7 +234,14 @@ func (kv *KeyValueStore) WithCounter(
 	fullKey := createKeyWithCtx(key, "")
 	entry, ok := kv.store[fullKey]
 	if !ok {
-		return errors.New("counter not found")
+		if strings.HasSuffix(fullKey, ":") {
+			// try without context
+			fullKey = strings.TrimSuffix(fullKey, ":")
+			entry, ok = kv.store[fullKey]
+		}
+		if !ok {
+			return errors.New("counter not found")
+		}
 	}
 
 	if entry.Properties.Type != counterName {

@@ -744,6 +744,7 @@ func TestKeyValueStore_AllKeys(t *testing.T) {
 	for _, expectedKey := range expectedKeys {
 		found := false
 		for _, key := range keys {
+			fmt.Printf("Checking key: '%s' vs '%s'\n", key, expectedKey)
 			if key == expectedKey {
 				found = true
 				break
