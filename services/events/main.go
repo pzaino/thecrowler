@@ -544,6 +544,9 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	eventID := cdb.GenerateEventUID(event)
 	event.Action = actionInsert
+	if event.ExpiresAt == "" {
+		event.ExpiresAt = time.Now().Add(5 * time.Minute).Format(time.RFC3339)
+	}
 
 	// Async process
 	jobQueue <- event

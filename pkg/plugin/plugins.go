@@ -4409,7 +4409,7 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 			return returnError(vm, "counter max is required")
 		}
 
-		var max int64
+		var maxVal int64
 		switch v := rawMax.(type) {
 		case otto.Value:
 			if !v.IsNumber() {
@@ -4419,20 +4419,20 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 			if err != nil || i <= 0 {
 				return returnError(vm, "counter max must be > 0")
 			}
-			max = i
+			maxVal = i
 
 		case int:
-			max = int64(v)
+			maxVal = int64(v)
 		case int64:
-			max = v
+			maxVal = v
 		case float64:
-			max = int64(v)
+			maxVal = int64(v)
 
 		default:
 			return returnError(vm, "counter max must be a number")
 		}
 
-		if max <= 0 {
+		if maxVal <= 0 {
 			return returnError(vm, "counter max must be > 0")
 		}
 
@@ -4459,7 +4459,7 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 		}
 
 		// Create global counter (CtxID is always "")
-		if err := cmn.KVStore.CreateCounterBase(key, max, source); err != nil {
+		if err := cmn.KVStore.CreateCounterBase(key, maxVal, source); err != nil {
 			return returnError(vm, err.Error())
 		}
 
