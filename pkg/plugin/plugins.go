@@ -4383,7 +4383,10 @@ func normalizeKVValues(value interface{}) interface{} {
 
 func addJSAPICounterCreate(vm *otto.Otto) error {
 	return vm.Set("createCounter", func(call otto.FunctionCall) otto.Value {
-		key, _ := call.Argument(0).ToString()
+		key, err := call.Argument(0).ToString()
+		if err != nil || key == "" {
+			return returnError(vm, "counter key is required")
+		}
 
 		cfgArg := call.Argument(1)
 		if !cfgArg.IsDefined() {
@@ -4400,25 +4403,63 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 			return returnError(vm, "invalid counter config")
 		}
 
-		var max int64
-		var source string
-
-		if v, ok := m["max"].(float64); ok {
-			max = int64(v)
+		// ---- max ----
+		rawMax, ok := m["max"]
+		if !ok {
+			return returnError(vm, "counter max is required")
 		}
+
+		var max int64
+		switch v := rawMax.(type) {
+		case otto.Value:
+			if !v.IsNumber() {
+				return returnError(vm, "counter max must be a number")
+			}
+			i, err := v.ToInteger()
+			if err != nil || i <= 0 {
+				return returnError(vm, "counter max must be > 0")
+			}
+			max = i
+
+		case int:
+			max = int64(v)
+		case int64:
+			max = v
+		case float64:
+			max = int64(v)
+
+		default:
+			return returnError(vm, "counter max must be a number")
+		}
+
 		if max <= 0 {
 			return returnError(vm, "counter max must be > 0")
 		}
 
-		if s, ok := m["source"].(string); ok {
-			source = s
-		} else {
-			source = "js_plugin"
+		// ---- source ----
+		source := "js_plugin"
+		if rawSource, ok := m["source"]; ok {
+			switch v := rawSource.(type) {
+			case string:
+				if v != "" {
+					source = v
+				}
+
+			case otto.Value:
+				if v.IsString() {
+					s, err := v.ToString()
+					if err == nil && s != "" {
+						source = s
+					}
+				}
+
+			default:
+				return returnError(vm, "counter source must be a string")
+			}
 		}
 
 		// Create global counter (CtxID is always "")
-		err = cmn.KVStore.CreateCounterBase(key, max, source)
-		if err != nil {
+		if err := cmn.KVStore.CreateCounterBase(key, max, source); err != nil {
 			return returnError(vm, err.Error())
 		}
 
@@ -4429,6 +4470,9 @@ func addJSAPICounterCreate(vm *otto.Otto) error {
 func addJSAPICounterTryAcquire(vm *otto.Otto) error {
 	return vm.Set("tryAcquireCounter", func(call otto.FunctionCall) otto.Value {
 		key, _ := call.Argument(0).ToString()
+		if strings.TrimSpace(key) == "" {
+			return returnError(vm, "counter key is empty")
+		}
 
 		cfgArg := call.Argument(1)
 		if !cfgArg.IsDefined() {
@@ -4444,6 +4488,7 @@ func addJSAPICounterTryAcquire(vm *otto.Otto) error {
 		if !ok {
 			return returnError(vm, "invalid acquire config")
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-tryAcquireCounter] config: %+v", m)
 
 		var (
 			slots int64
@@ -4451,24 +4496,80 @@ func addJSAPICounterTryAcquire(vm *otto.Otto) error {
 			owner string
 		)
 
-		if v, ok := m["slots"].(float64); ok {
-			slots = int64(v)
+		raw, ok := m["slots"]
+		if !ok {
+			return returnError(vm, "slots is missing")
 		}
+
+		switch v := raw.(type) {
+		case int:
+			slots = int64(v)
+		case int64:
+			slots = v
+		case float64:
+			slots = int64(v)
+		case float32:
+			slots = int64(v)
+		default:
+			return returnError(vm, "slots must be a number")
+		}
+
 		if slots <= 0 {
 			return returnError(vm, "slots must be > 0")
 		}
 
-		if v, ok := m["ttl_ms"].(float64); ok {
-			ttl = time.Duration(v) * time.Millisecond
+		raw2, ok := m["ttl_ms"]
+		if !ok {
+			return returnError(vm, "ttl_ms is required")
 		}
+
+		switch v := raw2.(type) {
+		case otto.Value:
+			if !v.IsNumber() {
+				return returnError(vm, "ttl_ms must be a number")
+			}
+			i, err := v.ToInteger()
+			if err != nil || i <= 0 {
+				return returnError(vm, "ttl_ms must be > 0")
+			}
+			ttl = time.Duration(i) * time.Millisecond
+
+		case int:
+			ttl = time.Duration(v) * time.Millisecond
+		case int64:
+			ttl = time.Duration(v) * time.Millisecond
+		case float64:
+			ttl = time.Duration(int64(v)) * time.Millisecond
+
+		default:
+			return returnError(vm, "ttl_ms must be a number")
+		}
+
 		if ttl <= 0 {
 			return returnError(vm, "ttl_ms must be > 0")
 		}
 
-		if v, ok := m["owner"].(string); ok {
-			owner = v
-		} else {
+		raw3, ok := m["owner"]
+		if !ok {
 			return returnError(vm, "owner is required")
+		}
+
+		switch v := raw3.(type) {
+		case string:
+			owner = v
+
+		case otto.Value:
+			if !v.IsString() {
+				return returnError(vm, "owner must be a string")
+			}
+			s, err := v.ToString()
+			if err != nil || s == "" {
+				return returnError(vm, "owner must be a non-empty string")
+			}
+			owner = s
+
+		default:
+			return returnError(vm, "owner must be a string")
 		}
 
 		leaseID, okAcquire, err := cmn.KVStore.TryAcquire(
