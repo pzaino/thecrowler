@@ -4447,7 +4447,7 @@ func addJSAPICounterTryAcquire(vm *otto.Otto) error {
 		if !ok {
 			return returnError(vm, "invalid acquire config")
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "tryAcquireCounter config: %+v", m)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-tryAcquireCounter] config: %+v", m)
 
 		var (
 			slots int64
