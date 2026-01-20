@@ -2297,13 +2297,52 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 // isDBSafeText returns false if the data cannot be stored
 // as JSON/text in a DB.
 func isDBSafeText(v any) bool {
-	switch v := v.(type) {
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "XHR response_body dynamic type: %T", v)
+
+	switch x := v.(type) {
+	case nil:
+		return true
+
 	case string:
-		return checkTextBytes([]byte(v))
+		return checkTextBytes([]byte(x))
+
 	case []byte:
-		return checkTextBytes(v)
+		return checkTextBytes(x)
+
+	case json.RawMessage:
+		return checkTextBytes([]byte(x))
+
+	case *string:
+		if x == nil {
+			return true
+		}
+		return checkTextBytes([]byte(*x))
+
+	case *json.RawMessage:
+		if x == nil {
+			return true
+		}
+		return checkTextBytes([]byte(*x))
+
+	case map[string]any:
+		for _, v := range x {
+			if !isDBSafeText(v) {
+				return false
+			}
+		}
+		return true
+
+	case []any:
+		for _, v := range x {
+			if !isDBSafeText(v) {
+				return false
+			}
+		}
+		return true
+
 	default:
-		return false
+		// numbers, bools, structs, etc. are DB-safe
+		return true
 	}
 }
 
