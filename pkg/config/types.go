@@ -126,8 +126,8 @@ type EngineSchedule struct {
 
 // ActiveDateRange represents a start and end datetime period
 type ActiveDateRange struct {
-	From string `json:"from" yaml:"from"` // Start date-time (ISO8601)
-	To   string `json:"to" yaml:"to"`     // End date-time (ISO8601)
+	From string `json:"from" yaml:"from"` // Start date-time (RFC3339)
+	To   string `json:"to" yaml:"to"`     // End date-time (RFC3339)
 }
 
 // TimeRange represents daily working hours (24-hour HH:MM)
@@ -156,7 +156,7 @@ func (s *EngineSchedule) IsActive(now time.Time) bool {
 	if s.ActiveDates != nil {
 		start, err1 := time.ParseInLocation(time.RFC3339, s.ActiveDates.From, loc)
 		end, err2 := time.ParseInLocation(time.RFC3339, s.ActiveDates.To, loc)
-		if err1 == nil && err2 == nil {
+		if (err1 == nil) && (err2 == nil) {
 			if now.Before(start) || now.After(end) {
 				return false
 			}
@@ -178,8 +178,16 @@ func (s *EngineSchedule) IsActive(now time.Time) bool {
 		end, err2 := time.ParseInLocation(layout, s.TimeRange.To, loc)
 		if err1 == nil && err2 == nil {
 			current, _ := time.ParseInLocation(layout, now.Format(layout), loc)
-			if current.Before(start) || current.After(end) {
-				return false
+			if start.Before(end) || start.Equal(end) {
+				// same-day window
+				if current.Before(start) || current.After(end) {
+					return false
+				}
+			} else {
+				// overnight window
+				if current.After(end) && current.Before(start) {
+					return false
+				}
 			}
 		}
 	}
