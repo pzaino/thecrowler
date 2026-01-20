@@ -88,6 +88,8 @@ const (
 	optBrowsingRCRecu = "right_click_recursive"
 	optBrowsingMobile = "mobile"
 	optCookiesOnReq   = "on_request"
+
+	binaryDataOmitted = "[binary data omitted]"
 )
 
 var (
@@ -2297,7 +2299,7 @@ func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 // isDBSafeText returns false if the data cannot be stored
 // as JSON/text in a DB.
 func isDBSafeText(v any) bool {
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "XHR response_body dynamic type: %T", v)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR response_body dynamic type: %T", v)
 
 	switch x := v.(type) {
 	case nil:
@@ -2446,7 +2448,7 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 
 					// Check if decodedPostData is DBSafeText
 					if !isDBSafeText(decodedPostData) {
-						decodedPostData = "[binary data omitted]"
+						decodedPostData = binaryDataOmitted
 					}
 
 					// Store Response Metadata
@@ -2478,7 +2480,7 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 
 					// Check if decodedPostData is DBSafeText
 					if !isDBSafeText(decodedBody) {
-						decodedBody = "[binary data omitted]"
+						decodedBody = binaryDataOmitted
 					}
 
 					// Store Response Body
@@ -2570,7 +2572,7 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 
 				// Check if decodedPostData is DBSafeText
 				if !isDBSafeText(decodedRespBody) {
-					decodedRespBody = "[binary data omitted]"
+					decodedRespBody = binaryDataOmitted
 				}
 
 				// Match method, status, and normalized URL
@@ -2818,7 +2820,7 @@ func storeResponseMetadata(ctx *ProcessContext, message map[string]interface{}, 
 
 	// Check if decodedPostData is DBSafeText
 	if !isDBSafeText(respBodyDecoded) {
-		respBodyDecoded = "[binary data omitted]"
+		respBodyDecoded = binaryDataOmitted
 	}
 
 	// add to collectedResponses
@@ -2860,7 +2862,7 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}
 
 		// Check if decodedPostData is DBSafeText
 		if !isDBSafeText(decodedBody) {
-			decodedBody = "[binary data omitted]"
+			decodedBody = binaryDataOmitted
 		}
 
 		// Store response body inside the original request
