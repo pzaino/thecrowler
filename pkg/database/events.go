@@ -267,6 +267,14 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 		"NOTIFY eventscheduler, $1",
 		e.ID,
 	)
+	if err != nil {
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"Failed to notify scheduler for event %s: %v",
+			e.ID,
+			err,
+		)
+	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Scheduled event %s at %s with recurrence %s", e.ID, schedTime, recurrence)
 	return schedTime, nil
