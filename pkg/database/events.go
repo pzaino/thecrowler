@@ -230,12 +230,13 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	e.ID = GenerateEventUID(e)
 
 	// Insert the scheduled event into the EventSchedules table
+	// NOTE: We re-use the event-id for the schedule ID to reduce over-scheduling for the same event
 	_, err = (*db).Exec(`
-        INSERT INTO EventSchedules (event_id, next_run, recurrence_interval, active)
+        INSERT INTO EventSchedules (schedule_id, event_id, next_run, recurrence_interval, active)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (event_id) DO UPDATE
         SET next_run = $2, recurrence_interval = $3, active = $4`,
-		e.ID, schedTime, recurrence, true)
+		e.ID, e.ID, schedTime, recurrence, true)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error scheduling event in DB: %v", err)
 		return schedTime, err

@@ -230,15 +230,23 @@ CREATE TABLE IF NOT EXISTS Events (
 -- EventSchedules table stores the schedules for the events
 CREATE TABLE IF NOT EXISTS EventSchedules (
     schedule_id CHAR(64) PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP,
-    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Stable scheduler identity (idempotent scheduling)
     event_sched_uid VARCHAR(64) UNIQUE NOT NULL,
-    event_id CHAR(64) NOT NULL REFERENCES Events(event_sha256) ON DELETE CASCADE,
+
+    -- Logical event identity (NOT owned by Events lifecycle)
+    event_id CHAR(64) UNIQUE NOT NULL,
+
     recurrence_interval VARCHAR(50),
     next_run TIMESTAMP NOT NULL,
     last_run TIMESTAMP,
-    active BOOLEAN DEFAULT TRUE,
+
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+
     details JSONB NOT NULL
 );
 
