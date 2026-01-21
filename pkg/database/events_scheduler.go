@@ -279,8 +279,14 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		rec := strings.ToLower(strings.TrimSpace(nextEvent.Recurrence))
 		if rec == recurrenceNone || rec == recurrenceNever {
 
-			_, err := (*db).Exec(
-				"UPDATE EventSchedules SET active = false WHERE event_id = $1",
+			_, err := (*db).Exec(`
+				UPDATE EventSchedules
+				SET
+					last_run = $1,
+					active = false,
+					last_updated_at = NOW()
+				WHERE event_id = $2`,
+				now,
 				nextEvent.EventID,
 			)
 			if err != nil {
