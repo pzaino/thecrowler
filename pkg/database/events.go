@@ -264,7 +264,7 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	}
 
 	_, err = (*db).Exec(
-		"NOTIFY eventscheduler, $1",
+		"SELECT pg_notify('eventscheduler', $1)",
 		e.ID,
 	)
 	if err != nil {
