@@ -82,6 +82,13 @@ func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 	uid := GenerateEventUID(e)
 	e.ID = uid
 
+	// Check if the event has expiration:
+	if strings.TrimSpace(e.ExpiresAt) == "" {
+		// Add standard 5 minutes expiration
+		expTime := time.Now().Add(5 * time.Minute)
+		e.ExpiresAt = expTime.Format(time.RFC3339)
+	}
+
 	// Start a transaction
 	tx, err := (*db).BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelReadCommitted,
@@ -221,13 +228,6 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 
 	// Generate a unique identifier for the event
 	e.ID = GenerateEventUID(e)
-
-	// Check if the event has expiration:
-	if strings.TrimSpace(e.ExpiresAt) == "" {
-		// Add standard 2 minutes expiration
-		expTime := time.Now().Add(2 * time.Minute)
-		e.ExpiresAt = expTime.Format(time.RFC3339)
-	}
 
 	// Insert the scheduled event into the EventSchedules table
 	_, err = (*db).Exec(`
