@@ -229,14 +229,37 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	// Generate a unique identifier for the event
 	e.ID = GenerateEventUID(e)
 
+	eventJSON, err := json.Marshal(e)
+	if err != nil {
+		return schedTime, fmt.Errorf("failed to marshal event for scheduler: %w", err)
+	}
+
 	// Insert the scheduled event into the EventSchedules table
 	// NOTE: We re-use the event-id for the schedule ID to reduce over-scheduling for the same event
 	_, err = (*db).Exec(`
-        INSERT INTO EventSchedules (schedule_id, event_id, next_run, recurrence_interval, active)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (event_id) DO UPDATE
-        SET next_run = $2, recurrence_interval = $3, active = $4`,
-		e.ID, e.ID, schedTime, recurrence, true)
+        INSERT INTO EventSchedules (
+			schedule_id,
+			event_id,
+			next_run,
+			recurrence_interval,
+			active,
+			details
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (event_id) DO UPDATE
+		SET
+			next_run = EXCLUDED.next_run,
+			recurrence_interval = EXCLUDED.recurrence_interval,
+			active = EXCLUDED.active,
+			details = EXCLUDED.details,
+			last_updated_at = CURRENT_TIMESTAMP;`,
+		e.ID,       // schedule_id (intentional reuse)
+		e.ID,       // event_id
+		schedTime,  // next_run
+		recurrence, // recurrence_interval
+		true,       // active
+		eventJSON,  // details
+	)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error scheduling event in DB: %v", err)
 		return schedTime, err
