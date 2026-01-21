@@ -233,7 +233,7 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	// NOTE: We re-use the event-id for the schedule ID to reduce over-scheduling for the same event
 	_, err = (*db).Exec(`
         INSERT INTO EventSchedules (schedule_id, event_id, next_run, recurrence_interval, active)
-        VALUES ($1, $2, $3, $4)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (event_id) DO UPDATE
         SET next_run = $2, recurrence_interval = $3, active = $4`,
 		e.ID, e.ID, schedTime, recurrence, true)
