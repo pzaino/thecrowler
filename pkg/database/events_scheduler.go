@@ -40,6 +40,7 @@ const (
 )
 
 var queueLock sync.Mutex
+var schedulerWakeup = make(chan struct{}, 1)
 
 // ScheduledEvent represents a scheduled event.
 type ScheduledEvent struct {
@@ -160,6 +161,13 @@ func loadSingleSchedule(db *Handler, pq *EventQueue, eventID string) error {
 
 	heap.Push(pq, &ev)
 
+	select {
+	case schedulerWakeup <- struct{}{}:
+	default:
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Scheduler loaded/updated event %s", eventID)
+
 	return nil
 }
 
@@ -207,7 +215,10 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		queueLock.Unlock()
 		if empty {
 			timer.Reset(time.Hour * 24)
-			<-timer.C
+			select {
+			case <-timer.C:
+			case <-schedulerWakeup:
+			}
 			continue
 		}
 
@@ -234,7 +245,13 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		}
 		timer.Reset(d)
 
-		<-timer.C
+		select {
+		case <-timer.C:
+			// normal execution
+		case <-schedulerWakeup:
+			// a new (possibly earlier) event was added
+			continue // re-evaluate queue immediately
+		}
 
 		queueLock.Lock()
 		nextEvent = heap.Pop(pq).(*ScheduledEvent)
