@@ -222,6 +222,13 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 	// Generate a unique identifier for the event
 	e.ID = GenerateEventUID(e)
 
+	// Check if the event has expiration:
+	if strings.TrimSpace(e.ExpiresAt) == "" {
+		// Add standard 2 minutes expiration
+		expTime := time.Now().Add(2 * time.Minute)
+		e.ExpiresAt = expTime.Format(time.RFC3339)
+	}
+
 	// Insert the scheduled event into the EventSchedules table
 	_, err = (*db).Exec(`
         INSERT INTO EventSchedules (event_id, next_run, recurrence_interval, active)
