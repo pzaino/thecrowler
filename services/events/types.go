@@ -43,9 +43,9 @@ type HeartbeatReport struct {
 
 // ScheduleEventRequest represents a request to schedule an event.
 type ScheduleEventRequest struct {
-	Event      cdb.Event `json:"event"`
-	ScheduleAt string    `json:"schedule_at"`
-	Recurrence string    `json:"recurrence"`
+	Event      cdb.Event `json:"event"`       // The actual CROWler event to be scheduled
+	ScheduleAt string    `json:"schedule_at"` // The time at which the event should be scheduled (RFC3339 format)
+	Recurrence string    `json:"recurrence"`  // Recurrence pattern (e.g., "daily", "weekly", "monthly")
 }
 
 var (

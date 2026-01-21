@@ -25,6 +25,7 @@ import (
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 const (
@@ -36,14 +37,19 @@ const (
 	week   = "week"
 	month  = "month"
 	year   = "year"
+
+	recurrenceNone  = ""
+	recurrenceNever = "never"
 )
 
 var queueLock sync.Mutex
+var schedulerWakeup = make(chan struct{}, 1)
 
 // ScheduledEvent represents a scheduled event.
 type ScheduledEvent struct {
 	EventID    string
 	NextRun    time.Time
+	LastRun    time.Time
 	Recurrence string
 	Event      Event
 }
@@ -77,7 +83,7 @@ func (pq *EventQueue) Pop() interface{} {
 }
 
 // StartScheduler initializes the event scheduler and starts the processing loop.
-func StartScheduler(db *Handler) {
+func StartScheduler(db *Handler, cfg cfg.Config) {
 	pq := &EventQueue{}
 	heap.Init(pq)
 
@@ -88,6 +94,85 @@ func StartScheduler(db *Handler) {
 	}
 
 	go schedulerLoop(db, pq)
+	go schedulerListenerLoop(db, pq, cfg)
+}
+
+func schedulerListenerLoop(db *Handler, pq *EventQueue, cfg cfg.Config) {
+	listener := (*db).NewListener()
+	if listener == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "DB does not support listeners")
+		return
+	}
+
+	err := listener.Connect(
+		cfg,
+		2*time.Second,
+		30*time.Second,
+		func(ev ListenerEventType, err error) {
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Scheduler listener event %v: %v", ev, err)
+			}
+		},
+	)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to connect scheduler listener: %v", err)
+		return
+	}
+	defer listener.Close()
+
+	if err := listener.Listen("eventscheduler"); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to LISTEN on eventscheduler: %v", err)
+		return
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Scheduler listening for schedule updates")
+
+	for n := range listener.Notify() {
+		eventID := n.Extra()
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Scheduler notified for event %s", eventID)
+
+		if err := loadSingleSchedule(db, pq, eventID); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to load schedule %s: %v", eventID, err)
+		}
+	}
+}
+
+func loadSingleSchedule(db *Handler, pq *EventQueue, eventID string) error {
+	row := (*db).QueryRow(`
+		SELECT event_id, next_run, recurrence_interval, details
+		FROM EventSchedules
+		WHERE event_id = $1 AND active
+	`, eventID)
+
+	var ev ScheduledEvent
+	var payload []byte
+
+	if err := row.Scan(
+		&ev.EventID,
+		&ev.NextRun,
+		&ev.Recurrence,
+		&payload,
+	); err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(payload, &ev.Event); err != nil {
+		return err
+	}
+
+	queueLock.Lock()
+	defer queueLock.Unlock()
+
+	heap.Push(pq, &ev)
+
+	select {
+	case schedulerWakeup <- struct{}{}:
+	default:
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "Scheduler loaded/updated event %s", eventID)
+
+	return nil
 }
 
 // loadEventsFromDB loads scheduled events from the database into the priority queue.
@@ -134,7 +219,10 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		queueLock.Unlock()
 		if empty {
 			timer.Reset(time.Hour * 24)
-			<-timer.C
+			select {
+			case <-timer.C:
+			case <-schedulerWakeup:
+			}
 			continue
 		}
 
@@ -161,7 +249,13 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 		}
 		timer.Reset(d)
 
-		<-timer.C
+		select {
+		case <-timer.C:
+			// normal execution
+		case <-schedulerWakeup:
+			// a new (possibly earlier) event was added
+			continue // re-evaluate queue immediately
+		}
 
 		queueLock.Lock()
 		nextEvent = heap.Pop(pq).(*ScheduledEvent)
@@ -178,12 +272,20 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 			continue
 		}
 
+		// Update current LastRun
+		nextEvent.LastRun = time.Now()
+
 		// One-shot event: deactivate schedule and do NOT requeue
 		rec := strings.ToLower(strings.TrimSpace(nextEvent.Recurrence))
-		if rec == "" || rec == "never" {
+		if rec == recurrenceNone || rec == recurrenceNever {
 
-			_, err := (*db).Exec(
-				"UPDATE EventSchedules SET active = false WHERE event_id = $1",
+			_, err := (*db).Exec(`
+				UPDATE EventSchedules
+				SET
+					last_run = NOW(),
+					active = false,
+					last_updated_at = NOW()
+				WHERE event_id = $1`,
 				nextEvent.EventID,
 			)
 			if err != nil {
@@ -235,9 +337,15 @@ func processEvent(db *Handler, event *ScheduledEvent) error {
 
 // updateScheduleInDB updates the next run time of a recurring event in the database.
 func updateScheduleInDB(db *Handler, event *ScheduledEvent) error {
-	_, err := (*db).Exec(
-		"UPDATE EventSchedules SET next_run = $1 WHERE event_id = $2",
-		event.NextRun, event.EventID,
+	_, err := (*db).Exec(`
+        UPDATE EventSchedules
+        SET
+            last_run = NOW(),
+            next_run = $1,
+            last_updated_at = NOW()
+        WHERE event_id = $2`,
+		event.NextRun,
+		event.EventID,
 	)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to update schedule for event %s: %v", event.EventID, err)
