@@ -63,9 +63,9 @@ func GenerateEventUID(e Event) string {
 }
 
 // InitializeScheduler initializes the centralized scheduler during application startup.
-func InitializeScheduler(db *Handler) {
+func InitializeScheduler(db *Handler, cfg cfg.Config) {
 	eventsSchedulerInitialize = false
-	go StartScheduler(db)
+	go StartScheduler(db, cfg)
 	eventsSchedulerInitialize = true
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Event scheduler started")
 }
@@ -210,10 +210,6 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error)
 
 // ScheduleEvent schedules a new event using the centralized scheduler.
 func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string) (time.Time, error) {
-	if !eventsSchedulerInitialize {
-		InitializeScheduler(db)
-	}
-
 	// Parse the schedule time
 	schedTime, err := time.Parse(time.RFC3339, scheduleTime)
 	if err != nil {
@@ -266,6 +262,11 @@ func ScheduleEvent(db *Handler, e Event, scheduleTime string, recurrence string)
 		cmn.DebugMsg(cmn.DbgLvlError, "Error scheduling event in DB: %v", err)
 		return schedTime, err
 	}
+
+	_, err = (*db).Exec(
+		"NOTIFY eventscheduler, $1",
+		e.ID,
+	)
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Scheduled event %s at %s with recurrence %s", e.ID, schedTime, recurrence)
 	return schedTime, nil

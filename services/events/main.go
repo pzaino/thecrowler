@@ -231,7 +231,7 @@ func main() {
 		go cdb.ListenForEvents(&dbHandler, handleNotification)
 
 		// Start events scheduler
-		cdb.StartScheduler(&dbHandler)
+		cdb.StartScheduler(&dbHandler, config)
 
 		// Start heartbeat loop if enabled
 		if config.Events.HeartbeatEnabled {

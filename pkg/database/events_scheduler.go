@@ -25,6 +25,7 @@ import (
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 const (
@@ -77,7 +78,7 @@ func (pq *EventQueue) Pop() interface{} {
 }
 
 // StartScheduler initializes the event scheduler and starts the processing loop.
-func StartScheduler(db *Handler) {
+func StartScheduler(db *Handler, cfg cfg.Config) {
 	pq := &EventQueue{}
 	heap.Init(pq)
 
@@ -88,6 +89,78 @@ func StartScheduler(db *Handler) {
 	}
 
 	go schedulerLoop(db, pq)
+	go schedulerListenerLoop(db, pq, cfg)
+}
+
+func schedulerListenerLoop(db *Handler, pq *EventQueue, cfg cfg.Config) {
+	listener := (*db).NewListener()
+	if listener == nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "DB does not support listeners")
+		return
+	}
+
+	err := listener.Connect(
+		cfg,
+		2*time.Second,
+		30*time.Second,
+		func(ev ListenerEventType, err error) {
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Scheduler listener event %v: %v", ev, err)
+			}
+		},
+	)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to connect scheduler listener: %v", err)
+		return
+	}
+	defer listener.Close()
+
+	if err := listener.Listen("eventscheduler"); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to LISTEN on eventscheduler: %v", err)
+		return
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Scheduler listening for schedule updates")
+
+	for n := range listener.Notify() {
+		eventID := n.Extra()
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Scheduler notified for event %s", eventID)
+
+		if err := loadSingleSchedule(db, pq, eventID); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to load schedule %s: %v", eventID, err)
+		}
+	}
+}
+
+func loadSingleSchedule(db *Handler, pq *EventQueue, eventID string) error {
+	row := (*db).QueryRow(`
+		SELECT event_id, next_run, recurrence_interval, details
+		FROM EventSchedules
+		WHERE event_id = $1 AND active
+	`, eventID)
+
+	var ev ScheduledEvent
+	var payload []byte
+
+	if err := row.Scan(
+		&ev.EventID,
+		&ev.NextRun,
+		&ev.Recurrence,
+		&payload,
+	); err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(payload, &ev.Event); err != nil {
+		return err
+	}
+
+	queueLock.Lock()
+	defer queueLock.Unlock()
+
+	heap.Push(pq, &ev)
+
+	return nil
 }
 
 // loadEventsFromDB loads scheduled events from the database into the priority queue.
