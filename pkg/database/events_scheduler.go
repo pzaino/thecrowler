@@ -37,6 +37,9 @@ const (
 	week   = "week"
 	month  = "month"
 	year   = "year"
+
+	recurrenceNone  = ""
+	recurrenceNever = "never"
 )
 
 var queueLock sync.Mutex
@@ -46,6 +49,7 @@ var schedulerWakeup = make(chan struct{}, 1)
 type ScheduledEvent struct {
 	EventID    string
 	NextRun    time.Time
+	LastRun    time.Time
 	Recurrence string
 	Event      Event
 }
@@ -268,9 +272,12 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 			continue
 		}
 
+		// Update current LastRun
+		nextEvent.LastRun = time.Now()
+
 		// One-shot event: deactivate schedule and do NOT requeue
 		rec := strings.ToLower(strings.TrimSpace(nextEvent.Recurrence))
-		if rec == "" || rec == "never" {
+		if rec == recurrenceNone || rec == recurrenceNever {
 
 			_, err := (*db).Exec(
 				"UPDATE EventSchedules SET active = false WHERE event_id = $1",
@@ -325,9 +332,16 @@ func processEvent(db *Handler, event *ScheduledEvent) error {
 
 // updateScheduleInDB updates the next run time of a recurring event in the database.
 func updateScheduleInDB(db *Handler, event *ScheduledEvent) error {
-	_, err := (*db).Exec(
-		"UPDATE EventSchedules SET next_run = $1 WHERE event_id = $2",
-		event.NextRun, event.EventID,
+	_, err := (*db).Exec(`
+        UPDATE EventSchedules
+        SET
+            last_run = $1,
+            next_run = $2,
+            last_updated_at = NOW()
+        WHERE event_id = $3`,
+		event.LastRun,
+		event.NextRun,
+		event.EventID,
 	)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to update schedule for event %s: %v", event.EventID, err)
