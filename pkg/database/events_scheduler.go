@@ -282,11 +282,10 @@ func schedulerLoop(db *Handler, pq *EventQueue) {
 			_, err := (*db).Exec(`
 				UPDATE EventSchedules
 				SET
-					last_run = $1,
+					last_run = NOW(),
 					active = false,
 					last_updated_at = NOW()
-				WHERE event_id = $2`,
-				now,
+				WHERE event_id = $1`,
 				nextEvent.EventID,
 			)
 			if err != nil {
@@ -341,11 +340,10 @@ func updateScheduleInDB(db *Handler, event *ScheduledEvent) error {
 	_, err := (*db).Exec(`
         UPDATE EventSchedules
         SET
-            last_run = $1,
-            next_run = $2,
+            last_run = NOW(),
+            next_run = $1,
             last_updated_at = NOW()
-        WHERE event_id = $3`,
-		event.LastRun,
+        WHERE event_id = $2`,
 		event.NextRun,
 		event.EventID,
 	)
