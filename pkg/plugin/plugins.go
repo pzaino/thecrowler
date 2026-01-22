@@ -795,7 +795,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	// Normalize timeout
 	d := time.Duration(timeout) * time.Second
-	if d <= 0 || d > maxTimeout {
+	if (d <= 0) || (d > maxTimeout) {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin `%s` timeout %s, using default %s", p.Name, d, defaultTimeout)
 		d = defaultTimeout
 	}
@@ -2087,7 +2087,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 	// Implement console.log
 	err = console.Set("log", func(call otto.FunctionCall) otto.Value {
 		message := formatConsoleLog(extractArguments(call))
-		cmn.DebugMsg(cmn.DbgLvlInfo, "plugin `%s`: %v", message)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "plugin `%s`: %v", plgName, message)
 		return otto.UndefinedValue()
 	})
 	if err != nil {
@@ -2098,7 +2098,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 	// Implement console.error
 	err = console.Set("error", func(call otto.FunctionCall) otto.Value {
 		message := formatConsoleLog(extractArguments(call))
-		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s`: %v", message)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s`: %v", plgName, message)
 		return otto.UndefinedValue()
 	})
 	if err != nil {
@@ -2109,7 +2109,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 	// Optionally implement console.warn
 	err = console.Set("warn", func(call otto.FunctionCall) otto.Value {
 		message := formatConsoleLog(extractArguments(call))
-		cmn.DebugMsg(cmn.DbgLvlWarn, "plugin `%s`: %v", message)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "plugin `%s`: %v", plgName, message)
 		return otto.UndefinedValue()
 	})
 	if err != nil {
