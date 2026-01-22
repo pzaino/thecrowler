@@ -1104,7 +1104,7 @@ func processEvent(event cdb.Event) {
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
-		if (event.Type != eventTypeSystem) && (event.Type != "heartbeat_response") {
+		if (event.Type != eventTypeSystem) && (event.Type != "crowler_heartbeat") {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
 		}
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
