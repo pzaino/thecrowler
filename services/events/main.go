@@ -920,31 +920,61 @@ func performDBMaintenance(db cdb.Handler) error {
 
 	if db.DBMS() == cdb.DBPostgresStr {
 		maintenanceCommands = []string{
-			"VACUUM Keywords",
-			"VACUUM MetaTags",
-			"VACUUM WebObjects",
-			"VACUUM SearchIndex",
-			"VACUUM KeywordIndex",
-			"VACUUM MetaTagsIndex",
-			"VACUUM WebObjectsIndex",
-			"REINDEX TABLE WebObjects",
-			"REINDEX TABLE SearchIndex",
-			"REINDEX TABLE KeywordIndex",
-			"REINDEX TABLE WebObjectsIndex",
-			"REINDEX TABLE MetaTagsIndex",
-			"REINDEX TABLE NetInfoIndex",
-			"REINDEX TABLE HTTPInfoIndex",
-			"REINDEX TABLE SourceInformationSeedIndex",
-			"REINDEX TABLE SourceOwnerIndex",
-			"REINDEX TABLE SourceSearchIndex",
+			"VACUUM (ANALYZE) Keywords",
+			"VACUUM (ANALYZE) MetaTags",
+			"VACUUM (ANALYZE) WebObjects",
+			"VACUUM (ANALYZE) Sessions",
+			"VACUUM (ANALYZE) Events",
+			"VACUUM (ANALYZE) NetInfo",
+			"VACUUM (ANALYZE) HTTPInfo",
+			"VACUUM (ANALYZE) SearchIndex",
+			"VACUUM (ANALYZE) KeywordIndex",
+			"VACUUM (ANALYZE) MetaTagsIndex",
+			"VACUUM (ANALYZE) WebObjectsIndex",
+			"VACUUM (ANALYZE) NetInfoIndex",
+			"VACUUM (ANALYZE) HTTPInfoIndex",
+			"VACUUM (ANALYZE) SourceInformationSeedIndex",
+			"VACUUM (ANALYZE) SourceOwnerIndex",
+			"VACUUM (ANALYZE) SourceSearchIndex",
+			"VACUUM (ANALYZE) SourceSessionIndex",
+			"VACUUM (ANALYZE) SourceCategoryIndex",
+			"VACUUM (ANALYZE) OwnerRelationships",
 		}
+		/*
+			 TODO: Add monthly maintenance with these:
+				"REINDEX TABLE WebObjects",
+				"REINDEX TABLE SearchIndex",
+				"REINDEX TABLE KeywordIndex",
+				"REINDEX TABLE WebObjectsIndex",
+				"REINDEX TABLE MetaTagsIndex",
+				"REINDEX TABLE NetInfoIndex",
+				"REINDEX TABLE HTTPInfoIndex",
+				"REINDEX TABLE SourceInformationSeedIndex",
+				"REINDEX TABLE SourceOwnerIndex",
+				"REINDEX TABLE SourceSearchIndex",
+		*/
 	}
 
+	// Execute the maintenance commands and collect all the errors
+	var errs []error
 	for _, cmd := range maintenanceCommands {
 		_, err := db.Exec(cmd)
 		if err != nil {
-			return fmt.Errorf("error executing maintenance command (%s): %w", cmd, err)
+			errs = append(errs, fmt.Errorf("error executing maintenance command (%s): %w", cmd, err))
 		}
+	}
+
+	if len(errs) > 0 {
+		var sb strings.Builder
+		sb.WriteString("database maintenance encountered errors:\n")
+
+		for _, err := range errs {
+			sb.WriteString("- ")
+			sb.WriteString(err.Error())
+			sb.WriteString("\n")
+		}
+
+		return errors.New(sb.String())
 	}
 
 	return nil
