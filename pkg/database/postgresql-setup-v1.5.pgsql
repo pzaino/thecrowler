@@ -1856,7 +1856,7 @@ CREATE OR REPLACE FUNCTION update_sources(
     p_regular_crawling VARCHAR,
     p_processing_timeout VARCHAR
 )
-RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
+RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
 $$
 DECLARE
     priority_list TEXT[];
