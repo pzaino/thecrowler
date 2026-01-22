@@ -44,6 +44,8 @@ const (
 	actionInsert = "insert"
 
 	sysEventDBMaintenance = "db_maintenance"
+
+	eventTypeSystem = "system_event"
 )
 
 var (
@@ -1093,7 +1095,7 @@ func processEvent(event cdb.Event) {
 		return
 	}
 
-	if event.Type == "system_event" {
+	if event.Type == eventTypeSystem {
 		handleSystemEvent(&dbHandler, event)
 	}
 
@@ -1102,7 +1104,7 @@ func processEvent(event cdb.Event) {
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
-		if event.Type != "system_event" {
+		if (event.Type != eventTypeSystem) && (event.Type != "heartbeat_response") {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
 		}
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
