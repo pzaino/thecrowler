@@ -1856,7 +1856,7 @@ CREATE OR REPLACE FUNCTION update_sources(
     p_regular_crawling VARCHAR,
     p_processing_timeout VARCHAR
 )
-RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMP) AS
+RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
 $$
 DECLARE
     priority_list TEXT[];
@@ -2029,6 +2029,10 @@ ALTER TABLE screenshots OWNER TO :CROWLER_DB_USER;
 ALTER TABLE keywords OWNER TO :CROWLER_DB_USER;
 ALTER TABLE events OWNER TO :CROWLER_DB_USER;
 ALTER TABLE categories OWNER TO :CROWLER_DB_USER;
+ALTER TABLE sessions OWNER TO :CROWLER_DB_USER;
+ALTER TABLE sourcesessionindex OWNER TO :CROWLER_DB_USER;
+ALTER TABLE sourcecategoryindex OWNER TO :CROWLER_DB_USER;
+ALTER TABLE ownerrelationships OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

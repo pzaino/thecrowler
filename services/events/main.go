@@ -42,6 +42,8 @@ const (
 	//errRateLimitExceed = "Rate limit exceeded"
 
 	actionInsert = "insert"
+
+	sysEventDBMaintenance = "db_maintenance"
 )
 
 var (
@@ -893,7 +895,7 @@ func processInternalEvent(event cdb.Event) {
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	}
 
-	if event.Action == "db_maintenance" {
+	if event.Action == sysEventDBMaintenance {
 		err := performDBMaintenance(dbHandler)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Database maintenance failed: %v", err)
@@ -908,6 +910,87 @@ func processInternalEvent(event cdb.Event) {
 	}
 }
 
+func handleSystemEvent(db *cdb.Handler, event cdb.Event) {
+	var systemAction string
+	// Check if we have an event.Action first
+	if event.Action != "" {
+		systemAction = event.Action
+	} else {
+		var ok bool
+		systemAction, ok = event.Details["action"].(string)
+		if !ok || strings.TrimSpace(systemAction) == "" {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "System event has no valid system_action, ignoring")
+			return
+		}
+	}
+
+	systemAction = strings.ToLower(strings.TrimSpace(systemAction))
+
+	switch systemAction {
+	case sysEventDBMaintenance:
+		// Perform database maintenance
+		err := performDBMaintenance(*db)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Database maintenance failed: %v", err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "Database maintenance completed successfully")
+		}
+	case "update_debug_level":
+		// Check if there is a tag "level" and process it
+		if event.Details["level"] == nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, no level specified.")
+			return
+		}
+		// Update the debug level
+		newLevel := event.Details["level"].(string)
+		// Convert newLevel to a DebugLevel
+		newLevel = strings.ToLower(newLevel)
+		go updateDebugLevel(newLevel)
+	default:
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Unknown system_action '%s', ignoring", systemAction)
+	}
+}
+
+// Update the debug level of the application
+func updateDebugLevel(newLevel string) {
+	// Get configuration lock
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	var dbgLvl cmn.DbgLevel
+	switch newLevel {
+	case "debug":
+		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug")
+	case "debug1":
+		config.DebugLevel = 1
+		cmn.SetDebugLevelFromString("debug1")
+	case "debug2":
+		config.DebugLevel = 2
+		cmn.SetDebugLevelFromString("debug2")
+	case "debug3":
+		config.DebugLevel = 3
+		cmn.SetDebugLevelFromString("debug3")
+	case "debug4":
+		config.DebugLevel = 4
+		cmn.SetDebugLevelFromString("debug4")
+	case "debug5":
+		config.DebugLevel = 5
+		cmn.SetDebugLevelFromString("debug5")
+	case "info":
+		config.DebugLevel = 0
+		cmn.SetDebugLevelFromString("info")
+	default:
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Ignoring event, invalid debug level specified: %s", newLevel)
+		return
+	}
+
+	// Update the debug level
+	dbgLvl = cmn.DbgLevel(config.DebugLevel)
+	cmn.SetDebugLevel(dbgLvl)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Debug level updated to: %d", cmn.GetDebugLevel())
+}
+
 // This function is responsible for performing database maintenance
 // to keep it lean and fast. Note: it's specific for PostgreSQL.
 func performDBMaintenance(db cdb.Handler) error {
@@ -920,31 +1003,61 @@ func performDBMaintenance(db cdb.Handler) error {
 
 	if db.DBMS() == cdb.DBPostgresStr {
 		maintenanceCommands = []string{
-			"VACUUM Keywords",
-			"VACUUM MetaTags",
-			"VACUUM WebObjects",
-			"VACUUM SearchIndex",
-			"VACUUM KeywordIndex",
-			"VACUUM MetaTagsIndex",
-			"VACUUM WebObjectsIndex",
-			"REINDEX TABLE WebObjects",
-			"REINDEX TABLE SearchIndex",
-			"REINDEX TABLE KeywordIndex",
-			"REINDEX TABLE WebObjectsIndex",
-			"REINDEX TABLE MetaTagsIndex",
-			"REINDEX TABLE NetInfoIndex",
-			"REINDEX TABLE HTTPInfoIndex",
-			"REINDEX TABLE SourceInformationSeedIndex",
-			"REINDEX TABLE SourceOwnerIndex",
-			"REINDEX TABLE SourceSearchIndex",
+			"VACUUM (ANALYZE) Keywords",
+			"VACUUM (ANALYZE) MetaTags",
+			"VACUUM (ANALYZE) WebObjects",
+			"VACUUM (ANALYZE) Sessions",
+			"VACUUM (ANALYZE) Events",
+			"VACUUM (ANALYZE) NetInfo",
+			"VACUUM (ANALYZE) HTTPInfo",
+			"VACUUM (ANALYZE) SearchIndex",
+			"VACUUM (ANALYZE) KeywordIndex",
+			"VACUUM (ANALYZE) MetaTagsIndex",
+			"VACUUM (ANALYZE) WebObjectsIndex",
+			"VACUUM (ANALYZE) NetInfoIndex",
+			"VACUUM (ANALYZE) HTTPInfoIndex",
+			"VACUUM (ANALYZE) SourceInformationSeedIndex",
+			"VACUUM (ANALYZE) SourceOwnerIndex",
+			"VACUUM (ANALYZE) SourceSearchIndex",
+			"VACUUM (ANALYZE) SourceSessionIndex",
+			"VACUUM (ANALYZE) SourceCategoryIndex",
+			"VACUUM (ANALYZE) OwnerRelationships",
 		}
+		/*
+			 TODO: Add monthly maintenance with these:
+				"REINDEX TABLE WebObjects",
+				"REINDEX TABLE SearchIndex",
+				"REINDEX TABLE KeywordIndex",
+				"REINDEX TABLE WebObjectsIndex",
+				"REINDEX TABLE MetaTagsIndex",
+				"REINDEX TABLE NetInfoIndex",
+				"REINDEX TABLE HTTPInfoIndex",
+				"REINDEX TABLE SourceInformationSeedIndex",
+				"REINDEX TABLE SourceOwnerIndex",
+				"REINDEX TABLE SourceSearchIndex",
+		*/
 	}
 
+	// Execute the maintenance commands and collect all the errors
+	var errs []error
 	for _, cmd := range maintenanceCommands {
 		_, err := db.Exec(cmd)
 		if err != nil {
-			return fmt.Errorf("error executing maintenance command (%s): %w", cmd, err)
+			errs = append(errs, fmt.Errorf("error executing maintenance command (%s): %w", cmd, err))
 		}
+	}
+
+	if len(errs) > 0 {
+		var sb strings.Builder
+		sb.WriteString("database maintenance encountered errors:\n")
+
+		for _, err := range errs {
+			sb.WriteString("- ")
+			sb.WriteString(err.Error())
+			sb.WriteString("\n")
+		}
+
+		return errors.New(sb.String())
 	}
 
 	return nil
@@ -980,12 +1093,18 @@ func processEvent(event cdb.Event) {
 		return
 	}
 
+	if event.Type == "system_event" {
+		handleSystemEvent(&dbHandler, event)
+	}
+
 	p, pExists := PluginRegister.GetPluginsByEventType(event.Type)
 	a, aExists := agt.AgentsRegistry.GetAgentsByEventType(event.Type)
 
 	// Check if we have a Plugin for this event
 	if !pExists && !aExists {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
+		if event.Type != "system_event" {
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ProcessEvent] No Plugins or Agents found to handle event type '%s', ignoring event", event.Type)
+		}
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 		return
 	}
