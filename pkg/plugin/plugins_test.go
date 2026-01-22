@@ -328,7 +328,7 @@ func TestSetCrowlerJSAPI(t *testing.T) {
 	db = nil
 
 	ctx, cancel := context.WithCancel(context.Background())
-	err := setCrowlerJSAPI(ctx, vm, db, nil, nil)
+	err := setCrowlerJSAPI(ctx, vm, db, nil, nil, "test")
 	cancel()
 	if err != nil {
 		t.Errorf("setCrowlerJSAPI returned an error: %v", err)
@@ -596,7 +596,7 @@ func TestAddJSAPIFetch(t *testing.T) {
 func TestAddJSAPIConsoleLog(t *testing.T) {
 	vm := otto.New()
 
-	err := addJSAPIConsoleLog(vm)
+	err := addJSAPIConsoleLog(vm, "test")
 	if err != nil {
 		t.Errorf("addJSAPIConsoleLog returned an error: %v", err)
 	}

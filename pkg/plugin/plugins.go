@@ -717,7 +717,7 @@ func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
 
 func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler, rt *pluginRuntime) (map[string]interface{}, error) {
 	const (
-		errMsg01       = "Error getting result from JS plugin: %v"
+		errMsg01       = "plugin `%s` error getting results: %v"
 		defaultTimeout = 30 * time.Second
 		maxTimeout     = 1 * time.Hour
 	)
@@ -727,7 +727,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	// Final safety net: never let a panic escape this function.
 	defer func() {
 		if r := recover(); r != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "execEnginePlugin recovered from panic: %v", r)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` engine recovered from panic: %v", p.Name, r)
 		}
 	}()
 
@@ -783,7 +783,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	defer stopAllTimers()
 
 	// Install CROWler JS extensions
-	if err := setCrowlerJSAPI(ctx, vm, db, addTimer, rt); err != nil {
+	if err := setCrowlerJSAPI(ctx, vm, db, addTimer, rt, p.Name); err != nil {
 		return result, err
 	}
 
@@ -791,12 +791,12 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	if err := vm.Set("params", params); err != nil {
 		return result, err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the VM successfully: %v", params)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the plugin `%s` VM successfully: %v", p.Name, params)
 
 	// Normalize timeout
 	d := time.Duration(timeout) * time.Second
 	if d <= 0 || d > maxTimeout {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin timeout %s, using default %s", d, defaultTimeout)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin `%s` timeout %s, using default %s", p.Name, d, defaultTimeout)
 		d = defaultTimeout
 	}
 
@@ -805,7 +805,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "background goroutine recovered: %v", r)
+					cmn.DebugMsg(cmn.DbgLvlError, "background goroutine for plugin `%s` recovered: %v", p.Name, r)
 				}
 			}()
 			f()
@@ -822,7 +822,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		case <-timer.C:
 			// Non-blocking send to avoid deadlock if VM already ended.
 			select {
-			case vm.Interrupt <- func() { panic(fmt.Sprintf("JavaScript execution timeout after %s", d)) }:
+			case vm.Interrupt <- func() { panic(fmt.Sprintf("plugin `%s` execution timeout after %s", p.Name, d)) }:
 			default:
 			}
 		case <-done:
@@ -852,7 +852,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		resultRaw, err = vm.Get("results")
 		if err != nil || !resultRaw.IsDefined() {
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+				cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, p.Name, err)
 			}
 			resultRaw = rval
 		}
@@ -860,7 +860,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	exported, err := resultRaw.Export()
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, p.Name, err)
 		return nil, err
 	}
 	//cmn.DebugMsg(cmn.DbgLvlDebug5, "Exported value from VM: %T", exported)
@@ -868,7 +868,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	// Convert exported correctly:
 	result, err = normalizeVMExport(exported)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, p.Name, err)
 		return result, err
 	}
 
@@ -1412,6 +1412,7 @@ func removeJSFunctions(vm *otto.Otto) error {
 func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	db *cdb.Handler, addTimer func(*time.Timer),
 	rt *pluginRuntime,
+	plgName string,
 ) error {
 	// Extends Otto JS VM with CROWler JS API functions
 
@@ -1425,7 +1426,7 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPIDebugLevel(vm); err != nil {
 		return err
 	}
-	if err := addJSAPIConsoleLog(vm); err != nil {
+	if err := addJSAPIConsoleLog(vm, plgName); err != nil {
 		return err
 	}
 	if err := addJSAPIISODate(vm); err != nil {
@@ -2075,44 +2076,44 @@ func addJSAPIFetch(vm *otto.Otto) error {
 	return err
 }
 
-func addJSAPIConsoleLog(vm *otto.Otto) error {
+func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 	// Implement the console object with log method
 	console, err := vm.Object(`console = {}`)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error creating console object:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` creating console object :", plgName, err)
 		return err
 	}
 
 	// Implement console.log
 	err = console.Set("log", func(call otto.FunctionCall) otto.Value {
 		message := formatConsoleLog(extractArguments(call))
-		cmn.DebugMsg(cmn.DbgLvlInfo, message)
+		cmn.DebugMsg(cmn.DbgLvlInfo, "plugin `%s`: %v", message)
 		return otto.UndefinedValue()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error setting console.log function:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.log function:", plgName, err)
 		return err
 	}
 
 	// Implement console.error
 	err = console.Set("error", func(call otto.FunctionCall) otto.Value {
 		message := formatConsoleLog(extractArguments(call))
-		cmn.DebugMsg(cmn.DbgLvlError, message)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s`: %v", message)
 		return otto.UndefinedValue()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error setting console.error function:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.error function:", plgName, err)
 		return err
 	}
 
 	// Optionally implement console.warn
 	err = console.Set("warn", func(call otto.FunctionCall) otto.Value {
 		message := formatConsoleLog(extractArguments(call))
-		cmn.DebugMsg(cmn.DbgLvlWarn, message)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "plugin `%s`: %v", message)
 		return otto.UndefinedValue()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error setting console.warn function:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.warn function:", plgName, err)
 		return err
 	}
 
