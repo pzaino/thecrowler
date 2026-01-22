@@ -409,7 +409,7 @@ func TestAddJSHTTPRequest(t *testing.T) {
 func TestAddJSAPIClient(t *testing.T) {
 	vm := otto.New()
 
-	err := addJSAPIClient(vm)
+	err := addJSAPIClient(vm, "test")
 	if err != nil {
 		t.Errorf("addJSAPIClient returned an error: %v", err)
 	}

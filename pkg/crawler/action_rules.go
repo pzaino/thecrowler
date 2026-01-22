@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	errNoElementFound        = "no element '%v' found."
-	errFailedToGetLoc        = "failed to get element location: %v"
+	errNoElementFound        = "Rule `%s` reported no element found: %v"
+	errFailedToGetLoc        = "Rule `%s` reported failed to get element location: %v"
 	defaultActionRulesConfig = "{\"config\":\"default\"}"
 )
 
@@ -353,7 +353,7 @@ func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, r.RuleName, err)
 		err = nil
 	}
 
@@ -361,7 +361,7 @@ func executeActionScrollToElement(ctx *ProcessContext, r *rules.ActionRule, wd *
 	if wdf != nil {
 		loc, err := wdf.Location()
 		if err != nil {
-			return fmt.Errorf(errFailedToGetLoc, err)
+			return fmt.Errorf(errFailedToGetLoc, r.RuleName, err)
 		}
 
 		// JavaScript to send a POST request to Rbee for scrolling to the element
@@ -450,7 +450,7 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 	// Find the element
 	wdf, _, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, r.RuleName, err)
 		err = nil
 	}
 
@@ -466,7 +466,7 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 	if wdf != nil {
 		loc, err := wdf.Location()
 		if err != nil {
-			return fmt.Errorf(errFailedToGetLoc, err)
+			return fmt.Errorf(errFailedToGetLoc, r.RuleName, err)
 		}
 
 		// JavaScript to send a POST request to Rbee for mouse move and click
@@ -728,7 +728,7 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 	// Find the element
 	wdf, selector, err := findElementBySelectorType(ctx, wd, r.Selectors)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, r.RuleName, err)
 		return nil
 	}
 
@@ -736,7 +736,7 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 	if wdf != nil {
 		loc, err := wdf.Location()
 		if err != nil {
-			return fmt.Errorf(errFailedToGetLoc, err)
+			return fmt.Errorf(errFailedToGetLoc, r.RuleName, err)
 		}
 
 		// JavaScript to send a POST request to Rbee for mouse move and click

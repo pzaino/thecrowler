@@ -1483,7 +1483,7 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSHTTPRequest(vm); err != nil {
 		return err
 	}
-	if err := addJSAPIClient(vm); err != nil {
+	if err := addJSAPIClient(vm, plgName); err != nil {
 		return err
 	}
 	if err := addJSAPIFetch(vm); err != nil {
@@ -1701,7 +1701,7 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 	console.log(response.body);
 
 */
-func addJSAPIClient(vm *otto.Otto) error {
+func addJSAPIClient(vm *otto.Otto, plgName string) error {
 	apiClientObject, _ := vm.Object(`({})`)
 
 	// Define the "post" method
@@ -1712,21 +1712,21 @@ func addJSAPIClient(vm *otto.Otto) error {
 		// Get the request object (second argument)
 		requestArg := call.Argument(1)
 		if !requestArg.IsDefined() {
-			fmt.Println("Request argument is undefined.")
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported request argument is undefined.", plgName)
 			return otto.UndefinedValue()
 		}
 
 		// Export the request object
 		request, err := requestArg.Export()
 		if err != nil {
-			fmt.Printf("Error exporting request object: %v\n", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported exporting request object: %v\n", plgName, err)
 			return otto.UndefinedValue()
 		}
 
 		// Type assert the exported request as a map
 		reqMap, ok := request.(map[string]interface{})
 		if !ok {
-			fmt.Println("Request object is not a valid map.")
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported request object is not a valid map.", plgName)
 			return otto.UndefinedValue()
 		}
 
@@ -1743,7 +1743,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 			} else {
 				bodyBytes, err := json.Marshal(b) // Serialize object to JSON
 				if err != nil {
-					fmt.Printf("Error marshaling body: %v\n", err)
+					cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported marshaling body: %v\n", plgName, err)
 					return otto.UndefinedValue()
 				}
 				body = bytes.NewReader(bodyBytes)
@@ -1764,7 +1764,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 		// Create the HTTP request
 		req, err := http.NewRequest("POST", url, body)
 		if err != nil {
-			fmt.Printf("Error creating request: %v\n", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported creating request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
@@ -1778,39 +1778,39 @@ func addJSAPIClient(vm *otto.Otto) error {
 		}
 
 		// output the object for debugging purposes:
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Request object:", req)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-apiClient] plugin `%s` request object: %v", plgName, req)
 
 		resp, err := client.Do(req)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "making request:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported making request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
 
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "reading response body:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported reading response body: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
 		respObject, _ := vm.Object(`({})`)
 		err = respObject.Set("status", resp.StatusCode)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "setting status:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting status: %v", plgName, err)
 		}
 		err = respObject.Set("headers", resp.Header)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "setting headers:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting headers: %v", plgName, err)
 		}
 		err = respObject.Set("body", string(respBody))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "setting body:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting body: %v", plgName, err)
 		}
 
 		return respObject.Value()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "setting post method:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting post method: %v", plgName, err)
 	}
 
 	// Define the "get" method
@@ -1852,7 +1852,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 		// Create the HTTP request
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error creating GET request:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported creating GET request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
@@ -1864,7 +1864,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 		// Execute the request
 		resp, err := client.Do(req)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error executing GET request:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported executing GET request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
@@ -1872,7 +1872,7 @@ func addJSAPIClient(vm *otto.Otto) error {
 		// Read response body
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error reading GET response body:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported reading GET response body: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
@@ -1880,21 +1880,21 @@ func addJSAPIClient(vm *otto.Otto) error {
 		respObject, _ := vm.Object(`({})`)
 		err = respObject.Set("status", resp.StatusCode)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error setting status in response object:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting status in response object: %v", plgName, err)
 		}
 		err = respObject.Set("headers", resp.Header)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error setting headers in response object:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting headers in response object: %v", plgName, err)
 		}
 		err = respObject.Set("body", string(respBody))
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Error setting body in response object:", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting body in response object: %v", plgName, err)
 		}
 
 		return respObject.Value()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "setting get method:", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting get method: %v", plgName, err)
 	}
 
 	return vm.Set("apiClient", apiClientObject)
@@ -2080,7 +2080,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 	// Implement the console object with log method
 	console, err := vm.Object(`console = {}`)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` creating console object :", plgName, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` creating console object: %v", plgName, err)
 		return err
 	}
 
@@ -2091,7 +2091,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 		return otto.UndefinedValue()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.log function:", plgName, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.log function: %v", plgName, err)
 		return err
 	}
 
@@ -2102,7 +2102,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 		return otto.UndefinedValue()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.error function:", plgName, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.error function: %v", plgName, err)
 		return err
 	}
 
@@ -2113,7 +2113,7 @@ func addJSAPIConsoleLog(vm *otto.Otto, plgName string) error {
 		return otto.UndefinedValue()
 	})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.warn function:", plgName, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` setting console.warn function: %v", plgName, err)
 		return err
 	}
 
