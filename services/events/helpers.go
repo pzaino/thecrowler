@@ -46,7 +46,7 @@ var durationUnits = map[string]time.Duration{
 func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}, errMsg string, errCode int, successCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg+"%v", err)
 		// escape " in the error message
 		errMsg = strings.ReplaceAll(err.Error(), "\"", "\\\"")
 		// Encapsulate the error message in a JSON string
