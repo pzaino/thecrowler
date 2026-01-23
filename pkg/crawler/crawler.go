@@ -3501,7 +3501,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	docType := inferDocumentType(url, &wd)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Document Type: %s", id, docType)
 
-	if docTypeIsHTML(docType) || strings.TrimSpace(docType) == "" {
+	if docTypeIsHTML(docType) || (strings.TrimSpace(docType) == "") {
 		// WaitForDomComplete
 		startTime := time.Now()
 		err = waitForDomComplete(wd, 5*time.Second)
@@ -3886,6 +3886,40 @@ func looksLikeHTML(body []byte) bool {
 	return false
 }
 
+const maxSniffBytes = 512
+
+func sniffHTML(body []byte) bool {
+	if len(body) > maxSniffBytes {
+		body = body[:maxSniffBytes]
+	}
+
+	// Trim leading whitespace and BOM
+	b := bytes.TrimLeft(body, "\x00\x09\x0a\x0d\x20")
+
+	lb := bytes.ToLower(b)
+
+	// Strong HTML signals
+	if bytes.HasPrefix(lb, []byte("<!doctype html")) {
+		return true
+	}
+
+	// Tag-based heuristics
+	htmlMarkers := [][]byte{
+		[]byte("<html"),
+		[]byte("<head"),
+		[]byte("<body"),
+		[]byte("<meta charset"),
+	}
+
+	for _, m := range htmlMarkers {
+		if bytes.Contains(lb, m) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func docTypeIsHTML(mime string) bool {
 	if strings.TrimSpace(mime) == "" {
 		return false
@@ -3958,9 +3992,10 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 
 	// Copy the current webPage object
 	webPageCopy := *webPage
+	htmlContentTest, _ := webPageCopy.PageSource()
 
 	// Get the HTML content of the page
-	if docTypeIsHTML(objType) || strings.TrimSpace((docType)) == "" {
+	if docTypeIsHTML(objType) || (strings.TrimSpace((docType)) == "") || (sniffHTML([]byte(htmlContentTest))) {
 		htmlContent, _ = webPageCopy.PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
@@ -4000,7 +4035,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			scrapedList = append(scrapedList, scrapedMap)
 			ctx.Status.TotalScraped.Add(1)
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Scraped Data (JSON): %v", scrapedList)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ExtractPageInfo] Scraped Data (JSON): %v", scrapedList)
 
 		// Get the title of the page (if any)
 		titleTmp, _ := webPageCopy.Title()
