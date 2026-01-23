@@ -270,7 +270,7 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 				// build an internal event to request DB maintenance
 				maintenanceEvent := cdb.Event{
 					Action:    sysEventDBMaintenance,
-					Type:      "system_event",
+					Type:      eventTypeSystem,
 					Severity:  "low",
 					Timestamp: time.Now().Format(time.RFC3339),
 					Details: map[string]interface{}{
