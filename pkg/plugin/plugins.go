@@ -69,8 +69,11 @@ const (
 )
 
 var (
+	// TestMode indicates whether the system is running in test mode
 	TestMode = false
 )
+
+var ErrPluginShuttingDown = fmt.Errorf("plugin is shutting down")
 
 // NewJSPluginRegister returns a new JSPluginRegister
 func NewJSPluginRegister() *JSPluginRegister {
@@ -231,7 +234,7 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 			if pType != "" {
 				for _, plugin := range plugins {
 					if pType == eventPlugin {
-						if plugin.EventType != "" || plugin.PType != eventPlugin {
+						if (plugin.EventType != "") || (plugin.PType != eventPlugin) {
 							pluginsSet = append(pluginsSet, plugin)
 						}
 					} else if pType == vdiPlugin {
@@ -590,6 +593,7 @@ func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, para
 	// So this must be either an API, Event or Engine Plugin:
 
 	// First let's initialize a RunTime for it and its callstack:
+	// (this should ensure the right level of isolation between all the parallel plugins being executed)
 	rt := &pluginRuntime{
 		subs: make(map[string]*pluginEventSub),
 	}
@@ -663,6 +667,9 @@ type pluginRuntime struct {
 	callStack []*JSPlugin
 	// currently executing plugin
 	current *JSPlugin
+
+	// shutdown flag
+	shutdown bool
 
 	// VM lifecycle
 	done <-chan struct{} // closed when VM exits
@@ -750,6 +757,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		var subs []*pluginEventSub
 
 		rt.mu.Lock()
+		rt.shutdown = true
 		if len(rt.subs) > 0 {
 			subs = make([]*pluginEventSub, 0, len(rt.subs))
 			for _, s := range rt.subs {
@@ -1934,6 +1942,7 @@ func addJSAPIFetch(vm *otto.Otto) error {
 		options := call.Argument(1)
 		method := httpMethodGet
 		headers := make(map[string]string)
+		var timeoutMs int64 = 30000 // Default timeout
 		var body io.Reader
 
 		if options.IsObject() {
@@ -1962,6 +1971,14 @@ func addJSAPIFetch(vm *otto.Otto) error {
 					}
 					headers[key] = valueStr
 				}
+				// Extract timeout if provided
+				timeoutVal, err := optionsObj.Get("timeout")
+				if err == nil && timeoutVal.IsNumber() {
+					timeoutFloat, err := timeoutVal.ToFloat()
+					if err == nil {
+						timeoutMs = int64(timeoutFloat)
+					}
+				}
 			}
 
 			// Extract body
@@ -1989,7 +2006,8 @@ func addJSAPIFetch(vm *otto.Otto) error {
 		}
 
 		// Make the HTTP request
-		client := &http.Client{}
+		timeout := time.Duration(timeoutMs) * time.Millisecond
+		client := &http.Client{Timeout: timeout}
 		resp, err := client.Do(req)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "EngineJS: making HTTP request:", err)
@@ -2512,6 +2530,10 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		id, ch, cancel := cdb.GlobalEventBus.Subscribe(filter, int(buffer))
 
 		rt.mu.Lock()
+		if rt.shutdown {
+			rt.mu.Unlock()
+			return otto.NullValue()
+		}
 		rt.subs[id] = &pluginEventSub{
 			id:     id,
 			ch:     ch,
@@ -2538,6 +2560,10 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		}
 
 		rt.mu.Lock()
+		if rt.shutdown {
+			rt.mu.Unlock()
+			return otto.NullValue()
+		}
 		sub := rt.subs[subID]
 		rt.mu.Unlock()
 
@@ -2581,6 +2607,10 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		}
 
 		rt.mu.Lock()
+		if rt.shutdown {
+			rt.mu.Unlock()
+			return otto.NullValue()
+		}
 		sub := rt.subs[subID]
 		if sub != nil {
 			delete(rt.subs, subID)
