@@ -747,12 +747,21 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 	// Ensure cleanup on exit
 	defer func() {
+		var subs []*pluginEventSub
+
 		rt.mu.Lock()
-		for _, s := range rt.subs {
+		if len(rt.subs) > 0 {
+			subs = make([]*pluginEventSub, 0, len(rt.subs))
+			for _, s := range rt.subs {
+				subs = append(subs, s)
+			}
+			rt.subs = nil
+		}
+		rt.mu.Unlock()
+
+		for _, s := range subs {
 			s.cancel()
 		}
-		rt.subs = nil
-		rt.mu.Unlock()
 	}()
 
 	vm.Interrupt = make(chan func(), 1)
@@ -2411,7 +2420,7 @@ func addJSAPIScheduleEvent(vm *otto.Otto, db *cdb.Handler) error {
 		sourceID := uint64(sourceIDraw) //nolint:gosec // We are not using end-user input here
 
 		severity, err := call.Argument(2).ToString()
-		if err != nil || strings.TrimSpace(severity) == "" {
+		if (err != nil) || (strings.TrimSpace(severity) == "") {
 			severity = cdb.EventSeverityInfo // Default severity
 		}
 
