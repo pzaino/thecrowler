@@ -89,6 +89,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	mxConns, mxIdleConns := determineConnectionLimits(c)
 	//handler.db.SetConnMaxLifetime(time.Minute * 5)
 	handler.db.SetConnMaxLifetime(90 * time.Second)
+	handler.db.SetConnMaxIdleTime(30 * time.Second)
 	handler.db.SetMaxOpenConns(mxConns)
 	handler.db.SetMaxIdleConns(mxIdleConns)
 
