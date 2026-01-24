@@ -264,6 +264,7 @@ func startEventJanitor(db *cdb.Handler, interval time.Duration) {
 }
 
 func cleanupExpiredEvents(db *cdb.Handler) {
+	// 1. Cleanup expired Events
 	res, err := (*db).Exec(`
 		DELETE FROM Events
 		WHERE expires_at IS NOT NULL
@@ -275,10 +276,29 @@ func cleanupExpiredEvents(db *cdb.Handler) {
 		return
 	}
 
-	rows, err := res.RowsAffected()
-	if err == nil && rows > 0 {
+	if rows, err := res.RowsAffected(); err == nil && rows > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug,
 			"Event cleanup removed %d expired events", rows)
+	}
+
+	// 2. Cleanup inactive, executed, non-recurring schedules
+	res, err = (*db).Exec(`
+		DELETE FROM EventSchedules
+		WHERE
+			active = FALSE
+			AND last_run IS NOT NULL
+			AND last_run < now()
+			AND (recurrence_interval IS NULL OR recurrence_interval = '')
+	`)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"EventSchedules cleanup failed: %v", err)
+		return
+	}
+
+	if rows, err := res.RowsAffected(); err == nil && rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"EventSchedules cleanup removed %d stale schedules", rows)
 	}
 }
 
