@@ -87,7 +87,8 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 
 	// Set connection parameters (open and idle connections)
 	mxConns, mxIdleConns := determineConnectionLimits(c)
-	handler.db.SetConnMaxLifetime(time.Minute * 5)
+	//handler.db.SetConnMaxLifetime(time.Minute * 5)
+	handler.db.SetConnMaxLifetime(90 * time.Second)
 	handler.db.SetMaxOpenConns(mxConns)
 	handler.db.SetMaxIdleConns(mxIdleConns)
 
@@ -376,7 +377,10 @@ func (l *PostgresListener) pollNotifications() {
 				}
 			}
 
-			rows.Close() // IMPORTANT: no defer in loops
+			err = rows.Close()
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Listener rows close error: %v", err)
+			}
 		}
 	}
 }
