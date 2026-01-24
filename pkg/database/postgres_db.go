@@ -344,34 +344,39 @@ func (l *PostgresListener) Ping() error {
 	return fmt.Errorf("listener is not connected")
 }
 
-// pollNotifications continuously polls for notifications
+// pollNotifications waits for PostgreSQL NOTIFY events without polling
 func (l *PostgresListener) pollNotifications() {
+	ctx := context.Background()
+
 	for {
 		select {
 		case <-l.done:
 			return
 		default:
-			// Use the connection to wait for notifications
-			if _, err := l.conn.ExecContext(context.Background(), "SELECT 1"); err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
-				continue
-			}
-
-			rows, err := l.conn.QueryContext(context.Background(), "SELECT pg_notification_queue_usage()")
+			// WAIT FOR NOTIFY blocks until a notification arrives
+			rows, err := l.conn.QueryContext(ctx, "WAIT FOR NOTIFY")
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
+				cmn.DebugMsg(cmn.DbgLvlError, "Listener wait error: %v", err)
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 
-			defer rows.Close() //nolint:errcheck // We can't check returned error when using defer
-			for rows.Next() {
+			// WAIT FOR NOTIFY returns exactly one row
+			if rows.Next() {
 				var channel, payload string
-				if err := rows.Scan(&channel, &payload); err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Listener poll error: %v", err)
-					continue
+				if err := rows.Scan(&channel, &payload); err == nil {
+					select {
+					case l.notify <- &PostgresNotification{
+						channel: channel,
+						extra:   payload,
+					}:
+					default:
+						// avoid blocking forever if nobody is reading
+					}
 				}
-				l.notify <- &PostgresNotification{channel: channel, extra: payload}
 			}
+
+			rows.Close() // IMPORTANT: no defer in loops
 		}
 	}
 }
