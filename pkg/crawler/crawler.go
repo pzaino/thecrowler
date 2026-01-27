@@ -3870,7 +3870,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 		val, _ := driver.Title()
 		seleniumKeepAliveSink = val
 		if seleniumKeepAliveSink.(string) != "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Wait] Sent keep-alive ping to Selenium, page title: %s", seleniumKeepAliveSink)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Sent keep-alive ping to VDI for page title: %s", seleniumKeepAliveSink)
 		}
 
 		if ctx.RefreshCrawlingTimer != nil {
@@ -4513,15 +4513,14 @@ func KeepSessionAlive(wd *vdi.WebDriver) error {
 	if wd == nil {
 		return errors.New("WebDriver is nil, cannot keep session alive")
 	}
+
 	// Keep session alive
 	titleStr, err := (*wd).Title()
 	if err != nil {
 		return fmt.Errorf("failed to keep session alive: %v", err)
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] Sent 'Keep Session Alive' command for page '%s'", titleStr)
 
-	if titleStr == "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] Sent 'Keep Session Alive' command. %s", titleStr)
-	}
 	return nil
 }
 
