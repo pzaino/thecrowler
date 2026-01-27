@@ -279,19 +279,19 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	strList = strings.TrimSpace(strList)
 	strIndices := strings.Split(strList, ",")
 	if strList != "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Acquiring VDI instance from pool with filter: '%s', total: %d", strList, len(strIndices))
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
 		// Read full VDIs pool names list and put it in a string comma separated
 		poolList := ""
 		for i := 0; i < len(p.slot); i++ {
 			pName := p.slot[i].Config.Name
 			if pName != "" {
 				if poolList != "" {
-					poolList += ", "
+					poolList += ","
 				}
 				poolList += pName
 			}
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDIs pool list: '%s'", poolList)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "VDIs local pool list: '%s'", poolList)
 	}
 
 	for i := 0; i < len(p.slot); i++ {

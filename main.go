@@ -902,7 +902,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
 			return
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Acquired VDI instance: %v", vdiInstance.Config.Host)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG startCrawling] Acquired VDI instance '%s' at index %d and host %v", vdiInstance.Config.Name, index, vdiInstance.Config.Host)
 		args.SelIdx = index // Update the index in the args
 
 		// Assign VDI ID to the pipeline status
