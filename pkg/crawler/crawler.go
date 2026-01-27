@@ -3860,6 +3860,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	// Prevent the compiler from optimizing away keep-alive calls
 	var seleniumKeepAliveSink any
 
+	keepAliveWait := 0
 	for {
 		elapsed := time.Since(start)
 		if elapsed >= waitDuration {
@@ -3867,10 +3868,15 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 		}
 
 		// Keep-alive: must NOT be optimized out
-		val, _ := driver.Title()
-		seleniumKeepAliveSink = val
-		if seleniumKeepAliveSink.(string) != "" {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Sent keep-alive ping to VDI for page title: %s", seleniumKeepAliveSink)
+		if keepAliveWait <= 0 {
+			val, _ := driver.Title()
+			seleniumKeepAliveSink = val
+			if seleniumKeepAliveSink.(string) != "" {
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Wait] Sent keep-alive ping to VDI for page title: %s", seleniumKeepAliveSink)
+			}
+			keepAliveWait = 3 // every 3 iterations
+		} else {
+			keepAliveWait--
 		}
 
 		if ctx.RefreshCrawlingTimer != nil {
@@ -3888,7 +3894,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 		}
 	}
 	if seleniumKeepAliveSink == nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Wait] Selenium keep-alive sink is nil (should not happen)")
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Wait] keep-alive sink is nil (should not happen)")
 	}
 
 	// Simulated human mouse move
