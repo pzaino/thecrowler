@@ -330,6 +330,8 @@ func (p *Pool) Release(index int, vdiName string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Received request to release VDI instance with index %d and name '%s' back to pool", index, vdiName)
+
 	vdiName = strings.TrimSpace(vdiName)
 	if vdiName != "" {
 		// We have a VDI name so we need to use it to verify the correct VDI is being released
@@ -347,6 +349,7 @@ func (p *Pool) Release(index int, vdiName string) {
 	}
 
 	if (index >= 0) && (index < len(p.busy)) {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Releasing VDI instance '%s' with index %d back to pool", p.slot[index].Config.Name, index)
 		p.busy[index] = false
 	}
 }
