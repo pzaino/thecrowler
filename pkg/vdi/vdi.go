@@ -323,14 +323,30 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 }
 
 // Release releases a VDI instance back to the pool
-func (p *Pool) Release(index int) {
+func (p *Pool) Release(index int, vdiName string) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if index >= 0 && index < len(p.busy) {
+	vdiName = strings.TrimSpace(vdiName)
+	if vdiName != "" {
+		// We have a VDI name so we need to use it to verify the correct VDI is being released
+		pName := p.slot[index].Config.Name
+		if !strings.EqualFold(strings.TrimSpace(vdiName), strings.TrimSpace(pName)) {
+			// Find the right VDI by name
+			for i := 0; i < len(p.slot); i++ {
+				pName = p.slot[i].Config.Name
+				if strings.EqualFold(strings.TrimSpace(vdiName), strings.TrimSpace(pName)) {
+					index = i
+					break
+				}
+			}
+		}
+	}
+
+	if (index >= 0) && (index < len(p.busy)) {
 		p.busy[index] = false
 	}
 }

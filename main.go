@@ -925,7 +925,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
 				// Return the VDI instance to the pool
 				vdiPool := args.Sel
-				vdiPool.Release(index)
+				vdiPool.Release(index, c.Crawler.VDIName)
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] quitting startCrawling() goroutine")
 				return // Exit the loop once VDI is returned
 
