@@ -3353,7 +3353,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			// check if webdriver session is still good, if not open a new one
 			_, err = wd.CurrentURL()
 			if err != nil {
-				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid Session id") {
+				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") {
 					// If the session is not found, create a new one
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
