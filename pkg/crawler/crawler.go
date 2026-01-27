@@ -4519,7 +4519,7 @@ func KeepSessionAlive(wd *vdi.WebDriver) error {
 	if err != nil {
 		return fmt.Errorf("failed to keep session alive: %v", err)
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] Sent 'Keep Session Alive' command for page '%s'", titleStr)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-KeepAlive] Sent 'Keep Session Alive' command for page '%s'", titleStr)
 
 	return nil
 }
