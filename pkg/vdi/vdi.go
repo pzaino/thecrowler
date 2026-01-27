@@ -276,16 +276,21 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	strList = strings.TrimSpace(strList)
+	strIndices := strings.Split(strList, ",")
+	if strList != "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Acquiring VDI instance from pool with filter: '%s', total: %d", strList, len(strIndices))
+	}
+
 	for i := 0; i < len(p.slot); i++ {
-		if p.slot[i].Config.Host == "" || p.slot[i].Config.Port == 0 {
+		if (p.slot[i].Config.Host == "") || (p.slot[i].Config.Port == 0) {
 			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
 			continue
 		}
 		if !p.busy[i] {
-			if strList != "" {
+			if len(strIndices) > 0 {
 				// We have an assigned list, so we need to check if this p is in the list
 				found := false
-				strIndices := strings.Split(strList, ",")
 				for _, strIdx := range strIndices {
 					pName := p.slot[i].Config.Name
 					if strings.EqualFold(strings.TrimSpace(strIdx), strings.TrimSpace(pName)) {
