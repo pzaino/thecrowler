@@ -4553,7 +4553,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Pipeline is still running so we can process the job
 		err = KeepSessionAlive(&processCtx.wd)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", id, err)
 			return err
 		}
 
