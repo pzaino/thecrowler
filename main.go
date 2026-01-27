@@ -472,8 +472,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
 
 	maxPipelines := len(config.Selenium) //nolint:gosec
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max pipelines: %d", maxPipelines)
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Max sources: %d", wb.Config.Crawler.MaxSources*2)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Pipeline] Max pipelines: %d", maxPipelines)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Pipeline] Max sources: %d", wb.Config.Crawler.MaxSources*2)
 
 	// "Reports" go routine, used to produce periodic reports on the pipelines status (during crawling):
 	go func(plStatus *[]crowler.Status) {
@@ -608,7 +608,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 						cmn.DebugMsg(cmn.DbgLvlWarn, "monitorBatchAndRefill error: %v", err)
 					} else if len(newSources) > 0 {
 						LastActivity.Store(time.Now()) // Reset activity
-						cmn.DebugMsg(cmn.DbgLvlDebug, "Refilling batch with %d new sources", len(newSources))
+						cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Refill] Refilling batch with %d new sources", len(newSources))
 						if !BatchCompleted.Load() {
 							for _, src := range newSources {
 								sourceChan <- src
@@ -674,7 +674,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 			ramp = 1 // fallback: minimal ramping
 		}
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Pipeline] Ramp-up factor: %d (engine multiplier: %d)", ramp, engineMultiplier)
 
 	// First batch load into the queue: (initial load)
 	LastActivity.Store(time.Now()) // Reset activity
@@ -713,14 +713,14 @@ func crawlSources(wb *WorkBlock) uint64 {
 					case source, ok = <-sourceChan:
 						if !ok {
 							// Channel is closed, let's check if we need to quit or not:
-							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
 							return
 						}
 					default:
 						// No source available right now
 						starves++
 						if starves > 5 {
-							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
 							starves = 0 // Reset starvation counter
 							// sleep 2 seconds and continue
 							time.Sleep(2 * time.Second)
@@ -732,7 +732,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					}
 				} else {
 					// Batch is completed, exit the goroutine
-					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
 					return
 				}
 				starves = 0           // Reset starvation counter
@@ -774,7 +774,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				(*wb.PipelineStatus)[statusIdx].PipelineRunning.Store(1) // Set the pipeline running status
 				statusLock.Unlock()
 
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
 
 				// Start crawling the website
 				// startCrawling will spawn a crawling thread and return, so we need to wait for
@@ -798,7 +798,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 		}(vdiID)
 
 		// Log the VDI instance started
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG Pipeline] Started VDI slot %d", vdiID)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Started VDI slot %d", vdiID)
 	}
 
 	RampUpRunning.Store(false) // Ramp-up phase is over
@@ -893,7 +893,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 
 	// Start a goroutine to crawl the website
 	go func(args *crowler.Pars, c *cfg.Config) {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for available VDI instance...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] Waiting for available VDI instance...")
 
 		// Fetch the next available Selenium instance (VDI)
 		vdiPool := args.Sel
@@ -902,7 +902,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
 			return
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG startCrawling] Acquired VDI instance '%s' at index %d and host %v", vdiInstance.Config.Name, index, vdiInstance.Config.Host)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-startCrawling] Acquired VDI instance '%s' at index %d and host %v", vdiInstance.Config.Name, index, vdiInstance.Config.Host)
 		args.SelIdx = index // Update the index in the args
 
 		// Assign VDI ID to the pipeline status
@@ -916,21 +916,21 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 			crowler.CrawlWebsite(args, vdiInstance, releaseVDI)
 		}()
 
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for VDI release (after any crawling activities are completed)...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] Waiting for VDI release (after any crawling activities are completed)...")
 
 		// Wait for `CrawlWebsite()` to release the VDI
 		for {
 			select {
 			case recoveredVDI := <-releaseVDI:
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
 				// Return the VDI instance to the pool
 				vdiPool := args.Sel
 				vdiPool.Release(index, c.Crawler.VDIName)
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] quitting startCrawling() goroutine")
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] quitting startCrawling() goroutine")
 				return // Exit the loop once VDI is returned
 
 			case <-time.After(10 * time.Minute): // Instead of quitting, just log
-				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG startCrawling] VDI instance %v is still in use after 10 minutes, continuing to wait...", vdiInstance.Config.Host)
+				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-startCrawling] VDI instance %v is still in use after 10 minutes, continuing to wait...", vdiInstance.Config.Host)
 			}
 		}
 	}(&args, wb.Config)
