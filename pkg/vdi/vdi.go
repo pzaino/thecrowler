@@ -273,7 +273,15 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	if p == nil {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
+
+wait_for_available_vdis:
 	p.mu.Lock()
+	// Check if there are any available VDIs
+	if p.Available() == 0 {
+		p.mu.Unlock()
+		time.Sleep(1 * time.Second)
+		goto wait_for_available_vdis
+	}
 	defer p.mu.Unlock()
 
 	strList = strings.TrimSpace(strList)

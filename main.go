@@ -897,17 +897,11 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 
 		// Fetch the next available Selenium instance (VDI)
 		vdiPool := args.Sel
-
-		// We need to wait until a VDI instance is available
-	wait_for_a_vdi:
-		for vdiPool.Available() == 0 {
-			time.Sleep(1 * time.Second)
-		}
 		index, vdiInstance, err := vdiPool.Acquire(c.Crawler.VDIName)
 		if err != nil {
+			// There are no available VDI instances right now, log and return an error
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
-			time.Sleep(2 * time.Second)
-			goto wait_for_a_vdi
+			return
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-startCrawling] Acquired VDI instance '%s' at index %d and host %v", vdiInstance.Config.Name, index, vdiInstance.Config.Host)
 		args.SelIdx = index // Update the index in the args
@@ -941,6 +935,8 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 			}
 		}
 	}(&args, wb.Config)
+
+	return
 }
 
 func logStatus(PipelineStatus *[]crowler.Status) {
