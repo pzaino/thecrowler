@@ -3382,6 +3382,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found, creating a new one...", id)
 				err = ctx.ConnectToVDI((*ctx).SelInstance)
 				wd = ctx.wd
 				if err != nil {
