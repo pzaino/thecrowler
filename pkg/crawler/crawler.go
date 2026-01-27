@@ -3430,11 +3430,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			}
 		}
 		if gotRedirectedToUURL {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Unwanted redirect detected: %s != %s", currentURL, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Unwanted redirect detected: %s != %s", id, currentURL, url)
 			if retries >= maxRetries {
 				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", url, retries+1, maxRetries)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
 			continue
 		}
 		PageLoadOk = true
