@@ -3315,12 +3315,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	}
 
 	// Reset cookies if needed
-	if ctx.config.Crawler.ResetCookiesPolicy == "on_start" && level == -1 {
+	if (ctx.config.Crawler.ResetCookiesPolicy == "on_start") && (level == -1) {
 		// Reset cookies only on the first URL
 		_ = ResetSiteSession(ctx)
 	}
-	if ctx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq ||
-		ctx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
+	if (ctx.config.Crawler.ResetCookiesPolicy == optCookiesOnReq) ||
+		(ctx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr) {
 		// Reset cookies on each request
 		_ = ResetSiteSession(ctx)
 	}
@@ -3334,7 +3334,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			return wd, "", nil
 		}
 
-		// Reset the Selenium session for a clean browser with new User-Agent
+		// Reset the VDI session for a clean browser with new User-Agent
 		if ctx.config.Crawler.ChangeUserAgent == "always" {
 			cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
 
@@ -4553,7 +4553,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Pipeline is still running so we can process the job
 		err = KeepSessionAlive(&processCtx.wd)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "keeping session alive: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", err)
 			return err
 		}
 

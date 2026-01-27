@@ -923,7 +923,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 		for {
 			select {
 			case recoveredVDI := <-releaseVDI:
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] VDI instance %v released for reuse", recoveredVDI.Config.Host)
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] VDI instance '%s' with Address %v released for reuse", recoveredVDI.Config.Name, recoveredVDI.Config.Host)
 				// Return the VDI instance to the pool
 				vdiPool := args.Sel
 				vdiPool.Release(index, c.Crawler.VDIName)
@@ -931,12 +931,10 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 				return // Exit the loop once VDI is returned
 
 			case <-time.After(10 * time.Minute): // Instead of quitting, just log
-				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-startCrawling] VDI instance %v is still in use after 10 minutes, continuing to wait...", vdiInstance.Config.Host)
+				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-startCrawling] VDI instance '%s' with Address %v is still in use after 10 minutes, continuing to wait...", vdiInstance.Config.Name, vdiInstance.Config.Host)
 			}
 		}
 	}(&args, wb.Config)
-
-	return
 }
 
 func logStatus(PipelineStatus *[]crowler.Status) {

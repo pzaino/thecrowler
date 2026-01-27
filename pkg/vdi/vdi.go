@@ -284,6 +284,7 @@ wait_for_available_vdis:
 	}
 	if available == 0 {
 		p.mu.Unlock()
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Acquire] No available VDI instances in the pool, waiting...")
 		time.Sleep(1 * time.Second)
 		goto wait_for_available_vdis
 	}
