@@ -1107,20 +1107,29 @@ func collectNavigationMetrics(wd *vdi.WebDriver, pageInfo *PageInfo) {
 // CollectXHR collects the XHR requests from the browser
 func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 	// Send a KeepSessionAlive to prevent session timeout
-	KeepSessionAlive(&(ctx.wd))
+	err := KeepSessionAlive(&(ctx.wd))
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "keeping session alive: %v", err)
+		ctx.pStatus = 3
+		return
+	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Starting collecting XHR requests...")
 
 	// Convert to Go structure
 	xhrData, err := collectCDPRequests(ctx, 1000)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data: Invalid XHR log format: %v", xhrData)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "Error during XHR data collection: %v", xhrData)
 		return
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR returned from collectCDPRequests\n")
 
 	// Send a keep alive to the VDI
-	KeepSessionAlive(&(ctx.wd))
+	err = KeepSessionAlive(&(ctx.wd))
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "keeping session alive: %v", err)
+		ctx.pStatus = 3
+	}
 
 	// Store data in PageInfo
 	xhr := map[string]any{"xhr": xhrData}
@@ -2646,7 +2655,12 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 	)
 	wd := ctx.wd
 	// Send a Keep alive
-	KeepSessionAlive(&wd)
+	err := KeepSessionAlive(&wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to keep session alive: %v", err)
+		ctx.pStatus = 3
+		return nil, err
+	}
 
 	// Fetch Performance Logs
 	logs, err := wd.Log("performance")
@@ -2673,7 +2687,12 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 			if ctx.RefreshCrawlingTimer != nil {
 				ctx.RefreshCrawlingTimer() // Refresh crawling timer
 			}
-			KeepSessionAlive(&wd)
+			err = KeepSessionAlive(&wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to keep session alive: %v", err)
+				ctx.pStatus = 3
+				return collectedRequests, err
+			}
 		}
 
 		if err := json.Unmarshal([]byte(entry.Message), &logEntry); err != nil {
@@ -2778,7 +2797,11 @@ func filterXHRRequests(ctx *ProcessContext, detectedType string) bool {
 		}
 	}
 
-	KeepSessionAlive(&ctx.wd)
+	err := KeepSessionAlive(&ctx.wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
+		ctx.pStatus = 3
+	}
 	return false
 }
 
@@ -2853,7 +2876,7 @@ func storeResponseMetadata(ctx *ProcessContext, message map[string]interface{}, 
 }
 
 // Fetch & Attach Response Bodies
-func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}) {
+func collectResponses(ctx *ProcessContext, responseBodies map[string]any) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting response bodies...")
 	wd := ctx.wd
 	// Fetch Response Bodies
@@ -2862,7 +2885,11 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]interface{}
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer() // Refresh crawling timer
 		}
-		KeepSessionAlive(&wd)
+		err := KeepSessionAlive(&wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
+			return
+		}
 
 		// Fetch Response Body
 		body, isBase64 := fetchResponseBody(wd, requestID)
@@ -2900,7 +2927,11 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 		time.Sleep(200 * time.Millisecond) // Wait before retrying
 	}
 
-	KeepSessionAlive(&wd)
+	err = KeepSessionAlive(&wd)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
+		return "", false
+	}
 
 	// Convert response to map
 	bodyData, ok := responseInf.(map[string]interface{})
@@ -2959,7 +2990,11 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 			}
 		}
 
-		KeepSessionAlive(&wd)
+		err = KeepSessionAlive(&wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
+			return body, detectedContentType
+		}
 	}
 
 	if detectedContentType == HTMLType {
@@ -2973,7 +3008,11 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 		jsonBody, _ := json.MarshalIndent(processedData, "", "  ")
 		bodyStr = string(jsonBody)
 
-		KeepSessionAlive(&wd)
+		err = KeepSessionAlive(&wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
+			return body, detectedContentType
+		}
 	}
 
 	// Attempt to parse as JSON (even without Content-Type check)
@@ -2985,7 +3024,10 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 			detectedContentType = JSONType
 		}
 
-		KeepSessionAlive(&wd)
+		err = KeepSessionAlive(&wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
+		}
 		return jsonBody, detectedContentType
 	}
 
@@ -4467,21 +4509,26 @@ func getDomainParts(parts []string, level uint) string {
 
 // KeepSessionAlive is a dummy function that keeps the WebDriver session alive.
 // It's used to prevent the WebDriver session from timing out.
-func KeepSessionAlive(wd *vdi.WebDriver) {
+func KeepSessionAlive(wd *vdi.WebDriver) error {
 	if wd == nil {
-		return
+		return errors.New("WebDriver is nil, cannot keep session alive")
 	}
 	// Keep session alive
-	titleStr, _ := (*wd).Title()
+	titleStr, err := (*wd).Title()
+	if err != nil {
+		return fmt.Errorf("failed to keep session alive: %v", err)
+	}
+
 	if titleStr == "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] Sent 'Keep Session Alive' command. %s", titleStr)
-		return
 	}
+	return nil
 }
 
 // worker is the worker function that is responsible for crawling a page
 func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 	var skippedURLs []LinkItem
+	var err error
 
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
@@ -4490,7 +4537,11 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			return nil // We return here because the pipeline is shutting down!
 		}
 		// Pipeline is still running so we can process the job
-		KeepSessionAlive(&processCtx.wd)
+		err = KeepSessionAlive(&processCtx.wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "keeping session alive: %v", err)
+			return err
+		}
 
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
@@ -4536,7 +4587,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		// Process the job
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Processing job %s\n", id, url.Link)
-		var err error
 		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
 			err = processJob(processCtx, id, urlLink, skippedURLs)
 		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRCRecu {

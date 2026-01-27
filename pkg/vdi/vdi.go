@@ -316,7 +316,12 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 			}
 
 			p.busy[i] = true
-			return i, p.slot[i], nil
+			// Make a deep copy of p.slot[i] to be safe:
+			vdiInstance := SeleniumInstance{
+				Service: p.slot[i].Service,
+				Config:  p.slot[i].Config,
+			}
+			return i, vdiInstance, nil
 		}
 	}
 	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
