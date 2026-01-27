@@ -635,7 +635,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		args = append(args, "--no-first-run")
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP) for '%s'...", sel.Config.Name)
 		// Set the CDP port
 		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
@@ -647,7 +647,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Proxy...")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Proxy for '%s'...", sel.Config.Name)
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
 		// Get local network:
@@ -658,7 +658,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			args = append(args, "--proxy-bypass-list=localhost")
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s'", sel.Config.ProxyURL, "localhost,"+localNet)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s' for '%s'", sel.Config.ProxyURL, "localhost,"+localNet, sel.Config.Name)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -946,13 +946,13 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed for '%s'", err, sel.Config.Name)
 		return nil, err
 	}
 	// Inject anti-detection patch
 	err = InjectAntiDetectionPatches(&wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed on '%s': %v", sel.Config.Name, err)
 	}
 
 	// Post-connection settings
@@ -969,7 +969,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration on '%s': %v\n", sel.Config.Name, result)
 	}
 
 	err2 = addLoadListener(&wd)

@@ -3829,6 +3829,15 @@ func moveMouseRandomly(wd vdi.WebDriver) {
 func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	driver := ctx.wd
 
+	if driver == nil {
+		return 0, errors.New("WebDriver is nil")
+	}
+
+	sid := driver.SessionID()
+	if strings.TrimSpace(sid) == "" {
+		return 0, errors.New("WebDriver session ID is empty")
+	}
+
 	const minDelay = 3.0
 	if delay < minDelay {
 		delay = minDelay
