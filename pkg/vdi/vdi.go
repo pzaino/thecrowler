@@ -277,7 +277,12 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 wait_for_available_vdis:
 	p.mu.Lock()
 	// Check if there are any available VDIs
-	if p.Available() == 0 {
+	available := checkAvailable(p)
+	if available < 0 {
+		p.mu.Unlock()
+		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is corrupted")
+	}
+	if available == 0 {
 		p.mu.Unlock()
 		time.Sleep(1 * time.Second)
 		goto wait_for_available_vdis
@@ -367,13 +372,11 @@ func (p *Pool) Release(index int, vdiName string) {
 	}
 }
 
-// Available returns the number of available VDI instances in the pool
-func (p *Pool) Available() int {
+// This is a special implementation for internal use-only
+func checkAvailable(p *Pool) int {
 	if p == nil {
-		return 0
+		return -1
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	available := 0
 	for _, busy := range p.busy {
@@ -382,6 +385,17 @@ func (p *Pool) Available() int {
 		}
 	}
 	return available
+}
+
+// Available returns the number of available VDI instances in the pool
+func (p *Pool) Available() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return checkAvailable(p)
 }
 
 // SeleniumInstance holds a Selenium service and its configuration
