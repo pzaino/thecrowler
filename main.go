@@ -897,6 +897,11 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 
 		// Fetch the next available Selenium instance (VDI)
 		vdiPool := args.Sel
+
+		// We need to wait until a VDI instance is available
+		for vdiPool.Available() == 0 {
+			time.Sleep(1 * time.Second)
+		}
 		index, vdiInstance, err := vdiPool.Acquire(c.Crawler.VDIName)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
