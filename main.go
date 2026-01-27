@@ -892,13 +892,12 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 	}
 
 	// Start a goroutine to crawl the website
-	go func(args *crowler.Pars) {
+	go func(args *crowler.Pars, c *cfg.Config) {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG startCrawling] Waiting for available VDI instance...")
 
 		// Fetch the next available Selenium instance (VDI)
-		//vdiInstance := <-*args.Sel
 		vdiPool := args.Sel
-		index, vdiInstance, err := vdiPool.Acquire()
+		index, vdiInstance, err := vdiPool.Acquire(c.Crawler.VDIName)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
 			return
@@ -934,7 +933,7 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG startCrawling] VDI instance %v is still in use after 10 minutes, continuing to wait...", vdiInstance.Config.Host)
 			}
 		}
-	}(&args)
+	}(&args, wb.Config)
 }
 
 func logStatus(PipelineStatus *[]crowler.Status) {

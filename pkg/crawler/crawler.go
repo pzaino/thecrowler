@@ -126,7 +126,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.Status.StartTime = time.Now()
 	processCtx.Status.PipelineRunning.Store(1) // Set the pipeline status to running
 	processCtx.SelInstance = sel
-	processCtx.CollectedCookies = make(map[string]interface{})
+	processCtx.CollectedCookies = make(map[string]any)
 	processCtx.SetVDIReturnedFlag(false)
 	processCtx.RefreshCrawlingTimer = args.Refresh
 	processCtx.pStatus = 1 // Processing started

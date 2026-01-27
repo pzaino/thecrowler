@@ -269,7 +269,7 @@ func (p *Pool) Size() int {
 }
 
 // Acquire acquires a VDI instance from the pool
-func (p *Pool) Acquire() (int, SeleniumInstance, error) {
+func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	if p == nil {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
@@ -282,6 +282,22 @@ func (p *Pool) Acquire() (int, SeleniumInstance, error) {
 			continue
 		}
 		if !p.busy[i] {
+			if strList != "" {
+				// We have an assigned list, so we need to check if this p is in the list
+				found := false
+				strIndices := strings.Split(strList, ",")
+				for _, strIdx := range strIndices {
+					pName := p.slot[i].Config.Name
+					if strings.EqualFold(strings.TrimSpace(strIdx), strings.TrimSpace(pName)) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+
 			p.busy[i] = true
 			return i, p.slot[i], nil
 		}
