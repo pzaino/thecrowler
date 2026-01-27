@@ -1009,7 +1009,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		startTime = time.Now()
 		collectXHR(ctx, &pageInfo)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Successfully collected XHR for '%s' in %v\n", url, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Completed XHR collection for '%s' in %v\n", url, elapsed)
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
@@ -5248,7 +5248,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		startTime = time.Now()
 		collectXHR(processCtx, &pageCache)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected XHR for '%s' in %v\n", id, currentURL, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Completed XHR collection for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
