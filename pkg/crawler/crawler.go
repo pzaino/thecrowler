@@ -1106,6 +1106,9 @@ func collectNavigationMetrics(wd *vdi.WebDriver, pageInfo *PageInfo) {
 
 // CollectXHR collects the XHR requests from the browser
 func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
+	// Send a KeepSessionAlive to prevent session timeout
+	KeepSessionAlive(&(ctx.wd))
+
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Starting collecting XHR requests...")
 
 	// Convert to Go structure
@@ -1115,9 +1118,12 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 		return
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR returned from collectCDPRequests\n")
-	// Store data in PageInfo
 
-	xhr := map[string]interface{}{"xhr": xhrData}
+	// Send a keep alive to the VDI
+	KeepSessionAlive(&(ctx.wd))
+
+	// Store data in PageInfo
+	xhr := map[string]any{"xhr": xhrData}
 	pageInfo.ScrapedData = append(pageInfo.ScrapedData, xhr)
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "XHR Data Captured")
 
@@ -2639,6 +2645,10 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 		rbee = "http://127.0.0.1:3000/v1/rb"
 	)
 	wd := ctx.wd
+	// Send a Keep alive
+	KeepSessionAlive(&wd)
+
+	// Fetch Performance Logs
 	logs, err := wd.Log("performance")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to retrieve performance logs: %v", err)
@@ -2651,14 +2661,14 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 		logs = logs[:maxItems] // Trim logs to maxItems
 	}
 
-	var collectedRequests []map[string]interface{}
-	var collectedResponses []map[string]interface{}
-	responseBodies := make(map[string]interface{}) // Store response metadata
+	var collectedRequests []map[string]any
+	var collectedResponses []map[string]any
+	responseBodies := make(map[string]any) // Store response metadata
 
 	// Process logs
 	totalLogs := len(logs)
 	for i, entry := range logs {
-		var logEntry map[string]interface{}
+		var logEntry map[string]any
 		if (i % 100) == 0 {
 			if ctx.RefreshCrawlingTimer != nil {
 				ctx.RefreshCrawlingTimer() // Refresh crawling timer
