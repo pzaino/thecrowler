@@ -219,6 +219,8 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 	// Determine whether all nodes are idle
 	allIdle := true
 
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "HEARTBEAT ANALYSIS: Analyzing %d responses for idleness...", len(state.Responses))
+
 	for _, evt := range state.Responses {
 		statusRaw, ok := evt.Details["pipeline_status"]
 		if !ok {
@@ -251,8 +253,10 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 			httpinfo, _ := obj["HTTPInfoStatus"].(string)
 			httpinfo = strings.ToLower(strings.TrimSpace(httpinfo))
 
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "HEARTBEAT ANALYSIS: PipelineStatus='%s', CrawlingStatus='%s', NetInfoStatus='%s', HTTPInfoStatus='%s'", ps, crawling, netinfo, httpinfo)
+
 			// If any subsystem is running we are not idle
-			if ps == running || crawling == running || netinfo == running || httpinfo == running {
+			if (ps == running) || (crawling == running) || (netinfo == running) || (httpinfo == running) {
 				allIdle = false
 				break
 			}
