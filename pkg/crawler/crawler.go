@@ -73,8 +73,8 @@ const (
 	dbConnTransErr             = "committing transaction: %v"
 	errFailedToRetrieveMetrics = "failed to retrieve navigation timing metrics: %v"
 	errCriticalError           = "[critical]"
-	errWExtractingPageInfo     = "Worker %d: Error extracting page info: %v\n"
-	errWorkerLog               = "Worker %d: Error indexing page %s: %v\n"
+	errWExtractingPageInfo     = "Worker %s: Error extracting page info: %v\n"
+	errWorkerLog               = "Worker %s: Error indexing page %s: %v\n"
 
 	optDNSLookup = "dns_lookup"
 	optTCPConn   = "tcp_connection"
@@ -853,8 +853,10 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Crawling Source: %d", ctx.source.ID)
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Crawling URL: %s", ctx.source.URL)
 
+	wid := ctx.GetContextID() + "-0"
+
 	// Get the initial URL
-	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx, 0)
+	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx, wid)
 	if err != nil {
 		// Check if we have alternative links to try
 		srcCfg := ctx.srcCfg["crawling_config"]
@@ -877,7 +879,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 								if !found {
 									// Try to get the content of the alternative link
 									cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Trying alternative link: %s", patternStr)
-									pageSource, docType, err = getURLContent(patternStr, ctx.wd, -1, ctx, 0)
+									pageSource, docType, err = getURLContent(patternStr, ctx.wd, -1, ctx, wid)
 									if err == nil {
 										cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Successfully crawled alternative link: %s", patternStr)
 										break // Exit the loop if we successfully crawled an alternative link
@@ -2535,6 +2537,15 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Collecting XHR logs...")
 	wd := ctx.wd
 
+	if wd == nil {
+		return nil, errors.New("WebDriver is nil")
+	}
+
+	if ctx.VDIReturned {
+		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver session has already been returned.")
+		return nil, errors.New("WebDriver session has already been returned")
+	}
+
 	// Injected JavaScript to return the collected XHR logs
 	script := "return window.__XCAP_LOG__ || [];"
 	data, err := wd.ExecuteScript(script, nil)
@@ -3282,7 +3293,7 @@ func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
 
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
-func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id int) (vdi.WebDriver, string, error) {
+func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id string) (vdi.WebDriver, string, error) {
 	if ctx == nil {
 		return nil, "", errors.New("ProcessContext is nil")
 	}
@@ -3325,6 +3336,23 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		}
 	}
 
+	// Check again if something has returned the session while we were waiting
+	if ctx.VDIReturned {
+		// If the VDI session is returned, return the WebDriver
+		return wd, "", nil
+	}
+
+	// Check if we have a sessionID in the VDI
+	sid := strings.TrimSpace(wd.SessionID())
+	if sid == "" {
+		// We need to reconnect to the VDI
+		err = ctx.ConnectToVDI((*ctx).SelInstance)
+		wd = ctx.wd
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to connect to VDI: %v", err)
+		}
+	}
+
 	// Reset cookies if needed
 	if (ctx.config.Crawler.ResetCookiesPolicy == "on_start") && (level == -1) {
 		// Reset cookies only on the first URL
@@ -3352,7 +3380,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 				// Let's check if session ID is invalid, if so we need to create a new one
 				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") ||
 					strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
-					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found during cleanup, creating a new one...", id)
+					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found during cleanup, creating a new one...", id)
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
 					if err != nil {
@@ -3379,7 +3407,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") ||
 					strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 					// If the session is not found, create a new one
-					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found, creating a new one...", id)
+					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found, creating a new one...", id)
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
 					if err != nil {
@@ -3407,7 +3435,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		if err := wd.Get(url); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found, creating a new one...", id)
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found, creating a new one...", id)
 				err = ctx.ConnectToVDI((*ctx).SelInstance)
 				wd = ctx.wd
 				if err != nil {
@@ -3475,7 +3503,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		if ctx.config.Crawler.CollectXHR {
 			err = addXHRHook(&wd)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: Failed to add XHR hook: %v", id, err)
+				cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %s: Failed to add XHR hook: %v", id, err)
 			}
 		}
 
@@ -3499,7 +3527,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		}
 		gotRedirectedToUURL := false
 		if ctx.compiledUURLs != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Checking for unwanted URLs (%d patterns) for URL: '%s'", id, len(ctx.compiledUURLs), currentURL)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Checking for unwanted URLs (%d patterns) for URL: '%s'", id, len(ctx.compiledUURLs), currentURL)
 			for _, UURL := range ctx.compiledUURLs {
 				if UURL.MatchString(currentURL) {
 					gotRedirectedToUURL = true
@@ -3508,11 +3536,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			}
 		}
 		if gotRedirectedToUURL {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Unwanted redirect detected: %s != %s", id, currentURL, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Unwanted redirect detected: %s != %s", id, currentURL, url)
 			if retries >= maxRetries {
 				return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
 			continue
 		}
 		PageLoadOk = true
@@ -3523,7 +3551,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		// Case 1: valid (or log_only, which you treat as valid after logging)
 		if status.Valid {
 			if status.Action == VALogOnly {
-				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-Worker] %d: load_validation -> log_only for URL %s", id, url)
+				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-Worker] %s: load_validation -> log_only for URL %s", id, url)
 			}
 			PageLoadOk = true
 		} else {
@@ -3566,25 +3594,25 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		if retries == maxRetries && maxRetries > 0 {
 			return nil, "", fmt.Errorf("failed to navigate to %s after %d retries", url, maxRetries)
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
 	}
 
 	// Get Session Cookies
 	err = getCookies(ctx, &wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: failed to get cookies: %v", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %s: failed to get cookies: %v", id, err)
 	}
 
 	// Get the Mime Type of the page
 	docType := inferDocumentType(url, &wd)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Document Type: %s", id, docType)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Document Type: %s", id, docType)
 
 	if docTypeIsHTML(docType) || (strings.TrimSpace(docType) == "") {
 		// WaitForDomComplete
 		startTime := time.Now()
 		err = waitForDomComplete(wd, 5*time.Second)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: waitForDomComplete error: %v", id, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %s: waitForDomComplete error: %v", id, err)
 		}
 		elapsed := time.Since(startTime)
 		// Sum elapsed to last wait time
@@ -3603,7 +3631,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	// Get Post-Actions Cookies (if any)
 	err = getCookies(ctx, &wd)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %d: failed to get post-actions cookies: %v", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %s: failed to get post-actions cookies: %v", id, err)
 	}
 
 	/*
@@ -4589,15 +4617,17 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 	var skippedURLs []LinkItem
 	var err error
 
+	wid := processCtx.GetContextID() + "_" + strconv.Itoa(id)
+
 	// Loop over the jobs channel and process each job
 	for url := range jobs {
 		if processCtx.Status.PipelineRunning.Load() > 1 {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping worker due to pipeline shutdown\n", id)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Stopping worker due to pipeline shutdown\n", wid)
 			return nil // We return here because the pipeline is shutting down!
 		}
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Stopping due reached max_links limit: %d\n", wid, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
 
@@ -4611,23 +4641,23 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 
 		// Check if the URL should be skipped
-		skip := skipURL(processCtx, id, urlLink)
+		skip := skipURL(processCtx, wid, urlLink)
 		if skip {
 			processCtx.Status.TotalSkipped.Add(1)
 			skippedURLs = append(skippedURLs, url)
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' being skipped due skipping rules\n", id, url.Link)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: URL '%s' being skipped due skipping rules\n", wid, url.Link)
 			continue
 		}
 		if processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] {
 			// URL already visited
 			processCtx.Status.TotalDuplicates.Add(1)
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' already visited\n", id, url.Link)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: URL '%s' already visited\n", wid, url.Link)
 			continue
 		}
 
 		// Check if the URL should be skipped
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Stopping due reached max_links limit: %d\n", wid, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
 
@@ -4635,28 +4665,28 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		if processCtx.config.Crawler.PreventDuplicateURLs {
 			alreadyCrawled, _ := cdb.IsURLKnown(urlLink, processCtx.db)
 			if alreadyCrawled {
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: URL '%s' already crawled by another instance\n", id, url)
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: URL '%s' already crawled by another instance\n", wid, url)
 				continue
 			}
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Starting job %s\n", id, url.Link)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Starting job %s\n", wid, url.Link)
 
 		// Process the job
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Processing job %s\n", id, url.Link)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Processing job %s\n", wid, url.Link)
 		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
-			err = processJob(processCtx, id, urlLink, skippedURLs)
+			err = processJob(processCtx, wid, urlLink, skippedURLs)
 		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRCRecu {
 			// Right Click Recursive Mode
-			err = rightClick(processCtx, id, url)
+			err = rightClick(processCtx, wid, url)
 		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingHuman {
 			// Human Mode
 			// Find the <a> element that contains the URL and click it
-			err = clickLink(processCtx, id, url)
+			err = clickLink(processCtx, wid, url)
 		} else {
 			// Fuzzing Mode
 			// Fuzzy works like recursive, however instead of extracting links from the page, it generates links based on the crawling rules
-			err = processJob(processCtx, id, urlLink, skippedURLs)
+			err = processJob(processCtx, wid, urlLink, skippedURLs)
 		}
 		if processCtx.visitedLinks == nil {
 			processCtx.visitedLinks = make(map[string]bool)
@@ -4665,10 +4695,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		if err == nil {
 			processCtx.Status.TotalPages.Add(1)
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished job %s\n", id, url.Link)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished job %s\n", wid, url.Link)
 		} else {
 			processCtx.Status.TotalErrors.Add(1)
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished job %s with an error: %v\n", id, url.Link, err)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished job %s with an error: %v\n", wid, url.Link, err)
 			if strings.Contains(err.Error(), errCriticalError) {
 				return err
 			}
@@ -4678,7 +4708,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		skippedURLs = nil
 
 		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Stopping due reached max_links limit: %d\n", wid, processCtx.Status.TotalPages.Load())
 			break // We break here because we reached the max_links limit!
 		}
 	}
@@ -4686,7 +4716,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 	return nil
 }
 
-func skipURL(processCtx *ProcessContext, id int, url string) bool {
+func skipURL(processCtx *ProcessContext, id string, url string) bool {
 	// Check if the URL is empty
 	url = strings.TrimSpace(url)
 	if url == "" {
@@ -4700,7 +4730,7 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 
 	// Check if the URL is valid (aka if it's within the allowed restricted boundaries)
 	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due 'external' policy.\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
 
@@ -4708,7 +4738,7 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 	if processCtx.compiledUURLs != nil {
 		for _, UURL := range processCtx.compiledUURLs {
 			if UURL.MatchString(url) {
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
 				return true
 			}
 		}
@@ -4716,7 +4746,7 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 
 	// Check if the URL is the same as the Source URL (in which case skip it)
 	if url == processCtx.source.URL {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' as it is the same as the source URL\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' as it is the same as the source URL\n", id, url)
 		return true
 	}
 
@@ -4728,7 +4758,7 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 
 		for _, pattern := range processCtx.userURLPatterns {
 			re := regexp.MustCompile(pattern)
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %s: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
 			if re.MatchString(url) {
 				matches++
 
@@ -4746,13 +4776,13 @@ func skipURL(processCtx *ProcessContext, id int, url string) bool {
 
 		// If we decided to skip based on negative pattern, return true
 		if shouldSkip {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to user-defined pattern\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due to user-defined pattern\n", id, url)
 			return true
 		}
 
 		// If we did not find any matches, skip the URL
 		if matches == 0 {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %d: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
 			return true
 		}
 	}
@@ -4768,7 +4798,7 @@ func isNegativePattern(pattern string) bool {
 }
 
 // rightClick simulates right-clicking on a link and opening it in the current tab using custom JavaScript
-func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
+func rightClick(processCtx *ProcessContext, id string, url LinkItem) error {
 	// Lock the mutex to ensure only one goroutine accesses the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -4831,7 +4861,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Check current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %d: Had to open '%s' link in the same tab were we had: %s\n", id, url.Link, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %s: Had to open '%s' link in the same tab were we had: %s\n", id, url.Link, currentURL)
 
 	// Execute any action rules after the link is opened
 	processActionRules(&processCtx.wd, processCtx, currentURL)
@@ -4962,7 +4992,7 @@ func rightClick(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Before we return, we need to call goBack to go back to the previous page
 	err = goBack(processCtx)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error navigating back: %v\n", id, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %s: Error navigating back: %v\n", id, err)
 	}
 
 	return nil
@@ -4980,7 +5010,7 @@ func goBack(processCtx *ProcessContext) error {
 	return nil
 }
 
-func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
+func clickLink(processCtx *ProcessContext, id string, url LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -5021,7 +5051,7 @@ func clickLink(processCtx *ProcessContext, id int, url LinkItem) error {
 	// Check current URL
 	currentURL, _ := processCtx.wd.CurrentURL()
 	if currentURL != url.Link {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error navigating to %s: URL mismatch\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %s: Error navigating to %s: URL mismatch\n", id, url)
 		return errors.New("URL mismatch")
 	}
 
@@ -5174,11 +5204,11 @@ func ResetSiteSession(ctx *ProcessContext) error {
 	return nil
 }
 
-func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []LinkItem) error {
+func processJob(processCtx *ProcessContext, id string, url string, skippedURLs []LinkItem) error {
 	// Set getURLMutex to ensure only one goroutine is accessing the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: starting processJob with '%s'\n", id, url)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: starting processJob with '%s'\n", id, url)
 
 	if processCtx.VDIReturned {
 		// If the VDI session has been returned we need to stop the worker
@@ -5186,7 +5216,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 
 	// Get the HTML content of the page
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Getting HTML content for '%s'\n", id, url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Getting HTML content for '%s'\n", id, url)
 	startTime := time.Now()
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx, id)
 	if err != nil {
@@ -5194,7 +5224,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		return err
 	}
 	elapsed := time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully retrieved HTML content for '%s' in %v\n", id, url, elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully retrieved HTML content for '%s' in %v\n", id, url, elapsed)
 
 	// Re-Get current URL (because some Action Rules may change the URL)
 	currentURL, _ := processCtx.wd.CurrentURL()
@@ -5219,7 +5249,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	// Detect Page/Website technologies
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Detecting technologies for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Detecting technologies for '%s'\n", id, currentURL)
 	startTime = time.Now()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
@@ -5230,10 +5260,10 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		processCtx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully detected technologies for '%s' in %v\n", id, currentURL, elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully detected technologies for '%s' in %v\n", id, currentURL, elapsed)
 
 	// Extract page information
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page information for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page information for '%s'\n", id, currentURL)
 	startTime = time.Now()
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
 	if err != nil {
@@ -5243,31 +5273,31 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	// Get Page Information
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page links for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page links for '%s'\n", id, currentURL)
 	startTime = time.Now()
 	pageCache.sourceID = processCtx.source.ID
 	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page links for '%s' in %v\n", id, currentURL, elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully extracted page links for '%s' in %v\n", id, currentURL, elapsed)
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	// Generate Keywords
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Extracting page keywords for '%s'\n", id, currentURL)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page keywords for '%s'\n", id, currentURL)
 	startTime = time.Now()
 	pageCache.Keywords = extractKeywords(pageCache)
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
 	}
@@ -5275,11 +5305,11 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect Navigation Timing metrics
 	if processCtx.config.Crawler.CollectPerfMetrics {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting navigation metrics for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting navigation metrics for '%s'\n", id, currentURL)
 		startTime = time.Now()
 		collectNavigationMetrics(&processCtx.wd, &pageCache)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected navigation metrics for '%s' in %v\n", id, currentURL, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully collected navigation metrics for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -5288,11 +5318,11 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect Page logs
 	if processCtx.config.Crawler.CollectPageEvents {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting page logs for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting page logs for '%s'\n", id, currentURL)
 		startTime = time.Now()
 		collectPageLogs(&htmlContent, &pageCache)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully collected page logs for '%s' in %v\n", id, currentURL, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully collected page logs for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -5301,11 +5331,11 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 
 	// Collect XHR
 	if processCtx.config.Crawler.CollectXHR {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting XHR for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting XHR for '%s'\n", id, currentURL)
 		startTime = time.Now()
 		collectXHR(processCtx, &pageCache)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Completed XHR collection for '%s' in %v\n", id, currentURL, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Completed XHR collection for '%s' in %v\n", id, currentURL, elapsed)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -5313,17 +5343,17 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 	if !processCtx.config.Crawler.CollectHTML {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting HTML content is disabled, clearing HTML content for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting HTML content is disabled, clearing HTML content for '%s'\n", id, currentURL)
 		// If we don't need to collect HTML content, clear it
 		pageCache.HTML = ""
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared HTML content for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Cleared HTML content for '%s'\n", id, currentURL)
 	}
 
 	if !processCtx.config.Crawler.CollectContent {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Collecting content is disabled, clearing body text content for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting content is disabled, clearing body text content for '%s'\n", id, currentURL)
 		// If we don't need to collect content, clear it
 		pageCache.BodyText = ""
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Cleared body text content for '%s'\n", id, currentURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Cleared body text content for '%s'\n", id, currentURL)
 	}
 
 	// Delay before processing the next job
@@ -5334,7 +5364,7 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 	}
 	processCtx.Status.LastDelay = totalDelay.Seconds()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
 	processCtx.getURLMutex.Unlock()
 	startTime = time.Now()
@@ -5347,22 +5377,22 @@ func processJob(processCtx *ProcessContext, id int, url string, skippedURLs []Li
 		processCtx.visitedLinks = make(map[string]bool)
 	}
 	processCtx.visitedLinks[cmn.NormalizeURL(url)] = true
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Indexed page '%s' in %v\n", id, currentURL, elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Indexed page '%s' in %v\n", id, currentURL, elapsed)
 
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Adding %d new links to the process context.\n", id, len(pageCache.Links))
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Adding %d new links to the process context.\n", id, len(pageCache.Links))
 		startTime = time.Now()
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %d: Successfully added new links to the process context in %v\n", id, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully added new links to the process context in %v\n", id, elapsed)
 	}
 	resetPageInfo(&pageCache) // Reset the PageInfo object
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Finished processing job '%s', returning to worker routine.\n", id, url)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished processing job '%s', returning to worker routine.\n", id, url)
 	return err
 }
 
