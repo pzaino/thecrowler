@@ -491,7 +491,6 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 					newLinksFound = 0
 				}
 				processCtx.newLinks = []LinkItem{} // reset newLinks
-				processCtx.linksMutex.Unlock()
 
 				// Increment the current depth
 				currentDepth++
@@ -693,7 +692,6 @@ func closeSession(ctx *ProcessContext,
 	ctx.newLinks = nil         // Clear the slice to release memory
 	ctx.visitedLinks = nil     // Clear the map to release memory
 	ctx.CollectedCookies = nil // Clear cookies
-	ctx.linksMutex.Unlock()
 
 	ctx.pStatus = 10 // Processing completed
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-closeSession] Returning from crawling a source.")
@@ -4957,7 +4955,6 @@ func rightClick(processCtx *ProcessContext, id string, url LinkItem) error {
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
-		processCtx.linksMutex.Unlock()
 	}
 
 	// Before we return, we need to call goBack to go back to the previous page
@@ -5140,7 +5137,6 @@ func clickLink(processCtx *ProcessContext, id string, url LinkItem) error {
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
-		processCtx.linksMutex.Unlock()
 	}
 
 	return err

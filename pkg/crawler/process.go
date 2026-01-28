@@ -55,8 +55,8 @@ type ProcessContext struct {
 	hi                   *httpi.HTTPDetails        // The HTTP header information of the web page
 	re                   *rules.RuleEngine         // The rule engine
 	getURLMutex          sync.Mutex                // Mutex to protect the getURLContent function
-	accessVDIMutex       cmn.SafeMutex             // Mutex to protect access to the VDI instance
-	closeSession         cmn.SafeMutex             // Mutex to protect the closeSession function
+	accessVDIMutex       sync.Mutex                // Mutex to protect access to the VDI instance
+	closeSession         sync.Mutex                // Mutex to protect the closeSession function
 	visitedLinks         map[string]bool           // Map to keep track of visited links
 	userURLPatterns      []string                  // User-defined URL patterns
 	userURLBlockPatterns []string                  // User-defined URL block patterns
