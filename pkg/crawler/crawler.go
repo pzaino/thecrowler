@@ -850,10 +850,10 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Crawling Source: %d", ctx.source.ID)
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Crawling URL: %s", ctx.source.URL)
-
 	wid := ctx.GetContextID() + "-0"
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Crawling Source: %d", wid, ctx.source.ID)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Crawling URL: %s", wid, ctx.source.URL)
 
 	// Get the initial URL
 	pageSource, docType, err := getURLContent(ctx.source.URL, ctx.wd, -1, ctx, wid)
