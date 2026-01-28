@@ -3223,17 +3223,17 @@ func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
 	}
 }
 
-func cleanUpBrowser(wd *vdi.WebDriver) {
-	if wd == nil || *wd == nil {
+func cleanUpBrowser(wd vdi.WebDriver) error {
+	if wd == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot clean up browser.")
-		return
+		return errors.New("WebDriver is nil")
 	}
 
 	// Check if the current page is `data:`, if so skip this routine and return
-	currentURL, err := (*wd).CurrentURL()
+	currentURL, err := wd.CurrentURL()
 	if err == nil && strings.HasPrefix(currentURL, "data:") {
-		_ = (*wd).DeleteAllCookies()
-		return
+		err = wd.DeleteAllCookies()
+		return err
 	}
 
 	// Clear everything before resetting the VDI session
@@ -3251,12 +3251,17 @@ func cleanUpBrowser(wd *vdi.WebDriver) {
 		});
 	}
 	`
-	_, err = (*wd).ExecuteScript(script, nil)
+	_, err = wd.ExecuteScript(script, nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to clear storage: %v", err)
+		return err
 	}
 
-	_ = (*wd).DeleteAllCookies()
+	err = wd.DeleteAllCookies()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to delete cookies: %v", err)
+	}
+	return err
 }
 
 func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
@@ -3336,7 +3341,18 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 
 		// Reset the VDI session for a clean browser with new User-Agent
 		if ctx.config.Crawler.ChangeUserAgent == "always" {
-			cleanUpBrowser(&wd) // Clear everything before resetting the VDI session
+			err = cleanUpBrowser(wd) // Clear everything before resetting the VDI session
+			if err != nil {
+				// Let's check if session ID is invalid, if so we need to create a new one
+				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") {
+					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found during cleanup, creating a new one...", id)
+					err = ctx.ConnectToVDI((*ctx).SelInstance)
+					wd = ctx.wd
+					if err != nil {
+						return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+					}
+				}
+			}
 
 			err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
 			if ctx.RefreshCrawlingTimer != nil {
@@ -5129,7 +5145,7 @@ func ResetSiteSession(ctx *ProcessContext) error {
 	// Clear IndexedDB (if applicable)
 	_, _ = ctx.wd.ExecuteScript("indexedDB.databases().then(dbs => dbs.forEach(db => indexedDB.deleteDatabase(db.name)));", nil)
 
-	cleanUpBrowser(&ctx.wd)
+	_ = cleanUpBrowser(ctx.wd)
 
 	return nil
 }
