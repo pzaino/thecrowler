@@ -3309,6 +3309,11 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		return wd, "", nil
 	}
 
+	// Give Selenium some time
+	time.Sleep(500 * time.Millisecond)
+
+	// Let's start preparing for a fetch:
+
 	var err error
 	// Get the page and process the interval
 	maxRetries := 5 // Default retries on redirect
