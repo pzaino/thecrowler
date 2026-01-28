@@ -1467,7 +1467,7 @@ func Refresh(ctx ProcessContextInterface) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("invalid parameters: WebDriver SessionID is empty, unable to find session with id")
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Refresh] Refreshing session with ID '%s'...", sessionID)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Refresh] Refreshing session with ID '%s'...", sessionID)
 
 	// get the page title
 	title, err := (*wd).Title()

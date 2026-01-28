@@ -3859,7 +3859,7 @@ func vdiSleep(ctx *ProcessContext, delay float64) (time.Duration, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return 0, fmt.Errorf("invalid parameters: WebDriver SessionID is empty, unable to find session with id")
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-vdiSleep] Refreshing session with ID '%s'...", sessionID)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-vdiSleep] Refreshing session with ID '%s'...", sessionID)
 
 	sid := driver.SessionID()
 	if strings.TrimSpace(sid) == "" {
@@ -4566,7 +4566,7 @@ func KeepSessionAlive(wd vdi.WebDriver) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("invalid parameters: WebDriver SessionID is empty, unable to find session with id")
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-KeepAlive] Refreshing session with ID '%s'...", sessionID)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-KeepAlive] Refreshing session with ID '%s'...", sessionID)
 
 	// Keep session alive
 	titleStr, err := wd.Title()
