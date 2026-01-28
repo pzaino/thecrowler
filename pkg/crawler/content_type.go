@@ -304,7 +304,11 @@ func detectContentType(body, url string, wd vdi.WebDriver) string {
 
 		// Keep session alive
 		if index%2 == 0 {
-			KeepSessionAlive(&wd)
+			err := KeepSessionAlive(wd)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error keeping session alive during content type detection: %v", err)
+				return ErrUnknownContentType
+			}
 		}
 		index++
 	}

@@ -273,19 +273,50 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	if p == nil {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
+
+wait_for_available_vdis:
 	p.mu.Lock()
+	// Check if there are any available VDIs
+	available := checkAvailable(p)
+	if available < 0 {
+		p.mu.Unlock()
+		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is corrupted")
+	}
+	if available == 0 {
+		p.mu.Unlock()
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Acquire] No available VDI instances in the pool, waiting...")
+		time.Sleep(1 * time.Second)
+		goto wait_for_available_vdis
+	}
 	defer p.mu.Unlock()
 
+	strList = strings.TrimSpace(strList)
+	strIndices := strings.Split(strList, ",")
+	if strList != "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
+		// Read full VDIs pool names list and put it in a string comma separated
+		poolList := ""
+		for i := 0; i < len(p.slot); i++ {
+			pName := p.slot[i].Config.Name
+			if pName != "" {
+				if poolList != "" {
+					poolList += ","
+				}
+				poolList += pName
+			}
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Acquire] VDIs local pool list: '%s'", poolList)
+	}
+
 	for i := 0; i < len(p.slot); i++ {
-		if p.slot[i].Config.Host == "" || p.slot[i].Config.Port == 0 {
+		if (p.slot[i].Config.Host == "") || (p.slot[i].Config.Port == 0) {
 			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
 			continue
 		}
 		if !p.busy[i] {
-			if strList != "" {
+			if len(strIndices) > 0 {
 				// We have an assigned list, so we need to check if this p is in the list
 				found := false
-				strIndices := strings.Split(strList, ",")
 				for _, strIdx := range strIndices {
 					pName := p.slot[i].Config.Name
 					if strings.EqualFold(strings.TrimSpace(strIdx), strings.TrimSpace(pName)) {
@@ -299,23 +330,62 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 			}
 
 			p.busy[i] = true
-			return i, p.slot[i], nil
+			// Make a deep copy of p.slot[i] to be safe:
+			vdiInstance := SeleniumInstance{
+				Service: p.slot[i].Service,
+				Config:  p.slot[i].Config,
+			}
+			return i, vdiInstance, nil
 		}
 	}
 	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
 }
 
 // Release releases a VDI instance back to the pool
-func (p *Pool) Release(index int) {
+func (p *Pool) Release(index int, vdiName string) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if index >= 0 && index < len(p.busy) {
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Received request to release VDI instance with index %d and name '%s' back to pool", index, vdiName)
+
+	vdiName = strings.TrimSpace(vdiName)
+	if vdiName != "" {
+		// We have a VDI name so we need to use it to verify the correct VDI is being released
+		pName := p.slot[index].Config.Name
+		if !strings.EqualFold(strings.TrimSpace(vdiName), strings.TrimSpace(pName)) {
+			// Find the right VDI by name
+			for i := 0; i < len(p.slot); i++ {
+				pName = p.slot[i].Config.Name
+				if strings.EqualFold(strings.TrimSpace(vdiName), strings.TrimSpace(pName)) {
+					index = i
+					break
+				}
+			}
+		}
+	}
+
+	if (index >= 0) && (index < len(p.busy)) {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Releasing VDI instance '%s' with index %d back to pool", p.slot[index].Config.Name, index)
 		p.busy[index] = false
 	}
+}
+
+// This is a special implementation for internal use-only
+func checkAvailable(p *Pool) int {
+	if p == nil {
+		return -1
+	}
+
+	available := 0
+	for _, busy := range p.busy {
+		if !busy {
+			available++
+		}
+	}
+	return available
 }
 
 // Available returns the number of available VDI instances in the pool
@@ -326,13 +396,7 @@ func (p *Pool) Available() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	available := 0
-	for _, busy := range p.busy {
-		if !busy {
-			available++
-		}
-	}
-	return available
+	return checkAvailable(p)
 }
 
 // SeleniumInstance holds a Selenium service and its configuration
@@ -449,11 +513,17 @@ func ResetVDI(ctx ProcessContextInterface, browserType int) error {
 	// get current session
 	vdi := ctx.GetWebDriver()
 
-	// Quit current session
-	(*vdi).Close()
-	(*vdi).Quit()
+	if vdi != nil && *vdi != nil {
+		// Quit current session
+		_ = (*vdi).Close()
+		_ = (*vdi).Quit()
+	}
 
 	instance := ctx.GetVDIInstance()
+
+	if instance == nil {
+		return fmt.Errorf("ResetVDI: SeleniumInstance is nil")
+	}
 
 	// Stop the current service
 	/*
@@ -572,7 +642,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		args = append(args, "--no-first-run")
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP)...")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP) for '%s'...", sel.Config.Name)
 		// Set the CDP port
 		args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
@@ -584,7 +654,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Proxy...")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Proxy for '%s'...", sel.Config.Name)
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
 		// Get local network:
@@ -595,7 +665,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			args = append(args, "--proxy-bypass-list=localhost")
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s'", sel.Config.ProxyURL, "localhost,"+localNet)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s' for '%s'", sel.Config.ProxyURL, "localhost,"+localNet, sel.Config.Name)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -883,22 +953,27 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed for '%s'", err, sel.Config.Name)
 		return nil, err
 	}
 	// Inject anti-detection patch
-	err = InjectAntiDetectionPatches(&wd, userAgent, pConfig.Crawler.Platform)
+	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed on '%s': %v", sel.Config.Name, err)
+		// Check if we have lost the session
+		if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
+			// We lost the session (this is a Selenium bug sometimes)
+			return nil, err
+		}
 	}
 
 	// Post-connection settings
 	if !*ctx.GetVDIReturnedFlag() {
-		setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+		setNavigatorProperties(wd, sel.Config.Language, userAgent)
 	}
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
-	result, err2 := getBrowserConfiguration(&wd)
+	result, err2 := getBrowserConfiguration(wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v\n", err)
 		// Check if the error contains: "invalid session id"
@@ -906,10 +981,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration: %v\n", result)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration on '%s': %v\n", sel.Config.Name, result)
 	}
 
-	err2 = addLoadListener(&wd)
+	err2 = addLoadListener(wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
 		// Check if the error contains: "invalid session id"
@@ -960,7 +1035,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	return wd, err
 }
 
-func addLoadListener(wd *WebDriver) error {
+func addLoadListener(wd WebDriver) error {
 	script := `
         window.addEventListener('load', () => {
             try {
@@ -977,7 +1052,7 @@ func addLoadListener(wd *WebDriver) error {
         });
     `
 
-	_, err := (*wd).ExecuteScript(script, nil)
+	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error adding load listener: %v", err)
 	}
@@ -1016,7 +1091,7 @@ func GPUPatch(wd WebDriver) error {
 }
 
 // ReinforceBrowserSettings applies additional settings to the WebDriver instance
-func ReinforceBrowserSettings(wd *WebDriver) error {
+func ReinforceBrowserSettings(wd WebDriver) error {
 	if wd == nil {
 		return fmt.Errorf("WebDriver is nil")
 	}
@@ -1116,7 +1191,7 @@ func ReinforceBrowserSettings(wd *WebDriver) error {
 		}
     `
 
-	_, err := (*wd).ExecuteScript(script, nil)
+	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
 	}
@@ -1158,7 +1233,7 @@ func ReinforceBrowserSettings(wd *WebDriver) error {
 	});
 	`
 
-	_, err = (*wd).ExecuteScript(script, nil)
+	_, err = wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
@@ -1166,7 +1241,7 @@ func ReinforceBrowserSettings(wd *WebDriver) error {
 	return nil
 }
 
-func getBrowserConfiguration(wd *WebDriver) (map[string]interface{}, error) {
+func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 	script := `
 		return {
 			// WebRTC settings
@@ -1194,7 +1269,7 @@ func getBrowserConfiguration(wd *WebDriver) (map[string]interface{}, error) {
 	`
 
 	// Execute the script and get the result
-	result, err := (*wd).ExecuteScript(script, nil)
+	result, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error executing browser configuration script: %v", err)
 	}
@@ -1208,7 +1283,7 @@ func getBrowserConfiguration(wd *WebDriver) (map[string]interface{}, error) {
 	return config, nil
 }
 
-func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
+func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	selectedLanguage := ""
 
@@ -1289,7 +1364,7 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
 	}
 	for _, script := range scripts {
-		_, err := (*wd).ExecuteScript(script, nil)
+		_, err := wd.ExecuteScript(script, nil)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
 		}
@@ -1297,7 +1372,7 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 }
 
 // InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
-func InjectAntiDetectionPatches(driver *WebDriver, uaString string, platform string) error {
+func InjectAntiDetectionPatches(driver WebDriver, uaString string, platform string) error {
 
 	script := fmt.Sprintf(`
 Object.defineProperty(navigator, 'webdriver', {
@@ -1367,7 +1442,7 @@ console.log("loaded");
 	args := make(map[string]any)
 	args["source"] = script
 
-	_, err := (*driver).ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", args)
+	_, err := driver.ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", args)
 	if err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}
@@ -1382,13 +1457,25 @@ func Refresh(ctx ProcessContextInterface) error {
 		return fmt.Errorf("invalid parameters: ProcessContext or SeleniumInstance is nil")
 	}
 
-	wd := ctx.GetWebDriver()
+	wd := *ctx.GetWebDriver()
+	if wd == nil {
+		return fmt.Errorf("invalid parameters: WebDriver is nil")
+	}
+
+	// Check if we have a SessionID
+	sessionID := wd.SessionID()
+	if strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("invalid parameters: WebDriver SessionID is empty, unable to find session with id")
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Refresh] Refreshing session with ID '%s'...", sessionID)
 
 	// get the page title
-	title, _ := (*wd).Title()
-	if title == "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Refresh] Sent 'Keep Session Alive' command. %s", title)
+	title, err := wd.Title()
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to get page title during session refresh: %v", err)
+		return err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Refresh] Sent 'Keep Session Alive' command for page '%s'", title)
 
 	return nil
 }
