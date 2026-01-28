@@ -4546,7 +4546,7 @@ func getDomainParts(parts []string, level uint) string {
 // KeepSessionAlive is a dummy function that keeps the WebDriver session alive.
 // It's used to prevent the WebDriver session from timing out.
 func KeepSessionAlive(wd *vdi.WebDriver) error {
-	if wd == nil {
+	if wd == nil || *wd == nil {
 		return errors.New("WebDriver is nil, cannot keep session alive")
 	}
 
