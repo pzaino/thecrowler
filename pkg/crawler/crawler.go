@@ -4092,15 +4092,13 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 
 	// Get the HTML content of the page
 	if docTypeIsHTML(objType) || (strings.TrimSpace((docType)) == "") || (sniffHTML([]byte(htmlContentTest))) {
+		// Get the HTML content
 		htmlContent, _ = webPageCopy.PageSource()
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content, during Page Info Extraction: %v", err)
 			return err
 		}
-
-		// Extract lang
-		detectedLang = detectLang(webPageCopy)
 
 		// Run scraping rules if any
 		var scrapedData string
@@ -4178,6 +4176,9 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 				}
 			}
 		}
+
+		// Extract lang
+		detectedLang = detectLang(*webPage)
 
 		// To get the summary, we extract the content of the "description" meta tag
 		// if description tag is not found, we extract the content of og:description tag
