@@ -4953,8 +4953,8 @@ func rightClick(processCtx *ProcessContext, id string, url LinkItem) error {
 	// Add new links to the process context
 	if len(pageCache.Links) > 0 {
 		processCtx.linksMutex.Lock()
-		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
+		processCtx.linksMutex.Unlock()
 	}
 
 	// Before we return, we need to call goBack to go back to the previous page
@@ -5359,8 +5359,8 @@ func processJob(processCtx *ProcessContext, id, url string, skippedURLs []LinkIt
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Adding %d new links to the process context.\n", id, len(pageCache.Links))
 		startTime := time.Now()
 		processCtx.linksMutex.Lock()
-		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
+		processCtx.linksMutex.Unlock()
 		elapsed := time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully added new links to the process context in %v\n", id, elapsed)
 	}
