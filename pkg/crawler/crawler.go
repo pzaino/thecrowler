@@ -4610,7 +4610,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		if skip {
 			processCtx.Status.TotalSkipped.Add(1)
 			skippedURLs = append(skippedURLs, url)
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' being skipped due skipping rules\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %d: URL '%s' being skipped due skipping rules\n", id, url.Link)
 			continue
 		}
 		if processCtx.visitedLinks[cmn.NormalizeURL(urlLink)] {
