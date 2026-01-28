@@ -35,7 +35,7 @@ import (
 // It's used to pass data between functions and goroutines and holds the
 // DB index of the source page after it's indexed.
 type ProcessContext struct {
-	pStatus              int                       // Process status
+	pStatus              int                       // Process status indicator (0=running, 1=stopped, 2=paused)
 	SelID                int                       // The Selenium ID
 	SelInstance          vdi.SeleniumInstance      // The Selenium instance
 	WG                   *sync.WaitGroup           // The Caller's WaitGroup
@@ -117,26 +117,26 @@ func (ctx *ProcessContext) GetVDIInstance() *vdi.SeleniumInstance {
 // from the database Source entry and populates the ProcessContext fields.
 func (ctx *ProcessContext) LoadSourceConfiguration() error {
 	if ctx.source == nil || ctx.source.Config == nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[ProcessContext] No source configuration found.")
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ProcessContext] No source configuration found.")
 		return nil
 	}
 
 	sourceConfig := make(map[string]interface{})
 	err := json.Unmarshal(*ctx.source.Config, &sourceConfig)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "[ProcessContext] Unmarshalling source configuration: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-ProcessContext] Unmarshalling source configuration: %v", err)
 		return err
 	}
 
 	ctx.srcCfg = sourceConfig
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[ProcessContext] Source configuration extracted: %v", ctx.srcCfg)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessContext] Source configuration extracted: %v", ctx.srcCfg)
 
 	// Extract crawling_config section if present
 	crawlingConfig, _ := ctx.srcCfg["crawling_config"].(map[string]interface{})
 
 	// Process unwanted_urls patterns
 	if unwantedURLs, ok := crawlingConfig["unwanted_urls"]; ok {
-		if unwantedURLsSlice, ok := unwantedURLs.([]interface{}); ok {
+		if unwantedURLsSlice, ok := unwantedURLs.([]any); ok {
 			ctx.compiledUURLs = make(map[string]*regexp.Regexp)
 			for _, pattern := range unwantedURLsSlice {
 				if strPattern, ok := pattern.(string); ok {
@@ -148,7 +148,7 @@ func (ctx *ProcessContext) LoadSourceConfiguration() error {
 					ctx.compiledUURLs[strPattern] = re
 				}
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[ProcessContext] Compiled unwanted URL patterns: %d", len(ctx.compiledUURLs))
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessContext] Compiled unwanted URL patterns: %d", len(ctx.compiledUURLs))
 		}
 	}
 
@@ -188,7 +188,7 @@ func (ctx *ProcessContext) LoadSourceConfiguration() error {
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3,
-		"[ProcessContext] Loaded %d include and %d exclude URL patterns",
+		"[DEBUG-ProcessContext] Loaded %d include and %d exclude URL patterns",
 		len(ctx.userURLPatterns), len(ctx.userURLBlockPatterns))
 
 	return nil
