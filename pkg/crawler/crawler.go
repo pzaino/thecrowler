@@ -2543,7 +2543,7 @@ func collectXHRLogs(ctx *ProcessContext, collectedResponses []map[string]interfa
 
 	if ctx.VDIReturned {
 		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver session has already been returned.")
-		return nil, errors.New("WebDriver session has already been returned")
+		return nil, nil
 	}
 
 	// Injected JavaScript to return the collected XHR logs
@@ -2666,6 +2666,16 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 		rbee = "http://127.0.0.1:3000/v1/rb"
 	)
 	wd := ctx.wd
+
+	if wd == nil {
+		return nil, errors.New("WebDriver is nil")
+	}
+
+	if ctx.VDIReturned {
+		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver session has already been returned.")
+		return nil, nil
+	}
+
 	// Send a Keep alive
 	err := KeepSessionAlive(wd)
 	if err != nil {
