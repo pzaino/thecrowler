@@ -1091,7 +1091,7 @@ func GPUPatch(wd WebDriver) error {
 }
 
 // ReinforceBrowserSettings applies additional settings to the WebDriver instance
-func ReinforceBrowserSettings(wd *WebDriver) error {
+func ReinforceBrowserSettings(wd WebDriver) error {
 	if wd == nil {
 		return fmt.Errorf("WebDriver is nil")
 	}
@@ -1191,7 +1191,7 @@ func ReinforceBrowserSettings(wd *WebDriver) error {
 		}
     `
 
-	_, err := (*wd).ExecuteScript(script, nil)
+	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
 	}
@@ -1233,7 +1233,7 @@ func ReinforceBrowserSettings(wd *WebDriver) error {
 	});
 	`
 
-	_, err = (*wd).ExecuteScript(script, nil)
+	_, err = wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}

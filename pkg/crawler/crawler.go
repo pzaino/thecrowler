@@ -3152,8 +3152,8 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 	}
 }
 
-func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
-	if wd == nil || *wd == nil {
+func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
+	if wd == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot setup browser.")
 		return
 	}
@@ -3174,13 +3174,13 @@ func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
 	*/
 
 	// Get about blank
-	err = (*wd).Get("about:blank")
+	err = wd.Get("about:blank")
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
 	}
 
 	// Set GPU properties
-	err = vdi.GPUPatch((*wd))
+	err = vdi.GPUPatch(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
 	}
@@ -3209,7 +3209,7 @@ func setupBrowser(wd *vdi.WebDriver, ctx *ProcessContext) {
 			if !ok {
 				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string: %v", homeURLInf)
 			} else {
-				_ = (*wd).Get(homeURL)
+				_ = wd.Get(homeURL)
 			}
 		}
 	}
@@ -3344,7 +3344,8 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			err = cleanUpBrowser(wd) // Clear everything before resetting the VDI session
 			if err != nil {
 				// Let's check if session ID is invalid, if so we need to create a new one
-				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") {
+				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") ||
+					strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found during cleanup, creating a new one...", id)
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
@@ -3369,8 +3370,10 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			// check if webdriver session is still good, if not open a new one
 			_, err = wd.CurrentURL()
 			if err != nil {
-				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") {
+				if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "invalid session id") ||
+					strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 					// If the session is not found, create a new one
+					cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: WebDriver session not found, creating a new one...", id)
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
 					if err != nil {
@@ -3381,7 +3384,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		}
 
 		// Setup the Browser before requesting a page
-		setupBrowser(&wd, ctx)
+		setupBrowser(wd, ctx)
 
 		// Set the HTTP referer if we are on the first URL
 		if level == -1 {
@@ -3419,7 +3422,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
 				}
 				// Setup the Browser before requesting a page
-				setupBrowser(&wd, ctx)
+				setupBrowser(wd, ctx)
 				// Set the HTTP referer if we are on the first URL
 				if level == -1 {
 					setReferrerHeader(&wd, ctx)
@@ -3612,7 +3615,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	return wd, docType, nil
 }
 
-func blockCDPURLs(wd *vdi.WebDriver, ctx *ProcessContext) error {
+func blockCDPURLs(wd vdi.WebDriver, ctx *ProcessContext) error {
 	// Check if we have any blocked URLs configured
 	if len((*ctx).userURLBlockPatterns) == 0 {
 		return nil // No patterns to block
@@ -3627,13 +3630,13 @@ func blockCDPURLs(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	}
 
 	// First: enable the Network domain
-	_, err := (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+	_, err := wd.ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
 	if err != nil {
 		return fmt.Errorf("failed to enable Network domain: %w", err)
 	}
 
 	// Then: set the blocked URL patterns
-	_, err = (*wd).ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
+	_, err = wd.ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
 		"urls": patterns,
 	})
 	if err != nil {
