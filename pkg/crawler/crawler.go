@@ -4550,8 +4550,10 @@ func KeepSessionAlive(wd *vdi.WebDriver) error {
 		return errors.New("WebDriver is nil, cannot keep session alive")
 	}
 
+	wdCopy := *wd
+
 	// Keep session alive
-	titleStr, err := (*wd).Title()
+	titleStr, err := wdCopy.Title()
 	if err != nil {
 		return fmt.Errorf("failed to keep session alive: %v", err)
 	}
