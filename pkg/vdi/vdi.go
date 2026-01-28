@@ -513,11 +513,17 @@ func ResetVDI(ctx ProcessContextInterface, browserType int) error {
 	// get current session
 	vdi := ctx.GetWebDriver()
 
-	// Quit current session
-	(*vdi).Close()
-	(*vdi).Quit()
+	if vdi != nil && *vdi != nil {
+		// Quit current session
+		_ = (*vdi).Close()
+		_ = (*vdi).Quit()
+	}
 
 	instance := ctx.GetVDIInstance()
+
+	if instance == nil {
+		return fmt.Errorf("ResetVDI: SeleniumInstance is nil")
+	}
 
 	// Stop the current service
 	/*
