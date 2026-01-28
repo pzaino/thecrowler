@@ -850,7 +850,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
 
-	wid := ctx.GetContextID() + "-0"
+	wid := ctx.GetContextID() + "_0"
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Crawling Source: %d", wid, ctx.source.ID)
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Crawling URL: %s", wid, ctx.source.URL)
@@ -878,10 +878,10 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 								}
 								if !found {
 									// Try to get the content of the alternative link
-									cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Trying alternative link: %s", patternStr)
+									cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Trying alternative link: %s", wid, patternStr)
 									pageSource, docType, err = getURLContent(patternStr, ctx.wd, -1, ctx, wid)
 									if err == nil {
-										cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Successfully crawled alternative link: %s", patternStr)
+										cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Successfully crawled alternative link: %s", wid, patternStr)
 										break // Exit the loop if we successfully crawled an alternative link
 									}
 								}
@@ -923,21 +923,21 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	}
 
 	// Detect page technologies
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Starting technology detection for URL: %s", url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Starting technology detection for URL: %s", wid, url)
 	startTime := time.Now()
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageInfo.DetectedTech = (*detectedTech)
 	}
 	elapsed := time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Technology detection took %s", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Technology detection took %s", wid, elapsed)
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Continue with extracting page info and indexing
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting page info for URL: %s", url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page info for URL: %s", wid, url)
 	startTime = time.Now()
 	err = extractPageInfo(&pageSource, ctx, docType, &pageInfo)
 	if err != nil {
@@ -951,29 +951,29 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting page info took %s", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page info took %s", wid, elapsed)
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Extract Links from the page HTML
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting links from page HTML for URL: %s", url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting links from page HTML for URL: %s", wid, url)
 	startTime = time.Now()
 	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, url)
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Extracting links took %s", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting links took %s", wid, elapsed)
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(ctx) // Refresh the WebDriver session
 
 	// Generate Keywords from the page content
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Generating keywords for URL: %s", url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Generating keywords for URL: %s", wid, url)
 	startTime = time.Now()
 	pageInfo.Keywords = extractKeywords(pageInfo)
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Generating keywords took %s", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Generating keywords took %s", wid, elapsed)
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
 	}
@@ -981,11 +981,11 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Collect Navigation Timing metrics
 	if ctx.config.Crawler.CollectPerfMetrics {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting navigation metrics for URL: %s", url)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting navigation metrics for URL: %s", wid, url)
 		startTime = time.Now()
 		collectNavigationMetrics(&ctx.wd, &pageInfo)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting navigation metrics took %s", elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting navigation metrics took %s", wid, elapsed)
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
@@ -994,11 +994,11 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Collect Page logs
 	if ctx.config.Crawler.CollectPageEvents {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting page logs for URL: %s", url)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting page logs for URL: %s", wid, url)
 		startTime = time.Now()
 		collectPageLogs(&pageSource, &pageInfo)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Collecting page logs took %s", elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting page logs took %s", wid, elapsed)
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
@@ -1007,11 +1007,11 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	// Collect XHR
 	if ctx.config.Crawler.CollectXHR {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Collecting XHR for '%s'...\n", url)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Collecting XHR for '%s'...\n", wid, url)
 		startTime = time.Now()
 		collectXHR(ctx, &pageInfo)
 		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] 0: Completed XHR collection for '%s' in %v\n", url, elapsed)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Completed XHR collection for '%s' in %v\n", wid, url, elapsed)
 		if ctx.RefreshCrawlingTimer != nil {
 			ctx.RefreshCrawlingTimer()
 		}
@@ -1030,7 +1030,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	ctx.getURLMutex.Unlock() // Unlock the getURLMutex
 
 	// Index the page
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Indexing page for URL: %s", url)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Indexing page for URL: %s", wid, url)
 	startTime = time.Now()
 	ctx.fpIdx, err = ctx.IndexPage(&pageInfo)
 	if err != nil {
@@ -1038,7 +1038,7 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
 	}
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] 0: Indexing page took %s", elapsed)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Indexing page took %s", wid, elapsed)
 
 	// Reset the PageInfo struct for the next use
 	resetPageInfo(&pageInfo) // Reset the PageInfo struct
