@@ -4557,14 +4557,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			return nil // We return here because we reached the max_links limit!
 		}
 
-		// Pipeline is still running so we can process the job
-		err = KeepSessionAlive(&processCtx.wd)
-		if err != nil {
-			// Failed to keep session alive, probably the session is closed
-			// just return
-			//cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", id, err)
-			return nil
-		}
+		// Given we may have to skip multiple URLs, we keep the session alive here
+		_ = KeepSessionAlive(&processCtx.wd)
 
 		// Recursive Mode
 		urlLink := url.Link
