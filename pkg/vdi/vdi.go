@@ -1457,20 +1457,20 @@ func Refresh(ctx ProcessContextInterface) error {
 		return fmt.Errorf("invalid parameters: ProcessContext or SeleniumInstance is nil")
 	}
 
-	wd := ctx.GetWebDriver()
-	if wd == nil || *wd == nil {
+	wd := *ctx.GetWebDriver()
+	if wd == nil {
 		return fmt.Errorf("invalid parameters: WebDriver is nil")
 	}
 
 	// Check if we have a SessionID
-	sessionID := (*wd).SessionID()
+	sessionID := wd.SessionID()
 	if strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("invalid parameters: WebDriver SessionID is empty, unable to find session with id")
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Refresh] Refreshing session with ID '%s'...", sessionID)
 
 	// get the page title
-	title, err := (*wd).Title()
+	title, err := wd.Title()
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to get page title during session refresh: %v", err)
 		return err
