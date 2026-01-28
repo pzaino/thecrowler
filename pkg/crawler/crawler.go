@@ -4560,8 +4560,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		// Pipeline is still running so we can process the job
 		err = KeepSessionAlive(&processCtx.wd)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", id, err)
-			return err
+			// Failed to keep session alive, probably the session is closed
+			// just return
+			//cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", id, err)
+			return nil
 		}
 
 		// Recursive Mode
@@ -4599,6 +4601,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 				continue
 			}
 		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Starting job %s\n", id, url.Link)
 
 		// Process the job
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Processing job %s\n", id, url.Link)
