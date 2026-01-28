@@ -4683,10 +4683,9 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			}
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Starting job %s\n", wid, url.Link)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Preparing to start job %s\n", wid, url.Link)
 
 		// Process the job
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Processing job %s\n", wid, url.Link)
 		if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRecu {
 			err = processJob(processCtx, wid, urlLink, skippedURLs)
 		} else if strings.ToLower(strings.TrimSpace(processCtx.config.Crawler.BrowsingMode)) == optBrowsingRCRecu {
@@ -5221,7 +5220,7 @@ func processJob(processCtx *ProcessContext, id string, url string, skippedURLs [
 	// Set getURLMutex to ensure only one goroutine is accessing the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: starting processJob with '%s'\n", id, url)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Starting processJob with '%s'\n", id, url)
 
 	if processCtx.VDIReturned {
 		// If the VDI session has been returned we need to stop the worker
