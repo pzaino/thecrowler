@@ -4057,6 +4057,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 	htmlContent := ""
 	metaTags := []MetaTag{}
 	scrapedList := []ScrapedItem{}
+	detectedLang := ""
 
 	// Copy the current webPage object
 	webPageCopy := *webPage
@@ -4070,6 +4071,9 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 			cmn.DebugMsg(cmn.DbgLvlError, "loading HTML content, during Page Info Extraction: %v", err)
 			return err
 		}
+
+		// Extract lang
+		detectedLang = detectLang(webPageCopy)
 
 		// Run scraping rules if any
 		var scrapedData string
@@ -4212,7 +4216,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 	(*PageCache).BodyText = bodyText
 	(*PageCache).HTML = htmlContent
 	(*PageCache).MetaTags = metaTags
-	(*PageCache).DetectedLang = detectLang((*webPage))
+	(*PageCache).DetectedLang = detectedLang
 	(*PageCache).DetectedType = objType
 	(*PageCache).ScrapedData = scrapedList
 
