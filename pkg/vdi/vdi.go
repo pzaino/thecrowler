@@ -957,7 +957,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		return nil, err
 	}
 	// Inject anti-detection patch
-	err = InjectAntiDetectionPatches(&wd, userAgent, pConfig.Crawler.Platform)
+	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed on '%s': %v", sel.Config.Name, err)
 		// Check if we have lost the session
@@ -969,11 +969,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Post-connection settings
 	if !*ctx.GetVDIReturnedFlag() {
-		setNavigatorProperties(&wd, sel.Config.Language, userAgent)
+		setNavigatorProperties(wd, sel.Config.Language, userAgent)
 	}
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
-	result, err2 := getBrowserConfiguration(&wd)
+	result, err2 := getBrowserConfiguration(wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Error executing script: %v\n", err)
 		// Check if the error contains: "invalid session id"
@@ -984,7 +984,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration on '%s': %v\n", sel.Config.Name, result)
 	}
 
-	err2 = addLoadListener(&wd)
+	err2 = addLoadListener(wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
 		// Check if the error contains: "invalid session id"
@@ -1035,7 +1035,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	return wd, err
 }
 
-func addLoadListener(wd *WebDriver) error {
+func addLoadListener(wd WebDriver) error {
 	script := `
         window.addEventListener('load', () => {
             try {
@@ -1052,7 +1052,7 @@ func addLoadListener(wd *WebDriver) error {
         });
     `
 
-	_, err := (*wd).ExecuteScript(script, nil)
+	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error adding load listener: %v", err)
 	}
@@ -1241,7 +1241,7 @@ func ReinforceBrowserSettings(wd *WebDriver) error {
 	return nil
 }
 
-func getBrowserConfiguration(wd *WebDriver) (map[string]interface{}, error) {
+func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 	script := `
 		return {
 			// WebRTC settings
@@ -1269,7 +1269,7 @@ func getBrowserConfiguration(wd *WebDriver) (map[string]interface{}, error) {
 	`
 
 	// Execute the script and get the result
-	result, err := (*wd).ExecuteScript(script, nil)
+	result, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error executing browser configuration script: %v", err)
 	}
@@ -1283,7 +1283,7 @@ func getBrowserConfiguration(wd *WebDriver) (map[string]interface{}, error) {
 	return config, nil
 }
 
-func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
+func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	selectedLanguage := ""
 
@@ -1364,7 +1364,7 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
 	}
 	for _, script := range scripts {
-		_, err := (*wd).ExecuteScript(script, nil)
+		_, err := wd.ExecuteScript(script, nil)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
 		}
@@ -1372,7 +1372,7 @@ func setNavigatorProperties(wd *WebDriver, lang, userAgent string) {
 }
 
 // InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
-func InjectAntiDetectionPatches(driver *WebDriver, uaString string, platform string) error {
+func InjectAntiDetectionPatches(driver WebDriver, uaString string, platform string) error {
 
 	script := fmt.Sprintf(`
 Object.defineProperty(navigator, 'webdriver', {
@@ -1442,7 +1442,7 @@ console.log("loaded");
 	args := make(map[string]any)
 	args["source"] = script
 
-	_, err := (*driver).ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", args)
+	_, err := driver.ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", args)
 	if err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}
