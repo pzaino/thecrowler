@@ -960,6 +960,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	err = InjectAntiDetectionPatches(&wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed on '%s': %v", sel.Config.Name, err)
+		// Check if we have lost the session
+		if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
+			// We lost the session (this is a Selenium bug sometimes)
+			return nil, err
+		}
 	}
 
 	// Post-connection settings
