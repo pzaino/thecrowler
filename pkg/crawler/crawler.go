@@ -4551,17 +4551,17 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping worker due to pipeline shutdown\n", id)
 			return nil // We return here because the pipeline is shutting down!
 		}
+		// Check if the URL should be skipped
+		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
+			return nil // We return here because we reached the max_links limit!
+		}
+
 		// Pipeline is still running so we can process the job
 		err = KeepSessionAlive(&processCtx.wd)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: %v", id, err)
 			return err
-		}
-
-		// Check if the URL should be skipped
-		if (processCtx.config.Crawler.MaxLinks > 0) && (processCtx.Status.TotalPages.Load() >= int32(processCtx.config.Crawler.MaxLinks)) { // nolint:gosec // Values are generated and handled by the code
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %d: Stopping due reached max_links limit: %d\n", id, processCtx.Status.TotalPages.Load())
-			return nil // We return here because we reached the max_links limit!
 		}
 
 		// Recursive Mode
