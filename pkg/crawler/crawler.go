@@ -131,6 +131,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx.RefreshCrawlingTimer = args.Refresh
 	processCtx.pStatus = 1 // Processing started
 
+	cid := processCtx.GetContextID()
+	processCtx.Status.ContextID = cid // Store context ID in status (this should be the only place where it's set!)
+
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
 		// Load the content type detection rules

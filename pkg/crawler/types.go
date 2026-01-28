@@ -50,6 +50,7 @@ type Status struct {
 	PipelineID      uint64
 	SourceID        uint64
 	VDIID           string
+	ContextID       string
 	Source          string
 	TotalPages      atomic.Int32
 	TotalLinks      atomic.Int32
