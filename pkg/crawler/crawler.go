@@ -5216,7 +5216,7 @@ func ResetSiteSession(ctx *ProcessContext) error {
 	return nil
 }
 
-func processJob(processCtx *ProcessContext, id string, url string, skippedURLs []LinkItem) error {
+func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURLs []LinkItem) (*PageInfo, string, error) {
 	// Set getURLMutex to ensure only one goroutine is accessing the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -5224,7 +5224,7 @@ func processJob(processCtx *ProcessContext, id string, url string, skippedURLs [
 
 	if processCtx.VDIReturned {
 		// If the VDI session has been returned we need to stop the worker
-		return nil
+		return nil, "", nil
 	}
 
 	// Get the HTML content of the page
@@ -5233,7 +5233,7 @@ func processJob(processCtx *ProcessContext, id string, url string, skippedURLs [
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx, id)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
-		return err
+		return nil, "", err
 	}
 	elapsed := time.Since(startTime)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully retrieved HTML content for '%s' in %v\n", id, url, elapsed)
@@ -5280,7 +5280,7 @@ func processJob(processCtx *ProcessContext, id string, url string, skippedURLs [
 	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
 	if err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
-			return err
+			return &pageCache, currentURL, err
 		}
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
 	}
@@ -5376,15 +5376,24 @@ func processJob(processCtx *ProcessContext, id string, url string, skippedURLs [
 	}
 	processCtx.Status.LastDelay = totalDelay.Seconds()
 
+	return &pageCache, currentURL, nil
+}
+
+func processJob(processCtx *ProcessContext, id, url string, skippedURLs []LinkItem) error {
+	pageCache, currentURL, err := processJobVDI(processCtx, id, url, skippedURLs)
+	if err != nil || pageCache == nil {
+		return err
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Indexing page '%s' with %d links found.\n", id, currentURL, len(pageCache.Links))
 	pageCache.Config = &processCtx.config
 	processCtx.getURLMutex.Unlock()
-	startTime = time.Now()
-	_, err = indexPage(processCtx, currentURL, &pageCache)
+	startTime := time.Now()
+	_, err = indexPage(processCtx, currentURL, pageCache)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, errWorkerLog, id, url, err)
 	}
-	elapsed = time.Since(startTime)
+	elapsed := time.Since(startTime)
 	if processCtx.visitedLinks == nil {
 		processCtx.visitedLinks = make(map[string]bool)
 	}
@@ -5394,15 +5403,15 @@ func processJob(processCtx *ProcessContext, id string, url string, skippedURLs [
 	// Add the new links to the process context
 	if len(pageCache.Links) > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Adding %d new links to the process context.\n", id, len(pageCache.Links))
-		startTime = time.Now()
+		startTime := time.Now()
 		processCtx.linksMutex.Lock()
 		defer processCtx.linksMutex.Unlock()
 		processCtx.newLinks = append(processCtx.newLinks, pageCache.Links...)
 		processCtx.linksMutex.Unlock()
-		elapsed = time.Since(startTime)
+		elapsed := time.Since(startTime)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully added new links to the process context in %v\n", id, elapsed)
 	}
-	resetPageInfo(&pageCache) // Reset the PageInfo object
+	resetPageInfo(pageCache) // Reset the PageInfo object
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished processing job '%s', returning to worker routine.\n", id, url)
 	return err
