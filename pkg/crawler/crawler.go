@@ -3269,8 +3269,8 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	if ctx == nil {
 		return nil, "", errors.New("ProcessContext is nil")
 	}
-	ctx.accessVDIMutex.Lock() // Allow 1 worker per session	at the time
-	defer ctx.accessVDIMutex.Unlock()
+	//ctx.accessVDIMutex.Lock() // Allow 1 worker per session	at the time
+	//defer ctx.accessVDIMutex.Unlock()
 
 	// Refresh Crawler Instance work timeout
 	if ctx.RefreshCrawlingTimer != nil {
