@@ -3293,7 +3293,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	}
 
 	// Give Selenium some time
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	// Let's start preparing for a fetch:
 
