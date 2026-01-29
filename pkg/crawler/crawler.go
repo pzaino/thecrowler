@@ -4637,7 +4637,7 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		if processCtx.config.Crawler.PreventDuplicateURLs {
 			alreadyCrawled, _ := cdb.IsURLKnown(urlLink, processCtx.db)
 			if alreadyCrawled {
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: URL '%s' already crawled by another instance\n", wid, url)
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: URL '%s' already crawled by another worker\n", wid, url.Link)
 				continue
 			}
 		}
