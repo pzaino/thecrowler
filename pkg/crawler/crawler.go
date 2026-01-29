@@ -4701,7 +4701,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 	// Check if the URL is valid (aka if it's within the allowed restricted boundaries)
 	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due 'external' policy.\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
 
@@ -4709,7 +4709,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 	if processCtx.compiledUURLs != nil {
 		for _, UURL := range processCtx.compiledUURLs {
 			if UURL.MatchString(url) {
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
 				return true
 			}
 		}
@@ -4717,7 +4717,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 	// Check if the URL is the same as the Source URL (in which case skip it)
 	if url == processCtx.source.URL {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' as it is the same as the source URL\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' as it is the same as the source URL\n", id, url)
 		return true
 	}
 
@@ -4729,7 +4729,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 		for _, pattern := range processCtx.userURLPatterns {
 			re := regexp.MustCompile(pattern)
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %s: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Worker] %s: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
 			if re.MatchString(url) {
 				matches++
 
@@ -4747,13 +4747,13 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 		// If we decided to skip based on negative pattern, return true
 		if shouldSkip {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due to user-defined pattern\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due to user-defined pattern\n", id, url)
 			return true
 		}
 
 		// If we did not find any matches, skip the URL
 		if matches == 0 {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
 			return true
 		}
 	}

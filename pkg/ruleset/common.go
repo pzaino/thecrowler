@@ -451,10 +451,10 @@ func CheckURL(urlStr, urlPattern string) bool {
 	// Check if the URL matches the pattern
 	matched, err := regexp.MatchString(urlPattern, urlStr)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "error matching URL: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "matching URL: %v", err)
 		return false
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "URL '%s' matched: %t", urlStr, matched)
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-CheckURL] URL '%s' matched: %t", urlStr, matched)
 	return matched
 }
