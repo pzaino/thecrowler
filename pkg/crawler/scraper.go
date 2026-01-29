@@ -378,7 +378,7 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 		doc, err2 := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 		if err2 != nil {
 			// Fallback failed
-			cmn.DebugMsg(cmn.DbgLvlError, "Error finding elements: %v, and fallback mechanism failed too: %v", err, err2)
+			cmn.DebugMsg(cmn.DbgLvlError, "finding elements: %v, and fallback mechanism failed too: %v", err, err2)
 			return results
 		}
 
@@ -416,9 +416,9 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 	// Let's check results before we return it
 	if len(results) == 0 {
 		if cmn.GetDebugLevel() <= cmn.DbgLvlDebug3 {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "No results found for selector: '%s'", selector.Selector)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ExtractContent] No results found for selector: '%s'", selector.Selector)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "Failed to find element: '%s' %v", selector.Selector, err)
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ExtractContent] Failed to find element: '%s' %v", selector.Selector, err)
 		}
 	} else {
 		tstResults := cmn.ConvertSliceInfToString(results)
@@ -426,9 +426,9 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 			if len(tstResults) > 128 {
 				tstResults = tstResults[:128] + "..."
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Found element: '%s' %s", selector.Selector, tstResults)
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ExtractContent] Found element: '%s' %s", selector.Selector, tstResults)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "Found element: '%s' %v", selector.Selector, tstResults)
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ExtractContent] Found element: '%s' %v", selector.Selector, tstResults)
 		}
 	}
 	return results
