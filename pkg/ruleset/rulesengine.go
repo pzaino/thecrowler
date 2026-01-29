@@ -311,7 +311,7 @@ func (re *RuleEngine) GetAllRuleGroups() []*RuleGroup {
 	if !re.Cache.IsInvalid && len(re.Cache.RuleGroups) != 0 {
 		cachedGroups := re.Cache.RuleGroups
 		re.Cache.Mu.RUnlock()
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning %d Rulesgroup from the cache.", len(cachedGroups))
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-GetAllRuleGroups] Returning %d Rulesgroup from the cache.", len(cachedGroups))
 		return cachedGroups
 	}
 	re.Cache.Mu.RUnlock()
