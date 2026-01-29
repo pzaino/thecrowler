@@ -293,7 +293,7 @@ wait_for_available_vdis:
 	strList = strings.TrimSpace(strList)
 	strIndices := strings.Split(strList, ",")
 	if strList != "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
 		// Read full VDIs pool names list and put it in a string comma separated
 		poolList := ""
 		for i := 0; i < len(p.slot); i++ {
@@ -305,7 +305,7 @@ wait_for_available_vdis:
 				poolList += pName
 			}
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Acquire] VDIs local pool list: '%s'", poolList)
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] VDIs local pool list: '%s'", poolList)
 	}
 
 	for i := 0; i < len(p.slot); i++ {

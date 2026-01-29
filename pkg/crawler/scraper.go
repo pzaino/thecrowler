@@ -43,7 +43,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 
 	_ = vdi.Refresh(ctx)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Applying scraping rule: %v", rule.RuleName)
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ApplyRule] Applying scraping rule: %v", rule.RuleName)
 
 	// Extracted data will be stored here
 	extractedData := make(map[string]interface{})
@@ -82,7 +82,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 						// Safely convert the map to JSON and store it directly in extractedData
 						jsonStr, err := json.Marshal(v)
 						if err != nil {
-							cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
+							cmn.DebugMsg(cmn.DbgLvlError, "marshalling map to JSON: %v", err)
 							errContainer = append(errContainer, err)
 						}
 						allExtracted = append(allExtracted, string(jsonStr))
@@ -99,7 +99,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 								// Safely convert the map to JSON and store it directly in extractedData
 								jsonStr, err := json.Marshal(item)
 								if err != nil {
-									cmn.DebugMsg(cmn.DbgLvlError, "Error marshalling map to JSON: %v", err)
+									cmn.DebugMsg(cmn.DbgLvlError, "marshalling map to JSON: %v", err)
 									errContainer = append(errContainer, err)
 								}
 								allExtracted = append(allExtracted, string(jsonStr))
@@ -160,7 +160,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	}
 	// Check if the Rule has a PostProcessing section
 	if len(rule.PostProcessing) != 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Applying Rule `%s` post-processing steps to the extracted data", rule.RuleName)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ApplyRule] Applying Rule `%s` post-processing steps to the extracted data", rule.RuleName)
 		data := cmn.ConvertMapToJSON(extractedData)
 		for _, step := range rule.PostProcessing {
 			ApplyPostProcessingStep(ctx, &step, &data)
@@ -175,7 +175,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 	}
 	endTime := time.Now()
 	// Log the time taken to extract the data for this element
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "Time taken to execute rule `%s`: %v", rule.RuleName, endTime.Sub(startTime))
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ApplyRule] Time taken to execute rule `%s`: %v", rule.RuleName, endTime.Sub(startTime))
 
 	// Optional: Extract JavaScript files if required
 	if rule.JsFiles {
