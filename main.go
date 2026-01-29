@@ -58,6 +58,7 @@ type PipelineStatusReport struct {
 	Source          string  `json:"source"`
 	SourceID        uint64  `json:"source_id"`
 	VDIID           string  `json:"vdi_id"`
+	ContextID       string  `json:"context_id"`
 	PipelineStatus  string  `json:"pipeline_status"`
 	CrawlingStatus  string  `json:"crawling_status"`
 	NetInfoStatus   string  `json:"netinfo_status"`
@@ -988,6 +989,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
 		report += fmt.Sprintf("                 VDI ID: %s\n", status.VDIID)
+		report += fmt.Sprintf("              ContextID: %s\n", status.ContextID)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(int(status.PipelineRunning.Load())))
 		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(int(status.CrawlingRunning.Load())))
 		report += fmt.Sprintf("         NetInfo status: %s\n", StatusStr(int(status.NetInfoRunning.Load())))
@@ -1572,6 +1574,7 @@ func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport
 			Source:          status.Source,
 			SourceID:        status.SourceID,
 			VDIID:           status.VDIID,
+			ContextID:       status.ContextID,
 			PipelineStatus:  StatusStr(int(status.PipelineRunning.Load())),
 			CrawlingStatus:  StatusStr(int(status.CrawlingRunning.Load())),
 			NetInfoStatus:   StatusStr(int(status.NetInfoRunning.Load())),
