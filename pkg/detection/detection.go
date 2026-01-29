@@ -52,12 +52,12 @@ func (d detectionEntityDetails) IsEmpty() bool {
 
 // DetectTechnologies detects technologies in the response body using the provided detection rules
 func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Starting technologies detection...")
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Starting technologies detection (if any rules is enabled)...")
 
 	// micro-signatures
 	Patterns := dtCtx.RE.GetAllEnabledDetectionRules(dtCtx.CtxID)
 	if len(Patterns) == 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No detection rules enabled")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] No detection rules enabled")
 		return nil
 	}
 
@@ -95,7 +95,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 			} else {
 				Signatures = ruleset.GetHTTPHeaderFieldsMapByKey(&Patterns, headerTag)
 			}
-			if (Signatures != nil) && len(Signatures) > 0 {
+			if len(Signatures) > 0 {
 				detectTechByTag(dtCtx.Header, headerTag, &Signatures, &detectedTech)
 			}
 		}
@@ -109,7 +109,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 			detectedTech[xGenerator] = entity
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping header detection because the header is nil")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Skipping header detection because the header is nil")
 	}
 
 	// Try to detect technologies using URL's micro-signatures (e.g., /wp-content/)
@@ -118,7 +118,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 		detectTechByURL(dtCtx.TargetURL, &URLSignatures, &detectedTech)
 		URLSignatures = nil
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping URL detection because the target URL is empty")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Skipping URL detection because the target URL is empty")
 	}
 
 	if responseBody != "" {
@@ -132,7 +132,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 		detectTechnologiesByKeyword(responseBody, &Signatures, &detectedTech)
 		Signatures = nil
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping HTML detection because the response body is empty")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Skipping HTML detection because the response body is empty")
 	}
 
 	// Try to detect technologies using plugins
@@ -141,11 +141,11 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 		if len(Plugins) > 0 {
 			detectTechnologiesWithPlugins(dtCtx.WD, dtCtx.RE, &Plugins, &detectedTech)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "No detection rules requiring plugins")
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] No detection rules requiring plugins")
 		}
 		Plugins = nil
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping plugin detection because the WebDriver is nil")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Skipping plugin detection because the WebDriver is nil")
 	}
 
 	// Check for SSL/TLS technologies
@@ -154,7 +154,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 		detectTechBySSL(dtCtx.HSSLInfo, &sslSignatures, &detectedTech)
 		sslSignatures = nil
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Skipping SSL detection because the SSLInfo is nil")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Skipping SSL detection because the SSLInfo is nil")
 	}
 
 	// Process implied technologies
@@ -176,7 +176,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 	// Transform the detectedTech map into a map of strings
 	detectedTechStr := make(map[string]DetectedEntity)
 	if len(detectedTech) == 0 {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "No technologies detected")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] No technologies detected")
 		return &detectedTechStr
 	}
 
@@ -206,7 +206,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 		}
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug1, "Detected entities: %v", detectedTechStr)
+	cmn.DebugMsg(cmn.DbgLvlDebug1, "[DEBUG-DetectTech] Detected entities: %v", detectedTechStr)
 	return &detectedTechStr
 }
 

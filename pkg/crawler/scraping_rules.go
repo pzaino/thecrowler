@@ -48,13 +48,13 @@ func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (s
 	// Run Scraping Rules if any
 	if ctx.source.Config != nil {
 		// Execute the CROWler rules
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Scraping rules...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcScrapingRules] Executing CROWler configured Scraping rules (if any)...")
 		// Execute the rules
 		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
 			addScrapedDataToDocument(&scrapedDataDoc, runDefaultScrapingRules(wd, ctx))
 		} else {
 			configStr := string((*ctx.source.Config))
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Source custom configuration detected: %v", configStr)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ProcScrapingRules] Source custom configuration detected: %v", configStr)
 		}
 	}
 
