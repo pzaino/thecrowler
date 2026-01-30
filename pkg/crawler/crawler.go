@@ -2397,9 +2397,9 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 					if contentType == "" {
 						contentType, _ = headers["content-type"].(string)
 					}
-					p.accessVDIMutex.Lock()
+					p.getURLMutex.Lock()
 					postDataDecoded, detectedContentType := decodeBodyContent(wd, postData, false, url)
-					p.accessVDIMutex.Unlock()
+					p.getURLMutex.Unlock()
 					if contentType == "" {
 						contentType = detectedContentType
 					}
@@ -2429,9 +2429,9 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 						contentType, _ = headers["content-type"].(string)
 					}
 					postData, _ := response["body"].(string)
-					p.accessVDIMutex.Lock()
+					p.getURLMutex.Lock()
 					decodedPostData, detectedContentType := decodeBodyContent(wd, postData, false, "")
-					p.accessVDIMutex.Unlock()
+					p.getURLMutex.Unlock()
 					if contentType == "" {
 						contentType = detectedContentType
 					}
@@ -2468,9 +2468,9 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 					}
 
 					// Decode Response Body (if Base64)
-					p.accessVDIMutex.Lock()
+					p.getURLMutex.Lock()
 					decodedBody, detectedType := decodeBodyContent(wd, responseBody, isBase64, "")
-					p.accessVDIMutex.Unlock()
+					p.getURLMutex.Unlock()
 
 					// Check if decodedPostData is DBSafeText
 					if !isDBSafeText(decodedBody) {
