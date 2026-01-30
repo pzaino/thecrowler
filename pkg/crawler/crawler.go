@@ -982,6 +982,13 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, er
 		pageInfo.BodyText = ""
 	}
 
+	// Delay after full page collection
+	if ctx.config.Crawler.Delay != "0" {
+		delay := exi.GetFloat(ctx.config.Crawler.Delay)
+		totalDelay, _ := vdiSleep(ctx, delay)
+		ctx.Status.LastDelay = totalDelay.Seconds()
+	}
+
 	return pageInfo, url, nil
 }
 
@@ -1013,13 +1020,6 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	}
 	ctx.visitedLinks[fURL] = true
 	ctx.Status.TotalPages.Add(1)
-
-	// Delay after indexing (outside mutex)
-	if ctx.config.Crawler.Delay != "0" {
-		delay := exi.GetFloat(ctx.config.Crawler.Delay)
-		totalDelay, _ := vdiSleep(ctx, delay)
-		ctx.Status.LastDelay = totalDelay.Seconds()
-	}
 
 	resetPageInfo(pageInfo)
 
