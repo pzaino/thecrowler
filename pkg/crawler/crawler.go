@@ -4604,7 +4604,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 
 		// Given we may have to skip multiple URLs, we keep the session alive here
-		_ = KeepSessionAlive(processCtx.wd)
+		// TODO: Session cannot be kept alive here, because we do not yet have the VDI lock
+		//_ = KeepSessionAlive(processCtx.wd)
 
 		// Recursive Mode
 		urlLink := url.Link
