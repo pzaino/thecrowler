@@ -2055,3 +2055,6 @@ ALTER SYSTEM SET work_mem = :'DB_WORK_MEM';
 ALTER SYSTEM SET maintenance_work_mem = :'DB_MAINTENANCE_WORK_MEM';
 ALTER SYSTEM SET effective_cache_size = :'DB_EFFECTIVE_CACHE_SIZE';
 ALTER SYSTEM SET autovacuum_work_mem = :'DB_AUTOVACUUM_WORK_MEM';
+ALTER SYSTEM SET max_wal_size = :'DB_MAX_WAL_SIZE';
+
+SELECT pg_reload_conf();

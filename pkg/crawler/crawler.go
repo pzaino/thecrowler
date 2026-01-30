@@ -2347,7 +2347,7 @@ func checkTextBytes(b []byte) bool {
 	return true
 }
 
-func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
+func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -2357,9 +2357,12 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 		default:
 			// Fetch CDP Events
 			//events, err := wd.ExecuteChromeDPCommand("Log.entryAdded", map[string]interface{}{})
+			p.getURLMutex.Lock()
 			logs, err := wd.Log("performance")
+			p.getURLMutex.Unlock()
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve CDP events: %v", err)
+				time.Sleep(1 * time.Second) // backoff on failure
 				continue
 			}
 
@@ -2394,7 +2397,9 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 					if contentType == "" {
 						contentType, _ = headers["content-type"].(string)
 					}
+					p.getURLMutex.Lock()
 					postDataDecoded, detectedContentType := decodeBodyContent(wd, postData, false, url)
+					p.getURLMutex.Unlock()
 					if contentType == "" {
 						contentType = detectedContentType
 					}
@@ -2424,7 +2429,9 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 						contentType, _ = headers["content-type"].(string)
 					}
 					postData, _ := response["body"].(string)
+					p.getURLMutex.Lock()
 					decodedPostData, detectedContentType := decodeBodyContent(wd, postData, false, "")
+					p.getURLMutex.Unlock()
 					if contentType == "" {
 						contentType = detectedContentType
 					}
@@ -2452,14 +2459,18 @@ func listenForCDPEvents(ctx context.Context, _ *ProcessContext, wd vdi.WebDriver
 					requestID, _ := params["requestId"].(string)
 
 					// Fetch Response Body
+					p.getURLMutex.Lock()
 					responseBody, isBase64 := fetchResponseBody(wd, requestID)
+					p.getURLMutex.Unlock()
 					if responseBody == "" {
 						cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to get response body for requestId %s: %v", requestID, err)
 						continue
 					}
 
 					// Decode Response Body (if Base64)
+					p.getURLMutex.Lock()
 					decodedBody, detectedType := decodeBodyContent(wd, responseBody, isBase64, "")
+					p.getURLMutex.Unlock()
 
 					// Check if decodedPostData is DBSafeText
 					if !isDBSafeText(decodedBody) {
@@ -4606,10 +4617,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Stopping due reached max_links limit: %d\n", wid, processCtx.Status.TotalPages.Load())
 			return nil // We return here because we reached the max_links limit!
 		}
-
-		// Given we may have to skip multiple URLs, we keep the session alive here
-		// TODO: Session cannot be kept alive here, because we do not yet have the VDI lock
-		//_ = KeepSessionAlive(processCtx.wd)
 
 		// Recursive Mode
 		urlLink := url.Link
