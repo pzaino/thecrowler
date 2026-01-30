@@ -4607,10 +4607,6 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			return nil // We return here because we reached the max_links limit!
 		}
 
-		// Given we may have to skip multiple URLs, we keep the session alive here
-		// TODO: Session cannot be kept alive here, because we do not yet have the VDI lock
-		//_ = KeepSessionAlive(processCtx.wd)
-
 		// Recursive Mode
 		urlLink := url.Link
 		if strings.HasPrefix(url.Link, "/") {
