@@ -2347,7 +2347,7 @@ func checkTextBytes(b []byte) bool {
 	return true
 }
 
-func listenForCDPEvents(ctx context.Context, p *ProcessContext, _ vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
+func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver, collectedRequests *[]map[string]interface{}) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -2358,7 +2358,7 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, _ vdi.WebDriver,
 			// Fetch CDP Events
 			//events, err := wd.ExecuteChromeDPCommand("Log.entryAdded", map[string]interface{}{})
 			p.getURLMutex.Lock()
-			logs, err := p.wd.Log("performance")
+			logs, err := wd.Log("performance")
 			p.getURLMutex.Unlock()
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve CDP events: %v", err)
@@ -2397,7 +2397,9 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, _ vdi.WebDriver,
 					if contentType == "" {
 						contentType, _ = headers["content-type"].(string)
 					}
-					postDataDecoded, detectedContentType := decodeBodyContent(p.wd, postData, false, url)
+					p.accessVDIMutex.Lock()
+					postDataDecoded, detectedContentType := decodeBodyContent(wd, postData, false, url)
+					p.accessVDIMutex.Unlock()
 					if contentType == "" {
 						contentType = detectedContentType
 					}
@@ -2427,7 +2429,9 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, _ vdi.WebDriver,
 						contentType, _ = headers["content-type"].(string)
 					}
 					postData, _ := response["body"].(string)
-					decodedPostData, detectedContentType := decodeBodyContent(p.wd, postData, false, "")
+					p.accessVDIMutex.Lock()
+					decodedPostData, detectedContentType := decodeBodyContent(wd, postData, false, "")
+					p.accessVDIMutex.Unlock()
 					if contentType == "" {
 						contentType = detectedContentType
 					}
@@ -2455,14 +2459,18 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, _ vdi.WebDriver,
 					requestID, _ := params["requestId"].(string)
 
 					// Fetch Response Body
-					responseBody, isBase64 := fetchResponseBody(p.wd, requestID)
+					p.getURLMutex.Lock()
+					responseBody, isBase64 := fetchResponseBody(wd, requestID)
+					p.getURLMutex.Unlock()
 					if responseBody == "" {
 						cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to get response body for requestId %s: %v", requestID, err)
 						continue
 					}
 
 					// Decode Response Body (if Base64)
-					decodedBody, detectedType := decodeBodyContent(p.wd, responseBody, isBase64, "")
+					p.accessVDIMutex.Lock()
+					decodedBody, detectedType := decodeBodyContent(wd, responseBody, isBase64, "")
+					p.accessVDIMutex.Unlock()
 
 					// Check if decodedPostData is DBSafeText
 					if !isDBSafeText(decodedBody) {
