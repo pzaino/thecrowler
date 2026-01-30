@@ -505,7 +505,11 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 		if processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies after crawling
-			_ = ResetSiteSession(processCtx)
+			func() {
+				processCtx.getURLMutex.Lock()
+				defer processCtx.getURLMutex.Unlock()
+				_ = ResetSiteSession(processCtx)
+			}()
 		}
 
 		// Return the Selenium instance to the channel
