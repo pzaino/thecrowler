@@ -2362,6 +2362,7 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, _ vdi.WebDriver,
 			p.getURLMutex.Unlock()
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve CDP events: %v", err)
+				time.Sleep(1 * time.Second) // backoff on failure
 				continue
 			}
 
