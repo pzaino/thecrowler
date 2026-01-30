@@ -505,7 +505,11 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 		if processCtx.config.Crawler.ResetCookiesPolicy == cmn.AlwaysStr {
 			// Reset cookies after crawling
-			_ = ResetSiteSession(processCtx)
+			func() {
+				processCtx.getURLMutex.Lock()
+				defer processCtx.getURLMutex.Unlock()
+				_ = ResetSiteSession(processCtx)
+			}()
 		}
 
 		// Return the Selenium instance to the channel
@@ -978,6 +982,13 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, er
 		pageInfo.BodyText = ""
 	}
 
+	// Delay after full page collection
+	if ctx.config.Crawler.Delay != "0" {
+		delay := exi.GetFloat(ctx.config.Crawler.Delay)
+		totalDelay, _ := vdiSleep(ctx, delay)
+		ctx.Status.LastDelay = totalDelay.Seconds()
+	}
+
 	return pageInfo, url, nil
 }
 
@@ -1009,13 +1020,6 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	}
 	ctx.visitedLinks[fURL] = true
 	ctx.Status.TotalPages.Add(1)
-
-	// Delay after indexing (outside mutex)
-	if ctx.config.Crawler.Delay != "0" {
-		delay := exi.GetFloat(ctx.config.Crawler.Delay)
-		totalDelay, _ := vdiSleep(ctx, delay)
-		ctx.Status.LastDelay = totalDelay.Seconds()
-	}
 
 	resetPageInfo(pageInfo)
 
@@ -4604,7 +4608,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 
 		// Given we may have to skip multiple URLs, we keep the session alive here
-		_ = KeepSessionAlive(processCtx.wd)
+		// TODO: Session cannot be kept alive here, because we do not yet have the VDI lock
+		//_ = KeepSessionAlive(processCtx.wd)
 
 		// Recursive Mode
 		urlLink := url.Link
@@ -4701,7 +4706,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 	// Check if the URL is valid (aka if it's within the allowed restricted boundaries)
 	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due 'external' policy.\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}
 
@@ -4709,7 +4714,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 	if processCtx.compiledUURLs != nil {
 		for _, UURL := range processCtx.compiledUURLs {
 			if UURL.MatchString(url) {
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due unwanted URL pattern.\n", id, url)
 				return true
 			}
 		}
@@ -4717,7 +4722,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 	// Check if the URL is the same as the Source URL (in which case skip it)
 	if url == processCtx.source.URL {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' as it is the same as the source URL\n", id, url)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' as it is the same as the source URL\n", id, url)
 		return true
 	}
 
@@ -4729,7 +4734,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 		for _, pattern := range processCtx.userURLPatterns {
 			re := regexp.MustCompile(pattern)
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Worker %s: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-Worker] %s: Checking URL '%s' against user-defined pattern '%s'\n", id, url, pattern)
 			if re.MatchString(url) {
 				matches++
 
@@ -4747,13 +4752,13 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 
 		// If we decided to skip based on negative pattern, return true
 		if shouldSkip {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due to user-defined pattern\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due to user-defined pattern\n", id, url)
 			return true
 		}
 
 		// If we did not find any matches, skip the URL
 		if matches == 0 {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "Worker %s: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due to no user-defined pattern matches\n", id, url)
 			return true
 		}
 	}

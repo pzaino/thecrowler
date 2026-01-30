@@ -293,7 +293,7 @@ wait_for_available_vdis:
 	strList = strings.TrimSpace(strList)
 	strIndices := strings.Split(strList, ",")
 	if strList != "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
 		// Read full VDIs pool names list and put it in a string comma separated
 		poolList := ""
 		for i := 0; i < len(p.slot); i++ {
@@ -305,7 +305,7 @@ wait_for_available_vdis:
 				poolList += pName
 			}
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Acquire] VDIs local pool list: '%s'", poolList)
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] VDIs local pool list: '%s'", poolList)
 	}
 
 	for i := 0; i < len(p.slot); i++ {
@@ -579,7 +579,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	if cmn.UADB.IsEmpty() {
 		err := cmn.UADB.InitUserAgentsDB()
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to initialize UserAgentsDB: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "failed to initialize UserAgentsDB: %v", err)
 		}
 	}
 
@@ -642,11 +642,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
 		args = append(args, "--no-first-run")
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Chrome DevTools Protocol (CDP) for '%s'...", sel.Config.Name)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Chrome DevTools Protocol (CDP) for '%s'...", sel.Config.Name)
 		// Set the CDP port
-		args = append(args, "--remote-debugging-port=9222")
+		//args = append(args, "--remote-debugging-port=9222")
 		// Set the CDP host
-		args = append(args, "--remote-debugging-address=0.0.0.0")
+		//args = append(args, "--remote-debugging-address=0.0.0.0")
 		// Ensure that the CDP is active
 		//args = append(args, "--auto-open-devtools-for-tabs")
 		cdpActive = true
@@ -654,7 +654,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Append proxy settings if available
 	if sel.Config.ProxyURL != "" {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Setting up Proxy for '%s'...", sel.Config.Name)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Proxy for '%s'...", sel.Config.Name)
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
 		// Get local network:
@@ -665,7 +665,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			args = append(args, "--proxy-bypass-list=localhost")
 		}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Proxy settings: URL '%s', Exclusions: '%s' for '%s'", sel.Config.ProxyURL, "localhost,"+localNet, sel.Config.Name)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", sel.Config.ProxyURL, "localhost,"+localNet, sel.Config.Name)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -871,7 +871,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			W3C:   true,
 			Prefs: chromePrefs,
 		})
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Chrome capabilities: %v\n", caps)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Chrome capabilities: %v\n", caps)
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
@@ -915,7 +915,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			Args:  args,
 			Prefs: firefoxCaps,
 		})
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Firefox capabilities: %v\n", caps)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Firefox capabilities: %v\n", caps)
 	}
 
 	// Enable logging
@@ -959,7 +959,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Inject anti-detection patch
 	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Patch injection failed on '%s': %v", sel.Config.Name, err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Patch injection failed on '%s': %v", sel.Config.Name, err)
 		// Check if we have lost the session
 		if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
 			// We lost the session (this is a Selenium bug sometimes)
@@ -981,7 +981,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
 		}
 	} else {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Browser Configuration on '%s': %v\n", sel.Config.Name, result)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ConnectVDI] Browser Configuration on '%s': %v\n", sel.Config.Name, result)
 	}
 
 	err2 = addLoadListener(wd)
@@ -1015,7 +1015,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		*/
 		_, err2 := wd.ExecuteChromeDPCommand("Network.enable", nil)
 		if err2 != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable CDP Network domain: %v", err2)
+			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable CDP Network domain: %v", err2)
 			// Check if the error contains: "invalid session id"
 			if strings.Contains(err2.Error(), "invalid session id") {
 				return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
@@ -1025,7 +1025,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 				"urls": []string{"*.mp4"},
 			})
 			if err2 != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to block .mp4 URLs: %v", err2)
+				cmn.DebugMsg(cmn.DbgLvlError, "failed to block .mp4 URLs: %v", err2)
 			}
 		}
 	}
@@ -1054,7 +1054,7 @@ func addLoadListener(wd WebDriver) error {
 
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
-		return fmt.Errorf("error adding load listener: %v", err)
+		return fmt.Errorf("adding load listener: %v", err)
 	}
 
 	return nil

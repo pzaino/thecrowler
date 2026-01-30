@@ -41,25 +41,25 @@ const (
 
 // processScrapingRules processes the scraping rules
 func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (string, error) {
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Scraping rules...")
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ProcScrapingRules] Starting to search and process CROWler Scraping rules...")
 
 	scrapedDataDoc := ""
 
 	// Run Scraping Rules if any
 	if ctx.source.Config != nil {
 		// Execute the CROWler rules
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Scraping rules...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcScrapingRules] Executing CROWler configured Scraping rules (if any)...")
 		// Execute the rules
 		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
 			addScrapedDataToDocument(&scrapedDataDoc, runDefaultScrapingRules(wd, ctx))
 		} else {
 			configStr := string((*ctx.source.Config))
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Source custom configuration detected: %v", configStr)
+			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ProcScrapingRules] Source custom configuration detected: %v", configStr)
 		}
 	}
 
 	// Check for rules based on the URL
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL-based Scraping rules (if any)...")
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcScrapingRules] Executing CROWler URL-based Scraping rules (if any)...")
 	// If the URL matches a rule, execute it
 	data, err := executeScrapingRulesByURL(wd, ctx, url)
 	addScrapedDataToDocument(&scrapedDataDoc, data)
@@ -71,7 +71,7 @@ func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (s
 	}
 
 	// log scraped data for debugging purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Scraped data (at processScrapingRules level): {%v}", scrapedDataDoc)
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ProcScrapingRules] Scraped data (at processScrapingRules level): {%v}", scrapedDataDoc)
 
 	return "{" + scrapedDataDoc + "}", err
 }

@@ -34,21 +34,21 @@ const (
 )
 
 func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "Starting to search and process CROWler Action rules...")
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ProcActionRules] Starting to search and process CROWler Action rules...")
 	// Run Action Rules if any
 	if ctx.source.Config != nil {
 		// Execute the CROWler rules
-		cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler configured Action rules...")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcActionRules] Executing CROWler configured Action rules...")
 		// Execute the rules
 		if strings.TrimSpace(string((*ctx.source.Config))) == defaultActionRulesConfig {
 			runDefaultActionRules(wd, ctx)
 		} else {
 			configStr := string((*ctx.source.Config))
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Configuration: %v", configStr)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcActionRules] Configuration: %v", configStr)
 		}
 	}
 	// Check for rules based on the URL
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing CROWler URL based Action rules (if any)...")
+	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcActionRules] Executing CROWler URL based Action rules (if any)...")
 	// If the URL matches a rule, execute it
 	processURLRules(wd, ctx, url)
 
@@ -59,7 +59,7 @@ func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 	rsl, err := ctx.re.GetAllRulesetByURL(url)
 	if err == nil && len(rsl) != 0 {
 		for _, rs := range rsl {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing ruleset: %s", rs.Name)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcURLRules] Executing ruleset: %s", rs.Name)
 			// Execute all the rules in the ruleset
 			executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
 			// Clean up non-persistent rules
@@ -71,7 +71,7 @@ func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 	rgl, err := ctx.re.GetAllRulesGroupByURL(url)
 	if err == nil && len(rgl) != 0 {
 		for _, rg := range rgl {
-			cmn.DebugMsg(cmn.DbgLvlDebug, "Executing rule group: %s", rg.GroupName)
+			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcURLRules] Executing rule group: %s", rg.GroupName)
 			// Set the environment variables for the rule group
 			rg.SetEnv(ctx.GetContextID())
 			// Execute all the rules in the rule group
@@ -511,10 +511,10 @@ func executeActionClick(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 		var success interface{}
 		success, err = (*wd).ExecuteScript(jsScript, nil)
 		if err == nil && success == true {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Mouse move and click action executed successfully using Rbee")
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ActionClick] Mouse move and click action executed successfully using Rbee")
 			return nil
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute mouse move and click using Rbee, falling back to Selenium")
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ActionClick] Failed to execute mouse move and click using Rbee, falling back to Selenium")
 
 		// Fall back to using Selenium's Click method
 		if button == 0 {
@@ -780,7 +780,7 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 		// Execute the JavaScript to move the mouse and click
 		success, err := (*wd).ExecuteScript(jsScriptMoveAndClick, nil)
 		if err == nil && success == true {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Mouse move and click action executed successfully using Rbee")
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ActionInput] Mouse move and click action executed successfully using Rbee")
 
 			attribute := selector.Value
 
@@ -810,12 +810,12 @@ func executeActionInput(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDri
 			// Execute the JavaScript to type the text
 			success, err := (*wd).ExecuteScript(jsScriptType, nil)
 			if err == nil && success == true {
-				cmn.DebugMsg(cmn.DbgLvlDebug3, "Text input action executed successfully using Rbee")
+				cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ActionInput] Text input action executed successfully using Rbee")
 				return nil
 			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute text input using Rbee, falling back to Selenium")
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ActionInput] Failed to execute text input using Rbee, falling back to Selenium")
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Failed to execute mouse move and click using Rbee, falling back to Selenium")
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ActionInput] Failed to execute mouse move and click using Rbee, falling back to Selenium")
 		}
 
 		// Fall back to using Selenium's Click and SendKeys methods

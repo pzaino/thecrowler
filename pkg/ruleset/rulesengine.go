@@ -311,7 +311,7 @@ func (re *RuleEngine) GetAllRuleGroups() []*RuleGroup {
 	if !re.Cache.IsInvalid && len(re.Cache.RuleGroups) != 0 {
 		cachedGroups := re.Cache.RuleGroups
 		re.Cache.Mu.RUnlock()
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Returning %d Rulesgroup from the cache.", len(cachedGroups))
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-GetAllRuleGroups] Returning %d Rulesgroup from the cache.", len(cachedGroups))
 		return cachedGroups
 	}
 	re.Cache.Mu.RUnlock()
@@ -654,7 +654,7 @@ func (re *RuleEngine) GetRulesGroupByURL(urlStr string) (*RuleGroup, error) {
 		if rgName == "" || !IsURL(rgName) {
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Checking rules group: '%s' == '%s'", rgName, parsedURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-GetRulesGroupByURL] Checking rules group: '%s' == '%s'", rgName, parsedURL)
 		if rgName == "*" || CheckURL(parsedURL, rgName) || CheckURL(parsedURL, rg.URL) {
 			if rg.IsValid() {
 				return rg, nil
@@ -681,7 +681,7 @@ func (re *RuleEngine) GetAllRulesGroupByURL(urlStr string) ([]*RuleGroup, error)
 		if rgName == "" || !IsURL(rgName) {
 			continue
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Checking rules group: '%s' == '%s'", rgName, parsedURL)
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-GetAllRulesGroupByURL] Checking rules group: '%s' == '%s'", rgName, parsedURL)
 		if rgName == "*" || CheckURL(parsedURL, rgName) || CheckURL(parsedURL, rg.URL) {
 			if rg.IsValid() {
 				ruleGroups = append(ruleGroups, rg)
