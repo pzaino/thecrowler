@@ -1568,7 +1568,7 @@ func insertOrUpdateSearchIndex(tx *sql.Tx, url string, pageInfo *PageInfo) (uint
 
 			last_updated_at = NOW()
 		RETURNING index_id`,
-		url, (*pageInfo).Title, (*pageInfo).Summary,
+		url, strLeft((*pageInfo).Title, 255), (*pageInfo).Summary,
 		strLeft((*pageInfo).DetectedLang, 8), strLeft((*pageInfo).DetectedType, 255)).Scan(&indexID)
 	if err != nil {
 		return 0, err // Handle error appropriately
