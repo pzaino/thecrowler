@@ -98,20 +98,25 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 
 // determineConnectionLimits calculates connection limits based on config
 func determineConnectionLimits(c cfg.Config) (int, int) {
-	mxConns, mxIdleConns := 25, 25
+	// Safe defaults per engine
+	mxConns := 8
+	mxIdleConns := 2
 
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
 	switch optFor {
-	case "write", "query":
-		mxConns = 100
-		mxIdleConns = 100
+	case "write":
+		mxConns = 10
+		mxIdleConns = 2
+	case "query":
+		mxConns = 12
+		mxIdleConns = 4
 	}
 
-	// Use config-defined max connections if smaller
-	if c.Database.MaxConns > 0 && c.Database.MaxConns < mxConns {
+	// Apply explicit caps, but never allow unsafe values
+	if (c.Database.MaxConns > 0) && (c.Database.MaxConns < mxConns) {
 		mxConns = c.Database.MaxConns
 	}
-	if c.Database.MaxIdleConns > 0 && c.Database.MaxIdleConns < mxIdleConns {
+	if (c.Database.MaxIdleConns > 0) && (c.Database.MaxIdleConns < mxIdleConns) {
 		mxIdleConns = c.Database.MaxIdleConns
 	}
 
