@@ -569,6 +569,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		return nil, errors.New("VDI instance port is empty")
 	}
 
+	var err error
+
 	// Get the required browser
 	browser := strings.ToLower(strings.TrimSpace(sel.Config.Type))
 	if browser == "" {
@@ -588,6 +590,18 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Get process configuration
 	pConfig := ctx.GetConfig()
+
+	VDIHost := sel.Config.Host
+	if pConfig.Crawler.ResolveVDIDNS {
+		// Pre-resolve the VDI DNS if required
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Pre-resolving VDI DNS for host '%s'...", sel.Config.Host)
+		VDIHost, err = cmn.ResolveDNS(sel.Config.Host)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "failed to pre-resolve VDI DNS for host '%s': %v", sel.Config.Host, err)
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] VDI DNS for host '%s' resolved successfully.", sel.Config.Host)
+		}
+	}
 
 	// Define the user agent string for a desktop Google Chrome browser
 	var userAgent string
@@ -938,11 +952,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Connect to the WebDriver instance running remotely.
 	var wd WebDriver
-	var err error
 	maxRetry := 500
 	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
-		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+sel.Config.Host+":%d/"+urlType, sel.Config.Port))
+		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+VDIHost+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
 			if i == 0 || (i%maxRetry) == 0 {
 				cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err, 5)

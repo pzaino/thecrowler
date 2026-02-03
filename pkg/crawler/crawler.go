@@ -5187,7 +5187,7 @@ func ResetSiteSession(ctx *ProcessContext) error {
 	return nil
 }
 
-func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURLs []LinkItem) (*PageInfo, string, error) {
+func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURLs []LinkItem, processJobStartTime time.Time) (*PageInfo, string, error) {
 	// Set getURLMutex to ensure only one goroutine is accessing the vdi.WebDriver at a time
 	processCtx.getURLMutex.Lock()
 	defer processCtx.getURLMutex.Unlock()
@@ -5339,20 +5339,32 @@ func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURL
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Cleared body text content for '%s'\n", id, currentURL)
 	}
 
-	// Delay before processing the next job
-	var totalDelay time.Duration
-	if processCtx.config.Crawler.Delay != "0" {
-		delay := exi.GetFloat(processCtx.config.Crawler.Delay)
-		totalDelay, _ = vdiSleep(processCtx, delay)
+	// Delay before processing the next job (if total elapsed time is just few seconds)
+	totalElapsedTime := time.Since(processJobStartTime)
+	if totalElapsedTime < 30*time.Second {
+		var totalDelay time.Duration
+		if processCtx.config.Crawler.Delay != "0" {
+			delay := exi.GetFloat(processCtx.config.Crawler.Delay)
+			totalDelay, _ = vdiSleep(processCtx, delay)
+		}
+		processCtx.Status.LastDelay = totalDelay.Seconds()
+	} else {
+		processCtx.Status.LastDelay = totalElapsedTime.Seconds()
 	}
-	processCtx.Status.LastDelay = totalDelay.Seconds()
 
 	return &pageCache, currentURL, nil
 }
 
 func processJob(processCtx *ProcessContext, id, url string, skippedURLs []LinkItem) error {
-	pageCache, currentURL, err := processJobVDI(processCtx, id, url, skippedURLs)
+	// Get start time
+	processJobStartTime := time.Now()
+
+	// Process the job using VDI
+	pageCache, currentURL, err := processJobVDI(processCtx, id, url, skippedURLs, processJobStartTime)
 	if err != nil || pageCache == nil {
+		// Get elapsed time
+		elapsed := time.Since(processJobStartTime)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished processing job '%s' with error: %v in %v\n", id, url, err, elapsed)
 		return err
 	}
 
@@ -5384,7 +5396,12 @@ func processJob(processCtx *ProcessContext, id, url string, skippedURLs []LinkIt
 	}
 	resetPageInfo(pageCache) // Reset the PageInfo object
 
-	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished processing job '%s', returning to worker routine.\n", id, url)
+	elapsedFullTime := time.Since(processJobStartTime)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished processing job '%s' with error: %v in %v\n", id, url, err, elapsedFullTime)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished processing job '%s' in %v, returning to worker routine.\n", id, url, elapsedFullTime)
+	}
 	return err
 }
 

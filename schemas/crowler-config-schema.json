@@ -422,6 +422,11 @@
             }
           ]
         },
+        "resolve_vdi_dns": {
+          "title": "CROWler Engine Pre-Resolve VDI DNS",
+          "description": "This is a flag that tells the CROWler Engine to resolve the VDI's hostname to an IP address before connecting to it. This can be useful to reduce DNS resolution time or to handle VDIs behind load balancers or proxies. Basically it pre-resolves the VDI's DNS name before connecting to it and then use that IP address for the connection.",
+          "type": "boolean"
+        },
         "platform": {
           "title": "CROWler Engine Platform",
           "description": "This is the platform that the CROWler Engine will use to crawl websites. For example, 'desktop' or 'mobile' (mobile is experimental!).",

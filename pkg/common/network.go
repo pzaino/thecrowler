@@ -16,6 +16,7 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -100,4 +101,17 @@ func GetHostName() string {
 		return unknown
 	}
 	return hostname
+}
+
+// ResolveDNS resolves the fully qualified domain name (FQDN) of a given host
+// into its corresponding IP address.
+func ResolveDNS(host string) (string, error) {
+	ips, err := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
+	if err != nil {
+		return "", err
+	}
+	if len(ips) == 0 {
+		return "", fmt.Errorf("no IPs found for host %s", host)
+	}
+	return ips[0].String(), nil
 }

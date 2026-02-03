@@ -55,6 +55,7 @@ type Crawler struct {
 	Workers               int             `json:"workers" yaml:"workers"`         // Number of crawler workers
 	Engine                []CustomEngine  `json:"engine" yaml:"engine"`           // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
 	VDIName               string          // Name of the VDI to use (this is useful when using custom configurations per each source)
+	ResolveVDIDNS         bool            `json:"resolve_vdi_dns" yaml:"resolve_vdi_dns"` // Whether to pre-resolve VDI DNS name or not
 	Schedule              *EngineSchedule // Optional schedule configuration for this engine
 	SourcePriority        string          // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
 	Platform              string          `json:"platform" yaml:"platform"`                                                 // Platform to use (e.g., "desktop", "mobile")
@@ -540,7 +541,7 @@ type Config struct {
 	// API configuration
 	API API `json:"api" yaml:"api"`
 
-	// Selenium configuration
+	// VDIConfig configuration
 	Selenium []Selenium `json:"selenium" yaml:"selenium"`
 
 	// Prometheus configuration

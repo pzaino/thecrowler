@@ -1033,7 +1033,7 @@ func (c *Config) validateAPI() {
 }
 
 func (c *Config) validateVDI() {
-	// Check Selenium
+	// Check VDIConfig
 	for i := range c.Selenium {
 		c.validateVDIName(&c.Selenium[i], i)
 		c.validateVDIType(&c.Selenium[i])
