@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -722,7 +723,7 @@ func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
 	return nil, false
 }
 
-func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, db *cdb.Handler, rt *pluginRuntime) (map[string]interface{}, error) {
+func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.Handler, rt *pluginRuntime) (map[string]any, error) {
 	const (
 		errMsg01       = "plugin `%s` error getting results: %v"
 		defaultTimeout = 30 * time.Second
@@ -817,6 +818,10 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 		d = defaultTimeout
 	}
 
+	// Set the VM as Active
+	vmActive := int32(1)
+	defer atomic.StoreInt32(&vmActive, 0)
+
 	// Utility: start goroutines safely.
 	safeGo := func(f func()) {
 		go func() {
@@ -835,20 +840,38 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 	safeGo(func() {
 		timer := time.NewTimer(d)
 		defer timer.Stop()
+
 		select {
 		case <-timer.C:
-			// Non-blocking send to avoid deadlock if VM already ended.
+			// Strong guard: never touch Otto after VM shutdown
+			if atomic.LoadInt32(&vmActive) == 0 {
+				return
+			}
+
 			select {
-			case vm.Interrupt <- func() { panic(fmt.Sprintf("plugin `%s` execution timeout after %s", p.Name, d)) }:
+			case vm.Interrupt <- func() {
+				panic(fmt.Sprintf(
+					"plugin `%s` execution timeout after %s",
+					p.Name, d,
+				))
+			}:
 			default:
 			}
+
 		case <-done:
 			return
 		}
 	})
 
+	var (
+		rval otto.Value
+		err  error
+	)
 	// Run the script
-	rval, err := vm.Run(p.Script)
+	func() {
+		defer atomic.StoreInt32(&vmActive, 0) // Paolo's note: VM is not longer active for processing, so sending interrupts to it is not safe anymore
+		rval, err = vm.Run(p.Script)
+	}()
 
 	// VM finished. Prevent any further callbacks
 	close(done)
@@ -897,22 +920,30 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]interface{}, d
 
 // TestFile represent a plugin's test file
 type TestFile struct {
+	// Path is the original path to the test file, used for debugging and error messages
 	Path string
+	// Name is the test name, parsed from the first non-empty line of the file, expected to be in the format: // name: <test name>
 	Name string // parsed from first non-empty line: // name: ...
+	// Body is the content of the test file, which should be a JavaScript code string containing calls to the test harness functions (test(), assertEqual(), etc.)
 	Body string
 }
 
-// PluginTestOptions represents the options for executing a plugin test
+// TestOptions represents the options for executing a plugin test
 type TestOptions struct {
+	// Timeout is the maximum execution time for the test in seconds. If the test exceeds this time, it will be terminated and marked as failed due to timeout.
 	Timeout int
-	Params  map[string]interface{}
+	// Params is a map of parameters to be passed to the plugin during test execution. These parameters will be available in the plugin's JavaScript code as a global variable named `params`.
+	Params map[string]any
 }
 
-// PluginTestResult represents the result of a plugin test
+// TestResult represents the result of a plugin test
 type TestResult struct {
-	Name   string
+	// Name is the name of the test, as defined in the test file (parsed from the first non-empty line in the format: // name: <test name>)
+	Name string
+	// Passed indicates whether the test passed or failed. A test is considered passed if all assertions in the test code succeeded without throwing exceptions and the execution completed within the specified timeout.
 	Passed bool
-	Error  string
+	// Error contains the error message if the test failed. This could be due to an assertion failure, an uncaught exception in the test code, or a timeout. If the test passed successfully, this field will be empty.
+	Error string
 }
 
 // PlgTestHarness is the JavaScript code that provides the test harness for plugin unit tests
@@ -1579,6 +1610,7 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	return nil
 }
 
+/*
 func addJSAPICallPlugin(
 	vm *otto.Otto,
 	db *cdb.Handler,
@@ -1626,9 +1658,8 @@ func addJSAPICallPlugin(
 		}
 
 		// ---- stack management ----
-
 		if err := rt.push(callee); err != nil {
-			v, _ := vm.ToValue(map[string]interface{}{
+			v, _ := vm.ToValue(map[string]any{
 				"error": err.Error(),
 			})
 			return v
@@ -1649,6 +1680,99 @@ func addJSAPICallPlugin(
 		}
 		rt.current = callee
 		res, execErr := execEnginePlugin(callee, timeout, params, db, rt)
+		if execErr != nil {
+			v, _ := vm.ToValue(res)
+			return v
+		}
+
+		v, _ := vm.ToValue(res)
+		return v
+	})
+}
+*/
+
+// New more secure implementation (it's in testing)
+func addJSAPICallPlugin(
+	vm *otto.Otto,
+	db *cdb.Handler,
+	rt *pluginRuntime,
+) error {
+
+	const maxDepth = 16
+
+	return vm.Set("callPlugin", func(call otto.FunctionCall) otto.Value {
+
+		// ---- arguments ----
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		params := map[string]interface{}{}
+		if call.Argument(1).IsObject() {
+			if exported, e := call.Argument(1).Export(); e == nil {
+				if m, ok := exported.(map[string]interface{}); ok {
+					params = m
+				}
+			}
+		}
+
+		timeout := 0
+		if call.Argument(2).IsDefined() {
+			if t, e := call.Argument(2).ToInteger(); e == nil {
+				timeout = int(t)
+			}
+		}
+
+		// ---- resolve callee ----
+
+		caller := rt.current
+		if caller == nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		callee, ok := resolvePluginFromCaller(caller, name)
+		if !ok {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// ---- depth management (isolated-safe) ----
+
+		depth := 0
+		if d, ok := params["__call_depth"]; ok {
+			switch v := d.(type) {
+			case int:
+				depth = v
+			case int64:
+				depth = int(v)
+			case float64:
+				depth = int(v)
+			}
+		}
+
+		depth++
+		if depth > maxDepth {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": "maximum plugin call depth exceeded",
+			})
+			return v
+		}
+
+		// propagate depth to callee
+		params["__call_depth"] = depth
+
+		// ---- execute (isolated runtime) ----
+
+		rt2 := &pluginRuntime{
+			subs: make(map[string]*pluginEventSub),
+		}
+		rt2.current = callee
+
+		res, execErr := execEnginePlugin(callee, timeout, params, db, rt2)
 		if execErr != nil {
 			v, _ := vm.ToValue(res)
 			return v
@@ -3924,7 +4048,7 @@ func addJSAPISortJSON(vm *otto.Otto) error {
 			return returnError(vm, fmt.Sprintf("Error, this function requires a JSON array in input: %v", err))
 		}
 		arr := normalizeArray(arrInterface)
-		if arr != nil {
+		if arr == nil {
 			return returnError(vm, fmt.Sprintf("Error, this function requires a JSON array in input: %v", arr))
 		}
 
