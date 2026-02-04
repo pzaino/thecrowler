@@ -58,13 +58,13 @@ type JobConfig struct {
 
 // Job represents a job configuration
 type Job struct {
-	Name           string                   `yaml:"name" json:"name"`
-	Process        string                   `yaml:"process" json:"process"`
-	TriggerType    string                   `yaml:"trigger_type" json:"trigger_type"`
-	TriggerName    string                   `yaml:"trigger_name" json:"trigger_name"`
-	Steps          []map[string]interface{} `yaml:"steps" json:"steps"`
-	AgentsTimeout  int                      `yaml:"timeout" json:"timeout"`
-	PluginsTimeout int                      `yaml:"plugins_timeout" json:"plugins_timeout"`
+	Name           string           `yaml:"name" json:"name"`
+	Process        string           `yaml:"process" json:"process"`
+	TriggerType    string           `yaml:"trigger_type" json:"trigger_type"`
+	TriggerName    string           `yaml:"trigger_name" json:"trigger_name"`
+	Steps          []map[string]any `yaml:"steps" json:"steps"`
+	AgentsTimeout  int              `yaml:"timeout" json:"timeout"`
+	PluginsTimeout int              `yaml:"plugins_timeout" json:"plugins_timeout"`
 }
 
 // NewJobConfig creates a new job configuration
@@ -333,6 +333,21 @@ func (je *JobEngine) GetAgentsByEventType(eventType string) ([]*JobConfig, bool)
 	return AgentsRegistry.GetAgentsByEventType(eventType)
 }
 
+func deepCopyJob(j Job) Job {
+	out := j // copy scalars
+
+	out.Steps = make([]map[string]any, len(j.Steps))
+	for i, step := range j.Steps {
+		m := make(map[string]any, len(step))
+		for k, v := range step {
+			m[k] = v
+		}
+		out.Steps[i] = m
+	}
+
+	return out
+}
+
 // ExecuteJobs executes all jobs in the configuration
 func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 	// Create a waiting group for parallel group processing
@@ -340,7 +355,9 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 
 	// Create a deep copy of j.Jobs to avoid modifying the original configuration
 	localJobs := make([]Job, len(j.Jobs))
-	copy(localJobs, j.Jobs)
+	for i, job := range j.Jobs {
+		localJobs[i] = deepCopyJob(job)
+	}
 
 	// Iterate over job groups
 	for _, jobGroup := range localJobs {
