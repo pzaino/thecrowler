@@ -386,8 +386,11 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 			// Merge iCfg into configMap
 			for k, v := range iCfg {
 				k = strings.ToLower(strings.TrimSpace(k))
+				if k == "metadata" {
+					k = "meta_data"
+				}
 				configMap[k] = v
-				if (k == "meta_data") || (k == "metadata") {
+				if k == "meta_data" {
 					cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Agents] Merged meta_data into job config: %v", v)
 				}
 			}
