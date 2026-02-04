@@ -393,7 +393,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 		}
 
 		// log the configuration for debugging purposes
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group Configuration: %s", cmn.SafeJSON(jobGroup))
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group Configuration: %v", jobGroup)
 
 		// Check if the group should run in parallel
 		if strings.ToLower(strings.TrimSpace(jobGroup.Process)) == "parallel" {
