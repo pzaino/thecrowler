@@ -334,12 +334,16 @@ func (je *JobEngine) GetAgentsByEventType(eventType string) ([]*JobConfig, bool)
 }
 
 // ExecuteJobs executes all jobs in the configuration
-func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) error {
+func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 	// Create a waiting group for parallel group processing
 	var wg sync.WaitGroup
 
+	// Create a deep copy of j.Jobs to avoid modifying the original configuration
+	localJobs := make([]Job, len(j.Jobs))
+	copy(localJobs, j.Jobs)
+
 	// Iterate over job groups
-	for _, jobGroup := range j.Jobs {
+	for _, jobGroup := range localJobs {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Executing Job Group: %s", jobGroup.Name)
 
 		// Add iCfg to the first step as StrConfig field
@@ -372,7 +376,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 		}
 
 		// log the configuration for debugging purposes
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group Configuration: %v", jobGroup)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group Configuration: %s", cmn.SafeJSON(jobGroup))
 
 		// Check if the group should run in parallel
 		if strings.ToLower(strings.TrimSpace(jobGroup.Process)) == "parallel" {
@@ -380,7 +384,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 			wg.Add(1)
 
 			// Execute the group in parallel
-			go func(jg []map[string]interface{}) {
+			go func(jg []map[string]any) {
 				defer wg.Done()
 				if err := executeJobGroup(je, jg); err != nil {
 					cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Agents] Failed to execute job group '%s': %v", jobGroup.Name, err)
@@ -403,19 +407,19 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 }
 
 // executeJobGroup runs jobs in a group serially
-func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
-	lastResult := make(map[string]interface{})
+func executeJobGroup(je *JobEngine, steps []map[string]any) error {
+	lastResult := make(map[string]any)
 
 	// Execute each job in the group
 	for i := 0; i < len(steps); i++ {
-		step := steps[i]
+		step := &steps[i]
 
 		// Get the action name
-		actionName, ok := step["action"].(string)
+		actionName, ok := (*step)["action"].(string)
 		if !ok {
 			return fmt.Errorf("missing 'action' field in job step")
 		}
-		params, _ := step["params"].(map[string]interface{})
+		params, _ := (*step)["params"].(map[string]interface{})
 
 		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
 		if i > 0 {
@@ -457,7 +461,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 				params[k] = v
 			} else {
 				// If yes, merge the two maps
-				for k, v := range v.(map[string]interface{}) {
+				for k, v := range v.(map[string]any) {
 					params[k] = v
 				}
 			}
@@ -470,11 +474,11 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 
 		result, err := action.Execute(params)
 		if err != nil {
-			if retryConfig, hasRetry := step["retry"].(RetryConfig); hasRetry {
+			if retryConfig, hasRetry := (*step)["retry"].(RetryConfig); hasRetry {
 				result, err = executeWithRetry(action, params, retryConfig)
 			}
 			if err != nil {
-				if fallback, hasFallback := step["fallback"].([]map[string]interface{}); hasFallback {
+				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
 					return executeJobGroup(je, fallback)
 				}
@@ -489,9 +493,9 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 }
 
 // executeWithRetry executes an action with retry logic
-func executeWithRetry(action Action, params map[string]interface{}, retryConfig RetryConfig) (map[string]interface{}, error) {
+func executeWithRetry(action Action, params map[string]any, retryConfig RetryConfig) (map[string]interface{}, error) {
 	var lastError error
-	var result map[string]interface{}
+	var result map[string]any
 
 	for attempt := 1; attempt <= retryConfig.MaxRetries; attempt++ {
 		result, lastError = action.Execute(params)

@@ -229,3 +229,13 @@ func isAlphaNum(c byte) bool {
 		(c >= 'a' && c <= 'z') ||
 		(c >= '0' && c <= '9')
 }
+
+// Utility function to safely convert any value to a JSON string, returning a placeholder if it fails
+// (it helps avoiding walking maps that might be too deep or contain cycles, or being changed dynamically while being marshaled)
+func SafeJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "<unserializable>"
+	}
+	return string(b)
+}
