@@ -4678,13 +4678,14 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 
 		if err == nil {
 			processCtx.Status.TotalPages.Add(1)
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished job %s\n", wid, url.Link)
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s'\n", wid, url.Link)
 		} else {
 			processCtx.Status.TotalErrors.Add(1)
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Finished job %s with an error: %v\n", wid, url.Link, err)
 			if strings.Contains(err.Error(), errCriticalError) {
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s' with a critical error: %v\n", wid, url.Link, err)
 				return err
 			}
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s' with an error: %v\n", wid, url.Link, err)
 		}
 
 		// Clear the skipped URLs
@@ -5395,6 +5396,12 @@ func processJob(processCtx *ProcessContext, id, url string, skippedURLs []LinkIt
 		}()
 	}
 	resetPageInfo(pageCache) // Reset the PageInfo object
+
+	// Check if we have a Stale Processing:
+	if (processCtx.Status.DetectedState.Load() & 0x01) != 0 {
+		// We have a stale processing, so we need to set the error to stop the worker
+		err = errors.New("[critical] Stale Processing detected, stopping worker")
+	}
 
 	elapsedFullTime := time.Since(processJobStartTime)
 	if err != nil {

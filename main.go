@@ -1192,11 +1192,11 @@ func StatusStr(condition int) string {
 
 // CollectionState returns the comma separated collection states string
 func CollectionState(condition int) string {
-	csSTr := "Fully operational"
+	csStr := "Fully operational"
 	if condition&0x01 != 0 {
-		csSTr = "Stale-Processing detected!"
+		csStr = "Stale-Processing detected!"
 	}
-	return csSTr
+	return csStr
 }
 
 /* vdiInstances *chan vdi.SeleniumInstance */
