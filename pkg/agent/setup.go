@@ -58,13 +58,13 @@ type JobConfig struct {
 
 // Job represents a job configuration
 type Job struct {
-	Name           string                   `yaml:"name" json:"name"`
-	Process        string                   `yaml:"process" json:"process"`
-	TriggerType    string                   `yaml:"trigger_type" json:"trigger_type"`
-	TriggerName    string                   `yaml:"trigger_name" json:"trigger_name"`
-	Steps          []map[string]interface{} `yaml:"steps" json:"steps"`
-	AgentsTimeout  int                      `yaml:"timeout" json:"timeout"`
-	PluginsTimeout int                      `yaml:"plugins_timeout" json:"plugins_timeout"`
+	Name           string           `yaml:"name" json:"name"`
+	Process        string           `yaml:"process" json:"process"`
+	TriggerType    string           `yaml:"trigger_type" json:"trigger_type"`
+	TriggerName    string           `yaml:"trigger_name" json:"trigger_name"`
+	Steps          []map[string]any `yaml:"steps" json:"steps"`
+	AgentsTimeout  int              `yaml:"timeout" json:"timeout"`
+	PluginsTimeout int              `yaml:"plugins_timeout" json:"plugins_timeout"`
 }
 
 // NewJobConfig creates a new job configuration
@@ -333,13 +333,34 @@ func (je *JobEngine) GetAgentsByEventType(eventType string) ([]*JobConfig, bool)
 	return AgentsRegistry.GetAgentsByEventType(eventType)
 }
 
+func deepCopyJob(j Job) Job {
+	out := j // copy scalars
+
+	out.Steps = make([]map[string]any, len(j.Steps))
+	for i, step := range j.Steps {
+		m := make(map[string]any, len(step))
+		for k, v := range step {
+			m[k] = v
+		}
+		out.Steps[i] = m
+	}
+
+	return out
+}
+
 // ExecuteJobs executes all jobs in the configuration
-func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) error {
+func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 	// Create a waiting group for parallel group processing
 	var wg sync.WaitGroup
 
+	// Create a deep copy of j.Jobs to avoid modifying the original configuration
+	localJobs := make([]Job, len(j.Jobs))
+	for i, job := range j.Jobs {
+		localJobs[i] = deepCopyJob(job)
+	}
+
 	// Iterate over job groups
-	for _, jobGroup := range j.Jobs {
+	for _, jobGroup := range localJobs {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Executing Job Group: %s", jobGroup.Name)
 
 		// Add iCfg to the first step as StrConfig field
@@ -364,6 +385,10 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 
 			// Merge iCfg into configMap
 			for k, v := range iCfg {
+				k = strings.ToLower(strings.TrimSpace(k))
+				if k == "metadata" {
+					k = "meta_data"
+				}
 				configMap[k] = v
 				if k == "meta_data" {
 					cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Agents] Merged meta_data into job config: %v", v)
@@ -380,7 +405,7 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 			wg.Add(1)
 
 			// Execute the group in parallel
-			go func(jg []map[string]interface{}) {
+			go func(jg []map[string]any) {
 				defer wg.Done()
 				if err := executeJobGroup(je, jg); err != nil {
 					cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Agents] Failed to execute job group '%s': %v", jobGroup.Name, err)
@@ -403,19 +428,19 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]interface{}) erro
 }
 
 // executeJobGroup runs jobs in a group serially
-func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
-	lastResult := make(map[string]interface{})
+func executeJobGroup(je *JobEngine, steps []map[string]any) error {
+	lastResult := make(map[string]any)
 
 	// Execute each job in the group
 	for i := 0; i < len(steps); i++ {
-		step := steps[i]
+		step := &steps[i]
 
 		// Get the action name
-		actionName, ok := step["action"].(string)
+		actionName, ok := (*step)["action"].(string)
 		if !ok {
 			return fmt.Errorf("missing 'action' field in job step")
 		}
-		params, _ := step["params"].(map[string]interface{})
+		params, _ := (*step)["params"].(map[string]interface{})
 
 		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
 		if i > 0 {
@@ -457,7 +482,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 				params[k] = v
 			} else {
 				// If yes, merge the two maps
-				for k, v := range v.(map[string]interface{}) {
+				for k, v := range v.(map[string]any) {
 					params[k] = v
 				}
 			}
@@ -470,11 +495,11 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 
 		result, err := action.Execute(params)
 		if err != nil {
-			if retryConfig, hasRetry := step["retry"].(RetryConfig); hasRetry {
+			if retryConfig, hasRetry := (*step)["retry"].(RetryConfig); hasRetry {
 				result, err = executeWithRetry(action, params, retryConfig)
 			}
 			if err != nil {
-				if fallback, hasFallback := step["fallback"].([]map[string]interface{}); hasFallback {
+				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
 					return executeJobGroup(je, fallback)
 				}
@@ -489,9 +514,9 @@ func executeJobGroup(je *JobEngine, steps []map[string]interface{}) error {
 }
 
 // executeWithRetry executes an action with retry logic
-func executeWithRetry(action Action, params map[string]interface{}, retryConfig RetryConfig) (map[string]interface{}, error) {
+func executeWithRetry(action Action, params map[string]any, retryConfig RetryConfig) (map[string]interface{}, error) {
 	var lastError error
-	var result map[string]interface{}
+	var result map[string]any
 
 	for attempt := 1; attempt <= retryConfig.MaxRetries; attempt++ {
 		result, lastError = action.Execute(params)

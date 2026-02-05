@@ -105,7 +105,7 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		eSeverity = strings.ToUpper(strings.TrimSpace(resolveResponseString(eventMap, eSeverity)))
 		event.Severity = eSeverity
 	} else {
-		event.Severity = "MEDIUM"
+		event.Severity = "medium"
 	}
 	// ExpiresAt
 	if params["expires_at"] != nil {
