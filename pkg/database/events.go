@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,10 +43,21 @@ const (
 	EventSeverityWarning = "warning"
 	// EventSeverityError represents an error event.
 	EventSeverityError = "error"
+
+	notificationQueueSize = 4096
 )
 
+// EventNotification is used to enqueue notifications about new events to be processed by the event bus subscribers.
+type EventNotification struct {
+	Payload    string
+	ReceivedAt time.Time
+}
+
 var (
-	eventsSchedulerInitialize bool
+	//eventsSchedulerInitialize bool
+
+	// Internal events queue used to decouple the database listener from the event bus processing, allowing for better scalability and reliability.
+	eventsNotificationQueue = make(chan EventNotification, notificationQueueSize)
 )
 
 // GenerateEventUID generates a unique identifier for the event.
@@ -64,9 +76,9 @@ func GenerateEventUID(e Event) string {
 
 // InitializeScheduler initializes the centralized scheduler during application startup.
 func InitializeScheduler(db *Handler, cfg cfg.Config) {
-	eventsSchedulerInitialize = false
+	//eventsSchedulerInitialize = false
 	go StartScheduler(db, cfg)
-	eventsSchedulerInitialize = true
+	//eventsSchedulerInitialize = true
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Event scheduler started")
 }
 
@@ -631,26 +643,20 @@ func GetEventsBySourceTypeSeverityAndTime(db *Handler, sourceID uint64, eventTyp
 	return events, nil
 }
 
-// StartEventBus starts an event bus that listens for new events in the database and publishes them to subscribers.
-func StartEventBus(db *Handler) (*EventBus, func()) {
-	bus := NewEventBus()
+// StartEventBus ensures the global EventBus exists and returns it together
+// with a stop function for the ingestion pipeline.
+// It does NOT start ingestion eagerly.
+func StartEventBus() (*EventBus, func()) {
+	globalEventBusOnce.Do(func() {
+		GlobalEventBus = NewEventBus()
+	})
 
-	stop := make(chan struct{})
-	go func() {
-		// Reuse the exact same fetch/marshal logic you already have,
-		// but instead of forwarding JSON to one handler, publish to the bus.
-		listenForEventsLoop(db, stop, func(fullJSON string) {
-			var e Event
-			if err := json.Unmarshal([]byte(fullJSON), &e); err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode full event JSON for bus: %v", err)
-				return
-			}
-			bus.Publish(e)
-		})
-	}()
+	// Stop function is idempotent and safe to call multiple times
+	stopFn := func() {
+		StopGlobalEventBus()
+	}
 
-	stopFn := func() { close(stop) }
-	return bus, stopFn
+	return GlobalEventBus, stopFn
 }
 
 // ListenForEvents listens for new events in the database and calls the handleNotification function when a new event is received.
@@ -665,14 +671,55 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 		close(stop)
 	}()
 
-	go listenForEventsLoop(db, stop, handleNotification)
+	// Determine worker count
+	workers := runtime.GOMAXPROCS(0) * 2
+	if workers < 2 {
+		workers = 2
+	}
+	if workers > 16 {
+		workers = 16
+	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlInfo,
+		"Starting event listener with %d workers and queue size %d",
+		workers, notificationQueueSize,
+	)
+
+	// Start workers first
+	startEventWorkers(db, eventsNotificationQueue, workers, handleNotification)
+
+	go listenForEventsLoop(db, stop, eventsNotificationQueue)
 
 	// Block until stop is closed
 	<-stop
+
+	// Stop accepting new messages
+	close(eventsNotificationQueue)
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Event listener shutting down")
+}
+
+func startEventWorkers(
+	db *Handler,
+	queue <-chan EventNotification,
+	workers int,
+	handleNotification func(string),
+) {
+	for i := 0; i < workers; i++ {
+		go func(_id int) {
+			for msg := range queue {
+				processEventNotification(db, msg, handleNotification)
+			}
+		}(i)
+	}
 }
 
 // listenForEventsLoop is the internal loop that handles listening for events and processing notifications.
-func listenForEventsLoop(db *Handler, stop <-chan struct{}, handleNotification func(string)) {
+func listenForEventsLoop(db *Handler,
+	stop <-chan struct{},
+	queue chan<- EventNotification,
+) {
 	listener := (*db).NewListener()
 	if listener == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to create a new listener")
@@ -710,52 +757,13 @@ func listenForEventsLoop(db *Handler, stop <-chan struct{}, handleNotification f
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Notification channel closed")
 				return
 			}
-			if n != nil {
-				// Step 1: Decode metadata
-				var meta struct {
-					EventSHA256    string `json:"event_sha256"`
-					EventType      string `json:"event_type"`
-					SourceID       uint64 `json:"source_id"`
-					EventTimestamp string `json:"event_timestamp"`
-				}
-
-				if err := json.Unmarshal([]byte(n.Extra()), &meta); err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode event metadata: %v", err)
-					continue
-				}
-
-				// Define retry parameters
-				// TODO: total needs to become a user parameter
-				total := 45 * time.Second        // total wait time
-				delay := 150 * time.Millisecond  // delay between retries
-				maxRetries := int(total / delay) // maximum number of retries
-
-				// Step 2: Fetch full event from DB
-				event, err := fetchEventWithRetry(db, meta.EventSHA256, maxRetries, delay)
-				if err != nil {
-					if errors.Is(err, sql.ErrNoRows) {
-						et := strings.ToLower(strings.TrimSpace(meta.EventType))
-						if strings.HasPrefix(et, "crowler_") ||
-							strings.HasPrefix(et, "system_") {
-							cmn.DebugMsg(cmn.DbgLvlError, "System event '%s' of type '%s' was removed before listener could fetch it:  %v", meta.EventSHA256, et, err)
-						} else {
-							cmn.DebugMsg(cmn.DbgLvlDebug2, "Event '%s' of type '%s' possibly already processed and removed from queue: %v", meta.EventSHA256, et, err)
-						}
-					} else {
-						cmn.DebugMsg(cmn.DbgLvlError, "Failed to fetch event '%s' of type '%s': %v", meta.EventSHA256, meta.EventType, err)
-					}
-					continue
-				}
-
-				// Step 3: Convert to JSON
-				fullJSON, err := json.Marshal(event)
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "Failed to marshal full event: %v", err)
-					continue
-				}
-
-				// Step 4: Pass it to existing handler (NO code change there)
-				handleNotification(string(fullJSON))
+			if n == nil {
+				continue
+			}
+			select {
+			case queue <- EventNotification{Payload: n.Extra(), ReceivedAt: time.Now()}:
+			default:
+				cmn.DebugMsg(cmn.DbgLvlWarn, "Event notification queue is full, dropping event: %s", n.Extra())
 			}
 		case <-stop:
 			cmn.DebugMsg(cmn.DbgLvlInfo, "Shutting down the events handler...")
@@ -765,6 +773,96 @@ func listenForEventsLoop(db *Handler, stop <-chan struct{}, handleNotification f
 			}
 			return
 		}
+	}
+}
+
+func processEventNotification(
+	db *Handler,
+	msg EventNotification,
+	handleNotification func(string),
+) {
+	// Step 0: Sanity check
+	payload := strings.TrimSpace(msg.Payload)
+	if payload == "" {
+		cmn.DebugMsg(cmn.DbgLvlError, "Received empty event notification payload")
+		return
+	}
+
+	// Step 1: Decode metadata
+	var meta struct {
+		EventSHA256    string `json:"event_sha256"`
+		EventType      string `json:"event_type"`
+		SourceID       uint64 `json:"source_id"`
+		EventTimestamp string `json:"event_timestamp"`
+	}
+
+	if err := json.Unmarshal([]byte(payload), &meta); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Failed to decode event metadata payload '%s': %v",
+			payload, err)
+		return
+	}
+
+	if meta.EventSHA256 == "" {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Event notification missing event_sha256: %s",
+			payload)
+		return
+	}
+
+	// Step 2: Retry parameters
+	// TODO: make these configurable
+	total := 45 * time.Second
+	delay := 150 * time.Millisecond
+	maxRetries := int(total / delay)
+
+	// Step 3: Fetch full event from DB
+	event, err := fetchEventWithRetry(db, meta.EventSHA256, maxRetries, delay)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			et := strings.ToLower(strings.TrimSpace(meta.EventType))
+			if strings.HasPrefix(et, "crowler_") ||
+				strings.HasPrefix(et, "system_") {
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"System event '%s' of type '%s' removed before fetch",
+					meta.EventSHA256, et,
+				)
+			} else {
+				cmn.DebugMsg(
+					cmn.DbgLvlDebug2,
+					"Event '%s' of type '%s' already processed or removed",
+					meta.EventSHA256, et,
+				)
+			}
+		} else {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"Failed to fetch event '%s' of type '%s': %v",
+				meta.EventSHA256, meta.EventType, err,
+			)
+		}
+		return
+	}
+
+	// Step 4: if we have an events bus publish the event ont he bus:
+	if GlobalEventBus != nil {
+		GlobalEventBus.Publish(event)
+	}
+
+	// Step 5: Call handleNotification function on the client (if any)
+	if handleNotification != nil {
+		fullJSON, err := json.Marshal(event)
+		if err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"Failed to marshal full event '%s': %v",
+				meta.EventSHA256, err,
+			)
+			return
+		}
+
+		handleNotification(string(fullJSON))
 	}
 }
 

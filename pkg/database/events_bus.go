@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 var (
@@ -12,6 +14,9 @@ var (
 	GlobalEventBus     *EventBus
 	globalEventBusOnce sync.Once
 	globalEventBusStop func()
+
+	ingestionMu      sync.Mutex
+	ingestionRunning bool
 )
 
 // EventFilter defines the filtering criteria for subscribing to events.
@@ -32,9 +37,10 @@ type subscription struct {
 
 // EventBus is a simple in-memory event bus with filtering capabilities.
 type EventBus struct {
-	mu   sync.RWMutex
-	subs map[string]*subscription
-	seq  uint64
+	mu       sync.RWMutex
+	subs     map[string]*subscription
+	seq      uint64
+	subCount atomic.Int32
 }
 
 // NewEventBus creates a new EventBus instance.
@@ -45,9 +51,9 @@ func NewEventBus() *EventBus {
 }
 
 // InitGlobalEventBus starts the global event bus.
-func InitGlobalEventBus(db *Handler) {
+func InitGlobalEventBus(_ *Handler) {
 	globalEventBusOnce.Do(func() {
-		GlobalEventBus, globalEventBusStop = StartEventBus(db)
+		GlobalEventBus, globalEventBusStop = StartEventBus()
 	})
 }
 
@@ -59,7 +65,11 @@ func StopGlobalEventBus() {
 }
 
 // Subscribe adds a new subscriber with the given filter and buffer size.
-func (b *EventBus) Subscribe(filter EventFilter, buffer int) (string, <-chan Event, func()) {
+func (b *EventBus) Subscribe(
+	filter EventFilter,
+	buffer int,
+) (string, <-chan Event, func()) {
+
 	if buffer <= 0 {
 		buffer = 16
 	}
@@ -76,7 +86,15 @@ func (b *EventBus) Subscribe(filter EventFilter, buffer int) (string, <-chan Eve
 	b.subs[id] = sub
 	b.mu.Unlock()
 
-	cancel := func() { b.Unsubscribe(id) }
+	// Transition 0 -> 1
+	if b.subCount.Add(1) == 1 {
+		startGlobalEventIngestion()
+	}
+
+	cancel := func() {
+		b.Unsubscribe(id)
+	}
+
 	return id, sub.ch, cancel
 }
 
@@ -92,9 +110,46 @@ func (b *EventBus) Unsubscribe(id string) {
 	if sub == nil {
 		return
 	}
+
 	if sub.closed.CompareAndSwap(false, true) {
 		close(sub.ch)
 	}
+
+	// Transition 1 -> 0
+	if b.subCount.Add(-1) == 0 {
+		stopGlobalEventIngestion()
+	}
+}
+
+func startGlobalEventIngestion() {
+	ingestionMu.Lock()
+	defer ingestionMu.Unlock()
+
+	if ingestionRunning {
+		return
+	}
+
+	GlobalEventBus, globalEventBusStop = StartEventBus()
+	ingestionRunning = true
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Event ingestion started")
+}
+
+func stopGlobalEventIngestion() {
+	ingestionMu.Lock()
+	defer ingestionMu.Unlock()
+
+	if !ingestionRunning {
+		return
+	}
+
+	if globalEventBusStop != nil {
+		globalEventBusStop()
+	}
+
+	ingestionRunning = false
+
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Event ingestion stopped")
 }
 
 // Publish fans out the event to all matching subscribers.
