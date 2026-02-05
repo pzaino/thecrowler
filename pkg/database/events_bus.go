@@ -155,6 +155,11 @@ func stopGlobalEventIngestion() {
 // Publish fans out the event to all matching subscribers.
 // Non-blocking: if a subscriber is slow and its buffer is full, the event is dropped for that subscriber.
 func (b *EventBus) Publish(e Event) {
+	// DO not publish if there aren't subscribers, to avoid unnecessary work (e.g. filter matching).
+	if b.subCount.Load() == 0 {
+		return
+	}
+
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

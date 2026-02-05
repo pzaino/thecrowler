@@ -53,13 +53,6 @@ type EventNotification struct {
 	ReceivedAt time.Time
 }
 
-var (
-	//eventsSchedulerInitialize bool
-
-	// Internal events queue used to decouple the database listener from the event bus processing, allowing for better scalability and reliability.
-	eventsNotificationQueue = make(chan EventNotification, notificationQueueSize)
-)
-
 // GenerateEventUID generates a unique identifier for the event.
 func GenerateEventUID(e Event) string {
 	// convert e.SourceID into a string
@@ -671,6 +664,8 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 		close(stop)
 	}()
 
+	eventsNotificationQueue := make(chan EventNotification, notificationQueueSize)
+
 	// Determine worker count
 	workers := runtime.GOMAXPROCS(0) * 2
 	if workers < 2 {
@@ -689,10 +684,18 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 	// Start workers first
 	startEventWorkers(db, eventsNotificationQueue, workers, handleNotification)
 
-	go listenForEventsLoop(db, stop, eventsNotificationQueue)
+	listenerDone := make(chan struct{})
+
+	go func() {
+		listenForEventsLoop(db, stop, eventsNotificationQueue)
+		close(listenerDone)
+	}()
 
 	// Block until stop is closed
 	<-stop
+
+	// Wait for listener loop to finish
+	<-listenerDone
 
 	// Stop accepting new messages
 	close(eventsNotificationQueue)
@@ -707,7 +710,7 @@ func startEventWorkers(
 	handleNotification func(string),
 ) {
 	for i := 0; i < workers; i++ {
-		go func(_id int) {
+		go func(_ int) {
 			for msg := range queue {
 				processEventNotification(db, msg, handleNotification)
 			}
