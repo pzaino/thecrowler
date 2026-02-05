@@ -989,6 +989,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		report += fmt.Sprintf("                 Source: %s\n", status.Source)
 		report += fmt.Sprintf("              Source ID: %d\n", status.SourceID)
 		report += fmt.Sprintf("                 VDI ID: %s\n", status.VDIID)
+		report += fmt.Sprintf("         VDI Session ID: %s\n", status.VDISID)
 		report += fmt.Sprintf("              ContextID: %s\n", status.ContextID)
 		report += fmt.Sprintf("        Pipeline status: %s\n", StatusStr(int(status.PipelineRunning.Load())))
 		report += fmt.Sprintf("        Crawling status: %s\n", StatusStr(int(status.CrawlingRunning.Load())))
