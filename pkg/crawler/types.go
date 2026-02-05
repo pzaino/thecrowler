@@ -47,11 +47,12 @@ type Pars struct {
 
 // Status holds the status of the crawler
 type Status struct {
-	PipelineID      uint64
-	SourceID        uint64
-	VDIID           string
-	ContextID       string
-	Source          string
+	PipelineID      uint64 // Pipeline ID
+	SourceID        uint64 // Collection SOurce ID
+	VDIID           string // VDI ID
+	VDISID          string // VDI Session ID
+	ContextID       string // Collection COntext ID
+	Source          string // Collection SOurce details
 	TotalPages      atomic.Int32
 	TotalLinks      atomic.Int32
 	TotalSkipped    atomic.Int32

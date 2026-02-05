@@ -818,6 +818,7 @@ func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
 		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
 		return err
 	}
+	ctx.Status.VDISID = ctx.wd.SessionID() // Update the report with the current VDI session ID
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "[DEBUG-ConnectToVDI] Connected to VDI successfully.")
 	return nil
 }
@@ -3278,6 +3279,25 @@ func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
 	return fmt.Errorf("document.readyState never reached 'complete' within timeout")
 }
 
+func getWithTimeout(wd *vdi.WebDriver, url string, timeout time.Duration) error {
+	if wd == nil {
+		return errors.New("[critical] WebDriver is nil")
+	}
+
+	done := make(chan error, 1)
+
+	go func() {
+		done <- (*wd).Get(url)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("[critical] wd.Get timeout after %s for URL %s", timeout, url)
+	}
+}
+
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id string) (vdi.WebDriver, string, error) {
@@ -3336,7 +3356,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		err = ctx.ConnectToVDI((*ctx).SelInstance)
 		wd = ctx.wd
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to connect to VDI: %v", err)
+			return nil, "", fmt.Errorf("[critical] failed to connect to VDI: %v", err)
 		}
 	}
 
@@ -3371,7 +3391,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
 					if err != nil {
-						return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+						return nil, "", fmt.Errorf("[critical] failed to create a new WebDriver session: %v", err)
 					}
 				}
 			}
@@ -3398,7 +3418,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					err = ctx.ConnectToVDI((*ctx).SelInstance)
 					wd = ctx.wd
 					if err != nil {
-						return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+						return nil, "", fmt.Errorf("[critical] failed to create a new WebDriver session: %v", err)
 					}
 				}
 			}
@@ -3419,14 +3439,14 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 
 		PageLoadOk := false
 		ctx.Status.LastRetry.Add(1) // Increment the report retry count
-		if err := wd.Get(url); err != nil {
+		if err := getWithTimeout(&wd, url, 45*time.Second); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found, creating a new one...", id)
 				err = ctx.ConnectToVDI((*ctx).SelInstance)
 				wd = ctx.wd
 				if err != nil {
-					details := map[string]interface{}{
+					details := map[string]any{
 						"source":  "crawler",
 						"url":     url,
 						"message": fmt.Sprintf("failed to create a new WebDriver session: %v", err),
@@ -3440,7 +3460,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 						Details:   details,
 					}
 					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
-					return nil, "", fmt.Errorf("failed to create a new WebDriver session: %v", err)
+					return nil, "", fmt.Errorf("[critical] failed to create a new WebDriver session: %v", err)
 				}
 				// Setup the Browser before requesting a page
 				setupBrowser(wd, ctx)
@@ -3449,9 +3469,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					setReferrerHeader(&wd, ctx)
 				}
 				// Retry navigating to the page
-				err := wd.Get(url)
+				err := getWithTimeout(&wd, url, 45*time.Second)
 				if err != nil {
-					details := map[string]interface{}{
+					details := map[string]any{
 						"source":  "crawler",
 						"url":     url,
 						"message": fmt.Sprintf("failed to navigate to %s: %v", url, err),
@@ -3465,10 +3485,10 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 						Details:   details,
 					}
 					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
-					return nil, "", fmt.Errorf("failed to navigate to %s: %v", url, err)
+					return nil, "", fmt.Errorf("[critical] failed to navigate to %s: %v", url, err)
 				}
 			} else {
-				details := map[string]interface{}{
+				details := map[string]any{
 					"source":  "crawler",
 					"url":     url,
 					"message": fmt.Sprintf("failed to navigate to %s: %v", url, err),
