@@ -13,7 +13,9 @@
 # Build stage (using golang:1.24.11-alpine-3.22)
 #FROM golang@sha256:fb828ef85a4c4140fae45f145a84ca9c0a83fd0baa437a301b35b551e91ceed5 AS builder
 # Build stage (using golang:1.24.12-alpine-3.22)
-FROM golang@sha256:9f1aa90ad6e9053725625f43ea699148a2dc362133dfb7489427658bb9a22af7 AS builder
+#FROM golang@sha256:9f1aa90ad6e9053725625f43ea699148a2dc362133dfb7489427658bb9a22af7 AS builder
+# Build stage (using golang:1.24.13-alpine-3.22)
+FROM golang@sha256:05104fa1701f4efdc294a38a58c064f4955855b97795d15272fa6479d9fe0c92 AS builder
 
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 RUN apk add --no-cache bash
