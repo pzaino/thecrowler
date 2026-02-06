@@ -334,12 +334,13 @@ func handleNotification(payload string) {
 	}
 
 	eventType := strings.ToLower(strings.TrimSpace(event.Type))
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 
 	switch eventType {
 	case "system_event":
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 		processSystemEvent(event)
 	case "crowler_heartbeat":
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 		processHeartbeatEvent(event)
 	default:
 		// Ignore all other events

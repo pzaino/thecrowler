@@ -45,7 +45,7 @@ const (
 	// EventSeverityError represents an error event.
 	EventSeverityError = "error"
 
-	notificationQueueSize = 4096
+	notificationQueueSize = 122880
 
 	silenceCatchUpLookback = 60 * time.Second
 	silenceCatchUpTimeout  = 3 * time.Second
