@@ -716,9 +716,9 @@ func startEventWorkers(
 	handleNotification func(string),
 ) {
 	for i := 0; i < workers; i++ {
-		go func(_ int) {
+		go func(workerID int) {
 			for msg := range queue {
-				processEventNotification(db, msg, handleNotification)
+				processEventNotification(workerID, db, msg, handleNotification)
 			}
 		}(i)
 	}
@@ -899,6 +899,7 @@ func runSilenceCatchUp(
 }
 
 func processEventNotification(
+	WID int, // Worker ID, for logging purposes
 	db *Handler,
 	msg EventNotification,
 	handleNotification func(string),
@@ -906,7 +907,7 @@ func processEventNotification(
 	// Step 0: Sanity check
 	payload := strings.TrimSpace(msg.Payload)
 	if payload == "" {
-		cmn.DebugMsg(cmn.DbgLvlError, "Received empty event notification payload")
+		cmn.DebugMsg(cmn.DbgLvlError, "Events Notification Processing worker `%d` received empty event notification payload", WID)
 		return
 	}
 
@@ -920,14 +921,14 @@ func processEventNotification(
 
 	if err := json.Unmarshal([]byte(payload), &meta); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError,
-			"Failed to decode event metadata payload '%s': %v",
-			payload, err)
+			"Events Notification Processing worker `%d` failed to decode event metadata payload '%s': %v",
+			WID, payload, err)
 		return
 	}
 
 	if meta.EventSHA256 == "" {
 		cmn.DebugMsg(cmn.DbgLvlError,
-			"Event notification missing event_sha256: %s",
+			"Events Notification Processing worker `%d` missing event_sha256: %s", WID,
 			payload)
 		return
 	}
@@ -947,21 +948,21 @@ func processEventNotification(
 				strings.HasPrefix(et, "system_") {
 				cmn.DebugMsg(
 					cmn.DbgLvlError,
-					"System event '%s' of type '%s' removed before fetch",
-					meta.EventSHA256, et,
+					"Events Notification Processing worker `%d` system event '%s' of type '%s' removed before fetch",
+					WID, meta.EventSHA256, et,
 				)
 			} else {
 				cmn.DebugMsg(
-					cmn.DbgLvlDebug2,
-					"Event '%s' of type '%s' already processed or removed",
-					meta.EventSHA256, et,
+					cmn.DbgLvlDebug3,
+					"Events Notification Processing worker `%d` event '%s' of type '%s' already processed or removed",
+					WID, meta.EventSHA256, et,
 				)
 			}
 		} else {
 			cmn.DebugMsg(
 				cmn.DbgLvlError,
-				"Failed to fetch event '%s' of type '%s': %v",
-				meta.EventSHA256, meta.EventType, err,
+				"Events Notification Processing worker `%d` failed to fetch event '%s' of type '%s': %v",
+				WID, meta.EventSHA256, meta.EventType, err,
 			)
 		}
 		return
@@ -978,8 +979,8 @@ func processEventNotification(
 		if err != nil {
 			cmn.DebugMsg(
 				cmn.DbgLvlError,
-				"Failed to marshal full event '%s': %v",
-				meta.EventSHA256, err,
+				"Events Notification Processing worker `%d` failed to marshal full event '%s': %v",
+				WID, meta.EventSHA256, err,
 			)
 			return
 		}
