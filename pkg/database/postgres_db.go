@@ -223,6 +223,11 @@ func (handler *PostgresHandler) QueryRow(query string, args ...interface{}) *sql
 	return handler.db.QueryRow(query, args...)
 }
 
+// QueryContext executes a query with a context and returns the result
+func (handler *PostgresHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return handler.db.QueryContext(ctx, query, args...)
+}
+
 // CheckConnection checks if the database connection is still alive
 func (handler *PostgresHandler) CheckConnection(c cfg.Config) error {
 	var err error
