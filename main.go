@@ -1301,6 +1301,21 @@ func main() {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "The CROWler Engine is starting...")
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Node   ID: %s", cmn.GetEngineID())
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Node name: %s", cmn.GetMicroServiceName())
+	nCPU := runtime.NumCPU()
+	nUsableCPU := runtime.GOMAXPROCS(0)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "CPU cores available: %d, usable by this process: %d", nCPU, nUsableCPU)
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	heapUsed := m.HeapAlloc
+	heapReserved := m.HeapSys
+	heapIdle := m.HeapIdle
+	heapReleased := m.HeapReleased
+	heapInUse := m.HeapInuse
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Memory usage at startup: HeapUsed=%d bytes, HeapReserved=%d bytes, HeapIdle=%d bytes, HeapReleased=%d bytes, HeapInUse=%d bytes",
+		heapUsed, heapReserved, heapIdle, heapReleased, heapInUse,
+	)
 
 	// Define db before we set signal handlers
 	var db cdb.Handler
