@@ -18,7 +18,7 @@ require (
 
 require (
 	github.com/Ullaakut/nmap/v3 v3.1.0
-	github.com/evanw/esbuild v0.27.2
+	github.com/evanw/esbuild v0.27.3
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
 	golang.org/x/crypto v0.47.0
