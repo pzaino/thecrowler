@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -45,6 +46,10 @@ const (
 	EventSeverityError = "error"
 
 	notificationQueueSize = 4096
+
+	silenceCatchUpLookback = 60 * time.Second
+	silenceCatchUpTimeout  = 3 * time.Second
+	silenceCatchUpMaxRows  = 256
 )
 
 // EventNotification is used to enqueue notifications about new events to be processed by the event bus subscribers.
@@ -753,6 +758,26 @@ func listenForEventsLoop(db *Handler,
 		return
 	}
 
+	const silenceThreshold = 30 * time.Second
+	var lastNotifyAt atomic.Int64
+	lastNotifyAt.Store(time.Now().UnixNano())
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				last := time.Unix(0, lastNotifyAt.Load())
+				if time.Since(last) > silenceThreshold {
+					runSilenceCatchUp(db, queue)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
 	for {
 		select {
 		case n, ok := <-listener.Notify():
@@ -763,6 +788,7 @@ func listenForEventsLoop(db *Handler,
 			if n == nil {
 				continue
 			}
+			lastNotifyAt.Store(time.Now().UnixNano())
 			select {
 			case queue <- EventNotification{Payload: n.Extra(), ReceivedAt: time.Now()}:
 			default:
@@ -776,6 +802,83 @@ func listenForEventsLoop(db *Handler,
 			}
 			return
 		}
+	}
+}
+
+func runSilenceCatchUp(
+	db *Handler,
+	queue chan<- EventNotification,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), silenceCatchUpTimeout)
+	defer cancel()
+
+	rows, err := (*db).QueryContext(ctx, `
+		SELECT event_sha256
+		FROM Events
+		WHERE
+			created_at > now() - $1::interval
+			AND (expires_at IS NULL OR expires_at > now())
+			AND deleted_at IS NULL
+		ORDER BY created_at ASC
+		LIMIT $2
+	`,
+		fmt.Sprintf("%f seconds", silenceCatchUpLookback.Seconds()),
+		silenceCatchUpMaxRows,
+	)
+	if err != nil {
+		cmn.DebugMsg(
+			cmn.DbgLvlWarn,
+			"Silence catch-up query failed: %v",
+			err,
+		)
+		return
+	}
+	defer rows.Close() //nolint:errcheck
+
+	enqueued := 0
+	dropped := 0
+
+	for rows.Next() {
+		var eventID string
+		if err := rows.Scan(&eventID); err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlWarn,
+				"Silence catch-up scan error: %v",
+				err,
+			)
+			continue
+		}
+
+		// Construct a minimal synthetic notification payload.
+		// We only need event_sha256, everything else is fetched later.
+		payload := fmt.Sprintf(`{"event_sha256":"%s"}`, eventID)
+
+		select {
+		case queue <- EventNotification{
+			Payload:    payload,
+			ReceivedAt: time.Now(),
+		}:
+			enqueued++
+		default:
+			dropped++
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		cmn.DebugMsg(
+			cmn.DbgLvlWarn,
+			"Silence catch-up rows error: %v",
+			err,
+		)
+	}
+
+	if enqueued > 0 || dropped > 0 {
+		cmn.DebugMsg(
+			cmn.DbgLvlInfo,
+			"Silence catch-up executed: enqueued=%d dropped=%d",
+			enqueued,
+			dropped,
+		)
 	}
 }
 

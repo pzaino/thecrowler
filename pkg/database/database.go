@@ -52,6 +52,7 @@ type Handler interface {
 	Commit(tx *sql.Tx) error
 	Rollback(tx *sql.Tx) error
 	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	CheckConnection(c cfg.Config) error
 	NewListener() Listener
 }

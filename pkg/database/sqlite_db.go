@@ -113,6 +113,11 @@ func (handler *SQLiteHandler) QueryRow(query string, args ...interface{}) *sql.R
 	return handler.db.QueryRow(query, args...)
 }
 
+// QueryContext executes a query with the given context and returns the result
+func (handler *SQLiteHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return handler.db.QueryContext(ctx, query, args...)
+}
+
 // CheckConnection checks if the database connection is still alive
 func (handler *SQLiteHandler) CheckConnection(c cfg.Config) error {
 	var err error
