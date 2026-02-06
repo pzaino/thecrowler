@@ -45,7 +45,7 @@ const (
 	// EventSeverityError represents an error event.
 	EventSeverityError = "error"
 
-	notificationQueueSize = 4096
+	notificationQueueSize = 122880
 
 	silenceCatchUpLookback = 60 * time.Second
 	silenceCatchUpTimeout  = 3 * time.Second
@@ -148,11 +148,12 @@ func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 
 // CreateEventWithRetries attempts to create a new event in the database with retries.
 func CreateEventWithRetries(db *Handler, event Event) (string, error) {
-	const maxRetries = 5
+	const maxRetries = 6
 	const baseDelay = 50 * time.Millisecond
 
 	var err error
-	for i := 0; i < maxRetries; i++ {
+	var i int
+	for i = 0; i < maxRetries; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		eID, err := CreateEvent(ctx, db, event)
 		cancel()
@@ -176,7 +177,7 @@ func CreateEventWithRetries(db *Handler, event Event) (string, error) {
 	}
 
 	// Final failure
-	cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %v", err)
+	cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %d %v", i, err)
 	return "", fmt.Errorf("failed to create event after %d retries: %w", maxRetries, err)
 }
 

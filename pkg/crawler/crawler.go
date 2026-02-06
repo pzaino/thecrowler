@@ -3327,8 +3327,8 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		return wd, "", nil
 	}
 
-	// Give Selenium some time
-	time.Sleep(100 * time.Millisecond)
+	// Define page load timeout (this is to ensure the VDI's Selenium doesn't gets stuck)
+	const getPageTimeout = 45 * time.Second
 
 	// Let's start preparing for a fetch:
 
@@ -3439,7 +3439,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 
 		PageLoadOk := false
 		ctx.Status.LastRetry.Add(1) // Increment the report retry count
-		if err := getWithTimeout(&wd, url, 45*time.Second); err != nil {
+		if err := getWithTimeout(&wd, url, getPageTimeout); err != nil {
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found, creating a new one...", id)
@@ -3469,7 +3469,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					setReferrerHeader(&wd, ctx)
 				}
 				// Retry navigating to the page
-				err := getWithTimeout(&wd, url, 45*time.Second)
+				err := getWithTimeout(&wd, url, getPageTimeout)
 				if err != nil {
 					details := map[string]any{
 						"source":  "crawler",
