@@ -890,7 +890,7 @@ func runSilenceCatchUp(
 
 	if (enqueued > 0) || (dropped > 0) {
 		cmn.DebugMsg(
-			cmn.DbgLvlInfo,
+			cmn.DbgLvlDebug4,
 			"Silence catch-up executed: enqueued=%d dropped=%d",
 			enqueued, dropped,
 		)
