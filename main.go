@@ -1380,7 +1380,8 @@ func main() {
 	defer closeResources(db, &vdiInstances)
 
 	// Start events listener
-	go cdb.ListenForEvents(&db, handleNotification)
+	notifyTimeout := 90 * time.Second
+	go cdb.ListenForEvents(&db, handleNotification, notifyTimeout)
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")

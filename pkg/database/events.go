@@ -658,7 +658,7 @@ func StartEventBus() (*EventBus, func()) {
 }
 
 // ListenForEvents listens for new events in the database and calls the handleNotification function when a new event is received.
-func ListenForEvents(db *Handler, handleNotification func(string)) {
+func ListenForEvents(db *Handler, handleNotification func(string), notifyTimeout time.Duration) {
 	stopSig := make(chan os.Signal, 1)
 	signal.Notify(stopSig, os.Interrupt, syscall.SIGTERM)
 
@@ -692,7 +692,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 	listenerDone := make(chan struct{})
 
 	go func() {
-		listenForEventsLoop(db, stop, eventsNotificationQueue)
+		listenForEventsLoop(db, stop, eventsNotificationQueue, notifyTimeout)
 		close(listenerDone)
 	}()
 
@@ -727,6 +727,7 @@ func startEventWorkers(
 func listenForEventsLoop(db *Handler,
 	stop <-chan struct{},
 	queue chan<- EventNotification,
+	notifyTimeout time.Duration,
 ) {
 	listener := (*db).NewListener()
 	if listener == nil {
@@ -759,6 +760,9 @@ func listenForEventsLoop(db *Handler,
 	}
 
 	const silenceThreshold = 30 * time.Second
+	if notifyTimeout < 30*time.Second {
+		notifyTimeout = silenceThreshold
+	}
 	var lastNotifyAt atomic.Int64
 	lastNotifyAt.Store(time.Now().UnixNano())
 	go func() {
@@ -769,7 +773,7 @@ func listenForEventsLoop(db *Handler,
 			select {
 			case <-ticker.C:
 				last := time.Unix(0, lastNotifyAt.Load())
-				if time.Since(last) > silenceThreshold {
+				if time.Since(last) > notifyTimeout {
 					runSilenceCatchUp(db, queue, &lastNotifyAt)
 				}
 			case <-stop:

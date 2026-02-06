@@ -231,8 +231,10 @@ func main() {
 		// We are on the Master Instance, start the events janitor
 		go startEventJanitor(&dbHandler, time.Minute)
 
+		notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
+
 		// Start the event listener (on a separate go routine)
-		go cdb.ListenForEvents(&dbHandler, handleNotification)
+		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
 		// Start events scheduler
 		cdb.StartScheduler(&dbHandler, config)
