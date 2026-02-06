@@ -287,7 +287,8 @@ func main() {
 	// ---------------------------------------------------------
 	// Start Event Listener (Search API participates in heartbeats)
 	// ---------------------------------------------------------
-	go cdb.ListenForEvents(&dbHandler, handleNotification)
+	notifyTimeout := 90 * time.Second
+	go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
 	// ---------------------------------------------------------
 	// Start Prometheus metrics updater

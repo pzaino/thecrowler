@@ -658,7 +658,7 @@ func StartEventBus() (*EventBus, func()) {
 }
 
 // ListenForEvents listens for new events in the database and calls the handleNotification function when a new event is received.
-func ListenForEvents(db *Handler, handleNotification func(string)) {
+func ListenForEvents(db *Handler, handleNotification func(string), notifyTimeout time.Duration) {
 	stopSig := make(chan os.Signal, 1)
 	signal.Notify(stopSig, os.Interrupt, syscall.SIGTERM)
 
@@ -692,7 +692,7 @@ func ListenForEvents(db *Handler, handleNotification func(string)) {
 	listenerDone := make(chan struct{})
 
 	go func() {
-		listenForEventsLoop(db, stop, eventsNotificationQueue)
+		listenForEventsLoop(db, stop, eventsNotificationQueue, notifyTimeout)
 		close(listenerDone)
 	}()
 
@@ -727,6 +727,7 @@ func startEventWorkers(
 func listenForEventsLoop(db *Handler,
 	stop <-chan struct{},
 	queue chan<- EventNotification,
+	notifyTimeout time.Duration,
 ) {
 	listener := (*db).NewListener()
 	if listener == nil {
@@ -759,6 +760,9 @@ func listenForEventsLoop(db *Handler,
 	}
 
 	const silenceThreshold = 30 * time.Second
+	if notifyTimeout < 30*time.Second {
+		notifyTimeout = silenceThreshold
+	}
 	var lastNotifyAt atomic.Int64
 	lastNotifyAt.Store(time.Now().UnixNano())
 	go func() {
@@ -769,8 +773,8 @@ func listenForEventsLoop(db *Handler,
 			select {
 			case <-ticker.C:
 				last := time.Unix(0, lastNotifyAt.Load())
-				if time.Since(last) > silenceThreshold {
-					runSilenceCatchUp(db, queue)
+				if time.Since(last) > notifyTimeout {
+					runSilenceCatchUp(db, queue, &lastNotifyAt)
 				}
 			case <-stop:
 				return
@@ -808,12 +812,18 @@ func listenForEventsLoop(db *Handler,
 func runSilenceCatchUp(
 	db *Handler,
 	queue chan<- EventNotification,
+	lastNotifyAt *atomic.Int64,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), silenceCatchUpTimeout)
 	defer cancel()
 
+	// Pull the same metadata you send via pg_notify
 	rows, err := (*db).QueryContext(ctx, `
-		SELECT event_sha256
+		SELECT
+			event_sha256,
+			event_type,
+			source_id,
+			event_timestamp
 		FROM Events
 		WHERE
 			created_at > now() - $1::interval
@@ -826,36 +836,45 @@ func runSilenceCatchUp(
 		silenceCatchUpMaxRows,
 	)
 	if err != nil {
-		cmn.DebugMsg(
-			cmn.DbgLvlWarn,
-			"Silence catch-up query failed: %v",
-			err,
-		)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Silence catch-up query failed: %v", err)
 		return
 	}
 	defer rows.Close() //nolint:errcheck
+
+	type metaPayload struct {
+		EventSHA256    string `json:"event_sha256"`
+		EventType      string `json:"event_type"`
+		SourceID       uint64 `json:"source_id"`
+		EventTimestamp string `json:"event_timestamp"`
+	}
 
 	enqueued := 0
 	dropped := 0
 
 	for rows.Next() {
-		var eventID string
-		if err := rows.Scan(&eventID); err != nil {
-			cmn.DebugMsg(
-				cmn.DbgLvlWarn,
-				"Silence catch-up scan error: %v",
-				err,
-			)
+		var (
+			m  metaPayload
+			ts time.Time
+		)
+
+		// event_timestamp is TIMESTAMPTZ in your schema
+		if err := rows.Scan(&m.EventSHA256, &m.EventType, &m.SourceID, &ts); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Silence catch-up scan error: %v", err)
 			continue
 		}
 
-		// Construct a minimal synthetic notification payload.
-		// We only need event_sha256, everything else is fetched later.
-		payload := fmt.Sprintf(`{"event_sha256":"%s"}`, eventID)
+		// Keep the exact same string format you use elsewhere (RFC3339 is fine)
+		m.EventTimestamp = ts.Format(time.RFC3339Nano)
+
+		b, err := json.Marshal(m)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Silence catch-up marshal error: %v", err)
+			continue
+		}
 
 		select {
 		case queue <- EventNotification{
-			Payload:    payload,
+			Payload:    string(b),
 			ReceivedAt: time.Now(),
 		}:
 			enqueued++
@@ -865,20 +884,16 @@ func runSilenceCatchUp(
 	}
 
 	if err := rows.Err(); err != nil {
-		cmn.DebugMsg(
-			cmn.DbgLvlWarn,
-			"Silence catch-up rows error: %v",
-			err,
-		)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Silence catch-up rows error: %v", err)
 	}
 
-	if enqueued > 0 || dropped > 0 {
+	if (enqueued > 0) || (dropped > 0) {
 		cmn.DebugMsg(
 			cmn.DbgLvlInfo,
 			"Silence catch-up executed: enqueued=%d dropped=%d",
-			enqueued,
-			dropped,
+			enqueued, dropped,
 		)
+		lastNotifyAt.Store(time.Now().UnixNano())
 	}
 }
 
