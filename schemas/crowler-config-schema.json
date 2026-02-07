@@ -422,6 +422,11 @@
             }
           ]
         },
+        "set_vdi_gpu_patch": {
+          "title": "CROWler Engine Set VDI GPU Patch",
+          "description": "This is a flag that tells the CROWler Engine to set the GPU patch for the VDI. This can be useful to improve real browser appearance when the VDI host, pod or container doesn't have an assigned GPU. Be careful setting this patch to true, it can increase the number of 500 error codes from the VDI.",
+          "type": "boolean"
+        },
         "resolve_vdi_dns": {
           "title": "CROWler Engine Pre-Resolve VDI DNS",
           "description": "This is a flag that tells the CROWler Engine to resolve the VDI's hostname to an IP address before connecting to it. This can be useful to reduce DNS resolution time or to handle VDIs behind load balancers or proxies. Basically it pre-resolves the VDI's DNS name before connecting to it and then use that IP address for the connection.",

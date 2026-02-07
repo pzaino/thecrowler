@@ -969,6 +969,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed for '%s'", err, sel.Config.Name)
 		return nil, err
 	}
+	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
+	time.Sleep(500 * time.Millisecond)
 	// Inject anti-detection patch
 	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
@@ -981,7 +983,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Post-connection settings
-	if !*ctx.GetVDIReturnedFlag() {
+	if !(*ctx.GetVDIReturnedFlag()) {
 		setNavigatorProperties(wd, sel.Config.Language, userAgent)
 	}
 

@@ -3180,9 +3180,11 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 	}
 
 	// Set GPU properties
-	err = vdi.GPUPatch(wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
+	if ctx.config.Crawler.SetVDIGPUPatch {
+		err = vdi.GPUPatch(wd)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
+		}
 	}
 
 	// Reinforce Browser Settings

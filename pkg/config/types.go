@@ -55,7 +55,8 @@ type Crawler struct {
 	Workers               int             `json:"workers" yaml:"workers"`         // Number of crawler workers
 	Engine                []CustomEngine  `json:"engine" yaml:"engine"`           // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
 	VDIName               string          // Name of the VDI to use (this is useful when using custom configurations per each source)
-	ResolveVDIDNS         bool            `json:"resolve_vdi_dns" yaml:"resolve_vdi_dns"` // Whether to pre-resolve VDI DNS name or not
+	SetVDIGPUPatch        bool            `json:"set_vdi_gpu_patch" yaml:"set_vdi_gpu_patch"` // Whether to set the VDI GPU patch or not (this can be useful when using GPU-less VDIs)
+	ResolveVDIDNS         bool            `json:"resolve_vdi_dns" yaml:"resolve_vdi_dns"`     // Whether to pre-resolve VDI DNS name or not
 	Schedule              *EngineSchedule // Optional schedule configuration for this engine
 	SourcePriority        string          // Source priority (e.g., "high", "medium", "low" , "medium,low", "high,medium,low")
 	Platform              string          `json:"platform" yaml:"platform"`                                                 // Platform to use (e.g., "desktop", "mobile")
