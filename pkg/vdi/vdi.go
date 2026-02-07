@@ -969,6 +969,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed for '%s'", err, sel.Config.Name)
 		return nil, err
 	}
+	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
+	time.Sleep(500 * time.Millisecond)
 	// Inject anti-detection patch
 	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
 	if err != nil {
@@ -981,7 +983,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Post-connection settings
-	if !*ctx.GetVDIReturnedFlag() {
+	if !(*ctx.GetVDIReturnedFlag()) {
 		setNavigatorProperties(wd, sel.Config.Language, userAgent)
 	}
 
@@ -1100,6 +1102,50 @@ func GPUPatch(wd WebDriver) error {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
+	/* Old patch:
+		script = `
+	await page.evaluateOnNewDocument(() => {
+	const canvasProto = HTMLCanvasElement.prototype;
+	const getContextOrig = canvasProto.getContext;
+
+	canvasProto.getContext = function(type, attribs) {
+		const ctx = getContextOrig.call(this, type, attribs);
+
+		if (type === 'webgl' || type === 'webgl2') {
+		const getExtOrig = ctx.getExtension;
+		ctx.getExtension = function(ext) {
+			if (ext === 'WEBGL_debug_renderer_info') {
+			return getExtOrig.call(this, ext); // Keep it available
+			}
+			return getExtOrig.call(this, ext);
+		};
+
+		const getParamOrig = ctx.getParameter;
+		ctx.getParameter = function(param) {
+			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
+			if (debugInfo) {
+			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
+				return 'Intel(R) UHD Graphics 620';
+			}
+			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
+				return 'Intel Inc.';
+			}
+			}
+			return getParamOrig.call(this, param);
+		};
+		}
+
+		return ctx;
+	};
+	});
+	`
+
+	_, err = wd.ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
+	}
+	*/
+
 	return nil
 }
 
@@ -1207,48 +1253,6 @@ func ReinforceBrowserSettings(wd WebDriver) error {
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
-	}
-
-	script = `
-	await page.evaluateOnNewDocument(() => {
-	const canvasProto = HTMLCanvasElement.prototype;
-	const getContextOrig = canvasProto.getContext;
-
-	canvasProto.getContext = function(type, attribs) {
-		const ctx = getContextOrig.call(this, type, attribs);
-
-		if (type === 'webgl' || type === 'webgl2') {
-		const getExtOrig = ctx.getExtension;
-		ctx.getExtension = function(ext) {
-			if (ext === 'WEBGL_debug_renderer_info') {
-			return getExtOrig.call(this, ext); // Keep it available
-			}
-			return getExtOrig.call(this, ext);
-		};
-
-		const getParamOrig = ctx.getParameter;
-		ctx.getParameter = function(param) {
-			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
-			if (debugInfo) {
-			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
-				return 'Intel(R) UHD Graphics 620';
-			}
-			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
-				return 'Intel Inc.';
-			}
-			}
-			return getParamOrig.call(this, param);
-		};
-		}
-
-		return ctx;
-	};
-	});
-	`
-
-	_, err = wd.ExecuteScript(script, nil)
-	if err != nil {
-		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
 	return nil
