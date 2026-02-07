@@ -1102,6 +1102,50 @@ func GPUPatch(wd WebDriver) error {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
+	/* Old patch:
+		script = `
+	await page.evaluateOnNewDocument(() => {
+	const canvasProto = HTMLCanvasElement.prototype;
+	const getContextOrig = canvasProto.getContext;
+
+	canvasProto.getContext = function(type, attribs) {
+		const ctx = getContextOrig.call(this, type, attribs);
+
+		if (type === 'webgl' || type === 'webgl2') {
+		const getExtOrig = ctx.getExtension;
+		ctx.getExtension = function(ext) {
+			if (ext === 'WEBGL_debug_renderer_info') {
+			return getExtOrig.call(this, ext); // Keep it available
+			}
+			return getExtOrig.call(this, ext);
+		};
+
+		const getParamOrig = ctx.getParameter;
+		ctx.getParameter = function(param) {
+			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
+			if (debugInfo) {
+			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
+				return 'Intel(R) UHD Graphics 620';
+			}
+			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
+				return 'Intel Inc.';
+			}
+			}
+			return getParamOrig.call(this, param);
+		};
+		}
+
+		return ctx;
+	};
+	});
+	`
+
+	_, err = wd.ExecuteScript(script, nil)
+	if err != nil {
+		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
+	}
+	*/
+
 	return nil
 }
 
@@ -1209,48 +1253,6 @@ func ReinforceBrowserSettings(wd WebDriver) error {
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
-	}
-
-	script = `
-	await page.evaluateOnNewDocument(() => {
-	const canvasProto = HTMLCanvasElement.prototype;
-	const getContextOrig = canvasProto.getContext;
-
-	canvasProto.getContext = function(type, attribs) {
-		const ctx = getContextOrig.call(this, type, attribs);
-
-		if (type === 'webgl' || type === 'webgl2') {
-		const getExtOrig = ctx.getExtension;
-		ctx.getExtension = function(ext) {
-			if (ext === 'WEBGL_debug_renderer_info') {
-			return getExtOrig.call(this, ext); // Keep it available
-			}
-			return getExtOrig.call(this, ext);
-		};
-
-		const getParamOrig = ctx.getParameter;
-		ctx.getParameter = function(param) {
-			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
-			if (debugInfo) {
-			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
-				return 'Intel(R) UHD Graphics 620';
-			}
-			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
-				return 'Intel Inc.';
-			}
-			}
-			return getParamOrig.call(this, param);
-		};
-		}
-
-		return ctx;
-	};
-	});
-	`
-
-	_, err = wd.ExecuteScript(script, nil)
-	if err != nil {
-		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
 	return nil
