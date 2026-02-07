@@ -148,7 +148,7 @@ func CreateEvent(ctx context.Context, db *Handler, e Event) (string, error) {
 
 // CreateEventWithRetries attempts to create a new event in the database with retries.
 func CreateEventWithRetries(db *Handler, event Event) (string, error) {
-	const maxRetries = 6
+	const maxRetries = 10
 	const baseDelay = 50 * time.Millisecond
 
 	var err error
