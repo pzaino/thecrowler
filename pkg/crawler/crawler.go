@@ -217,7 +217,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 		processCtx.srcCfg = sourceConfig
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-CrawlWebsite] Source configuration extracted: %v", processCtx.srcCfg)
-		crawlingConfig := make(map[string]interface{})
+		crawlingConfig := make(map[string]any)
 		crawlingConfig, _ = processCtx.srcCfg["crawling_config"].(map[string]interface{})
 		// Check if we have UnwantedURLs in the source configuration (and if so compile the patterns)
 		unwantedURLs, ok := crawlingConfig["unwanted_urls"]
@@ -382,8 +382,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			return
 		}
 
+		// track workers used for NetInfo and HTTPInfo to wait for them later before indexing the network information
+		usedWorkersFromPool := 0
+
 		// Get network information
 		processCtx.wgNetInfo.Add(1)
+		usedWorkersFromPool++
 		go func(ctx *ProcessContext) {
 			defer ctx.wgNetInfo.Done()
 			ctx.GetNetInfo(ctx.source.URL)
@@ -396,6 +400,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		// Get HTTP header information
 		if processCtx.config.HTTPHeaders.Enabled {
 			processCtx.wgNetInfo.Add(1)
+			usedWorkersFromPool++
 			go func(ctx *ProcessContext, htmlContent string) {
 				defer ctx.wgNetInfo.Done()
 				ctx.GetHTTPInfo(ctx.source.URL, htmlContent)
@@ -420,10 +425,10 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 				// Create a channel to enqueue jobs
 				jobs := make(chan LinkItem, len(allLinks))
 				// Create a channel to collect errors
-				errChan := make(chan error, config.Crawler.Workers-2)
+				errChan := make(chan error, config.Crawler.Workers-usedWorkersFromPool)
 
 				// Launch worker goroutines
-				for w := 1; w <= config.Crawler.Workers-2; w++ {
+				for w := 1; w <= config.Crawler.Workers-usedWorkersFromPool; w++ {
 					processCtx.wg.Add(1)
 
 					go func(w int) {
@@ -1011,7 +1016,6 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "indexing page: %v", err)
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
-		// keep going or return, your policy
 	}
 
 	// visitedLinks update (make sure this is protected if used concurrently elsewhere)
@@ -1086,7 +1090,7 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Starting collecting XHR requests...")
 
 	// Convert to Go structure
-	xhrData, err := collectCDPRequests(ctx, 1000)
+	xhrData, err := collectCDPRequests(ctx, 1000) // Let's cap them to 1000 entries (some site is extremely chatty and can lead to a very long time processing)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Error during XHR data collection: %v", xhrData)
 		return
