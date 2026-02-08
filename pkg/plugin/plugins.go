@@ -1610,6 +1610,10 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	return nil
 }
 
+// -----------------------------------------------------------------------------
+// Standard Functions added to make JS Plugins more useful
+// -----------------------------------------------------------------------------
+
 /*
 func addJSAPICallPlugin(
 	vm *otto.Otto,
@@ -2804,7 +2808,13 @@ func addJSAPICrypto(vm *otto.Otto) error {
 	return nil
 }
 
-// CROWler specific API
+// -----------------------------------------------------------------------------
+// END of Standard Functions
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Data Access Functions (Part of the ETL Framework)
+// -----------------------------------------------------------------------------
 
 /*
 	 example usage:
@@ -3474,7 +3484,13 @@ func convertBsonDatesRecursive(obj interface{}) interface{} {
 	return obj
 }
 
-/// Data conversion functions
+// -----------------------------------------------------------------------------
+// END of Data Access functions
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Data conversion functions (part of the ETL framework)
+// -----------------------------------------------------------------------------
 
 // toCSV converts an array of objects into a CSV string.
 // It assumes that every object in the array has the same keys.
@@ -3655,7 +3671,13 @@ func addJSAPIJSONToXML(vm *otto.Otto) error {
 	})
 }
 
-/// Data Transformation functions
+// -----------------------------------------------------------------------------
+// END of Data conversion functions
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Data Transformation functions (part of the ETL Framework)
+// -----------------------------------------------------------------------------
 
 /* Example usage of 2 data transformation functions (filterJSON, mapJSON) in JS:
 -------------------------------------------------------------------------------
@@ -4196,6 +4218,14 @@ func normalizeArray(input interface{}) []interface{} {
 	return arr
 }
 
+// -----------------------------------------------------------------------------
+// END of Data Transformation functions (part of the ETL Framework)
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Utility functions to be used in the JavaScript environment
+// -----------------------------------------------------------------------------
+
 // addJSAPIISODate adds a new function "ISODate" to the Otto VM,
 // which returns the current date and time in ISO 8601 format.
 // Usage in JS:
@@ -4317,6 +4347,29 @@ func addJSAPIGenUUID(vm *otto.Otto) error {
 		return result
 	})
 }
+
+// addJSAPISleep adds a sleep(ms) function to the VM
+func addJSAPISleep(vm *otto.Otto) error {
+	return vm.Set("sleep", func(call otto.FunctionCall) otto.Value {
+		ms, err := call.Argument(0).ToInteger()
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "sleep() - invalid argument: %v", err)
+			return otto.UndefinedValue()
+		}
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+		return otto.UndefinedValue()
+	})
+}
+
+// -------------------------------------------------------------------------------
+// END of Utility functions to be used in the JavaScript environment
+// -------------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// KV Store functions to interact with the CROWler Key Value Store distributed DB
+// (common.KVStore), allowing JavaScript code to get, set, delete, list keys, and
+// increment/decrement values in the KV store.
+// -----------------------------------------------------------------------------
 
 /*
   How to use getKV and setKV in JS:
@@ -4790,18 +4843,9 @@ func addJSAPICounterGet(vm *otto.Otto) error {
 	})
 }
 
-// addJSAPISleep adds a sleep(ms) function to the VM
-func addJSAPISleep(vm *otto.Otto) error {
-	return vm.Set("sleep", func(call otto.FunctionCall) otto.Value {
-		ms, err := call.Argument(0).ToInteger()
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "sleep() - invalid argument: %v", err)
-			return otto.UndefinedValue()
-		}
-		time.Sleep(time.Duration(ms) * time.Millisecond)
-		return otto.UndefinedValue()
-	})
-}
+// ------------------------------------------------------------------------------
+// END of KV Store functions
+// ------------------------------------------------------------------------------
 
 func returnError(vm *otto.Otto, message string) otto.Value {
 	stub := map[string]interface{}{"error": message}
