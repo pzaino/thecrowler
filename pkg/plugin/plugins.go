@@ -3484,6 +3484,40 @@ func convertBsonDatesRecursive(obj interface{}) interface{} {
 	return obj
 }
 
+// loadLocalFile is a JavaScript function that reads a file from the local filesystem.
+// Usage in JS:
+//
+//	var data = loadLocalFile("data.json");
+//	console.log("File contents:", data);
+func addJSAPILoadLocalFile(vm *otto.Otto) error {
+	return vm.Set("loadLocalFile", func(call otto.FunctionCall) otto.Value {
+		// First argument: file path.
+		filePath, err := call.Argument(0).ToString()
+		if err != nil {
+			return returnError(vm, "Error, this function requires a file path as the first argument.")
+		}
+
+		// Create a file path relative to the support directory.
+		filePath = "/app/support/" + filePath
+
+		// convert into an os path
+		filePath = filepath.FromSlash(filePath)
+
+		// Read the file contents.
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error reading file: %v", err))
+		}
+
+		// Convert the file contents to a string.
+		result, err := vm.ToValue(string(data))
+		if err != nil {
+			return returnError(vm, fmt.Sprintf("Error converting file contents to a JavaScript value: %v", err))
+		}
+		return result
+	})
+}
+
 // -----------------------------------------------------------------------------
 // END of Data Access functions
 // -----------------------------------------------------------------------------
@@ -4294,40 +4328,6 @@ func addJSAPISetTimeout(ctx context.Context, vm *otto.Otto, addTimer func(*time.
 		})
 		addTimer(t)
 		return otto.UndefinedValue()
-	})
-}
-
-// loadLocalFile is a JavaScript function that reads a file from the local filesystem.
-// Usage in JS:
-//
-//	var data = loadLocalFile("data.json");
-//	console.log("File contents:", data);
-func addJSAPILoadLocalFile(vm *otto.Otto) error {
-	return vm.Set("loadLocalFile", func(call otto.FunctionCall) otto.Value {
-		// First argument: file path.
-		filePath, err := call.Argument(0).ToString()
-		if err != nil {
-			return returnError(vm, "Error, this function requires a file path as the first argument.")
-		}
-
-		// Create a file path relative to the support directory.
-		filePath = "/app/support/" + filePath
-
-		// convert into an os path
-		filePath = filepath.FromSlash(filePath)
-
-		// Read the file contents.
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return returnError(vm, fmt.Sprintf("Error reading file: %v", err))
-		}
-
-		// Convert the file contents to a string.
-		result, err := vm.ToValue(string(data))
-		if err != nil {
-			return returnError(vm, fmt.Sprintf("Error converting file contents to a JavaScript value: %v", err))
-		}
-		return result
 	})
 }
 
