@@ -3497,6 +3497,11 @@ func addJSAPILoadLocalFile(vm *otto.Otto) error {
 			return returnError(vm, "Error, this function requires a file path as the first argument.")
 		}
 
+		// Check if the filepath is safe (aka not `../` or absolute path)
+		if strings.Contains(filePath, "..") || filepath.IsAbs(filePath) {
+			return returnError(vm, "Error, the file path must be relative and not contain '..' or be an absolute path.")
+		}
+
 		// Create a file path relative to the support directory.
 		filePath = "/app/support/" + filePath
 
@@ -3504,7 +3509,7 @@ func addJSAPILoadLocalFile(vm *otto.Otto) error {
 		filePath = filepath.FromSlash(filePath)
 
 		// Read the file contents.
-		data, err := os.ReadFile(filePath)
+		data, err := os.ReadFile(filePath) //nolint:gosec // We are validating the file path to prevent directory traversal
 		if err != nil {
 			return returnError(vm, fmt.Sprintf("Error reading file: %v", err))
 		}
