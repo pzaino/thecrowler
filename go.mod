@@ -4,7 +4,7 @@ go 1.24.13
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/lib/pq v1.11.1
+	github.com/lib/pq v1.11.2
 	gopkg.in/yaml.v2 v2.4.0
 )
 
