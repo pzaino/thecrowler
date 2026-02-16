@@ -244,7 +244,7 @@ func main() {
 	// Start the event janitor (cleans up expired events from the DB)
 	if instance == config.Events.MasterEventsManager {
 		// We are on the Master Instance, start the events janitor
-		go startEventJanitor(&dbHandler, time.Minute)
+		go startEventJanitor(&dbHandler, time.Minute, config)
 
 		notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
 
@@ -271,11 +271,15 @@ func main() {
 	setSysReady(0) // Indicate system is NOT ready
 }
 
-func startEventJanitor(db *cdb.Handler, interval time.Duration) {
+func startEventJanitor(db *cdb.Handler, interval time.Duration, config cfg.Config) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for range ticker.C {
 			cleanupExpiredEvents(db)
+			if strings.TrimSpace(config.Events.SysDBWebObjectsRetention) != "" {
+				threshold := parseDuration(config.Events.SysDBWebObjectsRetention)
+				cleanupTooOldWebObjects(db, threshold)
+			}
 		}
 	}()
 }
@@ -316,6 +320,37 @@ func cleanupExpiredEvents(db *cdb.Handler) {
 	if rows, err := res.RowsAffected(); err == nil && rows > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug,
 			"EventSchedules cleanup removed %d stale schedules", rows)
+	}
+}
+
+func cleanupTooOldWebObjects(db *cdb.Handler, olderThan time.Duration) {
+	cutoff := time.Now().UTC().Add(-olderThan)
+
+	res, err := (*db).Exec(`
+		WITH doomed AS (
+			SELECT wo.object_id
+			FROM WebObjects wo
+			WHERE wo.last_updated_at < $1
+			  AND NOT EXISTS (
+			        SELECT 1
+			        FROM WebObjectsIndex woi
+			        WHERE woi.object_id = wo.object_id
+			  )
+			LIMIT 5000
+		)
+		DELETE FROM WebObjects
+		WHERE object_id IN (SELECT object_id FROM doomed);
+	`, cutoff)
+
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"WebObjects cleanup failed: %v", err)
+		return
+	}
+
+	if rows, err := res.RowsAffected(); err == nil && rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"WebObjects cleanup removed %d old web objects", rows)
 	}
 }
 

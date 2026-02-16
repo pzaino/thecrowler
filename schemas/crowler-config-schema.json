@@ -1290,6 +1290,17 @@
             "1 hour",
             "1 days"
           ]
+        },
+        "sys_db_webobjects_retention": {
+          "title": "CROWler Events Manager Web Objects Retention",
+          "description": "This is the retention period for the web objects stored in the Events Manager's database. The format of this parameters is string and can be read as '<X> minutes/hours/days/months/years'. For example, '60 minutes' or '1 hours' or '1 days'. If empty or not specified, the default retention period is forever.",
+          "type": "string",
+          "examples": [
+            "60 minutes",
+            "1 hour",
+            "1 days",
+            "1 months"
+          ]
         }
       },
       "additionalProperties": false
