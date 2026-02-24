@@ -604,7 +604,7 @@ func initAPIv1() {
 	http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(docsHandler)))
 }
 
-func docsHandler(w http.ResponseWriter, r *http.Request) {
+func docsHandler(w http.ResponseWriter, _ *http.Request) {
 	handleErrorAndRespond(
 		w,
 		nil,
