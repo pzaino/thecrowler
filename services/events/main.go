@@ -527,7 +527,7 @@ func docsHandler(w http.ResponseWriter, _ *http.Request) {
 		w,
 		nil,
 		map[string]any{
-			"service":   "CROWler API",
+			"service":   "CROWler Events API",
 			"version":   "v1",
 			"endpoints": cmn.GetAPIRoutes(),
 		},
@@ -547,13 +547,22 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// If host is 0.0.0.0, leave serverURL blank (Swagger UI can still work).
-	host := strings.TrimSpace(config.API.Host)
-	if host != "" && host != "0.0.0.0" && host != "::" {
-		serverURL = fmt.Sprintf("%s://%s:%d", scheme, host, config.API.Port)
+	host := strings.TrimSpace(config.Events.URL)
+	if host == "" {
+		host = strings.TrimSpace(config.Events.Host)
+		if host != "" && host != "0.0.0.0" && host != "::" {
+			port := ""
+			if (config.Events.Port != 80) && (config.Events.Port != 443) && (config.Events.Port != 0) {
+				port = fmt.Sprintf(":%d", config.Events.Port)
+			}
+			serverURL = fmt.Sprintf("%s://%s%s", scheme, host, port)
+		}
+	} else {
+		serverURL = fmt.Sprintf("%s://%s", scheme, host)
 	}
 
 	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{
-		Title:       "CROWler Search API",
+		Title:       "CROWler Events API",
 		Version:     "v1",
 		Description: "Dynamically generated OpenAPI spec from the running server route registry.",
 		ServerURL:   serverURL,

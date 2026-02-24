@@ -174,7 +174,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			}
 
 			// Add q param for GET (and optionally for others too if you support q in query string)
-			if r.RequiresQ {
+			if r.RequiresQ && method == "get" {
 				op.Parameters = append(op.Parameters, OpenAPIParameter{
 					Name:        "q",
 					In:          "query",
@@ -231,7 +231,18 @@ func methodAllowsBody(method string) bool {
 func makeOperationID(method, path string) string {
 	clean := strings.Trim(path, "/")
 	clean = strings.ReplaceAll(clean, "/", "_")
-	clean = strings.ReplaceAll(clean, "-", "_")
+
+	// Replace anything not [A-Za-z0-9_] with underscore
+	b := make([]rune, 0, len(clean))
+	for _, r := range clean {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			b = append(b, r)
+		} else {
+			b = append(b, '_')
+		}
+	}
+	clean = string(b)
+
 	if clean == "" {
 		clean = "root"
 	}

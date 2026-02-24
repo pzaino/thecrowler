@@ -633,9 +633,18 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// If host is 0.0.0.0, leave serverURL blank (Swagger UI can still work).
-	host := strings.TrimSpace(config.API.Host)
-	if host != "" && host != "0.0.0.0" && host != "::" {
-		serverURL = fmt.Sprintf("%s://%s:%d", scheme, host, config.API.Port)
+	host := strings.TrimSpace(config.API.URL)
+	if host == "" {
+		host = strings.TrimSpace(config.API.Host)
+		if host != "" && host != "0.0.0.0" && host != "::" {
+			port := ""
+			if (config.API.Port != 80) && (config.API.Port != 443) && (config.API.Port != 0) {
+				port = fmt.Sprintf(":%d", config.API.Port)
+			}
+			serverURL = fmt.Sprintf("%s://%s%s", scheme, host, port)
+		}
+	} else {
+		serverURL = fmt.Sprintf("%s://%s", scheme, host)
 	}
 
 	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{

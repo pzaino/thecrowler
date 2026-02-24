@@ -861,6 +861,16 @@
       "description": "This is the General/Search API configuration section, it's used to configure the General/Search API and it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API. It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
       "type": "object",
       "properties": {
+        "url": {
+          "title": "CROWler General/Search API URL",
+          "description": "This is the URL that the CROWler will use to allow connections to the General/Search API. This is the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
+          "type": "string",
+          "format": "uri",
+          "examples": [
+            "http://localhost:8080/api/v1",
+            "https://crowler-api.example.com/v1"
+          ]
+        },
         "host": {
           "title": "CROWler General/Search API Host",
           "description": "This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address.",
@@ -882,6 +892,11 @@
           "description": "This is the timeout for the API. It is the maximum amount of time that the CROWler will wait for the API to respond.",
           "type": "integer",
           "minimum": 10
+        },
+        "enable_default": {
+          "title": "CROWler General/Search API Enable default end-points",
+          "description": "This is a flag that tells the CROWler to enable the General/Search API default end-points. If you want to use the General/Search API only for custom plugins, you can disable the default end-points to improve performance and security.",
+          "type": "boolean"
         },
         "content_search": {
           "title": "CROWler General/Search API Content Search",

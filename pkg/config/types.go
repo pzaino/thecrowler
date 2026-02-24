@@ -368,10 +368,12 @@ type PlatformInfo struct {
 
 // API represents the API configuration
 type API struct {
+	URL               string     `yaml:"url"`                // Base URL for the API (e.g., "http://localhost:8080/api")
 	Host              string     `yaml:"host"`               // Hostname of the API server
 	Port              int        `yaml:"port"`               // Port number of the API server
 	Timeout           int        `yaml:"timeout"`            // Timeout for API requests (in seconds)
 	ContentSearch     bool       `yaml:"content_search"`     // Whether to search in the content too or not
+	EnableDefault     bool       `yaml:"enable_default"`     // Whether to enable the default API endpoints or not
 	ReturnContent     bool       `yaml:"return_content"`     // Whether to return the content or not
 	SSLMode           string     `yaml:"sslmode"`            // SSL mode for API connection (e.g., "disable")
 	CertFile          string     `yaml:"cert_file"`          // Path to the SSL certificate file
@@ -432,6 +434,7 @@ type SysMngConfig struct {
 
 // EventsConfig represents the events handler service configuration
 type EventsConfig struct {
+	URL                      string `json:"url" yaml:"url"`                                                 // Base URL for the events handler API (e.g., "http://localhost:8080/api/events")
 	Host                     string `json:"host" yaml:"host"`                                               // Hostname of the events handler server
 	Port                     int    `json:"port" yaml:"port"`                                               // Port number of the events handler server
 	Timeout                  int    `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
