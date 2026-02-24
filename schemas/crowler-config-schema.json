@@ -893,9 +893,9 @@
           "type": "integer",
           "minimum": 10
         },
-        "enable_default": {
-          "title": "CROWler General/Search API Enable default end-points",
-          "description": "This is a flag that tells the CROWler to enable the General/Search API default end-points. If you want to use the General/Search API only for custom plugins, you can disable the default end-points to improve performance and security.",
+        "disable_default": {
+          "title": "CROWler General/Search API Disable default end-points",
+          "description": "This is a flag that tells the CROWler to disable the General/Search API default end-points. If you want to use the General/Search API only for custom plugins, you can disable the default end-points to improve performance and security.",
           "type": "boolean"
         },
         "enable_api_docs": {

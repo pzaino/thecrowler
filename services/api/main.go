@@ -539,21 +539,23 @@ func initAPIv1() {
 	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, false)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
-	// Query handlers
-	http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
-	cmn.RegisterAPIRoute("/v1/search/general", []string{"GET", "POST"}, "General search endpoint", true, false, false)
-	http.Handle("/v1/search/netinfo", withPublicMiddlewares(netInfoHandler))
-	cmn.RegisterAPIRoute("/v1/search/netinfo", []string{"GET", "POST"}, "Network information search endpoint", true, false, false)
-	http.Handle("/v1/search/httpinfo", withPublicMiddlewares(httpInfoHandler))
-	cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET", "POST"}, "HTTP information search endpoint", true, false, false)
-	http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
-	cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET", "POST"}, "Screenshot search endpoint", true, false, false)
-	http.Handle("/v1/search/webobject", withPublicMiddlewares(webObjectHandler))
-	cmn.RegisterAPIRoute("/v1/search/webobject", []string{"GET", "POST"}, "Web object search endpoint", true, false, false)
-	http.Handle("/v1/search/correlated_sites", withPublicMiddlewares(webCorrelatedSitesHandler))
-	cmn.RegisterAPIRoute("/v1/search/correlated_sites", []string{"GET", "POST"}, "Correlated sites search endpoint", true, false, false)
-	http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
-	cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET", "POST"}, "Collected data search endpoint", true, false, false)
+	if !config.API.DisableDefault {
+		// Query handlers
+		http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
+		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET", "POST"}, "General search endpoint", true, false, false)
+		http.Handle("/v1/search/netinfo", withPublicMiddlewares(netInfoHandler))
+		cmn.RegisterAPIRoute("/v1/search/netinfo", []string{"GET", "POST"}, "Network information search endpoint", true, false, false)
+		http.Handle("/v1/search/httpinfo", withPublicMiddlewares(httpInfoHandler))
+		cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET", "POST"}, "HTTP information search endpoint", true, false, false)
+		http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
+		cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET", "POST"}, "Screenshot search endpoint", true, false, false)
+		http.Handle("/v1/search/webobject", withPublicMiddlewares(webObjectHandler))
+		cmn.RegisterAPIRoute("/v1/search/webobject", []string{"GET", "POST"}, "Web object search endpoint", true, false, false)
+		http.Handle("/v1/search/correlated_sites", withPublicMiddlewares(webCorrelatedSitesHandler))
+		cmn.RegisterAPIRoute("/v1/search/correlated_sites", []string{"GET", "POST"}, "Correlated sites search endpoint", true, false, false)
+		http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
+		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET", "POST"}, "Collected data search endpoint", true, false, false)
+	}
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))

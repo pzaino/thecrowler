@@ -373,7 +373,7 @@ type API struct {
 	Port              int        `yaml:"port"`                                   // Port number of the API server
 	Timeout           int        `yaml:"timeout"`                                // Timeout for API requests (in seconds)
 	ContentSearch     bool       `yaml:"content_search"`                         // Whether to search in the content too or not
-	EnableDefault     bool       `yaml:"enable_default"`                         // Whether to enable the default API endpoints or not
+	DisableDefault    bool       `yaml:"enable_default"`                         // Whether to enable the default API endpoints or not
 	EnableAPIDocs     bool       `json:"enable_api_docs" yaml:"enable_api_docs"` // Whether to enable API documentation or not
 	ReturnContent     bool       `yaml:"return_content"`                         // Whether to return the content or not
 	SSLMode           string     `yaml:"sslmode"`                                // SSL mode for API connection (e.g., "disable")
