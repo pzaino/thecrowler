@@ -467,10 +467,10 @@ func initAPIv1() {
 	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
-	cmn.RegisterRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, false)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET", "POST"}, "Health check endpoint", false, false, false)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
-	cmn.RegisterRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, false)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET", "POST"}, "Readiness check endpoint", false, false, false)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
 	// Events API endpoints
@@ -485,19 +485,19 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"create", []string{"POST"}, "Create a new event", true, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", true, false, false)
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", true, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", true, false, false)
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, false)
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", true, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", true, false, false)
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"remove", []string{"GET", "POST"}, "Remove an event by its ID", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET", "POST"}, "Remove an event by its ID", false, false, false)
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"remove_before", []string{"GET", "POST"}, "Remove events before a certain timestamp", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET", "POST"}, "Remove events before a certain timestamp", false, false, false)
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, false)
 
 	// Handle uploads
 
@@ -508,11 +508,15 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, false)
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, false)
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, false)
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, false)
+
+	// OpenAPI spec endpoint
+	http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
+	cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false)
 
 	// Finally the docs endpoint
 	http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
@@ -531,6 +535,31 @@ func docsHandler(w http.ResponseWriter, _ *http.Request) {
 		http.StatusInternalServerError,
 		http.StatusOK,
 	)
+}
+
+func openapiHandler(w http.ResponseWriter, _ *http.Request) {
+	routes := cmn.GetAPIRoutes()
+
+	serverURL := ""
+	scheme := "http"
+	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == cmn.EnableStr {
+		scheme = "https"
+	}
+
+	// If host is 0.0.0.0, leave serverURL blank (Swagger UI can still work).
+	host := strings.TrimSpace(config.API.Host)
+	if host != "" && host != "0.0.0.0" && host != "::" {
+		serverURL = fmt.Sprintf("%s://%s:%d", scheme, host, config.API.Port)
+	}
+
+	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{
+		Title:       "CROWler Search API",
+		Version:     "v1",
+		Description: "Dynamically generated OpenAPI spec from the running server route registry.",
+		ServerURL:   serverURL,
+	})
+
+	handleErrorAndRespond(w, nil, spec, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 // RateLimitMiddleware is a middleware for rate limiting
