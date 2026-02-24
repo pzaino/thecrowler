@@ -17,6 +17,9 @@ type APIRoute struct {
 	ConsoleOnly   bool     `json:"console_only"`
 	Plugin        bool     `json:"plugin"`
 	SuccessStatus int      `json:"success_status,omitempty"` // optional, e.g. 200, 201, etc.
+
+	HasBody       bool   // For POST/PUT/PATCH/DELETE, indicates if the route expects a JSON body with a "q" field. This is derived from RequiresQ and the HTTP method.
+	BodySchemaRef string // optional future upgrade
 }
 
 // OpenAPISpec represents the structure of an OpenAPI specification, including the OpenAPI version, API information, servers, paths, and components.
@@ -114,7 +117,12 @@ func RegisterAPIRoute(
 	consoleOnly bool,
 	plugin bool,
 	successStatus int,
+	hasBody bool,
 ) {
+	if successStatus == 0 {
+		successStatus = 200
+	}
+
 	apiRegistryMutex.Lock()
 	defer apiRegistryMutex.Unlock()
 
@@ -126,6 +134,7 @@ func RegisterAPIRoute(
 		ConsoleOnly:   consoleOnly,
 		Plugin:        plugin,
 		SuccessStatus: successStatus,
+		HasBody:       hasBody,
 	})
 }
 
@@ -202,18 +211,15 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				})
 			}
 
-			// Add JSON body for non-GET requests if RequiresQ is true
+			// Add JSON body for non-GET requests if HasBody is true
 			// This matches your pattern of POST accepting {"q":"..."}.
-			if r.RequiresQ && methodAllowsBody(method) {
+			if r.HasBody && methodAllowsBody(method) {
 				op.RequestBody = &OpenAPIRequestBody{
 					Required: true,
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
 								Type: "object",
-								Properties: map[string]OpenAPISchema{
-									"q": {Type: "string"},
-								},
 							},
 						},
 					},
