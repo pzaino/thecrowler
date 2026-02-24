@@ -867,8 +867,8 @@
           "type": "string",
           "format": "uri",
           "examples": [
-            "http://localhost:8080/api/v1",
-            "https://crowler-api.example.com/v1"
+            "localhost:8080/api/v1",
+            "crowler-api.example.com/v1"
           ]
         },
         "host": {
@@ -896,6 +896,11 @@
         "enable_default": {
           "title": "CROWler General/Search API Enable default end-points",
           "description": "This is a flag that tells the CROWler to enable the General/Search API default end-points. If you want to use the General/Search API only for custom plugins, you can disable the default end-points to improve performance and security.",
+          "type": "boolean"
+        },
+        "enable_api_docs": {
+          "title": "CROWler General/Search API Enable API Documentation",
+          "description": "This is a flag that tells the CROWler to enable the API documentation for the General/Search API. This will make the API documentation available at the /v1/docs endpoint of the General/Search API.",
           "type": "boolean"
         },
         "content_search": {
@@ -1185,6 +1190,16 @@
       "description": "This is the Events Manager configuration section, it is used to configure the Events Manager",
       "type": "object",
       "properties": {
+        "url": {
+          "title": "CROWler Events Manager API URL",
+          "description": "This is the URL that the CROWler will use to allow connections to the Events Manager API. This is the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
+          "type": "string",
+          "format": "uri",
+          "examples": [
+            "localhost:8082/api/v1",
+            "crowler-events-manager.example.com/v1"
+          ]
+        },
         "host": {
           "title": "CROWler Events Manager Host",
           "description": "This is the host that the Events Manager will use to communicate with the outside world.",
@@ -1252,6 +1267,11 @@
           "title": "CROWler Events Manager Master Events Manager's name",
           "description": "This is the name of the Master Events Manager in a multi-instance Events Manager deployment. If you have multiple Events Manager instances running, you can set one of them as the Master Events Manager. The Master Events Manager is responsible for coordinating all systems events among the other Events Managers and ensuring that events are processed correctly. The other Events Manager enact as Events API endpoints only.",
           "type": "string"
+        },
+        "enable_api_docs": {
+          "title": "CROWler Events Manager Enable API Documentation",
+          "description": "This is a flag that tells the CROWler to enable the API documentation for the Events Manager. This will make the API documentation available at the /v1/docs endpoint of the Events Manager API.",
+          "type": "boolean"
         },
         "automatic_events_removal": {
           "title": "CROWler Events Manager Automatic Events Removal",

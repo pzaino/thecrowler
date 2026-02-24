@@ -514,12 +514,14 @@ func initAPIv1() {
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, false)
 
-	// OpenAPI spec endpoint
-	http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
-	cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false)
+	if config.Events.EnableAPIDocs {
+		// OpenAPI spec endpoint
+		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false)
 
-	// Finally the docs endpoint
-	http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
+		// Finally the docs endpoint
+		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
+	}
 }
 
 func docsHandler(w http.ResponseWriter, _ *http.Request) {
