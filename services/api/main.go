@@ -533,18 +533,27 @@ func initAPIv1() {
 	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
+	cmn.RegisterRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, false)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
+	cmn.RegisterRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, false)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
 	// Query handlers
 	http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
+	cmn.RegisterRoute("/v1/search/general", []string{"GET", "POST"}, "General search endpoint", true, false, false)
 	http.Handle("/v1/search/netinfo", withPublicMiddlewares(netInfoHandler))
+	cmn.RegisterRoute("/v1/search/netinfo", []string{"GET", "POST"}, "Network information search endpoint", true, false, false)
 	http.Handle("/v1/search/httpinfo", withPublicMiddlewares(httpInfoHandler))
+	cmn.RegisterRoute("/v1/search/httpinfo", []string{"GET", "POST"}, "HTTP information search endpoint", true, false, false)
 	http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
+	cmn.RegisterRoute("/v1/search/screenshot", []string{"GET", "POST"}, "Screenshot search endpoint", true, false, false)
 	http.Handle("/v1/search/webobject", withPublicMiddlewares(webObjectHandler))
+	cmn.RegisterRoute("/v1/search/webobject", []string{"GET", "POST"}, "Web object search endpoint", true, false, false)
 	http.Handle("/v1/search/correlated_sites", withPublicMiddlewares(webCorrelatedSitesHandler))
+	cmn.RegisterRoute("/v1/search/correlated_sites", []string{"GET", "POST"}, "Correlated sites search endpoint", true, false, false)
 	http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
+	cmn.RegisterRoute("/v1/search/collected_data", []string{"GET", "POST"}, "Collected data search endpoint", true, false, false)
 
 	if config.API.EnableConsole {
 		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
@@ -555,21 +564,33 @@ func initAPIv1() {
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
+		cmn.RegisterRoute("/v1/source/add", []string{"POST"}, "Add source endpoint (console)", false, true, false)
 		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
+		cmn.RegisterRoute("/v1/source/remove", []string{"POST"}, "Remove source endpoint (console)", false, true, false)
 		http.Handle("/v1/source/update", updateSourceHandlerWithMiddlewares)
+		cmn.RegisterRoute("/v1/source/update", []string{"POST"}, "Update source endpoint (console)", false, true, false)
 		http.Handle("/v1/source/vacuum", vacuumSourceHandlerWithMiddlewares)
+		cmn.RegisterRoute("/v1/source/vacuum", []string{"POST"}, "Vacuum source endpoint (console)", false, true, false)
 		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
+		cmn.RegisterRoute("/v1/source/status", []string{"GET"}, "Single URL status endpoint (console)", false, true, false)
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
+		cmn.RegisterRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", false, true, false)
 
 		// Owner endpoints
 		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
+		cmn.RegisterRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", false, true, false)
 		http.Handle("/v1/owner/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateOwnerHandler))))
+		cmn.RegisterRoute("/v1/owner/update", []string{"POST"}, "Update owner endpoint (console)", false, true, false)
 		http.Handle("/v1/owner/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeOwnerHandler))))
+		cmn.RegisterRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", false, true, false)
 
 		// Category endpoints
 		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
+		cmn.RegisterRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", false, true, false)
 		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
+		cmn.RegisterRoute("/v1/category/update", []string{"POST"}, "Update category endpoint (console)", false, true, false)
 		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
+		cmn.RegisterRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", false, true, false)
 	}
 
 	// Register API plugin routes
@@ -578,6 +599,24 @@ func initAPIv1() {
 		initAllowedAPIPlugins()
 		registerAPIPluginRoutes(http.DefaultServeMux, &registeredPlugins)
 	}
+
+	// Finally add the docs endpoint (after plugins, to ensure it's always registered and not overridden by plugins)
+	http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(docsHandler)))
+}
+
+func docsHandler(w http.ResponseWriter, r *http.Request) {
+	handleErrorAndRespond(
+		w,
+		nil,
+		map[string]any{
+			"service":   "CROWler API",
+			"version":   "v1",
+			"endpoints": cmn.GetAPIRoutes(),
+		},
+		"",
+		http.StatusInternalServerError,
+		http.StatusOK,
+	)
 }
 
 func initAllowedAPIPlugins() {
@@ -657,6 +696,7 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]str
 
 		mux.Handle(api.EndPoint, handler)
 		(*currentRegisteredPlugins) = append((*currentRegisteredPlugins), name)
+		cmn.RegisterRoute(api.EndPoint, api.Methods, fmt.Sprintf("API plugin endpoint for plugin '%s'", plugin.Name), false, false, true)
 	}
 }
 
