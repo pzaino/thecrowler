@@ -3,18 +3,20 @@ package common
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 )
 
 // APIRoute represents the structure of an API route, including its path, supported methods, description, and other metadata.
 type APIRoute struct {
-	Path        string   `json:"path"`
-	Methods     []string `json:"methods"`
-	Description string   `json:"description"`
-	RequiresQ   bool     `json:"requires_q"`
-	ConsoleOnly bool     `json:"console_only"`
-	Plugin      bool     `json:"plugin"`
+	Path          string   `json:"path"`
+	Methods       []string `json:"methods"`
+	Description   string   `json:"description"`
+	RequiresQ     bool     `json:"requires_q"`
+	ConsoleOnly   bool     `json:"console_only"`
+	Plugin        bool     `json:"plugin"`
+	SuccessStatus int      `json:"success_status,omitempty"` // optional, e.g. 200, 201, etc.
 }
 
 // OpenAPISpec represents the structure of an OpenAPI specification, including the OpenAPI version, API information, servers, paths, and components.
@@ -98,21 +100,32 @@ type OpenAPIOptions struct {
 	ServerURL   string // optional, e.g. "http://localhost:8080"
 }
 
+const getStr = "get"
+
 var apiRegistry []APIRoute
 var apiRegistryMutex sync.Mutex
 
-// RegisterRoute registers a new API route with the given parameters.
-func RegisterAPIRoute(path string, methods []string, description string, requiresQ bool, consoleOnly bool, plugin bool) {
+// RegisterAPIRoute registers a new API route with the given parameters.
+func RegisterAPIRoute(
+	path string,
+	methods []string,
+	description string,
+	requiresQ bool,
+	consoleOnly bool,
+	plugin bool,
+	successStatus int,
+) {
 	apiRegistryMutex.Lock()
 	defer apiRegistryMutex.Unlock()
 
 	apiRegistry = append(apiRegistry, APIRoute{
-		Path:        path,
-		Methods:     methods,
-		Description: description,
-		RequiresQ:   requiresQ,
-		ConsoleOnly: consoleOnly,
-		Plugin:      plugin,
+		Path:          path,
+		Methods:       methods,
+		Description:   description,
+		RequiresQ:     requiresQ,
+		ConsoleOnly:   consoleOnly,
+		Plugin:        plugin,
+		SuccessStatus: successStatus,
 	})
 }
 
@@ -126,6 +139,7 @@ func GetAPIRoutes() []APIRoute {
 	return out
 }
 
+// BuildOpenAPISpec generates an OpenAPI specification based on the registered API routes and the provided options.
 func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 	spec := OpenAPISpec{
 		OpenAPI: "3.0.3",
@@ -161,24 +175,28 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				continue
 			}
 
+			responses := map[string]OpenAPIResponse{
+				strconv.Itoa(r.SuccessStatus): {
+					Description: http.StatusText(r.SuccessStatus),
+				},
+				"400": {Description: "Bad Request"},
+				"500": {Description: "Internal Server Error"},
+			}
+
 			op := OpenAPIOperation{
 				Summary:     shortSummary(r.Description),
 				Description: r.Description,
 				OperationID: makeOperationID(method, r.Path),
 				Tags:        tagsForRoute(r),
-				Responses: map[string]OpenAPIResponse{
-					"200": {Description: "OK"},
-					"400": {Description: "Bad Request"},
-					"500": {Description: "Internal Server Error"},
-				},
+				Responses:   responses,
 			}
 
 			// Add q param for GET (and optionally for others too if you support q in query string)
-			if r.RequiresQ && method == "get" {
+			if r.RequiresQ && method == getStr {
 				op.Parameters = append(op.Parameters, OpenAPIParameter{
 					Name:        "q",
 					In:          "query",
-					Required:    method == "get",
+					Required:    method == getStr,
 					Description: "Search query",
 					Schema:      OpenAPISchema{Type: "string"},
 				})
