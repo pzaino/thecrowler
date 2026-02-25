@@ -122,6 +122,12 @@ type StdAPIQuery struct {
 	Offset int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Pagination offset. e.g. offset=20 will skip the first 20 results and return results starting from the 21st item. This is used in conjunction with limit for paginated results."`
 }
 
+type StdAPIError struct {
+	ErrCode int    `json:"error_code"`
+	Err     string `json:"error"`
+	Message string `json:"message"`
+}
+
 const getStr = "get"
 
 var apiRegistry []APIRoute
@@ -564,10 +570,8 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
-								Type: "object",
-								Properties: map[string]OpenAPISchema{
-									"error": {Type: "string"},
-								},
+								Type:       "object",
+								Properties: schemaFromValue(StdAPIError{}).Properties,
 							},
 						},
 					},
@@ -577,10 +581,8 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
-								Type: "object",
-								Properties: map[string]OpenAPISchema{
-									"error": {Type: "string"},
-								},
+								Type:       "object",
+								Properties: schemaFromValue(StdAPIError{}).Properties,
 							},
 						},
 					},

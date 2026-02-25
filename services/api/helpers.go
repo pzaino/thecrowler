@@ -51,9 +51,10 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	if err != nil {
 		// Log the error and prepare an error response
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
-		response = map[string]interface{}{
-			"error":   err.Error(),
-			"message": errMsg,
+		response = cmn.StdAPIError{
+			ErrCode: errCode,
+			Err:     err.Error(),
+			Message: errMsg,
 		}
 		w.WriteHeader(errCode) // Send the error code
 	} else {
