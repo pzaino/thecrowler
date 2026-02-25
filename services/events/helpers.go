@@ -50,8 +50,25 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 		// escape " in the error message
 		errMsg = strings.ReplaceAll(err.Error(), "\"", "\\\"")
 		// Encapsulate the error message in a JSON string
-		results := "{\n  \"error\": \"" + errMsg + "\"\n}"
-		http.Error(w, results, errCode)
+		//results := "{\n  \"error\": \"" + errMsg + "\"\n}"
+		results := cmn.StdAPIError{
+			ErrCode: errCode,
+			Err:     errMsg,
+			Message: "An error occurred while processing your request.",
+		}
+		//http.Error(w, results, errCode)
+		w.WriteHeader(errCode)
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			// Log the error and send a generic error message to the client
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON error response: %v", err)
+			fallbackResponse := cmn.StdAPIError{
+				ErrCode: http.StatusInternalServerError,
+				Err:     "Internal Server Error",
+				Message: "An error occurred while processing your request.",
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(fallbackResponse)
+		}
 		return
 	}
 	w.WriteHeader(successCode) // Explicitly set the success status code
