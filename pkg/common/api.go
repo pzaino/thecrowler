@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // APIRoute represents the structure of an API route, including its path, supported methods, description, and other metadata.
@@ -91,7 +92,8 @@ type OpenAPIContent struct {
 
 // OpenAPIResponse represents the structure of a response for an API operation, including its description and any additional metadata that may be relevant for documenting the response.
 type OpenAPIResponse struct {
-	Description string `json:"description"`
+	Description string                    `json:"description"`
+	Content     map[string]OpenAPIContent `json:"content,omitempty"`
 }
 
 // OpenAPISchema represents the structure of a schema definition used in parameters, request bodies, and responses, including its type, properties (for object types), and items (for array types).
@@ -101,6 +103,7 @@ type OpenAPISchema struct {
 	Items                *OpenAPISchema           `json:"items,omitempty"`
 	AdditionalProperties *OpenAPISchema           `json:"additionalProperties,omitempty"`
 	Format               string                   `json:"format,omitempty"`
+	Required             []string                 `json:"required,omitempty"`
 }
 
 // OpenAPIOptions represents the options for generating an OpenAPI specification, including the title, version, description, and an optional server URL for the API.
@@ -326,6 +329,7 @@ func schemaFromValue(v any) OpenAPISchema {
 }
 
 var rawMessageType = reflect.TypeOf(json.RawMessage{})
+var timeType = reflect.TypeOf(time.Time{})
 
 func schemaFromType(t reflect.Type) OpenAPISchema {
 	// unwrap pointers
@@ -344,6 +348,14 @@ func schemaFromType(t reflect.Type) OpenAPISchema {
 	// interface{} => any
 	if t.Kind() == reflect.Interface {
 		return OpenAPISchema{} // empty schema means "any"
+	}
+
+	// Detect time.Time
+	if t == timeType {
+		return OpenAPISchema{
+			Type:   "string",
+			Format: "date-time",
+		}
 	}
 
 	switch t.Kind() {
@@ -393,12 +405,33 @@ func schemaFromType(t reflect.Type) OpenAPISchema {
 
 	case reflect.Struct:
 		props := make(map[string]OpenAPISchema)
+		requiredFields := []string{}
 
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
 
-			// skip unexported fields
 			if f.PkgPath != "" {
+				continue
+			}
+
+			fieldType := f.Type
+			for fieldType.Kind() == reflect.Ptr {
+				fieldType = fieldType.Elem()
+			}
+
+			jsonTag := strings.TrimSpace(f.Tag.Get("json"))
+
+			// Flatten ONLY if:
+			// - Anonymous
+			// - No json tag at all
+			if f.Anonymous && jsonTag == "" && fieldType.Kind() == reflect.Struct {
+				embeddedSchema := schemaFromType(fieldType)
+
+				for k, v := range embeddedSchema.Properties {
+					props[k] = v
+				}
+
+				requiredFields = append(requiredFields, embeddedSchema.Required...)
 				continue
 			}
 
@@ -407,13 +440,25 @@ func schemaFromType(t reflect.Type) OpenAPISchema {
 				continue
 			}
 
-			props[name] = schemaFromType(f.Type)
+			fieldSchema := schemaFromType(f.Type)
+			props[name] = fieldSchema
+
+			// Only mark required if explicitly declared
+			if strings.EqualFold(f.Tag.Get("required"), "true") {
+				requiredFields = append(requiredFields, name)
+			}
 		}
 
-		return OpenAPISchema{
+		s := OpenAPISchema{
 			Type:       "object",
 			Properties: props,
 		}
+
+		if len(requiredFields) > 0 {
+			s.Required = requiredFields
+		}
+
+		return s
 
 	default:
 		// safe fallback: free-form
@@ -472,9 +517,38 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			responses := map[string]OpenAPIResponse{
 				strconv.Itoa(r.SuccessStatus): {
 					Description: http.StatusText(r.SuccessStatus),
+					Content: map[string]OpenAPIContent{
+						"application/json": {
+							Schema: schemaFromValue(r.ResponseType),
+						},
+					},
 				},
-				"400": {Description: "Bad Request"},
-				"500": {Description: "Internal Server Error"},
+				"400": {
+					Description: "Bad Request",
+					Content: map[string]OpenAPIContent{
+						"application/json": {
+							Schema: OpenAPISchema{
+								Type: "object",
+								Properties: map[string]OpenAPISchema{
+									"error": {Type: "string"},
+								},
+							},
+						},
+					},
+				},
+				"500": {
+					Description: "Internal Server Error",
+					Content: map[string]OpenAPIContent{
+						"application/json": {
+							Schema: OpenAPISchema{
+								Type: "object",
+								Properties: map[string]OpenAPISchema{
+									"error": {Type: "string"},
+								},
+							},
+						},
+					},
+				},
 			}
 
 			op := OpenAPIOperation{
