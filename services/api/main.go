@@ -573,7 +573,7 @@ func initAPIv1() {
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET"}, "Add source endpoint (console)", false, true, false, 201, true)
+		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", false, true, false, 201, cdb.UpdateSourceRequest{})
 
 		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/remove", []string{"GET"}, "Remove source endpoint (console)", false, true, false, 204, true)
@@ -592,23 +592,23 @@ func initAPIv1() {
 
 		// Owner endpoints
 		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
-		cmn.RegisterAPIRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", false, true, false, 201, true)
+		cmn.RegisterAPIRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", false, true, false, 201, cdb.OwnerRequest{})
 
 		http.Handle("/v1/owner/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateOwnerHandler))))
-		cmn.RegisterAPIRoute("/v1/owner/update", []string{"POST"}, "Update owner endpoint (console)", false, true, false, 204, true)
+		cmn.RegisterAPIRoute("/v1/owner/update", []string{"POST"}, "Update owner endpoint (console)", false, true, false, 204, cdb.OwnerRequest{})
 
 		http.Handle("/v1/owner/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeOwnerHandler))))
-		cmn.RegisterAPIRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", false, true, false, 204, true)
+		cmn.RegisterAPIRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", false, true, false, 204, map[string]int64{})
 
 		// Category endpoints
 		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
-		cmn.RegisterAPIRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", false, true, false, 201, true)
+		cmn.RegisterAPIRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", false, true, false, 201, cdb.CategoryRequest{})
 
 		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
-		cmn.RegisterAPIRoute("/v1/category/update", []string{"POST"}, "Update category endpoint (console)", false, true, false, 204, true)
+		cmn.RegisterAPIRoute("/v1/category/update", []string{"POST"}, "Update category endpoint (console)", false, true, false, 204, cdb.CategoryRequest{})
 
 		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
-		cmn.RegisterAPIRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", false, true, false, 204, true)
+		cmn.RegisterAPIRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", false, true, false, 204, map[string]int64{})
 	}
 
 	// Register API plugin routes
