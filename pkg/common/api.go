@@ -341,11 +341,12 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 		t = t.Elem()
 	}
 
+	// cycle detection: if we've seen this type before, return empty schema to avoid infinite recursion
 	if seen[t] {
-		// Break recursion
 		return OpenAPISchema{}
 	}
 	seen[t] = true
+	defer delete(seen, t)
 
 	// Detect json.RawMessage
 	if t == rawMessageType {
