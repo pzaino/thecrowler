@@ -501,7 +501,7 @@ func initAPIv1() {
 	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{})
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", true, false, 204, cdb.Event{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil)
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{})
