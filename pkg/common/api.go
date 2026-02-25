@@ -91,9 +91,11 @@ type OpenAPIResponse struct {
 
 // OpenAPISchema represents the structure of a schema definition used in parameters, request bodies, and responses, including its type, properties (for object types), and items (for array types).
 type OpenAPISchema struct {
-	Type       string                   `json:"type,omitempty"`
-	Properties map[string]OpenAPISchema `json:"properties,omitempty"`
-	Items      *OpenAPISchema           `json:"items,omitempty"`
+	Type                 string                   `json:"type,omitempty"`
+	Properties           map[string]OpenAPISchema `json:"properties,omitempty"`
+	Items                *OpenAPISchema           `json:"items,omitempty"`
+	AdditionalProperties *OpenAPISchema           `json:"additionalProperties,omitempty"`
+	Format               string                   `json:"format,omitempty"`
 }
 
 // OpenAPIOptions represents the options for generating an OpenAPI specification, including the title, version, description, and an optional server URL for the API.
@@ -149,55 +151,110 @@ func GetAPIRoutes() []APIRoute {
 	return out
 }
 
-func schemaFromStruct(v any) OpenAPISchema {
+func jsonFieldName(f reflect.StructField) (string, bool) {
+	tag := strings.TrimSpace(f.Tag.Get("json"))
+	if tag == "" {
+		return "", false
+	}
+	name := strings.Split(tag, ",")[0]
+	name = strings.TrimSpace(name)
+	if name == "" || name == "-" {
+		return "", false
+	}
+	return name, true
+}
+
+func schemaFromValue(v any) OpenAPISchema {
 	t := reflect.TypeOf(v)
-	if t.Kind() == reflect.Ptr {
+	if t == nil {
+		return OpenAPISchema{} // any
+	}
+	return schemaFromType(t)
+}
+
+func schemaFromType(t reflect.Type) OpenAPISchema {
+	// unwrap pointers
+	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
-	if t.Kind() != reflect.Struct {
-		return OpenAPISchema{Type: "object"}
+	// interface{} => any
+	if t.Kind() == reflect.Interface {
+		return OpenAPISchema{} // empty schema means "any"
 	}
 
-	props := make(map[string]OpenAPISchema)
-
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-
-		jsonTag := f.Tag.Get("json")
-		name := strings.Split(jsonTag, ",")[0]
-		if name == "" || name == "-" {
-			name = strings.ToLower(f.Name)
-		}
-
-		props[name] = goTypeToSchema(f.Type)
-	}
-
-	return OpenAPISchema{
-		Type:       "object",
-		Properties: props,
-	}
-}
-
-func goTypeToSchema(t reflect.Type) OpenAPISchema {
 	switch t.Kind() {
-	case reflect.String:
-		return OpenAPISchema{Type: "string"}
-	case reflect.Int, reflect.Int64:
-		return OpenAPISchema{Type: "integer"}
 	case reflect.Bool:
 		return OpenAPISchema{Type: "boolean"}
-	case reflect.Slice:
-		return OpenAPISchema{
-			Type: "array",
-			Items: &OpenAPISchema{
-				Type: goTypeToSchema(t.Elem()).Type,
-			},
-		}
-	case reflect.Struct:
-		return schemaFromStruct(reflect.New(t).Interface())
-	default:
+
+	case reflect.String:
 		return OpenAPISchema{Type: "string"}
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
+		return OpenAPISchema{Type: "integer", Format: "int32"}
+
+	case reflect.Int64:
+		return OpenAPISchema{Type: "integer", Format: "int64"}
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
+		return OpenAPISchema{Type: "integer", Format: "int32"}
+
+	case reflect.Uint64:
+		return OpenAPISchema{Type: "integer", Format: "int64"}
+
+	case reflect.Float32:
+		return OpenAPISchema{Type: "number", Format: "float"}
+
+	case reflect.Float64:
+		return OpenAPISchema{Type: "number", Format: "double"}
+
+	case reflect.Slice, reflect.Array:
+		item := schemaFromType(t.Elem())
+		return OpenAPISchema{
+			Type:  "array",
+			Items: &item,
+		}
+
+	case reflect.Map:
+		// OpenAPI requires map keys to be string for JSON objects. If not string, fall back.
+		if t.Key().Kind() != reflect.String {
+			return OpenAPISchema{Type: "object"}
+		}
+
+		// map[string]interface{} => additionalProperties: {}
+		valSchema := schemaFromType(t.Elem())
+		return OpenAPISchema{
+			Type:                 "object",
+			AdditionalProperties: &valSchema,
+		}
+
+	case reflect.Struct:
+		props := make(map[string]OpenAPISchema)
+
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+
+			// skip unexported fields
+			if f.PkgPath != "" {
+				continue
+			}
+
+			name, ok := jsonFieldName(f)
+			if !ok {
+				continue
+			}
+
+			props[name] = schemaFromType(f.Type)
+		}
+
+		return OpenAPISchema{
+			Type:       "object",
+			Properties: props,
+		}
+
+	default:
+		// safe fallback: free-form
+		return OpenAPISchema{}
 	}
 }
 
@@ -270,7 +327,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Required: true,
 					Content: map[string]OpenAPIContent{
 						"application/json": {
-							Schema: schemaFromStruct(r.BodyType),
+							Schema: schemaFromValue(r.BodyType),
 						},
 					},
 				}
