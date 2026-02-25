@@ -466,16 +466,19 @@ func schemaFromType(t reflect.Type) OpenAPISchema {
 	}
 }
 
-func schemaAnyFromJSON(schemaJSON string) any {
+func schemaAnyFromJSON(schemaJSON string) *OpenAPISchema {
 	schemaJSON = strings.TrimSpace(schemaJSON)
 	if schemaJSON == "" {
 		return nil
 	}
-	var raw any
-	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+
+	var schema OpenAPISchema
+	if err := json.Unmarshal([]byte(schemaJSON), &schema); err != nil {
+		DebugMsg(DbgLvlError, "Invalid plugin OpenAPI schema: %v", err)
 		return nil
 	}
-	return raw
+
+	return &schema
 }
 
 // BuildOpenAPISpec generates an OpenAPI specification based on the registered API routes and the provided options.

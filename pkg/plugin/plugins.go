@@ -583,15 +583,19 @@ func NewJSPlugin(script string) *JSPlugin {
 		}
 		if re11.MatchString(line) {
 			apiQueryJSON = strings.TrimSpace(re11.FindStringSubmatch(line)[1])
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s queryJSON=%s", pName, apiQueryJSON)
 		}
 		if re12.MatchString(line) {
 			apiRequestJSON = strings.TrimSpace(re12.FindStringSubmatch(line)[1])
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s requestJSON=%s", pName, apiRequestJSON)
 		}
 		if re13.MatchString(line) {
 			apiResponseJSON = strings.TrimSpace(re13.FindStringSubmatch(line)[1])
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s responseJSON=%s", pName, apiResponseJSON)
 		}
 		if re14.MatchString(line) {
 			apiHeadersJSON = strings.TrimSpace(re14.FindStringSubmatch(line)[1])
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s headersJSON=%s", pName, apiHeadersJSON)
 		}
 	}
 
