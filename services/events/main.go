@@ -474,11 +474,11 @@ func initAPIv1() {
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, false, 200, nil)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, 200, nil, nil)
 
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, false, 200, nil)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, 200, nil, nil)
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
@@ -492,25 +492,25 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", true, false, false, 201, cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", false, false, 201, cdb.Event{}, nil)
 
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", true, false, false, 201, ScheduleEventRequest{})
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", false, false, 201, ScheduleEventRequest{}, nil)
 
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, false, 200, nil)
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{})
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", true, false, false, 204, cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", true, false, 204, cdb.Event{}, nil)
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, false, 204, nil)
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, false, 204, nil)
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, cmn.StdAPIQuery{})
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, false, 200, nil)
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil)
 
 	// Handle uploads
 
@@ -521,18 +521,18 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, false, 201, rset.Ruleset{})
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil)
 
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, false, 201, PluginText{})
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil)
 
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, false, 201, agt.JobConfig{})
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil)
 
 	if config.Events.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false, 200, false)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, 200, nil, nil)
 
 		// Finally the docs endpoint
 		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))

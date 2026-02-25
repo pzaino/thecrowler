@@ -20,8 +20,10 @@ type APIRoute struct {
 	Plugin        bool     `json:"plugin"`
 	SuccessStatus int      `json:"success_status,omitempty"` // optional, e.g. 200, 201, etc.
 
-	BodyType      any
-	BodySchemaRef string // optional future upgrade
+	BodyType       any
+	BodySchemaRef  string // url to schema in components, optional
+	QueryType      any
+	QuerySchemaRef string // url to schema in components, optional
 }
 
 // OpenAPISpec represents the structure of an OpenAPI specification, including the OpenAPI version, API information, servers, paths, and components.
@@ -107,6 +109,14 @@ type OpenAPIOptions struct {
 	ServerURL   string // optional, e.g. "http://localhost:8080"
 }
 
+// StdAPIQuery represents a standard query structure that can be used for API endpoints
+// that support querying with pagination.
+type StdAPIQuery struct {
+	Q      string `json:"q" yaml:"q" desc:"Search query string, e.g. to filter results based on certain criteria. criteria can be expressed as a simple keyword, or as a dorking format, for example q=title:example (to search for items with 'example' in the title) or even more complex queries like q=title:Harry||Potter&summary:\"a magic story\"."`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty" desc:"Maximum number of results to return. e.g. limit=10 will return at most 10 results. If not specified, the default is typically 20 or 100 depending on the API design."`
+	Offset int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Pagination offset. e.g. offset=20 will skip the first 20 results and return results starting from the 21st item. This is used in conjunction with limit for paginated results."`
+}
+
 const getStr = "get"
 
 var apiRegistry []APIRoute
@@ -117,11 +127,11 @@ func RegisterAPIRoute(
 	path string,
 	methods []string,
 	description string,
-	requiresQ bool,
 	consoleOnly bool,
 	plugin bool,
 	successStatus int,
 	hasBody any,
+	hasQuery any,
 ) {
 	if successStatus == 0 {
 		successStatus = 200
@@ -134,11 +144,11 @@ func RegisterAPIRoute(
 		Path:          path,
 		Methods:       methods,
 		Description:   description,
-		RequiresQ:     requiresQ,
 		ConsoleOnly:   consoleOnly,
 		Plugin:        plugin,
 		SuccessStatus: successStatus,
 		BodyType:      hasBody,
+		QueryType:     hasQuery,
 	})
 }
 
@@ -150,6 +160,67 @@ func GetAPIRoutes() []APIRoute {
 	out := make([]APIRoute, len(apiRegistry))
 	copy(out, apiRegistry)
 	return out
+}
+
+func queryParamsFromValue(v any) []OpenAPIParameter {
+	if v == nil {
+		return nil
+	}
+	t := reflect.TypeOf(v)
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+
+	var params []OpenAPIParameter
+
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+
+		// skip unexported
+		if f.PkgPath != "" {
+			continue
+		}
+
+		// use query tag if present, else json tag
+		name := strings.TrimSpace(f.Tag.Get("query"))
+		if name == "" {
+			var ok bool
+			name, ok = jsonFieldName(f)
+			if !ok {
+				continue
+			}
+		}
+		if name == "-" {
+			continue
+		}
+
+		// optional: required tag
+		required := false
+		if strings.EqualFold(strings.TrimSpace(f.Tag.Get("required")), "true") {
+			required = true
+		}
+
+		s := schemaFromType(f.Type)
+
+		// Query params cannot be arbitrary objects in practice.
+		// If schema is object/any, degrade to string (safe default).
+		if s.Type == "" || s.Type == "object" {
+			s = OpenAPISchema{Type: "string"}
+		}
+
+		params = append(params, OpenAPIParameter{
+			Name:        name,
+			In:          "query",
+			Required:    required,
+			Description: strings.TrimSpace(f.Tag.Get("desc")),
+			Schema:      s,
+		})
+	}
+
+	return params
 }
 
 func jsonFieldName(f reflect.StructField) (string, bool) {
@@ -321,15 +392,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				Responses:   responses,
 			}
 
-			// Add q param for GET (and optionally for others too if you support q in query string)
-			if r.RequiresQ && (method == getStr) {
-				op.Parameters = append(op.Parameters, OpenAPIParameter{
-					Name:        "q",
-					In:          "query",
-					Required:    method == getStr,
-					Description: "Search query",
-					Schema:      OpenAPISchema{Type: "string"},
-				})
+			// Add query parameters from QueryType for GET
+			if method == getStr && r.QueryType != nil {
+				op.Parameters = append(op.Parameters, queryParamsFromValue(r.QueryType)...)
 			}
 
 			// Add JSON body for non-GET requests if BodyType is something other than nil.
