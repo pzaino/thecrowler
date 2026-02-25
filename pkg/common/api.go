@@ -528,12 +528,23 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				continue
 			}
 
+			var respSchema any
+
+			switch v := r.ResponseType.(type) {
+			case *OpenAPISchema:
+				respSchema = v
+			case OpenAPISchema:
+				respSchema = v
+			default:
+				respSchema = schemaFromValue(v)
+			}
+
 			responses := map[string]OpenAPIResponse{
 				strconv.Itoa(r.SuccessStatus): {
 					Description: http.StatusText(r.SuccessStatus),
 					Content: map[string]OpenAPIContent{
 						"application/json": {
-							Schema: schemaFromValue(r.ResponseType),
+							Schema: respSchema,
 						},
 					},
 				},
@@ -574,8 +585,48 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			}
 
 			// Add query parameters from QueryType for GET
-			if method == getStr && r.QueryType != nil {
-				op.Parameters = append(op.Parameters, queryParamsFromValue(r.QueryType)...)
+			if (method == getStr) && (r.QueryType != nil) {
+
+				switch v := r.QueryType.(type) {
+
+				case *OpenAPISchema:
+					// plugin JSON schema
+					if v.Type == "object" && v.Properties != nil {
+						for name, prop := range v.Properties {
+							op.Parameters = append(op.Parameters, OpenAPIParameter{
+								Name:   name,
+								In:     "query",
+								Schema: prop,
+							})
+						}
+					}
+
+				case OpenAPISchema:
+					if v.Type == "object" && v.Properties != nil {
+						for name, prop := range v.Properties {
+							op.Parameters = append(op.Parameters, OpenAPIParameter{
+								Name:   name,
+								In:     "query",
+								Schema: prop,
+							})
+						}
+					}
+
+				default:
+					// normal struct reflection
+					op.Parameters = append(op.Parameters, queryParamsFromValue(v)...)
+				}
+			}
+
+			var bodySchema any
+
+			switch v := r.BodyType.(type) {
+			case *OpenAPISchema:
+				bodySchema = v
+			case OpenAPISchema:
+				bodySchema = v
+			default:
+				bodySchema = schemaFromValue(v)
 			}
 
 			// Add JSON body for non-GET requests if BodyType is something other than nil.
@@ -584,7 +635,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Required: true,
 					Content: map[string]OpenAPIContent{
 						"application/json": {
-							Schema: schemaFromValue(r.BodyType),
+							Schema: bodySchema,
 						},
 					},
 				}
