@@ -532,7 +532,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 
 			switch v := r.ResponseType.(type) {
 			case *OpenAPISchema:
-				respSchema = v
+				if v != nil {
+					respSchema = v
+				}
 			case OpenAPISchema:
 				respSchema = v
 			default:
@@ -625,7 +627,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 
 			switch v := r.BodyType.(type) {
 			case *OpenAPISchema:
-				bodySchema = v
+				if v != nil {
+					bodySchema = v
+				}
 			case OpenAPISchema:
 				bodySchema = v
 			default:
