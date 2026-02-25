@@ -332,10 +332,20 @@ var rawMessageType = reflect.TypeOf(json.RawMessage{})
 var timeType = reflect.TypeOf(time.Time{})
 
 func schemaFromType(t reflect.Type) OpenAPISchema {
+	return schemaFromTypeInternal(t, map[reflect.Type]bool{})
+}
+
+func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPISchema {
 	// unwrap pointers
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
+
+	if seen[t] {
+		// Break recursion
+		return OpenAPISchema{}
+	}
+	seen[t] = true
 
 	// Detect json.RawMessage
 	if t == rawMessageType {
