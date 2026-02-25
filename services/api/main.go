@@ -621,7 +621,7 @@ func initAPIv1() {
 	if config.API.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withPublicMiddlewares(openapiHandler))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false, 200, false)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false, 200, nil)
 
 		// Finally add the docs endpoint (after plugins, to ensure it's always registered and not overridden by plugins)
 		http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(docsHandler)))
