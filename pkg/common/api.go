@@ -628,7 +628,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 
 				default:
 					// normal struct reflection
-					op.Parameters = append(op.Parameters, queryParamsFromValue(v)...)
+					if v != nil {
+						op.Parameters = append(op.Parameters, queryParamsFromValue(v)...)
+					}
 				}
 			}
 
