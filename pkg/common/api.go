@@ -650,7 +650,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			}
 
 			// Add JSON body for non-GET requests if BodyType is something other than nil.
-			if (r.BodyType != nil) && methodAllowsBody(method) {
+			if (bodySchema != nil) && methodAllowsBody(method) {
 				op.RequestBody = &OpenAPIRequestBody{
 					Required: true,
 					Content: map[string]OpenAPIContent{
