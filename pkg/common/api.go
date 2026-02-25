@@ -590,6 +590,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				switch v := r.QueryType.(type) {
 
 				case *OpenAPISchema:
+					if v == nil {
+						break
+					}
 					// plugin JSON schema
 					if v.Type == "object" && v.Properties != nil {
 						for name, prop := range v.Properties {
@@ -630,7 +633,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			}
 
 			// Add JSON body for non-GET requests if BodyType is something other than nil.
-			if r.BodyType != nil && methodAllowsBody(method) {
+			if (r.BodyType != nil) && methodAllowsBody(method) {
 				op.RequestBody = &OpenAPIRequestBody{
 					Required: true,
 					Content: map[string]OpenAPIContent{
