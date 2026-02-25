@@ -12,18 +12,19 @@ import (
 
 // APIRoute represents the structure of an API route, including its path, supported methods, description, and other metadata.
 type APIRoute struct {
-	Path          string   `json:"path"`
-	Methods       []string `json:"methods"`
-	Description   string   `json:"description"`
-	RequiresQ     bool     `json:"requires_q"`
-	ConsoleOnly   bool     `json:"console_only"`
-	Plugin        bool     `json:"plugin"`
-	SuccessStatus int      `json:"success_status,omitempty"` // optional, e.g. 200, 201, etc.
-
-	BodyType       any
-	BodySchemaRef  string // url to schema in components, optional
-	QueryType      any
-	QuerySchemaRef string // url to schema in components, optional
+	Path              string   `json:"path"`
+	Methods           []string `json:"methods"`
+	Description       string   `json:"description"`
+	RequiresQ         bool     `json:"requires_q"`
+	ConsoleOnly       bool     `json:"console_only"`
+	Plugin            bool     `json:"plugin"`
+	SuccessStatus     int      `json:"success_status,omitempty"`   // optional, e.g. 200, 201, etc.
+	BodyType          any      `json:"body_type,omitempty"`        // optional, can be used to generate OpenAPI schema for request body
+	BodySchemaRef     string   `json:"body_schema_ref,omitempty"`  // url to schema in components, optional
+	QueryType         any      `json:"query_type,omitempty"`       // optional, can be used to generate OpenAPI schema for query parameters
+	QuerySchemaRef    string   `json:"query_schema_ref,omitempty"` // url to schema in components, optional
+	ResponseType      any      `json:"response_type,omitempty"`
+	ResponseSchemaRef string   `json:"response_schema_ref,omitempty"` // url to schema in components, optional
 }
 
 // OpenAPISpec represents the structure of an OpenAPI specification, including the OpenAPI version, API information, servers, paths, and components.
@@ -84,7 +85,8 @@ type OpenAPIRequestBody struct {
 
 // OpenAPIContent represents the structure of the content for a specific media type in a request body, including its schema definition.
 type OpenAPIContent struct {
-	Schema OpenAPISchema `json:"schema"`
+	//Schema OpenAPISchema `json:"schema"`
+	Schema any `json:"schema"`
 }
 
 // OpenAPIResponse represents the structure of a response for an API operation, including its description and any additional metadata that may be relevant for documenting the response.
@@ -152,6 +154,40 @@ func RegisterAPIRoute(
 	})
 }
 
+// RegisterAPIPluginRoute is a helper function to register an API route for a plugin, which includes additional metadata for the plugin's API. The hasBody and hasQuery parameters can be used to specify the expected structure of the request body and query parameters, respectively, which can be used for generating OpenAPI documentation and validating incoming requests.
+func RegisterAPIPluginRoute(
+	path string,
+	methods []string,
+	description string,
+	consoleOnly bool,
+	successStatus int,
+	querySchemaJSON string,
+	requestSchemaJSON string,
+	responseSchemaJSON string,
+) {
+	// store into APIRoute using BodyType/QueryType nil, but stash JSON in new fields
+	if successStatus == 0 {
+		successStatus = 200
+	}
+
+	apiRegistryMutex.Lock()
+	defer apiRegistryMutex.Unlock()
+	apiRegistry = append(apiRegistry, APIRoute{
+		Path:              path,
+		Methods:           methods,
+		Description:       description,
+		ConsoleOnly:       consoleOnly,
+		Plugin:            true,
+		SuccessStatus:     successStatus,
+		QueryType:         schemaAnyFromJSON(querySchemaJSON),
+		BodyType:          schemaAnyFromJSON(requestSchemaJSON),
+		ResponseType:      schemaAnyFromJSON(responseSchemaJSON),
+		QuerySchemaRef:    "", // not used directly, but can be set to a reference in components if needed
+		BodySchemaRef:     "", // not used directly, but can be set to a reference in components if needed
+		ResponseSchemaRef: "", // not used directly, but can be set to a reference in components if needed
+	})
+}
+
 // GetAPIRoutes returns the list of registered API routes.
 func GetAPIRoutes() []APIRoute {
 	apiRegistryMutex.Lock()
@@ -159,6 +195,51 @@ func GetAPIRoutes() []APIRoute {
 
 	out := make([]APIRoute, len(apiRegistry))
 	copy(out, apiRegistry)
+	return out
+}
+
+func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
+	schemaJSON = strings.TrimSpace(schemaJSON)
+	if schemaJSON == "" {
+		return nil
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+		return nil
+	}
+
+	props, _ := raw["properties"].(map[string]any)
+	if len(props) == 0 {
+		return nil
+	}
+
+	out := make([]OpenAPIParameter, 0, len(props))
+	for name, v := range props {
+		prop, _ := v.(map[string]any)
+		if len(prop) == 0 {
+			continue
+		}
+
+		typ, _ := prop["type"].(string)
+		format, _ := prop["format"].(string)
+		desc, _ := prop["description"].(string)
+
+		// very small mapper for common cases
+		s := OpenAPISchema{Type: typ, Format: format}
+		if s.Type == "" {
+			s.Type = "string"
+		}
+
+		out = append(out, OpenAPIParameter{
+			Name:        name,
+			In:          "query",
+			Required:    false,
+			Description: desc,
+			Schema:      s,
+		})
+	}
+
 	return out
 }
 
@@ -338,6 +419,18 @@ func schemaFromType(t reflect.Type) OpenAPISchema {
 		// safe fallback: free-form
 		return OpenAPISchema{}
 	}
+}
+
+func schemaAnyFromJSON(schemaJSON string) any {
+	schemaJSON = strings.TrimSpace(schemaJSON)
+	if schemaJSON == "" {
+		return nil
+	}
+	var raw any
+	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+		return nil
+	}
+	return raw
 }
 
 // BuildOpenAPISpec generates an OpenAPI specification based on the registered API routes and the provided options.

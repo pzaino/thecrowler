@@ -455,6 +455,11 @@ func NewJSPlugin(script string) *JSPlugin {
 	pAPIAuthRegEx := "^//\\s*[@]?api_auth\\s*\\:\\s*([^\n]+)"
 	pAPIAuthTypeRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
 
+	pAPIQueryJSONRegEx := "^//\\s*[@]?api_query_json\\s*\\:\\s*(\\{.*)$"
+	pAPIRequestJSONRegEx := "^//\\s*[@]?api_request_json\\s*\\:\\s*(\\{.*)$"
+	pAPIResponseJSONRegEx := "^//\\s*[@]?api_response_json\\s*\\:\\s*(\\{.*)$"
+	pAPIHeadersJSONRegEx := "^//\\s*[@]?api_headers_json\\s*\\:\\s*(\\{.*)$"
+
 	re01 := regexp.MustCompile(pNameRegEx)
 	re02 := regexp.MustCompile(pDescRegEx)
 	re03 := regexp.MustCompile(pTypeRegEx)
@@ -466,6 +471,11 @@ func NewJSPlugin(script string) *JSPlugin {
 	re08 := regexp.MustCompile(pAPIMethodRegEx)
 	re09 := regexp.MustCompile(pAPIAuthRegEx)
 	re10 := regexp.MustCompile(pAPIAuthTypeRegEx)
+
+	re11 := regexp.MustCompile(pAPIQueryJSONRegEx)
+	re12 := regexp.MustCompile(pAPIRequestJSONRegEx)
+	re13 := regexp.MustCompile(pAPIResponseJSONRegEx)
+	re14 := regexp.MustCompile(pAPIHeadersJSONRegEx)
 
 	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
@@ -479,6 +489,10 @@ func NewJSPlugin(script string) *JSPlugin {
 	apiAuth := ""
 	const none = "none"
 	apiAuthType := none
+	apiQueryJSON := ""
+	apiRequestJSON := ""
+	apiResponseJSON := ""
+	apiHeadersJSON := ""
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
 		if re01.MatchString(line) {
@@ -567,6 +581,18 @@ func NewJSPlugin(script string) *JSPlugin {
 				}
 			}
 		}
+		if re11.MatchString(line) {
+			apiQueryJSON = strings.TrimSpace(re11.FindStringSubmatch(line)[1])
+		}
+		if re12.MatchString(line) {
+			apiRequestJSON = strings.TrimSpace(re12.FindStringSubmatch(line)[1])
+		}
+		if re13.MatchString(line) {
+			apiResponseJSON = strings.TrimSpace(re13.FindStringSubmatch(line)[1])
+		}
+		if re14.MatchString(line) {
+			apiHeadersJSON = strings.TrimSpace(re14.FindStringSubmatch(line)[1])
+		}
 	}
 
 	return &JSPlugin{
@@ -582,6 +608,11 @@ func NewJSPlugin(script string) *JSPlugin {
 			Methods:  apiMethods,
 			Auth:     apiAuth,
 			AuthType: apiAuthType,
+
+			OpenAPIQueryJSON:    apiQueryJSON,
+			OpenAPIRequestJSON:  apiRequestJSON,
+			OpenAPIResponseJSON: apiResponseJSON,
+			OpenAPIHeadersJSON:  apiHeadersJSON,
 		},
 	}
 }
