@@ -538,18 +538,27 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			case OpenAPISchema:
 				respSchema = v
 			default:
-				respSchema = schemaFromValue(v)
+				if v != nil {
+					respSchema = schemaFromValue(v)
+				}
+			}
+
+			successCode := strconv.Itoa(r.SuccessStatus)
+
+			successResponse := OpenAPIResponse{
+				Description: http.StatusText(r.SuccessStatus),
+			}
+
+			if respSchema != nil {
+				successResponse.Content = map[string]OpenAPIContent{
+					"application/json": {
+						Schema: respSchema,
+					},
+				}
 			}
 
 			responses := map[string]OpenAPIResponse{
-				strconv.Itoa(r.SuccessStatus): {
-					Description: http.StatusText(r.SuccessStatus),
-					Content: map[string]OpenAPIContent{
-						"application/json": {
-							Schema: respSchema,
-						},
-					},
-				},
+				successCode: successResponse,
 				"400": {
 					Description: "Bad Request",
 					Content: map[string]OpenAPIContent{
@@ -633,7 +642,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			case OpenAPISchema:
 				bodySchema = v
 			default:
-				bodySchema = schemaFromValue(v)
+				if v != nil {
+					bodySchema = schemaFromValue(v)
+				}
 			}
 
 			// Add JSON body for non-GET requests if BodyType is something other than nil.
