@@ -32,6 +32,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
+	rset "github.com/pzaino/thecrowler/pkg/ruleset"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -244,7 +245,7 @@ func main() {
 	// Start the event janitor (cleans up expired events from the DB)
 	if instance == config.Events.MasterEventsManager {
 		// We are on the Master Instance, start the events janitor
-		go startEventJanitor(&dbHandler, time.Minute)
+		go startEventJanitor(&dbHandler, time.Minute, config)
 
 		notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
 
@@ -271,11 +272,15 @@ func main() {
 	setSysReady(0) // Indicate system is NOT ready
 }
 
-func startEventJanitor(db *cdb.Handler, interval time.Duration) {
+func startEventJanitor(db *cdb.Handler, interval time.Duration, config cfg.Config) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for range ticker.C {
 			cleanupExpiredEvents(db)
+			if strings.TrimSpace(config.Events.SysDBWebObjectsRetention) != "" {
+				threshold := parseDuration(config.Events.SysDBWebObjectsRetention)
+				cleanupTooOldWebObjects(db, threshold)
+			}
 		}
 	}()
 }
@@ -316,6 +321,37 @@ func cleanupExpiredEvents(db *cdb.Handler) {
 	if rows, err := res.RowsAffected(); err == nil && rows > 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug,
 			"EventSchedules cleanup removed %d stale schedules", rows)
+	}
+}
+
+func cleanupTooOldWebObjects(db *cdb.Handler, olderThan time.Duration) {
+	cutoff := time.Now().UTC().Add(-olderThan)
+
+	res, err := (*db).Exec(`
+		WITH doomed AS (
+			SELECT wo.object_id
+			FROM WebObjects wo
+			WHERE wo.last_updated_at < $1
+			  AND NOT EXISTS (
+			        SELECT 1
+			        FROM WebObjectsIndex woi
+			        WHERE woi.object_id = wo.object_id
+			  )
+			LIMIT 5000
+		)
+		DELETE FROM WebObjects
+		WHERE object_id IN (SELECT object_id FROM doomed);
+	`, cutoff)
+
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"WebObjects cleanup failed: %v", err)
+		return
+	}
+
+	if rows, err := res.RowsAffected(); err == nil && rows > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"WebObjects cleanup removed %d old web objects", rows)
 	}
 }
 
@@ -425,6 +461,11 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	return nil
 }
 
+// PluginText is a struct for receive a plugin text in upload
+type PluginText struct {
+	Plugin string `json:"plugin"`
+}
+
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
 	// Health check
@@ -433,8 +474,11 @@ func initAPIv1() {
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, false, 200, nil)
+
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, false, 200, nil)
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
@@ -448,12 +492,25 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", true, false, false, 201, cdb.Event{})
+
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", true, false, false, 201, ScheduleEventRequest{})
+
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, false, 200, nil)
+
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", true, false, false, 204, cdb.Event{})
+
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, false, 204, nil)
+
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, false, 204, nil)
+
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, false, 200, nil)
 
 	// Handle uploads
 
@@ -464,9 +521,71 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, false, 201, rset.Ruleset{})
 
+	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, false, 201, PluginText{})
+
+	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, false, 201, agt.JobConfig{})
+
+	if config.Events.EnableAPIDocs {
+		// OpenAPI spec endpoint
+		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, false, 200, false)
+
+		// Finally the docs endpoint
+		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
+	}
+}
+
+func docsHandler(w http.ResponseWriter, _ *http.Request) {
+	handleErrorAndRespond(
+		w,
+		nil,
+		map[string]any{
+			"service":   "CROWler Events API",
+			"version":   "v1",
+			"endpoints": cmn.GetAPIRoutes(),
+		},
+		"",
+		http.StatusInternalServerError,
+		http.StatusOK,
+	)
+}
+
+func openapiHandler(w http.ResponseWriter, _ *http.Request) {
+	routes := cmn.GetAPIRoutes()
+
+	serverURL := ""
+	scheme := "http"
+	if strings.ToLower(strings.TrimSpace(config.API.SSLMode)) == cmn.EnableStr {
+		scheme = "https"
+	}
+
+	// If host is 0.0.0.0, leave serverURL blank (Swagger UI can still work).
+	host := strings.TrimSpace(config.Events.URL)
+	if host == "" {
+		host = strings.TrimSpace(config.Events.Host)
+		if host != "" && host != "0.0.0.0" && host != "::" {
+			port := ""
+			if (config.Events.Port != 80) && (config.Events.Port != 443) && (config.Events.Port != 0) {
+				port = fmt.Sprintf(":%d", config.Events.Port)
+			}
+			serverURL = fmt.Sprintf("%s://%s%s", scheme, host, port)
+		}
+	} else {
+		serverURL = fmt.Sprintf("%s://%s", scheme, host)
+	}
+
+	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{
+		Title:       "CROWler Events API",
+		Version:     "v1",
+		Description: "Dynamically generated OpenAPI spec from the running server route registry.",
+		ServerURL:   serverURL,
+	})
+
+	handleErrorAndRespond(w, nil, spec, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 // RateLimitMiddleware is a middleware for rate limiting

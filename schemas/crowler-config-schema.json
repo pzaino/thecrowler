@@ -861,6 +861,16 @@
       "description": "This is the General/Search API configuration section, it's used to configure the General/Search API and it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API. It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
       "type": "object",
       "properties": {
+        "url": {
+          "title": "CROWler General/Search API URL",
+          "description": "This is the URL that the CROWler will use to allow connections to the General/Search API. This is the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
+          "type": "string",
+          "format": "uri",
+          "examples": [
+            "localhost:8080/api/v1",
+            "crowler-api.example.com/v1"
+          ]
+        },
         "host": {
           "title": "CROWler General/Search API Host",
           "description": "This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address.",
@@ -882,6 +892,16 @@
           "description": "This is the timeout for the API. It is the maximum amount of time that the CROWler will wait for the API to respond.",
           "type": "integer",
           "minimum": 10
+        },
+        "disable_default": {
+          "title": "CROWler General/Search API Disable default end-points",
+          "description": "This is a flag that tells the CROWler to disable the General/Search API default end-points. If you want to use the General/Search API only for custom plugins, you can disable the default end-points to improve performance and security.",
+          "type": "boolean"
+        },
+        "enable_api_docs": {
+          "title": "CROWler General/Search API Enable API Documentation",
+          "description": "This is a flag that tells the CROWler to enable the API documentation for the General/Search API. This will make the API documentation available at the /v1/docs endpoint of the General/Search API.",
+          "type": "boolean"
         },
         "content_search": {
           "title": "CROWler General/Search API Content Search",
@@ -1170,6 +1190,16 @@
       "description": "This is the Events Manager configuration section, it is used to configure the Events Manager",
       "type": "object",
       "properties": {
+        "url": {
+          "title": "CROWler Events Manager API URL",
+          "description": "This is the URL that the CROWler will use to allow connections to the Events Manager API. This is the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
+          "type": "string",
+          "format": "uri",
+          "examples": [
+            "localhost:8082/api/v1",
+            "crowler-events-manager.example.com/v1"
+          ]
+        },
         "host": {
           "title": "CROWler Events Manager Host",
           "description": "This is the host that the Events Manager will use to communicate with the outside world.",
@@ -1238,6 +1268,11 @@
           "description": "This is the name of the Master Events Manager in a multi-instance Events Manager deployment. If you have multiple Events Manager instances running, you can set one of them as the Master Events Manager. The Master Events Manager is responsible for coordinating all systems events among the other Events Managers and ensuring that events are processed correctly. The other Events Manager enact as Events API endpoints only.",
           "type": "string"
         },
+        "enable_api_docs": {
+          "title": "CROWler Events Manager Enable API Documentation",
+          "description": "This is a flag that tells the CROWler to enable the API documentation for the Events Manager. This will make the API documentation available at the /v1/docs endpoint of the Events Manager API.",
+          "type": "boolean"
+        },
         "automatic_events_removal": {
           "title": "CROWler Events Manager Automatic Events Removal",
           "description": "This field help automating events removal from the database. It supports one fo the following values: always, failed, success, never or empty string. If set to always it means remove the event always, if set to on_failure it means remove the event only if the handling fails, if set to on_success it means remove the event only if the handling is successful, if set to never it means never remove the event, if set to empty string it means the default behavior (always).",
@@ -1289,6 +1324,17 @@
             "60 minutes",
             "1 hour",
             "1 days"
+          ]
+        },
+        "sys_db_webobjects_retention": {
+          "title": "CROWler Events Manager Web Objects Retention",
+          "description": "This is the retention period for the web objects stored in the Events Manager's database. The format of this parameters is string and can be read as '<X> minutes/hours/days/months/years'. For example, '60 minutes' or '1 hours' or '1 days'. If empty or not specified, the default retention period is forever.",
+          "type": "string",
+          "examples": [
+            "60 minutes",
+            "1 hour",
+            "1 days",
+            "1 months"
           ]
         }
       },

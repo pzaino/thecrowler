@@ -929,6 +929,15 @@ BEGIN
 END
 $$;
 
+-- Creates an index for the WebObjects  last_updated_at, object_id columns (for fast cleanup)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjects_last_updated_at_object_id') THEN
+        CREATE INDEX idx_webobjects_last_updated_at_object_id ON WebObjects(last_updated_at, object_id);
+    END IF;
+END
+$$;
+
 -- Creates an index for the details column in the WebObjects table
 DO $$
 BEGIN
