@@ -3,6 +3,7 @@ package common
 
 import (
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,7 +19,7 @@ type APIRoute struct {
 	Plugin        bool     `json:"plugin"`
 	SuccessStatus int      `json:"success_status,omitempty"` // optional, e.g. 200, 201, etc.
 
-	HasBody       bool   // For POST/PUT/PATCH/DELETE, indicates if the route expects a JSON body with a "q" field. This is derived from RequiresQ and the HTTP method.
+	BodyType      any
 	BodySchemaRef string // optional future upgrade
 }
 
@@ -117,7 +118,7 @@ func RegisterAPIRoute(
 	consoleOnly bool,
 	plugin bool,
 	successStatus int,
-	hasBody bool,
+	hasBody any,
 ) {
 	if successStatus == 0 {
 		successStatus = 200
@@ -134,7 +135,7 @@ func RegisterAPIRoute(
 		ConsoleOnly:   consoleOnly,
 		Plugin:        plugin,
 		SuccessStatus: successStatus,
-		HasBody:       hasBody,
+		BodyType:      hasBody,
 	})
 }
 
@@ -146,6 +147,58 @@ func GetAPIRoutes() []APIRoute {
 	out := make([]APIRoute, len(apiRegistry))
 	copy(out, apiRegistry)
 	return out
+}
+
+func schemaFromStruct(v any) OpenAPISchema {
+	t := reflect.TypeOf(v)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return OpenAPISchema{Type: "object"}
+	}
+
+	props := make(map[string]OpenAPISchema)
+
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+
+		jsonTag := f.Tag.Get("json")
+		name := strings.Split(jsonTag, ",")[0]
+		if name == "" || name == "-" {
+			name = strings.ToLower(f.Name)
+		}
+
+		props[name] = goTypeToSchema(f.Type)
+	}
+
+	return OpenAPISchema{
+		Type:       "object",
+		Properties: props,
+	}
+}
+
+func goTypeToSchema(t reflect.Type) OpenAPISchema {
+	switch t.Kind() {
+	case reflect.String:
+		return OpenAPISchema{Type: "string"}
+	case reflect.Int, reflect.Int64:
+		return OpenAPISchema{Type: "integer"}
+	case reflect.Bool:
+		return OpenAPISchema{Type: "boolean"}
+	case reflect.Slice:
+		return OpenAPISchema{
+			Type: "array",
+			Items: &OpenAPISchema{
+				Type: goTypeToSchema(t.Elem()).Type,
+			},
+		}
+	case reflect.Struct:
+		return schemaFromStruct(reflect.New(t).Interface())
+	default:
+		return OpenAPISchema{Type: "string"}
+	}
 }
 
 // BuildOpenAPISpec generates an OpenAPI specification based on the registered API routes and the provided options.
@@ -201,7 +254,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			}
 
 			// Add q param for GET (and optionally for others too if you support q in query string)
-			if r.RequiresQ && method == getStr {
+			if r.RequiresQ && (method == getStr) {
 				op.Parameters = append(op.Parameters, OpenAPIParameter{
 					Name:        "q",
 					In:          "query",
@@ -211,16 +264,13 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				})
 			}
 
-			// Add JSON body for non-GET requests if HasBody is true
-			// This matches your pattern of POST accepting {"q":"..."}.
-			if r.HasBody && methodAllowsBody(method) {
+			// Add JSON body for non-GET requests if BodyType is something other than nil.
+			if r.BodyType != nil && methodAllowsBody(method) {
 				op.RequestBody = &OpenAPIRequestBody{
 					Required: true,
 					Content: map[string]OpenAPIContent{
 						"application/json": {
-							Schema: OpenAPISchema{
-								Type: "object",
-							},
+							Schema: schemaFromStruct(r.BodyType),
 						},
 					},
 				}
