@@ -394,7 +394,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 		return OpenAPISchema{Type: "number", Format: "double"}
 
 	case reflect.Slice, reflect.Array:
-		item := schemaFromType(t.Elem())
+		item := schemaFromTypeInternal(t.Elem(), seen)
 		return OpenAPISchema{
 			Type:  "array",
 			Items: &item,
@@ -407,7 +407,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 		}
 
 		// map[string]interface{} => additionalProperties: {}
-		valSchema := schemaFromType(t.Elem())
+		valSchema := schemaFromTypeInternal(t.Elem(), seen)
 		return OpenAPISchema{
 			Type:                 "object",
 			AdditionalProperties: &valSchema,
@@ -435,7 +435,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 			// - Anonymous
 			// - No json tag at all
 			if f.Anonymous && jsonTag == "" && fieldType.Kind() == reflect.Struct {
-				embeddedSchema := schemaFromType(fieldType)
+				embeddedSchema := schemaFromTypeInternal(fieldType, seen)
 
 				for k, v := range embeddedSchema.Properties {
 					props[k] = v
@@ -450,7 +450,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 				continue
 			}
 
-			fieldSchema := schemaFromType(f.Type)
+			fieldSchema := schemaFromTypeInternal(f.Type, seen)
 			props[name] = fieldSchema
 
 			// Only mark required if explicitly declared
