@@ -2,6 +2,7 @@
 package common
 
 import (
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -172,10 +173,20 @@ func schemaFromValue(v any) OpenAPISchema {
 	return schemaFromType(t)
 }
 
+var rawMessageType = reflect.TypeOf(json.RawMessage{})
+
 func schemaFromType(t reflect.Type) OpenAPISchema {
 	// unwrap pointers
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
+	}
+
+	// Detect json.RawMessage
+	if t == rawMessageType {
+		return OpenAPISchema{
+			Type:                 "object",
+			AdditionalProperties: &OpenAPISchema{},
+		}
 	}
 
 	// interface{} => any
