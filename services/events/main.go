@@ -504,7 +504,7 @@ func initAPIv1() {
 	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{}, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
@@ -784,6 +784,11 @@ func scheduleEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.StatusInternalServerError,
 		http.StatusCreated,
 	)
+}
+
+// APIEventREquest is the struct for the request of event removal
+type APIEventREquest struct {
+	EventID string `json:"event_id"`
 }
 
 func removeEventHandler(w http.ResponseWriter, r *http.Request) {
