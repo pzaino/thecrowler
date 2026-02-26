@@ -342,6 +342,15 @@ func schemaFromType(t reflect.Type) OpenAPISchema {
 	return schemaFromTypeInternal(t, map[reflect.Type]bool{})
 }
 
+func isDateTimeField(name string) bool {
+	n := strings.ToLower(name)
+	return n == "created_at" ||
+		n == "last_updated_at" ||
+		strings.HasSuffix(n, "_at") ||
+		strings.HasSuffix(n, "_time") ||
+		strings.HasSuffix(n, "_timestamp")
+}
+
 func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPISchema {
 	// unwrap pointers
 	for t.Kind() == reflect.Ptr {
@@ -460,7 +469,17 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 				continue
 			}
 
-			fieldSchema := schemaFromTypeInternal(f.Type, seen)
+			var fieldSchema OpenAPISchema
+
+			// If it's a string type and name looks like a datetime field
+			if f.Type.Kind() == reflect.String && isDateTimeField(name) {
+				fieldSchema = OpenAPISchema{
+					Type:   "string",
+					Format: "date-time",
+				}
+			} else {
+				fieldSchema = schemaFromTypeInternal(f.Type, seen)
+			}
 			props[name] = fieldSchema
 
 			// Only mark required if explicitly declared
