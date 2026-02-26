@@ -689,11 +689,12 @@ func defaultIfEmpty(v, def string) string {
 }
 
 func methodAllowsBody(method string) bool {
+	method = strings.ToLower(strings.TrimSpace(method))
 	switch method {
-	case strings.ToLower(http.MethodPost),
-		strings.ToLower(http.MethodPut),
-		strings.ToLower(http.MethodPatch),
-		strings.ToLower(http.MethodDelete):
+	case http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete:
 		return true
 	default:
 		return false
