@@ -547,13 +547,13 @@ func initAPIv1() {
 	if !config.API.DisableDefault {
 		// Query handlers
 		http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
-		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET"}, "General search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET"}, "General search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, SearchResult{})
 
 		http.Handle("/v1/search/netinfo", withPublicMiddlewares(netInfoHandler))
-		cmn.RegisterAPIRoute("/v1/search/netinfo", []string{"GET"}, "Network information search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/netinfo", []string{"GET"}, "Network information search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, NetInfoResponse{})
 
 		http.Handle("/v1/search/httpinfo", withPublicMiddlewares(httpInfoHandler))
-		cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET"}, "HTTP information search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET"}, "HTTP information search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, HTTPInfoResponse{})
 
 		http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
 		cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET"}, "Screenshot search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
