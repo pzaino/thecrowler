@@ -181,17 +181,6 @@ func RegisterAPIPluginRoute(
 
 	apiRegistryMutex.Lock()
 	defer apiRegistryMutex.Unlock()
-
-	// Get each method and check if it allows body. If it does and requestSchemaJSON is empty, log a warning.
-	for _, method := range methods {
-		if methodAllowsBody(method) && strings.TrimSpace(requestSchemaJSON) == "" {
-			DebugMsg(DbgLvlWarn,
-				"API plugin route '%s' allows body but api_request_json is not defined",
-				path,
-			)
-		}
-	}
-
 	apiRegistry = append(apiRegistry, APIRoute{
 		Path:              path,
 		Methods:           methods,
@@ -347,7 +336,7 @@ func schemaFromValue(v any) OpenAPISchema {
 
 var rawMessageType = reflect.TypeOf(json.RawMessage{})
 var timeType = reflect.TypeOf(time.Time{})
-var CustTime = reflect.TypeOf(CustomTime{})
+var customTimeType = reflect.TypeOf(CustomTime{})
 
 func schemaFromType(t reflect.Type) OpenAPISchema {
 	return schemaFromTypeInternal(t, map[reflect.Type]bool{})
@@ -379,16 +368,10 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 		return OpenAPISchema{} // empty schema means "any"
 	}
 
-	// Detect time.Time
-	if t == timeType {
-		return OpenAPISchema{
-			Type:   "string",
-			Format: "date-time",
-		}
-	}
-
-	// Detect CustomTime
-	if t == CustTime {
+	// Detect time-like types
+	if t == timeType ||
+		t == customTimeType ||
+		t.ConvertibleTo(timeType) {
 		return OpenAPISchema{
 			Type:   "string",
 			Format: "date-time",
@@ -698,12 +681,11 @@ func defaultIfEmpty(v, def string) string {
 }
 
 func methodAllowsBody(method string) bool {
-	method = strings.ToLower(strings.TrimSpace(method))
 	switch method {
-	case http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete:
+	case strings.ToLower(http.MethodPost),
+		strings.ToLower(http.MethodPut),
+		strings.ToLower(http.MethodPatch),
+		strings.ToLower(http.MethodDelete):
 		return true
 	default:
 		return false
