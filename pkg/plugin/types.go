@@ -25,6 +25,12 @@ type APIMetadata struct {
 	Methods  []string `json:"api_methods" yaml:"api_methods"`     // API method for the plugin
 	Auth     string   `json:"api_auth" yaml:"api_auth"`           // API authentication: required, optional, none
 	AuthType string   `json:"api_auth_type" yaml:"api_auth_type"` // API authentication type for the plugin: jwt, apikey
+
+	// OpenAPI spec for the plugin's API. This is optional but can be used to generate API documentation and client code.
+	OpenAPIQueryJSON    string `json:"api_openapi_query_json,omitempty" yaml:"api_openapi_query_json,omitempty"`
+	OpenAPIRequestJSON  string `json:"api_openapi_request_json,omitempty" yaml:"api_openapi_request_json,omitempty"`
+	OpenAPIResponseJSON string `json:"api_openapi_response_json,omitempty" yaml:"api_openapi_response_json,omitempty"`
+	OpenAPIHeadersJSON  string `json:"api_openapi_headers_json,omitempty" yaml:"api_openapi_headers_json,omitempty"` // optional
 }
 
 // JSPlugin struct to hold the JS plugin

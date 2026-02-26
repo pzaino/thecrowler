@@ -21,8 +21,8 @@ var rulesets = []Ruleset{
 		RuleGroups: []RuleGroup{
 			{
 				GroupName: "Group1",
-				ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
-				ValidTo:   CustomTime{Time: time.Date(2029, time.December, 31, 0, 0, 0, 0, time.UTC)},
+				ValidFrom: cmn.CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
+				ValidTo:   cmn.CustomTime{Time: time.Date(2029, time.December, 31, 0, 0, 0, 0, time.UTC)},
 				IsEnabled: true,
 				ScrapingRules: []ScrapingRule{
 					{
@@ -58,8 +58,8 @@ var rulesets = []Ruleset{
 			},
 			{
 				GroupName: "Group2",
-				ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
-				ValidTo:   CustomTime{Time: time.Date(2021, time.December, 31, 0, 0, 0, 0, time.UTC)},
+				ValidFrom: cmn.CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
+				ValidTo:   cmn.CustomTime{Time: time.Date(2021, time.December, 31, 0, 0, 0, 0, time.UTC)},
 				IsEnabled: false,
 				ScrapingRules: []ScrapingRule{
 					{
@@ -88,8 +88,8 @@ var rulesets = []Ruleset{
 			},
 			{
 				GroupName: "GroupA",
-				ValidFrom: CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
-				ValidTo:   CustomTime{Time: time.Date(2023, time.December, 31, 0, 0, 0, 0, time.UTC)},
+				ValidFrom: cmn.CustomTime{Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)},
+				ValidTo:   cmn.CustomTime{Time: time.Date(2023, time.December, 31, 0, 0, 0, 0, time.UTC)},
 				IsEnabled: true,
 				ScrapingRules: []ScrapingRule{
 					{
@@ -122,7 +122,7 @@ var rulesets = []Ruleset{
 func TestCustomTimeIsEmpty(t *testing.T) {
 	// Create a non-empty CustomTime
 	nonEmptyTime := time.Now()
-	ct := CustomTime{Time: nonEmptyTime}
+	ct := cmn.CustomTime{Time: nonEmptyTime}
 
 	// Verify that IsEmpty returns false for a non-empty CustomTime
 	if ct.IsEmpty() {
@@ -131,7 +131,7 @@ func TestCustomTimeIsEmpty(t *testing.T) {
 
 	// Create an empty CustomTime
 	emptyTime := time.Time{}
-	ct = CustomTime{Time: emptyTime}
+	ct = cmn.CustomTime{Time: emptyTime}
 
 	// Verify that IsEmpty returns true for an empty CustomTime
 	if !ct.IsEmpty() {
@@ -262,8 +262,8 @@ func TestIsValid(t *testing.T) {
 	validRuleset.RuleGroups = []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: cmn.CustomTime{Time: time.Now()},
+			ValidTo:   cmn.CustomTime{Time: time.Now().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -282,8 +282,8 @@ func TestIsValid(t *testing.T) {
 	invalidRuleset.RuleGroups = []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: cmn.CustomTime{Time: time.Now()},
+			ValidTo:   cmn.CustomTime{Time: time.Now().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -311,8 +311,8 @@ func TestRulesetIsEmpty(t *testing.T) {
 	nonEmptyRuleset.RuleGroups = []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: cmn.CustomTime{Time: time.Now()},
+			ValidTo:   cmn.CustomTime{Time: time.Now().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -339,8 +339,8 @@ func TestRulesetGetAllRuleGroups(t *testing.T) {
 	ruleGroups := []RuleGroup{
 		{
 			GroupName: "Group1",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: cmn.CustomTime{Time: time.Now()},
+			ValidTo:   cmn.CustomTime{Time: time.Now().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
@@ -350,8 +350,8 @@ func TestRulesetGetAllRuleGroups(t *testing.T) {
 		},
 		{
 			GroupName: "Group2",
-			ValidFrom: CustomTime{Time: time.Now()},
-			ValidTo:   CustomTime{Time: time.Now().AddDate(1, 0, 0)},
+			ValidFrom: cmn.CustomTime{Time: time.Now()},
+			ValidTo:   cmn.CustomTime{Time: time.Now().AddDate(1, 0, 0)},
 			IsEnabled: true,
 			ScrapingRules: []ScrapingRule{
 				{
