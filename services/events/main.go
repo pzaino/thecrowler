@@ -507,7 +507,7 @@ func initAPIv1() {
 	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, cmn.StdAPIQuery{}, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil, []cdb.Event{})
@@ -805,6 +805,10 @@ func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 		Msg: "Event removed successfully",
 	}
 	handleErrorAndRespond(w, nil, response, "Error removing event: ", http.StatusInternalServerError, http.StatusOK)
+}
+
+type APIRemoveBeforeRequest struct {
+	Timestamp string `json:"timestamp"`
 }
 
 func removeEventsBeforeHandler(w http.ResponseWriter, r *http.Request) {
