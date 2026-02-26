@@ -181,6 +181,17 @@ func RegisterAPIPluginRoute(
 
 	apiRegistryMutex.Lock()
 	defer apiRegistryMutex.Unlock()
+
+	// Get each method and check if it allows body. If it does and requestSchemaJSON is empty, log a warning.
+	for _, method := range methods {
+		if methodAllowsBody(method) && strings.TrimSpace(requestSchemaJSON) == "" {
+			DebugMsg(DbgLvlWarn,
+				"API plugin route '%s' allows body but api_request_json is not defined",
+				path,
+			)
+		}
+	}
+
 	apiRegistry = append(apiRegistry, APIRoute{
 		Path:              path,
 		Methods:           methods,
@@ -687,11 +698,12 @@ func defaultIfEmpty(v, def string) string {
 }
 
 func methodAllowsBody(method string) bool {
+	method = strings.ToLower(strings.TrimSpace(method))
 	switch method {
-	case strings.ToLower(http.MethodPost),
-		strings.ToLower(http.MethodPut),
-		strings.ToLower(http.MethodPatch),
-		strings.ToLower(http.MethodDelete):
+	case http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete:
 		return true
 	default:
 		return false
