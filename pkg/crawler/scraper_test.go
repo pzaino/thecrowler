@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 )
 
@@ -68,16 +69,16 @@ func TestIsGroupValid(t *testing.T) {
 	}
 
 	// Test data
-	layoutFrom := rs.CustomTime{
+	layoutFrom := cmn.CustomTime{
 		Time: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC),
 	}
-	layoutTo := rs.CustomTime{
+	layoutTo := cmn.CustomTime{
 		Time: time.Date(2023, time.December, 31, 0, 0, 0, 0, time.UTC),
 	}
 	//const layoutFrom = "2021-01-01"
 	//const layoutTo = "2023-12-31"
 
-	LayoutToFuture := rs.CustomTime{
+	LayoutToFuture := cmn.CustomTime{
 		Time: time.Now().AddDate(0, 0, 1),
 	}
 

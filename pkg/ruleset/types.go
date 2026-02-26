@@ -19,10 +19,10 @@ package ruleset
 import (
 	"encoding/json"
 	"sync"
-	"time"
 
 	"github.com/qri-io/jsonschema"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
@@ -70,26 +70,21 @@ type DetectionConfig struct {
 	DetectedThreshold float32 `json:"detected_threshold" yaml:"detected_threshold"`
 }
 
-// CustomTime wraps time.Time to provide custom parsing.
-type CustomTime struct {
-	time.Time
-}
-
 // Ruleset represents the top-level structure of the rules YAML file
 type Ruleset struct {
-	FormatVersion string      `json:"format_version" yaml:"format_version"`
-	Author        string      `json:"author" yaml:"author"`
-	CreatedAt     CustomTime  `json:"created_at" yaml:"created_at"`
-	Description   string      `json:"description" yaml:"description"`
-	Name          string      `json:"ruleset_name" yaml:"ruleset_name"`
-	RuleGroups    []RuleGroup `json:"rule_groups" yaml:"rule_groups"`
+	FormatVersion string         `json:"format_version" yaml:"format_version"`
+	Author        string         `json:"author" yaml:"author"`
+	CreatedAt     cmn.CustomTime `json:"created_at" yaml:"created_at"`
+	Description   string         `json:"description" yaml:"description"`
+	Name          string         `json:"ruleset_name" yaml:"ruleset_name"`
+	RuleGroups    []RuleGroup    `json:"rule_groups" yaml:"rule_groups"`
 }
 
 // RuleGroup represents a group of rules
 type RuleGroup struct {
 	GroupName      string               `json:"group_name" yaml:"group_name"`
-	ValidFrom      CustomTime           `json:"valid_from,omitempty" yaml:"valid_from,omitempty"`
-	ValidTo        CustomTime           `json:"valid_to,omitempty" yaml:"valid_to,omitempty"`
+	ValidFrom      cmn.CustomTime       `json:"valid_from,omitempty" yaml:"valid_from,omitempty"`
+	ValidTo        cmn.CustomTime       `json:"valid_to,omitempty" yaml:"valid_to,omitempty"`
 	IsEnabled      bool                 `json:"is_enabled" yaml:"is_enabled"`
 	URL            string               `json:"url" yaml:"url"`
 	ScrapingRules  []ScrapingRule       `json:"scraping_rules,omitempty" yaml:"scraping_rules,omitempty"`

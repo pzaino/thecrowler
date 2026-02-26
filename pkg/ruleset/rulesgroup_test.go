@@ -27,8 +27,8 @@ import (
 func createTestRuleGroup(validFrom, validTo time.Time, isEnabled bool) RuleGroup {
 	return RuleGroup{
 		GroupName: "TestGroup",
-		ValidFrom: CustomTime{Time: validFrom},
-		ValidTo:   CustomTime{Time: validTo},
+		ValidFrom: cmn.CustomTime{Time: validFrom},
+		ValidTo:   cmn.CustomTime{Time: validTo},
 		IsEnabled: isEnabled,
 	}
 }

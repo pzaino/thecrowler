@@ -830,7 +830,7 @@ func (re *RuleEngine) IsGroupValid(group RuleGroup) bool {
 		return true
 	}
 
-	var validFrom, validTo CustomTime
+	var validFrom, validTo cmn.CustomTime
 
 	// Parse the 'valid_from' date if present
 	if !group.ValidFrom.IsEmpty() {

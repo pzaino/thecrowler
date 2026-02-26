@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
@@ -31,7 +32,7 @@ func mockRuleset(name string) Ruleset {
 	return Ruleset{
 		FormatVersion: "1.0",
 		Author:        "Tester",
-		CreatedAt:     CustomTime{Time: time.Now()},
+		CreatedAt:     cmn.CustomTime{Time: time.Now()},
 		Description:   "A test ruleset",
 		Name:          name,
 		RuleGroups:    []RuleGroup{},

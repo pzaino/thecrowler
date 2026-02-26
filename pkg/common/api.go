@@ -336,6 +336,7 @@ func schemaFromValue(v any) OpenAPISchema {
 
 var rawMessageType = reflect.TypeOf(json.RawMessage{})
 var timeType = reflect.TypeOf(time.Time{})
+var CustTime = reflect.TypeOf(CustomTime{})
 
 func schemaFromType(t reflect.Type) OpenAPISchema {
 	return schemaFromTypeInternal(t, map[reflect.Type]bool{})
@@ -369,6 +370,14 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 
 	// Detect time.Time
 	if t == timeType {
+		return OpenAPISchema{
+			Type:   "string",
+			Format: "date-time",
+		}
+	}
+
+	// Detect CustomTime
+	if t == CustTime {
 		return OpenAPISchema{
 			Type:   "string",
 			Format: "date-time",
