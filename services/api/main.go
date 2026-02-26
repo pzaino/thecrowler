@@ -556,16 +556,16 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET"}, "HTTP information search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, HTTPInfoResponse{})
 
 		http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
-		cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET"}, "Screenshot search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET"}, "Screenshot search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, ScreenshotResponse{})
 
 		http.Handle("/v1/search/webobject", withPublicMiddlewares(webObjectHandler))
-		cmn.RegisterAPIRoute("/v1/search/webobject", []string{"GET"}, "Web object search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/webobject", []string{"GET"}, "Web object search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, WebObjectResponse{})
 
 		http.Handle("/v1/search/correlated_sites", withPublicMiddlewares(webCorrelatedSitesHandler))
-		cmn.RegisterAPIRoute("/v1/search/correlated_sites", []string{"GET"}, "Correlated sites search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/correlated_sites", []string{"GET"}, "Correlated sites search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, CorrelatedSitesResponse{})
 
 		http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
-		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, ScrapedDataResponse{})
 	}
 
 	if config.API.EnableConsole {
