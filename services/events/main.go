@@ -498,7 +498,7 @@ func initAPIv1() {
 	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
 
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
@@ -507,10 +507,10 @@ func initAPIv1() {
 	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, cmn.StdAPIQuery{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, cmn.StdAPIQuery{}, EventResponse{})
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil, []cdb.Event{})
 
 	// Handle uploads
 
@@ -521,13 +521,13 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil, nil)
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil, nil)
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil, nil)
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
 
 	if config.Events.EnableAPIDocs {
 		// OpenAPI spec endpoint
@@ -840,7 +840,11 @@ func removeEventsBeforeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]string{"message": "Events removed successfully"}
+	//response := map[string]string{"message": "Events removed successfully"}
+	response := EventResponse{
+		ID:  "",
+		Msg: "Events removed successfully",
+	}
 	handleErrorAndRespond(w, nil, response, "Error removing events: ", http.StatusInternalServerError, http.StatusOK)
 }
 
@@ -1512,7 +1516,12 @@ func uploadRulesetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handleErrorAndRespond(w, nil, map[string]string{"message": "Ruleset uploaded and event created successfully"}, "", http.StatusInternalServerError, http.StatusCreated)
+	response := cmn.StdAPISuccess{
+		OpCode:  201,
+		Message: "Ruleset uploaded and event created successfully",
+	}
+
+	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusCreated)
 }
 
 func validateRuleset(data []byte) error {
@@ -1581,7 +1590,12 @@ func uploadPluginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handleErrorAndRespond(w, nil, map[string]string{"message": "Plugin uploaded and event created successfully"}, "", http.StatusInternalServerError, http.StatusCreated)
+	response := cmn.StdAPISuccess{
+		OpCode:  201,
+		Message: "Plugin uploaded and event created successfully",
+	}
+
+	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusCreated)
 }
 
 // Handler to upload an agent
@@ -1646,7 +1660,12 @@ func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handleErrorAndRespond(w, nil, map[string]string{"message": "Agent uploaded and event created successfully"}, "", http.StatusInternalServerError, http.StatusCreated)
+	response := cmn.StdAPISuccess{
+		OpCode:  201,
+		Message: "Agent uploaded and event created successfully",
+	}
+
+	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusCreated)
 }
 
 func validateAgent(data []byte) error {

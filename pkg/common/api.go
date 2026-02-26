@@ -122,9 +122,16 @@ type StdAPIQuery struct {
 	Offset int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Pagination offset. e.g. offset=20 will skip the first 20 results and return results starting from the 21st item. This is used in conjunction with limit for paginated results."`
 }
 
+// StdAPIError represents a standard error response structure for API endpoints, including an error code, a short error message, and a more detailed message that can provide additional context about the error.
 type StdAPIError struct {
 	ErrCode int    `json:"error_code"`
 	Err     string `json:"error"`
+	Message string `json:"message"`
+}
+
+// StdAPISuccess represents a standard success response structure for API endpoints, including an operation code and a message that can provide additional context about the successful operation.
+type StdAPISuccess struct {
+	OpCode  int    `json:"op_code"`
 	Message string `json:"message"`
 }
 
