@@ -143,6 +143,7 @@ func RegisterAPIRoute(
 	successStatus int,
 	hasBody any,
 	hasQuery any,
+	hasResponse any,
 ) {
 	if successStatus == 0 {
 		successStatus = 200
@@ -160,6 +161,7 @@ func RegisterAPIRoute(
 		SuccessStatus: successStatus,
 		BodyType:      hasBody,
 		QueryType:     hasQuery,
+		ResponseType:  hasResponse,
 	})
 }
 

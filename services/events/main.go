@@ -474,11 +474,11 @@ func initAPIv1() {
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, 200, nil, nil)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, 200, nil, nil, nil)
 
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, 200, nil, nil)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, 200, nil, nil, nil)
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
@@ -492,25 +492,25 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", false, false, 201, cdb.Event{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", false, false, 201, cdb.Event{}, nil, EventResponse{})
 
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", false, false, 201, ScheduleEventRequest{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
 
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{})
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{}, nil)
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{})
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, cmn.StdAPIQuery{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, cmn.StdAPIQuery{})
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, cmn.StdAPIQuery{}, nil)
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil)
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil, nil)
 
 	// Handle uploads
 
@@ -521,18 +521,18 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil, nil)
 
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil, nil)
 
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil)
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil, nil)
 
 	if config.Events.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, 200, nil, nil)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, 200, nil, nil, nil)
 
 		// Finally the docs endpoint
 		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
@@ -695,6 +695,12 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 */
 
+// EventResponse is the struct for the response of event creation
+type EventResponse struct {
+	ID  string `json:"event_id"`
+	Msg string `json:"message"`
+}
+
 func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	var event cdb.Event
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
@@ -711,8 +717,19 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	// Async process
 	jobQueue <- event
 
-	response := map[string]string{"message": "Event created successfully", "event_id": eventID}
+	//response := map[string]string{"message": "Event created successfully", "event_id": eventID}
+	response := EventResponse{
+		ID:  eventID,
+		Msg: "Event creation scheduled successfully",
+	}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
+}
+
+// EventScheduleResponse is the struct for the response of event scheduling
+type EventScheduleResponse struct {
+	EventID       string `json:"event_id"`
+	Message       string `json:"message"`
+	ScheduledTime string `json:"scheduled_time"`
 }
 
 func scheduleEventHandler(w http.ResponseWriter, r *http.Request) {
@@ -753,10 +770,10 @@ func scheduleEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]string{
-		"message":        "Event scheduled successfully",
-		"event_id":       req.Event.ID,
-		"scheduled_time": scheduledTime.Format(time.RFC3339),
+	response := EventScheduleResponse{
+		EventID:       req.Event.ID,
+		Message:       "Event scheduled successfully",
+		ScheduledTime: scheduledTime.Format(time.RFC3339),
 	}
 
 	handleErrorAndRespond(
@@ -782,7 +799,11 @@ func removeEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]string{"message": "Event removed successfully"}
+	//response := map[string]string{"message": "Event removed successfully"}
+	response := EventResponse{
+		ID:  eventID,
+		Msg: "Event removed successfully",
+	}
 	handleErrorAndRespond(w, nil, response, "Error removing event: ", http.StatusInternalServerError, http.StatusOK)
 }
 
@@ -893,6 +914,12 @@ func checkEventHandler(w http.ResponseWriter, r *http.Request) {
 	handleErrorAndRespond(w, nil, events, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
 }
 
+// EventUpdateResponse is the struct for the response of event update
+type EventUpdateResponse struct {
+	ID      string `json:"event_id"`
+	Message string `json:"message"`
+}
+
 func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 	eventID := r.URL.Query().Get("event_id")
 	if eventID == "" {
@@ -910,7 +937,12 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = dbHandler.Exec(`UPDATE Events SET event_type = $1, event_severity = $2, event_timestamp = $3, details = $4 WHERE event_sha256 = $5`, event.Type, event.Severity, event.Timestamp, cmn.ConvertMapToString(event.Details), eventID)
 
-	handleErrorAndRespond(w, err, nil, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
+	response := EventUpdateResponse{
+		ID:      eventID,
+		Message: "Event updated successfully",
+	}
+
+	handleErrorAndRespond(w, err, response, "Error listing events: ", http.StatusInternalServerError, http.StatusOK)
 }
 
 // Handle the notification received
