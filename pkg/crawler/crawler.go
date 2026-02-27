@@ -5230,7 +5230,7 @@ func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURL
 	startTime := time.Now()
 	htmlContent, docType, err := getURLContent(url, processCtx.wd, 1, processCtx, id)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Worker %d: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "Worker %s: Error getting HTML content for '%s': %v. Moving to next Link if any.\n", id, url, err)
 		return nil, "", err
 	}
 	elapsed := time.Since(startTime)
