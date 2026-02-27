@@ -3,6 +3,16 @@
 # shellcheck disable=SC2124
 pars="$@"
 
+# Check if pars contains "--no-vdi"
+if [[ "$pars" == *"--no-vdi"* ]]; then
+    echo "Building without VDI image"
+    export NO_VDI=true
+    # Remove the --no-vdi flag from pars
+    pars="${pars//--no-vdi/}"
+else
+    echo "Building VDI image"
+fi
+
 # Support functions
 
 version_to_integer() {
@@ -140,173 +150,175 @@ export DOCKER_POSTRGES_IMAGE=$POSTGRES_IMAGE
 export DOCKER_SELENIUM_IMAGE=$SELENIUM_IMAGE
 
 # Build custom Selenium image
-echo "Building the selenium container"
-rm -rf docker-selenium
-git clone https://github.com/SeleniumHQ/docker-selenium.git ./docker-selenium
-rval=$?
-if [ $rval -ne 0 ]; then
-    echo "Failed to clone the Selenium repository"
-    exit 1
-fi
-rm -rf Rbee
-git clone https://github.com/pzaino/RBee.git ./Rbee
-rval=$?
-if [ $rval -ne 0 ]; then
-    echo "Failed to clone the RBee repository"
-    exit 1
-fi
-mkdir -p ./Rbee/pkg
-
-# Prepare Sources
-cd ./docker-selenium || exit 1
-git checkout "${SELENIUM_RELEASE}"
-git pull origin "${SELENIUM_RELEASE}"
-# Check if we have patches for this Selenium image version
-if [ -d "../selenium-patches/${SELENIUM_VER_NUM}" ];
-then
-    echo "Found patches for Selenium version ${SELENIUM_VER_NUM}"
-    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile" ];
-    then
-        # patch Selenium Dockefile and start-selenium-standalone.sh files:
-        cp ../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile ./Standalone/Dockerfile
+if [ "$NO_VDI" != "true" ]; then
+    echo "Building VDI image..."
+    rm -rf docker-selenium
+    git clone https://github.com/SeleniumHQ/docker-selenium.git ./docker-selenium
+    rval=$?
+    if [ $rval -ne 0 ]; then
+        echo "Failed to clone the Selenium repository"
+        exit 1
     fi
-
-    # Check if there is a Makefile patch
-    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch" ];
-    then
-        cp ../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch ./Makefile-fixed.patch
-        if patch Makefile ./Makefile-fixed.patch; then
-            echo "Makefile patch applied successfully."
-        else
-            echo "Failed to apply Makefile patch."
-            exit 1
-        fi
+    rm -rf Rbee
+    git clone https://github.com/pzaino/RBee.git ./Rbee
+    rval=$?
+    if [ $rval -ne 0 ]; then
+        echo "Failed to clone the RBee repository"
+        exit 1
     fi
+    mkdir -p ./Rbee/pkg
 
-    # check if there is a `noarch` Base patch first:
-    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Base_noarch_${SELENIUM_VER_NUM}.patch" ];
+    # Prepare Sources
+    cd ./docker-selenium || exit 1
+    git checkout "${SELENIUM_RELEASE}"
+    git pull origin "${SELENIUM_RELEASE}"
+    # Check if we have patches for this Selenium image version
+    if [ -d "../selenium-patches/${SELENIUM_VER_NUM}" ];
     then
-        pushd ./Base || exit 1
-        cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Base_noarch_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Base.patch"
-        if patch Dockerfile ./Dockerfile_Base.patch; then
-            echo "Base patch applied successfully."
-        else
-            echo "Failed to apply Base patch."
-            exit 1
-        fi
-        popd || exit 1
-    else
-        # We have no noarch patch (for this version),
-        # check if we have an architecture specific patch then
-        if [ "$PLATFORM" == "linux/arm64/v8" ];
+        echo "Found patches for Selenium version ${SELENIUM_VER_NUM}"
+        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile" ];
         then
-            # We need to patch the Dockerfile_Base file for ARM64
-            patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
-            echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
-            if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
-            then
-                pushd ./Base || exit 1
-                cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
-                if patch Dockerfile ./${patch_file}; then
-                    echo "Patch applied successfully."
-                else
-                    echo "Failed to apply patch."
-                    exit 1
-                fi
-                popd || exit 1
+            # patch Selenium Dockefile and start-selenium-standalone.sh files:
+            cp ../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile ./Standalone/Dockerfile
+        fi
+
+        # Check if there is a Makefile patch
+        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch" ];
+        then
+            cp ../selenium-patches/${SELENIUM_VER_NUM}/Makefile-fixed.patch ./Makefile-fixed.patch
+            if patch Makefile ./Makefile-fixed.patch; then
+                echo "Makefile patch applied successfully."
             else
-                echo "No architecture patch file found for ${patch_file}, skipping patching."
+                echo "Failed to apply Makefile patch."
+                exit 1
             fi
         fi
-    fi
 
-    # check if there is a `multi-platform` patch for Standalone:
-    if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" ];
-    then
-        pushd ./Standalone || exit 1
-        cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Standalone.patch"
-        if patch Dockerfile ./Dockerfile_Standalone.patch; then
-            echo "Standalone patch applied successfully."
-        else
-            echo "Standalone to apply Base patch."
-            exit 1
-        fi
-        popd || exit 1
-    else
-        # We have no noarch patch (for this version),
-        # check if we have an architecture specific patch then
-        if [ "$PLATFORM" == "linux/arm64/v8" ];
+        # check if there is a `noarch` Base patch first:
+        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Base_noarch_${SELENIUM_VER_NUM}.patch" ];
         then
-            # We need to patch the Dockerfile_Base file for ARM64
-            patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
-            echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
-            if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
-            then
-                pushd ./Base || exit 1
-                cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
-                if patch Dockerfile ./${patch_file}; then
-                    echo "Patch applied successfully."
-                else
-                    echo "Failed to apply patch."
-                    exit 1
-                fi
-                popd || exit 1
+            pushd ./Base || exit 1
+            cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Base_noarch_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Base.patch"
+            if patch Dockerfile ./Dockerfile_Base.patch; then
+                echo "Base patch applied successfully."
             else
-                echo "No architecture patch file found for ${patch_file}, skipping patching."
-            fi
-        fi
-    fi
-
-    # Check if there are Chromium patches
-    if [ "$PLATFORM" == "linux/arm64/v8" ];
-    then
-        # We need to patch the Dockerfile_Base file for ARM64
-        patch_file="Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
-        if [ ! -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
-        then
-            patch_file="Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
-        fi
-        echo "Patching Dockerfile in ./NodeChromium for ARM64: ${patch_file}"
-        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
-        then
-            pushd ./NodeChromium || exit 1
-            cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
-            if patch Dockerfile ./${patch_file}; then
-                echo "Patch applied successfully."
-            else
-                echo "Failed to apply patch."
+                echo "Failed to apply Base patch."
                 exit 1
             fi
             popd || exit 1
         else
-            echo "No architecture patch file found for ${patch_file}, skipping patching."
+            # We have no noarch patch (for this version),
+            # check if we have an architecture specific patch then
+            if [ "$PLATFORM" == "linux/arm64/v8" ];
+            then
+                # We need to patch the Dockerfile_Base file for ARM64
+                patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
+                echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
+                if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+                then
+                    pushd ./Base || exit 1
+                    cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
+                    if patch Dockerfile ./${patch_file}; then
+                        echo "Patch applied successfully."
+                    else
+                        echo "Failed to apply patch."
+                        exit 1
+                    fi
+                    popd || exit 1
+                else
+                    echo "No architecture patch file found for ${patch_file}, skipping patching."
+                fi
+            fi
         fi
-    fi
-else
-    echo "No patches found for Selenium version ${SELENIUM_VER_NUM}, skipping..."
-fi
 
-# Add Rbee to the Selenium image
-cp -r ../Rbee ./Standalone/
-cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomation.conf
+        # check if there is a `multi-platform` patch for Standalone:
+        if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" ];
+        then
+            pushd ./Standalone || exit 1
+            cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Standalone.patch"
+            if patch Dockerfile ./Dockerfile_Standalone.patch; then
+                echo "Standalone patch applied successfully."
+            else
+                echo "Standalone to apply Base patch."
+                exit 1
+            fi
+            popd || exit 1
+        else
+            # We have no noarch patch (for this version),
+            # check if we have an architecture specific patch then
+            if [ "$PLATFORM" == "linux/arm64/v8" ];
+            then
+                # We need to patch the Dockerfile_Base file for ARM64
+                patch_file="Dockerfile_Base_ARM64_${SELENIUM_VER_NUM}.patch"
+                echo "Patching Dockerfile in ./Base for ARM64: ${patch_file}"
+                if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+                then
+                    pushd ./Base || exit 1
+                    cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
+                    if patch Dockerfile ./${patch_file}; then
+                        echo "Patch applied successfully."
+                    else
+                        echo "Failed to apply patch."
+                        exit 1
+                    fi
+                    popd || exit 1
+                else
+                    echo "No architecture patch file found for ${patch_file}, skipping patching."
+                fi
+            fi
+        fi
 
-# Add crowler-vdi-bg
-mkdir -p ./Standalone/images
-cp -r ../images/crowler-vdi-bg.png ./Standalone/images/
-
-# build Selenium image
-if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    # Google chrome is not yet supported officially on ARM64
-    SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-    TARGET_VER_INT=$(version_to_integer "4.21.0")
-    # shellcheck disable=SC2086
-    if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
-        make standalone_firefox
+        # Check if there are Chromium patches
+        if [ "$PLATFORM" == "linux/arm64/v8" ];
+        then
+            # We need to patch the Dockerfile_Base file for ARM64
+            patch_file="Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
+            if [ ! -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+            then
+                patch_file="Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
+            fi
+            echo "Patching Dockerfile in ./NodeChromium for ARM64: ${patch_file}"
+            if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ];
+            then
+                pushd ./NodeChromium || exit 1
+                cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
+                if patch Dockerfile ./${patch_file}; then
+                    echo "Patch applied successfully."
+                else
+                    echo "Failed to apply patch."
+                    exit 1
+                fi
+                popd || exit 1
+            else
+                echo "No architecture patch file found for ${patch_file}, skipping patching."
+            fi
+        fi
     else
-        make standalone_chromium
+        echo "No patches found for Selenium version ${SELENIUM_VER_NUM}, skipping..."
     fi
-else
-    make standalone_chrome
+
+    # Add Rbee to the Selenium image
+    cp -r ../Rbee ./Standalone/
+    cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomation.conf
+
+    # Add crowler-vdi-bg
+    mkdir -p ./Standalone/images
+    cp -r ../images/crowler-vdi-bg.png ./Standalone/images/
+
+    # build Selenium image
+    if [ "${ARCH}" == "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        # Google chrome is not yet supported officially on ARM64
+        SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
+        TARGET_VER_INT=$(version_to_integer "4.21.0")
+        # shellcheck disable=SC2086
+        if [ $SELENIUM_VER_NUM_INT -lt $TARGET_VER_INT ]; then
+            make standalone_firefox
+        else
+            make standalone_chromium
+        fi
+    else
+        make standalone_chrome
+    fi
 fi
 
 # Run Docker Compose
