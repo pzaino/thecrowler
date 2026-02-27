@@ -181,6 +181,31 @@ func CreateEventWithRetries(db *Handler, event Event) (string, error) {
 	return "", fmt.Errorf("failed to create event after %d retries: %w", maxRetries, err)
 }
 
+// Sets an event as processed by updating its expires_at to a short time in the future, effectively marking it as expired and preventing it from being processed again.
+func SetEventAsProcessed(ctx context.Context, db *Handler, eventUID string) error {
+	result, err := (*db).ExecContext(ctx, `
+		UPDATE Events
+		SET
+			expires_at = NOW() + INTERVAL '1 minute',
+			last_updated_at = NOW()
+		WHERE event_sha256 = $1;
+	`, eventUID)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("no event found with the given UID")
+	}
+
+	return nil
+}
+
 /*
 // ScheduleEvent schedules a new event in the database. Like CreateEvent, it receives an Event struct, but it also needs a scheduling time and returns the Event UID and an error if the operation fails.
 func ScheduleEvent(db *Handler, e Event, scheduleTime string) (time.Time, error) {

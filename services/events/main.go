@@ -1423,12 +1423,22 @@ func processEvent(event cdb.Event) {
 
 	// Remove the event if needed
 	removalPolicy := strings.ToLower(strings.TrimSpace(config.Events.EventRemoval))
-	if (removalPolicy == "") || (removalPolicy == cmn.AlwaysStr) {
+	if removalPolicy == "" {
+		expireEvent(event.ID)
+	} else if removalPolicy == cmn.AlwaysStr {
 		removeHandledEvent(event.ID)
 	} else if (removalPolicy == "on_success") && processingSuccess {
 		removeHandledEvent(event.ID)
 	} else if (removalPolicy == "on_failure") && !processingSuccess {
 		removeHandledEvent(event.ID)
+	}
+}
+
+func expireEvent(eventID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := cdb.SetEventAsProcessed(ctx, &dbHandler, eventID); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to expire event: %v", err)
 	}
 }
 
