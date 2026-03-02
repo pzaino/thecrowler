@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int
 		defer func() { <-dbSemaphore }()
 
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Invalid query", http.StatusBadRequest, successCode)
 			return
@@ -89,12 +91,16 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 // extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
 func extractQueryOrBody(r *http.Request) (string, error) {
 	if r.Method == http.MethodPost {
-		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close() // nolint:errcheck
+		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			return "", err
 		}
-		return string(body), nil
+		//defer r.Body.Close() // nolint:errcheck - we will close it in the caller after processing
+
+		// Replace body so it can be read again later
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		return string(bodyBytes), nil
 	}
 
 	// Handle GET requests
@@ -202,6 +208,7 @@ func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
 
 func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
 	input, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
 		handleErrorAndRespond(
 			w,
@@ -269,6 +276,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	}
 
 	input, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
