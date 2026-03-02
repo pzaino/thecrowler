@@ -1616,7 +1616,7 @@ func deleteWebObjects(tx *sql.Tx, indexID uint64) error {
 // It returns an error, if any.
 func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
 	// Prepare the "Details" field for insertion
-	details := make(map[string]interface{})
+	details := make(map[string]any)
 	details["performance"] = (*pageInfo).PerfInfo
 	links := []string{}
 	for _, link := range (*pageInfo).Links {
@@ -1671,8 +1671,8 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 
 		// Combine the scraped data and the details
 		if len(scrapedDataJSON) > 0 {
-			var doc1 map[string]interface{}
-			var doc2 map[string]interface{}
+			var doc1 map[string]any
+			var doc2 map[string]any
 
 			err := json.Unmarshal(detailsJSON, &doc1)
 			if err != nil {
@@ -1686,8 +1686,9 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			// Merges doc2 into doc1
 			mergeMaps(doc1, doc2)
 
-			detailsJSON, err = json.Marshal(doc1)
+			detailsJSON, err = normalizeJSON(doc1)
 			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "normalizing JSON: %v", err)
 				return err
 			}
 		}
@@ -1708,14 +1709,16 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	}
 
 	// Extract Scraped Data and Detected Tech from detailsJSON
+	htmlContent := bytes.ToValidUTF8([]byte((*pageInfo).HTML), []byte{})
+	textContent := bytes.ToValidUTF8([]byte((*pageInfo).BodyText), []byte{})
 
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
 	bytesToHash := []byte{}
-	if len((*pageInfo).BodyText) > 0 {
-		bytesToHash = []byte((*pageInfo).BodyText)
-	} else if len((*pageInfo).HTML) > 0 {
-		bytesToHash = []byte((*pageInfo).HTML)
+	if len(textContent) > 0 {
+		bytesToHash = []byte(textContent)
+	} else if len(htmlContent) > 0 {
+		bytesToHash = []byte(htmlContent)
 	} else {
 		hasher.Write([]byte(detailsJSON))
 	}
@@ -1723,10 +1726,6 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	bytesToHash = append(bytesToHash, detectedTechJSON...)
 	hasher.Write(bytesToHash)
 	hash := hex.EncodeToString(hasher.Sum(nil))
-
-	// Get HTML and text Content
-	htmlContent := (*pageInfo).HTML
-	textContent := (*pageInfo).BodyText
 
 	var objID int64
 
@@ -1764,6 +1763,24 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	}
 
 	return nil
+}
+
+func normalizeJSON(v any) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+
+	// Remove invalid UTF-8 sequences
+	raw = bytes.ToValidUTF8(raw, []byte{})
+
+	// Re-parse and re-marshal to ensure JSON validity
+	var clean interface{}
+	if err := json.Unmarshal(raw, &clean); err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(clean)
 }
 
 func mergeMaps(dst, src map[string]interface{}) {
