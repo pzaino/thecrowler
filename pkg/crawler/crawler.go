@@ -1611,6 +1611,8 @@ func deleteWebObjects(tx *sql.Tx, indexID uint64) error {
 	return err
 }
 
+var nullEscape = regexp.MustCompile(`\\u0000`)
+
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
@@ -1711,6 +1713,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	// Make sure detailsJSON is absolutely valid for JSONB objects:
 	detailsJSON = bytes.ToValidUTF8(detailsJSON, []byte{})
 	detailsJSON = removeSurrogateEscapes(detailsJSON)
+	detailsJSON = nullEscape.ReplaceAll(detailsJSON, []byte(""))
 
 	// Extract Scraped Data and Detected Tech from detailsJSON
 	htmlContent := bytes.ToValidUTF8([]byte((*pageInfo).HTML), []byte{})
@@ -1754,6 +1757,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	FROM upsert
 	FOR UPDATE;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting into WebObjectsIndex: %v", detailsJSON)
 		return err
 	}
 
