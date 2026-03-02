@@ -228,7 +228,7 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 			"query":  r.URL.RawQuery,
 			"header": r.Header,
 		},
-		"input": PrepareInput(input),
+		"jsonData": PrepareInput(input),
 	}
 
 	result, err := plugin.Execute(
@@ -321,7 +321,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 				"query":  r.URL.RawQuery,
 				"header": r.Header,
 			},
-			"input": input,
+			"jsonData": input,
 			"progress": func(msg map[string]interface{}) {
 				select {
 				case progressCh <- msg:
