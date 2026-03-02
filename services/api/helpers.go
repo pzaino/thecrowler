@@ -221,6 +221,12 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 		return
 	}
 
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(input), &parsed); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Input is not valid JSON, treating as raw string")
+		parsed = PrepareInput(input)
+	}
+
 	ctx := map[string]interface{}{
 		"http": map[string]interface{}{
 			"method": r.Method,
@@ -228,7 +234,7 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 			"query":  r.URL.RawQuery,
 			"header": r.Header,
 		},
-		"jsonData": PrepareInput(input),
+		"jsonData": parsed,
 	}
 
 	result, err := plugin.Execute(
@@ -314,6 +320,13 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 
 	go func(input string) {
 		defer close(pluginDone)
+
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(input), &parsed); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "Input is not valid JSON, treating as raw string")
+			parsed = input
+		}
+
 		ctx := map[string]interface{}{
 			"http": map[string]interface{}{
 				"method": r.Method,
@@ -321,7 +334,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 				"query":  r.URL.RawQuery,
 				"header": r.Header,
 			},
-			"jsonData": input,
+			"jsonData": parsed,
 			"progress": func(msg map[string]interface{}) {
 				select {
 				case progressCh <- msg:
