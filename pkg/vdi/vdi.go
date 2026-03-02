@@ -2,6 +2,7 @@
 package vdi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -17,6 +18,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
 const (
@@ -410,6 +412,7 @@ type SeleniumInstance struct {
 type ProcessContextInterface interface {
 	GetWebDriver() *WebDriver
 	GetConfig() *cfg.Config // Assuming Config is a struct used inside ProcessContext
+	GetSource() *cdb.Source // Assuming Source is a struct used inside ProcessContext
 	GetVDIClosedFlag() *bool
 	SetVDIClosedFlag(bool)
 	GetVDIOperationMutex() *sync.Mutex
@@ -555,6 +558,12 @@ func ResetVDI(ctx ProcessContextInterface, browserType int) error {
 	return nil
 }
 
+type ProxySettings struct {
+	ProxyURL  string
+	ProxyUser string
+	ProxyPass string
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -666,8 +675,24 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cdpActive = true
 	}
 
+	proxy := ProxySettings{}
+	rawSource := ctx.GetSource()
+	if rawSource != nil {
+		if rawSource.Config != nil {
+			var sourceConfig map[string]interface{}
+			err := json.Unmarshal(*rawSource.Config, &sourceConfig)
+			if err != nil {
+				proxy.ProxyURL = strings.TrimSpace(sel.Config.ProxyURL)
+			} else {
+				if val, ok := sourceConfig["proxy_url"].(string); ok {
+					proxy.ProxyURL = strings.TrimSpace(val)
+				}
+			}
+		}
+	}
+
 	// Append proxy settings if available
-	if sel.Config.ProxyURL != "" {
+	if proxy.ProxyURL != "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Proxy for '%s'...", sel.Config.Name)
 		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
 		args = append(args, "--force-proxy-for-all")
@@ -721,6 +746,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			caps.AddProxy(selProxy)
 			cmn.DebugMsg(cmn.DbgLvlDebug, "Proxy settings: %v\n", selProxy)
 		*/
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] No proxy settings for '%s'", sel.Config.Name)
 	}
 
 	// General settings
