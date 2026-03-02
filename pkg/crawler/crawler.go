@@ -1708,6 +1708,10 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		//fmt.Println(string(detailsJSON))
 	}
 
+	// Make sure detailsJSON is absolutely valid for JSONB objects:
+	detailsJSON = bytes.ToValidUTF8(detailsJSON, []byte{})
+	detailsJSON = removeSurrogateEscapes(detailsJSON)
+
 	// Extract Scraped Data and Detected Tech from detailsJSON
 	htmlContent := bytes.ToValidUTF8([]byte((*pageInfo).HTML), []byte{})
 	textContent := bytes.ToValidUTF8([]byte((*pageInfo).BodyText), []byte{})
@@ -1763,6 +1767,12 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	}
 
 	return nil
+}
+
+var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)
+
+func removeSurrogateEscapes(jsonBytes []byte) []byte {
+	return surrogateEscape.ReplaceAll(jsonBytes, []byte(""))
 }
 
 func normalizeJSON(v any) ([]byte, error) {
