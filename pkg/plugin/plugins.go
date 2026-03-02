@@ -2511,46 +2511,85 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		console.log(result); // Prints a JSON document with the event details
 */
 func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
-	err := vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
-		// Extract arguments from JavaScript call
-		eventType, err := call.Argument(0).ToString()
-		if err != nil || strings.TrimSpace(eventType) == "" {
-			return otto.UndefinedValue() // Event type is mandatory
-		}
+	return vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
 
-		sourceIDraw, err := call.Argument(1).ToInteger()
-		if err != nil {
-			return otto.UndefinedValue() // Source ID is mandatory
-		}
-		sourceID := uint64(sourceIDraw) //nolint:gosec // We are not using end-user input here
+		var event cdb.Event
 
-		severity, err := call.Argument(2).ToString()
-		if err != nil || strings.TrimSpace(severity) == "" {
-			severity = cdb.EventSeverityInfo // Default severity
-		}
+		if call.Argument(0).IsObject() && call.Argument(1).IsUndefined() {
 
-		detailsArg := call.Argument(3)
-		var details map[string]interface{}
-		if detailsArg.IsObject() {
-			detailsObj, err := detailsArg.Export()
-			if err == nil {
-				details, _ = detailsObj.(map[string]interface{})
+			// --- Mode 1: Single object argument ---
+
+			obj, err := call.Argument(0).Export()
+			if err != nil {
+				return otto.UndefinedValue()
 			}
-		}
-		if details == nil {
-			details = make(map[string]interface{}) // Default empty details
+
+			data, ok := obj.(map[string]interface{})
+			if !ok {
+				return otto.UndefinedValue()
+			}
+
+			event.Type, _ = data["event_type"].(string)
+
+			if sid, ok := data["source_id"].(float64); ok {
+				event.SourceID = uint64(sid)
+			}
+
+			event.Severity, _ = data["event_severity"].(string)
+			if event.Severity == "" {
+				event.Severity = cdb.EventSeverityInfo
+			}
+
+			if details, ok := data["details"].(map[string]interface{}); ok {
+				event.Details = details
+			} else {
+				event.Details = make(map[string]interface{})
+			}
+
+		} else {
+
+			// --- Mode 2: Legacy positional arguments ---
+
+			eventType, err := call.Argument(0).ToString()
+			if err != nil || strings.TrimSpace(eventType) == "" {
+				return otto.UndefinedValue()
+			}
+
+			sourceIDraw, err := call.Argument(1).ToInteger()
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			severity, err := call.Argument(2).ToString()
+			if err != nil || strings.TrimSpace(severity) == "" {
+				severity = cdb.EventSeverityInfo
+			}
+
+			detailsArg := call.Argument(3)
+			var details map[string]interface{}
+			if detailsArg.IsObject() {
+				detailsObj, err := detailsArg.Export()
+				if err == nil {
+					details, _ = detailsObj.(map[string]interface{})
+				}
+			}
+			if details == nil {
+				details = make(map[string]interface{})
+			}
+
+			event.Type = eventType
+			event.SourceID = uint64(sourceIDraw)
+			event.Severity = severity
+			event.Details = details
 		}
 
-		// Create a new event object
-		event := cdb.Event{
-			SourceID:  sourceID,
-			Type:      eventType,
-			Severity:  severity,
-			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
-			Details:   details,
+		// Validate mandatory field
+		if strings.TrimSpace(event.Type) == "" {
+			return otto.UndefinedValue()
 		}
 
-		// Insert the event into the database
+		event.ExpiresAt = time.Now().Add(2 * time.Minute).Format(time.RFC3339)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		eID, err := cdb.CreateEvent(ctx, db, event)
 		cancel()
@@ -2559,14 +2598,12 @@ func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
 			return otto.UndefinedValue()
 		}
 
-		// Return success status
 		success, _ := vm.ToValue(map[string]interface{}{
 			"status":  "success",
 			"eventID": eID,
 		})
 		return success
 	})
-	return err
 }
 
 /*
