@@ -1524,33 +1524,43 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
+	// Get Value from Key Value Store DB
 	if err := addJSAPIKVGet(vm); err != nil {
 		return err
 	}
+	// Set Value in Key Value Store DB
 	if err := addJSAPIKVSet(vm); err != nil {
 		return err
 	}
+	// Delete Key from Key Value Store DB
 	if err := addJSAPIDeleteKV(vm); err != nil {
 		return err
 	}
+	// List Keys in Key Value Store DB
 	if err := addJSAPIListKVKeys(vm); err != nil {
 		return err
 	}
+	// Generic Increment/Decrement Atomic Key in Key Value Store DB
 	if err := addJSAPIIncrDecrKV(vm); err != nil {
 		return err
 	}
+	// Atomic Counter in Key Value Store DB
 	if err := addJSAPICounterCreate(vm); err != nil {
 		return err
 	}
+	// Atomic Counter TryAcquire in Key Value Store DB
 	if err := addJSAPICounterTryAcquire(vm); err != nil {
 		return err
 	}
+	// Atomic Counter Release in Key Value Store DB
 	if err := addJSAPICounterRelease(vm); err != nil {
 		return err
 	}
+	// Get value of Atomic Counter in Key Value Store DB
 	if err := addJSAPICounterGet(vm); err != nil {
 		return err
 	}
+	// Sleep function
 	if err := addJSAPISleep(vm); err != nil {
 		return err
 	}
@@ -2394,7 +2404,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		argsArray := call.Argument(1)
-		var args []interface{}
+		var args []any
 		if argsArray.IsObject() {
 			argsObj, err := argsArray.Export()
 			if err != nil {
@@ -2402,9 +2412,9 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 				return otto.UndefinedValue()
 			}
 
-			var argsSlice []interface{}
+			var argsSlice []any
 			var ok bool
-			argsSlice, ok = argsObj.([]interface{})
+			argsSlice, ok = argsObj.([]any)
 			if !ok {
 				// If the arguments are not an array, convert them to a slice
 				argsSlice = append(argsSlice, argsObj)
@@ -2415,7 +2425,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 				switch v := arg.(type) {
 				case float64:
 					args = append(args, int64(v)) // Convert to int64
-				case []interface{}: // Handle nested slices
+				case []any: // Handle nested slices
 					args = append(args, v...)
 				case []uint64: // Flatten uint64 slices
 					for _, nested := range v {
@@ -2426,6 +2436,8 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 				}
 			}
 		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running query: %s with args: %v", query, args)
 
 		// Run the query using the provided db handler and arguments
 		rows, err := (*db).ExecuteQuery(query, args...)
@@ -2443,15 +2455,15 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Prepare the result slice
-		result := make([]map[string]interface{}, 0)
+		result := make([]map[string]any, 0)
 
 		// Iterate over the rows
 		var length uint64
 		for rows.Next() {
 			// Create a map for the row
-			row := make(map[string]interface{})
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
+			row := make(map[string]any)
+			values := make([]any, len(columns))
+			valuePtrs := make([]any, len(columns))
 			for i := range columns {
 				valuePtrs[i] = &values[i]
 			}
@@ -2476,7 +2488,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			length++
 		}
 		// Let's add a field to the result to indicate the number of rows returned
-		result = append(result, map[string]interface{}{"rows": length})
+		result = append(result, map[string]any{"rows": length})
 
 		// Convert the result to JSON
 		_, err = json.Marshal(result)
@@ -2491,7 +2503,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "converting JSON result to JS value:", err)
 			return otto.UndefinedValue()
 		}
-		//cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %s", jsResult.String())
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %s", jsResult.String())
 
 		return jsResult
 	})
