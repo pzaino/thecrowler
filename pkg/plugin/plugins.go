@@ -2414,7 +2414,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 
 			var argsSlice []any
 			var ok bool
-			argsSlice, ok = argsObj.([]any)
+			argsSlice, ok = argsObj.([]interface{}) // this needs to be []interface{} because otto exports arrays as []interface{}
 			if !ok {
 				// If the arguments are not an array, convert them to a slice
 				argsSlice = append(argsSlice, argsObj)
