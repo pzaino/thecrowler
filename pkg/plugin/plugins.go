@@ -2709,8 +2709,9 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		var filter cdb.EventFilter
 		if filterArg.IsObject() {
 			if raw, err := filterArg.Export(); err == nil {
-				m, ok := raw.(map[string]interface{})
+				m, ok := raw.(map[string]any)
 				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "invalid filter object provided to subscribeEvents")
 					return otto.NullValue()
 				}
 
@@ -2755,6 +2756,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 	if err := vm.Set("pollEvent", func(call otto.FunctionCall) otto.Value {
 		subID, err := call.Argument(0).ToString()
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "invalid subscription ID provided to pollEvent")
 			return otto.NullValue()
 		}
 
@@ -2766,6 +2768,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		rt.mu.Lock()
 		if rt.shutdown {
 			rt.mu.Unlock()
+			cmn.DebugMsg(cmn.DbgLvlDebug, "pollEvent called after shutdown, returning null")
 			return otto.NullValue()
 		}
 		sub := rt.subs[subID]
