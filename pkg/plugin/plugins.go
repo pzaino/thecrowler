@@ -2404,38 +2404,36 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		argsArray := call.Argument(1)
+
 		var args []any
-		if argsArray.IsObject() {
-			argsObj, err := argsArray.Export()
+
+		if argsArray.IsDefined() {
+
+			exported, err := argsArray.Export()
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error exporting query arguments: %v", err)
 				return otto.UndefinedValue()
 			}
 
-			var argsSlice []interface{}
+			var flatten func(interface{})
+			flatten = func(v interface{}) {
+				if v == nil {
+					return
+				}
 
-			switch v := argsObj.(type) {
-			case []interface{}: // This must stay []interface{} because otto exports arrays as []interface{}
-				argsSlice = append(argsSlice, v...)
-			default:
-				argsSlice = append(argsSlice, v)
-			}
-
-			// Process arguments from the JavaScript array
-			for _, arg := range argsSlice {
-				switch v := arg.(type) {
-				case float64:
-					args = append(args, int64(v)) // Convert to int64
-				case []interface{}: // Handle nested slices
-					args = append(args, v...)
-				case []uint64: // Flatten uint64 slices
-					for _, nested := range v {
-						args = append(args, nested)
+				switch val := v.(type) {
+				case []interface{}:
+					for _, inner := range val {
+						flatten(inner)
 					}
+				case float64:
+					args = append(args, int64(val))
 				default:
-					args = append(args, v)
+					args = append(args, val)
 				}
 			}
+
+			flatten(exported)
 		}
 
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running query: %s with args: %v", query, args)
