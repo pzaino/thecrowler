@@ -2413,11 +2413,12 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			}
 
 			var argsSlice []any
-			var ok bool
-			argsSlice, ok = argsObj.([]interface{}) // this needs to be []interface{} because otto exports arrays as []interface{}
-			if !ok {
-				// If the arguments are not an array, convert them to a slice
-				argsSlice = append(argsSlice, argsObj)
+
+			switch v := argsObj.(type) {
+			case []interface{}: // This must stay []interface{} because otto exports arrays as []interface{}
+				argsSlice = append(argsSlice, v...)
+			default:
+				argsSlice = append(argsSlice, v)
 			}
 
 			// Process arguments from the JavaScript array
@@ -2425,7 +2426,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 				switch v := arg.(type) {
 				case float64:
 					args = append(args, int64(v)) // Convert to int64
-				case []any: // Handle nested slices
+				case []interface{}: // Handle nested slices
 					args = append(args, v...)
 				case []uint64: // Flatten uint64 slices
 					for _, nested := range v {
