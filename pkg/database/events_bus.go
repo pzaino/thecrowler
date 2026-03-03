@@ -122,7 +122,7 @@ func (b *EventBus) Unsubscribe(id string) {
 
 	// Transition 1 -> 0
 	if b.subCount.Add(-1) == 0 {
-		stopGlobalEventIngestion()
+		//stopGlobalEventIngestion()
 	}
 }
 
