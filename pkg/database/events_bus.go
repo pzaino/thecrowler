@@ -52,10 +52,8 @@ func NewEventBus() *EventBus {
 
 // InitGlobalEventBus starts the global event bus.
 func InitGlobalEventBus(_ *Handler) {
-	globalEventBusOnce.Do(func() {
-		GlobalEventBus, globalEventBusStop = StartEventBus()
-		cmn.DebugMsg(cmn.DbgLvlInfo, "Global event bus initialized")
-	})
+	GlobalEventBus, globalEventBusStop = StartEventBus()
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Global event bus initialized")
 }
 
 // StopGlobalEventBus stops the global event bus.
