@@ -2412,7 +2412,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 				return otto.UndefinedValue()
 			}
 
-			var argsSlice []any
+			var argsSlice []interface{}
 
 			switch v := argsObj.(type) {
 			case []interface{}: // This must stay []interface{} because otto exports arrays as []interface{}
