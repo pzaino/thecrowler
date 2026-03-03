@@ -2421,6 +2421,15 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 					return
 				}
 
+				rv := reflect.ValueOf(v)
+
+				if rv.Kind() == reflect.Slice {
+					for i := 0; i < rv.Len(); i++ {
+						flatten(rv.Index(i).Interface())
+					}
+					return
+				}
+
 				switch val := v.(type) {
 				case []interface{}:
 					for _, inner := range val {
