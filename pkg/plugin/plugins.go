@@ -2696,6 +2696,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 
 	// subscribeEvents(filter, buffer)
 	if err := vm.Set("subscribeEvents", func(call otto.FunctionCall) otto.Value {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "subscribeEvents called with arguments: %v", extractArguments(call))
 		filterArg := call.Argument(0)
 		bufArg := call.Argument(1)
 
