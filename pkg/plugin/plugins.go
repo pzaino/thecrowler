@@ -2729,6 +2729,10 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 
 		id, ch, cancel := cdb.GlobalEventBus.Subscribe(filter, int(buffer))
 
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"Plugin subscribed: id=%s, type_prefix=%s, source_id=%v",
+			id, filter.TypePrefix, filter.SourceID)
+
 		rt.mu.Lock()
 		if rt.shutdown {
 			rt.mu.Unlock()
