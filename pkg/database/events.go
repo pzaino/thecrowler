@@ -675,9 +675,8 @@ func StartEventBus() (*EventBus, func()) {
 		GlobalEventBus = NewEventBus()
 	})
 
-	// Stop function is idempotent and safe to call multiple times
 	stopFn := func() {
-		StopGlobalEventBus()
+		stopGlobalEventIngestion()
 	}
 
 	return GlobalEventBus, stopFn
