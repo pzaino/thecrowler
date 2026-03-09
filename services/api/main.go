@@ -927,6 +927,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in search request", http.StatusBadRequest, successCode)
 			return
@@ -974,6 +975,7 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in webobject search request", http.StatusBadRequest, successCode)
 			return
@@ -1032,6 +1034,7 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in correlatedsites search request", http.StatusBadRequest, successCode)
 			return
@@ -1091,6 +1094,7 @@ func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in scraped_data search request", http.StatusBadRequest, successCode)
 			return
@@ -1150,6 +1154,7 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in screenshot search request", http.StatusBadRequest, successCode)
 			return
@@ -1191,6 +1196,7 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in netinfo search request", http.StatusBadRequest, successCode)
 			return
@@ -1250,6 +1256,7 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in httpinfo search request", http.StatusBadRequest, successCode)
 			return
@@ -1309,6 +1316,7 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusCreated
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in addSource request", http.StatusBadRequest, successCode)
 			return
@@ -1338,6 +1346,7 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusNoContent
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
 			return
@@ -1367,6 +1376,7 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusNoContent
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
 			return
@@ -1396,6 +1406,7 @@ func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusNoContent
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
 			return
@@ -1425,6 +1436,7 @@ func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in status request", http.StatusBadRequest, successCode)
 			return

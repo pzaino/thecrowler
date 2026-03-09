@@ -1530,33 +1530,43 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
+	// Get Value from Key Value Store DB
 	if err := addJSAPIKVGet(vm); err != nil {
 		return err
 	}
+	// Set Value in Key Value Store DB
 	if err := addJSAPIKVSet(vm); err != nil {
 		return err
 	}
+	// Delete Key from Key Value Store DB
 	if err := addJSAPIDeleteKV(vm); err != nil {
 		return err
 	}
+	// List Keys in Key Value Store DB
 	if err := addJSAPIListKVKeys(vm); err != nil {
 		return err
 	}
+	// Generic Increment/Decrement Atomic Key in Key Value Store DB
 	if err := addJSAPIIncrDecrKV(vm); err != nil {
 		return err
 	}
+	// Atomic Counter in Key Value Store DB
 	if err := addJSAPICounterCreate(vm); err != nil {
 		return err
 	}
+	// Atomic Counter TryAcquire in Key Value Store DB
 	if err := addJSAPICounterTryAcquire(vm); err != nil {
 		return err
 	}
+	// Atomic Counter Release in Key Value Store DB
 	if err := addJSAPICounterRelease(vm); err != nil {
 		return err
 	}
+	// Get value of Atomic Counter in Key Value Store DB
 	if err := addJSAPICounterGet(vm); err != nil {
 		return err
 	}
+	// Sleep function
 	if err := addJSAPISleep(vm); err != nil {
 		return err
 	}
@@ -2514,38 +2524,48 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		argsArray := call.Argument(1)
-		var args []interface{}
-		if argsArray.IsObject() {
-			argsObj, err := argsArray.Export()
+
+		var args []any
+
+		if argsArray.IsDefined() {
+
+			exported, err := argsArray.Export()
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error exporting query arguments: %v", err)
 				return otto.UndefinedValue()
 			}
 
-			var argsSlice []interface{}
-			var ok bool
-			argsSlice, ok = argsObj.([]interface{})
-			if !ok {
-				// If the arguments are not an array, convert them to a slice
-				argsSlice = append(argsSlice, argsObj)
-			}
+			var flatten func(interface{})
+			flatten = func(v interface{}) {
+				if v == nil {
+					return
+				}
 
-			// Process arguments from the JavaScript array
-			for _, arg := range argsSlice {
-				switch v := arg.(type) {
-				case float64:
-					args = append(args, int64(v)) // Convert to int64
-				case []interface{}: // Handle nested slices
-					args = append(args, v...)
-				case []uint64: // Flatten uint64 slices
-					for _, nested := range v {
-						args = append(args, nested)
+				rv := reflect.ValueOf(v)
+
+				if rv.Kind() == reflect.Slice {
+					for i := 0; i < rv.Len(); i++ {
+						flatten(rv.Index(i).Interface())
 					}
+					return
+				}
+
+				switch val := v.(type) {
+				case []interface{}:
+					for _, inner := range val {
+						flatten(inner)
+					}
+				case float64:
+					args = append(args, int64(val))
 				default:
-					args = append(args, v)
+					args = append(args, val)
 				}
 			}
+
+			flatten(exported)
 		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running query: %s with args: %v", query, args)
 
 		// Run the query using the provided db handler and arguments
 		rows, err := (*db).ExecuteQuery(query, args...)
@@ -2563,15 +2583,15 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Prepare the result slice
-		result := make([]map[string]interface{}, 0)
+		result := make([]map[string]any, 0)
 
 		// Iterate over the rows
 		var length uint64
 		for rows.Next() {
 			// Create a map for the row
-			row := make(map[string]interface{})
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
+			row := make(map[string]any)
+			values := make([]any, len(columns))
+			valuePtrs := make([]any, len(columns))
 			for i := range columns {
 				valuePtrs[i] = &values[i]
 			}
@@ -2596,7 +2616,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			length++
 		}
 		// Let's add a field to the result to indicate the number of rows returned
-		result = append(result, map[string]interface{}{"rows": length})
+		result = append(result, map[string]any{"rows": length})
 
 		// Convert the result to JSON
 		_, err = json.Marshal(result)
@@ -2604,6 +2624,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "marshaling query result to JSON:", err)
 			return otto.UndefinedValue()
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %v", result)
 
 		// Convert the JSON string to a JavaScript-compatible value
 		jsResult, err := vm.ToValue(result)
@@ -2611,7 +2632,6 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "converting JSON result to JS value:", err)
 			return otto.UndefinedValue()
 		}
-		//cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %s", jsResult.String())
 
 		return jsResult
 	})
@@ -2631,46 +2651,85 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		console.log(result); // Prints a JSON document with the event details
 */
 func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
-	err := vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
-		// Extract arguments from JavaScript call
-		eventType, err := call.Argument(0).ToString()
-		if err != nil || strings.TrimSpace(eventType) == "" {
-			return otto.UndefinedValue() // Event type is mandatory
-		}
+	return vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
 
-		sourceIDraw, err := call.Argument(1).ToInteger()
-		if err != nil {
-			return otto.UndefinedValue() // Source ID is mandatory
-		}
-		sourceID := uint64(sourceIDraw) //nolint:gosec // We are not using end-user input here
+		var event cdb.Event
 
-		severity, err := call.Argument(2).ToString()
-		if err != nil || strings.TrimSpace(severity) == "" {
-			severity = cdb.EventSeverityInfo // Default severity
-		}
+		if call.Argument(0).IsObject() && call.Argument(1).IsUndefined() {
 
-		detailsArg := call.Argument(3)
-		var details map[string]interface{}
-		if detailsArg.IsObject() {
-			detailsObj, err := detailsArg.Export()
-			if err == nil {
-				details, _ = detailsObj.(map[string]interface{})
+			// --- Mode 1: Single object argument ---
+
+			obj, err := call.Argument(0).Export()
+			if err != nil {
+				return otto.UndefinedValue()
 			}
-		}
-		if details == nil {
-			details = make(map[string]interface{}) // Default empty details
+
+			data, ok := obj.(map[string]interface{})
+			if !ok {
+				return otto.UndefinedValue()
+			}
+
+			event.Type, _ = data["event_type"].(string)
+
+			if sid, ok := data["source_id"].(float64); ok {
+				event.SourceID = uint64(sid)
+			}
+
+			event.Severity, _ = data["event_severity"].(string)
+			if event.Severity == "" {
+				event.Severity = cdb.EventSeverityInfo
+			}
+
+			if details, ok := data["details"].(map[string]interface{}); ok {
+				event.Details = details
+			} else {
+				event.Details = make(map[string]interface{})
+			}
+
+		} else {
+
+			// --- Mode 2: Legacy positional arguments ---
+
+			eventType, err := call.Argument(0).ToString()
+			if err != nil || strings.TrimSpace(eventType) == "" {
+				return otto.UndefinedValue()
+			}
+
+			sourceIDraw, err := call.Argument(1).ToInteger()
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			severity, err := call.Argument(2).ToString()
+			if err != nil || strings.TrimSpace(severity) == "" {
+				severity = cdb.EventSeverityInfo
+			}
+
+			detailsArg := call.Argument(3)
+			var details map[string]interface{}
+			if detailsArg.IsObject() {
+				detailsObj, err := detailsArg.Export()
+				if err == nil {
+					details, _ = detailsObj.(map[string]interface{})
+				}
+			}
+			if details == nil {
+				details = make(map[string]interface{})
+			}
+
+			event.Type = eventType
+			event.SourceID = uint64(sourceIDraw)
+			event.Severity = severity
+			event.Details = details
 		}
 
-		// Create a new event object
-		event := cdb.Event{
-			SourceID:  sourceID,
-			Type:      eventType,
-			Severity:  severity,
-			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
-			Details:   details,
+		// Validate mandatory field
+		if strings.TrimSpace(event.Type) == "" {
+			return otto.UndefinedValue()
 		}
 
-		// Insert the event into the database
+		event.ExpiresAt = time.Now().Add(2 * time.Minute).Format(time.RFC3339)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		eID, err := cdb.CreateEvent(ctx, db, event)
 		cancel()
@@ -2679,14 +2738,12 @@ func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
 			return otto.UndefinedValue()
 		}
 
-		// Return success status
 		success, _ := vm.ToValue(map[string]interface{}{
 			"status":  "success",
 			"eventID": eID,
 		})
 		return success
 	})
-	return err
 }
 
 /*
@@ -2779,6 +2836,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 
 	// subscribeEvents(filter, buffer)
 	if err := vm.Set("subscribeEvents", func(call otto.FunctionCall) otto.Value {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "subscribeEvents called with arguments: %v", extractArguments(call))
 		filterArg := call.Argument(0)
 		bufArg := call.Argument(1)
 
@@ -2792,8 +2850,9 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		var filter cdb.EventFilter
 		if filterArg.IsObject() {
 			if raw, err := filterArg.Export(); err == nil {
-				m, ok := raw.(map[string]interface{})
+				m, ok := raw.(map[string]any)
 				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "invalid filter object provided to subscribeEvents")
 					return otto.NullValue()
 				}
 
@@ -2811,6 +2870,10 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		cdb.InitGlobalEventBus(db)
 
 		id, ch, cancel := cdb.GlobalEventBus.Subscribe(filter, int(buffer))
+
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"Plugin subscribed: id=%s, type_prefix=%s, source_id=%v",
+			id, filter.TypePrefix, filter.SourceID)
 
 		rt.mu.Lock()
 		if rt.shutdown {
@@ -2834,6 +2897,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 	if err := vm.Set("pollEvent", func(call otto.FunctionCall) otto.Value {
 		subID, err := call.Argument(0).ToString()
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "invalid subscription ID provided to pollEvent")
 			return otto.NullValue()
 		}
 
@@ -2845,6 +2909,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		rt.mu.Lock()
 		if rt.shutdown {
 			rt.mu.Unlock()
+			cmn.DebugMsg(cmn.DbgLvlDebug, "pollEvent called after shutdown, returning null")
 			return otto.NullValue()
 		}
 		sub := rt.subs[subID]
