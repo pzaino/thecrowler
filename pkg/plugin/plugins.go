@@ -1506,6 +1506,9 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPILib(vm); err != nil {
 		return err
 	}
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		return err
+	}
 
 	// Common functions
 
@@ -1851,7 +1854,7 @@ func addJSAPILib(vm *otto.Otto) error {
 		obj, _ := vm.Object(`({})`)
 
 		// attach call method
-		obj.Set("call", func(call otto.FunctionCall) otto.Value {
+		err = obj.Set("call", func(call otto.FunctionCall) otto.Value {
 
 			method, err := call.Argument(0).ToString()
 			if err != nil || method == "" {
@@ -1880,8 +1883,61 @@ func addJSAPILib(vm *otto.Otto) error {
 
 			return res
 		})
+		if err != nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
 
 		v, _ := vm.ToValue(obj)
+		return v
+	})
+}
+
+// addJSAPIInclude adds the include() function to the VM, which allows plugins to include and execute other plugin scripts in the same VM context
+// Please note: This is a powerful function that can lead to security issues if misused, as it allows executing arbitrary plugin scripts in the context of the caller plugin. It should be used with caution and ideally only for trusted plugins (e.g., internal libraries).
+/* Usage in JS:
+include("utils"); // This will execute the "utils" plugin script in the same VM context, allowing it to define functions and variables that can be used afterwards in the current plugin script.
+*/
+func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
+
+	return vm.Set("include", func(call otto.FunctionCall) otto.Value {
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		caller := rt.current
+		if caller == nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		callee, ok := resolvePluginFromCaller(caller, name)
+		if !ok {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// only allow lib plugins
+		if callee.PType != "lib_plugin" {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": "include() only supports lib_plugin",
+			})
+			return v
+		}
+
+		// execute script inside current VM
+		_, err = vm.Run(callee.Script)
+		if err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return v
+		}
+
+		v, _ := vm.ToValue(true)
 		return v
 	})
 }
