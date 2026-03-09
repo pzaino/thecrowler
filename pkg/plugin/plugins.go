@@ -690,7 +690,7 @@ type pluginEventSub struct {
 }
 
 //
-// Execution Engine for API plugins, Engine plugins and Event Plugins
+// Execution Engine for API plugins, Engine plugins, Lib plugins and Event Plugins
 //
 
 type pluginRuntime struct {
@@ -1503,6 +1503,9 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPICallPlugin(vm, db, rt); err != nil {
 		return err
 	}
+	if err := addJSAPILib(vm); err != nil {
+		return err
+	}
 
 	// Common functions
 
@@ -1731,6 +1734,12 @@ func addJSAPICallPlugin(
 */
 
 // New more secure implementation (it's in testing)
+/* Usage in JS:
+// Call another plugin with parameters and timeout
+let response = callPlugin("otherPluginName", { "param1": "value1", "param2": 42 }, 30);
+
+console.log(response);
+*/
 func addJSAPICallPlugin(
 	vm *otto.Otto,
 	db *cdb.Handler,
@@ -1818,6 +1827,61 @@ func addJSAPICallPlugin(
 		}
 
 		v, _ := vm.ToValue(res)
+		return v
+	})
+}
+
+// addJSAPILib adds the lib() function to the VM, which allows plugins to call other plugins in a structured way
+/* Usage in JS:
+let mathLib = lib("math");
+let result = mathLib.call("add", { "a": 1, "b": 2 });
+console.log(result);
+*/
+func addJSAPILib(vm *otto.Otto) error {
+
+	return vm.Set("lib", func(call otto.FunctionCall) otto.Value {
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// create library object
+		obj, _ := vm.Object(`({})`)
+
+		// attach call method
+		obj.Set("call", func(call otto.FunctionCall) otto.Value {
+
+			method, err := call.Argument(0).ToString()
+			if err != nil || method == "" {
+				v, _ := vm.ToValue(nil)
+				return v
+			}
+
+			params := map[string]interface{}{}
+
+			if call.Argument(1).IsObject() {
+				if exported, e := call.Argument(1).Export(); e == nil {
+					if m, ok := exported.(map[string]interface{}); ok {
+						params = m
+					}
+				}
+			}
+
+			fullName := name + "." + method
+
+			// delegate to callPlugin
+			res, err := vm.Call("callPlugin", nil, fullName, params)
+			if err != nil {
+				v, _ := vm.ToValue(nil)
+				return v
+			}
+
+			return res
+		})
+
+		v, _ := vm.ToValue(obj)
 		return v
 	})
 }
