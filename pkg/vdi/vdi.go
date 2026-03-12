@@ -690,6 +690,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			}
 		}
 	}
+	if proxy.ProxyURL == "" {
+		proxy.ProxyURL = sel.Config.ProxyURL
+	} else if proxy.ProxyURL == "no_proxy" {
+		proxy.ProxyURL = ""
+	}
 
 	// Append proxy settings if available
 	if proxy.ProxyURL != "" {

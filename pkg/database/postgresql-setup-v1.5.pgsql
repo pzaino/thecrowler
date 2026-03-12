@@ -188,6 +188,124 @@ CREATE TABLE IF NOT EXISTS WebObjects (
                                                 -- the object.
 );
 
+-- ObjectAttributes table stores the attributes of the web objects found in the indexed pages
+-- For example:
+-- | object_id | attribute_key | attribute_value |
+-- | --------- | ------------- | --------------- |
+-- | 200       | ip_address    | 8.8.8.8         |
+-- | 200       | domain        | example.com     |
+
+CREATE TABLE IF NOT EXISTS ObjectAttributes (
+    attribute_id BIGSERIAL PRIMARY KEY,
+    object_id BIGINT NOT NULL REFERENCES WebObjects(object_id) ON DELETE CASCADE,
+    attribute_key TEXT NOT NULL,
+    attribute_value TEXT NOT NULL,
+    normalized_value TEXT,
+    value_hash VARCHAR(64),
+    attribute_type TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_objattr_value_hash_hex
+        CHECK (value_hash IS NULL OR value_hash ~ '^[0-9a-fA-F]{64}$')
+);
+
+-- De-dup identical extracted facts per object (allows multiple values for same key)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_objattr_object_key_norm
+    ON ObjectAttributes(object_id, attribute_key, normalized_value);
+
+CREATE INDEX IF NOT EXISTS idx_objattr_key_norm
+    ON ObjectAttributes(attribute_key, normalized_value);
+
+CREATE INDEX IF NOT EXISTS idx_objattr_key_hash
+    ON ObjectAttributes(attribute_key, value_hash);
+
+CREATE INDEX IF NOT EXISTS idx_objattr_object
+    ON ObjectAttributes(object_id);
+
+-- Entities type is generic (and it has to be in the CROWler) because we want to be able
+-- to link any type of entity to the indexed pages and the sources.
+CREATE TABLE IF NOT EXISTS Entities (
+    entity_id BIGSERIAL PRIMARY KEY,
+    entity_type TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- EntityMemberships table stores the relationship between the entities
+-- and the web objects found in the indexed pages, so what Entity represents
+-- is determined by correlation, not a predefined schema.
+-- For exact value match:
+--   SELECT a1.object_id, a2.object_id
+--     FROM ObjectAttributes a1
+--     JOIN ObjectAttributes a2
+--       ON a1.attribute_key = a2.attribute_key
+--      AND a1.normalized_value = a2.normalized_value
+--    WHERE a1.object_id != a2.object_id;
+-- While for fuzzy match:
+--    WHERE similarity(a1.normalized_value, a2.normalized_value) > 0.9;
+CREATE TABLE EntityMemberships (
+    entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE CASCADE,
+    object_id BIGINT REFERENCES WebObjects(object_id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    evidence JSONB,
+    PRIMARY KEY(entity_id, object_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entitymemberships_object
+    ON EntityMemberships(object_id);
+
+-- CorrelationRules table stores the correlation rules that are applied to
+-- the indexed pages and the web objects to find relationships between them
+-- and to create entities.
+-- Example of rule definition:
+-- {
+--   "attributes": [
+--     { "key": "title", "weight": 0.5, "match": "fuzzy" },
+--     { "key": "duration", "weight": 0.3, "match": "numeric_delta", "threshold": 3 },
+--     { "key": "author", "weight": 0.2, "match": "exact" }
+--   ],
+--   "threshold": 0.85
+-- }
+CREATE TABLE IF NOT EXISTS CorrelationRules (
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    version INTEGER NOT NULL DEFAULT 1,
+    rule_id BIGSERIAL PRIMARY KEY,
+    rule_name TEXT,
+    rule_definition JSONB
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_correlationrules_name
+    ON CorrelationRules(rule_name);
+
+
+-- ObjectsCorrelations stores the pre-computed correlations between objects
+-- based on the applied correlation rules. This allows for fast retrieval of
+-- related objects and entities without having to compute correlations on the fly.
+CREATE TABLE IF NOT EXISTS ObjectCorrelations (
+    object_id_1 BIGINT NOT NULL REFERENCES WebObjects(object_id) ON DELETE CASCADE,
+    object_id_2 BIGINT NOT NULL REFERENCES WebObjects(object_id) ON DELETE CASCADE,
+    rule_id BIGINT NOT NULL REFERENCES CorrelationRules(rule_id) ON DELETE CASCADE,
+    score NUMERIC CHECK (score IS NULL OR (score >= 0 AND score <= 1)),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_objectcorrelations_order CHECK (object_id_1 < object_id_2),
+    PRIMARY KEY(object_id_1, object_id_2, rule_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj1
+    ON ObjectCorrelations(object_id_1);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
+    ON ObjectCorrelations(object_id_2);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
+    ON ObjectCorrelations(rule_id, score DESC);
+
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
