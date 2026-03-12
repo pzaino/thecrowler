@@ -247,7 +247,7 @@ CREATE TABLE IF NOT EXISTS Entities (
 CREATE TABLE EntityMemberships (
     entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE CASCADE,
     object_id BIGINT REFERENCES WebObjects(object_id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
     evidence JSONB,
     PRIMARY KEY(entity_id, object_id)
