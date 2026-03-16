@@ -311,17 +311,11 @@ CREATE TABLE IF NOT EXISTS WebObjects (
                                                 -- the object.
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
-ON WebObjects (last_updated_at DESC, object_id);
-
 -- These two indexes should help boosting JSONB full-text search performance on
 -- the scraped_data field, which is expected to be the most commonly searched
 -- field in the details JSONB document.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_fts
-ON WebObjects
-USING gin (
-  jsonb_to_tsvector('simple', details->'scraped_data', '["string"]')
-);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
+ON WebObjects (last_updated_at DESC, object_id);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_fts
 ON WebObjects
