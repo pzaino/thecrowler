@@ -11,6 +11,86 @@
 --------------------------------------------------------------------------------
 -- Database Tables setup
 
+-- Database Schema Versioning table to keep track of the schema versions and changes
+CREATE TABLE IF NOT EXISTS DBSchemaVersion (
+    schema_version_id BIGSERIAL PRIMARY KEY,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    version TEXT NOT NULL UNIQUE,          -- e.g. "1.5", "1.6", "1.8"
+    description TEXT,
+
+    is_current BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.6'
+    ) THEN
+        INSERT INTO DBSchemaVersion (version, description)
+        VALUES ('1.6', 'CROWler DB schema version 1.6');
+    END IF;
+END
+$$;
+
+----------------------------------------------------------------
+-- System Status Operations table to keep track of the system status and operations
+-- Status table to track the runtime status of agents and operations
+CREATE TABLE IF NOT EXISTS Status (
+    status_sha256 CHAR(64) PRIMARY KEY,     -- SHA256 identifier of this status entry
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+
+    parent_status_sha256 CHAR(64),          -- previous status in the chain (optional)
+
+    agent_id TEXT,                          -- identifier of the agent/engine
+    source_id BIGINT,                       -- optional relation to a source
+    operation_type TEXT,                    -- e.g. crawl, scrape, detect, plugin
+
+    status TEXT NOT NULL,                   -- e.g. "thinking", "processing", "waiting"
+    progress NUMERIC CHECK (progress IS NULL OR (progress >= 0 AND progress <= 1)),
+
+    details JSONB NOT NULL                  -- arbitrary runtime information
+);
+
+-- Add foreign key constraint to link parent_status_sha256 to status_sha256 in the same table
+ALTER TABLE Status
+ADD CONSTRAINT fk_status_parent
+FOREIGN KEY (parent_status_sha256)
+REFERENCES Status(status_sha256)
+ON DELETE SET NULL;
+
+-- System Status Operations table indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_status_agent
+ON Status(agent_id);
+
+CREATE INDEX IF NOT EXISTS idx_status_source
+ON Status(source_id);
+
+CREATE INDEX IF NOT EXISTS idx_status_created
+ON Status(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_status_details
+ON Status USING gin(details jsonb_path_ops);
+
+-- update timestamp trigger
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_status_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_status_last_updated_before_update
+        BEFORE UPDATE ON Status
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+------------------------------------------------
+
+------------------------------------------------
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
@@ -27,6 +107,8 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
                                                 -- the information seed configuration for the crawler
 );
 
+
+------------------------------------------------
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
@@ -63,6 +145,8 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- crawls etc.
 );
 
+
+------------------------------------------------
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
@@ -77,6 +161,7 @@ CREATE TABLE IF NOT EXISTS Owners (
                                                 -- the owner.
 );
 
+------------------------------------------------
 -- Sessions table stores all collected web sessions information to be reused for future crawling
 CREATE TABLE IF NOT EXISTS Sessions (
     session_id BIGSERIAL PRIMARY KEY,
@@ -92,6 +177,7 @@ CREATE TABLE IF NOT EXISTS Sessions (
                                                 -- the session.
 );
 
+------------------------------------------------
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
@@ -106,6 +192,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     detected_lang VARCHAR(16)                   -- (URI language) denormalized for fast searches
 );
 
+------------------------------------------------
 -- Categories table stores the categories (and subcategories) for the sources
 CREATE TABLE IF NOT EXISTS Categories (
     category_id BIGSERIAL PRIMARY KEY,
@@ -123,6 +210,7 @@ CREATE TABLE IF NOT EXISTS Categories (
         ON DELETE SET NULL
 );
 
+------------------------------------------------
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
@@ -135,6 +223,7 @@ CREATE TABLE IF NOT EXISTS NetInfo (
     details JSONB NOT NULL
 );
 
+------------------------------------------------
 -- HTTPInfo table stores the HTTP header information retrieved from the sources
 CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
@@ -147,6 +236,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
     details JSONB NOT NULL
 );
 
+------------------------------------------------
 -- Screenshots table stores the screenshots details of the indexed pages
 CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_id BIGSERIAL PRIMARY KEY,
@@ -167,6 +257,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE
 );
 
+------------------------------------------------
 -- WebObjects table stores all types of web objects found in the indexed pages
 -- This includes scripts, styles, images, iframes, HTML etc.
 CREATE TABLE IF NOT EXISTS WebObjects (
@@ -305,7 +396,9 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
 
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
     ON ObjectCorrelations(rule_id, score DESC);
+------------------------------------------------
 
+------------------------------------------------
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
@@ -318,6 +411,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
 
+------------------------------------------------
 -- Keywords table stores all the found keywords during an indexing
 CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id BIGSERIAL PRIMARY KEY,
@@ -328,6 +422,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
     keyword VARCHAR(256) NOT NULL UNIQUE      -- The keyword found in the indexed page
 );
 
+------------------------------------------------
 -- Events table stores the events generated by the system
 CREATE TABLE IF NOT EXISTS Events (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -345,6 +440,7 @@ CREATE TABLE IF NOT EXISTS Events (
     details JSONB NOT NULL
 );
 
+------------------------------------------------
 -- EventSchedules table stores the schedules for the events
 CREATE TABLE IF NOT EXISTS EventSchedules (
     schedule_id CHAR(64) PRIMARY KEY,
@@ -369,6 +465,7 @@ CREATE TABLE IF NOT EXISTS EventSchedules (
 
     details JSONB NOT NULL
 );
+
 
 ----------------------------------------
 -- Relationship tables
