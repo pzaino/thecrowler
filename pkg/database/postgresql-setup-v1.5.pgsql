@@ -47,6 +47,7 @@ BEGIN
     END IF;
 END
 $$;
+----------------------------------------------------------------
 
 ----------------------------------------------------------------
 -- System Status Operations table to keep track of the system status and operations
@@ -101,9 +102,9 @@ BEGIN
     END IF;
 END
 $$;
-------------------------------------------------
+----------------------------------------------------------------
 
-------------------------------------------------
+----------------------------------------------------------------
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
@@ -121,7 +122,7 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 );
 
 
-------------------------------------------------
+----------------------------------------------------------------
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
@@ -159,7 +160,7 @@ CREATE TABLE IF NOT EXISTS Sources (
 );
 
 
-------------------------------------------------
+----------------------------------------------------------------
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
@@ -174,7 +175,7 @@ CREATE TABLE IF NOT EXISTS Owners (
                                                 -- the owner.
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- Sessions table stores all collected web sessions information to be reused for future crawling
 CREATE TABLE IF NOT EXISTS Sessions (
     session_id BIGSERIAL PRIMARY KEY,
@@ -190,7 +191,7 @@ CREATE TABLE IF NOT EXISTS Sessions (
                                                 -- the session.
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
@@ -205,7 +206,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     detected_lang VARCHAR(16)                   -- (URI language) denormalized for fast searches
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- Categories table stores the categories (and subcategories) for the sources
 CREATE TABLE IF NOT EXISTS Categories (
     category_id BIGSERIAL PRIMARY KEY,
@@ -223,7 +224,7 @@ CREATE TABLE IF NOT EXISTS Categories (
         ON DELETE SET NULL
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
@@ -236,7 +237,7 @@ CREATE TABLE IF NOT EXISTS NetInfo (
     details JSONB NOT NULL
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- HTTPInfo table stores the HTTP header information retrieved from the sources
 CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
@@ -249,7 +250,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
     details JSONB NOT NULL
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- Screenshots table stores the screenshots details of the indexed pages
 CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_id BIGSERIAL PRIMARY KEY,
@@ -270,7 +271,7 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- WebObjects table stores all types of web objects found in the indexed pages
 -- This includes scripts, styles, images, iframes, HTML etc.
 CREATE TABLE IF NOT EXISTS WebObjects (
@@ -290,6 +291,15 @@ CREATE TABLE IF NOT EXISTS WebObjects (
                                                 -- stored externally.
     details JSONB NOT NULL                      -- Stores JSON document with all details about
                                                 -- the object.
+);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
+ON WebObjects (last_updated_at DESC, object_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_fts
+ON WebObjects
+USING gin (
+  jsonb_to_tsvector('simple', details->'scraped_data', '["string"]')
 );
 
 -- ObjectAttributes table stores the attributes of the web objects found in the indexed pages
@@ -325,6 +335,12 @@ CREATE INDEX IF NOT EXISTS idx_objattr_key_hash
 
 CREATE INDEX IF NOT EXISTS idx_objattr_object
     ON ObjectAttributes(object_id);
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_objattr_norm_trgm
+ON ObjectAttributes
+USING gin (normalized_value gin_trgm_ops);
 
 -- Entities type is generic (and it has to be in the CROWler) because we want to be able
 -- to link any type of entity to the indexed pages and the sources.
@@ -409,9 +425,9 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
 
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
     ON ObjectCorrelations(rule_id, score DESC);
-------------------------------------------------
+----------------------------------------------------------------
 
-------------------------------------------------
+----------------------------------------------------------------
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
@@ -424,7 +440,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- Keywords table stores all the found keywords during an indexing
 CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id BIGSERIAL PRIMARY KEY,
@@ -435,7 +451,12 @@ CREATE TABLE IF NOT EXISTS Keywords (
     keyword VARCHAR(256) NOT NULL UNIQUE      -- The keyword found in the indexed page
 );
 
-------------------------------------------------
+-- Trigram index for the keywords
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_keywords_keyword_trgm
+ON Keywords
+USING gin (lower(keyword) gin_trgm_ops);
+
+----------------------------------------------------------------
 -- Events table stores the events generated by the system
 CREATE TABLE IF NOT EXISTS Events (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -453,7 +474,7 @@ CREATE TABLE IF NOT EXISTS Events (
     details JSONB NOT NULL
 );
 
-------------------------------------------------
+----------------------------------------------------------------
 -- EventSchedules table stores the schedules for the events
 CREATE TABLE IF NOT EXISTS EventSchedules (
     schedule_id CHAR(64) PRIMARY KEY,
@@ -480,7 +501,7 @@ CREATE TABLE IF NOT EXISTS EventSchedules (
 );
 
 
-----------------------------------------
+----------------------------------------------------------------
 -- Relationship tables
 
 -- SourceInformationSeedIndex table stores the relationship between sources and their information seeds
