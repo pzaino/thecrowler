@@ -49,6 +49,7 @@ END
 $$;
 ----------------------------------------------------------------
 
+
 ----------------------------------------------------------------
 -- System Status Operations table to keep track of the system status and operations
 -- Status table to track the runtime status of agents and operations
@@ -104,6 +105,7 @@ END
 $$;
 ----------------------------------------------------------------
 
+
 ----------------------------------------------------------------
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
@@ -120,6 +122,7 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     config JSONB                                -- Stores JSON document with all details about
                                                 -- the information seed configuration for the crawler
 );
+----------------------------------------------------------------
 
 
 ----------------------------------------------------------------
@@ -158,6 +161,7 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- data like the stage of the crawling for multi-stage
                                                 -- crawls etc.
 );
+----------------------------------------------------------------
 
 
 ----------------------------------------------------------------
@@ -174,6 +178,8 @@ CREATE TABLE IF NOT EXISTS Owners (
     details JSONB NOT NULL                      -- Stores JSON document with all details about
                                                 -- the owner.
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- Sessions table stores all collected web sessions information to be reused for future crawling
@@ -190,6 +196,8 @@ CREATE TABLE IF NOT EXISTS Sessions (
     details JSONB NOT NULL                      -- Stores JSON document with all details about
                                                 -- the session.
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- SearchIndex table stores the indexed information from the sources
@@ -205,6 +213,8 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     detected_type VARCHAR(255),                 -- (content type) denormalized for fast searches
     detected_lang VARCHAR(16)                   -- (URI language) denormalized for fast searches
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- Categories table stores the categories (and subcategories) for the sources
@@ -223,6 +233,8 @@ CREATE TABLE IF NOT EXISTS Categories (
         REFERENCES Categories(category_id)
         ON DELETE SET NULL
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- NetInfo table stores the network information retrieved from the sources
@@ -236,6 +248,8 @@ CREATE TABLE IF NOT EXISTS NetInfo (
                                                 -- and uniqueness.
     details JSONB NOT NULL
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- HTTPInfo table stores the HTTP header information retrieved from the sources
@@ -249,6 +263,8 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
                                                 -- and uniqueness
     details JSONB NOT NULL
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- Screenshots table stores the screenshots details of the indexed pages
@@ -270,6 +286,8 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     format VARCHAR(10) NOT NULL DEFAULT 'png',
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- WebObjects table stores all types of web objects found in the indexed pages
@@ -308,7 +326,10 @@ USING gin (
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_fts
 ON WebObjects
 USING gin (
-  jsonb_to_tsvector('simple', details->'scraped_data', '["string"]')
+    to_tsvector(
+        'simple',
+        left((details->'scraped_data')::text, 500000)
+    )
 )
 WHERE details ? 'scraped_data';
 
@@ -318,7 +339,6 @@ WHERE details ? 'scraped_data';
 -- | --------- | ------------- | --------------- |
 -- | 200       | ip_address    | 8.8.8.8         |
 -- | 200       | domain        | example.com     |
-
 CREATE TABLE IF NOT EXISTS ObjectAttributes (
     attribute_id BIGSERIAL PRIMARY KEY,
     object_id BIGINT NOT NULL REFERENCES WebObjects(object_id) ON DELETE CASCADE,
@@ -412,7 +432,6 @@ CREATE TABLE IF NOT EXISTS CorrelationRules (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_correlationrules_name
     ON CorrelationRules(rule_name);
 
-
 -- ObjectsCorrelations stores the pre-computed correlations between objects
 -- based on the applied correlation rules. This allows for fast retrieval of
 -- related objects and entities without having to compute correlations on the fly.
@@ -437,6 +456,7 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
     ON ObjectCorrelations(rule_id, score DESC);
 ----------------------------------------------------------------
 
+
 ----------------------------------------------------------------
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
@@ -449,6 +469,8 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     content TEXT NOT NULL,
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- Keywords table stores all the found keywords during an indexing
@@ -465,6 +487,8 @@ CREATE TABLE IF NOT EXISTS Keywords (
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_keywords_keyword_trgm
 ON Keywords
 USING gin (lower(keyword) gin_trgm_ops);
+----------------------------------------------------------------
+
 
 ----------------------------------------------------------------
 -- Events table stores the events generated by the system
@@ -484,7 +508,6 @@ CREATE TABLE IF NOT EXISTS Events (
     details JSONB NOT NULL
 );
 
-----------------------------------------------------------------
 -- EventSchedules table stores the schedules for the events
 CREATE TABLE IF NOT EXISTS EventSchedules (
     schedule_id CHAR(64) PRIMARY KEY,
@@ -509,6 +532,7 @@ CREATE TABLE IF NOT EXISTS EventSchedules (
 
     details JSONB NOT NULL
 );
+----------------------------------------------------------------
 
 
 ----------------------------------------------------------------
