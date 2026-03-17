@@ -322,7 +322,7 @@ ON WebObjects
 USING gin (
     to_tsvector(
         'simple',
-        left((details->'scraped_data')::text, 500000)
+        left((details->'scraped_data')::text, 400000)
     )
 )
 WHERE details ? 'scraped_data';
