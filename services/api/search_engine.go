@@ -1233,7 +1233,7 @@ func parseScrapedDataGetQuery(input string) (SearchQuery, error) {
 	WHERE
 		si.page_url != ''
 		AND si.page_url IS NOT NULL
-		AND `
+		AND (`
 
 	// Parse the advanced query (including the JSONB filters)
 	SQLQuery, err := parseAdvancedQuery(queryBody, input, "")
@@ -1246,7 +1246,7 @@ func parseScrapedDataGetQuery(input string) (SearchQuery, error) {
 	sqlParams := SQLQuery.sqlParams
 
 	// Add ORDER BY clause
-	sqlQuery = sqlQuery + " ORDER BY sd.last_updated_at DESC"
+	sqlQuery = sqlQuery + ") ORDER BY sd.last_updated_at DESC"
 
 	// Pagination logic
 	limit := len(sqlParams) - 1 // Assuming limit is the second to last param
@@ -1303,7 +1303,7 @@ func parseScrapedDataQuery(input string) (SearchQuery, error) {
 		LOWER(si.page_url) LIKE LOWER($1)
 		AND si.page_url != ''
 		AND si.page_url IS NOT NULL
-	`
+	    AND (`
 
 	// Add the URL as the first parameter
 	param := QueryParam{
@@ -1326,7 +1326,7 @@ func parseScrapedDataQuery(input string) (SearchQuery, error) {
 	sqlParams = append(sqlParams, SQLQuery.sqlParams...)
 
 	// Add ORDER BY and pagination (limit and offset)
-	sqlQuery = sqlQuery + " ORDER BY sd.last_updated_at DESC"
+	sqlQuery = sqlQuery + ") ORDER BY sd.last_updated_at DESC"
 	limit := len(sqlParams)      // Assuming limit is the second parameter after URL
 	offset := len(sqlParams) + 1 // Offset is the last parameter
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
@@ -1468,7 +1468,7 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 		return SearchQuery{}, err
 	}
 
-	sqlQuery = sqlQuery + "ORDER BY created_at DESC"
+	sqlQuery = sqlQuery + " ORDER BY created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
