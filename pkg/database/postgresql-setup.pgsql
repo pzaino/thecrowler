@@ -20,6 +20,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 --------------------------------------------------------------------------------
 -- Database Tables setup
@@ -317,13 +318,13 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
 ON WebObjects (last_updated_at DESC, object_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_fts
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_woi_object_index
+ON WebObjectsIndex(object_id, index_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_trgm
 ON WebObjects
 USING gin (
-    to_tsvector(
-        'simple',
-        left((details->'scraped_data')::text, 400000)
-    )
+    left((details->'scraped_data')::text, 400000) gin_trgm_ops
 )
 WHERE details ? 'scraped_data';
 
@@ -359,8 +360,6 @@ CREATE INDEX IF NOT EXISTS idx_objattr_key_hash
 
 CREATE INDEX IF NOT EXISTS idx_objattr_object
     ON ObjectAttributes(object_id);
-
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_objattr_norm_trgm
 ON ObjectAttributes
@@ -480,7 +479,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
 -- Trigram index for the keywords
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_keywords_keyword_trgm
 ON Keywords
-USING gin (lower(keyword) gin_trgm_ops);
+USING gin (keyword gin_trgm_ops);
 ----------------------------------------------------------------
 
 
@@ -1133,15 +1132,6 @@ BEGIN
 END
 $$;
 
--- Creates an index for the details column in the NetInfo table
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
-        CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
-    END IF;
-END
-$$;
-
 -- Optimize for 'whois' key in NetInfo details
 DO $$
 BEGIN
@@ -1397,15 +1387,6 @@ $$;
 
 -- Indexes for the HTTPInfo table ----------------------------------------------
 
--- Creates an index for the HTTPInfo details_hash column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_details_hash') THEN
-        CREATE INDEX idx_httpinfo_details_hash ON HTTPInfo(details_hash);
-    END IF;
-END
-$$;
-
 -- Creates an index for the HTTPInfo details column
 DO $$
 BEGIN
@@ -1482,14 +1463,7 @@ $$;
 
 -- Indexes for NetInfo table ---------------------------------------------------
 
--- Creates an index for the NetInfo details_hash column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_details_hash') THEN
-        CREATE INDEX idx_netinfo_details_hash ON NetInfo(details_hash);
-    END IF;
-END
-$$;
+
 
 -- Creates an index for the NetInfo details column
 DO $$
