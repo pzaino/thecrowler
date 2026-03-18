@@ -214,6 +214,11 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     detected_type VARCHAR(255),                 -- (content type) denormalized for fast searches
     detected_lang VARCHAR(16)                   -- (URI language) denormalized for fast searches
 );
+
+CREATE INDEX idx_searchindex_title_trgm
+ON SearchIndex
+USING gin(title gin_trgm_ops);
+
 ----------------------------------------------------------------
 
 
@@ -324,6 +329,10 @@ USING gin (
     left((details->'scraped_data')::text, 400000) gin_trgm_ops
 )
 WHERE details ? 'scraped_data';
+
+CREATE INDEX idx_webobjects_scraped_data_fts
+ON WebObjects
+USING gin(to_tsvector('simple', scraped_data_text));
 
 -- ObjectAttributes table stores the attributes of the web objects found in the indexed pages
 -- For example:
@@ -459,6 +468,11 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     content TEXT NOT NULL,
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
+
+CREATE INDEX idx_metatags_content_trgm
+ON MetaTags
+USING gin(content gin_trgm_ops);
+
 ----------------------------------------------------------------
 
 
@@ -2259,6 +2273,319 @@ BEGIN
     JOIN AllPartnerSources aps ON s.source_id = aps.source_id;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION search_pages(q TEXT, lang TEXT)
+RETURNS TABLE(
+    index_id BIGINT,
+    page_url TEXT,
+    title TEXT,
+    snippet TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    si.index_id,
+    si.page_url::TEXT,
+    si.title::TEXT,
+
+    ts_headline(
+        lang::regconfig,
+        si.summary,
+        plainto_tsquery(lang::regconfig, q)
+    )::TEXT AS snippet,
+
+    si.created_at,
+    si.last_updated_at,
+
+    (
+        COALESCE(ts_rank(si.tsv, plainto_tsquery(lang::regconfig, q)),0) * 1.0
+        +
+        COALESCE(MAX(similarity(si.title, q)),0) * 1.8
+        +
+        COALESCE(MAX(similarity(k.keyword, q)),0) * 0.6
+        +
+        COALESCE(MAX(similarity(mt.content, q)),0) * 0.5
+    )::REAL AS rank
+
+FROM SearchIndex si
+
+LEFT JOIN KeywordIndex ki
+    ON si.index_id = ki.index_id
+
+LEFT JOIN Keywords k
+    ON ki.keyword_id = k.keyword_id
+
+LEFT JOIN MetaTagsIndex mti
+    ON si.index_id = mti.index_id
+
+LEFT JOIN MetaTags mt
+    ON mti.metatag_id = mt.metatag_id
+
+WHERE
+    si.tsv @@ plainto_tsquery(lang::regconfig, q)
+    OR similarity(si.title, q) > 0.3
+    OR similarity(k.keyword, q) > 0.4
+    OR similarity(mt.content, q) > 0.4
+
+GROUP BY
+    si.index_id,
+    si.page_url,
+    si.title,
+    si.summary,
+    si.tsv,
+    si.created_at,
+    si.last_updated_at
+
+ORDER BY rank DESC
+--LIMIT 50;
+$$;
+
+
+
+CREATE OR REPLACE FUNCTION search_scraped_data(q TEXT)
+RETURNS TABLE(
+    index_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    si.index_id,
+    si.page_url,
+    j.key,
+    j.value,
+
+    si.created_at,
+    si.last_updated_at,
+
+    ts_rank(
+        to_tsvector('simple', j.value),
+        plainto_tsquery('simple', q)
+    ) AS rank
+
+FROM WebObjects wo
+
+JOIN WebObjectsIndex woi
+    ON wo.object_id = woi.object_id
+
+JOIN SearchIndex si
+    ON woi.index_id = si.index_id
+
+CROSS JOIN LATERAL jsonb_each_text(wo.details->'scraped_data') j
+
+WHERE
+    to_tsvector('simple', j.value)
+    @@ plainto_tsquery('simple', q)
+
+ORDER BY rank DESC
+--LIMIT 50;
+$$;
+
+CREATE OR REPLACE FUNCTION search_scraped_data_field(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    index_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH RECURSIVE json_tree AS (
+
+    SELECT
+        si.index_id,
+        si.page_url,
+        si.created_at,
+        si.last_updated_at,
+        j.key,
+        j.value
+    FROM WebObjects wo
+    JOIN WebObjectsIndex woi ON wo.object_id = woi.object_id
+    JOIN SearchIndex si ON woi.index_id = si.index_id
+    CROSS JOIN LATERAL jsonb_each(wo.details->'scraped_data') j
+
+    UNION ALL
+
+    SELECT
+        jt.index_id,
+        jt.page_url,
+        jt.created_at,
+        jt.last_updated_at,
+        j.key,
+        j.value
+    FROM json_tree jt
+    CROSS JOIN LATERAL jsonb_each(jt.value) j
+    WHERE jsonb_typeof(jt.value) = 'object'
+
+)
+
+SELECT
+    index_id,
+    page_url,
+    key,
+    value::text,
+    created_at,
+    last_updated_at,
+    similarity(value::text, field_value) AS rank
+
+FROM json_tree
+
+WHERE
+    key = field_name
+    AND value::text ILIKE '%' || field_value || '%'
+
+ORDER BY rank DESC
+--LIMIT 50;
+$$;
+
+CREATE OR REPLACE VIEW ArtifactDetails AS
+
+SELECT
+    'webobject' AS source_type,
+    wo.object_id AS artifact_id,
+    si.index_id,
+    si.page_url,
+    wo.created_at,
+    wo.last_updated_at,
+    wo.details->'scraped_data' AS data
+FROM WebObjects wo
+JOIN WebObjectsIndex woi ON wo.object_id = woi.object_id
+JOIN SearchIndex si ON woi.index_id = si.index_id
+
+UNION ALL
+
+SELECT
+    'netinfo',
+    ni.netinfo_id,
+    NULL,
+    NULL,
+    ni.created_at,
+    ni.last_updated_at,
+    ni.details
+FROM NetInfo ni
+
+UNION ALL
+
+SELECT
+    'httpinfo',
+    hi.httpinfo_id,
+    NULL,
+    NULL,
+    hi.created_at,
+    hi.last_updated_at,
+    hi.details
+FROM HTTPInfo hi;
+
+CREATE OR REPLACE FUNCTION search_artifacts(q TEXT)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    a.source_type,
+    a.artifact_id,
+    a.page_url,
+    j.key,
+    j.value,
+    a.created_at,
+    a.last_updated_at,
+
+    ts_rank(
+        to_tsvector('simple', j.value),
+        plainto_tsquery('simple', q)
+    ) AS rank
+
+FROM ArtifactDetails a
+
+CROSS JOIN LATERAL jsonb_each_text(a.data) j
+
+WHERE
+    to_tsvector('simple', j.value)
+    @@ plainto_tsquery('simple', q)
+$$;
+
+CREATE OR REPLACE FUNCTION search_artifacts_field(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH RECURSIVE json_tree AS (
+
+    SELECT
+        a.source_type,
+        a.artifact_id,
+        a.page_url,
+        a.created_at,
+        a.last_updated_at,
+        j.key,
+        j.value
+    FROM ArtifactDetails a
+    CROSS JOIN LATERAL jsonb_each(a.data) j
+
+    UNION ALL
+
+    SELECT
+        jt.source_type,
+        jt.artifact_id,
+        jt.page_url,
+        jt.created_at,
+        jt.last_updated_at,
+        j.key,
+        j.value
+    FROM json_tree jt
+    CROSS JOIN LATERAL jsonb_each(jt.value) j
+    WHERE jsonb_typeof(jt.value) = 'object'
+
+)
+
+SELECT
+    source_type,
+    artifact_id,
+    page_url,
+    key,
+    value::text,
+    created_at,
+    last_updated_at,
+    similarity(value::text, field_value) AS rank
+
+FROM json_tree
+WHERE
+    key = field_name
+    AND value::text ILIKE '%' || field_value || '%'
+$$;
 
 --------------------------------------------------------------------------------
 -- User and permissions setup
