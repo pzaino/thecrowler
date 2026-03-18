@@ -385,13 +385,6 @@ CREATE INDEX IF NOT EXISTS idx_objattr_norm_trgm
     ON ObjectAttributes
     USING gin (normalized_value gin_trgm_ops);
 
-CREATE INDEX IF NOT EXISTS idx_objattr_key_norm_trgm
-    ON ObjectAttributes
-    USING gin (
-        attribute_key,
-        normalized_value gin_trgm_ops
-    );
-
 -- Entities type is generic (and it has to be in the CROWler) because we want to be able
 -- to link any type of entity to the indexed pages and the sources.
 CREATE TABLE IF NOT EXISTS Entities (
