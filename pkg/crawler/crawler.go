@@ -2001,6 +2001,8 @@ func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
 		return 0, fmt.Errorf("Invalid keyword")
 	}
 
+	keyword = strings.ToLower(norm.NFC.String(keyword))
+
 	// Serialize per keyword
 	if _, err := tx.Exec(`
 		SELECT pg_advisory_xact_lock(hashtext($1))

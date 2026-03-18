@@ -470,7 +470,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMPTZ,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    keyword VARCHAR(256) NOT NULL UNIQUE      -- The keyword found in the indexed page
+    keyword TEXT NOT NULL UNIQUE      -- The keyword found in the indexed page
 );
 
 -- Trigram index for the keywords
