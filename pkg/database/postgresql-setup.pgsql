@@ -330,10 +330,6 @@ USING gin (
 )
 WHERE details ? 'scraped_data';
 
-CREATE INDEX idx_webobjects_scraped_data_fts
-ON WebObjects
-USING gin(to_tsvector('simple', scraped_data_text));
-
 -- ObjectAttributes table stores the attributes of the web objects found in the indexed pages
 -- For example:
 -- | object_id | object_type | attribute_key | attribute_value |
