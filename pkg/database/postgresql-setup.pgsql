@@ -318,9 +318,6 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
 ON WebObjects (last_updated_at DESC, object_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_woi_object_index
-ON WebObjectsIndex(object_id, index_id);
-
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_trgm
 ON WebObjects
 USING gin (
@@ -692,6 +689,10 @@ CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (object_id) REFERENCES WebObjects(object_id) ON DELETE CASCADE
 );
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_woi_object_index
+ON WebObjectsIndex(object_id, index_id);
+-------------------------------------------------------------------------------
 
 -- Relationship table between SearchIndex and MetaTags
 CREATE TABLE IF NOT EXISTS MetaTagsIndex (
