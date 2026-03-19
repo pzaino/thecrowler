@@ -1503,8 +1503,21 @@ func indexObjectAttributes(
 			continue
 		}
 
+		if strings.HasPrefix(attr.Path, "details.") {
+			cmn.DebugMsg(cmn.DbgLvlError,
+				"Invalid path '%s': should not include 'details.' prefix",
+				attr.Path,
+			)
+			continue
+		}
+
 		tokens := GetParsedPath(attr.Path)
 		values := ExtractWithTokens(data, tokens)
+
+		cmn.DebugMsg(cmn.DbgLvlDebug4,
+			"[DEBUG-Indexing] Attr key=%s path=%s -> extracted=%d",
+			attr.Key, attr.Path, len(values),
+		)
 
 		for _, v := range values {
 			raw := ToString(v)
