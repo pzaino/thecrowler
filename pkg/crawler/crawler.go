@@ -1433,9 +1433,11 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	// Index object attributes for WebObjet
 	err = indexObjectAttributes(tx, objID, detailsJSON, ctx.GetConfig())
 	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
@@ -1479,10 +1481,11 @@ func indexObjectAttributes(
 	tx *sql.Tx,
 	objectID int64,
 	detailsJSON []byte,
-	curr_cfg *cfg.Config,
+	currCfg *cfg.Config,
 ) error {
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Starting Indexing object attributes for objectID: %d", objectID)
 
-	if curr_cfg == nil || curr_cfg.AttributesIndexing.IsEmpty() {
+	if currCfg == nil || currCfg.AttributesIndexing.IsEmpty() {
 		return nil
 	}
 
@@ -1491,7 +1494,7 @@ func indexObjectAttributes(
 		return err
 	}
 
-	attrs := curr_cfg.AttributesIndexing.WebObject
+	attrs := currCfg.AttributesIndexing.WebObject
 
 	for _, attr := range attrs {
 
@@ -1529,6 +1532,7 @@ func indexObjectAttributes(
 		}
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Finished Indexing object attributes for objectID: %d", objectID)
 	return nil
 }
 
