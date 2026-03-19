@@ -124,6 +124,7 @@ func SanitizeString(s string) string {
 type PathToken struct {
 	Key     string
 	IsArray bool
+	Index   *int // nil = not index, set = specific index, -1 = wildcard
 }
 
 // GetParsedPath retrieves the parsed path tokens from the cache if available, otherwise it parses the path and stores it in the cache for future use.
@@ -144,18 +145,52 @@ func ParsePath(path string) []PathToken {
 	tokens := make([]PathToken, 0, len(parts))
 
 	for _, p := range parts {
+		p = strings.TrimSpace(p)
+
 		token := PathToken{}
 
+		// Case: [*]
 		if p == "[*]" {
-			token.Key = ""
 			token.IsArray = true
-		} else if strings.HasSuffix(p, "[*]") {
-			token.Key = strings.TrimSpace(strings.TrimSuffix(p, "[*]"))
-			token.IsArray = true
-		} else {
-			token.Key = strings.TrimSpace(p)
+			tokens = append(tokens, token)
+			continue
 		}
 
+		// Case: [2]
+		if strings.HasPrefix(p, "[") && strings.HasSuffix(p, "]") {
+			idxStr := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(p, "["), "]"))
+			if i, err := strconv.Atoi(idxStr); err == nil {
+				token.Index = &i
+				token.IsArray = true
+			}
+			tokens = append(tokens, token)
+			continue
+		}
+
+		// Case: key[*]
+		if strings.HasSuffix(p, "[*]") {
+			token.Key = strings.TrimSpace(strings.TrimSuffix(p, "[*]"))
+			token.IsArray = true
+			tokens = append(tokens, token)
+			continue
+		}
+
+		// Case: key[2]
+		if i := strings.Index(p, "["); i != -1 {
+			key := p[:i]
+			idxStr := p[i+1 : len(p)-1]
+
+			if idx, err := strconv.Atoi(idxStr); err == nil {
+				token.Key = key
+				token.Index = &idx
+				token.IsArray = true
+			}
+			tokens = append(tokens, token)
+			continue
+		}
+
+		// Default
+		token.Key = p
 		tokens = append(tokens, token)
 	}
 
@@ -212,10 +247,17 @@ func ExtractWithTokens(data interface{}, tokens []PathToken) []interface{} {
 					if !ok {
 						continue
 					}
-					next = append(next, arr...)
-				} else {
-					next = append(next, val)
+
+					if token.Index != nil {
+						if *token.Index < len(arr) {
+							next = append(next, arr[*token.Index])
+						}
+					} else {
+						next = append(next, arr...)
+					}
+					continue
 				}
+				next = append(next, val)
 
 			case []interface{}:
 
@@ -227,6 +269,14 @@ func ExtractWithTokens(data interface{}, tokens []PathToken) []interface{} {
 				}
 
 				for _, item := range n {
+
+					// Handle direct index access like [2]
+					if token.Key == "" && token.Index != nil {
+						if *token.Index < len(n) {
+							next = append(next, n[*token.Index])
+						}
+						continue
+					}
 
 					// If no key (edge case), just propagate values
 					if token.Key == "" {
