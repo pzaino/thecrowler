@@ -134,8 +134,8 @@ func (ls *LearningSystem) Learn(agentName, eventType string, memoryData map[stri
 	}
 
 	query := `
-		INSERT INTO AgentMemory (id, agent_name, event_type, details, created_at, last_updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		INSERT INTO Memory (id, owner_name, agent_name, event_type, details, created_at, last_updated_at)
+		VALUES ($1, 'agent', $2, $3, $4, NOW(), NOW())
 		ON CONFLICT (agent_name, event_type) DO UPDATE
 		SET details = EXCLUDED.details, last_updated_at = NOW();
 	`
@@ -150,8 +150,8 @@ func (ls *LearningSystem) Learn(agentName, eventType string, memoryData map[stri
 // Recall retrieves agent memory by name and event type
 func (ls *LearningSystem) Recall(agentName, eventType string) (map[string]interface{}, error) {
 	query := `
-		SELECT details FROM AgentMemory
-		WHERE agent_name=$1 AND event_type=$2 AND deleted_at IS NULL
+		SELECT details FROM Memory
+		WHERE owner_name='agent' AND agent_name=$1 AND event_type=$2 AND deleted_at IS NULL
 		ORDER BY last_updated_at DESC LIMIT 1;
 	`
 
@@ -175,9 +175,9 @@ func (ls *LearningSystem) Recall(agentName, eventType string) (map[string]interf
 // Forget removes agent memory (soft delete)
 func (ls *LearningSystem) Forget(agentName, eventType string) error {
 	query := `
-		UPDATE AgentMemory
+		UPDATE Memory
 		SET deleted_at = NOW()
-		WHERE agent_name=$1 AND event_type=$2;
+		WHERE owner_name='agent' AND agent_name=$1 AND event_type=$2;
 	`
 
 	_, err := (*ls.db).Exec(query, agentName, eventType)
@@ -190,8 +190,8 @@ func (ls *LearningSystem) Forget(agentName, eventType string) error {
 // ListMemories retrieves all memories for an agent
 func (ls *LearningSystem) ListMemories(agentName string, limit int) ([]map[string]interface{}, error) {
 	query := `
-		SELECT details FROM AgentMemory
-		WHERE agent_name=$1 AND deleted_at IS NULL
+		SELECT details FROM Memory
+		WHERE owner_name='agent' AND agent_name=$1 AND deleted_at IS NULL
 		ORDER BY created_at DESC LIMIT $2;
 	`
 

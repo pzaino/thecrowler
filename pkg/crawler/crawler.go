@@ -1421,7 +1421,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 
 	// Insert or update the page in WebObjects
-	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
+	objID, detailsJSON, err := insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating WebObjects: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating WebObjects: %v", err)
@@ -1429,6 +1429,13 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
+
+	// Index object attributes for WebObjet
+	err = indexObjectAttributes(tx, objID, detailsJSON, ctx.GetConfig())
+	if err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
@@ -1466,6 +1473,93 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Return the index ID
 	return indexID, nil
+}
+
+func indexObjectAttributes(
+	tx *sql.Tx,
+	objectID int64,
+	detailsJSON []byte,
+	curr_cfg *cfg.Config,
+) error {
+
+	if curr_cfg == nil || curr_cfg.AttributesIndexing.IsEmpty() {
+		return nil
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(detailsJSON, &data); err != nil {
+		return err
+	}
+
+	attrs := curr_cfg.AttributesIndexing.WebObject
+
+	for _, attr := range attrs {
+
+		if !attr.Index {
+			continue
+		}
+
+		tokens := GetParsedPath(attr.Path)
+		values := ExtractWithTokens(data, tokens)
+
+		for _, v := range values {
+			raw := ToString(v)
+			if raw == "" {
+				continue
+			}
+
+			normalized := ApplyNormalizers(raw, attr.Normalizers)
+			if normalized == "" {
+				continue
+			}
+
+			hash := hashString(normalized)
+
+			err := insertObjectAttribute(
+				tx,
+				objectID,
+				attr.Key,
+				raw,
+				normalized,
+				hash,
+			)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func hashString(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func insertObjectAttribute(
+	tx *sql.Tx,
+	objectID int64,
+	key string,
+	raw string,
+	normalized string,
+	hash string,
+) error {
+
+	_, err := tx.Exec(`
+		INSERT INTO ObjectAttributes
+			(object_id, attribute_key, raw_value, normalized_value, value_hash)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING
+	`,
+		objectID,
+		key,
+		raw,
+		normalized,
+		hash,
+	)
+
+	return err
 }
 
 // indexNetInfo indexes the network information of a source in the database
@@ -1616,7 +1710,7 @@ var nullEscape = regexp.MustCompile(`\\u0000`)
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
-func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (int64, []byte, error) {
 	// Prepare the "Details" field for insertion
 	details := make(map[string]any)
 	details["performance"] = (*pageInfo).PerfInfo
@@ -1630,7 +1724,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	// Create a JSON out of the details
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
@@ -1651,12 +1745,12 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			}
 			scrapedItemJSON, err := json.Marshal(value)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 			doc2 := make(map[string]interface{})
 			err = json.Unmarshal(scrapedItemJSON, &doc2)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 
 			// Add scrapedItemJSON to ScrapedJSON document
@@ -1668,7 +1762,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		// Convert the scraped data to JSON
 		scrapedDataJSON, err = json.Marshal(scrapedDoc1)
 		if err != nil {
-			return err
+			return 0, nil, err
 		}
 
 		// Combine the scraped data and the details
@@ -1678,11 +1772,11 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 
 			err := json.Unmarshal(detailsJSON, &doc1)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 			err = json.Unmarshal(scrapedDataJSON, &doc2)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 
 			// Merges doc2 into doc1
@@ -1691,7 +1785,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			detailsJSON, err = normalizeJSON(doc1)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "normalizing JSON: %v", err)
-				return err
+				return 0, nil, err
 			}
 		}
 		// For debugging purposes:
@@ -1700,7 +1794,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			var processedDetails map[string]interface{}
 			err = json.Unmarshal(detailsJSON, &processedDetails)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 			// Print the links tag
 			fmt.Printf("Processed Links: %v\n", processedDetails["links"])
@@ -1758,7 +1852,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	FOR UPDATE;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting into WebObjectsIndex: %v", detailsJSON)
-		return err
+		return objID, detailsJSON, err
 	}
 
 	// Step 2: Insert into WebObjectsIndex for the associated sourceID
@@ -1767,10 +1861,10 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		VALUES ($1, $2)
 		ON CONFLICT (index_id, object_id) DO NOTHING`, indexID, objID)
 	if err != nil {
-		return err
+		return objID, detailsJSON, err
 	}
 
-	return nil
+	return objID, detailsJSON, nil
 }
 
 var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)

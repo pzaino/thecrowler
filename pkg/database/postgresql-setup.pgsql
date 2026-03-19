@@ -618,6 +618,7 @@ CREATE TABLE IF NOT EXISTS Memory (
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ,
 
+    owner_name TEXT NOT NULL,                 -- which component or agent owns the memory
     agent_name TEXT NOT NULL,                 -- which agent owns the memory
     component TEXT,                           -- crowler_engine, plugin, ai_agent, etc.
 

@@ -15,7 +15,10 @@
 // Package config contains the configuration file parsing logic.
 package config
 
+// File: /pkg/config/types.go
+
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -221,36 +224,8 @@ type ControlConfig struct {
 	WriteTimeout      int    `json:"write_timeout" yaml:"write_timeout"`           // WriteTimeout
 }
 
-// DNSConfig represents the DNS information gathering configuration
-type DNSConfig struct {
-	Enabled   bool   `json:"enabled" yaml:"enabled"`       // Whether to enable DNS information gathering or not
-	Timeout   int    `json:"timeout" yaml:"timeout"`       // Timeout for DNS requests (in seconds)
-	RateLimit string `json:"rate_limit" yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
-}
-
-// WHOISConfig represents the WHOIS information gathering configuration
-type WHOISConfig struct {
-	Enabled   bool   `json:"enabled" yaml:"enabled"`
-	Timeout   int    `json:"timeout" yaml:"timeout"`
-	RateLimit string `json:"rate_limit" yaml:"rate_limit"`
-}
-
-// NetLookupConfig represents the network information gathering configuration
-type NetLookupConfig struct {
-	Enabled   bool   `json:"enabled" yaml:"enabled"`
-	Timeout   int    `json:"timeout" yaml:"timeout"`
-	RateLimit string `json:"rate_limit" yaml:"rate_limit"`
-}
-
-// GeoLookupConfig represents the network information gathering configuration
-type GeoLookupConfig struct {
-	Enabled bool   `json:"enabled" yaml:"enabled"`
-	Type    string `json:"type" yaml:"type"`       // "maxmind" or "ip2location"
-	DBPath  string `json:"db_path" yaml:"db_path"` // Used for MaxMind
-	APIKey  string `json:"api_key" yaml:"api_key"` // Used for IP2Location
-	Timeout int    `json:"timeout" yaml:"timeout"`
-	SSLMode string `json:"sslmode" yaml:"sslmode"`
-}
+/////////////////////////////////////////////////
+//// ----- HTTP Information Gathering ------ ////
 
 // HTTPConfig represents the HTTP information gathering configuration
 type HTTPConfig struct {
@@ -288,6 +263,9 @@ type SOCKSProxy struct {
 	Username string `json:"username" yaml:"username"`
 	Password string `json:"password" yaml:"password"`
 }
+
+/////////////////////////////////////////////////
+//// ----- Service Scout Configuration ----- ////
 
 // ServiceScoutConfig represents a structured configuration for an Nmap scan.
 // This is a simplified example and does not cover all possible Nmap options.
@@ -349,6 +327,9 @@ type SSIdleScan struct {
 	ZombiePort int    `yaml:"zombie_port"` // --zombie-port (Use a zombie port)
 }
 
+/////////////////////////////////////////////////
+//// --- Network  Information  Gathering --- ////
+
 // NetworkInfo represents the network information gathering configuration
 type NetworkInfo struct {
 	DNS          DNSConfig          `yaml:"dns"`
@@ -359,12 +340,49 @@ type NetworkInfo struct {
 	HostPlatform PlatformInfo       `yaml:"host_platform"`
 }
 
+// DNSConfig represents the DNS information gathering configuration
+type DNSConfig struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`       // Whether to enable DNS information gathering or not
+	Timeout   int    `json:"timeout" yaml:"timeout"`       // Timeout for DNS requests (in seconds)
+	RateLimit string `json:"rate_limit" yaml:"rate_limit"` // Rate limit for DNS requests (in milliseconds)
+}
+
+// WHOISConfig represents the WHOIS information gathering configuration
+type WHOISConfig struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Timeout   int    `json:"timeout" yaml:"timeout"`
+	RateLimit string `json:"rate_limit" yaml:"rate_limit"`
+}
+
+// NetLookupConfig represents the network information gathering configuration
+type NetLookupConfig struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Timeout   int    `json:"timeout" yaml:"timeout"`
+	RateLimit string `json:"rate_limit" yaml:"rate_limit"`
+}
+
+// GeoLookupConfig represents the network information gathering configuration
+type GeoLookupConfig struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	Type    string `json:"type" yaml:"type"`       // "maxmind" or "ip2location"
+	DBPath  string `json:"db_path" yaml:"db_path"` // Used for MaxMind
+	APIKey  string `json:"api_key" yaml:"api_key"` // Used for IP2Location
+	Timeout int    `json:"timeout" yaml:"timeout"`
+	SSLMode string `json:"sslmode" yaml:"sslmode"`
+}
+
+/////////////////////////////////////////////////
+//// ----- Host Platform Information ------- ////
+
 // PlatformInfo represents the platform information
 type PlatformInfo struct {
 	OSName    string `yaml:"os_name"`
 	OSVersion string `yaml:"os_version"`
 	OSArch    string `yaml:"os_arch"`
 }
+
+/////////////////////////////////////////////////
+//// ---------- API Configuration ---------- ////
 
 // API represents the API configuration
 type API struct {
@@ -396,6 +414,9 @@ type APIPlugins struct {
 	Allowed []string `yaml:"allowed"` // List of allowed plugins
 }
 
+/////////////////////////////////////////////////
+//// ---------- VDI Configuration ---------- ////
+
 // Selenium represents the CROWler VDI configuration
 type Selenium struct {
 	Name        string `yaml:"name"`         // Name of the Selenium instance
@@ -420,6 +441,9 @@ type Selenium struct {
 	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration
 }
 
+/////////////////////////////////////////////////
+//// --- System Management Configuration --- ////
+
 // SysMngConfig represents the system management configuration
 type SysMngConfig struct {
 	Port              int    `yaml:"port"`               // Port number of the system management server
@@ -432,6 +456,9 @@ type SysMngConfig struct {
 	ReadTimeout       int    `yaml:"read_timeout"`       // ReadTimeout is the maximum duration for reading the entire request
 	WriteTimeout      int    `yaml:"write_timeout"`      // WriteTimeout
 }
+
+/////////////////////////////////////////////////
+//// ---- Events Handler Configuration ----- ////
 
 // EventsConfig represents the events handler service configuration
 type EventsConfig struct {
@@ -457,15 +484,8 @@ type EventsConfig struct {
 	SysDBWebObjectsRetention string `json:"sys_db_webobjects_retention" yaml:"sys_db_webobjects_retention"` // System database web objects retention period (in hours/days/months/years)
 }
 
-// Rules represents the rules configuration sources for the crawler and the scrapper
-type Rules struct {
-	// Rules set location
-	Path []string `yaml:"path"`
-	// URL to fetch the rules from (in case they are distributed by a web server)
-	URL []string `yaml:"url"`
-	// Rules set update interval (in seconds)
-	Interval int `yaml:"interval"`
-}
+/////////////////////////////////////////////////
+//// -------- Remote Configuration --------- ////
 
 // Remote represents a way to tell the CROWler to load a remote configuration
 type Remote struct {
@@ -479,6 +499,9 @@ type Remote struct {
 	Type    string `yaml:"type"`    // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode string `yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
+
+/////////////////////////////////////////////////
+//// -------- Agents Configuration --------- ////
 
 // AgentsConfig represents the configuration section to tell the CROWler where to find the agents definitions
 type AgentsConfig struct {
@@ -497,6 +520,9 @@ type AgentsConfig struct {
 	Refresh          int                    `yaml:"refresh" json:"refresh"`                     // Refresh interval for the ruleset (in seconds)
 }
 
+/////////////////////////////////////////////////
+//// ----------- Rulesets Config ----------- ////
+
 // RulesetConfig represents the top-level structure of the rules YAML file
 type RulesetConfig struct {
 	SchemaPath string   `yaml:"schema_path"` // Path to the JSON schema file
@@ -511,6 +537,19 @@ type RulesetConfig struct {
 	SSLMode    string   `yaml:"sslmode"`     // SSL mode for API connection (e.g., "disable")
 	Refresh    int      `yaml:"refresh"`     // Refresh interval for the ruleset (in seconds)
 }
+
+// Rules represents the rules configuration sources for the crawler and the scrapper
+type Rules struct {
+	// Rules set location
+	Path []string `yaml:"path"`
+	// URL to fetch the rules from (in case they are distributed by a web server)
+	URL []string `yaml:"url"`
+	// Rules set update interval (in seconds)
+	Interval int `yaml:"interval"`
+}
+
+/////////////////////////////////////////////////
+////  ------- Plugins Configuration -------- ////
 
 // PluginConfig represents the top-level structure of the rules YAML file
 type PluginConfig struct {
@@ -527,12 +566,110 @@ type PluginConfig struct {
 	Refresh          int                    `yaml:"refresh"`           // Refresh interval for the ruleset (in seconds)
 }
 
+/////////////////////////////////////////////////
+////    ------- Prometheus Config --------   ////
+
 // PrometheusConfig represents the Prometheus configuration
 type PrometheusConfig struct {
 	Enabled bool   `json:"enabled" yaml:"enabled"` // Whether to enable Prometheus or not
 	Host    string `json:"host" yaml:"host"`       // Hostname of the Prometheus server
 	Port    int    `json:"port" yaml:"port"`       // Port number of the Prometheus server
 }
+
+/////////////////////////////////////////////////
+//// ----- Attributes Indexing Config ------ ////
+
+// AttributeIndexingConfig represents the top-level configuration
+// for attributes indexing across all artifact types.
+type AttributeIndexingConfig struct {
+	WebObject []AttributeDefinition `json:"webobject" yaml:"webobject"`
+	NetInfo   []AttributeDefinition `json:"netinfo" yaml:"netinfo"`
+	HTTPInfo  []AttributeDefinition `json:"httpinfo" yaml:"httpinfo"`
+}
+
+// AttributeDefinition represents a single attribute extraction rule.
+type AttributeDefinition struct {
+	Key         string   `json:"key" yaml:"key"`                 // Attribute key (e.g., "domain", "email")
+	Path        string   `json:"path" yaml:"path"`               // JSON path (e.g., "details.scraped_data.url")
+	IndexType   string   `json:"index_type" yaml:"index_type"`   // string, integer, boolean, date, array
+	Normalizers []string `json:"normalizers" yaml:"normalizers"` // lowercase, trim, domain, etc.
+	Index       bool     `json:"index" yaml:"index"`             // Whether to index this attribute
+}
+
+// IsEmpty checks if the AttributeIndexingConfig has no attribute definitions.
+func (c *AttributeIndexingConfig) IsEmpty() bool {
+	return len(c.WebObject) == 0 && len(c.NetInfo) == 0 && len(c.HTTPInfo) == 0
+}
+
+// GetEnabled returns the list of enabled attributes for a given object type (webobject, netinfo, httpinfo)
+func (c *AttributeIndexingConfig) GetEnabled(objectType string) []AttributeDefinition {
+	var attrs []AttributeDefinition
+
+	switch strings.ToLower(objectType) {
+	case "webobject":
+		attrs = c.WebObject
+	case "netinfo":
+		attrs = c.NetInfo
+	case "httpinfo":
+		attrs = c.HTTPInfo
+	default:
+		return nil
+	}
+
+	var result []AttributeDefinition
+	for _, a := range attrs {
+		if a.Index {
+			result = append(result, a)
+		}
+	}
+
+	return result
+}
+
+// IsValid checks if the attribute definition is valid (e.g., has a key, path, and valid index type and normalizer)
+func (a *AttributeDefinition) IsValid() bool {
+	if a.Key == "" || a.Path == "" {
+		return false
+	}
+
+	switch a.IndexType {
+	case "string", "integer", "boolean", "date", "array":
+	default:
+		return false
+	}
+
+	for _, n := range a.Normalizers {
+		switch n {
+		case "", "lowercase", "uppercase", "trim":
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+// Validate checks the validity of all attribute definitions in the configuration and returns a list of errors if any are found.
+func (c *AttributeIndexingConfig) Validate() []error {
+	var errs []error
+
+	check := func(list []AttributeDefinition, group string) {
+		for _, a := range list {
+			if !a.IsValid() {
+				errs = append(errs, fmt.Errorf("invalid attribute in %s: %s", group, a.Key))
+			}
+		}
+	}
+
+	check(c.WebObject, "webobject")
+	check(c.NetInfo, "netinfo")
+	check(c.HTTPInfo, "httpinfo")
+
+	return errs
+}
+
+//////////////////////////////////////////////////
+////   ----------- Main Config ------------   ////
 
 // Config represents the structure of the configuration file
 type Config struct {
@@ -544,6 +681,9 @@ type Config struct {
 
 	// Crawler configuration
 	Crawler Crawler `json:"crawler" yaml:"crawler"`
+
+	// Attributes indexing configuration
+	AttributesIndexing AttributeIndexingConfig `json:"attributes_indexing" yaml:"attributes_indexing"` // Configuration for attributes indexing
 
 	// API configuration
 	API API `json:"api" yaml:"api"`
