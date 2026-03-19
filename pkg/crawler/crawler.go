@@ -1499,6 +1499,11 @@ func indexObjectAttributes(
 
 	for _, attr := range attrs {
 
+		cmn.DebugMsg(cmn.DbgLvlDebug4,
+			"[DEBUG-Indexing] key=%s index=%v path=%s",
+			attr.Key, attr.Index, attr.Path,
+		)
+
 		if !attr.Index {
 			continue
 		}
@@ -1539,6 +1544,7 @@ func indexObjectAttributes(
 				raw,
 				normalized,
 				hash,
+				attr.IndexType,
 			)
 			if err != nil {
 				return err
@@ -1562,19 +1568,21 @@ func insertObjectAttribute(
 	raw string,
 	normalized string,
 	hash string,
+	attrType string,
 ) error {
 
 	_, err := tx.Exec(`
 		INSERT INTO ObjectAttributes
-			(object_id, attribute_key, raw_value, normalized_value, value_hash)
-		VALUES ($1, $2, $3, $4, $5)
+			(object_id, object_type, attribute_key, attribute_value, normalized_value, value_hash, attribute_type)
+		VALUES ($1, 'webobject', $2, $3, $4, $5, $6)
 		ON CONFLICT DO NOTHING
 	`,
 		objectID,
 		key,
-		raw,
+		raw, // maps to attribute_value
 		normalized,
 		hash,
+		attrType,
 	)
 
 	return err
