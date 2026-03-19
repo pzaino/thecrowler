@@ -1495,7 +1495,7 @@ func indexObjectAttributes(
 	}
 
 	attrs := currCfg.AttributesIndexing.WebObject
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[ATTR] Loaded %d webobject attributes", len(currCfg.AttributesIndexing.WebObject))
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Loaded %d webobject attributes", len(currCfg.AttributesIndexing.WebObject))
 
 	for _, attr := range attrs {
 
