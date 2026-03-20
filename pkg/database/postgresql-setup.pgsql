@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS ObjectAttributes (
     attribute_key TEXT NOT NULL,
     attribute_value TEXT NOT NULL,
     normalized_value TEXT NOT NULL,
-    value_hash VARCHAR(64),
+    value_hash VARCHAR(64) NOT NULL,    -- SHA256 hash of the attribute value for fast comparison and uniqueness.
     attribute_type TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -357,7 +357,7 @@ CREATE TABLE IF NOT EXISTS ObjectAttributes (
         object_type,
         object_id,
         attribute_key,
-        normalized_value
+        value_hash
     )
 );
 

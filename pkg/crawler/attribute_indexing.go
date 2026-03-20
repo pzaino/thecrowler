@@ -32,19 +32,35 @@ import (
 
 var pathCache sync.Map
 
-type Command func() interface{}
+type CommandContext struct {
+	ObjectID int64
+	Data     map[string]interface{}
+	// optional later:
+	PageURL string
+}
+
+type Command func(ctx CommandContext) interface{}
 
 var commands = map[string]Command{
-	"now()": func() interface{} {
+	"now()": func(ctx CommandContext) interface{} {
 		return time.Now().UTC().Format(time.RFC3339)
+	},
+	"object_id": func(ctx CommandContext) interface{} {
+		return ctx.ObjectID
+	},
+	"timestamp()": func(ctx CommandContext) interface{} {
+		return time.Now().Unix()
+	},
+	"json_size": func(ctx CommandContext) interface{} {
+		return len(ctx.Data)
 	},
 }
 
-func ExecuteCommand(a cfg.AttributeDefinition) []interface{} {
+func ExecuteCommand(a cfg.AttributeDefinition, ctx CommandContext) []interface{} {
 	cmdName := a.ParseCommand()
 
 	if cmd, ok := commands[cmdName]; ok {
-		return []interface{}{cmd()}
+		return []interface{}{cmd(ctx)}
 	}
 
 	return nil

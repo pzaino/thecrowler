@@ -1529,7 +1529,11 @@ func indexObjectAttributes(
 		var values []interface{}
 
 		if attr.IsCommandPath() {
-			values = ExecuteCommand(attr)
+			ctxCmd := CommandContext{
+				ObjectID: objectID,
+				Data:     data,
+			}
+			values = ExecuteCommand(attr, ctxCmd)
 		} else {
 			tokens := GetParsedPath(attr.Path)
 			values = ExtractWithTokens(data, tokens)
