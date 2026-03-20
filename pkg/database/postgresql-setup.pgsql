@@ -2689,6 +2689,275 @@ HAVING COUNT(*) = (
 ORDER BY rank DESC;
 $$;
 
+CREATE OR REPLACE FUNCTION search_artifacts_by_attribute(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    attribute_key TEXT,
+    attribute_value TEXT,
+    attribute_type TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH matched_objects AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        MAX(similarity(oa.normalized_value, field_value)) AS rank
+    FROM ObjectAttributes oa
+    WHERE
+        oa.attribute_key = field_name
+        AND oa.normalized_value ILIKE '%' || field_value || '%'
+    GROUP BY oa.object_type, oa.object_id
+)
+
+SELECT
+    oa.object_type AS source_type,
+    oa.object_id AS artifact_id,
+    ar.page_url,
+    oa.attribute_key,
+    oa.attribute_value,
+    oa.attribute_type,
+    ar.created_at,
+    ar.last_updated_at,
+    mo.rank
+
+FROM matched_objects mo
+
+JOIN ObjectAttributes oa
+  ON oa.object_type = mo.object_type
+ AND oa.object_id = mo.object_id
+
+JOIN Artifacts ar
+  ON ar.object_type = oa.object_type
+ AND ar.object_id = oa.object_id
+
+ORDER BY mo.rank DESC, oa.attribute_key;
+$$;
+
+CREATE OR REPLACE FUNCTION search_objects_by_attribute(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    source_type TEXT,
+    object_id BIGINT,
+    page_url TEXT,
+    details JSONB,
+    attributes JSONB,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH matched_objects AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        MAX(similarity(oa.normalized_value, field_value)) AS rank
+    FROM ObjectAttributes oa
+    WHERE
+        oa.attribute_key = field_name
+        AND oa.normalized_value ILIKE '%' || field_value || '%'
+    GROUP BY oa.object_type, oa.object_id
+)
+
+SELECT
+    mo.object_type AS source_type,
+    mo.object_id,
+    ar.page_url,
+
+    -- pick correct JSON source
+    CASE
+        WHEN mo.object_type = 'webobject' THEN wo.details
+        WHEN mo.object_type = 'netinfo' THEN ni.details
+        WHEN mo.object_type = 'httpinfo' THEN hi.details
+        ELSE NULL
+    END AS details,
+
+    jsonb_agg(
+        jsonb_build_object(
+            'key', oa.attribute_key,
+            'value', oa.attribute_value,
+            'type', oa.attribute_type
+        )
+    ) AS attributes,
+
+    ar.created_at,
+    ar.last_updated_at,
+    mo.rank
+
+FROM matched_objects mo
+
+JOIN ObjectAttributes oa
+  ON oa.object_type = mo.object_type
+ AND oa.object_id = mo.object_id
+
+JOIN Artifacts ar
+  ON ar.object_type = mo.object_type
+ AND ar.object_id = mo.object_id
+
+-- polymorphic joins
+LEFT JOIN WebObjects wo
+  ON mo.object_type = 'webobject'
+ AND wo.object_id = mo.object_id
+
+LEFT JOIN NetInfo ni
+  ON mo.object_type = 'netinfo'
+ AND ni.netinfo_id = mo.object_id
+
+LEFT JOIN HTTPInfo hi
+  ON mo.object_type = 'httpinfo'
+ AND hi.httpinfo_id = mo.object_id
+
+GROUP BY
+    mo.object_type,
+    mo.object_id,
+    ar.page_url,
+    wo.details,
+    ni.details,
+    hi.details,
+    ar.created_at,
+    ar.last_updated_at,
+    mo.rank
+
+ORDER BY mo.rank DESC;
+$$;
+
+
+CREATE OR REPLACE FUNCTION search_objects_by_attributes(filters JSONB)
+RETURNS TABLE(
+    source_type TEXT,
+    object_id BIGINT,
+    page_url TEXT,
+    details JSONB,
+    attributes JSONB,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    matched_fields JSONB,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH filter_pairs AS (
+    SELECT key, value
+    FROM jsonb_each_text(filters)
+),
+
+matches AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        ar.page_url,
+        ar.created_at,
+        ar.last_updated_at,
+        oa.attribute_key,
+        oa.attribute_value,
+        oa.attribute_type,
+        similarity(oa.normalized_value, f.value) AS similarity_score
+    FROM ObjectAttributes oa
+
+    JOIN Artifacts ar
+      ON ar.object_type = oa.object_type
+     AND ar.object_id = oa.object_id
+
+    JOIN filter_pairs f
+      ON oa.attribute_key = f.key
+     AND oa.normalized_value ILIKE '%' || f.value || '%'
+),
+
+matched_objects AS (
+    SELECT
+        object_type,
+        object_id,
+        page_url,
+        created_at,
+        last_updated_at,
+        jsonb_object_agg(attribute_key, attribute_value) AS matched_fields,
+        AVG(similarity_score)::REAL AS rank,
+        COUNT(*) AS match_count
+    FROM matches
+    GROUP BY
+        object_type,
+        object_id,
+        page_url,
+        created_at,
+        last_updated_at
+    HAVING COUNT(*) = (SELECT COUNT(*) FROM filter_pairs)
+)
+
+SELECT
+    mo.object_type AS source_type,
+    mo.object_id,
+    mo.page_url,
+
+    -- polymorphic details selection
+    CASE
+        WHEN mo.object_type = 'webobject' THEN wo.details
+        WHEN mo.object_type = 'netinfo' THEN ni.details
+        WHEN mo.object_type = 'httpinfo' THEN hi.details
+        ELSE NULL
+    END AS details,
+
+    jsonb_agg(
+        jsonb_build_object(
+            'key', oa.attribute_key,
+            'value', oa.attribute_value,
+            'type', oa.attribute_type
+        )
+    ) AS attributes,
+
+    mo.created_at,
+    mo.last_updated_at,
+    mo.matched_fields,
+    mo.rank
+
+FROM matched_objects mo
+
+JOIN ObjectAttributes oa
+  ON oa.object_type = mo.object_type
+ AND oa.object_id = mo.object_id
+
+JOIN Artifacts ar
+  ON ar.object_type = mo.object_type
+ AND ar.object_id = mo.object_id
+
+-- polymorphic joins
+LEFT JOIN WebObjects wo
+  ON mo.object_type = 'webobject'
+ AND wo.object_id = mo.object_id
+
+LEFT JOIN NetInfo ni
+  ON mo.object_type = 'netinfo'
+ AND ni.netinfo_id = mo.object_id
+
+LEFT JOIN HTTPInfo hi
+  ON mo.object_type = 'httpinfo'
+ AND hi.httpinfo_id = mo.object_id
+
+GROUP BY
+    mo.object_type,
+    mo.object_id,
+    mo.page_url,
+    wo.details,
+    ni.details,
+    hi.details,
+    mo.created_at,
+    mo.last_updated_at,
+    mo.matched_fields,
+    mo.rank
+
+ORDER BY mo.rank DESC;
+$$;
+
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 -- User and permissions setup
