@@ -53,6 +53,7 @@ func ExecuteCommand(a cfg.AttributeDefinition) []interface{} {
 // Normalizer is a function type that takes a string as input and returns a normalized version of that string.
 type Normalizer func(string) string
 
+// all names lower-case and trimmed for consistency:
 var normalizers = map[string]Normalizer{
 	"lowercase": strings.ToLower,
 	"uppercase": strings.ToUpper,
@@ -448,6 +449,7 @@ func ApplyNormalizers(value string, rules []string) string {
 	rules = EnsureSafeNormalizers(rules)
 
 	for _, rule := range rules {
+		rule = strings.ToLower(strings.TrimSpace(rule))
 		if norm, ok := normalizers[rule]; ok {
 			result = norm(result)
 		}
