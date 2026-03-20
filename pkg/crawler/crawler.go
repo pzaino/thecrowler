@@ -1519,11 +1519,11 @@ func indexObjectAttributes(
 		attr := queue[0]
 		queue = queue[1:]
 
-		if executed[attr.Key] {
+		id := attr.Key + "|" + attr.Path
+		if executed[id] {
 			continue
 		}
-
-		executed[attr.Key] = true
+		executed[id] = true
 
 		// --- extract ---
 		var values []interface{}
