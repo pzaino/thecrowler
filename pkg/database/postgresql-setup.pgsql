@@ -365,18 +365,20 @@ CREATE INDEX idx_objattr_fts
     ON ObjectAttributes
     USING gin (fts);
 
--- Index for ObjectAttributes to optimize searches by attribute key and normalized value,
-CREATE INDEX IF NOT EXISTS idx_objattr_key_norm
-    ON ObjectAttributes(attribute_key, normalized_value);
+-- fast filtering by key
+CREATE INDEX idx_objattr_key
+ON ObjectAttributes(attribute_key);
 
--- Index for ObjectAttributes to optimize searches by object type, attribute key and normalized value,
--- which is a common search pattern for finding objects with specific attributes.
-CREATE INDEX IF NOT EXISTS idx_objattr_type_key_norm
-    ON ObjectAttributes(object_type, attribute_key, normalized_value);
+-- fast filtering by type
+CREATE INDEX idx_objattr_type
+ON ObjectAttributes(object_type);
 
 CREATE INDEX IF NOT EXISTS idx_objattr_hash
     ON ObjectAttributes(value_hash)
     WHERE value_hash IS NOT NULL;
+
+CREATE INDEX idx_objattr_key_hash
+ON ObjectAttributes(attribute_key, value_hash);
 
 CREATE INDEX IF NOT EXISTS idx_objattr_object
     ON ObjectAttributes(object_type, object_id);
