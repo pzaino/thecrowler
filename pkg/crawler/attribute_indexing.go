@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -65,6 +66,32 @@ var normalizers = map[string]Normalizer{
 	"fix_utf8":          FixUTF8,
 	"normalize_unicode": NormalizeUnicode,
 	"sanitize_string":   SanitizeString,
+	"unix_to_datetime":  UnixToDateTime,
+}
+
+// UnixToDateTime Transform typical timestamps into date-time format
+func UnixToDateTime(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+
+	// Try parsing as integer (seconds or milliseconds)
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return s // fallback: keep original
+	}
+
+	// Detect milliseconds vs seconds
+	// heuristic: anything > year ~ 2286 in seconds is probably ms
+	if i > 9999999999 {
+		i = i / 1000
+	}
+
+	t := time.Unix(i, 0).UTC()
+
+	// Return ISO 8601 (PostgreSQL friendly)
+	return t.Format(time.RFC3339)
 }
 
 // FixUTF8 takes a string as input and returns a version of the string that is valid UTF-8, with control characters removed and NULL bytes stripped out, making it safe for storage in databases like PostgreSQL.
@@ -122,9 +149,11 @@ func SanitizeString(s string) string {
 
 // PathToken represents a single token in a JSON path, which can be either a key or an array indicator.
 type PathToken struct {
-	Key     string
-	IsArray bool
-	Index   *int // nil = not index, set = specific index, -1 = wildcard
+	Key      string
+	IsArray  bool
+	Index    *int // nil = not index, set = specific index, -1 = wildcard
+	Wildcard bool
+	Prefix   string
 }
 
 // GetParsedPath retrieves the parsed path tokens from the cache if available, otherwise it parses the path and stores it in the cache for future use.
@@ -189,6 +218,20 @@ func ParsePath(path string) []PathToken {
 			continue
 		}
 
+		// Case: *
+		if p == "*" {
+			token.Wildcard = true
+			tokens = append(tokens, token)
+			continue
+		}
+
+		// Case: prefix*
+		if strings.HasSuffix(p, "*") {
+			token.Prefix = strings.TrimSuffix(p, "*")
+			tokens = append(tokens, token)
+			continue
+		}
+
 		// Default
 		token.Key = p
 		tokens = append(tokens, token)
@@ -237,6 +280,25 @@ func ExtractWithTokens(data interface{}, tokens []PathToken) []interface{} {
 			switch n := node.(type) {
 
 			case map[string]interface{}:
+				// --- Wildcard: match all keys ---
+				if token.Wildcard {
+					for _, v := range n {
+						next = append(next, v)
+					}
+					continue
+				}
+
+				// --- Prefix match ---
+				if token.Prefix != "" {
+					for k, v := range n {
+						if strings.HasPrefix(k, token.Prefix) {
+							next = append(next, v)
+						}
+					}
+					continue
+				}
+
+				// --- Normal key ---
 				val, ok := n[token.Key]
 				if !ok {
 					continue
