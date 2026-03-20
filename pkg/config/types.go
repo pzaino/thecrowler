@@ -594,6 +594,48 @@ type AttributeDefinition struct {
 	IndexType   string   `json:"index_type" yaml:"index_type"`   // string, integer, boolean, date, array
 	Normalizers []string `json:"normalizers" yaml:"normalizers"` // lowercase, trim, domain, etc.
 	Index       bool     `json:"index" yaml:"index"`             // Whether to index this attribute
+	RunAlso     []string `json:"run_also" yaml:"run_also"`       // List of other attribute keys to run if this one is found
+}
+
+// IsCommandPath checks if the Path field is a command (e.g., "cmd(some_command)")
+func (a *AttributeDefinition) IsCommandPath() bool {
+	tmp := strings.ToLower(strings.TrimSpace(a.Path))
+	return strings.HasPrefix(tmp, "cmd(") && strings.HasSuffix(tmp, ")")
+}
+
+// ParseCommand extracts the command from the Path field if it is a command path, otherwise returns an empty string.
+func (a *AttributeDefinition) ParseCommand() string {
+	if !a.IsCommandPath() {
+		return ""
+	}
+	tmp := strings.TrimSpace(a.Path)
+	tmp = strings.TrimPrefix(tmp, "cmd(")
+	tmp = strings.TrimPrefix(tmp, "CMD(")
+	tmp = strings.TrimSuffix(tmp, ")")
+	return strings.TrimSpace(tmp)
+}
+
+// IsValid checks if the attribute definition is valid (e.g., has a key, path, and valid index type and normalizer)
+func (a *AttributeDefinition) IsValid() bool {
+	if a.Key == "" || a.Path == "" {
+		return false
+	}
+
+	switch a.IndexType {
+	case "string", "integer", "boolean", "date", "array":
+	default:
+		return false
+	}
+
+	for _, n := range a.Normalizers {
+		switch n {
+		case "", "lowercase", "uppercase", "trim":
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 // IsEmpty checks if the AttributeIndexingConfig has no attribute definitions.
@@ -624,29 +666,6 @@ func (c *AttributeIndexingConfig) GetEnabled(objectType string) []AttributeDefin
 	}
 
 	return result
-}
-
-// IsValid checks if the attribute definition is valid (e.g., has a key, path, and valid index type and normalizer)
-func (a *AttributeDefinition) IsValid() bool {
-	if a.Key == "" || a.Path == "" {
-		return false
-	}
-
-	switch a.IndexType {
-	case "string", "integer", "boolean", "date", "array":
-	default:
-		return false
-	}
-
-	for _, n := range a.Normalizers {
-		switch n {
-		case "", "lowercase", "uppercase", "trim":
-		default:
-			return false
-		}
-	}
-
-	return true
 }
 
 // Validate checks the validity of all attribute definitions in the configuration and returns a list of errors if any are found.

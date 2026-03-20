@@ -1483,7 +1483,6 @@ func indexObjectAttributes(
 	detailsJSON []byte,
 	currCfg *cfg.Config,
 ) error {
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Starting Indexing object attributes for objectID: %d", objectID)
 
 	if currCfg == nil || currCfg.AttributesIndexing.IsEmpty() {
 		return nil
@@ -1495,35 +1494,57 @@ func indexObjectAttributes(
 	}
 
 	attrs := currCfg.AttributesIndexing.WebObject
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Indexing] Loaded %d webobject attributes", len(currCfg.AttributesIndexing.WebObject))
 
-	for _, attr := range attrs {
+	// --- build lookup ---
+	attrMap := make(map[string]cfg.AttributeDefinition)
+	for _, a := range attrs {
+		attrMap[a.Key] = a
+	}
 
-		cmn.DebugMsg(cmn.DbgLvlDebug4,
-			"[DEBUG-Indexing] key=%s index=%v path=%s",
-			attr.Key, attr.Index, attr.Path,
-		)
+	// --- execution state ---
+	executed := make(map[string]bool)
 
-		if !attr.Index {
+	// --- queue ---
+	queue := []cfg.AttributeDefinition{}
+
+	// --- seed: only index=true ---
+	for _, a := range attrs {
+		if a.Index {
+			queue = append(queue, a)
+		}
+	}
+
+	// --- process queue ---
+	for len(queue) > 0 {
+		attr := queue[0]
+		queue = queue[1:]
+
+		if executed[attr.Key] {
 			continue
 		}
 
-		if strings.HasPrefix(attr.Path, "details.") {
-			cmn.DebugMsg(cmn.DbgLvlError,
-				"Invalid path '%s': should not include 'details.' prefix",
-				attr.Path,
-			)
+		executed[attr.Key] = true
+
+		// --- extract ---
+		var values []interface{}
+
+		if attr.IsCommandPath() {
+			values = ExecuteCommand(attr)
+		} else {
+			tokens := GetParsedPath(attr.Path)
+			values = ExtractWithTokens(data, tokens)
+		}
+
+		if len(values) == 0 {
 			continue
 		}
 
-		tokens := GetParsedPath(attr.Path)
-		values := ExtractWithTokens(data, tokens)
-
 		cmn.DebugMsg(cmn.DbgLvlDebug4,
-			"[DEBUG-Indexing] Attr key=%s path=%s -> extracted=%d",
-			attr.Key, attr.Path, len(values),
+			"[DEBUG-Indexing] Attr key=%s extracted=%d",
+			attr.Key, len(values),
 		)
 
+		// --- insert values ---
 		for _, v := range values {
 			raw := ToString(v)
 			if raw == "" {
@@ -1550,9 +1571,15 @@ func indexObjectAttributes(
 				return err
 			}
 		}
+
+		// --- trigger RunAlso ---
+		for _, depKey := range attr.RunAlso {
+			if dep, ok := attrMap[depKey]; ok {
+				queue = append(queue, dep)
+			}
+		}
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Finished Indexing object attributes for objectID: %d", objectID)
 	return nil
 }
 

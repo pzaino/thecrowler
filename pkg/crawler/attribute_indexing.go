@@ -26,10 +26,29 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	"golang.org/x/text/unicode/norm"
 )
 
 var pathCache sync.Map
+
+type Command func() interface{}
+
+var commands = map[string]Command{
+	"now()": func() interface{} {
+		return time.Now().UTC().Format(time.RFC3339)
+	},
+}
+
+func ExecuteCommand(a cfg.AttributeDefinition) []interface{} {
+	cmdName := a.ParseCommand()
+
+	if cmd, ok := commands[cmdName]; ok {
+		return []interface{}{cmd()}
+	}
+
+	return nil
+}
 
 // Normalizer is a function type that takes a string as input and returns a normalized version of that string.
 type Normalizer func(string) string
