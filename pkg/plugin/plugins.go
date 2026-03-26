@@ -29,7 +29,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -444,40 +443,6 @@ func getPluginName(pluginBody, file string) string {
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
-	pNameRegEx := "^//\\s*[@]?name\\s*\\:\\s*([^\n]+)"
-	pDescRegEx := "^//\\s*[@]?description\\s*\\:?\\s*([^\n]+)"
-	pVerRegEx := "^//\\s*[@]?version\\s*\\:?\\s*([^\n]+)"
-	pTypeRegEx := "^//\\s*[@]?type\\s*\\:\\s*([^\n]+)"
-	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
-	pAsyncTagRegEx := "^//\\s*[@]?async\\s*\\:\\s*([^\n]+)"
-	pAPIEndPointRegEx := "^//\\s*[@]?api_endpoint\\s*\\:\\s*([^\n]+)"
-	pAPIMethodRegEx := "^//\\s*[@]?api_methods\\s*\\:\\s*([^\n]+)"
-	pAPIAuthRegEx := "^//\\s*[@]?api_auth\\s*\\:\\s*([^\n]+)"
-	pAPIAuthTypeRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
-
-	pAPIQueryJSONRegEx := "^//\\s*[@]?api_query_json\\s*\\:\\s*(\\{.*)$"
-	pAPIRequestJSONRegEx := "^//\\s*[@]?api_request_json\\s*\\:\\s*(\\{.*)$"
-	pAPIResponseJSONRegEx := "^//\\s*[@]?api_response_json\\s*\\:\\s*(\\{.*)$"
-	pAPIHeadersJSONRegEx := "^//\\s*[@]?api_headers_json\\s*\\:\\s*(\\{.*)$"
-
-	re01 := regexp.MustCompile(pNameRegEx)
-	re02 := regexp.MustCompile(pDescRegEx)
-	re03 := regexp.MustCompile(pTypeRegEx)
-	re04 := regexp.MustCompile(pEventTypeRegEx)
-	re05 := regexp.MustCompile(pVerRegEx)
-	re06 := regexp.MustCompile(pAsyncTagRegEx)
-
-	re07 := regexp.MustCompile(pAPIEndPointRegEx)
-	re08 := regexp.MustCompile(pAPIMethodRegEx)
-	re09 := regexp.MustCompile(pAPIAuthRegEx)
-	re10 := regexp.MustCompile(pAPIAuthTypeRegEx)
-
-	re11 := regexp.MustCompile(pAPIQueryJSONRegEx)
-	re12 := regexp.MustCompile(pAPIRequestJSONRegEx)
-	re13 := regexp.MustCompile(pAPIResponseJSONRegEx)
-	re14 := regexp.MustCompile(pAPIHeadersJSONRegEx)
-
-	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
@@ -493,16 +458,94 @@ func NewJSPlugin(script string) *JSPlugin {
 	apiRequestJSON := ""
 	apiResponseJSON := ""
 	apiHeadersJSON := ""
-	lines := strings.Split(script, "\n")
-	for _, line := range lines {
-		if re01.MatchString(line) {
-			pName = strings.TrimSpace(re01.FindStringSubmatch(line)[1])
+	commentLines := extractMetadataCommentLines(script)
+	pendingJSONKey := ""
+	pendingJSONValue := ""
+	supportedKeys := map[string]bool{
+		"name":              true,
+		"description":       true,
+		"type":              true,
+		"event_type":        true,
+		"version":           true,
+		"async":             true,
+		"api_endpoint":      true,
+		"api_methods":       true,
+		"api_auth":          true,
+		"api_auth_type":     true,
+		"api_query_json":    true,
+		"api_request_json":  true,
+		"api_response_json": true,
+		"api_headers_json":  true,
+	}
+	jsonKeys := map[string]bool{
+		"api_query_json":    true,
+		"api_request_json":  true,
+		"api_response_json": true,
+		"api_headers_json":  true,
+	}
+
+	assignJSONValue := func(key, value string) {
+		trimmed := strings.TrimSpace(value)
+		switch key {
+		case "api_query_json":
+			apiQueryJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s queryJSON=%s", pName, apiQueryJSON)
+		case "api_request_json":
+			apiRequestJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s requestJSON=%s", pName, apiRequestJSON)
+		case "api_response_json":
+			apiResponseJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s responseJSON=%s", pName, apiResponseJSON)
+		case "api_headers_json":
+			apiHeadersJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s headersJSON=%s", pName, apiHeadersJSON)
 		}
-		if re02.MatchString(line) {
-			pDesc = strings.TrimSpace(re02.FindStringSubmatch(line)[1])
+	}
+
+	for _, line := range commentLines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			if pendingJSONKey != "" {
+				pendingJSONValue += "\n"
+			}
+			continue
 		}
-		if re03.MatchString(line) {
-			pTypeStr := strings.ToLower(strings.TrimSpace(re03.FindStringSubmatch(line)[1]))
+
+		key, value, found := parseMetadataKV(trimmedLine)
+		isSupportedKey := found && supportedKeys[key]
+		if pendingJSONKey != "" && isSupportedKey && jsonKeys[key] == false {
+			assignJSONValue(pendingJSONKey, pendingJSONValue)
+			pendingJSONKey = ""
+			pendingJSONValue = ""
+		}
+
+		if pendingJSONKey != "" && !(isSupportedKey && jsonKeys[key] == false) {
+			if isSupportedKey && jsonKeys[key] {
+				assignJSONValue(pendingJSONKey, pendingJSONValue)
+				pendingJSONKey = ""
+				pendingJSONValue = ""
+			} else {
+				pendingJSONValue += "\n" + trimmedLine
+				if json.Valid([]byte(strings.TrimSpace(pendingJSONValue))) {
+					assignJSONValue(pendingJSONKey, pendingJSONValue)
+					pendingJSONKey = ""
+					pendingJSONValue = ""
+				}
+				continue
+			}
+		}
+
+		if !isSupportedKey {
+			continue
+		}
+
+		switch key {
+		case "name":
+			pName = strings.TrimSpace(value)
+		case "description":
+			pDesc = strings.TrimSpace(value)
+		case "type":
+			pTypeStr := strings.ToLower(strings.TrimSpace(value))
 			if pTypeStr == vdiPlugin ||
 				pTypeStr == enginePlugin ||
 				pTypeStr == apiPlugin ||
@@ -514,30 +557,24 @@ func NewJSPlugin(script string) *JSPlugin {
 				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
 				pType = enginePlugin
 			}
-		}
-		if re04.MatchString(line) {
-			pEventType = strings.ToLower(strings.TrimSpace(re04.FindStringSubmatch(line)[1]))
-		}
-		if re05.MatchString(line) {
-			pVersion = strings.TrimSpace(re05.FindStringSubmatch(line)[1])
-		}
-		if re06.MatchString(line) {
-			asyncStr := strings.ToLower(strings.TrimSpace(re06.FindStringSubmatch(line)[1]))
+		case "event_type":
+			pEventType = strings.ToLower(strings.TrimSpace(value))
+		case "version":
+			pVersion = strings.TrimSpace(value)
+		case "async":
+			asyncStr := strings.ToLower(strings.TrimSpace(value))
 			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
 				pAsync = true
 			}
-		}
-		if re07.MatchString(line) {
-			apiEndPointStr := strings.TrimSpace(re07.FindStringSubmatch(line)[1])
+		case "api_endpoint":
+			apiEndPointStr := strings.TrimSpace(value)
 			if apiEndPointStr != "" {
-				apiEndPoint = strings.TrimSpace(apiEndPointStr)
+				apiEndPoint = apiEndPointStr
 			}
-		}
-		if re08.MatchString(line) {
-			apiMethodStr := strings.TrimSpace(re08.FindStringSubmatch(line)[1])
+		case "api_methods":
+			apiMethodStr := strings.TrimSpace(value)
 			if apiMethodStr != "" {
-				// Split multiple endpoints by comma
-				for method := range strings.SplitSeq(apiMethodStr, ",") {
+				for _, method := range strings.Split(apiMethodStr, ",") {
 					method = strings.ToUpper(strings.TrimSpace(method))
 					if method == "" {
 						continue
@@ -554,49 +591,40 @@ func NewJSPlugin(script string) *JSPlugin {
 					apiMethods = append(apiMethods, method)
 				}
 			}
-		}
-		if re09.MatchString(line) {
-			apiAuthStr := strings.TrimSpace(re09.FindStringSubmatch(line)[1])
-			if apiAuthStr != "" {
-				apiAuthStr = strings.ToLower(strings.TrimSpace(apiAuthStr))
-				if apiAuthStr == "required" ||
-					apiAuthStr == "optional" ||
-					apiAuthStr == none {
-					apiAuth = apiAuthStr
-				} else {
-					apiAuth = none
-				}
+		case "api_auth":
+			apiAuthStr := strings.ToLower(strings.TrimSpace(value))
+			if apiAuthStr == "required" ||
+				apiAuthStr == "optional" ||
+				apiAuthStr == none {
+				apiAuth = apiAuthStr
+			} else {
+				apiAuth = none
+			}
+		case "api_auth_type":
+			apiAuthTypeStr := strings.ToLower(strings.TrimSpace(value))
+			if apiAuthTypeStr == "jwt" ||
+				apiAuthTypeStr == "apikey" ||
+				apiAuthTypeStr == none {
+				apiAuthType = apiAuthTypeStr
+			} else {
+				apiAuthType = none
+			}
+		case "api_query_json", "api_request_json", "api_response_json", "api_headers_json":
+			initialValue := strings.TrimSpace(value)
+			if initialValue == "" {
+				continue
+			}
+			if json.Valid([]byte(initialValue)) {
+				assignJSONValue(key, initialValue)
+			} else {
+				pendingJSONKey = key
+				pendingJSONValue = initialValue
 			}
 		}
-		if re10.MatchString(line) {
-			apiAuthTypeStr := strings.TrimSpace(re10.FindStringSubmatch(line)[1])
-			if apiAuthTypeStr != "" {
-				apiAuthTypeStr = strings.ToLower(strings.TrimSpace(apiAuthTypeStr))
-				if apiAuthTypeStr == "jwt" ||
-					apiAuthTypeStr == "apikey" ||
-					apiAuthTypeStr == none {
-					apiAuthType = apiAuthTypeStr
-				} else {
-					apiAuthType = none
-				}
-			}
-		}
-		if re11.MatchString(line) {
-			apiQueryJSON = strings.TrimSpace(re11.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s queryJSON=%s", pName, apiQueryJSON)
-		}
-		if re12.MatchString(line) {
-			apiRequestJSON = strings.TrimSpace(re12.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s requestJSON=%s", pName, apiRequestJSON)
-		}
-		if re13.MatchString(line) {
-			apiResponseJSON = strings.TrimSpace(re13.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s responseJSON=%s", pName, apiResponseJSON)
-		}
-		if re14.MatchString(line) {
-			apiHeadersJSON = strings.TrimSpace(re14.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s headersJSON=%s", pName, apiHeadersJSON)
-		}
+	}
+
+	if pendingJSONKey != "" {
+		assignJSONValue(pendingJSONKey, pendingJSONValue)
 	}
 
 	return &JSPlugin{
@@ -619,6 +647,67 @@ func NewJSPlugin(script string) *JSPlugin {
 			OpenAPIHeadersJSON:  apiHeadersJSON,
 		},
 	}
+}
+
+func extractMetadataCommentLines(script string) []string {
+	lines := strings.Split(script, "\n")
+	commentLines := make([]string, 0, len(lines))
+	inBlockComment := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlockComment {
+			if strings.HasPrefix(trimmed, "//") {
+				commentLines = append(commentLines, strings.TrimSpace(trimmed[2:]))
+				continue
+			}
+			if strings.HasPrefix(trimmed, "/*") {
+				inBlockComment = true
+				content := strings.TrimSpace(strings.TrimPrefix(trimmed, "/*"))
+				if idx := strings.Index(content, "*/"); idx >= 0 {
+					commentLines = append(commentLines, strings.TrimSpace(content[:idx]))
+					inBlockComment = false
+					continue
+				}
+				commentLines = append(commentLines, strings.TrimSpace(strings.TrimPrefix(content, "*")))
+			}
+			continue
+		}
+
+		if idx := strings.Index(trimmed, "*/"); idx >= 0 {
+			content := strings.TrimSpace(trimmed[:idx])
+			content = strings.TrimSpace(strings.TrimPrefix(content, "*"))
+			commentLines = append(commentLines, content)
+			inBlockComment = false
+			continue
+		}
+
+		content := strings.TrimSpace(strings.TrimPrefix(trimmed, "*"))
+		commentLines = append(commentLines, content)
+	}
+
+	return commentLines
+}
+
+func parseMetadataKV(line string) (string, string, bool) {
+	if line == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(line, "@") {
+		line = strings.TrimSpace(line[1:])
+	}
+
+	idx := strings.Index(line, ":")
+	if idx <= 0 {
+		return "", "", false
+	}
+
+	key := strings.ToLower(strings.TrimSpace(line[:idx]))
+	if key == "" {
+		return "", "", false
+	}
+
+	return key, strings.TrimSpace(line[idx+1:]), true
 }
 
 // Execute executes the JS plugin

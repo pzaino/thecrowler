@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -29,6 +30,103 @@ func TestNewJSPlugin(t *testing.T) {
 
 	if plugin == nil {
 		t.Error("NewJSPlugin() returned nil")
+	}
+}
+
+func TestNewJSPluginParsesMultilineCommentMetadata(t *testing.T) {
+	script := `// name: api_yt-fetch-or-collect
+// description: Fetch a YT document by document_id, trigger crawl if missing, wait for completion, then retry
+// type: api_plugin
+// version: 1.0.0
+// api_endpoint: /v1/plugin/yt_fetch_or_collect
+// api_methods: POST
+// api_auth: none
+// api_auth_type: none
+// api_request_json: {"type":"object","properties":{"requested_entity_type":{"type":"string"}}}
+/* api_response_json: {
+   "type":"object",
+   "oneOf":[
+     {
+       "properties":{"status":{"type":"string"}}
+     }
+   ]
+}
+*/
+console.log("ok");`
+
+	plugin := NewJSPlugin(script)
+	if plugin == nil {
+		t.Fatal("NewJSPlugin() returned nil")
+	}
+
+	if plugin.Name != "api_yt-fetch-or-collect" {
+		t.Fatalf("plugin.Name = %q, expected %q", plugin.Name, "api_yt-fetch-or-collect")
+	}
+	if plugin.PType != apiPlugin {
+		t.Fatalf("plugin.PType = %q, expected %q", plugin.PType, apiPlugin)
+	}
+	if plugin.API.EndPoint != "/v1/plugin/yt_fetch_or_collect" {
+		t.Fatalf("plugin.API.EndPoint = %q, expected %q", plugin.API.EndPoint, "/v1/plugin/yt_fetch_or_collect")
+	}
+	if len(plugin.API.Methods) != 1 || plugin.API.Methods[0] != "POST" {
+		t.Fatalf("plugin.API.Methods = %#v, expected [POST]", plugin.API.Methods)
+	}
+
+	if !json.Valid([]byte(plugin.API.OpenAPIRequestJSON)) {
+		t.Fatalf("plugin.API.OpenAPIRequestJSON is not valid JSON: %q", plugin.API.OpenAPIRequestJSON)
+	}
+	if !json.Valid([]byte(plugin.API.OpenAPIResponseJSON)) {
+		t.Fatalf("plugin.API.OpenAPIResponseJSON is not valid JSON: %q", plugin.API.OpenAPIResponseJSON)
+	}
+
+	if !strings.Contains(plugin.API.OpenAPIResponseJSON, `"oneOf"`) {
+		t.Fatalf("plugin.API.OpenAPIResponseJSON does not include expected payload: %q", plugin.API.OpenAPIResponseJSON)
+	}
+}
+
+func TestNewJSPluginKeepsSingleLineMetadataParsing(t *testing.T) {
+	script := `// @name: SingleLineAPI
+// @description: Single line test
+// @type: api_plugin
+// @version: 2.1.0
+// @api_endpoint: /v1/plugin/single
+// @api_methods: get, POST, INVALID
+// @api_auth: required
+// @api_auth_type: jwt
+// @api_query_json: {"type":"object","properties":{"q":{"type":"string"}}}
+// @api_request_json: {"type":"object","properties":{"id":{"type":"string"}}}
+// @api_response_json: {"type":"object","properties":{"ok":{"type":"boolean"}}}
+// @api_headers_json: {"type":"object","properties":{"X-Test":{"type":"string"}}}
+console.log("ok");`
+
+	plugin := NewJSPlugin(script)
+	if plugin == nil {
+		t.Fatal("NewJSPlugin() returned nil")
+	}
+
+	if plugin.Name != "SingleLineAPI" {
+		t.Fatalf("plugin.Name = %q, expected %q", plugin.Name, "SingleLineAPI")
+	}
+	if plugin.Description != "Single line test" {
+		t.Fatalf("plugin.Description = %q, expected %q", plugin.Description, "Single line test")
+	}
+	if plugin.Version != "2.1.0" {
+		t.Fatalf("plugin.Version = %q, expected %q", plugin.Version, "2.1.0")
+	}
+	if !reflect.DeepEqual(plugin.API.Methods, []string{"GET", "POST"}) {
+		t.Fatalf("plugin.API.Methods = %#v, expected %#v", plugin.API.Methods, []string{"GET", "POST"})
+	}
+	if plugin.API.Auth != "required" {
+		t.Fatalf("plugin.API.Auth = %q, expected %q", plugin.API.Auth, "required")
+	}
+	if plugin.API.AuthType != "jwt" {
+		t.Fatalf("plugin.API.AuthType = %q, expected %q", plugin.API.AuthType, "jwt")
+	}
+	if !json.Valid([]byte(plugin.API.OpenAPIQueryJSON)) ||
+		!json.Valid([]byte(plugin.API.OpenAPIRequestJSON)) ||
+		!json.Valid([]byte(plugin.API.OpenAPIResponseJSON)) ||
+		!json.Valid([]byte(plugin.API.OpenAPIHeadersJSON)) {
+		t.Fatalf("expected all single-line OpenAPI fields to remain valid JSON")
 	}
 }
 
