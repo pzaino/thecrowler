@@ -693,16 +693,34 @@ func parseMetadataKV(line string) (string, string, bool) {
 	if line == "" {
 		return "", "", false
 	}
-	if strings.HasPrefix(line, "@") {
-		line = strings.TrimSpace(line[1:])
-	}
 
 	idx := strings.Index(line, ":")
 	if idx <= 0 {
 		return "", "", false
 	}
 
-	key := strings.ToLower(strings.TrimSpace(line[:idx]))
+	keyPart := strings.TrimSpace(line[:idx])
+	if keyPart == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(keyPart, "@") {
+		keyPart = strings.TrimSpace(keyPart[1:])
+	}
+	if keyPart == "" {
+		return "", "", false
+	}
+
+	for i, r := range keyPart {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return "", "", false
+	}
+
+	key := strings.ToLower(keyPart)
 	if key == "" {
 		return "", "", false
 	}
