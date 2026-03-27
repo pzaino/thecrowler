@@ -102,3 +102,105 @@ func TestNewJobConfig(t *testing.T) {
 		t.Errorf("Expected Jobs slice to be empty, but it has %d elements", len(jobConfig.Jobs))
 	}
 }
+
+func TestParseAgentsBytesWithDerivedIdentity(t *testing.T) {
+	content := []byte(`jobs:
+  - name: "Legacy Agent"
+    process: "serial"
+    trigger_type: "manual"
+    trigger_name: "legacy_agent"
+    steps:
+      - action: "RunCommand"
+        params:
+          command: "echo legacy"
+`)
+
+	cfg, err := parseAgentsBytes(content, "yaml")
+	if err != nil {
+		t.Fatalf("expected no error parsing legacy config, got %v", err)
+	}
+	if cfg.AgentIdentity == nil {
+		t.Fatal("expected derived agent_identity to be set")
+	}
+	if cfg.AgentIdentity.Name != "Legacy Agent" {
+		t.Fatalf("expected derived name 'Legacy Agent', got %q", cfg.AgentIdentity.Name)
+	}
+	if cfg.AgentIdentity.AgentID != "legacy-agent" {
+		t.Fatalf("expected derived agent_id 'legacy-agent', got %q", cfg.AgentIdentity.AgentID)
+	}
+	if cfg.AgentIdentity.AgentType != "executor" {
+		t.Fatalf("expected default agent_type 'executor', got %q", cfg.AgentIdentity.AgentType)
+	}
+}
+
+func TestParseAgentsBytesWithAgentIdentity(t *testing.T) {
+	content := []byte(`{
+  "agent_identity": {
+    "name": "AI Agent",
+    "agent_type": "planner"
+  },
+  "jobs": [
+    {
+      "name": "AI Agent",
+      "process": "serial",
+      "trigger_type": "agent",
+      "trigger_name": "entrypoint",
+      "steps": [
+        {
+          "action": "AIInteraction",
+          "params": {
+            "model": "gpt-4o-mini",
+            "prompt": "hello"
+          }
+        }
+      ]
+    }
+  ]
+}`)
+
+	cfg, err := parseAgentsBytes(content, "json")
+	if err != nil {
+		t.Fatalf("expected no error parsing identity config, got %v", err)
+	}
+	if cfg.AgentIdentity == nil {
+		t.Fatal("expected explicit agent_identity")
+	}
+	if cfg.AgentIdentity.AgentID != "ai-agent" {
+		t.Fatalf("expected derived agent_id 'ai-agent', got %q", cfg.AgentIdentity.AgentID)
+	}
+	if cfg.AgentIdentity.AgentType != "planner" {
+		t.Fatalf("expected explicit agent_type 'planner', got %q", cfg.AgentIdentity.AgentType)
+	}
+	if cfg.AgentIdentity.Memory == nil || cfg.AgentIdentity.Memory.Scope != "persistent" {
+		t.Fatalf("expected default memory scope 'persistent', got %+v", cfg.AgentIdentity.Memory)
+	}
+}
+
+func TestParseAgentsBytesRejectsMismatchedIdentityName(t *testing.T) {
+	content := []byte(`{
+  "agent_identity": {
+    "name": "Agent A"
+  },
+  "jobs": [
+    {
+      "name": "Agent B",
+      "process": "serial",
+      "trigger_type": "manual",
+      "trigger_name": "agent_b",
+      "steps": [
+        {
+          "action": "RunCommand",
+          "params": {
+            "command": "echo test"
+          }
+        }
+      ]
+    }
+  ]
+}`)
+
+	_, err := parseAgentsBytes(content, "json")
+	if err == nil {
+		t.Fatal("expected mismatch error but got nil")
+	}
+}

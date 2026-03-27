@@ -53,7 +53,62 @@ type RetryConfig struct {
 
 // JobConfig represents the structure of a job configuration file
 type JobConfig struct {
-	Jobs []Job `yaml:"jobs" json:"jobs"`
+	AgentIdentity *AgentIdentity `yaml:"agent_identity,omitempty" json:"agent_identity,omitempty"`
+	Jobs          []Job          `yaml:"jobs" json:"jobs"`
+}
+
+// AgentIdentity represents optional explicit identity metadata for an agent definition.
+type AgentIdentity struct {
+	AgentID      string            `yaml:"agent_id,omitempty" json:"agent_id,omitempty"`
+	Name         string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Version      string            `yaml:"version,omitempty" json:"version,omitempty"`
+	AgentType    string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
+	Owner        string            `yaml:"owner,omitempty" json:"owner,omitempty"`
+	TrustLevel   string            `yaml:"trust_level,omitempty" json:"trust_level,omitempty"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Constraints  *AgentConstraints `yaml:"constraints,omitempty" json:"constraints,omitempty"`
+	Reasoning    string            `yaml:"reasoning_mode,omitempty" json:"reasoning_mode,omitempty"`
+	Memory       *AgentMemory      `yaml:"memory,omitempty" json:"memory,omitempty"`
+	Goal         string            `yaml:"goal,omitempty" json:"goal,omitempty"`
+	Description  string            `yaml:"description,omitempty" json:"description,omitempty"`
+	AuditTags    []string          `yaml:"audit_tags,omitempty" json:"audit_tags,omitempty"`
+	SelfModel    *AgentSelfModel   `yaml:"self_model,omitempty" json:"self_model,omitempty"`
+	Contract     *AgentContract    `yaml:"agent_contract,omitempty" json:"agent_contract,omitempty"`
+}
+
+// AgentConstraints defines safety and execution constraints for an agent identity.
+type AgentConstraints struct {
+	MaxSteps       int                 `yaml:"max_steps,omitempty" json:"max_steps,omitempty"`
+	TimeBudget     string              `yaml:"time_budget,omitempty" json:"time_budget,omitempty"`
+	ResourceLimits *AgentResourceLimit `yaml:"resource_limits,omitempty" json:"resource_limits,omitempty"`
+	EventRateLimit float64             `yaml:"event_rate_limit,omitempty" json:"event_rate_limit,omitempty"`
+}
+
+// AgentResourceLimit defines CPU/memory usage limits.
+type AgentResourceLimit struct {
+	CPUPercent float64 `yaml:"cpu_percent,omitempty" json:"cpu_percent,omitempty"`
+	MemoryMB   float64 `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty"`
+}
+
+// AgentMemory defines memory retention scope for an agent.
+type AgentMemory struct {
+	Scope     string `yaml:"scope,omitempty" json:"scope,omitempty"`
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+}
+
+// AgentSelfModel defines permissions related to self-modification.
+type AgentSelfModel struct {
+	CanModifyIdentity bool `yaml:"can_modify_identity,omitempty" json:"can_modify_identity,omitempty"`
+	CanSpawnAgents    bool `yaml:"can_spawn_agents,omitempty" json:"can_spawn_agents,omitempty"`
+	CanModifyJobs     bool `yaml:"can_modify_jobs,omitempty" json:"can_modify_jobs,omitempty"`
+}
+
+// AgentContract defines boundaries and assumptions for an agent.
+type AgentContract struct {
+	Guarantees       []string `yaml:"guarantees,omitempty" json:"guarantees,omitempty"`
+	Assumptions      []string `yaml:"assumptions,omitempty" json:"assumptions,omitempty"`
+	ForbiddenActions []string `yaml:"forbidden_actions,omitempty" json:"forbidden_actions,omitempty"`
+	FailurePolicy    string   `yaml:"failure_policy,omitempty" json:"failure_policy,omitempty"`
 }
 
 // Job represents a job configuration
@@ -97,7 +152,92 @@ func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
 	default:
 		err = fmt.Errorf("unsupported file format: %s", fileType)
 	}
-	return cfg, err
+	if err != nil {
+		return cfg, err
+	}
+	if err = cfg.normalizeAgentIdentity(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func normalizeAgentID(name string) string {
+	v := strings.ToLower(strings.TrimSpace(name))
+	if v == "" {
+		return "anonymous-agent"
+	}
+	v = strings.ReplaceAll(v, " ", "-")
+	v = strings.ReplaceAll(v, "/", "-")
+	v = strings.ReplaceAll(v, "_", "-")
+	return v
+}
+
+func (jc *JobConfig) normalizeAgentIdentity() error {
+	if jc == nil {
+		return nil
+	}
+
+	derivedName := ""
+	if len(jc.Jobs) > 0 {
+		derivedName = strings.TrimSpace(jc.Jobs[0].Name)
+	}
+
+	if jc.AgentIdentity == nil {
+		if derivedName == "" {
+			return nil
+		}
+		jc.AgentIdentity = &AgentIdentity{
+			Name:         derivedName,
+			AgentID:      normalizeAgentID(derivedName),
+			Version:      "0.0.0",
+			AgentType:    "executor",
+			TrustLevel:   "restricted",
+			Capabilities: []string{"all"},
+			Reasoning:    "fixed",
+			Memory:       &AgentMemory{Scope: "persistent"},
+			Contract:     &AgentContract{FailurePolicy: "emit_event"},
+		}
+		return nil
+	}
+
+	if derivedName != "" {
+		if strings.TrimSpace(jc.AgentIdentity.Name) == "" {
+			jc.AgentIdentity.Name = derivedName
+		} else if strings.TrimSpace(jc.AgentIdentity.Name) != derivedName {
+			return fmt.Errorf("agent_identity.name (%s) must match jobs[0].name (%s)", jc.AgentIdentity.Name, derivedName)
+		}
+	}
+
+	if strings.TrimSpace(jc.AgentIdentity.AgentID) == "" {
+		jc.AgentIdentity.AgentID = normalizeAgentID(jc.AgentIdentity.Name)
+	}
+	if strings.TrimSpace(jc.AgentIdentity.Version) == "" {
+		jc.AgentIdentity.Version = "0.0.0"
+	}
+	if strings.TrimSpace(jc.AgentIdentity.AgentType) == "" {
+		jc.AgentIdentity.AgentType = "executor"
+	}
+	if strings.TrimSpace(jc.AgentIdentity.TrustLevel) == "" {
+		jc.AgentIdentity.TrustLevel = "restricted"
+	}
+	if len(jc.AgentIdentity.Capabilities) == 0 {
+		jc.AgentIdentity.Capabilities = []string{"all"}
+	}
+	if strings.TrimSpace(jc.AgentIdentity.Reasoning) == "" {
+		jc.AgentIdentity.Reasoning = "fixed"
+	}
+	if jc.AgentIdentity.Memory == nil {
+		jc.AgentIdentity.Memory = &AgentMemory{Scope: "persistent"}
+	} else if strings.TrimSpace(jc.AgentIdentity.Memory.Scope) == "" {
+		jc.AgentIdentity.Memory.Scope = "persistent"
+	}
+	if jc.AgentIdentity.Contract == nil {
+		jc.AgentIdentity.Contract = &AgentContract{FailurePolicy: "emit_event"}
+	} else if strings.TrimSpace(jc.AgentIdentity.Contract.FailurePolicy) == "" {
+		jc.AgentIdentity.Contract.FailurePolicy = "emit_event"
+	}
+
+	return nil
 }
 
 // applyGlobalParams merges AgentsTimeout/PluginsTimeout and GlobalParameters into every step
