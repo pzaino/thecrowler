@@ -202,11 +202,26 @@ func applyExecutionContext(params map[string]interface{}, ctx AgentExecutionCont
 		configMap = map[string]interface{}{}
 		params[StrConfig] = configMap
 	}
-	configMap[cfgKeyAgentRuntime] = map[string]interface{}{
-		"run_id":            ctx.RunID,
-		"trace_id":          ctx.TraceID,
-		"source":            ctx.Source,
-		"owner":             ctx.Owner,
-		"identity_snapshot": ctx.IdentitySnapshot,
+	runtimeMap, _ := configMap[cfgKeyAgentRuntime].(map[string]interface{})
+	if runtimeMap == nil {
+		runtimeMap = map[string]interface{}{}
+		switch existing := configMap[cfgKeyAgentRuntime].(type) {
+		case cfg.AgentRuntimeConfig:
+			runtimeMap["identity_enforcement"] = existing.IdentityEnforcement
+			runtimeMap["contract_enforcement"] = existing.ContractEnforcement
+			runtimeMap["memory_runtime"] = existing.MemoryRuntime
+		case *cfg.AgentRuntimeConfig:
+			if existing != nil {
+				runtimeMap["identity_enforcement"] = existing.IdentityEnforcement
+				runtimeMap["contract_enforcement"] = existing.ContractEnforcement
+				runtimeMap["memory_runtime"] = existing.MemoryRuntime
+			}
+		}
 	}
+	runtimeMap["run_id"] = ctx.RunID
+	runtimeMap["trace_id"] = ctx.TraceID
+	runtimeMap["source"] = ctx.Source
+	runtimeMap["owner"] = ctx.Owner
+	runtimeMap["identity_snapshot"] = ctx.IdentitySnapshot
+	configMap[cfgKeyAgentRuntime] = runtimeMap
 }

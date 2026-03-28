@@ -96,29 +96,73 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 
 	var results map[string]interface{}
 	if nextStep != nil {
-		// extract the call_agent from the nextStep
-		agentRef, ok := nextStep["call_agent"].(string)
-		if agentRef == "" {
-			agentRef, _ = nextStep["agent_id"].(string)
-		}
-		if agentRef == "" {
-			agentRef, _ = nextStep["agent_name"].(string)
-		}
-		if !ok {
-			ok = strings.TrimSpace(agentRef) != ""
-		}
-		if !ok {
+		target, resolveErr := resolveDelegationTarget(nextStep, inputRaw)
+		if resolveErr != nil {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = "missing 'call_agent', 'agent_id', or 'agent_name' in next step"
-			return rval, fmt.Errorf("missing 'call_agent', 'agent_id', or 'agent_name' in next step")
+			rval[StrMessage] = resolveErr.Error()
+			return rval, resolveErr
 		}
-		// Check if agentRef needs to be resolved
-		agentRef = resolveResponseString(inputRaw, agentRef)
 
-		err = AgentsEngine.ExecuteAgent(agentRef, params)
+		callee, _, resolveAgentErr := AgentsEngine.resolveAgentDefinitionByTarget(target)
+		if resolveAgentErr != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = resolveAgentErr.Error()
+			return rval, resolveAgentErr
+		}
+
+		configMap, _ := params[StrConfig].(map[string]interface{})
+		flags := runtimeFlagsFromConfig(configMap)
+		if flags.IdentityEnforcement {
+			caller, hasCaller := parseRuntimeIdentity(params)
+			if !hasCaller {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = "delegation denied: missing caller identity"
+				return rval, fmt.Errorf("delegation denied: missing caller identity")
+			}
+			if policyErr := delegationPolicyCheck(caller, callee.Identity); policyErr != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = policyErr.Error()
+				return rval, policyErr
+			}
+			graph := getDelegationGraph(params)
+			callerNode := delegationNodeKey(caller)
+			calleeNode := delegationNodeKey(callee.Identity)
+			if len(graph.Path) == 0 {
+				graph.Path = append(graph.Path, callerNode)
+			}
+			if cycleErr := detectDelegationCycle(graph, calleeNode); cycleErr != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = cycleErr.Error()
+				return rval, cycleErr
+			}
+			graph.Edges = append(graph.Edges, callerNode+"->"+calleeNode)
+			previousPath := append([]string(nil), graph.Path...)
+			graph.Path = append(graph.Path, calleeNode)
+			setDelegationGraph(params, graph)
+			defer func() {
+				graph.Path = previousPath
+				setDelegationGraph(params, graph)
+			}()
+		}
+
+		agentRef := target.AgentID
+		if strings.TrimSpace(agentRef) == "" {
+			agentRef = target.AgentName
+		}
+
+		delegationCtx := map[string]any{}
+		if configMap != nil {
+			for k, v := range configMap {
+				delegationCtx[k] = v
+			}
+		}
+		if inputVal, ok := inputRaw[StrRequest]; ok {
+			delegationCtx[StrRequest] = inputVal
+		}
+		err = AgentsEngine.ExecuteAgent(agentRef, delegationCtx)
 		if err != nil {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("failed to execute steps: %v", err)
+			rval[StrMessage] = fmt.Sprintf("delegation failed: %v", err)
 			return rval, err
 		}
 	}

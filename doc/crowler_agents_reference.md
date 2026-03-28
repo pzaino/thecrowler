@@ -46,6 +46,25 @@ Each run also receives an execution context snapshot with run correlation fields
 (`run_id`, `trace_id`, `source`, `owner`, `identity_snapshot`) injected into
 step `config.agent_runtime`.
 
+## Decision and delegation model (Milestone 4)
+
+`Decision` branches can now target delegated agents using:
+
+- `agent_id` (preferred when present)
+- `agent_name`
+- legacy `call_agent` (name alias)
+
+With `agent.identity_enforcement=true`, delegation also enforces:
+
+- caller delegation capability (`delegate`)
+- caller/callee trust compatibility
+- caller/callee contract checks for delegation restrictions
+- target availability checks before execution
+- delegation graph tracking with cycle detection to prevent loops
+
+Delegation failures are deterministic and surfaced as explicit errors (for
+example, target unavailable, policy denial, or cycle detected).
+
 ## Examples of configuring Agents
 
 ```yaml
