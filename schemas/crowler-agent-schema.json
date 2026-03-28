@@ -4,6 +4,14 @@
     "type": "object",
     "title": "The CROWler Agents and Jobs Config Schema",
     "properties": {
+        "format_version": {
+            "type": "string",
+            "description": "Schema/runtime compatibility marker. v1=legacy jobs-only, v2=identity-enabled.",
+            "enum": [
+                "v1",
+                "v2"
+            ]
+        },
         "agent_identity": {
             "type": "object",
             "description": "Optional explicit identity definition for a CROWler Agent. If omitted, identity is derived from job definitions for backward compatibility.",

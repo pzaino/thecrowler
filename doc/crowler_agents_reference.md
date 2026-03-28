@@ -12,6 +12,17 @@ enrichment, correction, manipulation etc. and combine it with actions.
 
 Agents should be defined in YAML files and stored in the `./agents/` path.
 
+## Compatibility contract (Milestone 0 baseline)
+
+- Legacy manifests with `jobs` only are still valid and continue to run unchanged.
+- Identity-enabled manifests with `agent_identity + jobs` are also valid.
+- `format_version` is supported as a compatibility marker:
+  - `v1` for legacy jobs-only mode
+  - `v2` for identity-enabled mode
+- If omitted, compatibility mode is derived automatically:
+  - no `agent_identity` => `v1`
+  - with `agent_identity` => `v2`
+
 Below an example of such YAML file.
 
 ## Examples of configuring Agents

@@ -87,6 +87,22 @@ func TestLoadConfigInvalidFile(t *testing.T) {
 	}
 }
 
+func TestAgentFeatureFlagDefaults(t *testing.T) {
+	cfg := NewConfig()
+	if cfg == nil {
+		t.Fatal("expected NewConfig to return non-nil config")
+	}
+	if cfg.Agent.IdentityEnforcement {
+		t.Fatal("expected agent.identity_enforcement default to false")
+	}
+	if cfg.Agent.ContractEnforcement {
+		t.Fatal("expected agent.contract_enforcement default to false")
+	}
+	if cfg.Agent.MemoryRuntime {
+		t.Fatal("expected agent.memory_runtime default to false")
+	}
+}
+
 // Test IsEmpty
 func TestConfigIsEmpty(t *testing.T) {
 	// Create a non-empty config

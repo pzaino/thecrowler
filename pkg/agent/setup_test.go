@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 func TestInitialize(t *testing.T) {
@@ -202,5 +206,132 @@ func TestParseAgentsBytesRejectsMismatchedIdentityName(t *testing.T) {
 	_, err := parseAgentsBytes(content, "json")
 	if err == nil {
 		t.Fatal("expected mismatch error but got nil")
+	}
+}
+
+func TestParseAgentsBytesAssignsLegacyVersionMarker(t *testing.T) {
+	content := []byte(`jobs:
+  - name: "Legacy Agent"
+    process: "serial"
+    trigger_type: "manual"
+    trigger_name: "legacy_agent"
+    steps:
+      - action: "RunCommand"
+        params:
+          command: "echo legacy"
+`)
+
+	cfg, err := parseAgentsBytes(content, "yaml")
+	if err != nil {
+		t.Fatalf("expected no error parsing legacy config, got %v", err)
+	}
+	if cfg.FormatVersion != AgentFormatVersionV1 {
+		t.Fatalf("expected format_version %q, got %q", AgentFormatVersionV1, cfg.FormatVersion)
+	}
+}
+
+func TestParseAgentsBytesAssignsIdentityVersionMarker(t *testing.T) {
+	content := []byte(`{
+  "agent_identity": {
+    "name": "AI Agent",
+    "agent_type": "planner"
+  },
+  "jobs": [
+    {
+      "name": "AI Agent",
+      "process": "serial",
+      "trigger_type": "agent",
+      "trigger_name": "entrypoint",
+      "steps": [
+        {
+          "action": "AIInteraction",
+          "params": {
+            "model": "gpt-4o-mini",
+            "prompt": "hello"
+          }
+        }
+      ]
+    }
+  ]
+}`)
+
+	cfg, err := parseAgentsBytes(content, "json")
+	if err != nil {
+		t.Fatalf("expected no error parsing identity config, got %v", err)
+	}
+	if cfg.FormatVersion != AgentFormatVersionV2 {
+		t.Fatalf("expected format_version %q, got %q", AgentFormatVersionV2, cfg.FormatVersion)
+	}
+}
+
+func TestGoldenFixturesParse(t *testing.T) {
+	tests := []struct {
+		name          string
+		path          string
+		fileType      string
+		expectVersion string
+	}{
+		{
+			name:          "legacy json",
+			path:          "testdata/legacy.valid.json",
+			fileType:      "json",
+			expectVersion: AgentFormatVersionV1,
+		},
+		{
+			name:          "legacy yaml",
+			path:          "testdata/legacy.valid.yaml",
+			fileType:      "yaml",
+			expectVersion: AgentFormatVersionV1,
+		},
+		{
+			name:          "identity json",
+			path:          "testdata/identity.valid.json",
+			fileType:      "json",
+			expectVersion: AgentFormatVersionV2,
+		},
+		{
+			name:          "identity yaml",
+			path:          "testdata/identity.valid.yaml",
+			fileType:      "yaml",
+			expectVersion: AgentFormatVersionV2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Clean(tt.path))
+			if err != nil {
+				t.Fatalf("failed reading fixture %s: %v", tt.path, err)
+			}
+
+			cfg, err := parseAgentsBytes(data, tt.fileType)
+			if err != nil {
+				t.Fatalf("expected fixture %s to parse, got error: %v", tt.path, err)
+			}
+			if cfg.FormatVersion != tt.expectVersion {
+				t.Fatalf("expected format_version %q, got %q", tt.expectVersion, cfg.FormatVersion)
+			}
+			if len(cfg.Jobs) == 0 {
+				t.Fatalf("expected at least one job in fixture %s", tt.path)
+			}
+		})
+	}
+}
+
+func TestLoadConfigRegressionHarnessLegacyAndIdentity(t *testing.T) {
+	jc := NewJobConfig()
+	err := jc.LoadConfig([]cfg.AgentsConfig{
+		{
+			Path: []string{
+				"./testdata/legacy.valid.yaml",
+				"./testdata/identity.valid.json",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected no error loading baseline fixtures, got %v", err)
+	}
+	if len(jc.Jobs) != 2 {
+		t.Fatalf("expected 2 jobs loaded from baseline fixtures, got %d", len(jc.Jobs))
 	}
 }

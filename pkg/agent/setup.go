@@ -53,9 +53,21 @@ type RetryConfig struct {
 
 // JobConfig represents the structure of a job configuration file
 type JobConfig struct {
+	// FormatVersion is the compatibility contract marker for agents/job manifests.
+	// - v1: legacy jobs-only config (agent_identity omitted and derived at load time)
+	// - v2: identity-enabled config (agent_identity present)
+	// Backward-compatibility guarantee: jobs-only manifests MUST continue to parse and run unchanged.
+	FormatVersion string         `yaml:"format_version,omitempty" json:"format_version,omitempty"`
 	AgentIdentity *AgentIdentity `yaml:"agent_identity,omitempty" json:"agent_identity,omitempty"`
 	Jobs          []Job          `yaml:"jobs" json:"jobs"`
 }
+
+const (
+	// AgentFormatVersionV1 is the legacy compatibility marker for jobs-only config.
+	AgentFormatVersionV1 = "v1"
+	// AgentFormatVersionV2 marks identity-enabled config.
+	AgentFormatVersionV2 = "v2"
+)
 
 // AgentIdentity represents optional explicit identity metadata for an agent definition.
 type AgentIdentity struct {
@@ -183,6 +195,9 @@ func (jc *JobConfig) normalizeAgentIdentity() error {
 	}
 
 	if jc.AgentIdentity == nil {
+		if strings.TrimSpace(jc.FormatVersion) == "" {
+			jc.FormatVersion = AgentFormatVersionV1
+		}
 		if derivedName == "" {
 			return nil
 		}
@@ -198,6 +213,10 @@ func (jc *JobConfig) normalizeAgentIdentity() error {
 			Contract:     &AgentContract{FailurePolicy: "emit_event"},
 		}
 		return nil
+	}
+
+	if strings.TrimSpace(jc.FormatVersion) == "" {
+		jc.FormatVersion = AgentFormatVersionV2
 	}
 
 	if derivedName != "" {

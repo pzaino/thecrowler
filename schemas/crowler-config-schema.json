@@ -2446,6 +2446,29 @@
       "minItems": 1,
       "uniqueItems": true
     },
+    "agent": {
+      "title": "CROWler Agent Runtime Rollout Guards",
+      "description": "Compatibility-preserving feature flags for identity-enabled runtime enforcement.",
+      "type": "object",
+      "properties": {
+        "identity_enforcement": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable runtime identity enforcement for agents."
+        },
+        "contract_enforcement": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable runtime contract enforcement for agents."
+        },
+        "memory_runtime": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable identity-bound memory runtime behavior for agents."
+        }
+      },
+      "additionalProperties": false
+    },
     "plugins": {
       "title": "CROWler Plugins locations Configuration",
       "description": "This is the Plugins configuration section, it is used to tell the CROWler's Engine which plugins we want to use and provide the path to the plugins. Plugins are used to extend the CROWler's capabilities, for example, to detect phishing URLs, detect malware, detect network vulnerabilities, etc.",

@@ -1,0 +1,26 @@
+{
+  "format_version": "v2",
+  "agent_identity": {
+    "agent_id": "identity-json-agent",
+    "name": "Identity JSON Agent",
+    "agent_type": "planner",
+    "trust_level": "restricted"
+  },
+  "jobs": [
+    {
+      "name": "Identity JSON Agent",
+      "process": "serial",
+      "trigger_type": "agent",
+      "trigger_name": "entrypoint",
+      "steps": [
+        {
+          "action": "AIInteraction",
+          "params": {
+            "model": "gpt-4o-mini",
+            "prompt": "hello"
+          }
+        }
+      ]
+    }
+  ]
+}

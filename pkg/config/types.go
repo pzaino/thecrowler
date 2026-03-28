@@ -734,6 +734,8 @@ type Config struct {
 
 	// Agents configuration
 	Agents []AgentsConfig `json:"agents" yaml:"agents"`
+	// Agent runtime rollout flags (compatibility guards for identity-enabled execution).
+	Agent AgentRuntimeConfig `json:"agent" yaml:"agent"`
 
 	Plugins PluginsConfig `json:"plugins" yaml:"plugins"` // Plugins configuration
 
@@ -741,6 +743,14 @@ type Config struct {
 
 	OS         string // Operating system name
 	DebugLevel int    `json:"debug_level" yaml:"debug_level"` // Debug level for logging
+}
+
+// AgentRuntimeConfig stores rollout guards for agentic enforcement behavior.
+// All flags default to false to preserve legacy behavior during migration.
+type AgentRuntimeConfig struct {
+	IdentityEnforcement bool `json:"identity_enforcement" yaml:"identity_enforcement"`
+	ContractEnforcement bool `json:"contract_enforcement" yaml:"contract_enforcement"`
+	MemoryRuntime       bool `json:"memory_runtime" yaml:"memory_runtime"`
 }
 
 // PluginsConfig represents the configuration for plugins
