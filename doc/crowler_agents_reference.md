@@ -25,6 +25,27 @@ Agents should be defined in YAML files and stored in the `./agents/` path.
 
 Below an example of such YAML file.
 
+## Identity-aware execution guards (Milestone 3)
+
+Identity-aware execution is controlled by runtime flags under `agent`:
+
+- `agent.identity_enforcement` (default `false`)
+- `agent.contract_enforcement` (default `false`)
+- `agent.memory_runtime` (default `false`)
+
+When `identity_enforcement` is enabled, execution uses `agent_identity` metadata
+to enforce:
+
+- action capability checks (`run_command`, `db_query`, `ai_interaction`,
+  `plugin_execution`, `create_event`, `decision`)
+- trust-level checks for sensitive actions (`RunCommand`, `DBQuery`,
+  `PluginExecution`)
+- constraint budgets (`max_steps`, `time_budget`, `event_rate_limit`)
+
+Each run also receives an execution context snapshot with run correlation fields
+(`run_id`, `trace_id`, `source`, `owner`, `identity_snapshot`) injected into
+step `config.agent_runtime`.
+
 ## Examples of configuring Agents
 
 ```yaml

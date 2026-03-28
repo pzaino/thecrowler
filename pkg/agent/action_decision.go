@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/Knetic/govaluate"
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // DecisionAction makes decisions based on conditions
@@ -98,27 +97,25 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 	var results map[string]interface{}
 	if nextStep != nil {
 		// extract the call_agent from the nextStep
-		agentName, ok := nextStep["call_agent"].(string)
-		if agentName == "" {
-			agentName, _ = nextStep["agent_name"].(string)
+		agentRef, ok := nextStep["call_agent"].(string)
+		if agentRef == "" {
+			agentRef, _ = nextStep["agent_id"].(string)
+		}
+		if agentRef == "" {
+			agentRef, _ = nextStep["agent_name"].(string)
+		}
+		if !ok {
+			ok = strings.TrimSpace(agentRef) != ""
 		}
 		if !ok {
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = "missing 'call_agent' or 'agent_name' in next step"
-			return rval, fmt.Errorf("missing 'call_agent' or 'agent_name' in next step")
+			rval[StrMessage] = "missing 'call_agent', 'agent_id', or 'agent_name' in next step"
+			return rval, fmt.Errorf("missing 'call_agent', 'agent_id', or 'agent_name' in next step")
 		}
-		// Check if agentName needs to be resolved
-		agentName = resolveResponseString(inputRaw, agentName)
+		// Check if agentRef needs to be resolved
+		agentRef = resolveResponseString(inputRaw, agentRef)
 
-		// Retrieve the agent
-		agent, exists := AgentsEngine.GetAgentByName(agentName)
-		if !exists {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("agent '%s' not found", cmn.SafeEscapeJSONString(agentName))
-			return rval, fmt.Errorf("agent '%s' not found", cmn.SafeEscapeJSONString(agentName))
-		}
-
-		err = AgentsEngine.ExecuteJobs(agent, params)
+		err = AgentsEngine.ExecuteAgent(agentRef, params)
 		if err != nil {
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("failed to execute steps: %v", err)

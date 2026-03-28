@@ -563,6 +563,28 @@ func (je *JobEngine) GetAgentsByTrigger(triggerType, triggerName string) ([]*Job
 	return AgentsRegistry.GetAgentsByTrigger(triggerType, triggerName)
 }
 
+// ExecuteAgent executes a registered agent by agent ID or, if missing, by agent name.
+func (je *JobEngine) ExecuteAgent(agentRef string, inputCtx map[string]any) error {
+	lookup := strings.TrimSpace(agentRef)
+	if lookup == "" {
+		return fmt.Errorf("missing agent reference")
+	}
+	if AgentsRegistry != nil {
+		AgentsRegistry.ensureRegistry()
+		if def, ok := AgentsRegistry.registry.GetByID(lookup); ok {
+			return je.executeAgentDefinition(def, inputCtx)
+		}
+		if def, ok := AgentsRegistry.registry.GetByName(lookup); ok {
+			return je.executeAgentDefinition(def, inputCtx)
+		}
+	}
+
+	if agent, ok := je.GetAgentByName(lookup); ok {
+		return je.ExecuteJobs(agent, inputCtx)
+	}
+	return fmt.Errorf("agent '%s' not found", lookup)
+}
+
 func deepCopyJob(j Job) Job {
 	out := j // copy scalars
 
@@ -580,6 +602,24 @@ func deepCopyJob(j Job) Job {
 
 // ExecuteJobs executes all jobs in the configuration
 func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
+	if j != nil && j.AgentIdentity != nil {
+		if def, err := j.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"}); err == nil {
+			return je.executeAgentDefinition(def, iCfg)
+		}
+	}
+	return je.executeJobsWithContext(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
+}
+
+func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[string]any) error {
+	if def == nil {
+		return fmt.Errorf("nil agent definition")
+	}
+	flags := runtimeFlagsFromConfig(iCfg)
+	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	return je.executeJobsWithContext(def.toJobConfig(), iCfg, ctx, flags)
+}
+
+func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
 	// Create a waiting group for parallel group processing
 	var wg sync.WaitGroup
 
@@ -635,17 +675,17 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 			wg.Add(1)
 
 			// Execute the group in parallel
-			go func(jg []map[string]any) {
+			go func(jg []map[string]any, identity *AgentIdentity) {
 				defer wg.Done()
-				if err := executeJobGroup(je, jg); err != nil {
+				if err := executeJobGroup(je, jg, identity, execCtx, flags); err != nil {
 					cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Agents] Failed to execute job group '%s': %v", jobGroup.Name, err)
 				}
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
-			}(jobGroup.Steps)
+			}(jobGroup.Steps, j.AgentIdentity)
 
 		} else {
 			// Execute the group serially
-			if err := executeJobGroup(je, jobGroup.Steps); err != nil {
+			if err := executeJobGroup(je, jobGroup.Steps, j.AgentIdentity, execCtx, flags); err != nil {
 				return fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
 			}
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
@@ -658,8 +698,16 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 }
 
 // executeJobGroup runs jobs in a group serially
-func executeJobGroup(je *JobEngine, steps []map[string]any) error {
+func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
 	lastResult := make(map[string]any)
+	var budget *constraintBudgetManager
+	if flags.IdentityEnforcement && identity != nil {
+		b, err := newConstraintBudgetManager(*identity)
+		if err != nil {
+			return err
+		}
+		budget = b
+	}
 
 	// Execute each job in the group
 	for i := 0; i < len(steps); i++ {
@@ -671,6 +719,22 @@ func executeJobGroup(je *JobEngine, steps []map[string]any) error {
 			return fmt.Errorf("missing 'action' field in job step")
 		}
 		params, _ := (*step)["params"].(map[string]interface{})
+		if params == nil {
+			params = map[string]interface{}{}
+			(*step)["params"] = params
+		}
+		if flags.IdentityEnforcement && identity != nil {
+			applyExecutionContext(params, execCtx)
+			if !capabilityAllowed(*identity, actionName) {
+				return fmt.Errorf("capability gate denied action %s: capability %q missing", actionName, requiredCapabilityForAction(actionName))
+			}
+			if !trustAllowed(*identity, actionName) {
+				return fmt.Errorf("trust gate denied action %s: trust_level %q insufficient", actionName, identity.TrustLevel)
+			}
+			if err := budget.preStepCheck(actionName); err != nil {
+				return err
+			}
+		}
 
 		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
 		if i > 0 {
@@ -731,7 +795,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any) error {
 			if err != nil {
 				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-					return executeJobGroup(je, fallback)
+					return executeJobGroup(je, fallback, identity, execCtx, flags)
 				}
 				return fmt.Errorf("action %s failed: %v", actionName, err)
 			}
@@ -739,6 +803,9 @@ func executeJobGroup(je *JobEngine, steps []map[string]any) error {
 
 		// Update the result for the next job in the group
 		lastResult = result
+		if flags.IdentityEnforcement && identity != nil {
+			budget.markActionExecuted(actionName)
+		}
 	}
 	return nil
 }
