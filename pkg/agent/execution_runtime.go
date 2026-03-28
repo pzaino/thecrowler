@@ -140,7 +140,7 @@ func requiredCapabilityForAction(actionName string) string {
 	case "DBQuery":
 		return "db_query"
 	case "AIInteraction":
-		return "ai_interaction"
+		return "ai_reasoning"
 	case "PluginExecution":
 		return "plugin_execution"
 	case "CreateEvent":
@@ -164,6 +164,9 @@ func capabilityAllowed(identity AgentIdentity, actionName string) bool {
 		normalized := strings.ToLower(strings.TrimSpace(capability))
 		if normalized == "all" || normalized == required {
 			return true
+		}
+		if required == "ai_reasoning" && normalized == "ai_interaction" {
+			return true // backward-compatibility alias
 		}
 	}
 	return false

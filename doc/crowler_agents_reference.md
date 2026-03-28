@@ -36,7 +36,7 @@ Identity-aware execution is controlled by runtime flags under `agent`:
 When `identity_enforcement` is enabled, execution uses `agent_identity` metadata
 to enforce:
 
-- action capability checks (`run_command`, `db_query`, `ai_interaction`,
+- action capability checks (`run_command`, `db_query`, `ai_reasoning`,
   `plugin_execution`, `create_event`, `decision`)
 - trust-level checks for sensitive actions (`RunCommand`, `DBQuery`,
   `PluginExecution`)
@@ -64,6 +64,28 @@ With `agent.identity_enforcement=true`, delegation also enforces:
 
 Delegation failures are deterministic and surfaced as explicit errors (for
 example, target unavailable, policy denial, or cycle detected).
+
+
+## AI provider abstraction (Milestone 5)
+
+`AIInteraction` now executes against a provider abstraction (`LLMProvider`)
+internally, so orchestration is provider-agnostic.
+
+Resolution order for AI provider settings is deterministic:
+
+1. Step-level `params`
+2. Step config `params.config.ai`
+3. Step config `params.config`
+4. Runtime defaults (provider defaults to `openai-compatible`)
+
+Supported normalized AI fields include `messages`, `prompt`, `model`,
+`temperature`, `max_tokens`, `top_p`, and related sampling parameters.
+
+When identity enforcement is enabled, `AIInteraction` requires the
+`ai_reasoning` capability (legacy alias `ai_interaction` is still accepted for
+backward compatibility) and enforces model/provider policy restrictions from
+agent trust level and contract `forbidden_actions` entries
+(e.g. `model:gpt-4*`, `provider:example*`).
 
 ## Examples of configuring Agents
 
