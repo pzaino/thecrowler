@@ -164,6 +164,9 @@ func (jc *JobConfig) ensureRegistry() {
 // parseAgentsBytes decodes YAML or JSON into a JobConfig
 func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
 	var cfg JobConfig
+	if err := ValidateAgentConfig(data, fileType, ValidationModeLenient, nil); err != nil {
+		return cfg, err
+	}
 	var err error
 	switch strings.ToLower(strings.TrimPrefix(fileType, ".")) {
 	case "yaml", "yml":
