@@ -101,7 +101,7 @@ type OpenAPISchema struct {
 	Type                 string                   `json:"type,omitempty"`
 	Properties           map[string]OpenAPISchema `json:"properties,omitempty"`
 	Items                *OpenAPISchema           `json:"items,omitempty"`
-	AdditionalProperties *OpenAPISchema           `json:"additionalProperties,omitempty"`
+	AdditionalProperties any                      `json:"additionalProperties,omitempty"`
 	Format               string                   `json:"format,omitempty"`
 	Required             []string                 `json:"required,omitempty"`
 }

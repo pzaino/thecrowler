@@ -130,6 +130,73 @@ console.log("ok");`
 	}
 }
 
+func TestNewJSPluginParsesSlashCommentMultilineJSONMetadata(t *testing.T) {
+	script := `// name: api_get_video
+// description: Returns post/video and can trigger collect/retry.
+// version: 1.0.0
+// type: api_plugin
+// api_endpoint: /v1/get_video
+// api_methods: POST
+// api_auth: none
+// api_auth_type: none
+// api_request_json: {
+//   "type": "object",
+//   "properties": {
+//     "platform": {
+//       "type": "string"
+//     },
+//     "video_id": {
+//       "type": "string"
+//     }
+//   },
+//   "required": ["platform"]
+// }
+// api_response_json: {
+//   "oneOf": [
+//     {
+//       "type": "object"
+//     },
+//     {
+//       "type": "object",
+//       "properties": {
+//         "error": {
+//           "type": "string"
+//         }
+//       },
+//       "required": ["error"]
+//     }
+//   ]
+// }
+console.log("ok");`
+
+	plugin := NewJSPlugin(script)
+	if plugin == nil {
+		t.Fatal("NewJSPlugin() returned nil")
+	}
+
+	if plugin.Name != "api_get_video" {
+		t.Fatalf("plugin.Name = %q, expected %q", plugin.Name, "api_get_video")
+	}
+	if plugin.PType != apiPlugin {
+		t.Fatalf("plugin.PType = %q, expected %q", plugin.PType, apiPlugin)
+	}
+	if plugin.API.EndPoint != "/v1/get_video" {
+		t.Fatalf("plugin.API.EndPoint = %q, expected %q", plugin.API.EndPoint, "/v1/get_video")
+	}
+	if !reflect.DeepEqual(plugin.API.Methods, []string{"POST"}) {
+		t.Fatalf("plugin.API.Methods = %#v, expected %#v", plugin.API.Methods, []string{"POST"})
+	}
+	if !json.Valid([]byte(plugin.API.OpenAPIRequestJSON)) {
+		t.Fatalf("plugin.API.OpenAPIRequestJSON is not valid JSON: %q", plugin.API.OpenAPIRequestJSON)
+	}
+	if !json.Valid([]byte(plugin.API.OpenAPIResponseJSON)) {
+		t.Fatalf("plugin.API.OpenAPIResponseJSON is not valid JSON: %q", plugin.API.OpenAPIResponseJSON)
+	}
+	if !strings.Contains(plugin.API.OpenAPIResponseJSON, `"oneOf"`) {
+		t.Fatalf("plugin.API.OpenAPIResponseJSON does not include oneOf: %q", plugin.API.OpenAPIResponseJSON)
+	}
+}
+
 func TestJSPluginRegisterRegister(t *testing.T) {
 	reg := NewJSPluginRegister()
 	plugin := NewJSPlugin("console.log('Test plugin')")
