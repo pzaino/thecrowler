@@ -74,6 +74,9 @@ func Initialize() {
 	if AgentsEngine == nil {
 		AgentsEngine = NewJobEngine() // Ensure `AgentsEngine` is not nil
 	}
+	if AgentsRegistry == nil {
+		AgentsRegistry = NewJobConfig()
+	}
 	RegisterActions(AgentsEngine)
 }
 

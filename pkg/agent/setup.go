@@ -60,6 +60,7 @@ type JobConfig struct {
 	FormatVersion string         `yaml:"format_version,omitempty" json:"format_version,omitempty"`
 	AgentIdentity *AgentIdentity `yaml:"agent_identity,omitempty" json:"agent_identity,omitempty"`
 	Jobs          []Job          `yaml:"jobs" json:"jobs"`
+	registry      *AgentRegistry `yaml:"-" json:"-"`
 }
 
 const (
@@ -136,7 +137,9 @@ type Job struct {
 
 // NewJobConfig creates a new job configuration
 func NewJobConfig() *JobConfig {
-	return &JobConfig{}
+	return &JobConfig{
+		registry: NewAgentRegistry(),
+	}
 }
 
 // LoadJob loads a job into the JobConfig
@@ -148,6 +151,12 @@ func (jc *JobConfig) LoadJob(j Job) {
 		jc.Jobs = make([]Job, 0)
 	}
 	jc.Jobs = append(jc.Jobs, j)
+}
+
+func (jc *JobConfig) ensureRegistry() {
+	if jc.registry == nil {
+		jc.registry = NewAgentRegistry()
+	}
 }
 
 // --- helpers: parsing and normalization ---
@@ -406,6 +415,7 @@ func loadAgentsFromRemote(agt cfg.AgentsConfig) ([]JobConfig, error) {
 // LoadConfig loads YAML/JSON Agent Definitions from local paths or remote hosts (http/ftp/s3)
 // and applies global parameters/timeouts from each AgentsConfig entry.
 func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
+	jc.ensureRegistry()
 	for _, agt := range agtConfigs {
 		var chunks []JobConfig
 		var err error
@@ -431,7 +441,17 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 		// Normalize and merge global params for each loaded chunk, then append
 		for idx := range chunks {
 			applyGlobalParams(&chunks[idx], agt)
-			jc.Jobs = append(jc.Jobs, chunks[idx].Jobs...)
+			def, err := chunks[idx].NormalizeToAgentDefinition(AgentSourceMetadata{
+				Location: strings.Join(agt.Path, ","),
+				Format:   strings.ToLower(strings.TrimSpace(agt.Type)),
+			})
+			if err != nil {
+				return err
+			}
+			if err := jc.registry.Register(def); err != nil {
+				return err
+			}
+			jc.Jobs = append(jc.Jobs, def.Jobs...)
 		}
 	}
 	return nil
@@ -439,7 +459,20 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 
 // RegisterAgent registers an agent with the JobConfig
 func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
-	jc.Jobs = append(jc.Jobs, agent.Jobs...)
+	jc.ensureRegistry()
+	if agent == nil {
+		return
+	}
+	def, err := agent.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to normalize agent registration: %v", err)
+		return
+	}
+	if err := jc.registry.Register(def); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to register agent: %v", err)
+		return
+	}
+	jc.Jobs = append(jc.Jobs, def.Jobs...)
 }
 
 // GetAgentByName returns an agent by name
@@ -447,13 +480,17 @@ func (jc *JobConfig) GetAgentByName(name string) (*JobConfig, bool) {
 	if jc == nil {
 		return nil, false
 	}
-	if len(jc.Jobs) == 0 {
-		return nil, false
+	jc.ensureRegistry()
+
+	if a, ok := jc.registry.GetByName(name); ok {
+		return a.toJobConfig(), true
 	}
+
+	// Backward-compatible fallback: lookup by legacy job-group name.
 	for i := 0; i < len(jc.Jobs); i++ {
 		if strings.TrimSpace(jc.Jobs[i].Name) == name {
 			// Return the Job with the specified name inside a JobConfig struct
-			rjc := &JobConfig{}
+			rjc := NewJobConfig()
 			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
 			return rjc, true
 		}
@@ -463,17 +500,43 @@ func (jc *JobConfig) GetAgentByName(name string) (*JobConfig, bool) {
 
 // GetAgentsByEventType returns all agents that are triggered by a specific event type
 func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
+	return jc.GetAgentsByTrigger("event", eventType)
+}
+
+// GetAgentsByTrigger returns all agents matching a trigger selector.
+func (jc *JobConfig) GetAgentsByTrigger(triggerType, triggerName string) ([]*JobConfig, bool) {
 	if jc == nil {
 		return nil, false
 	}
-	if len(jc.Jobs) == 0 {
-		return nil, false
-	}
+	jc.ensureRegistry()
 
 	var agents []*JobConfig
+	defs := jc.registry.GetByTrigger(triggerType, triggerName)
+	for _, def := range defs {
+		cfg := NewJobConfig()
+		cfg.FormatVersion = def.FormatVersion
+		id := def.Identity
+		cfg.AgentIdentity = &id
+		for _, job := range def.Jobs {
+			if strings.ToLower(strings.TrimSpace(job.TriggerType)) == strings.ToLower(strings.TrimSpace(triggerType)) &&
+				strings.TrimSpace(job.TriggerName) == strings.TrimSpace(triggerName) {
+				cfg.Jobs = append(cfg.Jobs, job)
+			}
+		}
+		if len(cfg.Jobs) > 0 {
+			agents = append(agents, cfg)
+		}
+	}
+
+	if len(agents) > 0 {
+		return agents, true
+	}
+
+	// Backward-compatible fallback in case legacy callers only populated Jobs directly.
 	for i := 0; i < len(jc.Jobs); i++ {
-		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == "event" && strings.TrimSpace(jc.Jobs[i].TriggerName) == eventType {
-			rjc := &JobConfig{}
+		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == strings.ToLower(strings.TrimSpace(triggerType)) &&
+			strings.TrimSpace(jc.Jobs[i].TriggerName) == strings.TrimSpace(triggerName) {
+			rjc := NewJobConfig()
 			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
 			agents = append(agents, rjc)
 		}
@@ -490,6 +553,11 @@ func (je *JobEngine) GetAgentByName(name string) (*JobConfig, bool) {
 // GetAgentsByEventType returns all agents that are triggered by a specific event type from the JobEngine
 func (je *JobEngine) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
 	return AgentsRegistry.GetAgentsByEventType(eventType)
+}
+
+// GetAgentsByTrigger returns all agents matching the provided trigger selector.
+func (je *JobEngine) GetAgentsByTrigger(triggerType, triggerName string) ([]*JobConfig, bool) {
+	return AgentsRegistry.GetAgentsByTrigger(triggerType, triggerName)
 }
 
 func deepCopyJob(j Job) Job {

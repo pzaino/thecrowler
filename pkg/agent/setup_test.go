@@ -335,3 +335,29 @@ func TestLoadConfigRegressionHarnessLegacyAndIdentity(t *testing.T) {
 		t.Fatalf("expected 2 jobs loaded from baseline fixtures, got %d", len(jc.Jobs))
 	}
 }
+
+func TestLoadConfigBuildsRegistryForLegacyAndIdentity(t *testing.T) {
+	jc := NewJobConfig()
+	err := jc.LoadConfig([]cfg.AgentsConfig{
+		{
+			Path: []string{
+				"./testdata/legacy.valid.yaml",
+				"./testdata/identity.valid.yaml",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected load to succeed, got %v", err)
+	}
+
+	if _, ok := jc.GetAgentByName("Legacy YAML Agent"); !ok {
+		t.Fatal("expected legacy fixture to be accessible via registry-backed name lookup")
+	}
+	if _, ok := jc.GetAgentByName("Identity YAML Agent"); !ok {
+		t.Fatal("expected identity fixture to be accessible via registry-backed name lookup")
+	}
+
+	if matches, ok := jc.GetAgentsByTrigger("manual", "legacy_yaml"); !ok || len(matches) == 0 {
+		t.Fatalf("expected manual lookup to resolve at least one agent, got ok=%v len=%d", ok, len(matches))
+	}
+}
