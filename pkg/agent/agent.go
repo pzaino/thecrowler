@@ -67,6 +67,7 @@ type DecisionTrace struct {
 // JobEngine executes a sequence of actions
 type JobEngine struct {
 	actions map[string]Action
+	memory  *agentMemoryRuntime
 }
 
 // Initialize initializes the agent engine
@@ -96,7 +97,18 @@ func RegisterActions(engine *JobEngine) {
 
 // NewJobEngine creates a new job engine
 func NewJobEngine() *JobEngine {
-	return &JobEngine{}
+	return &JobEngine{memory: newAgentMemoryRuntime()}
+}
+
+// SetPersistentMemoryBackend configures the persistent memory backend for runtime memory mode.
+func (je *JobEngine) SetPersistentMemoryBackend(backend PersistentMemoryBackend) {
+	if je == nil {
+		return
+	}
+	if je.memory == nil {
+		je.memory = newAgentMemoryRuntime()
+	}
+	je.memory.setPersistentBackend(backend)
 }
 
 // Initialize registers all actions with the engine

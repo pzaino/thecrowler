@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/qri-io/jsonschema"
 	"gopkg.in/yaml.v2"
@@ -180,6 +181,23 @@ func validateSemanticRules(doc map[string]any, registry *AgentRegistry) *Validat
 		if ai, ok := aiRaw.(map[string]any); ok {
 			if name, _ := ai["name"].(string); strings.TrimSpace(name) != "" && !semanticNamePattern.MatchString(name) {
 				ve.add("agent_identity.name", "must match ^[A-Za-z0-9][A-Za-z0-9 _.-]{1,127}$")
+			}
+			if memRaw, ok := ai["memory"].(map[string]any); ok {
+				if ttl, _ := memRaw["ttl"].(string); strings.TrimSpace(ttl) != "" {
+					if _, err := time.ParseDuration(strings.TrimSpace(ttl)); err != nil {
+						ve.add("agent_identity.memory.ttl", "must be a valid Go duration (for example, '30s' or '10m')")
+					}
+				}
+				switch ret := memRaw["retention"].(type) {
+				case int:
+					if ret < 0 {
+						ve.add("agent_identity.memory.retention", "must be >= 0")
+					}
+				case float64:
+					if ret < 0 {
+						ve.add("agent_identity.memory.retention", "must be >= 0")
+					}
+				}
 			}
 		}
 	}

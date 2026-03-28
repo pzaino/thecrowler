@@ -141,6 +141,15 @@
                         "namespace": {
                             "type": "string",
                             "description": "Optional namespace used to isolate agent memory."
+                        },
+                        "ttl": {
+                            "type": "string",
+                            "description": "Optional default TTL for ephemeral memory entries (Go duration format, for example '30s')."
+                        },
+                        "retention": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Optional maximum number of records to retain per namespace."
                         }
                     },
                     "additionalProperties": false

@@ -87,6 +87,37 @@ backward compatibility) and enforces model/provider policy restrictions from
 agent trust level and contract `forbidden_actions` entries
 (e.g. `model:gpt-4*`, `provider:example*`).
 
+## Memory runtime semantics (Milestone 6)
+
+When `agent.memory_runtime=true`, each step receives a namespaced memory context
+in `params.memory_context` with:
+
+- `mode`: `none`, `ephemeral`, or `persistent`
+- `namespace`: effective namespace (`agent_identity.memory.namespace` or
+  fallback to `agent_id`)
+- `records`: current key/value memory map visible to that agent namespace
+
+Agent memory configuration supports:
+
+- `agent_identity.memory.scope`: `none | ephemeral | persistent`
+- `agent_identity.memory.namespace`: isolates memory by namespace
+- `agent_identity.memory.ttl`: optional Go duration used as default TTL
+  (primarily for ephemeral mode)
+- `agent_identity.memory.retention`: optional max record count retained per
+  namespace
+
+Read/write helper parameters for step flows:
+
+- `memory_read_key`: loads a single key into `params.memory_read_value`
+- `memory_write_key`: key to write after step completion (default:
+  `last_result`)
+- `memory_write_value`: explicit value map to persist; if omitted, step
+  response is used
+- `memory_ttl`: step-level TTL override
+
+Persistent mode supports pluggable backends via the `PersistentMemoryBackend`
+interface; a PostgreSQL implementation writes to the `Memory` table.
+
 ## Examples of configuring Agents
 
 ```yaml

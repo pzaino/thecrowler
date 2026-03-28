@@ -107,6 +107,8 @@ type AgentResourceLimit struct {
 type AgentMemory struct {
 	Scope     string `yaml:"scope,omitempty" json:"scope,omitempty"`
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	TTL       string `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	Retention int    `yaml:"retention,omitempty" json:"retention,omitempty"`
 }
 
 // AgentSelfModel defines permissions related to self-modification.
@@ -735,6 +737,14 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 				return err
 			}
 		}
+		if flags.MemoryRuntime && je != nil {
+			if je.memory == nil {
+				je.memory = newAgentMemoryRuntime()
+			}
+			if err := je.memory.inject(params, identity); err != nil {
+				return fmt.Errorf("memory runtime inject failed: %w", err)
+			}
+		}
 
 		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
 		if i > 0 {
@@ -805,6 +815,11 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 		lastResult = result
 		if flags.IdentityEnforcement && identity != nil {
 			budget.markActionExecuted(actionName)
+		}
+		if flags.MemoryRuntime && je != nil && je.memory != nil {
+			if err := je.memory.persistStepResult(params, result, identity); err != nil {
+				return fmt.Errorf("memory runtime persist failed: %w", err)
+			}
 		}
 	}
 	return nil

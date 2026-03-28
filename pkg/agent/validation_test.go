@@ -98,6 +98,33 @@ func TestValidateAgentConfigSemanticRulesStrict(t *testing.T) {
 	}
 }
 
+func TestValidateAgentConfigMemorySemanticRulesStrict(t *testing.T) {
+	strictBad := `{
+  "agent_identity": {
+    "name": "good-name",
+    "agent_id": "good-id",
+    "memory": {"scope":"ephemeral","ttl":"bad-ttl","retention":1}
+  },
+  "jobs": [
+    {
+      "name": "good-job",
+      "process": "serial",
+      "trigger_type": "manual",
+      "trigger_name": "run",
+      "steps": [{"action":"RunCommand","params":{"command":"echo ok"}}]
+    }
+  ]
+}`
+	err := ValidateAgentConfig([]byte(strictBad), "json", ValidationModeStrict, nil)
+	if err == nil {
+		t.Fatal("expected strict semantic validation to reject invalid memory ttl/retention")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "agent_identity.memory.ttl") {
+		t.Fatalf("expected memory ttl semantic error, got: %v", msg)
+	}
+}
+
 func TestValidateAgentConfigStrictVsLenientFixtureBehavior(t *testing.T) {
 	fixturePath := filepath.Clean("testdata/strict.invalid.decision.json")
 	data, err := os.ReadFile(fixturePath)
