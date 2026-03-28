@@ -1,0 +1,43 @@
+format_version: v2
+agent_identity:
+  agent_id: cyber-surface-monitor
+  name: Cyber Surface Monitor
+  agent_type: observer
+  owner: team:security
+  trust_level: trusted
+  capabilities:
+    - api_requests
+    - ai_reasoning
+    - emit_event
+  memory:
+    scope: persistent
+    namespace: security-surface
+    retention: 200
+  constraints:
+    max_steps: 12
+    time_budget: 4m
+jobs:
+  - name: Cyber Surface Monitor
+    process: serial
+    trigger_type: event
+    trigger_name: crawler.page_indexed
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://security.example.local/intel/enrich?url={{TARGET_URL}}"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          url: "https://api.openai.com/v1/chat/completions"
+          auth: "Bearer ${OPENAI_API_KEY}"
+          model: "gpt-4o-mini"
+          prompt: "Identify exposed technologies, weak configurations, and remediation priorities: $response"
+          memory_write_key: "latest_finding"
+      - action: CreateEvent
+        params:
+          source: "agent.cyber-surface-monitor"
+          event_name: "security.finding.generated"
+          event_type: "security.finding.generated"
+          severity: "warning"
+          details:
+            findings: "$response"

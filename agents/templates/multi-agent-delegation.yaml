@@ -1,0 +1,39 @@
+format_version: v2
+agent_identity:
+  agent_id: triage-controller
+  name: TriageController
+  version: 1.0.0
+  trust_level: trusted
+  capabilities:
+    - all
+jobs:
+  - name: TriageController
+    process: serial
+    trigger_type: manual
+    trigger_name: triage_ticket
+    steps:
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response.status == "ok"'
+            on_true:
+              agent_name: TriageWorker
+            on_false:
+              agent_name: TriageFallback
+  - name: TriageWorker
+    process: serial
+    trigger_type: agent
+    trigger_name: TriageController
+    steps:
+      - action: RunCommand
+        params:
+          command: echo "worker path"
+  - name: TriageFallback
+    process: serial
+    trigger_type: agent
+    trigger_name: TriageController
+    steps:
+      - action: RunCommand
+        params:
+          command: echo "fallback path"

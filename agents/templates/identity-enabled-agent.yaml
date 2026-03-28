@@ -1,0 +1,33 @@
+format_version: v2
+agent_identity:
+  agent_id: identity-enabled-agent
+  name: IdentityEnabledAgent
+  version: 1.0.0
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - command_execution
+    - emit_event
+  constraints:
+    max_steps: 10
+    time_budget: 30s
+  memory:
+    scope: ephemeral
+    namespace: identity-enabled-agent
+    ttl: 10m
+    retention: 100
+jobs:
+  - name: IdentityEnabledAgent
+    process: serial
+    trigger_type: event
+    trigger_name: page_crawled
+    steps:
+      - action: RunCommand
+        params:
+          command: echo "identity mode"
+      - action: CreateEvent
+        params:
+          event_name: agent_completed
+          event_type: agent.completed
+          source: identity-enabled-agent

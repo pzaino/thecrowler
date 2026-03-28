@@ -1,0 +1,43 @@
+format_version: v2
+agent_identity:
+  agent_id: finance-news-risk-signal
+  name: Finance News Risk Signal
+  agent_type: observer
+  owner: team:finance
+  trust_level: restricted
+  capabilities:
+    - api_requests
+    - ai_reasoning
+    - emit_event
+  memory:
+    scope: ephemeral
+    namespace: finance-risk
+    ttl: 1h
+    retention: 100
+  constraints:
+    max_steps: 10
+    time_budget: 2m
+jobs:
+  - name: Finance News Risk Signal
+    process: serial
+    trigger_type: event
+    trigger_name: ingest.market_news
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://example.com/market-news"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          url: "https://api.openai.com/v1/chat/completions"
+          auth: "Bearer ${OPENAI_API_KEY}"
+          model: "gpt-4o-mini"
+          prompt: "Classify macro, sector, and company-specific risk signals with confidence scores: $response"
+      - action: CreateEvent
+        params:
+          source: "agent.finance-news-risk-signal"
+          event_name: "finance.risk.signal"
+          event_type: "finance.risk.signal"
+          severity: "warning"
+          details:
+            signal: "$response"
