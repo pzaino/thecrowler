@@ -184,3 +184,20 @@ jobs:
           plugin_name: "example_plugin"
 
 ```
+
+## YAML-first authoring workflow (Milestone 8)
+
+For day-to-day authoring, use YAML templates and the `crowler agents` CLI:
+
+- Templates:
+  - `agents/templates/legacy-job-only.yaml`
+  - `agents/templates/identity-enabled-agent.yaml`
+  - `agents/templates/multi-agent-delegation.yaml`
+- Commands:
+  - `crowler-agt agents lint <file>`
+  - `crowler-agt agents validate --strict <file>`
+  - `crowler-agt agents convert json2yaml <input.json> [output.yaml]`
+  - `crowler-agt agents convert yaml2json <input.yaml> [output.json]`
+
+A detailed field-by-field guide, migration steps, and common troubleshooting are
+available in [`doc/agents_yaml_authoring.md`](./agents_yaml_authoring.md).

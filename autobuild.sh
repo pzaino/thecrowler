@@ -136,6 +136,23 @@ then
 fi
 
 if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "agent-cli" ] ||
+    [ "${build_objs}" == "ac" ] ||
+    [ "${build_objs}" == "" ];
+then
+    cmd_name="crowler-agt"
+    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
+fi
+
+if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "api" ] ||
     [ "${build_objs}" == "" ];
 then
