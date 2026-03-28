@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -66,8 +67,12 @@ type DecisionTrace struct {
 
 // JobEngine executes a sequence of actions
 type JobEngine struct {
-	actions map[string]Action
-	memory  *agentMemoryRuntime
+	actions     map[string]Action
+	memory      *agentMemoryRuntime
+	auditMu     sync.Mutex
+	auditEvents []AuditEvent
+	traceLogs   []string
+	auditSeq    int
 }
 
 // Initialize initializes the agent engine

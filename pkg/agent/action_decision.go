@@ -98,6 +98,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 	if nextStep != nil {
 		target, resolveErr := resolveDelegationTarget(nextStep, inputRaw)
 		if resolveErr != nil {
+			emitDelegationAudit(params, "", auditOutcomeDenied, resolveErr.Error())
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = resolveErr.Error()
 			return rval, resolveErr
@@ -105,6 +106,11 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 
 		callee, _, resolveAgentErr := AgentsEngine.resolveAgentDefinitionByTarget(target)
 		if resolveAgentErr != nil {
+			targetRef := target.AgentID
+			if strings.TrimSpace(targetRef) == "" {
+				targetRef = target.AgentName
+			}
+			emitDelegationAudit(params, targetRef, auditOutcomeDenied, resolveAgentErr.Error())
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = resolveAgentErr.Error()
 			return rval, resolveAgentErr
@@ -115,11 +121,14 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 		if flags.IdentityEnforcement {
 			caller, hasCaller := parseRuntimeIdentity(params)
 			if !hasCaller {
+				err := fmt.Errorf("delegation denied: missing caller identity")
+				emitDelegationAudit(params, callee.Identity.AgentID, auditOutcomeDenied, err.Error())
 				rval[StrStatus] = StatusError
-				rval[StrMessage] = "delegation denied: missing caller identity"
-				return rval, fmt.Errorf("delegation denied: missing caller identity")
+				rval[StrMessage] = err.Error()
+				return rval, err
 			}
 			if policyErr := delegationPolicyCheck(caller, callee.Identity); policyErr != nil {
+				emitDelegationAudit(params, callee.Identity.AgentID, auditOutcomeDenied, policyErr.Error())
 				rval[StrStatus] = StatusError
 				rval[StrMessage] = policyErr.Error()
 				return rval, policyErr
@@ -131,6 +140,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 				graph.Path = append(graph.Path, callerNode)
 			}
 			if cycleErr := detectDelegationCycle(graph, calleeNode); cycleErr != nil {
+				emitDelegationAudit(params, calleeNode, auditOutcomeDenied, cycleErr.Error())
 				rval[StrStatus] = StatusError
 				rval[StrMessage] = cycleErr.Error()
 				return rval, cycleErr
@@ -161,10 +171,12 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 		}
 		err = AgentsEngine.ExecuteAgent(agentRef, delegationCtx)
 		if err != nil {
+			emitDelegationAudit(params, agentRef, auditOutcomeError, err.Error())
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("delegation failed: %v", err)
 			return rval, err
 		}
+		emitDelegationAudit(params, agentRef, auditOutcomeAllowed, "delegation_completed")
 	}
 
 	rval[StrResponse] = results

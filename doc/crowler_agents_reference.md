@@ -118,6 +118,27 @@ Read/write helper parameters for step flows:
 Persistent mode supports pluggable backends via the `PersistentMemoryBackend`
 interface; a PostgreSQL implementation writes to the `Memory` table.
 
+
+## Contracts, auditability, and governance (Milestone 7)
+
+When `agent.contract_enforcement=true`, runtime now applies contract middleware on
+each step:
+
+- blocks actions listed in `agent_identity.agent_contract.forbidden_actions`
+- enforces `failure_policy` as deterministic runtime behavior (`abort`,
+  `continue`, or `fallback`)
+- keeps delegation restrictions auditable through `Decision` delegation outcomes
+
+The runtime also emits deterministic audit telemetry per run, including:
+
+- identity and ownership context (`agent_id`, `name`, `owner`)
+- capabilities used for each action
+- action outcomes (`allowed`, `denied`, `error`)
+- denied actions and policy reasons
+- delegation outcomes and target refs
+
+Audit events and trace logs are sequenced and deterministic for incident review.
+
 ## Examples of configuring Agents
 
 ```yaml
