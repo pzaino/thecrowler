@@ -12,8 +12,9 @@ enrichment, correction, manipulation etc. and combine it with actions.
 
 Agents should be defined in YAML files and stored in the `./agents/` path.
 
-## Compatibility contract (Milestone 0 baseline)
+## Compatibility contract
 
+- Originally the CROWler used Jobs to allow users to create complex jobs in YAML, this is now known as v1 format.
 - Legacy manifests with `jobs` only are still valid and continue to run unchanged.
 - Identity-enabled manifests with `agent_identity + jobs` are also valid.
 - `format_version` is supported as a compatibility marker:
@@ -46,7 +47,7 @@ Each run also receives an execution context snapshot with run correlation fields
 (`run_id`, `trace_id`, `source`, `owner`, `identity_snapshot`) injected into
 step `config.agent_runtime`.
 
-## Decision and delegation model (Milestone 4)
+## Decision and delegation model
 
 `Decision` branches can now target delegated agents using:
 
@@ -65,8 +66,7 @@ With `agent.identity_enforcement=true`, delegation also enforces:
 Delegation failures are deterministic and surfaced as explicit errors (for
 example, target unavailable, policy denial, or cycle detected).
 
-
-## AI provider abstraction (Milestone 5)
+## AI provider abstraction
 
 `AIInteraction` now executes against a provider abstraction (`LLMProvider`)
 internally, so orchestration is provider-agnostic.
@@ -87,7 +87,7 @@ backward compatibility) and enforces model/provider policy restrictions from
 agent trust level and contract `forbidden_actions` entries
 (e.g. `model:gpt-4*`, `provider:example*`).
 
-## Memory runtime semantics (Milestone 6)
+## Memory runtime semantics
 
 When `agent.memory_runtime=true`, each step receives a namespaced memory context
 in `params.memory_context` with:
@@ -118,8 +118,7 @@ Read/write helper parameters for step flows:
 Persistent mode supports pluggable backends via the `PersistentMemoryBackend`
 interface; a PostgreSQL implementation writes to the `Memory` table.
 
-
-## Contracts, auditability, and governance (Milestone 7)
+## Contracts, auditability, and governance
 
 When `agent.contract_enforcement=true`, runtime now applies contract middleware on
 each step:
@@ -185,7 +184,7 @@ jobs:
 
 ```
 
-## YAML-first authoring workflow (Milestone 8)
+## YAML-first authoring workflow
 
 For day-to-day authoring, use YAML templates and the `crowler agents` CLI:
 
