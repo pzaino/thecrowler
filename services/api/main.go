@@ -259,8 +259,15 @@ func main() {
 		os.Exit(-1)
 	}
 
+	addr := ""
+	if config.API.UseGoogleCloudRun {
+		addr = cloudRunAddr(config)
+	} else {
+		addr = fmt.Sprintf("%s:%d", config.API.Host, config.API.Port)
+	}
+
 	srv := &http.Server{
-		Addr: config.API.Host + ":" + fmt.Sprintf("%d", config.API.Port),
+		Addr: addr,
 
 		// ReadHeaderTimeout is the amount of time allowed to read
 		// request headers. The connection's read deadline is reset
@@ -335,6 +342,20 @@ func main() {
 		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
 	}
 	setSysReady(0) // Indicate system is NOT ready
+}
+
+func cloudRunAddr(cfg cfg.Config) string {
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		if cfg.Events.Port > 0 {
+			port = strconv.Itoa(cfg.Events.Port)
+		} else {
+			port = "8080"
+		}
+	}
+
+	// Cloud Run requires listening on all interfaces.
+	return "0.0.0.0:" + port
 }
 
 // ---------------------------------------------------------

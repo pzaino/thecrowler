@@ -50,6 +50,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"google.golang.org/api/idtoken"
 )
 
 const (
@@ -2082,6 +2083,21 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 	return err
 }
 
+type jsAPIClientAuth struct {
+	Type      string
+	Audience  string
+	Header    string
+	Token     string
+	TokenType string
+}
+
+type jsAPIClientRequest struct {
+	Headers map[string]string
+	Body    []byte
+	Timeout time.Duration
+	Auth    jsAPIClientAuth
+}
+
 // addJSAPIClient adds the apiClient function to the VM
 /* Usage in javascript:
 	// Make a GET request to the specified URL
@@ -2117,111 +2133,64 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 	console.log(response.headers);
 	console.log(response.body);
 
+// Also:
+
+let response = apiClient.post(
+  "https://my-service-abc123.a.run.app/v1/do",
+  {
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: {
+      hello: "world"
+    },
+    timeout: 30000,
+    auth: {
+      type: "gcp_id_token",
+      audience: "https://my-service-abc123.a.run.app"
+    }
+  }
+);
+
 */
 func addJSAPIClient(vm *otto.Otto, plgName string) error {
 	apiClientObject, _ := vm.Object(`({})`)
 
 	// Define the "post" method
 	err := apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
-		// Get the URL (first argument)
-		url, _ := call.Argument(0).ToString()
+		url, err := call.Argument(0).ToString()
+		if err != nil || strings.TrimSpace(url) == "" {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported invalid URL: %v", plgName, err)
+			return otto.UndefinedValue()
+		}
 
-		// Get the request object (second argument)
 		requestArg := call.Argument(1)
 		if !requestArg.IsDefined() {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported request argument is undefined.", plgName)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported request argument is undefined.", plgName)
 			return otto.UndefinedValue()
 		}
 
-		// Export the request object
-		request, err := requestArg.Export()
+		reqCfg, err := parseJSAPIClientRequest(requestArg, true)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported exporting request object: %v\n", plgName, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported invalid request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
-		// Type assert the exported request as a map
-		reqMap, ok := request.(map[string]interface{})
-		if !ok {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported request object is not a valid map.", plgName)
-			return otto.UndefinedValue()
-		}
-
-		// Extract headers, body, and timeout from the request object
-		var headers map[string]interface{}
-		if h, exists := reqMap["headers"]; exists {
-			headers, _ = h.(map[string]interface{}) // Type assert headers
-		}
-
-		var body io.Reader
-		if b, exists := reqMap["body"]; exists {
-			if bodyString, ok := b.(string); ok {
-				body = strings.NewReader(bodyString) // Handle as pre-serialized JSON
-			} else {
-				bodyBytes, err := json.Marshal(b) // Serialize object to JSON
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported marshaling body: %v\n", plgName, err)
-					return otto.UndefinedValue()
-				}
-				body = bytes.NewReader(bodyBytes)
-			}
-		}
-
-		var timeoutMs int64 = 30000 // Default timeout
-		if t, exists := reqMap["timeout"]; exists {
-			if timeoutFloat, ok := t.(float64); ok { // Otto exports numbers as float64
-				timeoutMs = int64(timeoutFloat)
-			}
-		}
-		timeout := time.Duration(timeoutMs) * time.Millisecond
-
-		// Set up HTTP client with timeout
-		client := &http.Client{Timeout: timeout}
-
-		// Create the HTTP request
-		req, err := http.NewRequest("POST", url, body)
+		resp, respBody, err := executeJSAPIClientRequest(http.MethodPost, url, reqCfg)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported creating request: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-
-		// Add headers to the request
-		if len(headers) > 0 {
-			for key, value := range headers {
-				if headerValue, ok := value.(string); ok {
-					req.Header.Set(key, headerValue)
-				}
-			}
-		}
-
-		// output the object for debugging purposes:
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-apiClient] plugin `%s` request object: %v", plgName, req)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported making request: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported reading response body: %v", plgName, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported making request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
 		respObject, _ := vm.Object(`({})`)
-		err = respObject.Set("status", resp.StatusCode)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting status: %v", plgName, err)
+		if err := respObject.Set("status", resp.StatusCode); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported setting status: %v", plgName, err)
 		}
-		err = respObject.Set("headers", resp.Header)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting headers: %v", plgName, err)
+		if err := respObject.Set("headers", resp.Header); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported setting headers: %v", plgName, err)
 		}
-		err = respObject.Set("body", string(respBody))
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting body: %v", plgName, err)
+		if err := respObject.Set("body", string(respBody)); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported setting body: %v", plgName, err)
 		}
 
 		return respObject.Value()
@@ -2232,80 +2201,43 @@ func addJSAPIClient(vm *otto.Otto, plgName string) error {
 
 	// Define the "get" method
 	err = apiClientObject.Set("get", func(call otto.FunctionCall) otto.Value {
-		// Get the URL (first argument)
-		url, _ := call.Argument(0).ToString()
+		url, err := call.Argument(0).ToString()
+		if err != nil || strings.TrimSpace(url) == "" {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported invalid URL: %v", plgName, err)
+			return otto.UndefinedValue()
+		}
 
-		// Get the request options object (second argument)
 		requestArg := call.Argument(1)
-		var headers map[string]string
-		var timeoutMs int64 = 30000 // Default timeout
 
+		var reqCfg jsAPIClientRequest
 		if requestArg.IsDefined() {
-			reqMap, err := requestArg.Export()
-			if err == nil {
-				// Extract headers
-				if h, exists := reqMap.(map[string]interface{})["headers"]; exists {
-					headersInterface, _ := h.(map[string]interface{})
-					headers = make(map[string]string)
-					for k, v := range headersInterface {
-						if vStr, ok := v.(string); ok {
-							headers[k] = vStr
-						}
-					}
-				}
-				// Extract timeout
-				if t, exists := reqMap.(map[string]interface{})["timeout"]; exists {
-					if timeoutFloat, ok := t.(float64); ok { // Otto exports numbers as float64
-						timeoutMs = int64(timeoutFloat)
-					}
-				}
+			reqCfg, err = parseJSAPIClientRequest(requestArg, false)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported invalid request: %v", plgName, err)
+				return otto.UndefinedValue()
+			}
+		} else {
+			reqCfg = jsAPIClientRequest{
+				Headers: map[string]string{},
+				Timeout: 30 * time.Second,
 			}
 		}
 
-		// Set up HTTP client with timeout
-		timeout := time.Duration(timeoutMs) * time.Millisecond
-		client := &http.Client{Timeout: timeout}
-
-		// Create the HTTP request
-		req, err := http.NewRequest("GET", url, nil)
+		resp, respBody, err := executeJSAPIClientRequest(http.MethodGet, url, reqCfg)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported creating GET request: %v", plgName, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported executing GET request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
-		// Add headers to the request
-		for key, value := range headers {
-			req.Header.Set(key, value)
-		}
-
-		// Execute the request
-		resp, err := client.Do(req)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported executing GET request: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
-
-		// Read response body
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported reading GET response body: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-
-		// Create response object for JavaScript
 		respObject, _ := vm.Object(`({})`)
-		err = respObject.Set("status", resp.StatusCode)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting status in response object: %v", plgName, err)
+		if err := respObject.Set("status", resp.StatusCode); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported setting status in response object: %v", plgName, err)
 		}
-		err = respObject.Set("headers", resp.Header)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting headers in response object: %v", plgName, err)
+		if err := respObject.Set("headers", resp.Header); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported setting headers in response object: %v", plgName, err)
 		}
-		err = respObject.Set("body", string(respBody))
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting body in response object: %v", plgName, err)
+		if err := respObject.Set("body", string(respBody)); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported setting body in response object: %v", plgName, err)
 		}
 
 		return respObject.Value()
@@ -2315,6 +2247,216 @@ func addJSAPIClient(vm *otto.Otto, plgName string) error {
 	}
 
 	return vm.Set("apiClient", apiClientObject)
+}
+
+func parseJSAPIClientRequest(requestArg otto.Value, allowBody bool) (jsAPIClientRequest, error) {
+	reqCfg := jsAPIClientRequest{
+		Headers: map[string]string{},
+		Timeout: 30 * time.Second,
+	}
+
+	if !requestArg.IsDefined() {
+		return reqCfg, nil
+	}
+
+	request, err := requestArg.Export()
+	if err != nil {
+		return reqCfg, err
+	}
+
+	reqMap, ok := request.(map[string]interface{})
+	if !ok {
+		return reqCfg, fmt.Errorf("request object is not a valid map")
+	}
+
+	if h, exists := reqMap["headers"]; exists {
+		headersMap, ok := h.(map[string]interface{})
+		if !ok {
+			return reqCfg, fmt.Errorf("headers field is not a valid map")
+		}
+		for key, value := range headersMap {
+			switch v := value.(type) {
+			case string:
+				reqCfg.Headers[key] = v
+			case fmt.Stringer:
+				reqCfg.Headers[key] = v.String()
+			default:
+				reqCfg.Headers[key] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	if allowBody {
+		if b, exists := reqMap["body"]; exists {
+			switch bodyValue := b.(type) {
+			case string:
+				reqCfg.Body = []byte(bodyValue)
+			case nil:
+				reqCfg.Body = nil
+			default:
+				bodyBytes, err := json.Marshal(bodyValue)
+				if err != nil {
+					return reqCfg, fmt.Errorf("marshaling body: %w", err)
+				}
+				reqCfg.Body = bodyBytes
+			}
+		}
+	}
+
+	if t, exists := reqMap["timeout"]; exists {
+		timeoutMs, err := normalizeTimeoutMillis(t)
+		if err != nil {
+			return reqCfg, fmt.Errorf("invalid timeout: %w", err)
+		}
+		reqCfg.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	if a, exists := reqMap["auth"]; exists && a != nil {
+		authMap, ok := a.(map[string]interface{})
+		if !ok {
+			return reqCfg, fmt.Errorf("auth field is not a valid map")
+		}
+		reqCfg.Auth = jsAPIClientAuth{
+			Type:      normalizeStringValue(authMap["type"]),
+			Audience:  normalizeStringValue(authMap["audience"]),
+			Header:    normalizeStringValue(authMap["header"]),
+			Token:     normalizeStringValue(authMap["token"]),
+			TokenType: normalizeStringValue(authMap["token_type"]),
+		}
+	}
+
+	return reqCfg, nil
+}
+
+func executeJSAPIClientRequest(method, url string, reqCfg jsAPIClientRequest) (*http.Response, []byte, error) {
+	var bodyReader io.Reader
+	if len(reqCfg.Body) > 0 {
+		bodyReader = bytes.NewReader(reqCfg.Body)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reqCfg.Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for key, value := range reqCfg.Headers {
+		req.Header.Set(key, value)
+	}
+
+	if err := applyJSAPIClientAuth(ctx, req, reqCfg.Auth); err != nil {
+		return nil, nil, err
+	}
+
+	client := &http.Client{
+		Timeout: reqCfg.Timeout,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close() //nolint:errcheck // Best-effort close after full read
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resp, respBody, nil
+}
+
+func applyJSAPIClientAuth(ctx context.Context, req *http.Request, auth jsAPIClientAuth) error {
+	authType := strings.ToLower(strings.TrimSpace(auth.Type))
+	if authType == "" || authType == "none" {
+		return nil
+	}
+
+	headerName := strings.TrimSpace(auth.Header)
+	if headerName == "" {
+		headerName = "Authorization"
+	}
+
+	switch authType {
+	case "bearer":
+		if strings.TrimSpace(auth.Token) == "" {
+			return fmt.Errorf("auth.token is required for bearer auth")
+		}
+		tokenType := strings.TrimSpace(auth.TokenType)
+		if tokenType == "" {
+			tokenType = "Bearer"
+		}
+		req.Header.Set(headerName, tokenType+" "+auth.Token)
+		return nil
+
+	case "gcp_id_token":
+		if strings.TrimSpace(auth.Audience) == "" {
+			return fmt.Errorf("auth.audience is required for gcp_id_token auth")
+		}
+
+		ts, err := idtoken.NewTokenSource(ctx, auth.Audience)
+		if err != nil {
+			return fmt.Errorf("creating ID token source: %w", err)
+		}
+
+		tok, err := ts.Token()
+		if err != nil {
+			return fmt.Errorf("fetching ID token: %w", err)
+		}
+
+		req.Header.Set(headerName, "Bearer "+tok.AccessToken)
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported auth.type: %s", authType)
+	}
+}
+
+func normalizeStringValue(v interface{}) string {
+	switch val := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(val)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", val))
+	}
+}
+
+func normalizeTimeoutMillis(v interface{}) (int64, error) {
+	switch val := v.(type) {
+	case int:
+		return int64(val), nil
+	case int8:
+		return int64(val), nil
+	case int16:
+		return int64(val), nil
+	case int32:
+		return int64(val), nil
+	case int64:
+		return val, nil
+	case uint:
+		return int64(val), nil
+	case uint8:
+		return int64(val), nil
+	case uint16:
+		return int64(val), nil
+	case uint32:
+		return int64(val), nil
+	case uint64:
+		if val > uint64(^uint64(0)>>1) {
+			return 0, fmt.Errorf("timeout too large")
+		}
+		return int64(val), nil
+	case float32:
+		return int64(val), nil
+	case float64:
+		return int64(val), nil
+	default:
+		return 0, fmt.Errorf("unsupported timeout type %T", v)
+	}
 }
 
 // addJSAPIFetch adds the fetch function to the VM

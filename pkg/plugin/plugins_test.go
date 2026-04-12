@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
@@ -1715,5 +1717,432 @@ func TestJSPluginRegisterRemove(t *testing.T) {
 	uninitializedReg.Remove("plugin1")
 	if uninitializedReg.Registry != nil || len(uninitializedReg.Order) != 0 {
 		t.Errorf("Uninitialized registry should remain unchanged after calling Remove")
+	}
+}
+
+func TestNormalizeTimeoutMillis(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   interface{}
+		want    int64
+		wantErr bool
+	}{
+		{name: "int", input: int(1234), want: 1234},
+		{name: "int64", input: int64(5678), want: 5678},
+		{name: "float64", input: float64(2500), want: 2500},
+		{name: "uint32", input: uint32(42), want: 42},
+		{name: "invalid string", input: "3000", wantErr: true},
+		{name: "invalid bool", input: true, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeTimeoutMillis(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseJSAPIClientRequest_POST(t *testing.T) {
+	vm := otto.New()
+
+	value, err := vm.Run(`({
+		headers: {
+			"Content-Type": "application/json",
+			"X-Test": "abc"
+		},
+		body: {
+			hello: "world",
+			count: 2
+		},
+		timeout: 1500,
+		auth: {
+			type: "bearer",
+			token: "secret-token",
+			header: "Authorization",
+			token_type: "Bearer"
+		}
+	})`)
+	if err != nil {
+		t.Fatalf("vm.Run failed: %v", err)
+	}
+
+	reqCfg, err := parseJSAPIClientRequest(value, true)
+	if err != nil {
+		t.Fatalf("parseJSAPIClientRequest failed: %v", err)
+	}
+
+	if reqCfg.Timeout.Milliseconds() != 1500 {
+		t.Fatalf("timeout = %dms, want 1500ms", reqCfg.Timeout.Milliseconds())
+	}
+
+	if got := reqCfg.Headers["Content-Type"]; got != "application/json" {
+		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got := reqCfg.Headers["X-Test"]; got != "abc" {
+		t.Fatalf("X-Test = %q, want %q", got, "abc")
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(reqCfg.Body, &body); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if body["hello"] != "world" {
+		t.Fatalf("body[hello] = %v, want %v", body["hello"], "world")
+	}
+
+	if reqCfg.Auth.Type != "bearer" {
+		t.Fatalf("auth.type = %q, want %q", reqCfg.Auth.Type, "bearer")
+	}
+	if reqCfg.Auth.Token != "secret-token" {
+		t.Fatalf("auth.token = %q, want %q", reqCfg.Auth.Token, "secret-token")
+	}
+	if reqCfg.Auth.Header != "Authorization" {
+		t.Fatalf("auth.header = %q, want %q", reqCfg.Auth.Header, "Authorization")
+	}
+	if reqCfg.Auth.TokenType != "Bearer" {
+		t.Fatalf("auth.token_type = %q, want %q", reqCfg.Auth.TokenType, "Bearer")
+	}
+}
+
+func TestParseJSAPIClientRequest_GETWithoutBody(t *testing.T) {
+	vm := otto.New()
+
+	value, err := vm.Run(`({
+		headers: {
+			"Accept": "application/json"
+		},
+		timeout: 2200,
+		auth: {
+			type: "gcp_id_token",
+			audience: "https://example-service.a.run.app"
+		}
+	})`)
+	if err != nil {
+		t.Fatalf("vm.Run failed: %v", err)
+	}
+
+	reqCfg, err := parseJSAPIClientRequest(value, false)
+	if err != nil {
+		t.Fatalf("parseJSAPIClientRequest failed: %v", err)
+	}
+
+	if reqCfg.Timeout.Milliseconds() != 2200 {
+		t.Fatalf("timeout = %dms, want 2200ms", reqCfg.Timeout.Milliseconds())
+	}
+	if got := reqCfg.Headers["Accept"]; got != "application/json" {
+		t.Fatalf("Accept = %q, want %q", got, "application/json")
+	}
+	if len(reqCfg.Body) != 0 {
+		t.Fatalf("expected empty body for GET parsing, got %q", string(reqCfg.Body))
+	}
+	if reqCfg.Auth.Type != "gcp_id_token" {
+		t.Fatalf("auth.type = %q, want %q", reqCfg.Auth.Type, "gcp_id_token")
+	}
+	if reqCfg.Auth.Audience != "https://example-service.a.run.app" {
+		t.Fatalf("auth.audience = %q, want %q", reqCfg.Auth.Audience, "https://example-service.a.run.app")
+	}
+}
+
+func TestApplyJSAPIClientAuth_Bearer(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest failed: %v", err)
+	}
+
+	auth := jsAPIClientAuth{
+		Type:      "bearer",
+		Token:     "abc123",
+		Header:    "Authorization",
+		TokenType: "Bearer",
+	}
+
+	err = applyJSAPIClientAuth(context.Background(), req, auth)
+	if err != nil {
+		t.Fatalf("applyJSAPIClientAuth failed: %v", err)
+	}
+
+	if got := req.Header.Get("Authorization"); got != "Bearer abc123" {
+		t.Fatalf("Authorization = %q, want %q", got, "Bearer abc123")
+	}
+}
+
+func TestApplyJSAPIClientAuth_BearerCustomHeader(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest failed: %v", err)
+	}
+
+	auth := jsAPIClientAuth{
+		Type:      "bearer",
+		Token:     "abc123",
+		Header:    "X-Serverless-Authorization",
+		TokenType: "Bearer",
+	}
+
+	err = applyJSAPIClientAuth(context.Background(), req, auth)
+	if err != nil {
+		t.Fatalf("applyJSAPIClientAuth failed: %v", err)
+	}
+
+	if got := req.Header.Get("X-Serverless-Authorization"); got != "Bearer abc123" {
+		t.Fatalf("X-Serverless-Authorization = %q, want %q", got, "Bearer abc123")
+	}
+}
+
+func TestApplyJSAPIClientAuth_GCPIDTokenMissingAudience(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest failed: %v", err)
+	}
+
+	auth := jsAPIClientAuth{
+		Type: "gcp_id_token",
+	}
+
+	err = applyJSAPIClientAuth(context.Background(), req, auth)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "auth.audience is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecuteJSAPIClientRequest_BearerGET(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("expected GET request, got %s", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer test-token")
+		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept = %q, want %q", got, "application/json")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	reqCfg := jsAPIClientRequest{
+		Headers: map[string]string{
+			"Accept": "application/json",
+		},
+		Timeout: 3 * time.Second,
+		Auth: jsAPIClientAuth{
+			Type:      "bearer",
+			Token:     "test-token",
+			Header:    "Authorization",
+			TokenType: "Bearer",
+		},
+	}
+
+	resp, respBody, err := executeJSAPIClientRequest(http.MethodGet, ts.URL, reqCfg)
+	if err != nil {
+		t.Fatalf("executeJSAPIClientRequest failed: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if string(respBody) != `{"ok":true}` {
+		t.Fatalf("body = %q, want %q", string(respBody), `{"ok":true}`)
+	}
+}
+
+func TestExecuteJSAPIClientRequest_BearerPOST(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST request, got %s", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer test-token")
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed reading request body: %v", err)
+		}
+		defer r.Body.Close() //nolint:errcheck
+
+		if string(body) != `{"hello":"world"}` {
+			t.Fatalf("request body = %q, want %q", string(body), `{"hello":"world"}`)
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`created`))
+	}))
+	defer ts.Close()
+
+	reqCfg := jsAPIClientRequest{
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+		},
+		Body:    []byte(`{"hello":"world"}`),
+		Timeout: 3 * time.Second,
+		Auth: jsAPIClientAuth{
+			Type:      "bearer",
+			Token:     "test-token",
+			Header:    "Authorization",
+			TokenType: "Bearer",
+		},
+	}
+
+	resp, respBody, err := executeJSAPIClientRequest(http.MethodPost, ts.URL, reqCfg)
+	if err != nil {
+		t.Fatalf("executeJSAPIClientRequest failed: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if string(respBody) != "created" {
+		t.Fatalf("body = %q, want %q", string(respBody), "created")
+	}
+}
+
+func TestAddJSAPIClient_BearerAuthGETAndPOST(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIClient(vm, "test")
+	if err != nil {
+		t.Fatalf("addJSAPIClient returned an error: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer plugin-token" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer plugin-token")
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Hello, GET Auth!"))
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("failed reading POST body: %v", err)
+			}
+			defer r.Body.Close() //nolint:errcheck
+
+			if string(body) != `{"key":"value"}` {
+				t.Fatalf("POST body = %q, want %q", string(body), `{"key":"value"}`)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Hello, POST Auth!"))
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer ts.Close()
+
+	postScript := fmt.Sprintf(`
+		var result = apiClient.post("%s", {
+			headers: { "Content-Type": "application/json" },
+			body: { "key": "value" },
+			timeout: 30000,
+			auth: {
+				type: "bearer",
+				token: "plugin-token",
+				header: "Authorization",
+				token_type: "Bearer"
+			}
+		});
+		result;
+	`, ts.URL)
+
+	postResult, err := vm.Run(postScript)
+	if err != nil {
+		t.Fatalf("Error running post script: %v", err)
+	}
+
+	postResultObj := postResult.Object()
+	postStatus, _ := postResultObj.Get("status")
+	postBody, _ := postResultObj.Get("body")
+
+	if status, _ := postStatus.ToInteger(); status != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", status)
+	}
+	if body, _ := postBody.ToString(); body != "Hello, POST Auth!" {
+		t.Fatalf("Expected body %q, got %q", "Hello, POST Auth!", body)
+	}
+
+	getScript := fmt.Sprintf(`
+		var result = apiClient.get("%s", {
+			headers: { "Accept": "application/json" },
+			timeout: 30000,
+			auth: {
+				type: "bearer",
+				token: "plugin-token",
+				header: "Authorization",
+				token_type: "Bearer"
+			}
+		});
+		result;
+	`, ts.URL)
+
+	getResult, err := vm.Run(getScript)
+	if err != nil {
+		t.Fatalf("Error running get script: %v", err)
+	}
+
+	getResultObj := getResult.Object()
+	getStatus, _ := getResultObj.Get("status")
+	getBody, _ := getResultObj.Get("body")
+
+	if status, _ := getStatus.ToInteger(); status != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", status)
+	}
+	if body, _ := getBody.ToString(); body != "Hello, GET Auth!" {
+		t.Fatalf("Expected body %q, got %q", "Hello, GET Auth!", body)
+	}
+}
+
+func TestAddJSAPIClient_GCPIDTokenMissingAudience(t *testing.T) {
+	vm := otto.New()
+
+	err := addJSAPIClient(vm, "test")
+	if err != nil {
+		t.Fatalf("addJSAPIClient returned an error: %v", err)
+	}
+
+	script := `
+		var result = apiClient.get("https://example.com", {
+			timeout: 30000,
+			auth: {
+				type: "gcp_id_token"
+			}
+		});
+		result;
+	`
+
+	result, err := vm.Run(script)
+	if err != nil {
+		t.Fatalf("vm.Run failed: %v", err)
+	}
+
+	exported, err := result.Export()
+	if err != nil {
+		t.Fatalf("result.Export failed: %v", err)
+	}
+
+	if exported != nil {
+		t.Fatalf("expected undefined/nil result on auth failure, got %#v", exported)
 	}
 }

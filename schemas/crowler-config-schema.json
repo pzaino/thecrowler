@@ -1222,6 +1222,11 @@
             "enabled",
             "directory"
           ]
+        },
+        "use_google_cloud_run": {
+          "title": "CROWler General/Search API Use Google Cloud Run",
+          "description": "This is a flag that tells the CROWler General API to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the General API on Google Cloud Run. This is useful to make the API scalable and highly available.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -1467,6 +1472,11 @@
           "type": "integer",
           "minimum": 10,
           "description": "This is the write timeout (in seconds) for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond."
+        },
+        "use_google_cloud_run": {
+          "title": "CROWler Events Manager Use Google Cloud Run",
+          "description": "This is a flag that tells the CROWler Events Manager to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the Events Manager API on Google Cloud Run. This is useful to make the API scalable and highly available.",
+          "type": "boolean"
         },
         "master_events_manager": {
           "title": "CROWler Events Manager Master Events Manager's name",

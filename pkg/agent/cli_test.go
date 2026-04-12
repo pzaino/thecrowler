@@ -59,8 +59,8 @@ func TestConvertRoundTripParity(t *testing.T) {
 func TestPublishedYAMLTemplatesValidate(t *testing.T) {
 	templates := []string{
 		"../../agents/templates/legacy-job-only.yaml",
-		"../../agents/templates/identity-enabled-agent.yaml",
-		"../../agents/templates/multi-agent-delegation.yaml",
+		"../../agents/templates/identity-enabled-agent.agent.yaml",
+		"../../agents/templates/multi-agent-delegation.agent.yaml",
 	}
 	for _, p := range templates {
 		p := filepath.Clean(p)
