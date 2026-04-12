@@ -1,0 +1,9 @@
+jobs:
+  - name: Legacy Golden YAML
+    process: serial
+    trigger_type: manual
+    trigger_name: legacy_golden_yaml
+    steps:
+      - action: RunCommand
+        params:
+          command: echo "golden yaml"

@@ -856,6 +856,211 @@
       },
       "additionalProperties": false
     },
+    "attributes_indexing": {
+      "title": "CROWler Attributes Indexing Configuration",
+      "description": "This is the CROWler's attributes indexing configuration. It is used to configure the indexing of the attributes of the web objects, net info and http info in the database. This is required in order to implement data correlation features.",
+      "type": "object",
+      "properties": {
+        "webobject": {
+          "title": "CROWler Web Object Attributes Indexing",
+          "description": "This is a list of web object attributes that the CROWler will index in the database. This is required in order to implement data correlation features.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "This is the key of the web object attribute to index. For example, 'url', 'title', 'content' etc.",
+                  "examples": [
+                    "url",
+                    "title",
+                    "content"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "This is the JSON path of the web object attribute in the details JSONB file to index. For example, 'details.scraped_data.url', 'details.links[*]' etc.",
+                  "examples": [
+                    "details.scraped_data.url",
+                    "details.metadata.title",
+                    "details.content.text"
+                  ]
+                },
+                "index_type": {
+                  "type": "string",
+                  "description": "This is the type of the web object attribute to index. For example, 'string', 'integer', 'boolean' etc.",
+                  "enum": [
+                    "string",
+                    "integer",
+                    "boolean",
+                    "date",
+                    "array"
+                  ],
+                  "examples": [
+                    "string",
+                    "integer",
+                    "boolean"
+                  ]
+                },
+                "normalizers": {
+                  "type": "array",
+                  "description": "This is the list of normalizers to apply to the web object attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "lowercase",
+                      "uppercase",
+                      "trim",
+                      ""
+                    ]
+                  },
+                  "examples": [
+                    "lowercase",
+                    "uppercase",
+                    "trim"
+                   ]
+                },
+                "index": {
+                  "type": "boolean",
+                  "description": "This is a flag that tells the CROWler to index this web object attribute in the database. This is required in order to implement data correlation features."
+                }
+            },
+            "additionalProperties": false
+          }
+        },
+        "netinfo": {
+          "title": "CROWler Net Info Attributes Indexing",
+          "description": "This is a list of net info attributes that the CROWler will index in the database. This is required in order to implement data correlation features.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "This is the key of the net info attribute to index. For example, 'ip', 'asn', 'isp' etc.",
+                  "examples": [
+                    "ip",
+                    "asn",
+                    "isp"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "This is the JSON path of the net info attribute in the details JSONB file to index. For example, 'details.net_info.ip', 'details.net_info.asn' etc.",
+                  "examples": [
+                    "details.net_info.ip",
+                    "details.net_info.asn",
+                    "details.net_info.isp"
+                  ]
+                },
+                "index_type": {
+                  "type": "string",
+                  "description": "This is the type of the net info attribute to index. For example, 'string', 'integer', 'boolean' etc.",
+                  "enum": [
+                    "string",
+                    "integer",
+                    "boolean",
+                    "date",
+                    "array"
+                  ],
+                  "examples": [
+                    "string",
+                    "integer",
+                    "boolean"
+                  ]
+                },
+                "normalizers": {
+                  "type": "array",
+                  "description": "This is the list of normalizers to apply to the net info attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "lowercase",
+                      "uppercase",
+                      "trim"
+                    ]
+                  },
+                  "examples": [
+                    "lowercase",
+                    "uppercase",
+                    "trim"
+                   ]
+                },
+                "index": {
+                  "type": "boolean",
+                  "description": "This is a flag that tells the CROWler to index this net info attribute in the database. This is required in order to implement data correlation features."
+                }
+            },
+            "additionalProperties": false
+          }
+        },
+        "httpinfo": {
+          "title": "CROWler HTTP Info Attributes Indexing",
+          "description": "This is a list of http info attributes that the CROWler will index in the database. This is required in order to implement data correlation features.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "This is the key of the http info attribute to index. For example, 'status_code', 'content_type' etc.",
+                  "examples": [
+                    "status_code",
+                    "content_type"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "This is the JSON path of the http info attribute in the details JSONB file to index. For example, 'details.http_info.status_code', 'details.http_info.headers.content_type' etc.",
+                  "examples": [
+                    "details.http_info.status_code",
+                    "details.http_info.headers.content_type"
+                  ]
+                },
+                "index_type": {
+                  "type": "string",
+                  "description": "This is the type of the http info attribute to index. For example, 'string', 'integer', 'boolean' etc.",
+                  "enum": [
+                    "string",
+                    "integer",
+                    "boolean",
+                    "date",
+                    "array"
+                  ],
+                  "examples": [
+                    "string",
+                    "integer",
+                    "boolean"
+                  ]
+                },
+                "normalizers": {
+                  "type": "array",
+                  "description": "This is the list of normalizers to apply to the http info attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "lowercase",
+                      "uppercase",
+                      "trim"
+                    ]
+                  },
+                  "examples": [
+                    "lowercase",
+                    "uppercase",
+                    "trim"
+                   ]
+                },
+                "index": {
+                  "type": "boolean",
+                  "description": "This is a flag that tells the CROWler to index this http info attribute in the database. This is required in order to implement data correlation features."
+                }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "api": {
       "title": "CROWler General/Search API Configuration",
       "description": "This is the General/Search API configuration section, it's used to configure the General/Search API and it has no effect on the CROWler's engine, nor it has anything to do with the Engine's Control API. It is the configuration for the API that the CROWler will use to communicate with the outside world, to allow users to make queries, post Sources, check the status of the crawling activities etc.",
@@ -1017,6 +1222,11 @@
             "enabled",
             "directory"
           ]
+        },
+        "use_google_cloud_run": {
+          "title": "CROWler General/Search API Use Google Cloud Run",
+          "description": "This is a flag that tells the CROWler General API to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the General API on Google Cloud Run. This is useful to make the API scalable and highly available.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -1262,6 +1472,11 @@
           "type": "integer",
           "minimum": 10,
           "description": "This is the write timeout (in seconds) for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond."
+        },
+        "use_google_cloud_run": {
+          "title": "CROWler Events Manager Use Google Cloud Run",
+          "description": "This is a flag that tells the CROWler Events Manager to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the Events Manager API on Google Cloud Run. This is useful to make the API scalable and highly available.",
+          "type": "boolean"
         },
         "master_events_manager": {
           "title": "CROWler Events Manager Master Events Manager's name",
@@ -2240,6 +2455,29 @@
       },
       "minItems": 1,
       "uniqueItems": true
+    },
+    "agent": {
+      "title": "CROWler Agent Runtime Rollout Guards",
+      "description": "Compatibility-preserving feature flags for identity-enabled runtime enforcement.",
+      "type": "object",
+      "properties": {
+        "identity_enforcement": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable runtime identity enforcement for agents."
+        },
+        "contract_enforcement": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable runtime contract enforcement for agents."
+        },
+        "memory_runtime": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable identity-bound memory runtime behavior for agents."
+        }
+      },
+      "additionalProperties": false
     },
     "plugins": {
       "title": "CROWler Plugins locations Configuration",

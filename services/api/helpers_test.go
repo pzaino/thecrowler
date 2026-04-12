@@ -20,6 +20,7 @@ func TestExtractQueryOrBody(t *testing.T) {
 		body := "test body"
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		res, err := extractQueryOrBody(req)
+		defer req.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -32,6 +33,7 @@ func TestExtractQueryOrBody(t *testing.T) {
 		query := "test query"
 		req := httptest.NewRequest(http.MethodGet, "/?q="+url.QueryEscape(query), nil)
 		res, err := extractQueryOrBody(req)
+		defer req.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -43,6 +45,7 @@ func TestExtractQueryOrBody(t *testing.T) {
 	t.Run("GET request without query parameter", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		_, err := extractQueryOrBody(req)
+		defer req.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err == nil {
 			t.Error("expected error, got nil")
 		}

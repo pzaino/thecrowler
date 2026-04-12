@@ -33,6 +33,7 @@ docker-selenium/
 Rbee/
 bin/
 images/*.png
+/do.patch
 
 # Testing environments
 sonar-project.properties

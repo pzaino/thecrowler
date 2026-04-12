@@ -1,0 +1,18 @@
+{
+  "jobs": [
+    {
+      "name": "Legacy Golden JSON",
+      "process": "serial",
+      "trigger_type": "manual",
+      "trigger_name": "legacy_golden_json",
+      "steps": [
+        {
+          "action": "RunCommand",
+          "params": {
+            "command": "echo golden json"
+          }
+        }
+      ]
+    }
+  ]
+}

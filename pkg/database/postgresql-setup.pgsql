@@ -9,8 +9,105 @@
 --\set CROWLER_DB_PASSWORD 'your_password'
 
 --------------------------------------------------------------------------------
+-- Helper functions
+
+-- Creates a function to update the last_updated_at column
+CREATE OR REPLACE FUNCTION update_last_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.last_updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+--------------------------------------------------------------------------------
 -- Database Tables setup
 
+-- Database Schema Versioning table to keep track of the schema versions and changes
+CREATE TABLE IF NOT EXISTS DBSchemaVersion (
+    schema_version_id BIGSERIAL PRIMARY KEY,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    version TEXT NOT NULL UNIQUE,          -- e.g. "1.5", "1.6", "1.8"
+    description TEXT,
+
+    is_current BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.6'
+    ) THEN
+        INSERT INTO DBSchemaVersion (version, description)
+        VALUES ('1.6', 'CROWler DB schema version 1.6');
+    END IF;
+END
+$$;
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
+-- System Status Operations table to keep track of the system status and operations
+-- Status table to track the runtime status of agents and operations
+CREATE TABLE IF NOT EXISTS Status (
+    status_sha256 CHAR(64) PRIMARY KEY,     -- SHA256 identifier of this status entry
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+
+    parent_status_sha256 CHAR(64),          -- previous status in the chain (optional)
+
+    agent_id TEXT,                          -- identifier of the agent/engine
+    source_id BIGINT,                       -- optional relation to a source
+    operation_type TEXT,                    -- e.g. crawl, scrape, detect, plugin
+
+    status TEXT NOT NULL,                   -- e.g. "thinking", "processing", "waiting"
+    progress NUMERIC CHECK (progress IS NULL OR (progress >= 0 AND progress <= 1)),
+
+    details JSONB NOT NULL                  -- arbitrary runtime information
+);
+
+-- Add foreign key constraint to link parent_status_sha256 to status_sha256 in the same table
+ALTER TABLE Status
+ADD CONSTRAINT fk_status_parent
+FOREIGN KEY (parent_status_sha256)
+REFERENCES Status(status_sha256)
+ON DELETE SET NULL;
+
+-- System Status Operations table indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_status_agent
+ON Status(agent_id);
+
+CREATE INDEX IF NOT EXISTS idx_status_source
+ON Status(source_id);
+
+CREATE INDEX IF NOT EXISTS idx_status_created
+ON Status(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_status_details
+ON Status USING gin(details jsonb_path_ops);
+
+-- update timestamp trigger
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_status_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_status_last_updated_before_update
+        BEFORE UPDATE ON Status
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
@@ -26,7 +123,10 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     config JSONB                                -- Stores JSON document with all details about
                                                 -- the information seed configuration for the crawler
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
@@ -62,7 +162,10 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- data like the stage of the crawling for multi-stage
                                                 -- crawls etc.
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
     owner_id BIGSERIAL PRIMARY KEY,
@@ -76,7 +179,10 @@ CREATE TABLE IF NOT EXISTS Owners (
     details JSONB NOT NULL                      -- Stores JSON document with all details about
                                                 -- the owner.
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- Sessions table stores all collected web sessions information to be reused for future crawling
 CREATE TABLE IF NOT EXISTS Sessions (
     session_id BIGSERIAL PRIMARY KEY,
@@ -91,7 +197,10 @@ CREATE TABLE IF NOT EXISTS Sessions (
     details JSONB NOT NULL                      -- Stores JSON document with all details about
                                                 -- the session.
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- SearchIndex table stores the indexed information from the sources
 CREATE TABLE IF NOT EXISTS SearchIndex (
     index_id BIGSERIAL PRIMARY KEY,
@@ -106,6 +215,14 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     detected_lang VARCHAR(16)                   -- (URI language) denormalized for fast searches
 );
 
+CREATE INDEX idx_searchindex_title_trgm
+ON SearchIndex
+USING gin(title gin_trgm_ops);
+
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
 -- Categories table stores the categories (and subcategories) for the sources
 CREATE TABLE IF NOT EXISTS Categories (
     category_id BIGSERIAL PRIMARY KEY,
@@ -122,7 +239,10 @@ CREATE TABLE IF NOT EXISTS Categories (
         REFERENCES Categories(category_id)
         ON DELETE SET NULL
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- NetInfo table stores the network information retrieved from the sources
 CREATE TABLE IF NOT EXISTS NetInfo (
     netinfo_id BIGSERIAL PRIMARY KEY,
@@ -134,7 +254,10 @@ CREATE TABLE IF NOT EXISTS NetInfo (
                                                 -- and uniqueness.
     details JSONB NOT NULL
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- HTTPInfo table stores the HTTP header information retrieved from the sources
 CREATE TABLE IF NOT EXISTS HTTPInfo (
     httpinfo_id BIGSERIAL PRIMARY KEY,
@@ -146,7 +269,10 @@ CREATE TABLE IF NOT EXISTS HTTPInfo (
                                                 -- and uniqueness
     details JSONB NOT NULL
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- Screenshots table stores the screenshots details of the indexed pages
 CREATE TABLE IF NOT EXISTS Screenshots (
     screenshot_id BIGSERIAL PRIMARY KEY,
@@ -166,7 +292,10 @@ CREATE TABLE IF NOT EXISTS Screenshots (
     format VARCHAR(10) NOT NULL DEFAULT 'png',
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE
 );
+----------------------------------------------------------------
 
+
+----------------------------------------------------------------
 -- WebObjects table stores all types of web objects found in the indexed pages
 -- This includes scripts, styles, images, iframes, HTML etc.
 CREATE TABLE IF NOT EXISTS WebObjects (
@@ -188,6 +317,218 @@ CREATE TABLE IF NOT EXISTS WebObjects (
                                                 -- the object.
 );
 
+-- These two indexes should help boosting JSONB full-text search performance on
+-- the scraped_data field, which is expected to be the most commonly searched
+-- field in the details JSONB document.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
+ON WebObjects (last_updated_at DESC, object_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_trgm
+ON WebObjects
+USING gin (
+    left((details->'scraped_data')::text, 400000) gin_trgm_ops
+)
+WHERE details ? 'scraped_data';
+
+-- ObjectAttributes table stores the attributes of the web objects found in the indexed pages
+-- For example:
+-- | object_id | object_type | attribute_key | attribute_value |
+-- | --------- | ----------- | ------------- | --------------- |
+-- | 200       | netinfo.    | ip_address    | 8.8.8.8         |
+-- | 200       | webobject   | domain        | example.com     |
+-- | 200       | httpinfo    | server        | nginx.          |
+CREATE TABLE IF NOT EXISTS ObjectAttributes (
+    attribute_id BIGSERIAL,
+    object_id BIGINT NOT NULL,
+    object_type TEXT NOT NULL DEFAULT 'webobject',
+    attribute_key TEXT NOT NULL,
+    attribute_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    value_hash VARCHAR(64) NOT NULL,    -- SHA256 hash of the attribute value for fast comparison and uniqueness.
+    attribute_type TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    fts tsvector,
+    CONSTRAINT chk_objattr_value_hash_hex
+        CHECK (value_hash IS NULL OR value_hash ~ '^[0-9a-fA-F]{64}$'),
+    CONSTRAINT chk_object_type
+        CHECK (object_type IN ('webobject','netinfo','httpinfo')),
+    PRIMARY KEY (
+        object_type,
+        object_id,
+        attribute_key,
+        value_hash
+    )
+);
+
+CREATE INDEX idx_objattr_fts
+    ON ObjectAttributes
+    USING gin (fts);
+
+-- fast filtering by key
+CREATE INDEX idx_objattr_key
+ON ObjectAttributes(attribute_key);
+
+-- fast filtering by type
+CREATE INDEX idx_objattr_type
+ON ObjectAttributes(object_type);
+
+CREATE INDEX IF NOT EXISTS idx_objattr_hash
+    ON ObjectAttributes(value_hash)
+    WHERE value_hash IS NOT NULL;
+
+CREATE INDEX idx_objattr_key_hash
+ON ObjectAttributes(attribute_key, value_hash);
+
+CREATE INDEX IF NOT EXISTS idx_objattr_object
+    ON ObjectAttributes(object_type, object_id);
+
+CREATE INDEX IF NOT EXISTS idx_objattr_norm_trgm
+    ON ObjectAttributes
+    USING gin (normalized_value gin_trgm_ops);
+
+-- Entities type is generic (and it has to be in the CROWler) because we want to be able
+-- to link any type of entity to the indexed pages and the sources.
+CREATE TABLE IF NOT EXISTS Entities (
+    entity_id BIGSERIAL PRIMARY KEY,
+    entity_type TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- EntityMemberships table stores the relationship between the entities
+-- and the web objects found in the indexed pages, so what Entity represents
+-- is determined by correlation, not a predefined schema.
+-- For exact value match:
+--   SELECT a1.object_id, a2.object_id
+--     FROM ObjectAttributes a1
+--     JOIN ObjectAttributes a2
+--       ON a1.attribute_key = a2.attribute_key
+--      AND a1.normalized_value = a2.normalized_value
+--    WHERE a1.object_id != a2.object_id;
+-- While for fuzzy match:
+--    WHERE similarity(a1.normalized_value, a2.normalized_value) > 0.9;
+CREATE TABLE EntityMemberships (
+    entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE CASCADE,
+    object_id BIGINT NOT NULL,
+    object_type TEXT NOT NULL DEFAULT 'webobject',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    evidence JSONB,
+    CONSTRAINT chk_entitymembership_object_type
+        CHECK (object_type IN ('webobject','netinfo','httpinfo')),
+    PRIMARY KEY(entity_id, object_type, object_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entitymemberships_object
+ON EntityMemberships(object_type, object_id);
+
+-- CorrelationRules table stores the correlation rules that are applied to
+-- the indexed pages and the web objects to find relationships between them
+-- and to create entities.
+-- Example of rule definition:
+-- {
+--   "attributes": [
+--     { "key": "title", "weight": 0.5, "match": "fuzzy" },
+--     { "key": "duration", "weight": 0.3, "match": "numeric_delta", "threshold": 3 },
+--     { "key": "author", "weight": 0.2, "match": "exact" }
+--   ],
+--   "threshold": 0.85
+-- }
+CREATE TABLE IF NOT EXISTS CorrelationRules (
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    version INTEGER NOT NULL DEFAULT 1,
+    rule_id BIGSERIAL PRIMARY KEY,
+    rule_name TEXT,
+    rule_definition JSONB
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_correlationrules_name
+    ON CorrelationRules(rule_name);
+
+-- ObjectsCorrelations stores the pre-computed correlations between objects
+-- based on the applied correlation rules. This allows for fast retrieval of
+-- related objects and entities without having to compute correlations on the fly.
+CREATE TABLE IF NOT EXISTS ObjectCorrelations (
+    object_type_1 TEXT NOT NULL,
+    object_type_2 TEXT NOT NULL,
+    object_id_1 BIGINT NOT NULL,
+    object_id_2 BIGINT NOT NULL,
+    rule_id BIGINT NOT NULL REFERENCES CorrelationRules(rule_id) ON DELETE CASCADE,
+    score NUMERIC CHECK (score IS NULL OR (score >= 0 AND score <= 1)),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_objectcorrelations_order
+        CHECK (
+            (object_type_1, object_id_1) <
+            (object_type_2, object_id_2)
+        ), -- Ensure consistent ordering to avoid duplicate correlations in reverse order
+    CONSTRAINT chk_objectcorrelations_object_type
+        CHECK (
+            object_type_1 IN ('webobject','netinfo','httpinfo')
+            AND object_type_2 IN ('webobject','netinfo','httpinfo')
+        ), -- Ensure that object types are valid
+    PRIMARY KEY(
+        object_type_1,
+        object_id_1,
+        object_type_2,
+        object_id_2,
+        rule_id
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj1
+    ON ObjectCorrelations(object_type_1, object_id_1);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
+    ON ObjectCorrelations(object_type_2, object_id_2);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
+    ON ObjectCorrelations(rule_id, score DESC);
+
+CREATE OR REPLACE FUNCTION cleanup_artifact_data()
+RETURNS trigger AS $$
+BEGIN
+
+    DELETE FROM ObjectAttributes
+    WHERE object_type = TG_ARGV[0]
+    AND object_id = OLD.object_id;
+
+    DELETE FROM EntityMemberships
+    WHERE object_type = TG_ARGV[0]
+    AND object_id = OLD.object_id;
+
+    DELETE FROM ObjectCorrelations
+    WHERE (object_type_1 = TG_ARGV[0] AND object_id_1 = OLD.object_id)
+       OR (object_type_2 = TG_ARGV[0] AND object_id_2 = OLD.object_id);
+
+    RETURN OLD;
+
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_cleanup_webobject
+AFTER DELETE ON WebObjects
+FOR EACH ROW
+EXECUTE FUNCTION cleanup_artifact_data('webobject');
+
+CREATE TRIGGER trg_cleanup_netinfo
+AFTER DELETE ON NetInfo
+FOR EACH ROW
+EXECUTE FUNCTION cleanup_artifact_data('netinfo');
+
+CREATE TRIGGER trg_cleanup_httpinfo
+AFTER DELETE ON HTTPInfo
+FOR EACH ROW
+EXECUTE FUNCTION cleanup_artifact_data('httpinfo');
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
 -- MetaTags table stores the meta tags from the SearchIndex
 CREATE TABLE IF NOT EXISTS MetaTags (
     metatag_id BIGSERIAL PRIMARY KEY,
@@ -200,6 +541,14 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
 
+CREATE INDEX idx_metatags_content_trgm
+ON MetaTags
+USING gin(content gin_trgm_ops);
+
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
 -- Keywords table stores all the found keywords during an indexing
 CREATE TABLE IF NOT EXISTS Keywords (
     keyword_id BIGSERIAL PRIMARY KEY,
@@ -207,9 +556,17 @@ CREATE TABLE IF NOT EXISTS Keywords (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMPTZ,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    keyword VARCHAR(256) NOT NULL UNIQUE      -- The keyword found in the indexed page
+    keyword TEXT NOT NULL UNIQUE      -- The keyword found in the indexed page
 );
 
+-- Trigram index for the keywords
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_keywords_keyword_trgm
+ON Keywords
+USING gin (keyword gin_trgm_ops);
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
 -- Events table stores the events generated by the system
 CREATE TABLE IF NOT EXISTS Events (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -251,8 +608,52 @@ CREATE TABLE IF NOT EXISTS EventSchedules (
 
     details JSONB NOT NULL
 );
+----------------------------------------------------------------
 
-----------------------------------------
+
+----------------------------------------------------------------
+-- Memory table stores the short-term and long-term memories of agents and other components
+CREATE TABLE IF NOT EXISTS Memory (
+    memory_id CHAR(64) PRIMARY KEY,           -- SHA256 ID
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+
+    owner_name TEXT NOT NULL,                 -- which component or agent owns the memory
+    agent_name TEXT NOT NULL,                 -- which agent owns the memory
+    component TEXT,                           -- crowler_engine, plugin, ai_agent, etc.
+
+    memory_type TEXT NOT NULL,                -- short_term | long_term | episodic | semantic
+    event_type TEXT,                          -- observation | decision | crawl_result | error
+
+    name TEXT,                                -- optional human-readable name
+
+    importance NUMERIC CHECK (importance IS NULL OR (importance >= 0 AND importance <= 1)),
+
+    expires_at TIMESTAMPTZ,                   -- optional TTL
+
+    details JSONB NOT NULL                    -- actual memory payload
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_agent
+ON Memory(agent_name);
+
+CREATE INDEX IF NOT EXISTS idx_memory_event
+ON Memory(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_memory_type
+ON Memory(memory_type);
+
+CREATE INDEX IF NOT EXISTS idx_memory_details
+ON Memory USING gin(details jsonb_path_ops);
+
+CREATE INDEX IF NOT EXISTS idx_memory_created
+ON Memory(created_at DESC);
+----------------------------------------------------------------
+
+
+----------------------------------------------------------------
 -- Relationship tables
 
 -- SourceInformationSeedIndex table stores the relationship between sources and their information seeds
@@ -375,6 +776,10 @@ CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE,
     FOREIGN KEY (object_id) REFERENCES WebObjects(object_id) ON DELETE CASCADE
 );
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_woi_object_index
+ON WebObjectsIndex(object_id, index_id);
+-------------------------------------------------------------------------------
 
 -- Relationship table between SearchIndex and MetaTags
 CREATE TABLE IF NOT EXISTS MetaTagsIndex (
@@ -815,15 +1220,6 @@ BEGIN
 END
 $$;
 
--- Creates an index for the details column in the NetInfo table
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_json_netinfo_details') THEN
-        CREATE INDEX idx_json_netinfo_details ON NetInfo USING gin (details jsonb_path_ops);
-    END IF;
-END
-$$;
-
 -- Optimize for 'whois' key in NetInfo details
 DO $$
 BEGIN
@@ -1079,15 +1475,6 @@ $$;
 
 -- Indexes for the HTTPInfo table ----------------------------------------------
 
--- Creates an index for the HTTPInfo details_hash column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_httpinfo_details_hash') THEN
-        CREATE INDEX idx_httpinfo_details_hash ON HTTPInfo(details_hash);
-    END IF;
-END
-$$;
-
 -- Creates an index for the HTTPInfo details column
 DO $$
 BEGIN
@@ -1164,14 +1551,7 @@ $$;
 
 -- Indexes for NetInfo table ---------------------------------------------------
 
--- Creates an index for the NetInfo details_hash column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_details_hash') THEN
-        CREATE INDEX idx_netinfo_details_hash ON NetInfo(details_hash);
-    END IF;
-END
-$$;
+
 
 -- Creates an index for the NetInfo details column
 DO $$
@@ -1508,14 +1888,6 @@ END
 $$;
 
 
--- Creates a function to update the last_updated_at column
-CREATE OR REPLACE FUNCTION update_last_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.last_updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
 -- Creates a trigger to update the last_updated_at column on Sources table
 DO $$
@@ -1933,6 +2305,9 @@ LANGUAGE plpgsql;
 --------------------------------------------------------------------------------
 -- Special function for data correlation
 
+-- Allows searching for correlated sources based on a specific domain appearing in the details of NetInfo, HTTPInfo, or WebObjects, returning the source_id and url of the correlated sources.
+-- SELECT *
+-- FROM find_correlated_sources_by_domain('example.com');
 CREATE OR REPLACE FUNCTION find_correlated_sources_by_domain(domain TEXT)
 RETURNS TABLE (
     source_id BIGINT,
@@ -1975,6 +2350,617 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Allows searching for a specific query string across the page_url, title, summary, keywords, and metatags of the SearchIndex, returning results that match the query in any of those fields, along with a relevance ranking based on the full-text search score and similarity.
+-- SELECT *
+-- FROM search_pages('nginx', 'english');
+CREATE OR REPLACE FUNCTION search_pages(q TEXT, lang TEXT)
+RETURNS TABLE(
+    index_id BIGINT,
+    page_url TEXT,
+    title TEXT,
+    snippet TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    si.index_id,
+    si.page_url::TEXT,
+    si.title::TEXT,
+
+    ts_headline(
+        lang::regconfig,
+        si.summary,
+        plainto_tsquery(lang::regconfig, q)
+    )::TEXT AS snippet,
+
+    si.created_at,
+    si.last_updated_at,
+
+    (
+        COALESCE(ts_rank(si.tsv, plainto_tsquery(lang::regconfig, q)),0) * 1.0
+        +
+        COALESCE(MAX(similarity(si.title, q)),0) * 1.8
+        +
+        COALESCE(MAX(similarity(k.keyword, q)),0) * 0.6
+        +
+        COALESCE(MAX(similarity(mt.content, q)),0) * 0.5
+    )::REAL AS rank
+
+FROM SearchIndex si
+
+LEFT JOIN KeywordIndex ki
+    ON si.index_id = ki.index_id
+
+LEFT JOIN Keywords k
+    ON ki.keyword_id = k.keyword_id
+
+LEFT JOIN MetaTagsIndex mti
+    ON si.index_id = mti.index_id
+
+LEFT JOIN MetaTags mt
+    ON mti.metatag_id = mt.metatag_id
+
+WHERE
+    si.tsv @@ plainto_tsquery(lang::regconfig, q)
+    OR similarity(si.title, q) > 0.3
+    OR similarity(k.keyword, q) > 0.4
+    OR similarity(mt.content, q) > 0.4
+
+GROUP BY
+    si.index_id,
+    si.page_url,
+    si.title,
+    si.summary,
+    si.tsv,
+    si.created_at,
+    si.last_updated_at
+
+ORDER BY rank DESC
+--LIMIT 50;
+$$;
+
+-- This view aggregates all the relevant details from WebObjects, NetInfo, and HTTPInfo into a single unified view that can be easily queried for correlation and search purposes.
+CREATE OR REPLACE VIEW Artifacts AS
+
+SELECT
+    'webobject'::text AS object_type,
+    wo.object_id AS object_id,
+    si.index_id,
+    si.page_url,
+    wo.created_at,
+    wo.last_updated_at
+FROM WebObjects wo
+JOIN WebObjectsIndex woi
+    ON wo.object_id = woi.object_id
+JOIN SearchIndex si
+    ON woi.index_id = si.index_id
+
+UNION ALL
+
+SELECT
+    'netinfo',
+    ni.netinfo_id,
+    NULL,
+    NULL,
+    ni.created_at,
+    ni.last_updated_at
+FROM NetInfo ni
+
+UNION ALL
+
+SELECT
+    'httpinfo',
+    hi.httpinfo_id,
+    NULL,
+    NULL,
+    hi.created_at,
+    hi.last_updated_at
+FROM HTTPInfo hi;
+
+-- Allows searching for a specific query string across all the scraped_data JSON fields, returning results that match the query in any of the field values.
+-- SELECT *
+-- FROM search_scraped_data('nginx');
+CREATE OR REPLACE FUNCTION search_scraped_data(q TEXT)
+RETURNS TABLE(
+    index_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    ar.index_id,
+    ar.page_url,
+    oa.attribute_key,
+    oa.attribute_value,
+    ar.created_at,
+    ar.last_updated_at,
+
+    ts_rank(
+        to_tsvector('simple', oa.normalized_value),
+        plainto_tsquery('simple', q)
+    ) AS rank
+
+FROM ObjectAttributes oa
+
+JOIN Artifacts ar
+  ON ar.object_type = oa.object_type
+ AND ar.object_id = oa.object_id
+
+WHERE
+    to_tsvector('simple', oa.normalized_value)
+    @@ plainto_tsquery('simple', q)
+
+ORDER BY rank DESC;
+$$;
+
+-- Allows searching for a specific field and value within the scraped_data JSON, returning results that match the field name and have a value similar to the provided field_value.
+-- SELECT *
+-- FROM search_scraped_data_field('server', 'nginx');
+CREATE OR REPLACE FUNCTION search_scraped_data_field(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    index_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    ar.index_id,
+    ar.page_url,
+    oa.attribute_key,
+    oa.attribute_value,
+    ar.created_at,
+    ar.last_updated_at,
+
+    similarity(oa.normalized_value, field_value) AS rank
+
+FROM ObjectAttributes oa
+
+JOIN Artifacts ar
+  ON ar.object_type = oa.object_type
+ AND ar.object_id = oa.object_id
+
+WHERE
+    oa.attribute_key = field_name
+    AND oa.normalized_value ILIKE '%' || field_value || '%'
+
+ORDER BY rank DESC;
+$$;
+
+-- This function allows searching across all artifacts (WebObjects, NetInfo, HTTPInfo) for a given query string, returning the relevant details and a relevance rank based on the content of the JSON fields.
+-- SELECT *
+-- FROM search_artifacts('nginx');
+CREATE OR REPLACE FUNCTION search_artifacts(q TEXT)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    oa.object_type AS source_type,
+    oa.object_id AS artifact_id,
+    ar.page_url,
+    oa.attribute_key AS json_field,
+    oa.attribute_value AS json_value,
+    ar.created_at,
+    ar.last_updated_at,
+
+    ts_rank(
+        to_tsvector('simple', oa.normalized_value),
+        plainto_tsquery('simple', q)
+    ) AS rank
+
+FROM ObjectAttributes oa
+JOIN Artifacts ar
+  ON ar.object_type = oa.object_type
+ AND ar.object_id = oa.object_id
+
+WHERE
+    to_tsvector('simple', oa.normalized_value)
+    @@ plainto_tsquery('simple', q)
+
+ORDER BY rank DESC;
+$$;
+
+CREATE OR REPLACE FUNCTION search_artifacts_field(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    json_field TEXT,
+    json_value TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+SELECT
+    oa.object_type AS source_type,
+    oa.object_id AS artifact_id,
+    ar.page_url,
+    oa.attribute_key AS json_field,
+    oa.attribute_value AS json_value,
+    ar.created_at,
+    ar.last_updated_at,
+
+    similarity(oa.normalized_value, field_value) AS rank
+
+FROM ObjectAttributes oa
+JOIN Artifacts ar
+  ON ar.object_type = oa.object_type
+ AND ar.object_id = oa.object_id
+
+WHERE
+    oa.attribute_key = field_name
+    AND oa.normalized_value ILIKE '%' || field_value || '%'
+
+ORDER BY rank DESC;
+$$;
+
+-- Allow searching for multiple fields at once, returning only results that match all provided fields
+-- SELECT *
+-- FROM search_artifacts_fields(
+--  '{"server":"nginx","status":"200"}'
+-- );
+CREATE OR REPLACE FUNCTION search_artifacts_fields(filters JSONB)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    matched_fields JSONB,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH filter_pairs AS (
+    SELECT key, value
+    FROM jsonb_each_text(filters)
+),
+
+matches AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        ar.page_url,
+        ar.created_at,
+        ar.last_updated_at,
+        oa.attribute_key,
+        oa.attribute_value,
+        similarity(oa.normalized_value, f.value) AS similarity_score
+    FROM ObjectAttributes oa
+
+    JOIN Artifacts ar
+      ON ar.object_type = oa.object_type
+     AND ar.object_id = oa.object_id
+
+    JOIN filter_pairs f
+      ON oa.attribute_key = f.key
+     AND oa.normalized_value ILIKE '%' || f.value || '%'
+)
+
+SELECT
+    object_type AS source_type,
+    object_id AS artifact_id,
+    page_url,
+    created_at,
+    last_updated_at,
+    jsonb_object_agg(attribute_key, attribute_value) AS matched_fields,
+    AVG(similarity_score)::REAL AS rank
+
+FROM matches
+
+GROUP BY
+    object_type,
+    object_id,
+    page_url,
+    created_at,
+    last_updated_at
+
+HAVING COUNT(*) = (
+    SELECT COUNT(*) FROM filter_pairs
+)
+
+ORDER BY rank DESC;
+$$;
+
+CREATE OR REPLACE FUNCTION search_artifacts_by_attribute(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    source_type TEXT,
+    artifact_id BIGINT,
+    page_url TEXT,
+    attribute_key TEXT,
+    attribute_value TEXT,
+    attribute_type TEXT,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH matched_objects AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        MAX(similarity(oa.normalized_value, field_value)) AS rank
+    FROM ObjectAttributes oa
+    WHERE
+        oa.attribute_key = field_name
+        AND oa.normalized_value ILIKE '%' || field_value || '%'
+    GROUP BY oa.object_type, oa.object_id
+)
+
+SELECT
+    oa.object_type AS source_type,
+    oa.object_id AS artifact_id,
+    ar.page_url,
+    oa.attribute_key,
+    oa.attribute_value,
+    oa.attribute_type,
+    ar.created_at,
+    ar.last_updated_at,
+    mo.rank
+
+FROM matched_objects mo
+
+JOIN ObjectAttributes oa
+  ON oa.object_type = mo.object_type
+ AND oa.object_id = mo.object_id
+
+JOIN Artifacts ar
+  ON ar.object_type = oa.object_type
+ AND ar.object_id = oa.object_id
+
+ORDER BY mo.rank DESC, oa.attribute_key;
+$$;
+
+CREATE OR REPLACE FUNCTION search_objects_by_attribute(
+    field_name TEXT,
+    field_value TEXT
+)
+RETURNS TABLE(
+    source_type TEXT,
+    object_id BIGINT,
+    page_url TEXT,
+    details JSONB,
+    attributes JSONB,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH matched_objects AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        MAX(similarity(oa.normalized_value, field_value)) AS rank
+    FROM ObjectAttributes oa
+    WHERE
+        oa.attribute_key = field_name
+        AND oa.normalized_value ILIKE '%' || field_value || '%'
+    GROUP BY oa.object_type, oa.object_id
+)
+
+SELECT
+    mo.object_type AS source_type,
+    mo.object_id,
+    ar.page_url,
+
+    -- pick correct JSON source
+    CASE
+        WHEN mo.object_type = 'webobject' THEN wo.details
+        WHEN mo.object_type = 'netinfo' THEN ni.details
+        WHEN mo.object_type = 'httpinfo' THEN hi.details
+        ELSE NULL
+    END AS details,
+
+    jsonb_agg(
+        jsonb_build_object(
+            'key', oa.attribute_key,
+            'value', oa.attribute_value,
+            'type', oa.attribute_type
+        )
+    ) AS attributes,
+
+    ar.created_at,
+    ar.last_updated_at,
+    mo.rank
+
+FROM matched_objects mo
+
+JOIN ObjectAttributes oa
+  ON oa.object_type = mo.object_type
+ AND oa.object_id = mo.object_id
+
+JOIN Artifacts ar
+  ON ar.object_type = mo.object_type
+ AND ar.object_id = mo.object_id
+
+-- polymorphic joins
+LEFT JOIN WebObjects wo
+  ON mo.object_type = 'webobject'
+ AND wo.object_id = mo.object_id
+
+LEFT JOIN NetInfo ni
+  ON mo.object_type = 'netinfo'
+ AND ni.netinfo_id = mo.object_id
+
+LEFT JOIN HTTPInfo hi
+  ON mo.object_type = 'httpinfo'
+ AND hi.httpinfo_id = mo.object_id
+
+GROUP BY
+    mo.object_type,
+    mo.object_id,
+    ar.page_url,
+    wo.details,
+    ni.details,
+    hi.details,
+    ar.created_at,
+    ar.last_updated_at,
+    mo.rank
+
+ORDER BY mo.rank DESC;
+$$;
+
+
+CREATE OR REPLACE FUNCTION search_objects_by_attributes(filters JSONB)
+RETURNS TABLE(
+    source_type TEXT,
+    object_id BIGINT,
+    page_url TEXT,
+    details JSONB,
+    attributes JSONB,
+    created_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    matched_fields JSONB,
+    rank REAL
+)
+LANGUAGE SQL
+AS $$
+WITH filter_pairs AS (
+    SELECT key, value
+    FROM jsonb_each_text(filters)
+),
+
+matches AS (
+    SELECT
+        oa.object_type,
+        oa.object_id,
+        ar.page_url,
+        ar.created_at,
+        ar.last_updated_at,
+        oa.attribute_key,
+        oa.attribute_value,
+        oa.attribute_type,
+        similarity(oa.normalized_value, f.value) AS similarity_score
+    FROM ObjectAttributes oa
+
+    JOIN Artifacts ar
+      ON ar.object_type = oa.object_type
+     AND ar.object_id = oa.object_id
+
+    JOIN filter_pairs f
+      ON oa.attribute_key = f.key
+     AND oa.normalized_value ILIKE '%' || f.value || '%'
+),
+
+matched_objects AS (
+    SELECT
+        object_type,
+        object_id,
+        page_url,
+        created_at,
+        last_updated_at,
+        jsonb_object_agg(attribute_key, attribute_value) AS matched_fields,
+        AVG(similarity_score)::REAL AS rank,
+        COUNT(*) AS match_count
+    FROM matches
+    GROUP BY
+        object_type,
+        object_id,
+        page_url,
+        created_at,
+        last_updated_at
+    HAVING COUNT(*) = (SELECT COUNT(*) FROM filter_pairs)
+)
+
+SELECT
+    mo.object_type AS source_type,
+    mo.object_id,
+    mo.page_url,
+
+    -- polymorphic details selection
+    CASE
+        WHEN mo.object_type = 'webobject' THEN wo.details
+        WHEN mo.object_type = 'netinfo' THEN ni.details
+        WHEN mo.object_type = 'httpinfo' THEN hi.details
+        ELSE NULL
+    END AS details,
+
+    jsonb_agg(
+        jsonb_build_object(
+            'key', oa.attribute_key,
+            'value', oa.attribute_value,
+            'type', oa.attribute_type
+        )
+    ) AS attributes,
+
+    mo.created_at,
+    mo.last_updated_at,
+    mo.matched_fields,
+    mo.rank
+
+FROM matched_objects mo
+
+JOIN ObjectAttributes oa
+  ON oa.object_type = mo.object_type
+ AND oa.object_id = mo.object_id
+
+JOIN Artifacts ar
+  ON ar.object_type = mo.object_type
+ AND ar.object_id = mo.object_id
+
+-- polymorphic joins
+LEFT JOIN WebObjects wo
+  ON mo.object_type = 'webobject'
+ AND wo.object_id = mo.object_id
+
+LEFT JOIN NetInfo ni
+  ON mo.object_type = 'netinfo'
+ AND ni.netinfo_id = mo.object_id
+
+LEFT JOIN HTTPInfo hi
+  ON mo.object_type = 'httpinfo'
+ AND hi.httpinfo_id = mo.object_id
+
+GROUP BY
+    mo.object_type,
+    mo.object_id,
+    mo.page_url,
+    wo.details,
+    ni.details,
+    hi.details,
+    mo.created_at,
+    mo.last_updated_at,
+    mo.matched_fields,
+    mo.rank
+
+ORDER BY mo.rank DESC;
+$$;
+
+--------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 -- User and permissions setup
 
@@ -2057,7 +3043,7 @@ GRANT USAGE ON SCHEMA public TO :CROWLER_DB_USER;
 GRANT INSERT, SELECT ON events TO :CROWLER_DB_USER;
 
 --------------------------------------------------------------------------------
--- DB Paramaeters tuning
+-- DB Parameters tuning
 
 ALTER SYSTEM SET shared_buffers = :'DB_SHARED_BUFFERS';
 ALTER SYSTEM SET work_mem = :'DB_WORK_MEM';

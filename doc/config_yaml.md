@@ -34,6 +34,19 @@ in the Docker image!
 The config.yaml file is divided in sections, each section configures a specific
 component of the CROWler.
 
+### Agent rollout guard flags
+
+The top-level `agent` section contains compatibility-preserving rollout flags:
+
+```yaml
+agent:
+  identity_enforcement: false
+  contract_enforcement: false
+  memory_runtime: false
+```
+
+These defaults are intentionally `false` to avoid breaking existing legacy `jobs`-only agent configs while identity-enabled runtime features are rolled out.
+
 **Please note:** You must create your config.yaml file before building the Docker
 image! If you don't do this, the CROWler will not work.
 

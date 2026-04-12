@@ -45,6 +45,11 @@
     "crawling_config": {
       "type": "object",
       "properties": {
+        "proxy": {
+          "type": "string",
+          "format": "uri",
+          "description": "This is the proxy that the CROWler will use to crawl the source. It's an alternative proxy that might be required for this specific source. It should be in the format 'http://proxyserver:port', no authentication is supported for this specific one."
+        },
         "site": {
           "type": "string",
           "format": "uri"

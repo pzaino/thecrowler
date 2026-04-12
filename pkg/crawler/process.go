@@ -83,6 +83,11 @@ func (ctx *ProcessContext) GetConfig() *cfg.Config {
 	return &ctx.config
 }
 
+// GetSource returns the Source in the format of *cdb.Source from the ProcessContext
+func (ctx *ProcessContext) GetSource() *cdb.Source {
+	return ctx.source
+}
+
 // GetVDIClosedFlag returns the VDI closed flag from the ProcessContext
 func (ctx *ProcessContext) GetVDIClosedFlag() *bool {
 	return &ctx.SelClosed

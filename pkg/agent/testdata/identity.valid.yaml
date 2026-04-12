@@ -1,0 +1,15 @@
+format_version: "v2"
+agent_identity:
+  agent_id: "identity-yaml-agent"
+  name: "Identity YAML Agent"
+  agent_type: "executor"
+  trust_level: "restricted"
+jobs:
+  - name: "Identity YAML Agent"
+    process: "serial"
+    trigger_type: "agent"
+    trigger_name: "entrypoint"
+    steps:
+      - action: "RunCommand"
+        params:
+          command: "echo identity-yaml"

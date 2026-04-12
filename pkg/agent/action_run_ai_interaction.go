@@ -1,4 +1,4 @@
-// Copyright 2023 Paolo Fabio Zaino
+// Copyright 2023 Paolo Fabio Zaino, all rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,11 +16,9 @@
 package agent
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
-
-	cmn "github.com/pzaino/thecrowler/pkg/common"
+	"strings"
 )
 
 // AIInteractionAction interacts with an AI API
@@ -31,11 +29,9 @@ func (a *AIInteractionAction) Name() string {
 	return "AIInteraction"
 }
 
-// Execute sends a request to an AI API
+// Execute sends a request to an AI provider.
 func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
-	rval := make(map[string]interface{})
-	rval[StrResponse] = nil
-	rval[StrConfig] = nil
+	rval := map[string]interface{}{StrResponse: nil, StrConfig: nil}
 
 	config, err := getConfig(params)
 	if err != nil {
@@ -52,284 +48,280 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	// Combine the prompt with the request
-	var prompt string
-	if params["prompt"] != nil {
-		prompt = params["prompt"].(string)
-		// Check if prompt needs to be resolved
-		prompt = resolveResponseString(inputRaw, prompt)
-	}
-	if prompt == "" {
-		prompt, _ = inputRaw[StrRequest].(string)
-	}
-	if prompt == "" {
-		// Check is params has a message field
-		if params[StrMessage] != nil {
-			prompt = params[StrMessage].(string)
-			// Check if prompt needs to be resolved
-			prompt = resolveResponseString(inputRaw, prompt)
-		}
-	}
-	if prompt == "" {
-		rval[StrStatus] = StatusError
-		rval[StrMessage] = "missing 'prompt' or 'message' parameter"
-		return rval, fmt.Errorf("missing 'prompt' or 'message' parameter")
-	}
-
-	// Get the URL from the config
-	url := ""
-	if params["url"] == nil {
-		// Try the config
-		if config["url"] == nil {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = ErrMissingURL
-			return rval, errors.New(ErrMissingURL)
-		}
-		url, _ = config["url"].(string)
-	} else {
-		urlRaw := params["url"]
-		// Check if urlRaw is a string or a map
-		_, ok := urlRaw.(string)
-		if !ok {
-			// Check if it's a map
-			urlMap := urlRaw.(map[string]interface{})
-			url = urlMap[StrRequest].(string)
-		} else {
-			url = urlRaw.(string)
-		}
-	}
-	// Check if url needs to be resolved
-	url = resolveResponseString(inputRaw, url)
-	// Check if the final URL is valid
-	if !cmn.IsURLValid(url) {
-		rval[StrStatus] = StatusError
-		rval[StrMessage] = fmt.Sprintf("invalid URL: %s", cmn.SafeEscapeJSONString(url))
-		return rval, fmt.Errorf("invalid URL: %s", cmn.SafeEscapeJSONString(url))
-	}
-
-	// Generate the API request based on the input and parameters
-	request := map[string]string{
-		"url": url,
-	}
-
-	// Prepare request body
-	requestBody := make(map[string]interface{}, 1)
-	// Check if we have a prompt or messages
-	if msgs, ok := params["messages"].([]interface{}); ok && len(msgs) > 0 {
-		requestBody["messages"] = resolveValue(inputRaw, msgs)
-	} else {
-		requestBody["prompt"] = prompt
-	}
-	// Check if we have additional parameters for AI in params like temperature, max_tokens, etc.
-	if params["temperature"] != nil {
-		// Temperature should be a float value between 0 and 1
-		value, ok := params["temperature"].(float64)
-		if ok {
-			requestBody["temperature"] = value
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("temperature '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["temperature"]))
-			return rval, fmt.Errorf("temperature '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["temperature"]))
-		}
-	}
-	// Check if we have max_tokens
-	if params["max_tokens"] != nil {
-		value, ok := params["max_tokens"].(float64)
-		if ok {
-			// Max tokens should be an integer value
-			requestBody["max_tokens"] = int(value)
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("max_tokens '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["max_tokens"]))
-			return rval, fmt.Errorf("max_tokens '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["max_tokens"]))
-		}
-	}
-	// Check if we have top_p
-	if params["top_p"] != nil {
-		value, ok := params["top_p"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Convert value to a float
-			valueFloat, err := strconv.ParseFloat(value, 64)
-			if err != nil {
-				rval[StrStatus] = StatusError
-				rval[StrMessage] = fmt.Sprintf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
-				return rval, fmt.Errorf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
-			}
-			// Top p should be a float value between 0 and 1
-			requestBody["top_p"] = valueFloat
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
-			return rval, fmt.Errorf("top_p '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["top_p"]))
-		}
-	}
-	// Check if we have presence_penalty
-	if params["presence_penalty"] != nil {
-		value, ok := params["presence_penalty"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Convert value to a float
-			valueFloat, err := strconv.ParseFloat(value, 64)
-			if err != nil {
-				rval[StrStatus] = StatusError
-				rval[StrMessage] = fmt.Sprintf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
-				return rval, fmt.Errorf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
-			}
-			// Presence penalty should be a float value between 0 and 1
-			requestBody["presence_penalty"] = valueFloat
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
-			return rval, fmt.Errorf("presence_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["presence_penalty"]))
-		}
-	}
-	// Check if we have frequency_penalty
-	if params["frequency_penalty"] != nil {
-		value, ok := params["frequency_penalty"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Convert value to a float
-			valueFloat, err := strconv.ParseFloat(value, 64)
-			if err != nil {
-				rval[StrStatus] = StatusError
-				rval[StrMessage] = fmt.Sprintf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
-				return rval, fmt.Errorf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
-			}
-			// Frequency penalty should be a float value between 0 and 1
-			requestBody["frequency_penalty"] = valueFloat
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
-			return rval, fmt.Errorf("frequency_penalty '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["frequency_penalty"]))
-		}
-	}
-	// Check if we have stop
-	if params["stop"] != nil {
-		value, ok := params["stop"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Stop should be a boolean value
-			requestBody["stop"] = value
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("stop '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["stop"]))
-			return rval, fmt.Errorf("stop '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["stop"]))
-		}
-	}
-	// Check if we have echo
-	if params["echo"] != nil {
-		value, ok := params["echo"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Echo should be a boolean value
-			requestBody["echo"] = value
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("echo '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["echo"]))
-			return rval, fmt.Errorf("echo '%s' parameter doesn't appear to be a valid boolean", cmn.SafeEscapeJSONString(config["echo"]))
-		}
-	}
-	// Check if we have logprobs
-	if params["logprobs"] != nil {
-		value, ok := params["logprobs"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Logprobs should be an integer value
-			requestBody["logprobs"] = value
-		} else {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("logprobs '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["logprobs"]))
-			return rval, fmt.Errorf("logprobs '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["logprobs"]))
-		}
-	}
-	// Check if we have n
-	if params["n"] != nil {
-		valid := true
-		value, ok := params["n"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Convert value to an integer
-			valueInt, err := strconv.Atoi(value)
-			if err == nil {
-				// N should be an integer value
-				requestBody["n"] = valueInt
-			} else {
-				valid = false
-			}
-		} else {
-			valid = false
-		}
-		if !valid {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("n '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["n"]))
-			return rval, fmt.Errorf("n '%s' parameter doesn't appear to be a valid integer", cmn.SafeEscapeJSONString(config["n"]))
-		}
-	}
-	// Check if we have stream
-
-	// Check if we have logit_bias
-	if params["logit_bias"] != nil {
-		valid := true
-		value, ok := params["logit_bias"].(string)
-		if ok {
-			// Check if value needs to be resolved
-			value = resolveResponseString(inputRaw, value)
-			// Convert value to a float
-			valueFloat, err := strconv.ParseFloat(value, 64)
-			if err != nil {
-				valid = false
-			} else {
-				// Logit bias should be a float value
-				requestBody["logit_bias"] = valueFloat
-			}
-		} else {
-			valid = false
-		}
-		if !valid {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("logit_bias '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["logit_bias"]))
-			return rval, fmt.Errorf("logit_bias '%s' parameter doesn't appear to be a valid float", cmn.SafeEscapeJSONString(config["logit_bias"]))
-		}
-	}
-
-	// Create the request body:
-	request["body"] = string(cmn.ConvertMapToJSON(requestBody))
-
-	// Prepare request headers
-	requestHeaders := make(map[string]interface{})
-	// Add JSON document type
-	requestHeaders["Content-Type"] = jsonAppType
-	if config["auth"] != nil {
-		requestHeaders["Authorization"] = config["auth"].(string)
-	}
-	request["headers"] = string(cmn.ConvertMapToJSON(requestHeaders))
-	//request["type"] = "POST" // AI interactions are usually POST requests
-
-	response, err := cmn.GenericAPIRequest(request)
+	resolved, err := normalizeLLMRequest(params, config, inputRaw)
 	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = fmt.Sprintf("AI interaction failed: %v", err)
-		return rval, fmt.Errorf("AI interaction failed: %v", err)
+		rval[StrMessage] = err.Error()
+		return rval, err
 	}
 
-	responseMap, err := cmn.JSONStrToMap(response)
+	if err := enforceAIUsagePolicy(config, resolved); err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+
+	provider, ok := getLLMProvider(resolved.Provider)
+	if !ok {
+		err = fmt.Errorf("unsupported AI provider: %s", resolved.Provider)
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+
+	responseMap, err := provider.Execute(resolved)
 	if err != nil {
 		rval[StrStatus] = StatusError
-		rval[StrMessage] = fmt.Sprintf("failed to parse AI response: %v", err)
-		return rval, fmt.Errorf("failed to parse AI response: %v", err)
+		rval[StrMessage] = err.Error()
+		return rval, err
 	}
 
 	rval[StrResponse] = responseMap
 	rval[StrStatus] = StatusSuccess
 	rval[StrMessage] = "AI interaction successful"
-
 	return rval, nil
+}
+
+func normalizeLLMRequest(params, config, inputRaw map[string]interface{}) (LLMRequest, error) {
+	getResolvedString := func(key string) string {
+		v, ok := params[key]
+		if !ok || v == nil {
+			return ""
+		}
+		s, ok := v.(string)
+		if !ok {
+			return ""
+		}
+		return strings.TrimSpace(resolveResponseString(inputRaw, s))
+	}
+
+	provider := firstString(getResolvedString("provider"), nestedConfigString(config, inputRaw, "ai", "provider"), defaultLLMProvider)
+	url := firstString(getResolvedString("url"), nestedConfigString(config, inputRaw, "ai", "url"), resolveConfigString(config, inputRaw, "url"))
+	auth := firstString(getResolvedString("auth"), nestedConfigString(config, inputRaw, "ai", "auth"), resolveConfigString(config, inputRaw, "auth"))
+	model := firstString(getResolvedString("model"), nestedConfigString(config, inputRaw, "ai", "model"), resolveConfigString(config, inputRaw, "model"))
+
+	messages := normalizeMessages(params, inputRaw)
+	prompt := firstString(getResolvedString("prompt"), getResolvedString(StrMessage))
+	if prompt == "" {
+		if req, ok := inputRaw[StrRequest].(string); ok {
+			prompt = strings.TrimSpace(req)
+		}
+	}
+	if len(messages) == 0 && prompt == "" {
+		return LLMRequest{}, fmt.Errorf("missing 'prompt' or 'message' parameter")
+	}
+	if url == "" {
+		return LLMRequest{}, fmt.Errorf(ErrMissingURL)
+	}
+
+	temperature, err := parseOptionalFloat(params, inputRaw, "temperature")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	maxTokens, err := parseOptionalInt(params, inputRaw, "max_tokens")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	topP, err := parseOptionalFloat(params, inputRaw, "top_p")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+
+	extras := map[string]interface{}{}
+	for _, key := range []string{"presence_penalty", "frequency_penalty", "stop", "echo", "logprobs", "n", "logit_bias", "stream"} {
+		if val, ok := resolveOptionalParam(params, inputRaw, key); ok {
+			extras[key] = val
+		}
+	}
+
+	return LLMRequest{
+		Provider:    provider,
+		URL:         url,
+		Auth:        auth,
+		Model:       model,
+		Messages:    messages,
+		Prompt:      prompt,
+		Temperature: temperature,
+		MaxTokens:   maxTokens,
+		TopP:        topP,
+		Extras:      extras,
+	}, nil
+}
+
+func enforceAIUsagePolicy(config map[string]interface{}, req LLMRequest) error {
+	runtimeMap := mapStringAny(config[cfgKeyAgentRuntime])
+	identityMap := mapStringAny(runtimeMap["identity_snapshot"])
+	if len(identityMap) == 0 {
+		return nil
+	}
+
+	trustLevel, _ := identityMap["trust_level"].(string)
+	if trustLevelRank(trustLevel) < trustLevelRank("trusted") && disallowHighTrustModel(req.Model) {
+		return fmt.Errorf("AI policy denied model %q for trust_level %q", req.Model, trustLevel)
+	}
+
+	contractMap := mapStringAny(identityMap["agent_contract"])
+	for _, token := range toStringSlice(contractMap["forbidden_actions"]) {
+		normalized := strings.ToLower(strings.TrimSpace(token))
+		switch {
+		case normalized == "aiinteraction":
+			return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
+		case strings.HasPrefix(normalized, "provider:"):
+			if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+				return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
+			}
+		case strings.HasPrefix(normalized, "model:"):
+			if matchesPolicyPattern(strings.TrimPrefix(normalized, "model:"), strings.ToLower(req.Model)) {
+				return fmt.Errorf("AI policy denied model %q by contract", req.Model)
+			}
+		}
+	}
+
+	return nil
+}
+
+func disallowHighTrustModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" {
+		return false
+	}
+	if strings.Contains(m, "mini") || strings.Contains(m, "small") || strings.Contains(m, "nano") {
+		return false
+	}
+	return strings.Contains(m, "gpt-4") || strings.HasPrefix(m, "o")
+}
+
+func matchesPolicyPattern(pattern, actual string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return false
+	}
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(actual, strings.TrimSuffix(pattern, "*"))
+	}
+	return pattern == actual
+}
+
+func normalizeMessages(params, inputRaw map[string]interface{}) []interface{} {
+	if msgs, ok := params["messages"].([]interface{}); ok && len(msgs) > 0 {
+		resolved := resolveValue(inputRaw, msgs)
+		if out, ok := resolved.([]interface{}); ok {
+			return out
+		}
+	}
+	return nil
+}
+
+func parseOptionalFloat(params, inputRaw map[string]interface{}, key string) (*float64, error) {
+	val, ok := resolveOptionalParam(params, inputRaw, key)
+	if !ok {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case float64:
+		return &v, nil
+	case float32:
+		f := float64(v)
+		return &f, nil
+	case int:
+		f := float64(v)
+		return &f, nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return nil, fmt.Errorf("%s '%v' parameter doesn't appear to be a valid float", key, v)
+		}
+		return &f, nil
+	default:
+		return nil, fmt.Errorf("%s '%v' parameter doesn't appear to be a valid float", key, v)
+	}
+}
+
+func parseOptionalInt(params, inputRaw map[string]interface{}, key string) (*int, error) {
+	val, ok := resolveOptionalParam(params, inputRaw, key)
+	if !ok {
+		return nil, nil
+	}
+	switch v := val.(type) {
+	case int:
+		return &v, nil
+	case int64:
+		i := int(v)
+		return &i, nil
+	case float64:
+		i := int(v)
+		return &i, nil
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("%s '%v' parameter doesn't appear to be a valid integer", key, v)
+		}
+		return &i, nil
+	default:
+		return nil, fmt.Errorf("%s '%v' parameter doesn't appear to be a valid integer", key, v)
+	}
+}
+
+func resolveOptionalParam(params, inputRaw map[string]interface{}, key string) (interface{}, bool) {
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return nil, false
+	}
+	if s, ok := raw.(string); ok {
+		return resolveResponseString(inputRaw, s), true
+	}
+	return resolveValue(inputRaw, raw), true
+}
+
+func nestedConfigString(config map[string]interface{}, inputRaw map[string]interface{}, key, nested string) string {
+	cfgSection := mapStringAny(config[key])
+	if len(cfgSection) == 0 {
+		return ""
+	}
+	v, _ := cfgSection[nested].(string)
+	return strings.TrimSpace(resolveResponseString(inputRaw, v))
+}
+
+func resolveConfigString(config map[string]interface{}, inputRaw map[string]interface{}, key string) string {
+	v, _ := config[key].(string)
+	return strings.TrimSpace(resolveResponseString(inputRaw, v))
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func mapStringAny(v interface{}) map[string]interface{} {
+	if m, ok := v.(map[string]interface{}); ok {
+		return m
+	}
+	if m, ok := v.(map[string]any); ok {
+		return map[string]interface{}(m)
+	}
+	return map[string]interface{}{}
+}
+
+func toStringSlice(v interface{}) []string {
+	if v == nil {
+		return nil
+	}
+	if values, ok := v.([]string); ok {
+		return values
+	}
+	items, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }

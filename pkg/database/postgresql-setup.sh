@@ -47,4 +47,4 @@ fi
 psql \
     "${PSQL_BASE_ARGS[@]}" \
     "${PSQL_EXTRA_ARGS[@]}" \
-    -f /docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql
+    -f /docker-entrypoint-initdb.d/postgresql-setup.pgsql

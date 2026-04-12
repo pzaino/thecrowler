@@ -174,8 +174,8 @@ func TestParseAdvancedQuery(t *testing.T) {
 				err           error
 			}{
 				//combinedQuery: "SELECT * FROM table WHERE (LOWER(title) LIKE $1) AND (LOWER(summary) LIKE $2) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2))",
-				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1)) AND ((LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2))",
-				queryParams:   []interface{}{"%value1%", "%value2%", 10, 0},
+				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1)) AND ((LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2)) OR ((k.keyword = $3 OR k.keyword = $4))",
+				queryParams:   []interface{}{"%value1%", "%value2%", "value1", "value2", 10, 0},
 				err:           nil,
 			},
 		},
@@ -187,9 +187,8 @@ func TestParseAdvancedQuery(t *testing.T) {
 				queryParams   []interface{}
 				err           error
 			}{
-				//combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) AND (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) AND (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4) AND (LOWER(page_url) LIKE $5 OR LOWER(title) LIKE $5 OR LOWER(summary) LIKE $5) AND (LOWER(page_url) LIKE $6 OR LOWER(title) LIKE $6 OR LOWER(summary) LIKE $6)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4 OR k.keyword LIKE $5 OR k.keyword LIKE $6))",
-				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4))",
-				queryParams:   []interface{}{"%field1:\"value%", "%1\"%", "%field2:\"value%", "%2\"%", 10, 0},
+				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4)) OR ((k.keyword = $5 OR k.keyword = $6 OR k.keyword = $7 OR k.keyword = $8))",
+				queryParams:   []interface{}{"%field1:\"value%", "%1\"%", "%field2:\"value%", "%2\"%", "field1:\"value", "1\"", "field2:\"value", "2\"", 10, 0},
 				err:           nil,
 			},
 		},
@@ -201,9 +200,8 @@ func TestParseAdvancedQuery(t *testing.T) {
 				queryParams   []interface{}
 				err           error
 			}{
-				//combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) AND OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) AND (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4) AND OR (LOWER(page_url) LIKE $5 OR LOWER(title) LIKE $5 OR LOWER(summary) LIKE $5) AND (LOWER(page_url) LIKE $6 OR LOWER(title) LIKE $6 OR LOWER(summary) LIKE $6)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4 OR k.keyword LIKE $5 OR k.keyword LIKE $6))",
-				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) OR (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3))",
-				queryParams:   []interface{}{"%field1:value1%", "%field2:value2%", "%field3:value3%", 10, 0},
+				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) OR (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3)) OR ((k.keyword = $4 OR k.keyword = $5 OR k.keyword = $6))",
+				queryParams:   []interface{}{"%field1:value1%", "%field2:value2%", "%field3:value3%", "field1:value1", "field2:value2", "field3:value3", 10, 0},
 				err:           nil,
 			},
 		},
@@ -215,9 +213,8 @@ func TestParseAdvancedQuery(t *testing.T) {
 				queryParams   []interface{}
 				err           error
 			}{
-				//combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) AND OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3) AND (LOWER(page_url) LIKE $4 OR LOWER(title) LIKE $4 OR LOWER(summary) LIKE $4) AND OR (LOWER(page_url) LIKE $5 OR LOWER(title) LIKE $5 OR LOWER(summary) LIKE $5) AND (LOWER(page_url) LIKE $6 OR LOWER(title) LIKE $6 OR LOWER(summary) LIKE $6)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3 OR k.keyword LIKE $4 OR k.keyword LIKE $5 OR k.keyword LIKE $6))",
-				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) OR (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2 OR k.keyword LIKE $3))",
-				queryParams:   []interface{}{"%field1:value1%", "%field2:value 2%", "%field3:value3%", 10, 0},
+				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) OR (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2) OR (LOWER(page_url) LIKE $3 OR LOWER(title) LIKE $3 OR LOWER(summary) LIKE $3)) OR ((k.keyword = $4 OR k.keyword = $5 OR k.keyword = $6))",
+				queryParams:   []interface{}{"%field1:value1%", "%field2:value 2%", "%field3:value3%", "field1:value1", "field2:value 2", "field3:value3", 10, 0},
 				err:           nil,
 			},
 		},
@@ -229,9 +226,9 @@ func TestParseAdvancedQuery(t *testing.T) {
 				queryParams   []interface{}
 				err           error
 			}{
-				//combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1) AND (LOWER(page_url) LIKE $2 OR LOWER(title) LIKE $2 OR LOWER(summary) LIKE $2)) OR ((k.keyword LIKE $1 OR k.keyword LIKE $2))",
-				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1)) OR ((k.keyword LIKE $1))",
-				queryParams:   []interface{}{"%invalid:value%", 10, 0},
+
+				combinedQuery: "SELECT * FROM table WHERE ((LOWER(page_url) LIKE $1 OR LOWER(title) LIKE $1 OR LOWER(summary) LIKE $1)) OR ((k.keyword = $2))",
+				queryParams:   []interface{}{"%invalid:value%", "invalid:value", 10, 0},
 				err:           nil,
 			},
 		},
@@ -240,7 +237,7 @@ func TestParseAdvancedQuery(t *testing.T) {
 	for i, test := range tests {
 		SQLQuery, err := parseAdvancedQuery(test.queryBody, test.input, "")
 		combinedQuery := SQLQuery.sqlQuery
-		queryParams := SQLQuery.sqlParams
+		queryParams := transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if combinedQuery != test.expected.combinedQuery {
 			t.Errorf("%d: parseAdvancedQuery(%q, %q)\n got combinedQuery = %q;\n want %q", i, test.queryBody, test.input, combinedQuery, test.expected.combinedQuery)
 		}

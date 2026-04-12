@@ -1,4 +1,4 @@
-// Copyright 2023 Paolo Fabio Zaino
+// Copyright 2023 Paolo Fabio Zaino, all rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/Knetic/govaluate"
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // DecisionAction makes decisions based on conditions
@@ -97,33 +96,87 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 
 	var results map[string]interface{}
 	if nextStep != nil {
-		// extract the call_agent from the nextStep
-		agentName, ok := nextStep["call_agent"].(string)
-		if agentName == "" {
-			agentName, _ = nextStep["agent_name"].(string)
-		}
-		if !ok {
+		target, resolveErr := resolveDelegationTarget(nextStep, inputRaw)
+		if resolveErr != nil {
+			emitDelegationAudit(params, "", auditOutcomeDenied, resolveErr.Error())
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = "missing 'call_agent' or 'agent_name' in next step"
-			return rval, fmt.Errorf("missing 'call_agent' or 'agent_name' in next step")
-		}
-		// Check if agentName needs to be resolved
-		agentName = resolveResponseString(inputRaw, agentName)
-
-		// Retrieve the agent
-		agent, exists := AgentsEngine.GetAgentByName(agentName)
-		if !exists {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("agent '%s' not found", cmn.SafeEscapeJSONString(agentName))
-			return rval, fmt.Errorf("agent '%s' not found", cmn.SafeEscapeJSONString(agentName))
+			rval[StrMessage] = resolveErr.Error()
+			return rval, resolveErr
 		}
 
-		err = AgentsEngine.ExecuteJobs(agent, params)
+		callee, _, resolveAgentErr := AgentsEngine.resolveAgentDefinitionByTarget(target)
+		if resolveAgentErr != nil {
+			targetRef := target.AgentID
+			if strings.TrimSpace(targetRef) == "" {
+				targetRef = target.AgentName
+			}
+			emitDelegationAudit(params, targetRef, auditOutcomeDenied, resolveAgentErr.Error())
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = resolveAgentErr.Error()
+			return rval, resolveAgentErr
+		}
+
+		configMap, _ := params[StrConfig].(map[string]interface{})
+		flags := runtimeFlagsFromConfig(configMap)
+		if flags.IdentityEnforcement {
+			caller, hasCaller := parseRuntimeIdentity(params)
+			if !hasCaller {
+				err := fmt.Errorf("delegation denied: missing caller identity")
+				emitDelegationAudit(params, callee.Identity.AgentID, auditOutcomeDenied, err.Error())
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			if policyErr := delegationPolicyCheck(caller, callee.Identity); policyErr != nil {
+				emitDelegationAudit(params, callee.Identity.AgentID, auditOutcomeDenied, policyErr.Error())
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = policyErr.Error()
+				return rval, policyErr
+			}
+			graph := getDelegationGraph(params)
+			callerNode := delegationNodeKey(caller)
+			calleeNode := delegationNodeKey(callee.Identity)
+			if len(graph.Path) == 0 {
+				graph.Path = append(graph.Path, callerNode)
+			}
+			if cycleErr := detectDelegationCycle(graph, calleeNode); cycleErr != nil {
+				emitDelegationAudit(params, calleeNode, auditOutcomeDenied, cycleErr.Error())
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = cycleErr.Error()
+				return rval, cycleErr
+			}
+			graph.Edges = append(graph.Edges, callerNode+"->"+calleeNode)
+			previousPath := append([]string(nil), graph.Path...)
+			graph.Path = append(graph.Path, calleeNode)
+			setDelegationGraph(params, graph)
+			defer func() {
+				graph.Path = previousPath
+				setDelegationGraph(params, graph)
+			}()
+		}
+
+		agentRef := target.AgentID
+		if strings.TrimSpace(agentRef) == "" {
+			agentRef = target.AgentName
+		}
+
+		delegationCtx := map[string]any{}
+		if configMap != nil {
+			for k, v := range configMap {
+				delegationCtx[k] = v
+			}
+		}
+		if inputVal, ok := inputRaw[StrRequest]; ok {
+			delegationCtx[StrRequest] = inputVal
+		}
+		err = AgentsEngine.ExecuteAgent(agentRef, delegationCtx)
 		if err != nil {
+			emitDelegationAudit(params, agentRef, auditOutcomeError, err.Error())
 			rval[StrStatus] = StatusError
-			rval[StrMessage] = fmt.Sprintf("failed to execute steps: %v", err)
+			rval[StrMessage] = fmt.Sprintf("delegation failed: %v", err)
 			return rval, err
 		}
+		emitDelegationAudit(params, agentRef, auditOutcomeAllowed, "delegation_completed")
 	}
 
 	rval[StrResponse] = results

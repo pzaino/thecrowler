@@ -1,0 +1,146 @@
+format_version: v2
+agent_identity:
+  agent_id: soc-autonomous-triage
+  name: SOC Autonomous Triage
+  version: 2.0.0
+  agent_type: coordinator
+  owner: team:secops
+  trust_level: trusted
+  reasoning_mode: reflective
+  capabilities:
+    - api_requests
+    - ai_reasoning
+    - db_read
+    - db_write
+    - emit_event
+    - plugin_execution
+    - command_execution
+  memory:
+    scope: persistent
+    namespace: soc-triage
+    retention: 500
+  constraints:
+    max_steps: 40
+    time_budget: 8m
+    resource_limits:
+      cpu_percent: 45
+      memory_mb: 1024
+    event_rate_limit: 30
+  goal: "Continuously triage external attack-surface changes and open incident workflows only for high-confidence risk."
+  description: "Coordinator and specialist delegates for enrichment, scoring, and response recommendation."
+  audit_tags:
+    - security
+    - soc
+    - autonomous
+  self_model:
+    can_modify_identity: false
+    can_spawn_agents: false
+    can_modify_jobs: false
+  agent_contract:
+    guarantees:
+      - "Every high-risk result produces a traceable event with deterministic correlation metadata."
+      - "All scoring decisions include evidence summaries and confidence."
+    assumptions:
+      - "Threat intel feed and CMDB API are reachable."
+      - "Incident plugin is installed in plugin runtime."
+    forbidden_actions:
+      - "model:gpt-4.1"
+      - "provider:unapproved-*"
+    failure_policy: emit_event
+jobs:
+  - name: SOC Intake Coordinator
+    description: "Entry point: gather base signal and delegate by severity confidence."
+    process: serial
+    trigger_type: event
+    trigger_name: crawler.page_indexed
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://security.example.local/signals/intake?url={{TARGET_URL}}"
+          request_type: GET
+          headers:
+            X-Correlation-ID: "{{TRACE_ID}}"
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          temperature: 0.1
+          max_tokens: 1200
+          messages:
+            - role: system
+              content: "You are a SOC intake classifier. Output JSON with severity, confidence, rationale, and required next specialist."
+            - role: user
+              content: "Classify this signal and pick one specialist: exposure, malware, or phishing. Data: $response"
+          memory_write_key: intake_classification
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response.confidence >= 0.75 && $response.severity == "high"'
+            on_true:
+              agent_name: SOC Deep Triage Specialist
+            on_false:
+              agent_name: SOC Watchlist Recorder
+
+  - name: SOC Deep Triage Specialist
+    description: "High-risk path with enrichment, context joins, and response action planning."
+    process: serial
+    trigger_type: agent
+    trigger_name: SOC Intake Coordinator
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://security.example.local/threat-intel/enrich?indicator={{TARGET_URL}}"
+          request_type: GET
+      - action: DBQuery
+        params:
+          query: "SELECT asset_id, owner, data_classification, criticality FROM asset_inventory WHERE external_hostname = '{{TARGET_HOST}}' LIMIT 1"
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          temperature: 0.2
+          messages:
+            - role: system
+              content: "Generate an incident recommendation object with risk_score(0-100), blast_radius, MITRE mapping, and 3 action items."
+            - role: user
+              content: "Combine intake memory, threat intel, and asset context into one deterministic recommendation."
+          memory_read_key: intake_classification
+          memory_write_key: deep_triage_recommendation
+      - action: PluginExecution
+        params:
+          plugin_name: create_incident_ticket
+          payload:
+            title: "Automated SOC triage for {{TARGET_HOST}}"
+            priority: "$response.risk_score"
+            recommendation: "$response"
+      - action: CreateEvent
+        params:
+          event_name: security.incident.recommended
+          event_type: security.incident.recommended
+          source: agent.soc-autonomous-triage
+          severity: critical
+          details:
+            recommendation: "$response"
+
+  - name: SOC Watchlist Recorder
+    description: "Low-confidence path that persists context and emits lightweight telemetry."
+    process: serial
+    trigger_type: agent
+    trigger_name: SOC Intake Coordinator
+    steps:
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          prompt: "Summarize why this signal is not actionable yet and define explicit escalation conditions: $response"
+          memory_read_key: intake_classification
+          memory_write_key: watchlist_note
+      - action: RunCommand
+        params:
+          command: "echo '[soc-watchlist] deferred {{TARGET_HOST}} with trace {{TRACE_ID}}'"
+      - action: CreateEvent
+        params:
+          event_name: security.signal.watchlist
+          event_type: security.signal.watchlist
+          source: agent.soc-autonomous-triage
+          severity: info
+          details:
+            note: "$response"
