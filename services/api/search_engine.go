@@ -26,6 +26,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	"golang.org/x/text/unicode/norm"
 
 	_ "github.com/lib/pq"
 )
@@ -43,11 +44,16 @@ const (
 // SearchQuery represents the result of a processed search query.
 // (Please note: NOT the result of the search itself)
 type SearchQuery struct {
-	sqlQuery  string
-	sqlParams []interface{}
-	limit     int
-	offset    int
-	details   Details
+	sqlQuery    string
+	sqlParams   []QueryParam
+	sqlEqParams []QueryParam
+	limit       int
+	offset      int
+	details     Details
+}
+
+type QueryParam struct {
+	value interface{}
 }
 
 // TODO: Improve Tokenizer and query generator to support more complex queries
@@ -320,7 +326,8 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 
 	// Parse the tokens and generate the query parts and query params:
 	var queryParts [][]string
-	var queryParams []interface{}
+	var queryParams []QueryParam
+	var queryEqParams []QueryParam
 	var generalParamCounter = 1 // For general fields like example
 	const jObjAccOp = "->"
 	const jObjTxtAccOp = "->>"
@@ -529,7 +536,6 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				queryParts[queryGroup] = append(queryParts[queryGroup], "AND")
 			} else {
 				queryParts[queryGroup] = append(queryParts[queryGroup], "OR")
-
 			}
 
 		default:
@@ -547,7 +553,15 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				// Handle JSON field value (use a separate jsonParamCounter)
 				condition := fmt.Sprintf("%s LIKE $%d", currentField, generalParamCounter)
 				addCondition(condition)
-				queryParams = append(queryParams, "%"+tokenData.tValue+"%")
+				normalized := strings.ToLower(norm.NFC.String(tokenData.tValue))
+				likeParam := QueryParam{
+					value: "%" + normalized + "%",
+				}
+				eqParam := QueryParam{
+					value: normalized,
+				}
+				queryParams = append(queryParams, likeParam)
+				queryEqParams = append(queryEqParams, eqParam)
 				generalParamCounter++ // Increase the JSON parameter counter
 			} else {
 				// Handle non-JSON field value
@@ -558,7 +572,15 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 				}
 				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
 				addCondition(combinedCondition)
-				queryParams = append(queryParams, "%"+strings.ToLower(tokenData.tValue)+"%")
+				normalized := strings.ToLower(norm.NFC.String(tokenData.tValue))
+				likeParam := QueryParam{
+					value: "%" + normalized + "%",
+				}
+				eqParam := QueryParam{
+					value: normalized,
+				}
+				queryParams = append(queryParams, likeParam)
+				queryEqParams = append(queryEqParams, eqParam)
 				generalParamCounter++ // Increase the parameter counter for general fields
 			}
 		}
@@ -567,7 +589,11 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 	// Add a separate group for keyword conditions (only use the first parameter set for keywords)
 	var keywordConditions []string
 	for i := 1; i < generalParamCounter; i++ {
-		keywordCondition := fmt.Sprintf("k.keyword LIKE $%d", i)
+		// append the equality version as a brand new param
+		queryParams = append(queryParams, queryEqParams[i-1])
+
+		newPos := len(queryParams)
+		keywordCondition := fmt.Sprintf("k.keyword = $%d", newPos)
 		keywordConditions = append(keywordConditions, keywordCondition)
 	}
 
@@ -589,10 +615,17 @@ func parseAdvancedQuery(queryBody string, input string, parsingType string) (Sea
 	}
 
 	// Add the limit and offset to the list of parameters:
-	queryParams = append(queryParams, limit, offset)
+	limitQuery := QueryParam{
+		value: limit,
+	}
+	offsetQuery := QueryParam{
+		value: offset,
+	}
+	queryParams = append(queryParams, limitQuery, offsetQuery)
 
 	SQLQuery.sqlQuery = combinedQuery
 	SQLQuery.sqlParams = queryParams
+	SQLQuery.sqlEqParams = queryEqParams
 	SQLQuery.limit = limit
 	SQLQuery.offset = offset
 	SQLQuery.details = details
@@ -628,6 +661,14 @@ func buildCombinedQuery(queryBody string, queryParts [][]string) string {
 // Helper function to determine if a string is a logical operator
 func isLogicalOperator(op string) bool {
 	return op == "AND" || op == "OR"
+}
+
+func transformQueryParams(likeParams, equParams []QueryParam) []interface{} {
+	var params []interface{}
+	for _, param := range likeParams {
+		params = append(params, param.value)
+	}
+	return params
 }
 
 func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
@@ -672,7 +713,7 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	// Parse the user input
 	SQLQuery, err := parseAdvancedQuery(queryBody, query, "")
 	sqlQuery := SQLQuery.sqlQuery
-	sqlParams := SQLQuery.sqlParams
+	sqlParams := transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -748,7 +789,7 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 		// it's a GET request, so we need to interpret the q parameter
 		SQLQuery, err := parseScreenshotGetQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return ScreenshotResponse{}, err
 		}
@@ -756,7 +797,7 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 		// It's a POST request, so we can use the standard JSON parsing
 		SQLQuery, err = parseScreenshotQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return ScreenshotResponse{}, err
 		}
@@ -836,7 +877,7 @@ func parseScreenshotGetQuery(input string) (SearchQuery, error) {
 	`
 	SQLQuery, err := parseAdvancedQuery(queryBody, input, "")
 	sqlQuery := SQLQuery.sqlQuery
-	sqlParams := SQLQuery.sqlParams
+	sqlParams := transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 	if err != nil {
 		return SearchQuery{}, err
 	}
@@ -847,7 +888,7 @@ func parseScreenshotGetQuery(input string) (SearchQuery, error) {
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
 	SQLQuery.sqlQuery = sqlQuery
-	SQLQuery.sqlParams = sqlParams
+	//SQLQuery.sqlParams = sqlParams
 
 	return SQLQuery, nil
 }
@@ -855,7 +896,8 @@ func parseScreenshotGetQuery(input string) (SearchQuery, error) {
 func parseScreenshotQuery(input string) (SearchQuery, error) {
 	var query string
 	var err error
-	var sqlParams []interface{}
+	var sqlParams []QueryParam
+	var sqlEqParams []QueryParam
 
 	input = PrepareInput(input)
 
@@ -894,14 +936,21 @@ func parseScreenshotQuery(input string) (SearchQuery, error) {
 	AND
 		s.screenshot_link != '' AND s.screenshot_link IS NOT NULL;
 	`
-	sqlParams = append(sqlParams, query)
+	param := QueryParam{
+		value: query,
+	}
+	eqParam := QueryParam{
+		value: query,
+	}
+	sqlParams = append(sqlParams, param)
+	sqlEqParams = append(sqlEqParams, eqParam)
 
 	sqlQuery = sqlQuery + " ORDER BY s.created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
+	return SearchQuery{sqlQuery, sqlParams, sqlEqParams, 10, 0, Details{}}, nil
 }
 
 func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObjectResponse, error) {
@@ -916,7 +965,7 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 		// it's a GET request, so we need to interpret the q parameter
 		SQLQuery, err = parseWebObjectGetQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return WebObjectResponse{}, err
 		}
@@ -924,7 +973,7 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 		// It's a POST request, so we can use the standard JSON parsing
 		SQLQuery, err = parseWebObjectQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return WebObjectResponse{}, err
 		}
@@ -1025,7 +1074,8 @@ func parseWebObjectGetQuery(input string) (SearchQuery, error) {
 func parseWebObjectQuery(input string) (SearchQuery, error) {
 	var query string
 	var err error
-	var sqlParams []interface{}
+	var sqlParams []QueryParam
+	var sqlEqParams []QueryParam
 
 	input = PrepareInput(input)
 
@@ -1066,14 +1116,21 @@ func parseWebObjectQuery(input string) (SearchQuery, error) {
 	AND
 		wo.object_link != '' AND wo.object_link IS NOT NULL;
 	`
-	sqlParams = append(sqlParams, query)
+	param := QueryParam{
+		value: query,
+	}
+	eqParam := QueryParam{
+		value: query,
+	}
+	sqlParams = append(sqlParams, param)
+	sqlEqParams = append(sqlEqParams, eqParam)
 
 	sqlQuery = sqlQuery + " ORDER BY wo.created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
+	return SearchQuery{sqlQuery, sqlParams, sqlEqParams, 10, 0, Details{}}, nil
 }
 
 func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (ScrapedDataResponse, error) {
@@ -1083,12 +1140,13 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 	// Parse the user input
 	var sqlQuery string
 	var sqlParams []interface{}
+
 	var SQLQuery SearchQuery
 	if qType == getQuery {
 		// it's a GET request, so we need to interpret the q parameter
 		SQLQuery, err = parseScrapedDataGetQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return ScrapedDataResponse{}, err
 		}
@@ -1096,7 +1154,7 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 		// It's a POST request, so we can use the standard JSON parsing
 		SQLQuery, err = parseScrapedDataQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return ScrapedDataResponse{}, err
 		}
@@ -1175,7 +1233,7 @@ func parseScrapedDataGetQuery(input string) (SearchQuery, error) {
 	WHERE
 		si.page_url != ''
 		AND si.page_url IS NOT NULL
-		AND `
+		AND (`
 
 	// Parse the advanced query (including the JSONB filters)
 	SQLQuery, err := parseAdvancedQuery(queryBody, input, "")
@@ -1188,7 +1246,7 @@ func parseScrapedDataGetQuery(input string) (SearchQuery, error) {
 	sqlParams := SQLQuery.sqlParams
 
 	// Add ORDER BY clause
-	sqlQuery = sqlQuery + " ORDER BY sd.last_updated_at DESC"
+	sqlQuery = sqlQuery + ") ORDER BY sd.last_updated_at DESC"
 
 	// Pagination logic
 	limit := len(sqlParams) - 1 // Assuming limit is the second to last param
@@ -1205,7 +1263,8 @@ func parseScrapedDataGetQuery(input string) (SearchQuery, error) {
 func parseScrapedDataQuery(input string) (SearchQuery, error) {
 	var query string
 	var err error
-	var sqlParams []interface{}
+	var sqlParams []QueryParam
+	var sqlEqParams []QueryParam
 
 	// Prepare the input (e.g., sanitize it, trim spaces)
 	input = PrepareInput(input)
@@ -1244,10 +1303,17 @@ func parseScrapedDataQuery(input string) (SearchQuery, error) {
 		LOWER(si.page_url) LIKE LOWER($1)
 		AND si.page_url != ''
 		AND si.page_url IS NOT NULL
-	`
+	    AND (`
 
 	// Add the URL as the first parameter
-	sqlParams = append(sqlParams, query)
+	param := QueryParam{
+		value: query,
+	}
+	eqParam := QueryParam{
+		value: query,
+	}
+	sqlParams = append(sqlParams, param)
+	sqlEqParams = append(sqlEqParams, eqParam)
 
 	// Parse JSONB filters from the input (if any)
 	SQLQuery, err := parseAdvancedQuery(sqlQuery, input, "")
@@ -1260,13 +1326,13 @@ func parseScrapedDataQuery(input string) (SearchQuery, error) {
 	sqlParams = append(sqlParams, SQLQuery.sqlParams...)
 
 	// Add ORDER BY and pagination (limit and offset)
-	sqlQuery = sqlQuery + " ORDER BY sd.last_updated_at DESC"
+	sqlQuery = sqlQuery + ") ORDER BY sd.last_updated_at DESC"
 	limit := len(sqlParams)      // Assuming limit is the second parameter after URL
 	offset := len(sqlParams) + 1 // Offset is the last parameter
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
 	// Return the final query and parameters, including pagination
-	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
+	return SearchQuery{sqlQuery, sqlParams, sqlEqParams, 10, 0, Details{}}, nil
 }
 
 func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (CorrelatedSitesResponse, error) {
@@ -1281,7 +1347,7 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 		// it's a GET request, so we need to interpret the q parameter
 		SQLQuery, err = parseCorrelatedSitesGetQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return CorrelatedSitesResponse{}, err
 		}
@@ -1289,7 +1355,7 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 		// It's a POST request, so we can use the standard JSON parsing
 		SQLQuery, err = parseCorrelatedSitesQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return CorrelatedSitesResponse{}, err
 		}
@@ -1402,7 +1468,7 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 		return SearchQuery{}, err
 	}
 
-	sqlQuery = sqlQuery + "ORDER BY created_at DESC"
+	sqlQuery = sqlQuery + " ORDER BY created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
@@ -1416,7 +1482,8 @@ func parseCorrelatedSitesGetQuery(input string) (SearchQuery, error) {
 func parseCorrelatedSitesQuery(input string) (SearchQuery, error) {
 	var query string
 	var err error
-	var sqlParams []interface{}
+	var sqlParams []QueryParam
+	var sqlEqParams []QueryParam
 
 	// Unmarshal the JSON document
 	var req CorrelatedSitesRequest
@@ -1467,14 +1534,21 @@ func parseCorrelatedSitesQuery(input string) (SearchQuery, error) {
 	FROM
 		WhoisAndSSLInfo;
 	`
-	sqlParams = append(sqlParams, query)
+	param := QueryParam{
+		value: query,
+	}
+	eqParam := QueryParam{
+		value: query,
+	}
+	sqlParams = append(sqlParams, param)
+	sqlEqParams = append(sqlEqParams, eqParam)
 
 	sqlQuery = sqlQuery + " ORDER BY created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
+	return SearchQuery{sqlQuery, sqlParams, sqlEqParams, 10, 0, Details{}}, nil
 }
 
 // performNetInfoSearch performs a search for network information.
@@ -1490,7 +1564,7 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 		// it's a GET request, so we need to interpret the q parameter
 		SQLQuery, err = parseNetInfoGetQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return NetInfoResponse{}, err
 		}
@@ -1498,7 +1572,7 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 		// It's a POST request, so we can use the standard JSON parsing
 		SQLQuery, err = parseNetInfoQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return NetInfoResponse{}, err
 		}
@@ -1602,7 +1676,8 @@ func parseNetInfoGetQuery(input string) (SearchQuery, error) {
 func parseNetInfoQuery(input string) (SearchQuery, error) {
 	var query string
 	var err error
-	var sqlParams []interface{}
+	var sqlParams []QueryParam
+	var sqlEqParams []QueryParam
 
 	// Unmarshal the JSON document
 	var req QueryRequest
@@ -1633,14 +1708,21 @@ func parseNetInfoQuery(input string) (SearchQuery, error) {
 	WHERE
 		si.page_url LIKE $1;
 	`
-	sqlParams = append(sqlParams, query)
+	param := QueryParam{
+		value: query,
+	}
+	eqParam := QueryParam{
+		value: query,
+	}
+	sqlParams = append(sqlParams, param)
+	sqlEqParams = append(sqlEqParams, eqParam)
 
 	sqlQuery = sqlQuery + " ORDER BY ni.created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
+	return SearchQuery{sqlQuery, sqlParams, sqlEqParams, 10, 0, Details{}}, nil
 }
 
 // performNetInfoSearch performs a search for network information.
@@ -1656,7 +1738,7 @@ func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoRe
 		// it's a GET request, so we need to interpret the q parameter
 		SQLQuery, err = parseHTTPInfoGetQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return HTTPInfoResponse{}, err
 		}
@@ -1664,7 +1746,7 @@ func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoRe
 		// It's a POST request, so we can use the standard JSON parsing
 		SQLQuery, err = parseHTTPInfoPostQuery(query)
 		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = SQLQuery.sqlParams
+		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
 		if err != nil {
 			return HTTPInfoResponse{}, err
 		}
@@ -1764,7 +1846,8 @@ func parseHTTPInfoGetQuery(input string) (SearchQuery, error) {
 func parseHTTPInfoPostQuery(input string) (SearchQuery, error) {
 	var query string
 	var err error
-	var sqlParams []interface{}
+	var sqlParams []QueryParam
+	var sqlEqParams []QueryParam
 
 	// Unmarshal the JSON document
 	var req QueryRequest
@@ -1795,12 +1878,19 @@ func parseHTTPInfoPostQuery(input string) (SearchQuery, error) {
 	WHERE
 		si.page_url LIKE $1;
 	`
-	sqlParams = append(sqlParams, query)
+	param := QueryParam{
+		value: query,
+	}
+	eqParam := QueryParam{
+		value: query,
+	}
+	sqlParams = append(sqlParams, param)
+	sqlEqParams = append(sqlEqParams, eqParam)
 
 	sqlQuery = sqlQuery + " ORDER BY hi.created_at DESC"
 	limit := len(sqlParams) - 1
 	offset := len(sqlParams)
 	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
 
-	return SearchQuery{sqlQuery, sqlParams, 10, 0, Details{}}, nil
+	return SearchQuery{sqlQuery, sqlParams, sqlEqParams, 10, 0, Details{}}, nil
 }

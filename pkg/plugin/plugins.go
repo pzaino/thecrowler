@@ -29,7 +29,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -51,6 +50,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"google.golang.org/api/idtoken"
 )
 
 const (
@@ -444,40 +444,6 @@ func getPluginName(pluginBody, file string) string {
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
-	pNameRegEx := "^//\\s*[@]?name\\s*\\:\\s*([^\n]+)"
-	pDescRegEx := "^//\\s*[@]?description\\s*\\:?\\s*([^\n]+)"
-	pVerRegEx := "^//\\s*[@]?version\\s*\\:?\\s*([^\n]+)"
-	pTypeRegEx := "^//\\s*[@]?type\\s*\\:\\s*([^\n]+)"
-	pEventTypeRegEx := "^//\\s*[@]?event_type\\s*\\:\\s*([^\n]+)"
-	pAsyncTagRegEx := "^//\\s*[@]?async\\s*\\:\\s*([^\n]+)"
-	pAPIEndPointRegEx := "^//\\s*[@]?api_endpoint\\s*\\:\\s*([^\n]+)"
-	pAPIMethodRegEx := "^//\\s*[@]?api_methods\\s*\\:\\s*([^\n]+)"
-	pAPIAuthRegEx := "^//\\s*[@]?api_auth\\s*\\:\\s*([^\n]+)"
-	pAPIAuthTypeRegEx := "^//\\s*[@]?api_auth_type\\s*\\:\\s*([^\n]+)"
-
-	pAPIQueryJSONRegEx := "^//\\s*[@]?api_query_json\\s*\\:\\s*(\\{.*)$"
-	pAPIRequestJSONRegEx := "^//\\s*[@]?api_request_json\\s*\\:\\s*(\\{.*)$"
-	pAPIResponseJSONRegEx := "^//\\s*[@]?api_response_json\\s*\\:\\s*(\\{.*)$"
-	pAPIHeadersJSONRegEx := "^//\\s*[@]?api_headers_json\\s*\\:\\s*(\\{.*)$"
-
-	re01 := regexp.MustCompile(pNameRegEx)
-	re02 := regexp.MustCompile(pDescRegEx)
-	re03 := regexp.MustCompile(pTypeRegEx)
-	re04 := regexp.MustCompile(pEventTypeRegEx)
-	re05 := regexp.MustCompile(pVerRegEx)
-	re06 := regexp.MustCompile(pAsyncTagRegEx)
-
-	re07 := regexp.MustCompile(pAPIEndPointRegEx)
-	re08 := regexp.MustCompile(pAPIMethodRegEx)
-	re09 := regexp.MustCompile(pAPIAuthRegEx)
-	re10 := regexp.MustCompile(pAPIAuthTypeRegEx)
-
-	re11 := regexp.MustCompile(pAPIQueryJSONRegEx)
-	re12 := regexp.MustCompile(pAPIRequestJSONRegEx)
-	re13 := regexp.MustCompile(pAPIResponseJSONRegEx)
-	re14 := regexp.MustCompile(pAPIHeadersJSONRegEx)
-
-	// Extract the "// @name" comment from the script (usually on the first line)
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
@@ -493,16 +459,94 @@ func NewJSPlugin(script string) *JSPlugin {
 	apiRequestJSON := ""
 	apiResponseJSON := ""
 	apiHeadersJSON := ""
-	lines := strings.Split(script, "\n")
-	for _, line := range lines {
-		if re01.MatchString(line) {
-			pName = strings.TrimSpace(re01.FindStringSubmatch(line)[1])
+	commentLines := extractMetadataCommentLines(script)
+	pendingJSONKey := ""
+	pendingJSONValue := ""
+	supportedKeys := map[string]bool{
+		"name":              true,
+		"description":       true,
+		"type":              true,
+		"event_type":        true,
+		"version":           true,
+		"async":             true,
+		"api_endpoint":      true,
+		"api_methods":       true,
+		"api_auth":          true,
+		"api_auth_type":     true,
+		"api_query_json":    true,
+		"api_request_json":  true,
+		"api_response_json": true,
+		"api_headers_json":  true,
+	}
+	jsonKeys := map[string]bool{
+		"api_query_json":    true,
+		"api_request_json":  true,
+		"api_response_json": true,
+		"api_headers_json":  true,
+	}
+
+	assignJSONValue := func(key, value string) {
+		trimmed := strings.TrimSpace(value)
+		switch key {
+		case "api_query_json":
+			apiQueryJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s queryJSON=%s", pName, apiQueryJSON)
+		case "api_request_json":
+			apiRequestJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s requestJSON=%s", pName, apiRequestJSON)
+		case "api_response_json":
+			apiResponseJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s responseJSON=%s", pName, apiResponseJSON)
+		case "api_headers_json":
+			apiHeadersJSON = trimmed
+			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s headersJSON=%s", pName, apiHeadersJSON)
 		}
-		if re02.MatchString(line) {
-			pDesc = strings.TrimSpace(re02.FindStringSubmatch(line)[1])
+	}
+
+	for _, line := range commentLines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			if pendingJSONKey != "" {
+				pendingJSONValue += "\n"
+			}
+			continue
 		}
-		if re03.MatchString(line) {
-			pTypeStr := strings.ToLower(strings.TrimSpace(re03.FindStringSubmatch(line)[1]))
+
+		key, value, found := parseMetadataKV(trimmedLine)
+		isSupportedKey := found && supportedKeys[key]
+		if pendingJSONKey != "" && isSupportedKey && jsonKeys[key] == false {
+			assignJSONValue(pendingJSONKey, pendingJSONValue)
+			pendingJSONKey = ""
+			pendingJSONValue = ""
+		}
+
+		if pendingJSONKey != "" && !(isSupportedKey && jsonKeys[key] == false) {
+			if isSupportedKey && jsonKeys[key] {
+				assignJSONValue(pendingJSONKey, pendingJSONValue)
+				pendingJSONKey = ""
+				pendingJSONValue = ""
+			} else {
+				pendingJSONValue += "\n" + trimmedLine
+				if json.Valid([]byte(strings.TrimSpace(pendingJSONValue))) {
+					assignJSONValue(pendingJSONKey, pendingJSONValue)
+					pendingJSONKey = ""
+					pendingJSONValue = ""
+				}
+				continue
+			}
+		}
+
+		if !isSupportedKey {
+			continue
+		}
+
+		switch key {
+		case "name":
+			pName = strings.TrimSpace(value)
+		case "description":
+			pDesc = strings.TrimSpace(value)
+		case "type":
+			pTypeStr := strings.ToLower(strings.TrimSpace(value))
 			if pTypeStr == vdiPlugin ||
 				pTypeStr == enginePlugin ||
 				pTypeStr == apiPlugin ||
@@ -514,30 +558,24 @@ func NewJSPlugin(script string) *JSPlugin {
 				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
 				pType = enginePlugin
 			}
-		}
-		if re04.MatchString(line) {
-			pEventType = strings.ToLower(strings.TrimSpace(re04.FindStringSubmatch(line)[1]))
-		}
-		if re05.MatchString(line) {
-			pVersion = strings.TrimSpace(re05.FindStringSubmatch(line)[1])
-		}
-		if re06.MatchString(line) {
-			asyncStr := strings.ToLower(strings.TrimSpace(re06.FindStringSubmatch(line)[1]))
+		case "event_type":
+			pEventType = strings.ToLower(strings.TrimSpace(value))
+		case "version":
+			pVersion = strings.TrimSpace(value)
+		case "async":
+			asyncStr := strings.ToLower(strings.TrimSpace(value))
 			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
 				pAsync = true
 			}
-		}
-		if re07.MatchString(line) {
-			apiEndPointStr := strings.TrimSpace(re07.FindStringSubmatch(line)[1])
+		case "api_endpoint":
+			apiEndPointStr := strings.TrimSpace(value)
 			if apiEndPointStr != "" {
-				apiEndPoint = strings.TrimSpace(apiEndPointStr)
+				apiEndPoint = apiEndPointStr
 			}
-		}
-		if re08.MatchString(line) {
-			apiMethodStr := strings.TrimSpace(re08.FindStringSubmatch(line)[1])
+		case "api_methods":
+			apiMethodStr := strings.TrimSpace(value)
 			if apiMethodStr != "" {
-				// Split multiple endpoints by comma
-				for method := range strings.SplitSeq(apiMethodStr, ",") {
+				for _, method := range strings.Split(apiMethodStr, ",") {
 					method = strings.ToUpper(strings.TrimSpace(method))
 					if method == "" {
 						continue
@@ -554,49 +592,40 @@ func NewJSPlugin(script string) *JSPlugin {
 					apiMethods = append(apiMethods, method)
 				}
 			}
-		}
-		if re09.MatchString(line) {
-			apiAuthStr := strings.TrimSpace(re09.FindStringSubmatch(line)[1])
-			if apiAuthStr != "" {
-				apiAuthStr = strings.ToLower(strings.TrimSpace(apiAuthStr))
-				if apiAuthStr == "required" ||
-					apiAuthStr == "optional" ||
-					apiAuthStr == none {
-					apiAuth = apiAuthStr
-				} else {
-					apiAuth = none
-				}
+		case "api_auth":
+			apiAuthStr := strings.ToLower(strings.TrimSpace(value))
+			if apiAuthStr == "required" ||
+				apiAuthStr == "optional" ||
+				apiAuthStr == none {
+				apiAuth = apiAuthStr
+			} else {
+				apiAuth = none
+			}
+		case "api_auth_type":
+			apiAuthTypeStr := strings.ToLower(strings.TrimSpace(value))
+			if apiAuthTypeStr == "jwt" ||
+				apiAuthTypeStr == "apikey" ||
+				apiAuthTypeStr == none {
+				apiAuthType = apiAuthTypeStr
+			} else {
+				apiAuthType = none
+			}
+		case "api_query_json", "api_request_json", "api_response_json", "api_headers_json":
+			initialValue := strings.TrimSpace(value)
+			if initialValue == "" {
+				continue
+			}
+			if json.Valid([]byte(initialValue)) {
+				assignJSONValue(key, initialValue)
+			} else {
+				pendingJSONKey = key
+				pendingJSONValue = initialValue
 			}
 		}
-		if re10.MatchString(line) {
-			apiAuthTypeStr := strings.TrimSpace(re10.FindStringSubmatch(line)[1])
-			if apiAuthTypeStr != "" {
-				apiAuthTypeStr = strings.ToLower(strings.TrimSpace(apiAuthTypeStr))
-				if apiAuthTypeStr == "jwt" ||
-					apiAuthTypeStr == "apikey" ||
-					apiAuthTypeStr == none {
-					apiAuthType = apiAuthTypeStr
-				} else {
-					apiAuthType = none
-				}
-			}
-		}
-		if re11.MatchString(line) {
-			apiQueryJSON = strings.TrimSpace(re11.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s queryJSON=%s", pName, apiQueryJSON)
-		}
-		if re12.MatchString(line) {
-			apiRequestJSON = strings.TrimSpace(re12.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s requestJSON=%s", pName, apiRequestJSON)
-		}
-		if re13.MatchString(line) {
-			apiResponseJSON = strings.TrimSpace(re13.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s responseJSON=%s", pName, apiResponseJSON)
-		}
-		if re14.MatchString(line) {
-			apiHeadersJSON = strings.TrimSpace(re14.FindStringSubmatch(line)[1])
-			cmn.DebugMsg(cmn.DbgLvlDebug, "PLUGIN %s headersJSON=%s", pName, apiHeadersJSON)
-		}
+	}
+
+	if pendingJSONKey != "" {
+		assignJSONValue(pendingJSONKey, pendingJSONValue)
 	}
 
 	return &JSPlugin{
@@ -619,6 +648,85 @@ func NewJSPlugin(script string) *JSPlugin {
 			OpenAPIHeadersJSON:  apiHeadersJSON,
 		},
 	}
+}
+
+func extractMetadataCommentLines(script string) []string {
+	lines := strings.Split(script, "\n")
+	commentLines := make([]string, 0, len(lines))
+	inBlockComment := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlockComment {
+			if strings.HasPrefix(trimmed, "//") {
+				commentLines = append(commentLines, strings.TrimSpace(trimmed[2:]))
+				continue
+			}
+			if strings.HasPrefix(trimmed, "/*") {
+				inBlockComment = true
+				content := strings.TrimSpace(strings.TrimPrefix(trimmed, "/*"))
+				if idx := strings.Index(content, "*/"); idx >= 0 {
+					commentLines = append(commentLines, strings.TrimSpace(content[:idx]))
+					inBlockComment = false
+					continue
+				}
+				commentLines = append(commentLines, strings.TrimSpace(strings.TrimPrefix(content, "*")))
+			}
+			continue
+		}
+
+		if idx := strings.Index(trimmed, "*/"); idx >= 0 {
+			content := strings.TrimSpace(trimmed[:idx])
+			content = strings.TrimSpace(strings.TrimPrefix(content, "*"))
+			commentLines = append(commentLines, content)
+			inBlockComment = false
+			continue
+		}
+
+		content := strings.TrimSpace(strings.TrimPrefix(trimmed, "*"))
+		commentLines = append(commentLines, content)
+	}
+
+	return commentLines
+}
+
+func parseMetadataKV(line string) (string, string, bool) {
+	if line == "" {
+		return "", "", false
+	}
+
+	idx := strings.Index(line, ":")
+	if idx <= 0 {
+		return "", "", false
+	}
+
+	keyPart := strings.TrimSpace(line[:idx])
+	if keyPart == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(keyPart, "@") {
+		keyPart = strings.TrimSpace(keyPart[1:])
+	}
+	if keyPart == "" {
+		return "", "", false
+	}
+
+	for i, r := range keyPart {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return "", "", false
+	}
+
+	key := strings.ToLower(keyPart)
+	if key == "" {
+		return "", "", false
+	}
+
+	return key, strings.TrimSpace(line[idx+1:]), true
 }
 
 // Execute executes the JS plugin
@@ -690,7 +798,7 @@ type pluginEventSub struct {
 }
 
 //
-// Execution Engine for API plugins, Engine plugins and Event Plugins
+// Execution Engine for API plugins, Engine plugins, Lib plugins and Event Plugins
 //
 
 type pluginRuntime struct {
@@ -1503,6 +1611,12 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPICallPlugin(vm, db, rt); err != nil {
 		return err
 	}
+	if err := addJSAPILib(vm); err != nil {
+		return err
+	}
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		return err
+	}
 
 	// Common functions
 
@@ -1524,33 +1638,43 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPIGenUUID(vm); err != nil {
 		return err
 	}
+	// Get Value from Key Value Store DB
 	if err := addJSAPIKVGet(vm); err != nil {
 		return err
 	}
+	// Set Value in Key Value Store DB
 	if err := addJSAPIKVSet(vm); err != nil {
 		return err
 	}
+	// Delete Key from Key Value Store DB
 	if err := addJSAPIDeleteKV(vm); err != nil {
 		return err
 	}
+	// List Keys in Key Value Store DB
 	if err := addJSAPIListKVKeys(vm); err != nil {
 		return err
 	}
+	// Generic Increment/Decrement Atomic Key in Key Value Store DB
 	if err := addJSAPIIncrDecrKV(vm); err != nil {
 		return err
 	}
+	// Atomic Counter in Key Value Store DB
 	if err := addJSAPICounterCreate(vm); err != nil {
 		return err
 	}
+	// Atomic Counter TryAcquire in Key Value Store DB
 	if err := addJSAPICounterTryAcquire(vm); err != nil {
 		return err
 	}
+	// Atomic Counter Release in Key Value Store DB
 	if err := addJSAPICounterRelease(vm); err != nil {
 		return err
 	}
+	// Get value of Atomic Counter in Key Value Store DB
 	if err := addJSAPICounterGet(vm); err != nil {
 		return err
 	}
+	// Sleep function
 	if err := addJSAPISleep(vm); err != nil {
 		return err
 	}
@@ -1731,6 +1855,12 @@ func addJSAPICallPlugin(
 */
 
 // New more secure implementation (it's in testing)
+/* Usage in JS:
+// Call another plugin with parameters and timeout
+let response = callPlugin("otherPluginName", { "param1": "value1", "param2": 42 }, 30);
+
+console.log(response);
+*/
 func addJSAPICallPlugin(
 	vm *otto.Otto,
 	db *cdb.Handler,
@@ -1822,6 +1952,114 @@ func addJSAPICallPlugin(
 	})
 }
 
+// addJSAPILib adds the lib() function to the VM, which allows plugins to call other plugins in a structured way
+/* Usage in JS:
+let mathLib = lib("math");
+let result = mathLib.call("add", { "a": 1, "b": 2 });
+console.log(result);
+*/
+func addJSAPILib(vm *otto.Otto) error {
+
+	return vm.Set("lib", func(call otto.FunctionCall) otto.Value {
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// create library object
+		obj, _ := vm.Object(`({})`)
+
+		// attach call method
+		err = obj.Set("call", func(call otto.FunctionCall) otto.Value {
+
+			method, err := call.Argument(0).ToString()
+			if err != nil || method == "" {
+				v, _ := vm.ToValue(nil)
+				return v
+			}
+
+			params := map[string]interface{}{}
+
+			if call.Argument(1).IsObject() {
+				if exported, e := call.Argument(1).Export(); e == nil {
+					if m, ok := exported.(map[string]interface{}); ok {
+						params = m
+					}
+				}
+			}
+
+			fullName := name + "." + method
+
+			// delegate to callPlugin
+			res, err := vm.Call("callPlugin", nil, fullName, params)
+			if err != nil {
+				v, _ := vm.ToValue(nil)
+				return v
+			}
+
+			return res
+		})
+		if err != nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		v, _ := vm.ToValue(obj)
+		return v
+	})
+}
+
+// addJSAPIInclude adds the include() function to the VM, which allows plugins to include and execute other plugin scripts in the same VM context
+// Please note: This is a powerful function that can lead to security issues if misused, as it allows executing arbitrary plugin scripts in the context of the caller plugin. It should be used with caution and ideally only for trusted plugins (e.g., internal libraries).
+/* Usage in JS:
+include("utils"); // This will execute the "utils" plugin script in the same VM context, allowing it to define functions and variables that can be used afterwards in the current plugin script.
+*/
+func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
+
+	return vm.Set("include", func(call otto.FunctionCall) otto.Value {
+
+		name, err := call.Argument(0).ToString()
+		if err != nil || name == "" {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		caller := rt.current
+		if caller == nil {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		callee, ok := resolvePluginFromCaller(caller, name)
+		if !ok {
+			v, _ := vm.ToValue(nil)
+			return v
+		}
+
+		// only allow lib plugins
+		if callee.PType != "lib_plugin" {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": "include() only supports lib_plugin",
+			})
+			return v
+		}
+
+		// execute script inside current VM
+		_, err = vm.Run(callee.Script)
+		if err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return v
+		}
+
+		v, _ := vm.ToValue(true)
+		return v
+	})
+}
+
 // addJSHTTPRequest adds the httpRequest function to the VM
 func addJSHTTPRequest(vm *otto.Otto) error {
 	// Register the fetch function
@@ -1843,6 +2081,21 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 		return result
 	})
 	return err
+}
+
+type jsAPIClientAuth struct {
+	Type      string
+	Audience  string
+	Header    string
+	Token     string
+	TokenType string
+}
+
+type jsAPIClientRequest struct {
+	Headers map[string]string
+	Body    []byte
+	Timeout time.Duration
+	Auth    jsAPIClientAuth
 }
 
 // addJSAPIClient adds the apiClient function to the VM
@@ -1880,111 +2133,64 @@ func addJSHTTPRequest(vm *otto.Otto) error {
 	console.log(response.headers);
 	console.log(response.body);
 
+// Also:
+
+let response = apiClient.post(
+  "https://my-service-abc123.a.run.app/v1/do",
+  {
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: {
+      hello: "world"
+    },
+    timeout: 30000,
+    auth: {
+      type: "gcp_id_token",
+      audience: "https://my-service-abc123.a.run.app"
+    }
+  }
+);
+
 */
 func addJSAPIClient(vm *otto.Otto, plgName string) error {
 	apiClientObject, _ := vm.Object(`({})`)
 
 	// Define the "post" method
 	err := apiClientObject.Set("post", func(call otto.FunctionCall) otto.Value {
-		// Get the URL (first argument)
-		url, _ := call.Argument(0).ToString()
+		url, err := call.Argument(0).ToString()
+		if err != nil || strings.TrimSpace(url) == "" {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported invalid URL: %v", plgName, err)
+			return otto.UndefinedValue()
+		}
 
-		// Get the request object (second argument)
 		requestArg := call.Argument(1)
 		if !requestArg.IsDefined() {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported request argument is undefined.", plgName)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported request argument is undefined.", plgName)
 			return otto.UndefinedValue()
 		}
 
-		// Export the request object
-		request, err := requestArg.Export()
+		reqCfg, err := parseJSAPIClientRequest(requestArg, true)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported exporting request object: %v\n", plgName, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported invalid request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
-		// Type assert the exported request as a map
-		reqMap, ok := request.(map[string]interface{})
-		if !ok {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported request object is not a valid map.", plgName)
-			return otto.UndefinedValue()
-		}
-
-		// Extract headers, body, and timeout from the request object
-		var headers map[string]interface{}
-		if h, exists := reqMap["headers"]; exists {
-			headers, _ = h.(map[string]interface{}) // Type assert headers
-		}
-
-		var body io.Reader
-		if b, exists := reqMap["body"]; exists {
-			if bodyString, ok := b.(string); ok {
-				body = strings.NewReader(bodyString) // Handle as pre-serialized JSON
-			} else {
-				bodyBytes, err := json.Marshal(b) // Serialize object to JSON
-				if err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported marshaling body: %v\n", plgName, err)
-					return otto.UndefinedValue()
-				}
-				body = bytes.NewReader(bodyBytes)
-			}
-		}
-
-		var timeoutMs int64 = 30000 // Default timeout
-		if t, exists := reqMap["timeout"]; exists {
-			if timeoutFloat, ok := t.(float64); ok { // Otto exports numbers as float64
-				timeoutMs = int64(timeoutFloat)
-			}
-		}
-		timeout := time.Duration(timeoutMs) * time.Millisecond
-
-		// Set up HTTP client with timeout
-		client := &http.Client{Timeout: timeout}
-
-		// Create the HTTP request
-		req, err := http.NewRequest("POST", url, body)
+		resp, respBody, err := executeJSAPIClientRequest(http.MethodPost, url, reqCfg)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient reported creating request: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-
-		// Add headers to the request
-		if len(headers) > 0 {
-			for key, value := range headers {
-				if headerValue, ok := value.(string); ok {
-					req.Header.Set(key, headerValue)
-				}
-			}
-		}
-
-		// output the object for debugging purposes:
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-apiClient] plugin `%s` request object: %v", plgName, req)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported making request: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported reading response body: %v", plgName, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported making request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
 		respObject, _ := vm.Object(`({})`)
-		err = respObject.Set("status", resp.StatusCode)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting status: %v", plgName, err)
+		if err := respObject.Set("status", resp.StatusCode); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported setting status: %v", plgName, err)
 		}
-		err = respObject.Set("headers", resp.Header)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting headers: %v", plgName, err)
+		if err := respObject.Set("headers", resp.Header); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported setting headers: %v", plgName, err)
 		}
-		err = respObject.Set("body", string(respBody))
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting body: %v", plgName, err)
+		if err := respObject.Set("body", string(respBody)); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.post reported setting body: %v", plgName, err)
 		}
 
 		return respObject.Value()
@@ -1995,80 +2201,43 @@ func addJSAPIClient(vm *otto.Otto, plgName string) error {
 
 	// Define the "get" method
 	err = apiClientObject.Set("get", func(call otto.FunctionCall) otto.Value {
-		// Get the URL (first argument)
-		url, _ := call.Argument(0).ToString()
+		url, err := call.Argument(0).ToString()
+		if err != nil || strings.TrimSpace(url) == "" {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported invalid URL: %v", plgName, err)
+			return otto.UndefinedValue()
+		}
 
-		// Get the request options object (second argument)
 		requestArg := call.Argument(1)
-		var headers map[string]string
-		var timeoutMs int64 = 30000 // Default timeout
 
+		var reqCfg jsAPIClientRequest
 		if requestArg.IsDefined() {
-			reqMap, err := requestArg.Export()
-			if err == nil {
-				// Extract headers
-				if h, exists := reqMap.(map[string]interface{})["headers"]; exists {
-					headersInterface, _ := h.(map[string]interface{})
-					headers = make(map[string]string)
-					for k, v := range headersInterface {
-						if vStr, ok := v.(string); ok {
-							headers[k] = vStr
-						}
-					}
-				}
-				// Extract timeout
-				if t, exists := reqMap.(map[string]interface{})["timeout"]; exists {
-					if timeoutFloat, ok := t.(float64); ok { // Otto exports numbers as float64
-						timeoutMs = int64(timeoutFloat)
-					}
-				}
+			reqCfg, err = parseJSAPIClientRequest(requestArg, false)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported invalid request: %v", plgName, err)
+				return otto.UndefinedValue()
+			}
+		} else {
+			reqCfg = jsAPIClientRequest{
+				Headers: map[string]string{},
+				Timeout: 30 * time.Second,
 			}
 		}
 
-		// Set up HTTP client with timeout
-		timeout := time.Duration(timeoutMs) * time.Millisecond
-		client := &http.Client{Timeout: timeout}
-
-		// Create the HTTP request
-		req, err := http.NewRequest("GET", url, nil)
+		resp, respBody, err := executeJSAPIClientRequest(http.MethodGet, url, reqCfg)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported creating GET request: %v", plgName, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported executing GET request: %v", plgName, err)
 			return otto.UndefinedValue()
 		}
 
-		// Add headers to the request
-		for key, value := range headers {
-			req.Header.Set(key, value)
-		}
-
-		// Execute the request
-		resp, err := client.Do(req)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported executing GET request: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-		defer resp.Body.Close() //nolint:errcheck // We can't check error here it's a defer
-
-		// Read response body
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported reading GET response body: %v", plgName, err)
-			return otto.UndefinedValue()
-		}
-
-		// Create response object for JavaScript
 		respObject, _ := vm.Object(`({})`)
-		err = respObject.Set("status", resp.StatusCode)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting status in response object: %v", plgName, err)
+		if err := respObject.Set("status", resp.StatusCode); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported setting status in response object: %v", plgName, err)
 		}
-		err = respObject.Set("headers", resp.Header)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting headers in response object: %v", plgName, err)
+		if err := respObject.Set("headers", resp.Header); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported setting headers in response object: %v", plgName, err)
 		}
-		err = respObject.Set("body", string(respBody))
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` reported setting body in response object: %v", plgName, err)
+		if err := respObject.Set("body", string(respBody)); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "plugin `%s` apiClient.get reported setting body in response object: %v", plgName, err)
 		}
 
 		return respObject.Value()
@@ -2078,6 +2247,216 @@ func addJSAPIClient(vm *otto.Otto, plgName string) error {
 	}
 
 	return vm.Set("apiClient", apiClientObject)
+}
+
+func parseJSAPIClientRequest(requestArg otto.Value, allowBody bool) (jsAPIClientRequest, error) {
+	reqCfg := jsAPIClientRequest{
+		Headers: map[string]string{},
+		Timeout: 30 * time.Second,
+	}
+
+	if !requestArg.IsDefined() {
+		return reqCfg, nil
+	}
+
+	request, err := requestArg.Export()
+	if err != nil {
+		return reqCfg, err
+	}
+
+	reqMap, ok := request.(map[string]interface{})
+	if !ok {
+		return reqCfg, fmt.Errorf("request object is not a valid map")
+	}
+
+	if h, exists := reqMap["headers"]; exists {
+		headersMap, ok := h.(map[string]interface{})
+		if !ok {
+			return reqCfg, fmt.Errorf("headers field is not a valid map")
+		}
+		for key, value := range headersMap {
+			switch v := value.(type) {
+			case string:
+				reqCfg.Headers[key] = v
+			case fmt.Stringer:
+				reqCfg.Headers[key] = v.String()
+			default:
+				reqCfg.Headers[key] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	if allowBody {
+		if b, exists := reqMap["body"]; exists {
+			switch bodyValue := b.(type) {
+			case string:
+				reqCfg.Body = []byte(bodyValue)
+			case nil:
+				reqCfg.Body = nil
+			default:
+				bodyBytes, err := json.Marshal(bodyValue)
+				if err != nil {
+					return reqCfg, fmt.Errorf("marshaling body: %w", err)
+				}
+				reqCfg.Body = bodyBytes
+			}
+		}
+	}
+
+	if t, exists := reqMap["timeout"]; exists {
+		timeoutMs, err := normalizeTimeoutMillis(t)
+		if err != nil {
+			return reqCfg, fmt.Errorf("invalid timeout: %w", err)
+		}
+		reqCfg.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	if a, exists := reqMap["auth"]; exists && a != nil {
+		authMap, ok := a.(map[string]interface{})
+		if !ok {
+			return reqCfg, fmt.Errorf("auth field is not a valid map")
+		}
+		reqCfg.Auth = jsAPIClientAuth{
+			Type:      normalizeStringValue(authMap["type"]),
+			Audience:  normalizeStringValue(authMap["audience"]),
+			Header:    normalizeStringValue(authMap["header"]),
+			Token:     normalizeStringValue(authMap["token"]),
+			TokenType: normalizeStringValue(authMap["token_type"]),
+		}
+	}
+
+	return reqCfg, nil
+}
+
+func executeJSAPIClientRequest(method, url string, reqCfg jsAPIClientRequest) (*http.Response, []byte, error) {
+	var bodyReader io.Reader
+	if len(reqCfg.Body) > 0 {
+		bodyReader = bytes.NewReader(reqCfg.Body)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reqCfg.Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for key, value := range reqCfg.Headers {
+		req.Header.Set(key, value)
+	}
+
+	if err := applyJSAPIClientAuth(ctx, req, reqCfg.Auth); err != nil {
+		return nil, nil, err
+	}
+
+	client := &http.Client{
+		Timeout: reqCfg.Timeout,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close() //nolint:errcheck // Best-effort close after full read
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resp, respBody, nil
+}
+
+func applyJSAPIClientAuth(ctx context.Context, req *http.Request, auth jsAPIClientAuth) error {
+	authType := strings.ToLower(strings.TrimSpace(auth.Type))
+	if authType == "" || authType == "none" {
+		return nil
+	}
+
+	headerName := strings.TrimSpace(auth.Header)
+	if headerName == "" {
+		headerName = "Authorization"
+	}
+
+	switch authType {
+	case "bearer":
+		if strings.TrimSpace(auth.Token) == "" {
+			return fmt.Errorf("auth.token is required for bearer auth")
+		}
+		tokenType := strings.TrimSpace(auth.TokenType)
+		if tokenType == "" {
+			tokenType = "Bearer"
+		}
+		req.Header.Set(headerName, tokenType+" "+auth.Token)
+		return nil
+
+	case "gcp_id_token":
+		if strings.TrimSpace(auth.Audience) == "" {
+			return fmt.Errorf("auth.audience is required for gcp_id_token auth")
+		}
+
+		ts, err := idtoken.NewTokenSource(ctx, auth.Audience)
+		if err != nil {
+			return fmt.Errorf("creating ID token source: %w", err)
+		}
+
+		tok, err := ts.Token()
+		if err != nil {
+			return fmt.Errorf("fetching ID token: %w", err)
+		}
+
+		req.Header.Set(headerName, "Bearer "+tok.AccessToken)
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported auth.type: %s", authType)
+	}
+}
+
+func normalizeStringValue(v interface{}) string {
+	switch val := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(val)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", val))
+	}
+}
+
+func normalizeTimeoutMillis(v interface{}) (int64, error) {
+	switch val := v.(type) {
+	case int:
+		return int64(val), nil
+	case int8:
+		return int64(val), nil
+	case int16:
+		return int64(val), nil
+	case int32:
+		return int64(val), nil
+	case int64:
+		return val, nil
+	case uint:
+		return int64(val), nil
+	case uint8:
+		return int64(val), nil
+	case uint16:
+		return int64(val), nil
+	case uint32:
+		return int64(val), nil
+	case uint64:
+		if val > uint64(^uint64(0)>>1) {
+			return 0, fmt.Errorf("timeout too large")
+		}
+		return int64(val), nil
+	case float32:
+		return int64(val), nil
+	case float64:
+		return int64(val), nil
+	default:
+		return 0, fmt.Errorf("unsupported timeout type %T", v)
+	}
 }
 
 // addJSAPIFetch adds the fetch function to the VM
@@ -2394,38 +2773,48 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		argsArray := call.Argument(1)
-		var args []interface{}
-		if argsArray.IsObject() {
-			argsObj, err := argsArray.Export()
+
+		var args []any
+
+		if argsArray.IsDefined() {
+
+			exported, err := argsArray.Export()
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "Error exporting query arguments: %v", err)
 				return otto.UndefinedValue()
 			}
 
-			var argsSlice []interface{}
-			var ok bool
-			argsSlice, ok = argsObj.([]interface{})
-			if !ok {
-				// If the arguments are not an array, convert them to a slice
-				argsSlice = append(argsSlice, argsObj)
-			}
+			var flatten func(interface{})
+			flatten = func(v interface{}) {
+				if v == nil {
+					return
+				}
 
-			// Process arguments from the JavaScript array
-			for _, arg := range argsSlice {
-				switch v := arg.(type) {
-				case float64:
-					args = append(args, int64(v)) // Convert to int64
-				case []interface{}: // Handle nested slices
-					args = append(args, v...)
-				case []uint64: // Flatten uint64 slices
-					for _, nested := range v {
-						args = append(args, nested)
+				rv := reflect.ValueOf(v)
+
+				if rv.Kind() == reflect.Slice {
+					for i := 0; i < rv.Len(); i++ {
+						flatten(rv.Index(i).Interface())
 					}
+					return
+				}
+
+				switch val := v.(type) {
+				case []interface{}:
+					for _, inner := range val {
+						flatten(inner)
+					}
+				case float64:
+					args = append(args, int64(val))
 				default:
-					args = append(args, v)
+					args = append(args, val)
 				}
 			}
+
+			flatten(exported)
 		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running query: %s with args: %v", query, args)
 
 		// Run the query using the provided db handler and arguments
 		rows, err := (*db).ExecuteQuery(query, args...)
@@ -2443,15 +2832,15 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Prepare the result slice
-		result := make([]map[string]interface{}, 0)
+		result := make([]map[string]any, 0)
 
 		// Iterate over the rows
 		var length uint64
 		for rows.Next() {
 			// Create a map for the row
-			row := make(map[string]interface{})
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
+			row := make(map[string]any)
+			values := make([]any, len(columns))
+			valuePtrs := make([]any, len(columns))
 			for i := range columns {
 				valuePtrs[i] = &values[i]
 			}
@@ -2476,7 +2865,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			length++
 		}
 		// Let's add a field to the result to indicate the number of rows returned
-		result = append(result, map[string]interface{}{"rows": length})
+		result = append(result, map[string]any{"rows": length})
 
 		// Convert the result to JSON
 		_, err = json.Marshal(result)
@@ -2484,6 +2873,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "marshaling query result to JSON:", err)
 			return otto.UndefinedValue()
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %v", result)
 
 		// Convert the JSON string to a JavaScript-compatible value
 		jsResult, err := vm.ToValue(result)
@@ -2491,7 +2881,6 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "converting JSON result to JS value:", err)
 			return otto.UndefinedValue()
 		}
-		//cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %s", jsResult.String())
 
 		return jsResult
 	})
@@ -2511,46 +2900,85 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		console.log(result); // Prints a JSON document with the event details
 */
 func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
-	err := vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
-		// Extract arguments from JavaScript call
-		eventType, err := call.Argument(0).ToString()
-		if err != nil || strings.TrimSpace(eventType) == "" {
-			return otto.UndefinedValue() // Event type is mandatory
-		}
+	return vm.Set("createEvent", func(call otto.FunctionCall) otto.Value {
 
-		sourceIDraw, err := call.Argument(1).ToInteger()
-		if err != nil {
-			return otto.UndefinedValue() // Source ID is mandatory
-		}
-		sourceID := uint64(sourceIDraw) //nolint:gosec // We are not using end-user input here
+		var event cdb.Event
 
-		severity, err := call.Argument(2).ToString()
-		if err != nil || strings.TrimSpace(severity) == "" {
-			severity = cdb.EventSeverityInfo // Default severity
-		}
+		if call.Argument(0).IsObject() && call.Argument(1).IsUndefined() {
 
-		detailsArg := call.Argument(3)
-		var details map[string]interface{}
-		if detailsArg.IsObject() {
-			detailsObj, err := detailsArg.Export()
-			if err == nil {
-				details, _ = detailsObj.(map[string]interface{})
+			// --- Mode 1: Single object argument ---
+
+			obj, err := call.Argument(0).Export()
+			if err != nil {
+				return otto.UndefinedValue()
 			}
-		}
-		if details == nil {
-			details = make(map[string]interface{}) // Default empty details
+
+			data, ok := obj.(map[string]interface{})
+			if !ok {
+				return otto.UndefinedValue()
+			}
+
+			event.Type, _ = data["event_type"].(string)
+
+			if sid, ok := data["source_id"].(float64); ok {
+				event.SourceID = uint64(sid)
+			}
+
+			event.Severity, _ = data["event_severity"].(string)
+			if event.Severity == "" {
+				event.Severity = cdb.EventSeverityInfo
+			}
+
+			if details, ok := data["details"].(map[string]interface{}); ok {
+				event.Details = details
+			} else {
+				event.Details = make(map[string]interface{})
+			}
+
+		} else {
+
+			// --- Mode 2: Legacy positional arguments ---
+
+			eventType, err := call.Argument(0).ToString()
+			if err != nil || strings.TrimSpace(eventType) == "" {
+				return otto.UndefinedValue()
+			}
+
+			sourceIDraw, err := call.Argument(1).ToInteger()
+			if err != nil {
+				return otto.UndefinedValue()
+			}
+
+			severity, err := call.Argument(2).ToString()
+			if err != nil || strings.TrimSpace(severity) == "" {
+				severity = cdb.EventSeverityInfo
+			}
+
+			detailsArg := call.Argument(3)
+			var details map[string]interface{}
+			if detailsArg.IsObject() {
+				detailsObj, err := detailsArg.Export()
+				if err == nil {
+					details, _ = detailsObj.(map[string]interface{})
+				}
+			}
+			if details == nil {
+				details = make(map[string]interface{})
+			}
+
+			event.Type = eventType
+			event.SourceID = uint64(sourceIDraw)
+			event.Severity = severity
+			event.Details = details
 		}
 
-		// Create a new event object
-		event := cdb.Event{
-			SourceID:  sourceID,
-			Type:      eventType,
-			Severity:  severity,
-			ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
-			Details:   details,
+		// Validate mandatory field
+		if strings.TrimSpace(event.Type) == "" {
+			return otto.UndefinedValue()
 		}
 
-		// Insert the event into the database
+		event.ExpiresAt = time.Now().Add(2 * time.Minute).Format(time.RFC3339)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		eID, err := cdb.CreateEvent(ctx, db, event)
 		cancel()
@@ -2559,14 +2987,12 @@ func addJSAPICreateEvent(vm *otto.Otto, db *cdb.Handler) error {
 			return otto.UndefinedValue()
 		}
 
-		// Return success status
 		success, _ := vm.ToValue(map[string]interface{}{
 			"status":  "success",
 			"eventID": eID,
 		})
 		return success
 	})
-	return err
 }
 
 /*
@@ -2659,6 +3085,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 
 	// subscribeEvents(filter, buffer)
 	if err := vm.Set("subscribeEvents", func(call otto.FunctionCall) otto.Value {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "subscribeEvents called with arguments: %v", extractArguments(call))
 		filterArg := call.Argument(0)
 		bufArg := call.Argument(1)
 
@@ -2672,8 +3099,9 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		var filter cdb.EventFilter
 		if filterArg.IsObject() {
 			if raw, err := filterArg.Export(); err == nil {
-				m, ok := raw.(map[string]interface{})
+				m, ok := raw.(map[string]any)
 				if !ok {
+					cmn.DebugMsg(cmn.DbgLvlError, "invalid filter object provided to subscribeEvents")
 					return otto.NullValue()
 				}
 
@@ -2691,6 +3119,10 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		cdb.InitGlobalEventBus(db)
 
 		id, ch, cancel := cdb.GlobalEventBus.Subscribe(filter, int(buffer))
+
+		cmn.DebugMsg(cmn.DbgLvlDebug,
+			"Plugin subscribed: id=%s, type_prefix=%s, source_id=%v",
+			id, filter.TypePrefix, filter.SourceID)
 
 		rt.mu.Lock()
 		if rt.shutdown {
@@ -2714,6 +3146,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 	if err := vm.Set("pollEvent", func(call otto.FunctionCall) otto.Value {
 		subID, err := call.Argument(0).ToString()
 		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "invalid subscription ID provided to pollEvent")
 			return otto.NullValue()
 		}
 
@@ -2725,6 +3158,7 @@ func addJSAPIEventBus(vm *otto.Otto, db *cdb.Handler, rt *pluginRuntime) error {
 		rt.mu.Lock()
 		if rt.shutdown {
 			rt.mu.Unlock()
+			cmn.DebugMsg(cmn.DbgLvlDebug, "pollEvent called after shutdown, returning null")
 			return otto.NullValue()
 		}
 		sub := rt.subs[subID]

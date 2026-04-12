@@ -1,0 +1,18 @@
+{
+  "jobs": [
+    {
+      "name": "Legacy JSON Agent",
+      "process": "serial",
+      "trigger_type": "manual",
+      "trigger_name": "legacy_json",
+      "steps": [
+        {
+          "action": "RunCommand",
+          "params": {
+            "command": "echo legacy-json"
+          }
+        }
+      ]
+    }
+  ]
+}

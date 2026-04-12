@@ -203,7 +203,7 @@ if ($postgres -eq "yes") {
     $composeLines += '    volumes:'
     $composeLines += '      - db_data:/var/lib/postgresql/data'
     $composeLines += '      - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh'
-    $composeLines += '      - ./pkg/database/postgresql-setup-v1.5.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql'
+    $composeLines += '      - ./pkg/database/postgresql-setup.pgsql:/docker-entrypoint-initdb.d/postgresql-setup.pgsql'
     $composeLines += '    networks:'
     $composeLines += '      - crowler-net'
     $composeLines += '    healthcheck:'

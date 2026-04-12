@@ -12,7 +12,131 @@ enrichment, correction, manipulation etc. and combine it with actions.
 
 Agents should be defined in YAML files and stored in the `./agents/` path.
 
+## Compatibility contract
+
+- Originally the CROWler used Jobs to allow users to create complex jobs in YAML, this is now known as v1 format.
+- Legacy manifests with `jobs` only are still valid and continue to run unchanged.
+- Identity-enabled manifests with `agent_identity + jobs` are also valid.
+- `format_version` is supported as a compatibility marker:
+  - `v1` for legacy jobs-only mode
+  - `v2` for identity-enabled mode
+- If omitted, compatibility mode is derived automatically:
+  - no `agent_identity` => `v1`
+  - with `agent_identity` => `v2`
+
 Below an example of such YAML file.
+
+## Identity-aware execution guards (Milestone 3)
+
+Identity-aware execution is controlled by runtime flags under `agent`:
+
+- `agent.identity_enforcement` (default `false`)
+- `agent.contract_enforcement` (default `false`)
+- `agent.memory_runtime` (default `false`)
+
+When `identity_enforcement` is enabled, execution uses `agent_identity` metadata
+to enforce:
+
+- action capability checks (`run_command`, `db_query`, `ai_reasoning`,
+  `plugin_execution`, `create_event`, `decision`)
+- trust-level checks for sensitive actions (`RunCommand`, `DBQuery`,
+  `PluginExecution`)
+- constraint budgets (`max_steps`, `time_budget`, `event_rate_limit`)
+
+Each run also receives an execution context snapshot with run correlation fields
+(`run_id`, `trace_id`, `source`, `owner`, `identity_snapshot`) injected into
+step `config.agent_runtime`.
+
+## Decision and delegation model
+
+`Decision` branches can now target delegated agents using:
+
+- `agent_id` (preferred when present)
+- `agent_name`
+- legacy `call_agent` (name alias)
+
+With `agent.identity_enforcement=true`, delegation also enforces:
+
+- caller delegation capability (`delegate`)
+- caller/callee trust compatibility
+- caller/callee contract checks for delegation restrictions
+- target availability checks before execution
+- delegation graph tracking with cycle detection to prevent loops
+
+Delegation failures are deterministic and surfaced as explicit errors (for
+example, target unavailable, policy denial, or cycle detected).
+
+## AI provider abstraction
+
+`AIInteraction` now executes against a provider abstraction (`LLMProvider`)
+internally, so orchestration is provider-agnostic.
+
+Resolution order for AI provider settings is deterministic:
+
+1. Step-level `params`
+2. Step config `params.config.ai`
+3. Step config `params.config`
+4. Runtime defaults (provider defaults to `openai-compatible`)
+
+Supported normalized AI fields include `messages`, `prompt`, `model`,
+`temperature`, `max_tokens`, `top_p`, and related sampling parameters.
+
+When identity enforcement is enabled, `AIInteraction` requires the
+`ai_reasoning` capability (legacy alias `ai_interaction` is still accepted for
+backward compatibility) and enforces model/provider policy restrictions from
+agent trust level and contract `forbidden_actions` entries
+(e.g. `model:gpt-4*`, `provider:example*`).
+
+## Memory runtime semantics
+
+When `agent.memory_runtime=true`, each step receives a namespaced memory context
+in `params.memory_context` with:
+
+- `mode`: `none`, `ephemeral`, or `persistent`
+- `namespace`: effective namespace (`agent_identity.memory.namespace` or
+  fallback to `agent_id`)
+- `records`: current key/value memory map visible to that agent namespace
+
+Agent memory configuration supports:
+
+- `agent_identity.memory.scope`: `none | ephemeral | persistent`
+- `agent_identity.memory.namespace`: isolates memory by namespace
+- `agent_identity.memory.ttl`: optional Go duration used as default TTL
+  (primarily for ephemeral mode)
+- `agent_identity.memory.retention`: optional max record count retained per
+  namespace
+
+Read/write helper parameters for step flows:
+
+- `memory_read_key`: loads a single key into `params.memory_read_value`
+- `memory_write_key`: key to write after step completion (default:
+  `last_result`)
+- `memory_write_value`: explicit value map to persist; if omitted, step
+  response is used
+- `memory_ttl`: step-level TTL override
+
+Persistent mode supports pluggable backends via the `PersistentMemoryBackend`
+interface; a PostgreSQL implementation writes to the `Memory` table.
+
+## Contracts, auditability, and governance
+
+When `agent.contract_enforcement=true`, runtime now applies contract middleware on
+each step:
+
+- blocks actions listed in `agent_identity.agent_contract.forbidden_actions`
+- enforces `failure_policy` as deterministic runtime behavior (`abort`,
+  `continue`, or `fallback`)
+- keeps delegation restrictions auditable through `Decision` delegation outcomes
+
+The runtime also emits deterministic audit telemetry per run, including:
+
+- identity and ownership context (`agent_id`, `name`, `owner`)
+- capabilities used for each action
+- action outcomes (`allowed`, `denied`, `error`)
+- denied actions and policy reasons
+- delegation outcomes and target refs
+
+Audit events and trace logs are sequenced and deterministic for incident review.
 
 ## Examples of configuring Agents
 
@@ -59,3 +183,20 @@ jobs:
           plugin_name: "example_plugin"
 
 ```
+
+## YAML-first authoring workflow
+
+For day-to-day authoring, use YAML templates and the `crowler agents` CLI:
+
+- Templates:
+  - `agents/templates/legacy-job-only.yaml`
+  - `agents/templates/identity-enabled-agent.yaml`
+  - `agents/templates/multi-agent-delegation.yaml`
+- Commands:
+  - `crowler-agt agents lint <file>`
+  - `crowler-agt agents validate --strict <file>`
+  - `crowler-agt agents convert json2yaml <input.json> [output.yaml]`
+  - `crowler-agt agents convert yaml2json <input.yaml> [output.json]`
+
+A detailed field-by-field guide, migration steps, and common troubleshooting are
+available in [`doc/agents_yaml_authoring.md`](./agents_yaml_authoring.md).

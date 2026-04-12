@@ -1,0 +1,159 @@
+format_version: v2
+agent_identity:
+  agent_id: compliance-evidence-fabric
+  name: Compliance Evidence Fabric
+  version: 2.1.0
+  agent_type: planner
+  owner: team:governance
+  trust_level: restricted
+  reasoning_mode: adaptive
+  capabilities:
+    - api_requests
+    - ai_reasoning
+    - db_read
+    - emit_event
+  memory:
+    scope: persistent
+    namespace: compliance-fabric
+    retention: 1200
+  constraints:
+    max_steps: 30
+    time_budget: 10m
+    event_rate_limit: 20
+  goal: "Continuously assemble auditable, control-level evidence packs from crawl and runtime telemetry."
+  description: "Demonstrates long-horizon memory plus policy-aware branching for audit readiness."
+  audit_tags:
+    - compliance
+    - audit
+    - governance
+  agent_contract:
+    guarantees:
+      - "Evidence artifacts are tagged with control IDs and collection timestamps."
+      - "Every control gap emits a governance event with remediation guidance."
+    assumptions:
+      - "Data governance API is available."
+      - "Evidence store table exists and is queryable."
+    forbidden_actions:
+      - "RunCommand"
+      - "PluginExecution"
+    failure_policy: delegate
+jobs:
+  - name: Evidence Intake Planner
+    process: serial
+    trigger_type: interval
+    trigger_name: every 60 minutes
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://governance.example.local/controls/catalog?framework=SOC2"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          temperature: 0
+          messages:
+            - role: system
+              content: "Map controls to evidence categories and freshness requirements. Return strict JSON."
+            - role: user
+              content: "Create an evidence collection plan from: $response"
+          memory_write_key: latest_control_plan
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response.requires_external_attestations == true'
+            on_true:
+              agent_name: Evidence External Corroboration
+            on_false:
+              agent_name: Evidence Internal Assembly
+
+  - name: Evidence Internal Assembly
+    process: serial
+    trigger_type: agent
+    trigger_name: Evidence Intake Planner
+    steps:
+      - action: DBQuery
+        params:
+          query: "SELECT control_id, source_type, payload, collected_at FROM compliance_evidence WHERE collected_at > NOW() - INTERVAL '30 days'"
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          temperature: 0.1
+          prompt: "Validate coverage, freshness, and traceability gaps for these records: $response"
+          memory_read_key: latest_control_plan
+          memory_write_key: internal_coverage_report
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response.coverage_gap_count > 0'
+            on_true:
+              agent_name: Evidence Gap Escalation
+            on_false:
+              agent_name: Evidence Pack Publisher
+
+  - name: Evidence External Corroboration
+    process: serial
+    trigger_type: agent
+    trigger_name: Evidence Intake Planner
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://attestation.example.local/api/v1/reports/latest"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          prompt: "Extract only attestations relevant to SOC2 controls and output normalized evidence fragments: $response"
+          memory_read_key: latest_control_plan
+          memory_write_key: external_attestation_fragments
+      - action: CreateEvent
+        params:
+          event_name: governance.external_attestations.updated
+          event_type: governance.external_attestations.updated
+          source: agent.compliance-evidence-fabric
+          severity: info
+          details:
+            attestations: "$response"
+
+  - name: Evidence Gap Escalation
+    process: serial
+    trigger_type: agent
+    trigger_name: Evidence Internal Assembly
+    steps:
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          prompt: "Generate a prioritized remediation plan with owners, deadlines, and required evidence artifacts: $response"
+          memory_read_key: internal_coverage_report
+      - action: CreateEvent
+        params:
+          event_name: governance.control_gap.detected
+          event_type: governance.control_gap.detected
+          source: agent.compliance-evidence-fabric
+          severity: warning
+          details:
+            remediation_plan: "$response"
+
+  - name: Evidence Pack Publisher
+    process: serial
+    trigger_type: agent
+    trigger_name: Evidence Internal Assembly
+    steps:
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          messages:
+            - role: system
+              content: "Produce an executive-ready evidence pack summary with control coverage score, exceptions, and auditor notes."
+            - role: user
+              content: "Use internal and external memory fragments to draft final summary."
+          memory_read_key: external_attestation_fragments
+      - action: CreateEvent
+        params:
+          event_name: governance.evidence_pack.ready
+          event_type: governance.evidence_pack.ready
+          source: agent.compliance-evidence-fabric
+          severity: info
+          details:
+            evidence_pack_summary: "$response"

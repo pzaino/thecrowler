@@ -2,8 +2,237 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-agent-schema.json",
     "type": "object",
-    "title": "JobConfig Schema",
+    "title": "The CROWler Agents and Jobs Config Schema",
     "properties": {
+        "format_version": {
+            "type": "string",
+            "description": "Schema/runtime compatibility marker. v1=legacy jobs-only, v2=identity-enabled.",
+            "enum": [
+                "v1",
+                "v2"
+            ]
+        },
+        "agent_identity": {
+            "type": "object",
+            "description": "Optional explicit identity definition for a CROWler Agent. If omitted, identity is derived from job definitions for backward compatibility.",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Stable unique identifier for the agent. If omitted, it is derived from the job name."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable agent name. Must match jobs[].name if both are defined."
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Agent version identifier (semantic versioning recommended).",
+                    "default": "0.0.0"
+                },
+                "agent_type": {
+                    "type": "string",
+                    "description": "Declared agent role (e.g. observer, executor, planner, coordinator).",
+                    "enum": [
+                        "observer",
+                        "executor",
+                        "planner",
+                        "coordinator"
+                    ],
+                    "default": "executor"
+                },
+                "owner": {
+                    "type": "string",
+                    "description": "Owner of the agent (e.g. system, user:<id>, org:<id>)."
+                },
+                "trust_level": {
+                    "type": "string",
+                    "description": "Security trust level for the agent.",
+                    "enum": [
+                        "untrusted",
+                        "restricted",
+                        "trusted",
+                        "system"
+                    ],
+                    "default": "restricted"
+                },
+                "capabilities": {
+                    "type": "array",
+                    "description": "Explicit list of capabilities granted to the agent.",
+                    "default": [
+                        "all"
+                    ],
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "all",
+                            "network_access",
+                            "file_system_access",
+                            "db_read",
+                            "db_write",
+                            "plugin_execution",
+                            "api_requests",
+                            "command_execution",
+                            "emit_event",
+                            "schedule_event",
+                            "call_plugin",
+                            "ai_reasoning"
+                        ]
+                    }
+                },
+                "constraints": {
+                    "type": "object",
+                    "description": "Execution and safety constraints applied to the agent.",
+                    "properties": {
+                        "max_steps": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "default": 0,
+                            "description": "Maximum number of allowed steps including repetitions. A value of 0 means unlimited."
+                        },
+                        "time_budget": {
+                            "type": "string",
+                            "description": "Maximum execution time budget (e.g. '30m', '2h')."
+                        },
+                        "resource_limits": {
+                            "type": "object",
+                            "description": "Resource usage limits for the agent.",
+                            "properties": {
+                                "cpu_percent": {
+                                    "type": "number",
+                                    "description": "Maximum CPU usage percentage."
+                                },
+                                "memory_mb": {
+                                    "type": "number",
+                                    "description": "Maximum memory usage in megabytes."
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "event_rate_limit": {
+                            "type": "number",
+                            "description": "Maximum number of events the agent can emit per minute."
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "reasoning_mode": {
+                    "type": "string",
+                    "description": "Declared reasoning strategy of the agent. This is descriptive and does not alter execution semantics.",
+                    "enum": [
+                        "fixed",
+                        "adaptive",
+                        "reflective"
+                    ],
+                    "default": "fixed"
+                },
+                "memory": {
+                    "type": "object",
+                    "description": "Memory configuration for the agent. Memory here means the ability to retain information across different runs/executions of the agent.",
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": [
+                                "none",
+                                "ephemeral",
+                                "persistent"
+                            ],
+                            "default": "persistent"
+                        },
+                        "namespace": {
+                            "type": "string",
+                            "description": "Optional namespace used to isolate agent memory."
+                        },
+                        "ttl": {
+                            "type": "string",
+                            "description": "Optional default TTL for ephemeral memory entries (Go duration format, for example '30s')."
+                        },
+                        "retention": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Optional maximum number of records to retain per namespace."
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "goal": {
+                    "type": "string",
+                    "description": "High-level objective of the agent."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable explanation of the agent purpose."
+                },
+                "audit_tags": {
+                    "type": "array",
+                    "description": "Tags used for auditing, classification, and traceability.",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "self_model": {
+                    "type": "object",
+                    "description": "Self-modification and autonomy permissions for the agent.",
+                    "properties": {
+                        "can_modify_identity": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Whether the agent is allowed to modify its own identity metadata."
+                        },
+                        "can_spawn_agents": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Whether the agent is allowed to create or register new agents."
+                        },
+                        "can_modify_jobs": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Whether the agent is allowed to modify its own jobs or execution steps."
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "agent_contract": {
+                    "type": "object",
+                    "description": "Declarative contract describing guarantees, assumptions, and operational boundaries of the agent.",
+                    "properties": {
+                        "guarantees": {
+                            "type": "array",
+                            "description": "Explicit guarantees provided by the agent during execution.",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "assumptions": {
+                            "type": "array",
+                            "description": "Assumptions the agent makes about its environment, inputs, or dependencies.",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "forbidden_actions": {
+                            "type": "array",
+                            "description": "Explicitly forbidden behaviors, even if capabilities might otherwise allow them.",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "failure_policy": {
+                            "type": "string",
+                            "description": "Declared behavior when the agent cannot complete its goal.",
+                            "enum": [
+                                "fail_fast",
+                                "retry",
+                                "emit_event",
+                                "delegate"
+                            ],
+                            "default": "emit_event"
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        },
         "jobs": {
             "type": "array",
             "description": "List of jobs in the configuration.",
@@ -29,11 +258,13 @@
                     },
                     "trigger_type": {
                         "type": "string",
-                        "description": "The type of trigger for the job.",
+                        "description": "The type of trigger for the job. Note: Event also means scheduled events, not just immediate events.",
                         "enum": [
                             "interval",
                             "event",
-                            "manual"
+                            "manual",
+                            "signal",
+                            "agent"
                         ]
                     },
                     "trigger_name": {

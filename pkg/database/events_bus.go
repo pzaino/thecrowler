@@ -52,9 +52,8 @@ func NewEventBus() *EventBus {
 
 // InitGlobalEventBus starts the global event bus.
 func InitGlobalEventBus(_ *Handler) {
-	globalEventBusOnce.Do(func() {
-		GlobalEventBus, globalEventBusStop = StartEventBus()
-	})
+	GlobalEventBus, globalEventBusStop = StartEventBus()
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Global event bus initialized")
 }
 
 // StopGlobalEventBus stops the global event bus.
@@ -86,6 +85,10 @@ func (b *EventBus) Subscribe(
 	b.subs[id] = sub
 	b.mu.Unlock()
 
+	cmn.DebugMsg(cmn.DbgLvlDebug,
+		"EventBus.Subscribe: id=%s, total_subs=%d",
+		id, len(b.subs))
+
 	// Transition 0 -> 1
 	if b.subCount.Add(1) == 1 {
 		startGlobalEventIngestion()
@@ -107,6 +110,8 @@ func (b *EventBus) Unsubscribe(id string) {
 	}
 	b.mu.Unlock()
 
+	cmn.DebugMsg(cmn.DbgLvlDebug, "EventBus.Unsubscribe: id=%s, total_subs=%d", id, len(b.subs))
+
 	if sub == nil {
 		return
 	}
@@ -117,7 +122,7 @@ func (b *EventBus) Unsubscribe(id string) {
 
 	// Transition 1 -> 0
 	if b.subCount.Add(-1) == 0 {
-		stopGlobalEventIngestion()
+		//stopGlobalEventIngestion()
 	}
 }
 
@@ -159,6 +164,10 @@ func (b *EventBus) Publish(e Event) {
 	if b.subCount.Load() == 0 {
 		return
 	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug3,
+		"Publish called: type=%s, subscribers=%d",
+		e.Type, b.subCount.Load())
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()

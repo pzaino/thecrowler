@@ -1,0 +1,142 @@
+format_version: v2
+agent_identity:
+  agent_id: revenue-growth-experiment-lab
+  name: Revenue Growth Experiment Lab
+  version: 2.0.0
+  agent_type: coordinator
+  owner: team:growth
+  trust_level: restricted
+  reasoning_mode: reflective
+  capabilities:
+    - api_requests
+    - ai_reasoning
+    - db_read
+    - db_write
+    - emit_event
+    - schedule_event
+  memory:
+    scope: ephemeral
+    namespace: growth-lab
+    ttl: 24h
+    retention: 300
+  constraints:
+    max_steps: 25
+    time_budget: 6m
+    event_rate_limit: 25
+  goal: "Autonomously design, evaluate, and route revenue experiments while enforcing statistical and ethical guardrails."
+  description: "Advanced v2 orchestration pattern for experimentation lifecycle with delegated specialists."
+  audit_tags:
+    - growth
+    - experimentation
+    - analytics
+  agent_contract:
+    guarantees:
+      - "Only experiments meeting minimum sample size confidence are promoted."
+      - "Every variant recommendation includes impact, risk, and rollback criteria."
+    assumptions:
+      - "Warehouse and product analytics APIs return fresh data."
+    forbidden_actions:
+      - "RunCommand"
+      - "PluginExecution"
+    failure_policy: retry
+jobs:
+  - name: Experiment Intake Router
+    process: serial
+    trigger_type: manual
+    trigger_name: run_growth_experiment_cycle
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://product.example.local/experiments/proposals/pending"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          temperature: 0.15
+          prompt: "Rank proposals by expected ARR impact, implementation complexity, and confidence readiness. Output top 3 with rationale: $response"
+          memory_write_key: ranked_proposals
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response[0].estimated_impact_band == "high"'
+            on_true:
+              agent_name: Experiment Statistical Reviewer
+            on_false:
+              agent_name: Experiment Backlog Curator
+
+  - name: Experiment Statistical Reviewer
+    process: serial
+    trigger_type: agent
+    trigger_name: Experiment Intake Router
+    steps:
+      - action: DBQuery
+        params:
+          query: "SELECT experiment_id, metric_name, baseline_value, sample_size, p_value FROM experiment_metrics WHERE status = 'running'"
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          messages:
+            - role: system
+              content: "Act as a senior experimentation scientist. Return JSON with verdict, confidence, and risk_of_bias."
+            - role: user
+              content: "Review statistical validity using ranked proposals memory and current metrics: $response"
+          memory_read_key: ranked_proposals
+          memory_write_key: stats_review
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response.verdict == "promote" && $response.confidence >= 0.8'
+            on_true:
+              agent_name: Experiment Launch Planner
+            on_false:
+              agent_name: Experiment Backlog Curator
+
+  - name: Experiment Launch Planner
+    process: serial
+    trigger_type: agent
+    trigger_name: Experiment Statistical Reviewer
+    steps:
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          temperature: 0.1
+          prompt: "Produce a launch checklist with rollout phases, KPI guardrails, and rollback triggers from: $response"
+          memory_read_key: stats_review
+      - action: CreateEvent
+        params:
+          event_name: growth.experiment.launch_ready
+          event_type: growth.experiment.launch_ready
+          source: agent.revenue-growth-experiment-lab
+          severity: info
+          details:
+            launch_plan: "$response"
+      - action: CreateEvent
+        params:
+          event_name: growth.experiment.monitoring_schedule
+          event_type: growth.experiment.monitoring_schedule
+          source: agent.revenue-growth-experiment-lab
+          severity: info
+          details:
+            cadence: every 30 minutes
+            plan_ref: "$response"
+
+  - name: Experiment Backlog Curator
+    process: serial
+    trigger_type: agent
+    trigger_name: Experiment Intake Router
+    steps:
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          prompt: "Reframe non-promotable proposals into backlog items with missing evidence requirements and owner suggestions: $response"
+          memory_read_key: ranked_proposals
+      - action: CreateEvent
+        params:
+          event_name: growth.experiment.backlog_updated
+          event_type: growth.experiment.backlog_updated
+          source: agent.revenue-growth-experiment-lab
+          severity: info
+          details:
+            backlog_recommendations: "$response"

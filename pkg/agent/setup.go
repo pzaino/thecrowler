@@ -1,4 +1,4 @@
-// Copyright 2023 Paolo Fabio Zaino
+// Copyright 2023 Paolo Fabio Zaino, all rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -53,7 +53,77 @@ type RetryConfig struct {
 
 // JobConfig represents the structure of a job configuration file
 type JobConfig struct {
-	Jobs []Job `yaml:"jobs" json:"jobs"`
+	// FormatVersion is the compatibility contract marker for agents/job manifests.
+	// - v1: legacy jobs-only config (agent_identity omitted and derived at load time)
+	// - v2: identity-enabled config (agent_identity present)
+	// Backward-compatibility guarantee: jobs-only manifests MUST continue to parse and run unchanged.
+	FormatVersion string         `yaml:"format_version,omitempty" json:"format_version,omitempty"`
+	AgentIdentity *AgentIdentity `yaml:"agent_identity,omitempty" json:"agent_identity,omitempty"`
+	Jobs          []Job          `yaml:"jobs" json:"jobs"`
+	registry      *AgentRegistry `yaml:"-" json:"-"`
+}
+
+const (
+	// AgentFormatVersionV1 is the legacy compatibility marker for jobs-only config.
+	AgentFormatVersionV1 = "v1"
+	// AgentFormatVersionV2 marks identity-enabled config.
+	AgentFormatVersionV2 = "v2"
+)
+
+// AgentIdentity represents optional explicit identity metadata for an agent definition.
+type AgentIdentity struct {
+	AgentID      string            `yaml:"agent_id,omitempty" json:"agent_id,omitempty"`
+	Name         string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Version      string            `yaml:"version,omitempty" json:"version,omitempty"`
+	AgentType    string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
+	Owner        string            `yaml:"owner,omitempty" json:"owner,omitempty"`
+	TrustLevel   string            `yaml:"trust_level,omitempty" json:"trust_level,omitempty"`
+	Capabilities []string          `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Constraints  *AgentConstraints `yaml:"constraints,omitempty" json:"constraints,omitempty"`
+	Reasoning    string            `yaml:"reasoning_mode,omitempty" json:"reasoning_mode,omitempty"`
+	Memory       *AgentMemory      `yaml:"memory,omitempty" json:"memory,omitempty"`
+	Goal         string            `yaml:"goal,omitempty" json:"goal,omitempty"`
+	Description  string            `yaml:"description,omitempty" json:"description,omitempty"`
+	AuditTags    []string          `yaml:"audit_tags,omitempty" json:"audit_tags,omitempty"`
+	SelfModel    *AgentSelfModel   `yaml:"self_model,omitempty" json:"self_model,omitempty"`
+	Contract     *AgentContract    `yaml:"agent_contract,omitempty" json:"agent_contract,omitempty"`
+}
+
+// AgentConstraints defines safety and execution constraints for an agent identity.
+type AgentConstraints struct {
+	MaxSteps       int                 `yaml:"max_steps,omitempty" json:"max_steps,omitempty"`
+	TimeBudget     string              `yaml:"time_budget,omitempty" json:"time_budget,omitempty"`
+	ResourceLimits *AgentResourceLimit `yaml:"resource_limits,omitempty" json:"resource_limits,omitempty"`
+	EventRateLimit float64             `yaml:"event_rate_limit,omitempty" json:"event_rate_limit,omitempty"`
+}
+
+// AgentResourceLimit defines CPU/memory usage limits.
+type AgentResourceLimit struct {
+	CPUPercent float64 `yaml:"cpu_percent,omitempty" json:"cpu_percent,omitempty"`
+	MemoryMB   float64 `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty"`
+}
+
+// AgentMemory defines memory retention scope for an agent.
+type AgentMemory struct {
+	Scope     string `yaml:"scope,omitempty" json:"scope,omitempty"`
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	TTL       string `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	Retention int    `yaml:"retention,omitempty" json:"retention,omitempty"`
+}
+
+// AgentSelfModel defines permissions related to self-modification.
+type AgentSelfModel struct {
+	CanModifyIdentity bool `yaml:"can_modify_identity,omitempty" json:"can_modify_identity,omitempty"`
+	CanSpawnAgents    bool `yaml:"can_spawn_agents,omitempty" json:"can_spawn_agents,omitempty"`
+	CanModifyJobs     bool `yaml:"can_modify_jobs,omitempty" json:"can_modify_jobs,omitempty"`
+}
+
+// AgentContract defines boundaries and assumptions for an agent.
+type AgentContract struct {
+	Guarantees       []string `yaml:"guarantees,omitempty" json:"guarantees,omitempty"`
+	Assumptions      []string `yaml:"assumptions,omitempty" json:"assumptions,omitempty"`
+	ForbiddenActions []string `yaml:"forbidden_actions,omitempty" json:"forbidden_actions,omitempty"`
+	FailurePolicy    string   `yaml:"failure_policy,omitempty" json:"failure_policy,omitempty"`
 }
 
 // Job represents a job configuration
@@ -69,7 +139,9 @@ type Job struct {
 
 // NewJobConfig creates a new job configuration
 func NewJobConfig() *JobConfig {
-	return &JobConfig{}
+	return &JobConfig{
+		registry: NewAgentRegistry(),
+	}
 }
 
 // LoadJob loads a job into the JobConfig
@@ -83,11 +155,20 @@ func (jc *JobConfig) LoadJob(j Job) {
 	jc.Jobs = append(jc.Jobs, j)
 }
 
+func (jc *JobConfig) ensureRegistry() {
+	if jc.registry == nil {
+		jc.registry = NewAgentRegistry()
+	}
+}
+
 // --- helpers: parsing and normalization ---
 
 // parseAgentsBytes decodes YAML or JSON into a JobConfig
 func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
 	var cfg JobConfig
+	if err := ValidateAgentConfig(data, fileType, ValidationModeLenient, nil); err != nil {
+		return cfg, err
+	}
 	var err error
 	switch strings.ToLower(strings.TrimPrefix(fileType, ".")) {
 	case "yaml", "yml":
@@ -97,7 +178,99 @@ func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
 	default:
 		err = fmt.Errorf("unsupported file format: %s", fileType)
 	}
-	return cfg, err
+	if err != nil {
+		return cfg, err
+	}
+	if err = cfg.normalizeAgentIdentity(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func normalizeAgentID(name string) string {
+	v := strings.ToLower(strings.TrimSpace(name))
+	if v == "" {
+		return "anonymous-agent"
+	}
+	v = strings.ReplaceAll(v, " ", "-")
+	v = strings.ReplaceAll(v, "/", "-")
+	v = strings.ReplaceAll(v, "_", "-")
+	return v
+}
+
+func (jc *JobConfig) normalizeAgentIdentity() error {
+	if jc == nil {
+		return nil
+	}
+
+	derivedName := ""
+	if len(jc.Jobs) > 0 {
+		derivedName = strings.TrimSpace(jc.Jobs[0].Name)
+	}
+
+	if jc.AgentIdentity == nil {
+		if strings.TrimSpace(jc.FormatVersion) == "" {
+			jc.FormatVersion = AgentFormatVersionV1
+		}
+		if derivedName == "" {
+			return nil
+		}
+		jc.AgentIdentity = &AgentIdentity{
+			Name:         derivedName,
+			AgentID:      normalizeAgentID(derivedName),
+			Version:      "0.0.0",
+			AgentType:    "executor",
+			TrustLevel:   "restricted",
+			Capabilities: []string{"all"},
+			Reasoning:    "fixed",
+			Memory:       &AgentMemory{Scope: "persistent"},
+			Contract:     &AgentContract{FailurePolicy: "emit_event"},
+		}
+		return nil
+	}
+
+	if strings.TrimSpace(jc.FormatVersion) == "" {
+		jc.FormatVersion = AgentFormatVersionV2
+	}
+
+	if derivedName != "" {
+		if strings.TrimSpace(jc.AgentIdentity.Name) == "" {
+			jc.AgentIdentity.Name = derivedName
+		} else if strings.TrimSpace(jc.AgentIdentity.Name) != derivedName {
+			return fmt.Errorf("agent_identity.name (%s) must match jobs[0].name (%s)", jc.AgentIdentity.Name, derivedName)
+		}
+	}
+
+	if strings.TrimSpace(jc.AgentIdentity.AgentID) == "" {
+		jc.AgentIdentity.AgentID = normalizeAgentID(jc.AgentIdentity.Name)
+	}
+	if strings.TrimSpace(jc.AgentIdentity.Version) == "" {
+		jc.AgentIdentity.Version = "0.0.0"
+	}
+	if strings.TrimSpace(jc.AgentIdentity.AgentType) == "" {
+		jc.AgentIdentity.AgentType = "executor"
+	}
+	if strings.TrimSpace(jc.AgentIdentity.TrustLevel) == "" {
+		jc.AgentIdentity.TrustLevel = "restricted"
+	}
+	if len(jc.AgentIdentity.Capabilities) == 0 {
+		jc.AgentIdentity.Capabilities = []string{"all"}
+	}
+	if strings.TrimSpace(jc.AgentIdentity.Reasoning) == "" {
+		jc.AgentIdentity.Reasoning = "fixed"
+	}
+	if jc.AgentIdentity.Memory == nil {
+		jc.AgentIdentity.Memory = &AgentMemory{Scope: "persistent"}
+	} else if strings.TrimSpace(jc.AgentIdentity.Memory.Scope) == "" {
+		jc.AgentIdentity.Memory.Scope = "persistent"
+	}
+	if jc.AgentIdentity.Contract == nil {
+		jc.AgentIdentity.Contract = &AgentContract{FailurePolicy: "emit_event"}
+	} else if strings.TrimSpace(jc.AgentIdentity.Contract.FailurePolicy) == "" {
+		jc.AgentIdentity.Contract.FailurePolicy = "emit_event"
+	}
+
+	return nil
 }
 
 // applyGlobalParams merges AgentsTimeout/PluginsTimeout and GlobalParameters into every step
@@ -247,6 +420,7 @@ func loadAgentsFromRemote(agt cfg.AgentsConfig) ([]JobConfig, error) {
 // LoadConfig loads YAML/JSON Agent Definitions from local paths or remote hosts (http/ftp/s3)
 // and applies global parameters/timeouts from each AgentsConfig entry.
 func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
+	jc.ensureRegistry()
 	for _, agt := range agtConfigs {
 		var chunks []JobConfig
 		var err error
@@ -272,7 +446,17 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 		// Normalize and merge global params for each loaded chunk, then append
 		for idx := range chunks {
 			applyGlobalParams(&chunks[idx], agt)
-			jc.Jobs = append(jc.Jobs, chunks[idx].Jobs...)
+			def, err := chunks[idx].NormalizeToAgentDefinition(AgentSourceMetadata{
+				Location: strings.Join(agt.Path, ","),
+				Format:   strings.ToLower(strings.TrimSpace(agt.Type)),
+			})
+			if err != nil {
+				return err
+			}
+			if err := jc.registry.Register(def); err != nil {
+				return err
+			}
+			jc.Jobs = append(jc.Jobs, def.Jobs...)
 		}
 	}
 	return nil
@@ -280,7 +464,20 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 
 // RegisterAgent registers an agent with the JobConfig
 func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
-	jc.Jobs = append(jc.Jobs, agent.Jobs...)
+	jc.ensureRegistry()
+	if agent == nil {
+		return
+	}
+	def, err := agent.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to normalize agent registration: %v", err)
+		return
+	}
+	if err := jc.registry.Register(def); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to register agent: %v", err)
+		return
+	}
+	jc.Jobs = append(jc.Jobs, def.Jobs...)
 }
 
 // GetAgentByName returns an agent by name
@@ -288,13 +485,17 @@ func (jc *JobConfig) GetAgentByName(name string) (*JobConfig, bool) {
 	if jc == nil {
 		return nil, false
 	}
-	if len(jc.Jobs) == 0 {
-		return nil, false
+	jc.ensureRegistry()
+
+	if a, ok := jc.registry.GetByName(name); ok {
+		return a.toJobConfig(), true
 	}
+
+	// Backward-compatible fallback: lookup by legacy job-group name.
 	for i := 0; i < len(jc.Jobs); i++ {
 		if strings.TrimSpace(jc.Jobs[i].Name) == name {
 			// Return the Job with the specified name inside a JobConfig struct
-			rjc := &JobConfig{}
+			rjc := NewJobConfig()
 			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
 			return rjc, true
 		}
@@ -304,17 +505,43 @@ func (jc *JobConfig) GetAgentByName(name string) (*JobConfig, bool) {
 
 // GetAgentsByEventType returns all agents that are triggered by a specific event type
 func (jc *JobConfig) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
+	return jc.GetAgentsByTrigger("event", eventType)
+}
+
+// GetAgentsByTrigger returns all agents matching a trigger selector.
+func (jc *JobConfig) GetAgentsByTrigger(triggerType, triggerName string) ([]*JobConfig, bool) {
 	if jc == nil {
 		return nil, false
 	}
-	if len(jc.Jobs) == 0 {
-		return nil, false
-	}
+	jc.ensureRegistry()
 
 	var agents []*JobConfig
+	defs := jc.registry.GetByTrigger(triggerType, triggerName)
+	for _, def := range defs {
+		cfg := NewJobConfig()
+		cfg.FormatVersion = def.FormatVersion
+		id := def.Identity
+		cfg.AgentIdentity = &id
+		for _, job := range def.Jobs {
+			if strings.ToLower(strings.TrimSpace(job.TriggerType)) == strings.ToLower(strings.TrimSpace(triggerType)) &&
+				strings.TrimSpace(job.TriggerName) == strings.TrimSpace(triggerName) {
+				cfg.Jobs = append(cfg.Jobs, job)
+			}
+		}
+		if len(cfg.Jobs) > 0 {
+			agents = append(agents, cfg)
+		}
+	}
+
+	if len(agents) > 0 {
+		return agents, true
+	}
+
+	// Backward-compatible fallback in case legacy callers only populated Jobs directly.
 	for i := 0; i < len(jc.Jobs); i++ {
-		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == "event" && strings.TrimSpace(jc.Jobs[i].TriggerName) == eventType {
-			rjc := &JobConfig{}
+		if strings.ToLower(strings.TrimSpace(jc.Jobs[i].TriggerType)) == strings.ToLower(strings.TrimSpace(triggerType)) &&
+			strings.TrimSpace(jc.Jobs[i].TriggerName) == strings.TrimSpace(triggerName) {
+			rjc := NewJobConfig()
 			rjc.Jobs = append(rjc.Jobs, jc.Jobs[i])
 			agents = append(agents, rjc)
 		}
@@ -331,6 +558,33 @@ func (je *JobEngine) GetAgentByName(name string) (*JobConfig, bool) {
 // GetAgentsByEventType returns all agents that are triggered by a specific event type from the JobEngine
 func (je *JobEngine) GetAgentsByEventType(eventType string) ([]*JobConfig, bool) {
 	return AgentsRegistry.GetAgentsByEventType(eventType)
+}
+
+// GetAgentsByTrigger returns all agents matching the provided trigger selector.
+func (je *JobEngine) GetAgentsByTrigger(triggerType, triggerName string) ([]*JobConfig, bool) {
+	return AgentsRegistry.GetAgentsByTrigger(triggerType, triggerName)
+}
+
+// ExecuteAgent executes a registered agent by agent ID or, if missing, by agent name.
+func (je *JobEngine) ExecuteAgent(agentRef string, inputCtx map[string]any) error {
+	lookup := strings.TrimSpace(agentRef)
+	if lookup == "" {
+		return fmt.Errorf("missing agent reference")
+	}
+	if AgentsRegistry != nil {
+		AgentsRegistry.ensureRegistry()
+		if def, ok := AgentsRegistry.registry.GetByID(lookup); ok {
+			return je.executeAgentDefinition(def, inputCtx)
+		}
+		if def, ok := AgentsRegistry.registry.GetByName(lookup); ok {
+			return je.executeAgentDefinition(def, inputCtx)
+		}
+	}
+
+	if agent, ok := je.GetAgentByName(lookup); ok {
+		return je.ExecuteJobs(agent, inputCtx)
+	}
+	return fmt.Errorf("agent '%s' not found", lookup)
 }
 
 func deepCopyJob(j Job) Job {
@@ -350,6 +604,27 @@ func deepCopyJob(j Job) Job {
 
 // ExecuteJobs executes all jobs in the configuration
 func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
+	if j != nil && j.AgentIdentity != nil {
+		if def, err := j.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"}); err == nil {
+			return je.executeAgentDefinition(def, iCfg)
+		}
+	}
+	return je.executeJobsWithContext(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
+}
+
+func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[string]any) error {
+	if def == nil {
+		return fmt.Errorf("nil agent definition")
+	}
+	flags := runtimeFlagsFromConfig(iCfg)
+	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	if flags.IdentityEnforcement || flags.ContractEnforcement {
+		je.startGovernanceRun()
+	}
+	return je.executeJobsWithContext(def.toJobConfig(), iCfg, ctx, flags)
+}
+
+func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
 	// Create a waiting group for parallel group processing
 	var wg sync.WaitGroup
 
@@ -405,17 +680,17 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 			wg.Add(1)
 
 			// Execute the group in parallel
-			go func(jg []map[string]any) {
+			go func(jg []map[string]any, identity *AgentIdentity) {
 				defer wg.Done()
-				if err := executeJobGroup(je, jg); err != nil {
+				if err := executeJobGroup(je, jg, identity, execCtx, flags); err != nil {
 					cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Agents] Failed to execute job group '%s': %v", jobGroup.Name, err)
 				}
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
-			}(jobGroup.Steps)
+			}(jobGroup.Steps, j.AgentIdentity)
 
 		} else {
 			// Execute the group serially
-			if err := executeJobGroup(je, jobGroup.Steps); err != nil {
+			if err := executeJobGroup(je, jobGroup.Steps, j.AgentIdentity, execCtx, flags); err != nil {
 				return fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
 			}
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
@@ -428,8 +703,28 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 }
 
 // executeJobGroup runs jobs in a group serially
-func executeJobGroup(je *JobEngine, steps []map[string]any) error {
+func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
 	lastResult := make(map[string]any)
+	var budget *constraintBudgetManager
+	if flags.IdentityEnforcement && identity != nil {
+		b, err := newConstraintBudgetManager(*identity)
+		if err != nil {
+			return err
+		}
+		budget = b
+	}
+
+	if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
+		je.appendAudit(AuditEvent{
+			RunID:     execCtx.RunID,
+			TraceID:   execCtx.TraceID,
+			AgentID:   identity.AgentID,
+			AgentName: identity.Name,
+			Owner:     identity.Owner,
+			Outcome:   auditOutcomeAllowed,
+			Reason:    "identity_loaded",
+		})
+	}
 
 	// Execute each job in the group
 	for i := 0; i < len(steps); i++ {
@@ -441,6 +736,48 @@ func executeJobGroup(je *JobEngine, steps []map[string]any) error {
 			return fmt.Errorf("missing 'action' field in job step")
 		}
 		params, _ := (*step)["params"].(map[string]interface{})
+		auditAgentID, auditAgentName, auditOwner := "", "", ""
+		if identity != nil {
+			auditAgentID = identity.AgentID
+			auditAgentName = identity.Name
+			auditOwner = identity.Owner
+		}
+		if params == nil {
+			params = map[string]interface{}{}
+			(*step)["params"] = params
+		}
+		if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
+			applyExecutionContext(params, execCtx)
+		}
+		if flags.IdentityEnforcement && identity != nil {
+			if !capabilityAllowed(*identity, actionName) {
+				err := fmt.Errorf("capability gate denied action %s: capability %q missing", actionName, requiredCapabilityForAction(actionName))
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				return err
+			}
+			if !trustAllowed(*identity, actionName) {
+				err := fmt.Errorf("trust gate denied action %s: trust_level %q insufficient", actionName, identity.TrustLevel)
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				return err
+			}
+			if err := budget.preStepCheck(actionName); err != nil {
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				return err
+			}
+		}
+		if flags.ContractEnforcement && contractForbidsAction(identity, actionName) {
+			err := fmt.Errorf("contract gate denied action %s: forbidden_actions policy", actionName)
+			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+			return err
+		}
+		if flags.MemoryRuntime && je != nil {
+			if je.memory == nil {
+				je.memory = newAgentMemoryRuntime()
+			}
+			if err := je.memory.inject(params, identity); err != nil {
+				return fmt.Errorf("memory runtime inject failed: %w", err)
+			}
+		}
 
 		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
 		if i > 0 {
@@ -499,16 +836,38 @@ func executeJobGroup(je *JobEngine, steps []map[string]any) error {
 				result, err = executeWithRetry(action, params, retryConfig)
 			}
 			if err != nil {
-				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
+				policy := effectiveFailurePolicy(identity)
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
+				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback && policy != "continue" {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-					return executeJobGroup(je, fallback)
+					return executeJobGroup(je, fallback, identity, execCtx, flags)
 				}
-				return fmt.Errorf("action %s failed: %v", actionName, err)
+				switch policy {
+				case "continue":
+					continue
+				case "fallback":
+					if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
+						cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
+						return executeJobGroup(je, fallback, identity, execCtx, flags)
+					}
+					return fmt.Errorf("action %s failed: %v", actionName, err)
+				default:
+					return fmt.Errorf("action %s failed: %v", actionName, err)
+				}
 			}
 		}
 
 		// Update the result for the next job in the group
 		lastResult = result
+		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeAllowed, Reason: "action_completed"})
+		if flags.IdentityEnforcement && identity != nil {
+			budget.markActionExecuted(actionName)
+		}
+		if flags.MemoryRuntime && je != nil && je.memory != nil {
+			if err := je.memory.persistStepResult(params, result, identity); err != nil {
+				return fmt.Errorf("memory runtime persist failed: %w", err)
+			}
+		}
 	}
 	return nil
 }

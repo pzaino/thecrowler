@@ -1,4 +1,4 @@
-// Copyright 2023 Paolo Fabio Zaino
+// Copyright 2023 Paolo Fabio Zaino, all rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -66,13 +67,21 @@ type DecisionTrace struct {
 
 // JobEngine executes a sequence of actions
 type JobEngine struct {
-	actions map[string]Action
+	actions     map[string]Action
+	memory      *agentMemoryRuntime
+	auditMu     sync.Mutex
+	auditEvents []AuditEvent
+	traceLogs   []string
+	auditSeq    int
 }
 
 // Initialize initializes the agent engine
 func Initialize() {
 	if AgentsEngine == nil {
 		AgentsEngine = NewJobEngine() // Ensure `AgentsEngine` is not nil
+	}
+	if AgentsRegistry == nil {
+		AgentsRegistry = NewJobConfig()
 	}
 	RegisterActions(AgentsEngine)
 }
@@ -93,7 +102,18 @@ func RegisterActions(engine *JobEngine) {
 
 // NewJobEngine creates a new job engine
 func NewJobEngine() *JobEngine {
-	return &JobEngine{}
+	return &JobEngine{memory: newAgentMemoryRuntime()}
+}
+
+// SetPersistentMemoryBackend configures the persistent memory backend for runtime memory mode.
+func (je *JobEngine) SetPersistentMemoryBackend(backend PersistentMemoryBackend) {
+	if je == nil {
+		return
+	}
+	if je.memory == nil {
+		je.memory = newAgentMemoryRuntime()
+	}
+	je.memory.setPersistentBackend(backend)
 }
 
 // Initialize registers all actions with the engine

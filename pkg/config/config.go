@@ -422,6 +422,11 @@ func NewConfig() *Config {
 				},
 			},
 		},
+		Agent: AgentRuntimeConfig{
+			IdentityEnforcement: false,
+			ContractEnforcement: false,
+			MemoryRuntime:       false,
+		},
 		ExternalDetection: ExternalDetectionConfig{},
 		OS:                runtime.GOOS,
 		DebugLevel:        0,

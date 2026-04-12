@@ -410,7 +410,7 @@ $(emit_limits "    " "${cpu_limit_mng:-1.0}" "${mem_limit_mng_pct:-3g}")
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./pkg/database/postgresql-setup.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./pkg/database/postgresql-setup-v1.5.pgsql:/docker-entrypoint-initdb.d/postgresql-setup-v1.5.pgsql
+      - ./pkg/database/postgresql-setup.pgsql:/docker-entrypoint-initdb.d/postgresql-setup.pgsql
     networks:
       - crowler-net
     healthcheck:

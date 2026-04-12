@@ -1,0 +1,33 @@
+{
+  "agent_identity": {
+    "name": "Strict Fixture Agent",
+    "agent_id": "strict-fixture-agent",
+    "agent_type": "executor",
+    "trust_level": "restricted"
+  },
+  "jobs": [
+    {
+      "name": "Strict Fixture Agent",
+      "process": "serial",
+      "trigger_type": "manual",
+      "trigger_name": "strict_fixture",
+      "steps": [
+        {
+          "action": "Decision",
+          "params": {
+            "condition": {
+              "condition_type": "if",
+              "expression": "true",
+              "on_true": {
+                "agent_name": "non_existent_agent"
+              },
+              "on_false": {
+                "agent_name": "non_existent_agent"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

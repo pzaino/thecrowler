@@ -1,0 +1,9 @@
+jobs:
+  - name: "Legacy YAML Agent"
+    process: "serial"
+    trigger_type: "manual"
+    trigger_name: "legacy_yaml"
+    steps:
+      - action: "RunCommand"
+        params:
+          command: "echo legacy-yaml"

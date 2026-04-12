@@ -87,6 +87,22 @@ func TestLoadConfigInvalidFile(t *testing.T) {
 	}
 }
 
+func TestAgentFeatureFlagDefaults(t *testing.T) {
+	cfg := NewConfig()
+	if cfg == nil {
+		t.Fatal("expected NewConfig to return non-nil config")
+	}
+	if cfg.Agent.IdentityEnforcement {
+		t.Fatal("expected agent.identity_enforcement default to false")
+	}
+	if cfg.Agent.ContractEnforcement {
+		t.Fatal("expected agent.contract_enforcement default to false")
+	}
+	if cfg.Agent.MemoryRuntime {
+		t.Fatal("expected agent.memory_runtime default to false")
+	}
+}
+
 // Test IsEmpty
 func TestConfigIsEmpty(t *testing.T) {
 	// Create a non-empty config
@@ -1206,7 +1222,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0   0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 false false false false     false 0 0 0 false [] {false 0 []}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0   0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 false false false false     false 0 0 0 false [] {false 0 []} false}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()

@@ -1,0 +1,38 @@
+format_version: v2
+agent_identity:
+  agent_id: marketing-competitor-intel
+  name: Marketing Competitor Intel
+  agent_type: planner
+  owner: team:marketing
+  trust_level: restricted
+  capabilities:
+    - api_requests
+    - ai_reasoning
+    - emit_event
+  constraints:
+    max_steps: 10
+    time_budget: 3m
+jobs:
+  - name: Marketing Competitor Intel
+    process: serial
+    trigger_type: manual
+    trigger_name: run_marketing_intel
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://example.com/competitor-feed.json"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          url: "https://api.openai.com/v1/chat/completions"
+          auth: "Bearer ${OPENAI_API_KEY}"
+          model: "gpt-4o-mini"
+          prompt: "Extract product launches, positioning changes, and campaign themes from: $response"
+      - action: CreateEvent
+        params:
+          source: "agent.marketing-competitor-intel"
+          event_name: "marketing.competitor.snapshot"
+          event_type: "marketing.competitor.snapshot"
+          severity: "info"
+          details:
+            snapshot: "$response"

@@ -1421,7 +1421,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 
 	// Insert or update the page in WebObjects
-	err = insertOrUpdateWebObjects(tx, indexID, pageInfo)
+	objID, detailsJSON, err := insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating WebObjects: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating WebObjects: %v", err)
@@ -1429,6 +1429,15 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
+
+	// Index object attributes for WebObjet
+	err = indexObjectAttributes(tx, objID, detailsJSON, ctx.GetConfig())
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
+		rollbackTransaction(tx)
+		return 0, err
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
@@ -1466,6 +1475,148 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Return the index ID
 	return indexID, nil
+}
+
+func indexObjectAttributes(
+	tx *sql.Tx,
+	objectID int64,
+	detailsJSON []byte,
+	currCfg *cfg.Config,
+) error {
+
+	if currCfg == nil || currCfg.AttributesIndexing.IsEmpty() {
+		return nil
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(detailsJSON, &data); err != nil {
+		return err
+	}
+
+	attrs := currCfg.AttributesIndexing.WebObject
+
+	// --- build lookup ---
+	attrMap := make(map[string]cfg.AttributeDefinition)
+	for _, a := range attrs {
+		attrMap[a.Key] = a
+	}
+
+	// --- execution state ---
+	executed := make(map[string]bool)
+
+	// --- queue ---
+	queue := []cfg.AttributeDefinition{}
+
+	// --- seed: only index=true ---
+	for _, a := range attrs {
+		if a.Index {
+			queue = append(queue, a)
+		}
+	}
+
+	// --- process queue ---
+	for len(queue) > 0 {
+		attr := queue[0]
+		queue = queue[1:]
+
+		id := attr.Key + "|" + attr.Path
+		if executed[id] {
+			continue
+		}
+		executed[id] = true
+
+		// --- extract ---
+		var values []interface{}
+
+		if attr.IsCommandPath() {
+			ctxCmd := CommandContext{
+				ObjectID: objectID,
+				Data:     data,
+			}
+			values = ExecuteCommand(attr, ctxCmd)
+		} else {
+			tokens := GetParsedPath(attr.Path)
+			values = ExtractWithTokens(data, tokens)
+		}
+
+		if len(values) == 0 {
+			continue
+		}
+
+		cmn.DebugMsg(cmn.DbgLvlDebug4,
+			"[DEBUG-Indexing] Attr key=%s extracted=%d",
+			attr.Key, len(values),
+		)
+
+		// --- insert values ---
+		for _, v := range values {
+			raw := ToString(v)
+			if raw == "" {
+				continue
+			}
+
+			normalized := ApplyNormalizers(raw, attr.Normalizers)
+			if normalized == "" {
+				continue
+			}
+
+			hash := hashString(normalized)
+
+			err := insertObjectAttribute(
+				tx,
+				objectID,
+				attr.Key,
+				raw,
+				normalized,
+				hash,
+				attr.IndexType,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		// --- trigger RunAlso ---
+		for _, depKey := range attr.RunAlso {
+			if dep, ok := attrMap[depKey]; ok {
+				queue = append(queue, dep)
+			}
+		}
+	}
+
+	return nil
+}
+
+func hashString(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func insertObjectAttribute(
+	tx *sql.Tx,
+	objectID int64,
+	key string,
+	raw string,
+	normalized string,
+	hash string,
+	attrType string,
+) error {
+
+	_, err := tx.Exec(`
+		INSERT INTO ObjectAttributes
+			(object_id, object_type, attribute_key, attribute_value, normalized_value, value_hash, attribute_type)
+		VALUES ($1, 'webobject', $2, $3, $4, $5, $6)
+		ON CONFLICT DO NOTHING
+	`,
+		objectID,
+		key,
+		raw, // maps to attribute_value
+		normalized,
+		hash,
+		attrType,
+	)
+
+	return err
 }
 
 // indexNetInfo indexes the network information of a source in the database
@@ -1611,12 +1762,14 @@ func deleteWebObjects(tx *sql.Tx, indexID uint64) error {
 	return err
 }
 
+var nullEscape = regexp.MustCompile(`\\u0000`)
+
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
-func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (int64, []byte, error) {
 	// Prepare the "Details" field for insertion
-	details := make(map[string]interface{})
+	details := make(map[string]any)
 	details["performance"] = (*pageInfo).PerfInfo
 	links := []string{}
 	for _, link := range (*pageInfo).Links {
@@ -1628,7 +1781,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	// Create a JSON out of the details
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
@@ -1649,12 +1802,12 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			}
 			scrapedItemJSON, err := json.Marshal(value)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 			doc2 := make(map[string]interface{})
 			err = json.Unmarshal(scrapedItemJSON, &doc2)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 
 			// Add scrapedItemJSON to ScrapedJSON document
@@ -1666,29 +1819,30 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		// Convert the scraped data to JSON
 		scrapedDataJSON, err = json.Marshal(scrapedDoc1)
 		if err != nil {
-			return err
+			return 0, nil, err
 		}
 
 		// Combine the scraped data and the details
 		if len(scrapedDataJSON) > 0 {
-			var doc1 map[string]interface{}
-			var doc2 map[string]interface{}
+			var doc1 map[string]any
+			var doc2 map[string]any
 
 			err := json.Unmarshal(detailsJSON, &doc1)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 			err = json.Unmarshal(scrapedDataJSON, &doc2)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 
 			// Merges doc2 into doc1
 			mergeMaps(doc1, doc2)
 
-			detailsJSON, err = json.Marshal(doc1)
+			detailsJSON, err = normalizeJSON(doc1)
 			if err != nil {
-				return err
+				cmn.DebugMsg(cmn.DbgLvlError, "normalizing JSON: %v", err)
+				return 0, nil, err
 			}
 		}
 		// For debugging purposes:
@@ -1697,7 +1851,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 			var processedDetails map[string]interface{}
 			err = json.Unmarshal(detailsJSON, &processedDetails)
 			if err != nil {
-				return err
+				return 0, nil, err
 			}
 			// Print the links tag
 			fmt.Printf("Processed Links: %v\n", processedDetails["links"])
@@ -1707,15 +1861,22 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		//fmt.Println(string(detailsJSON))
 	}
 
+	// Make sure detailsJSON is absolutely valid for JSONB objects:
+	detailsJSON = bytes.ToValidUTF8(detailsJSON, []byte{})
+	detailsJSON = removeSurrogateEscapes(detailsJSON)
+	detailsJSON = nullEscape.ReplaceAll(detailsJSON, []byte(""))
+
 	// Extract Scraped Data and Detected Tech from detailsJSON
+	htmlContent := bytes.ToValidUTF8([]byte((*pageInfo).HTML), []byte{})
+	textContent := bytes.ToValidUTF8([]byte((*pageInfo).BodyText), []byte{})
 
 	// Calculate the SHA256 hash of the body text
 	hasher := sha256.New()
 	bytesToHash := []byte{}
-	if len((*pageInfo).BodyText) > 0 {
-		bytesToHash = []byte((*pageInfo).BodyText)
-	} else if len((*pageInfo).HTML) > 0 {
-		bytesToHash = []byte((*pageInfo).HTML)
+	if len(textContent) > 0 {
+		bytesToHash = []byte(textContent)
+	} else if len(htmlContent) > 0 {
+		bytesToHash = []byte(htmlContent)
 	} else {
 		hasher.Write([]byte(detailsJSON))
 	}
@@ -1723,10 +1884,6 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	bytesToHash = append(bytesToHash, detectedTechJSON...)
 	hasher.Write(bytesToHash)
 	hash := hex.EncodeToString(hasher.Sum(nil))
-
-	// Get HTML and text Content
-	htmlContent := (*pageInfo).HTML
-	textContent := (*pageInfo).BodyText
 
 	var objID int64
 
@@ -1751,7 +1908,8 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 	FROM upsert
 	FOR UPDATE;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
-		return err
+		cmn.DebugMsg(cmn.DbgLvlError, "inserting into WebObjectsIndex: %v", detailsJSON)
+		return objID, detailsJSON, err
 	}
 
 	// Step 2: Insert into WebObjectsIndex for the associated sourceID
@@ -1760,10 +1918,34 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) er
 		VALUES ($1, $2)
 		ON CONFLICT (index_id, object_id) DO NOTHING`, indexID, objID)
 	if err != nil {
-		return err
+		return objID, detailsJSON, err
 	}
 
-	return nil
+	return objID, detailsJSON, nil
+}
+
+var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)
+
+func removeSurrogateEscapes(jsonBytes []byte) []byte {
+	return surrogateEscape.ReplaceAll(jsonBytes, []byte(""))
+}
+
+func normalizeJSON(v any) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+
+	// Remove invalid UTF-8 sequences
+	raw = bytes.ToValidUTF8(raw, []byte{})
+
+	// Re-parse and re-marshal to ensure JSON validity
+	var clean interface{}
+	if err := json.Unmarshal(raw, &clean); err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(clean)
 }
 
 func mergeMaps(dst, src map[string]interface{}) {
@@ -1969,6 +2151,8 @@ func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
 	if keyword == "" {
 		return 0, fmt.Errorf("Invalid keyword")
 	}
+
+	keyword = strings.ToLower(norm.NFC.String(keyword))
 
 	// Serialize per keyword
 	if _, err := tx.Exec(`
