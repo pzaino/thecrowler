@@ -13,6 +13,11 @@ else
     echo "Building VDI image"
 fi
 
+# remove --no-cache from pars if it was passed by docker-rebuild.sh
+if [[ "$pars" == *"--no-cache"* ]]; then
+    pars="${pars//--no-cache/}"
+fi
+
 # Support functions
 
 version_to_integer() {
@@ -319,6 +324,16 @@ if [ "$NO_VDI" != "true" ]; then
     else
         make standalone_chrome
     fi
+fi
+
+# trim spaces from pars
+pars=$(echo "$pars" | xargs)
+
+# Check if pars is empty and if it is add "build" as default command
+if [ -z "$pars" ]; then
+    pars="build"
+else
+    echo "Using custom Docker Compose command: ${pars}"
 fi
 
 # Run Docker Compose
