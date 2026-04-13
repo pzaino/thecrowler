@@ -11,7 +11,7 @@ transparent as possible, whether it's:
 - Becoming a maintainer
 
 To check daily updates, you can follow the project on github or click on
-[here](https://githubtracker.com/pzaino/thecrowler).
+[this link](https://githubtracker.com/pzaino/thecrowler).
 
 ## We Develop with Github
 
@@ -198,7 +198,8 @@ By contributing, you agree that your contributions will be licensed under its
 
 ### Does the CROWler project and team assume any liability for the code I contribute?
 
-No, the CROWler project and team do not assume any liability for the code you
+No, the CROWler project and team do not assume any liability for the code you submit. By contributing to the CROWler project, you agree that you are solely responsible for your contributions and that the CROWler project and team are not liable for any issues that
+may arise from your contributions.
 
 ### Can I contribute to the CROWler project if I am not a developer?
 
@@ -212,7 +213,7 @@ Yes, you can contribute to the CROWler project even if you are not a Go develope
 
 No, the CROWler project and the development team do not assure backward compatibility.
 While I try to maintain backward compatibility, it is not always possible and the main goal
-is to ensure the CROWler is always effective and efficient in its tasks. BAckward compatibility
+is to ensure the CROWler is always effective and efficient in its tasks. Backward compatibility
 comes after these two goals, especially until release 1.0.0 is reached.
 
 ## References
