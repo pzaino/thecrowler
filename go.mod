@@ -98,7 +98,7 @@ require (
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
 	github.com/mafredri/cdp v0.35.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
