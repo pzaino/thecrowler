@@ -49,9 +49,6 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/abadojack/whatlanggo"
-	cdp "github.com/mafredri/cdp"
-	"github.com/mafredri/cdp/protocol/emulation"
-	"github.com/mafredri/cdp/rpcc"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -2416,47 +2413,40 @@ func addXHRHook(wd *vdi.WebDriver) error {
 
 func enableCDPNetworkLogging(wd vdi.WebDriver) error {
 	// Enable full network tracking (includes POST bodies)
-	_, err := wd.ExecuteChromeDPCommand("Network.enable", map[string]interface{}{
-		"maxPostDataSize": -1, // Ensure full request/response capture
-	})
+	maxPostDataSize := -1
+	err := vdi.EnableNetwork(wd, &maxPostDataSize)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Network domain: %v", err)
 		return err
 	}
 
 	// Disable caching to prevent early response disposal
-	_, err = wd.ExecuteChromeDPCommand("Network.setCacheDisabled", map[string]interface{}{
-		"cacheDisabled": true,
-	})
+	err = vdi.SetCacheDisabled(wd, true)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to disable cache: %v", err)
 	}
 
 	// Capture Service Worker Requests
-	_, err = wd.ExecuteChromeDPCommand("ServiceWorker.enable", map[string]interface{}{})
+	err = vdi.EnableServiceWorker(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Service Worker capture: %v", err)
 	}
 
 	// Capture ALL frames
-	_, err = wd.ExecuteChromeDPCommand("Target.setAutoAttach", map[string]interface{}{
-		"autoAttach":             true,
-		"waitForDebuggerOnStart": false,
-		"flatten":                true,
-	})
+	err = vdi.SetTargetAutoAttach(wd, true, false, true)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable iframe logging: %v", err)
 	}
 
 	// Enable Log domain
-	_, err = wd.ExecuteChromeDPCommand("Log.enable", map[string]interface{}{})
+	err = vdi.EnableLog(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Log domain: %v", err)
 		return err
 	}
 
 	// Enable Page Events (for iframe tracking)
-	_, err = wd.ExecuteChromeDPCommand("Page.enable", map[string]interface{}{})
+	err = vdi.EnablePage(wd)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Page domain: %v", err)
 		return err
@@ -2546,7 +2536,7 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 			return
 		default:
 			// Fetch CDP Events
-			//events, err := wd.ExecuteChromeDPCommand("Log.entryAdded", map[string]interface{}{})
+			// events can be polled through CDP Log domain if needed.
 			p.getURLMutex.Lock()
 			logs, err := wd.Log("performance")
 			p.getURLMutex.Unlock()
@@ -3101,17 +3091,12 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]any) {
 // Fetch Response Body from ChromeDP
 func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetching response body for requestId: %s", requestID)
-	responseBodyArgs := map[string]interface{}{
-		"requestId": requestID,
-	}
-
 	// Try fetching response body (Retry if empty)
-	var responseInf interface{}
 	var err error
 	for i := 0; i < 5; i++ { // Retry up to 3 times
-		responseInf, err = wd.ExecuteChromeDPCommand("Network.getResponseBody", responseBodyArgs)
-		if err == nil && responseInf != nil {
-			break
+		body, isBase64, err := vdi.GetResponseBody(wd, requestID)
+		if err == nil {
+			return body, isBase64
 		}
 		time.Sleep(200 * time.Millisecond) // Wait before retrying
 	}
@@ -3121,25 +3106,7 @@ func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
 		return "", false
 	}
-
-	// Convert response to map
-	bodyData, ok := responseInf.(map[string]interface{})
-	if !ok || bodyData["body"] == nil {
-		return "", false
-	}
-
-	/*
-		contentType, _ := bodyData["mimeType"].(string)
-		if contentType == "" {
-			contentType, _ = bodyData["content-type"].(string)
-		}
-	*/
-
-	// Check if it's Base64 encoded
-	bodyText, _ := bodyData["body"].(string)
-	isBase64, _ := bodyData["base64Encoded"].(bool)
-
-	return bodyText, isBase64
+	return "", false
 }
 
 // Decode Base64 & Parse JSON Responses
@@ -3323,15 +3290,13 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 			return
 		}
 		if referrerURL != "" {
-			_, err := (*wd).ExecuteChromeDPCommand("Network.enable", nil)
+			err := vdi.EnableNetwork(*wd, nil)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
 				return
 			}
-			_, err = (*wd).ExecuteChromeDPCommand("Network.setExtraHTTPHeaders", map[string]interface{}{
-				"headers": map[string]interface{}{
-					"referer": referrerURL,
-				},
+			err = vdi.SetExtraHTTPHeaders(*wd, map[string]interface{}{
+				"referer": referrerURL,
 			})
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "failed to set referrer URL: %v", err)
@@ -3862,15 +3827,13 @@ func blockCDPURLs(wd vdi.WebDriver, ctx *ProcessContext) error {
 	}
 
 	// First: enable the Network domain
-	_, err := wd.ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+	err := vdi.EnableNetwork(wd, nil)
 	if err != nil {
 		return fmt.Errorf("failed to enable Network domain: %w", err)
 	}
 
 	// Then: set the blocked URL patterns
-	_, err = wd.ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
-		"urls": patterns,
-	})
+	err = vdi.SetBlockedURLs(wd, patterns)
 	if err != nil {
 		return fmt.Errorf("failed to set blocked URLs: %w", err)
 	}
@@ -3911,12 +3874,9 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		err := changeUserAgentCDP(ctx, userAgent)
 		if err != nil {
 			// Enable the Network domain
-			_, _ = (*wd).ExecuteChromeDPCommand("Network.enable", map[string]interface{}{})
+			_ = vdi.EnableNetwork(*wd, nil)
 			// Set the User-Agent using CDP
-			_, err = (*wd).ExecuteChromeDPCommand("Network.setUserAgentOverride", map[string]interface{}{
-				"userAgent": userAgent,
-				"platform":  ctx.config.Crawler.Platform,
-			})
+			err = vdi.SetUserAgentOverride(*wd, userAgent, ctx.config.Crawler.Platform)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
 				//return nil
@@ -3942,114 +3902,25 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	return nil
 }
 
-/*
-// Input for the Network.setUserAgentOverride command
-type setUserAgentOverrideParams struct {
-	UserAgent string `json:"userAgent"`
-}
-
-// Implement easyjson.Marshaler for the input
-func (p *setUserAgentOverrideParams) MarshalJSON() ([]byte, error) {
-	w := &jwriter.Writer{}
-	p.MarshalEasyJSON(w)
-	return w.Buffer.BuildBytes(), w.Error
-}
-
-func (p *setUserAgentOverrideParams) MarshalEasyJSON(w *jwriter.Writer) {
-	w.RawString(`{"userAgent":"`)
-	w.String(p.UserAgent)
-	w.RawString(`"}`)
-}
-
-// Empty response struct for the command (no response expected)
-type emptyResponse struct{}
-
-// Implement easyjson.Unmarshaler for the output
-func (r *emptyResponse) UnmarshalJSON(_ []byte) error {
-	return nil
-}
-
-// Implement easyjson.Unmarshaler for the output
-func (r *emptyResponse) UnmarshalEasyJSON(_ *jlexer.Lexer) {
-	// No-op since there is no data to unmarshal
-}
-
-func changeUserAgentCDP(_ *vdi.WebDriver, pctx *ProcessContext, userAgent string) error {
-	// Connect to the existing Chrome instance with CDP enabled
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Use cdp.NewRemoteAllocator to connect to the Chrome container
-	remoteAllocatorCtx, cancelRemoteAllocator := cdp.NewRemoteAllocator(ctx, "http://"+pctx.config.Selenium[pctx.SelID].Host+":9222")
-	defer cancelRemoteAllocator()
-
-	// Create a new browser context
-	browserCtx, cancelBrowser := cdp.NewContext(remoteAllocatorCtx)
-	defer cancelBrowser()
-
-	// Run CDP command to change the user-agent
-	params := &setUserAgentOverrideParams{
-		UserAgent: userAgent,
-	}
-
-	// Send the raw CDP command
-	err := cdp.Run(browserCtx,
-		cdp.ActionFunc(func(ctx context.Context) error {
-			return cdp.FromContext(ctx).Browser.Execute(
-				ctx,
-				"Network.setUserAgentOverride",
-				params,           // Input parameters
-				&emptyResponse{}, // Empty output since no response is expected
-			)
-		}),
-	)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to change User-Agent using CDP: %v", err)
-	}
-
-	return err
-}
-*/
-
-// changeUserAgentCDP modifies the User-Agent using CDP
+// changeUserAgentCDP modifies the User-Agent using CDP via Selenium bridge.
 func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
-	// Connect to the existing Selenium CDP instance
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Get WebSocket URL from Selenium-controlled browser
-	port := fmt.Sprintf("%d", 9222+pctx.SelID)
-	wsURL := "ws://" + pctx.config.Selenium[pctx.SelID].Host + ":" + port + "/devtools/browser/" + pctx.wd.SessionID()
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Connecting to CDP via 'ws': %s", wsURL)
-
-	// Dial the Chrome Debugger Protocol
-	conn, err := rpcc.DialContext(ctx, wsURL)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to connect to CDP via 'ws': %v", err)
-		return err
+	if pctx == nil || pctx.wd == nil {
+		return fmt.Errorf("invalid process context or webdriver")
 	}
-	defer conn.Close() //nolint:errcheck // Close the connection when done
 
-	// Create a CDP client
-	cdpClient := cdp.NewClient(conn)
-
-	// Enable Network domain
-	err = cdpClient.Network.Enable(ctx, nil)
+	err := vdi.EnableNetwork(pctx.wd, nil)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to enable Network domain via 'ws': %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to enable Network domain via Selenium CDP bridge: %v", err)
 		return err
 	}
 
-	// Enable Emulation domain
-	err = cdpClient.Emulation.SetUserAgentOverride(ctx, &emulation.SetUserAgentOverrideArgs{
-		UserAgent: userAgent,
-	})
+	err = vdi.SetUserAgentOverride(pctx.wd, userAgent, pctx.config.Crawler.Platform)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using CDP via 'ws': %v", err)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using Selenium CDP bridge: %v", err)
 		return err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Successfully changed UserAgent to: '%s', using CDP via 'ws'", userAgent)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] Successfully changed UserAgent to: '%s', using Selenium CDP bridge", userAgent)
 	return nil
 }
 
