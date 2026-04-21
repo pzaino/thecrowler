@@ -243,7 +243,7 @@ func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
 	var errList []error
 
 	// Execute the scraping rule
-	if shouldExecuteScrapingRule(r, wd) {
+	if shouldExecuteScrapingRule(ctx, r, wd) {
 		// Apply the rule
 		extractedData, err := ApplyRule(ctx, r, wd)
 		if err != nil {
@@ -331,8 +331,8 @@ func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition
 	return nil
 }
 
-func shouldExecuteScrapingRule(r *rules.ScrapingRule, wd *vdi.WebDriver) bool {
-	return len(r.Conditions) == 0 || checkScrapingConditions(r.Conditions, wd)
+func shouldExecuteScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule, wd *vdi.WebDriver) bool {
+	return len(r.Conditions) == 0 || checkScrapingConditions(ctx, r.Conditions, wd)
 }
 
 func processExtractedData(extractedData map[string]interface{}) map[string]interface{} {
@@ -589,7 +589,7 @@ func checkScrapingPreConditions(conditions cfg.Condition, url string) bool {
 // checkScrapingConditions checks all types of conditions: Scraping and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
-func checkScrapingConditions(conditions map[string]interface{}, wd *vdi.WebDriver) bool {
+func checkScrapingConditions(ctx *ProcessContext, conditions map[string]interface{}, wd *vdi.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
 	if len(conditions) > 0 {
@@ -610,6 +610,11 @@ func checkScrapingConditions(conditions map[string]interface{}, wd *vdi.WebDrive
 			}
 			// Check if the language is correct
 			if lang != conditions["language"] {
+				canProceed = false
+			}
+		}
+		if envConditions, ok := conditions["env"]; ok {
+			if !checkEnvironmentCondition(ctx, envConditions) {
 				canProceed = false
 			}
 		}

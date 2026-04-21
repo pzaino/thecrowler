@@ -953,6 +953,7 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, er
 	// tech detect
 	if detectedTech := detect.DetectTechnologies(&detectCtx); detectedTech != nil {
 		pageInfo.DetectedTech = *detectedTech
+		publishDetectionResults(ctx, url, detectedTech)
 	}
 
 	// extract page info (uses pageSource, and may use wd depending on your implementation)
@@ -5083,6 +5084,7 @@ func rightClick(processCtx *ProcessContext, id string, url LinkItem) error {
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
+		publishDetectionResults(processCtx, currentURL, detectedTech)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
 		processCtx.RefreshCrawlingTimer()
@@ -5276,6 +5278,7 @@ func clickLink(processCtx *ProcessContext, id string, url LinkItem) error {
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
+		publishDetectionResults(processCtx, currentURL, detectedTech)
 	}
 
 	// Extract page information
@@ -5448,6 +5451,7 @@ func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURL
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
+		publishDetectionResults(processCtx, currentURL, detectedTech)
 	}
 	elapsed = time.Since(startTime)
 	if processCtx.RefreshCrawlingTimer != nil {
