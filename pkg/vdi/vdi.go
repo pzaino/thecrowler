@@ -1065,7 +1065,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err2)
 			}
 		*/
-		err2 := EnableNetwork(wd, nil)
+		err2 := EnableNetwork(wd, ctx.GetConfig().Crawler.CDPDelay, nil)
 		if err2 != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable CDP Network domain: %v", err2)
 			// Check if the error contains: "invalid session id"
@@ -1073,7 +1073,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 				return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
 			}
 		} else {
-			err2 = SetBlockedURLs(wd, []string{"*.mp4"})
+			err2 = SetBlockedURLs(wd, ctx.GetConfig().Crawler.CDPDelay, []string{"*.mp4"})
 			if err2 != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "failed to block .mp4 URLs: %v", err2)
 			}
@@ -1491,7 +1491,7 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 console.log("loaded");
 `, uaString, platform, platform)
 
-	err := AddScriptToEvaluateOnNewDocument(driver, script)
+	err := AddScriptToEvaluateOnNewDocument(driver, 0, script)
 	if err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}

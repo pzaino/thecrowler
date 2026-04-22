@@ -84,6 +84,7 @@ crawler:                     # This is the CROWler Engine's crawler configuratio
   workers: 5                 # Required, this is the number of workers the crawler will use
   max_depth: 1               # Optional, this is the maximum depth the crawler will reach (0 for no limit)
   delay: "2"                 # Optional, this is the delay between two requests (this is important to avoid being banned by the target website, you can also use remote(x,y) to use a random delay between x and y seconds)
+  cdp_delay: 100             # Optional, delay in milliseconds applied before each CDP request
   timeout: 10                # Optional, this is the timeout for a request
   maintenance: 60            # Optional, this is the time between two maintenance operations (in seconds)
   interval: 10               # Optional, this is the time before start executing action rules on a just fetched page (this is useful for slow websites)
