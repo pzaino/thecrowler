@@ -706,6 +706,9 @@ func crawlSources(wb *WorkBlock) uint64 {
 			RefreshLastActivity() // Reset activity
 
 			for {
+				// This function logs vdiSlot in human readable format (starting from 1 instead
+				// of 0), this is because normally VDI instances are numbered starting from 1,
+				// so it will be more intuitive to log them starting from 1 as well.
 				var source cdb.Source
 				if !BatchCompleted.Load() {
 					var ok bool
@@ -714,14 +717,14 @@ func crawlSources(wb *WorkBlock) uint64 {
 					case source, ok = <-sourceChan:
 						if !ok {
 							// Channel is closed, let's check if we need to quit or not:
-							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot+1)
 							return
 						}
 					default:
 						// No source available right now
 						starves++
 						if starves > 5 {
-							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot)
+							cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] No sources available for 5 iterations for VDI slot %d", vdiSlot+1)
 							starves = 0 // Reset starvation counter
 							// sleep 2 seconds and continue
 							time.Sleep(2 * time.Second)
@@ -733,7 +736,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					}
 				} else {
 					// Batch is completed, exit the goroutine
-					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot)
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Batch completed, exiting goroutine for VDI slot %d", vdiSlot+1)
 					return
 				}
 				starves = 0           // Reset starvation counter
@@ -775,7 +778,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				(*wb.PipelineStatus)[statusIdx].PipelineRunning.Store(1) // Set the pipeline running status
 				statusLock.Unlock()
 
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot, statusIdx)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot+1, statusIdx+1)
 
 				// Start crawling the website
 				// startCrawling will spawn a crawling thread and return, so we need to wait for
@@ -799,7 +802,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 		}(vdiID)
 
 		// Log the VDI instance started
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Started VDI slot %d", vdiID)
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Started VDI slot %d", vdiID+1)
 	}
 
 	RampUpRunning.Store(false) // Ramp-up phase is over
