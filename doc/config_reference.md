@@ -33,6 +33,7 @@
   - **`max_depth`** *(integer)*: This is the maximum depth that the CROWler will crawl websites.
   - **`max_sources`** *(integer)*: This is the maximum number of sources that a single instance of the CROWler's engine will fetch atomically to enqueue and crawl.
   - **`delay`** *(string)*: This is the delay between requests that the CROWler will use to crawl websites. It is the delay between requests that the CROWler will use to crawl websites. For delay you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'.
+  - **`cdp_delay`** *(integer)*: Delay in milliseconds applied before each CDP request. Useful on low-spec VDIs where very frequent CDP commands can trigger transient Selenium/CDP errors.
   - **`browsing_mode`** *(string)*: This is the browsing mode that the CROWler will use to crawl websites. For example, recursive, human, or fuzzing.
   - **`max_retries`** *(integer)*: This is the maximum number of times that the CROWler will retry a request to a website. If the CROWler is unable to fetch a website after this number of retries, it will move on to the next website.
   - **`max_requests`** *(integer)*: This is the maximum number of requests that the CROWler will send to a website. If the CROWler sends this number of requests to a website and is unable to fetch the website, it will move on to the next website.

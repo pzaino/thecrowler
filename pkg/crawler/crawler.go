@@ -2411,42 +2411,49 @@ func addXHRHook(wd *vdi.WebDriver) error {
 	return err
 }
 
-func enableCDPNetworkLogging(wd vdi.WebDriver) error {
+func getCDPDelay(cfg cfg.Config) int {
+	if cfg.Crawler.CDPDelay < 0 {
+		return 0
+	}
+	return cfg.Crawler.CDPDelay
+}
+
+func enableCDPNetworkLogging(wd vdi.WebDriver, cdpDelay int) error {
 	// Enable full network tracking (includes POST bodies)
 	maxPostDataSize := -1
-	err := vdi.EnableNetwork(wd, &maxPostDataSize)
+	err := vdi.EnableNetwork(wd, cdpDelay, &maxPostDataSize)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Network domain: %v", err)
 		return err
 	}
 
 	// Disable caching to prevent early response disposal
-	err = vdi.SetCacheDisabled(wd, true)
+	err = vdi.SetCacheDisabled(wd, cdpDelay, true)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to disable cache: %v", err)
 	}
 
 	// Capture Service Worker Requests
-	err = vdi.EnableServiceWorker(wd)
+	err = vdi.EnableServiceWorker(wd, cdpDelay)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Service Worker capture: %v", err)
 	}
 
 	// Capture ALL frames
-	err = vdi.SetTargetAutoAttach(wd, true, false, true)
+	err = vdi.SetTargetAutoAttach(wd, cdpDelay, true, false, true)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable iframe logging: %v", err)
 	}
 
 	// Enable Log domain
-	err = vdi.EnableLog(wd)
+	err = vdi.EnableLog(wd, cdpDelay)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Log domain: %v", err)
 		return err
 	}
 
 	// Enable Page Events (for iframe tracking)
-	err = vdi.EnablePage(wd)
+	err = vdi.EnablePage(wd, cdpDelay)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to enable Page domain: %v", err)
 		return err
@@ -2640,7 +2647,7 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 
 					// Fetch Response Body
 					p.getURLMutex.Lock()
-					responseBody, isBase64 := fetchResponseBody(wd, requestID)
+					responseBody, isBase64 := fetchResponseBody(wd, getCDPDelay(p.config), requestID)
 					p.getURLMutex.Unlock()
 					if responseBody == "" {
 						cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to get response body for requestId %s: %v", requestID, err)
@@ -3071,7 +3078,7 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]any) {
 		}
 
 		// Fetch Response Body
-		body, isBase64 := fetchResponseBody(wd, requestID)
+		body, isBase64 := fetchResponseBody(wd, getCDPDelay(ctx.config), requestID)
 
 		// Decode if necessary
 		decodedBody, detectedType := decodeBodyContent(wd, body, isBase64, "")
@@ -3089,12 +3096,12 @@ func collectResponses(ctx *ProcessContext, responseBodies map[string]any) {
 }
 
 // Fetch Response Body from ChromeDP
-func fetchResponseBody(wd vdi.WebDriver, requestID string) (string, bool) {
+func fetchResponseBody(wd vdi.WebDriver, cdpDelay int, requestID string) (string, bool) {
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Fetching response body for requestId: %s", requestID)
 	// Try fetching response body (Retry if empty)
 	var err error
 	for i := 0; i < 5; i++ { // Retry up to 3 times
-		body, isBase64, err := vdi.GetResponseBody(wd, requestID)
+		body, isBase64, err := vdi.GetResponseBody(wd, cdpDelay, requestID)
 		if err == nil {
 			return body, isBase64
 		}
@@ -3290,12 +3297,12 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 			return
 		}
 		if referrerURL != "" {
-			err := vdi.EnableNetwork(*wd, nil)
+			err := vdi.EnableNetwork(*wd, getCDPDelay(ctx.config), nil)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "failed to enable Network domain: %v", err)
 				return
 			}
-			err = vdi.SetExtraHTTPHeaders(*wd, map[string]interface{}{
+			err = vdi.SetExtraHTTPHeaders(*wd, getCDPDelay(ctx.config), map[string]interface{}{
 				"referer": referrerURL,
 			})
 			if err != nil {
@@ -3372,7 +3379,7 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 
 	// Add XHR Hook
 	if ctx.config.Crawler.CollectXHR {
-		err = enableCDPNetworkLogging(ctx.wd)
+		err = enableCDPNetworkLogging(ctx.wd, getCDPDelay(ctx.config))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "adding XHR Hook: %v", err)
 		}
@@ -3827,13 +3834,13 @@ func blockCDPURLs(wd vdi.WebDriver, ctx *ProcessContext) error {
 	}
 
 	// First: enable the Network domain
-	err := vdi.EnableNetwork(wd, nil)
+	err := vdi.EnableNetwork(wd, getCDPDelay(ctx.config), nil)
 	if err != nil {
 		return fmt.Errorf("failed to enable Network domain: %w", err)
 	}
 
 	// Then: set the blocked URL patterns
-	err = vdi.SetBlockedURLs(wd, patterns)
+	err = vdi.SetBlockedURLs(wd, getCDPDelay(ctx.config), patterns)
 	if err != nil {
 		return fmt.Errorf("failed to set blocked URLs: %w", err)
 	}
@@ -3874,9 +3881,9 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		err := changeUserAgentCDP(ctx, userAgent)
 		if err != nil {
 			// Enable the Network domain
-			_ = vdi.EnableNetwork(*wd, nil)
+			_ = vdi.EnableNetwork(*wd, getCDPDelay(ctx.config), nil)
 			// Set the User-Agent using CDP
-			err = vdi.SetUserAgentOverride(*wd, userAgent, ctx.config.Crawler.Platform)
+			err = vdi.SetUserAgentOverride(*wd, getCDPDelay(ctx.config), userAgent, ctx.config.Crawler.Platform)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
 				//return nil
@@ -3908,13 +3915,13 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 		return fmt.Errorf("invalid process context or webdriver")
 	}
 
-	err := vdi.EnableNetwork(pctx.wd, nil)
+	err := vdi.EnableNetwork(pctx.wd, getCDPDelay(pctx.config), nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to enable Network domain via Selenium CDP bridge: %v", err)
 		return err
 	}
 
-	err = vdi.SetUserAgentOverride(pctx.wd, userAgent, pctx.config.Crawler.Platform)
+	err = vdi.SetUserAgentOverride(pctx.wd, getCDPDelay(pctx.config), userAgent, pctx.config.Crawler.Platform)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using Selenium CDP bridge: %v", err)
 		return err
