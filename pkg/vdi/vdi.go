@@ -270,15 +270,18 @@ func (p *Pool) Size() int {
 	return len(p.slot)
 }
 
-// Acquire acquires a VDI instance from the pool
+// Acquire acquires a VDI instance from the pool based on the provided allowed list of VDI names (comma-separated string).
+// If the list is empty, it will acquire any available VDI instance. If no instances are available, it will wait until one is released
 func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	if p == nil {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-VDI-Acquire] Trying to acquire VDi: %s", strList)
+
 wait_for_available_vdis:
 	p.mu.Lock()
-	// Check if there are any available VDIs
+
 	available := checkAvailable(p)
 	if available < 0 {
 		p.mu.Unlock()
@@ -293,10 +296,12 @@ wait_for_available_vdis:
 	defer p.mu.Unlock()
 
 	strList = strings.TrimSpace(strList)
-	strIndices := strings.Split(strList, ",")
+
+	var strIndices []string
 	if strList != "" {
+		strIndices = strings.Split(strList, ",")
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
-		// Read full VDIs pool names list and put it in a string comma separated
+
 		poolList := ""
 		for i := 0; i < len(p.slot); i++ {
 			pName := p.slot[i].Config.Name
@@ -315,9 +320,9 @@ wait_for_available_vdis:
 			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
 			continue
 		}
+
 		if !p.busy[i] {
-			if len(strIndices) > 0 {
-				// We have an assigned list, so we need to check if this p is in the list
+			if strList != "" {
 				found := false
 				for _, strIdx := range strIndices {
 					pName := p.slot[i].Config.Name
@@ -332,7 +337,6 @@ wait_for_available_vdis:
 			}
 
 			p.busy[i] = true
-			// Make a deep copy of p.slot[i] to be safe:
 			vdiInstance := SeleniumInstance{
 				Service: p.slot[i].Service,
 				Config:  p.slot[i].Config,
@@ -340,6 +344,7 @@ wait_for_available_vdis:
 			return i, vdiInstance, nil
 		}
 	}
+
 	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
 }
 
@@ -1060,7 +1065,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 				cmn.DebugMsg(cmn.DbgLvlError, "Failed to configure browser to block video content: %v", err2)
 			}
 		*/
-		_, err2 := wd.ExecuteChromeDPCommand("Network.enable", nil)
+		err2 := EnableNetwork(wd, nil)
 		if err2 != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "failed to enable CDP Network domain: %v", err2)
 			// Check if the error contains: "invalid session id"
@@ -1068,9 +1073,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 				return nil, fmt.Errorf("VDI session is invalid, something closed it, cannot continue")
 			}
 		} else {
-			_, err2 = wd.ExecuteChromeDPCommand("Network.setBlockedURLs", map[string]interface{}{
-				"urls": []string{"*.mp4"},
-			})
+			err2 = SetBlockedURLs(wd, []string{"*.mp4"})
 			if err2 != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "failed to block .mp4 URLs: %v", err2)
 			}
@@ -1488,10 +1491,7 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 console.log("loaded");
 `, uaString, platform, platform)
 
-	args := make(map[string]any)
-	args["source"] = script
-
-	_, err := driver.ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", args)
+	err := AddScriptToEvaluateOnNewDocument(driver, script)
 	if err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}

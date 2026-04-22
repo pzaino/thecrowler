@@ -28,8 +28,6 @@ deployed in a containerized environment.
 - [Plugins](./plugins.md)
 - [Traditional and modern Agents](./crowler_agents_reference.md)
 - [Agents YAML-first authoring guide](./agents_yaml_authoring.md)
-- [Agent compatibility matrix](./agent_compatibility_matrix.md)
-- [ADR 000: Agent dual-mode baseline](./adr/000-agent-dual-mode-baseline.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Test Policy](./test_policy.md)
 - [License](../LICENSE.md)
