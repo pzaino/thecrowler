@@ -3,6 +3,7 @@
 # shellcheck disable=SC2124
 pars="$@"
 
+export NO_VDI=false
 # Check if pars contains "--no-vdi"
 if [[ "$pars" == *"--no-vdi"* ]]; then
     echo "Building without VDI image"
@@ -155,7 +156,7 @@ export DOCKER_POSTRGES_IMAGE=$POSTGRES_IMAGE
 export DOCKER_SELENIUM_IMAGE=$SELENIUM_IMAGE
 
 # Build custom Selenium image
-if [ "$NO_VDI" != "true" ]; then
+if [ "${NO_VDI}" != "true" ]; then
     echo "Building VDI image..."
     rm -rf docker-selenium
     git clone https://github.com/SeleniumHQ/docker-selenium.git ./docker-selenium

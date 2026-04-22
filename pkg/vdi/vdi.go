@@ -276,6 +276,8 @@ func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-VDI-Acquire] Trying to acquire VDi: %s", strList)
+
 wait_for_available_vdis:
 	p.mu.Lock()
 	// Check if there are any available VDIs
