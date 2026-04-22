@@ -1,15 +1,35 @@
+---
+# ==========================
+# CROWler REMOTE config (annotated)
+# ==========================
+# Freeform version of YOUR config (semver pattern):
 version: "1.0.0"
+# Who authored/maintains this config (freeform string):
 author: "Paolo Fabio Zaino"
+# Short description of this config (freeform string):
 description: "Reusable remote configuration for The CROWler Engine instances"
+# Timestamp of when this config was created (ISO 8601 format):
 created_at: "2025-09-07T12:00:00"
 
+# Remote distribution configuration for The CROWler Fleet
+# This section defines the settings to reach the remote distribution server
+# and download the actual config.yaml file to configure the CROWler Fleet instances.
 remote:
-  host: "${CROWLER_DISTRIBUTION_HOST}"
-  path: "${CROWLER_DISTRIBUTION_PATH}"
-  port: ${CROWLER_DISTRIBUTION_PORT}
+  # The protocol to use for the connection (http | https)
   type: "http"
+  # The host that serves the config.yaml file 
+  host: "${CROWLER_DISTRIBUTION_HOST}"
+  # The path on the host where the config.yaml file is located
+  path: "${CROWLER_DISTRIBUTION_PATH}"
+  # The port to connect to on the host
+  port: ${CROWLER_DISTRIBUTION_PORT}
+  # The AWS region where the distribution server is located (if applicable)
   region: "${CROWLER_DISTRIBUTION_REGION}"
+  # The authentication token to use when connecting to the distribution server (if applicable)
   token: "${CROWLER_DISTRIBUTION_TOKEN}"
+  # The secret or password to use for authentication (if applicable)
   secret: "${CROWLER_DISTRIBUTION_SECRET}"
+  # The timeout in seconds for the connection to the distribution server
   timeout: ${CROWLER_DISTRIBUTION_TIMEOUT}
+  # If the connection to the distribution server should use SSL/TLS (enable | disable)
   sslmode: "${CROWLER_DISTRIBUTION_SSLMODE}"
