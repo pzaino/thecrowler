@@ -270,12 +270,13 @@ func (p *Pool) Size() int {
 	return len(p.slot)
 }
 
+// Acquire acquires a VDI instance from the pool based on the provided allowed list of VDI names (comma-separated string).
+// If the list is empty, it will acquire any available VDI instance. If no instances are available, it will wait until one is released
 func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	if p == nil {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
 
-	strList = strings.TrimSpace(strList)
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-VDI-Acquire] Trying to acquire VDi: %s", strList)
 
 wait_for_available_vdis:
