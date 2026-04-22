@@ -2,72 +2,144 @@
 # ==========================
 # CROWler LOCAL config (annotated)
 # ==========================
-version: 1.0.0 # Freeform version of YOUR config (semver pattern)
-author: default # Who authored/maintains this config
+# Freeform version of YOUR config (semver pattern):
+version: 1.0.0 
+# Who authored/maintains this config (freeform string):
+author: default 
+# Short description of this config (freeform string):
 description: Default LOCAL configuration for The CROWler
-created_at: "2025-08-13T00:00:00" # Accepts multiple date/time formats per schema regex
+# Accepts multiple date/time formats per schema regex
+created_at: "2025-08-13T00:00:00" 
 
 # --------------------------
 # Database (required in LOCAL mode)
 # --------------------------
 database:
-  type: postgres # DB engine: postgres | mysql | sqlite (postgres recommended)
-  host: ${DOCKER_DB_HOST} # DB host (FQDN/IP/env-var allowed by regex in schema)
-  port: 5432 # DB port (1..65535)
-  user: ${CROWLER_DB_USER} # DB username
-  password: ${CROWLER_DB_PASSWORD} # DB password (can use envsubst at runtime)
-  dbname: SitesIndex # DB name (example value from schema)
-  retry_time: 10 # Seconds before retrying a failed DB connection (≥5)
-  ping_time: 10 # Seconds between liveness pings (≥5)
-  sslmode: disable # enable | disable | "" (empty) per enum
-  optimize_for: write # write | query | none | "" – pick for workload pattern
-  max_conns: 50 # Max open connections (≥25)
-  max_idle_conns: 30 # Idle pool size (≥25; ~25–30% of max_conns is typical)
+  # DB engine: postgres | mysql | sqlite (postgres recommended):
+  type: postgres 
+  # DB host (FQDN/IP/env-var allowed by regex in schema)
+  host: ${DOCKER_DB_HOST} 
+  # DB port (1..65535)
+  port: 5432 
+  # DB username
+  user: ${CROWLER_DB_USER} 
+  # DB password (can use envsubst at runtime)
+  password: ${CROWLER_DB_PASSWORD} 
+  # DB name (example value from schema)
+  dbname: SitesIndex 
+  # Seconds before retrying a failed DB connection (≥5)
+  retry_time: 10 
+  # Seconds between liveness pings (≥5)
+  ping_time: 10 
+  # SSL mode: enable | disable | "" (empty) per enum
+  sslmode: disable 
+  # Optimize for workload pattern: write | query | none | "" – pick for workload pattern
+  optimize_for: write 
+  # Max open connections (≥25)
+  max_conns: 50 
+  # Idle pool size (≥25; ~25–30% of max_conns is typical)
+  max_idle_conns: 30 
 
 # --------------------------
 # Crawler Engine behavior
 # --------------------------
 crawler:
-  query_timer: 30 # Seconds between DB polls for new Sources
-  workers: 3 # Concurrent workers; use ≥3 when network discovery is enabled
-  platform: desktop # desktop | mobile (mobile is experimental per docs)
-  browser_platform: linux # darwin | windows | linux | random – affects UA selection
-  interval: random(1, 3) # Human Behavior Simulation pacing; supports ExprTerpreter strings
-  timeout: 30 # Page fetch/render timeout (seconds)
-  crawling_interval: 3 days # Re-crawl cadence per Source (e.g., "1 hour", "3 days")
-  crawling_if_error: 15 minutes # Retry-after when a crawl fails (string)
-  crawling_if_ok: 3 days # Retry-after when a crawl succeeds (string)
-  maintenance: 120 # Engine’s internal housekeeping tick (seconds)
-  source_screenshot: false # Save a screenshot per seed/source page
-  full_site_screenshot: false # Attempt broader site screenshots (heavier)
-  max_depth: 3 # Max DOM/URL traversal depth; 0 often means unlimited
-  #max_links: 0                  # Limit links per page
-  #max_sources: 0                # Limit number of sources processed per cycle
-  delay: random(1, 3) # Extra per-action delay (ExprTerpreter supported)
-  cdp_delay: 0 # Delay in milliseconds before each CDP request (useful for low-spec VDIs)
-  browsing_mode: recursive # human | fuzzing | recursive
-  max_retries: 3 # Per-URL retry budget
-  max_requests: 0 # Global cap per run (0 = unlimited)
-  change_useragent: never # never | random | per_source (varies by build)
-  force_sec_fetch_site_same_origin: false # Force Sec-Fetch-Site header to same-origin (anti-fingerprinting)
-  reset_cookies_policy: on_start # on_start | per_domain | never (depends on build)
-  no_third_party_cookies: true # Block third-party cookies in sessions
-  request_images: true # Allow image requests
-  request_css: true # Allow CSS requests
-  request_scripts: true # Allow JS requests (turn off to reduce JS-heavy sites load)
-  request_plugins: false # Allow browser plugins (usually off)
-  request_frames: false # Allow iframes (off reduces surface/fingerprinting)
-  prevent_duplicate_urls: true # De-duplicate URLs during crawl
-  collect_html: true # Persist raw HTML
-  collect_images: true # Persist discovered image metadata/links
-  collect_files: false # Persist non-image file metadata/links
-  collect_content: true # Persist text content extraction
-  collect_keywords: true # Extract keyword metrics
-  collect_metatags: true # Extract <meta> tags
-  collect_performance: false # Collect timing/navigation metrics
-  collect_events: false # Collect DOM/browser events during crawl
-  collect_xhr: false # Collect XHR/fetch requests
-  filter_xhr: # (Optional) deny types for XHRs collection
+  # Seconds between DB polls for new Sources (≥5; use higher values if you have a large number of engines or low crawl frequency)
+  query_timer: 30 
+  # Concurrent workers; use ≥3 when network discovery is enabled
+  workers: 3 
+  # Per-engine overrides (optional)
+  engine: [] 
+  # Apply GPU-less VDI patch when needed
+  set_vdi_gpu_patch: false 
+  # Resolve VDI DNS before connecting
+  resolve_vdi_dns: false 
+  # desktop | mobile (mobile is experimental per docs)
+  platform: desktop 
+  # darwin | windows | linux | random – affects UA selection
+  browser_platform: linux 
+  # Human Behavior Simulation (HBS) pacing; supports ExprTerpreter strings
+  interval: random(1, 3) 
+  # Page fetch/render timeout (seconds)
+  timeout: 30 
+  # Re-crawl cadence per Source (e.g., "1 hour", "3 days")
+  crawling_interval: 3 days 
+  # Retry-after when a crawl fails (string)
+  crawling_if_error: 15 minutes 
+  # Retry-after when a crawl succeeds (string)
+  crawling_if_ok: 3 days 
+  # Max time to process a source
+  processing_timeout: 1 day 
+  # Engine’s internal housekeeping tick (seconds)
+  maintenance: 120 
+  # Save a screenshot per seed/source page
+  source_screenshot: false 
+  # Attempt broader site screenshots (heavier)
+  full_site_screenshot: false 
+  # Max DOM/URL traversal depth; 0 often means unlimited
+  max_depth: 3 
+  # Limit links per page
+  max_links: 0 
+  # Limit number of sources processed per cycle
+  max_sources: 0 
+  # Warm-up delay in seconds before crawling starts
+  initial_ramp_up: 0
+  # Limit links per page 
+  #max_links: 0
+  # Limit number of sources processed per cycle                  
+  #max_sources: 0                
+  # Extra per-action delay (ExprTerpreter supported)
+  delay: random(1, 3) 
+  # Delay in milliseconds before each CDP request (useful for low-spec VDIs)
+  cdp_delay: 0 
+  # Browsing mode: human | fuzzing | recursive
+  browsing_mode: recursive 
+  # Per-URL retry budget
+  max_retries: 3 
+  # Global cap per run (0 = unlimited)
+  max_requests: 0 
+  # User agent change policy: never | random | per_source (varies by build)
+  change_useragent: never 
+  # Force Sec-Fetch-Site header to same-origin (anti-fingerprinting)
+  force_sec_fetch_site_same_origin: false 
+  # on_start | per_domain | never (depends on build)
+  reset_cookies_policy: on_start 
+  # Block third-party cookies in sessions
+  no_third_party_cookies: true 
+  # Allow image requests
+  request_images: true 
+  # Allow CSS requests
+  request_css: true 
+  # Allow JS requests (turn off to reduce JS-heavy sites load)
+  request_scripts: true 
+  # Allow browser plugins (usually off)
+  request_plugins: false 
+  # Allow iframes (off reduces surface/fingerprinting)
+  request_frames: false 
+  # De-duplicate URLs during crawl
+  prevent_duplicate_urls: true 
+  # Refresh stored content for already-known pages
+  refresh_content: false 
+  # Persist raw HTML content (heavier)
+  collect_html: true 
+  # Persist discovered image metadata/links
+  collect_images: true 
+  # Persist non-image file metadata/links
+  collect_files: false 
+  # Persist text content extraction
+  collect_content: true 
+  # Extract keyword metrics
+  collect_keywords: true 
+  # Extract <meta> tags
+  collect_metatags: true 
+  # Collect timing/navigation metrics
+  collect_performance: false 
+  # Collect DOM/browser events during crawl
+  collect_events: false 
+  # Collect XHR/fetch requests
+  collect_xhr: false 
+  # (Optional) deny types for XHRs collection
+  filter_xhr: 
     - text/empty
     - text/css
     - text/html
@@ -101,61 +173,142 @@ crawler:
     - application/x-rpm
     - application/vnd.android.package-archive
     - application/x-iso9660-image
-  collect_links: true # Collect outgoing links for graph/crawl queue
-  create_event_when_done: false # Emit a final “crawl done” event automatically
+  # Collect outgoing links for graph/crawl queue
+  collect_links: true 
+  # Emit a final “crawl done” event automatically
+  create_event_when_done: false 
 
   # Control API for the Engine (local admin interface)
   control:
-    host: 0.0.0.0 # Bind address for control endpoint
-    port: 8443 # Control API port (1..65535)
-    timeout: 20 # Control API request timeout (seconds)
-    sslmode: disable # enable | disable
-    cert_file: "" # Required if sslmode=enable
-    key_file: "" # Required if sslmode=enable
-    rate_limit: "100,100" # e.g., "100,100" max 100 req per second with a max burst of 100
-    readheader_timeout: 30 # Seconds to read headers
-    write_timeout: 30 # Seconds for writes
+    # Bind address for control endpoint
+    host: 0.0.0.0 
+    # Control API port (1..65535)
+    port: 8443 
+    # Control API request timeout (seconds)
+    timeout: 20 
+    # enable | disable TLS for control API
+    sslmode: disable 
+    # Required if sslmode=enable
+    cert_file: "" 
+    # Required if sslmode=enable
+    key_file: "" 
+    # Rate limit for control API (requests per second, burst)
+    # e.g., "100,100" max 100 req per second with a max burst of 100
+    rate_limit: "100,100" 
+    # Seconds to read headers
+    readheader_timeout: 30 
+    # Seconds for writes
+    write_timeout: 30 
+
+# --------------------------
+# Attributes indexing
+# --------------------------
+attributes_indexing:
+  # Indexed attributes for web objects
+  webobject: [] 
+  # Indexed attributes for network info
+  netinfo: [] 
+  # Indexed attributes for HTTP info
+  httpinfo: [] 
 
 # --------------------------
 # General API (query/search/trigger)
 # --------------------------
 api:
-  host: 0.0.0.0 # Bind address
-  port: 8080 # Public API port
-  timeout: 30 # Request timeout (seconds)
-  sslmode: disable # enable | disable
-  cert_file: "" # If sslmode=enable
-  key_file: "" # If sslmode=enable
-  rate_limit: "1000,1000" # Throttle (string allowed) 1000 requests per second with a burst of 1000 requests
-  readheader_timeout: 30 # Seconds to read headers
-  write_timeout: 30 # Seconds to write responses
-  enable_console: true # Enable built-in API console (dev only)
-  return_404: false # Respond 404 for unknown endpoints when true
-  content_search: false # Allow fulltext-like searches on collected content
-  return_content: false # Include raw page content in API results (heavier)
+  # Optional public URL for the General/Search API
+  url: "" 
+  # Bind address
+  host: 0.0.0.0 
+  # Public API port
+  port: 8080 
+  # Request timeout (seconds)
+  timeout: 30 
+  # Disable default API endpoints
+  disable_default: false 
+  # Enable API docs endpoint
+  enable_api_docs: false 
+  # enable | disable TLS for API
+  sslmode: disable 
+  # Required if sslmode=enable
+  cert_file: "" 
+  # Required if sslmode=enable
+  key_file: "" 
+  # Throttle (string allowed) 1000 requests per second with a burst of 1000 requests
+  rate_limit: "1000,1000" 
+  # Seconds to read headers
+  readheader_timeout: 30 
+  # Seconds to write responses
+  write_timeout: 30 
+  # Enable built-in API console (dev only)
+  enable_console: true 
+  # Respond 404 for unknown endpoints when true
+  return_404: false 
+  # Allow fulltext-like searches on collected content
+  content_search: false 
+  # Include raw page content in API results (heavier)
+  return_content: false 
+  # Allowed IPs/CIDRs
+  allowed_ips: [] 
+  plugins:
+    # Enable API plugins
+    enabled: false 
+    # Per-plugin timeout (seconds)
+    timeout: 30 
+    # Allowed plugin IDs (empty = all)
+    allow: [] 
+  # Enable Google Cloud Run mode
+  use_google_cloud_run: false 
 
 # --------------------------
-# Selenium / VDI pool
+# VDI pool
 # Provide 1+ entries; names should match docker-compose service names
 # --------------------------
 selenium:
-  - type: chrome # chrome | chromium | firefox (depends on images available)
-    host: localhost # Selenium host/container DNS
-    port: 4444 # Selenium hub/standalone port
-    sslmode: disable # enable | disable (TLS to Selenium)
-    headless: false # Headless browser sessions
-    name: crowler-vdi-1 # Logical VDI name (used by Engine pinning)
-    location: "" # Freeform location tag (e.g., "eu-west")
-    language: "" # Preferred UI language/locale
-    path: "" # Optional: path to browser binary (usually empty in containers)
-    driver_path: "" # Optional: custom driver binary path
-    use_service: false # Use OS/browser service manager where applicable
-    download_path: "./downloads" # Temporary download dir inside the container (exists in image)
-    proxy_url: "" # http(s)://user:pass@host:port – route all traffic via proxy
-    sys_manager: # Optional sidecar/system manager for the VDI
-      port: 4445 # Manager port
-      timeout: 30 # Request timeout (seconds)
-      sslmode: disable # TLS to manager
+  # chrome | chromium | firefox (depends on images available)
+  - type: chrome 
+    # VDI host/container DNS name or IP (e.g., "crowler-vdi-1" if using docker-compose)
+    host: localhost 
+    # VDI hub/standalone port
+    port: 4444 
+    # enable | disable TLS for VDI
+    sslmode: disable 
+    # Headless browser sessions
+    headless: false 
+    # Logical VDI name (used by Engine pinning)
+    name: crowler-vdi-1 
+    # Freeform location tag (e.g., "eu-west")
+    location: "" 
+    # Preferred UI language/locale (e.g., "en-US")
+    language: "" 
+    # Optional: path to browser binary (usually empty in containers)
+    path: "" 
+    # Optional: custom driver binary path
+    driver_path: "" 
+    # Use OS/browser service manager where applicable
+    use_service: false 
+    # Temporary download dir inside the container (exists in image)
+    download_path: "./downloads" 
+    # http(s)://user:pass@host:port – route all traffic via proxy
+    proxy_url: "" 
+    # Optional sidecar/system manager for the VDI
+    sys_manager: 
+      # Manager port
+      port: 4445 
+      # Request timeout (seconds)
+      timeout: 30 
+      # TLS to manager
+      sslmode: disable 
+
+# --------------------------
+# Prometheus metrics endpoint
+# --------------------------
+prometheus:
+  # Enable Prometheus metrics endpoint (crowler-pushgateway)
+  enabled: false 
+  # Bind host for metrics endpoint
+  host: 0.0.0.0 
+  # Prometheus metrics port
+  port: 9091 
 
 # --------------------------
 # Network information (DNS/WHOIS/Net/Geo/Service scout)
@@ -163,166 +316,410 @@ selenium:
 # --------------------------
 network_info:
   dns:
-    enabled: false # Enable DNS info gathering (recursive/authoritative)
-    timeout: 60 # Seconds per request
-    rate_limit: 20/s # Throttle expression/string
+    # Enable Source DNS info gathering (recursive/authoritative)
+    enabled: false 
+    # Seconds per request
+    timeout: 60 
+    # Throttle expression/string (to avoid abuse; e.g., "20/s" for 20 req/second)
+    rate_limit: 20/s 
 
   whois:
-    enabled: false # WHOIS lookups (can be slow)
+    # Enable WHOIS lookups (can be slow)
+    enabled: false 
+    # Seconds per request
     timeout: 60
+    # Throttle expression/string (to avoid abuse; e.g., "20/s" for 20 req/second)
     rate_limit: 20/s
 
   netlookup:
-    enabled: false # General network lookups (reverse, ptr, etc.)
+    # Enable general network lookups (reverse, ptr, etc.)
+    enabled: false 
+    # Seconds per request
     timeout: 60
+    # Throttle expression/string (to avoid abuse; e.g., "20/s" for 20 req/second)
     rate_limit: 20/s
 
   geo_localization:
-    enabled: false # IP geolocation enrichment (local DB or remote API)
-    type: maxmind # "" | maxmind | ip2location (depends on your setup)
-    path: "" # Path to local DB (e.g., MaxMind). Required if local mode.
-    timeout: 60 # Seconds per lookup
-    #api_key: ''                  # If using a remote API provider
-    #sslmode: ''                  # "" | enable | disable (TLS to provider)
+    # Enable IP geolocation enrichment (local DB or remote API)
+    enabled: false 
+    # "" | maxmind | ip2location (depends on your setup)
+    type: maxmind 
+    # Path to local DB (e.g., MaxMind). Required if local mode.
+    path: "" 
+    # Seconds per lookup
+    timeout: 60 
+    # If using a remote API provider
+    api_key: "" 
+    # "" | enable | disable (TLS to provider)
+    sslmode: disable 
+    # If using a remote API provider
+    #api_key: ''
+    # "" | enable | disable (TLS to provider)               
+    #sslmode: ''                  
 
   service_scout:
-    enabled: false # Network/service scanner (use with caution)
-    timeout: 60 # Seconds per scan (≥5)
+    # Network/service scanner (use with caution)
+    enabled: false 
+    # Seconds per scan (≥5)
+    timeout: 60 
+    # Configure idle scanning (this type of scanning requires zombie hosts)
     #idle_scan:
-    #  host: localhost           # Zombie host (only if you know what you’re doing)
-    #  port: 80                  # 1..65535
-    ping_scan: false # ICMP discovery
-    connect_scan: false # TCP connect() scan
-    syn_scan: false # TCP SYN scan
-    udp_scan: false # UDP scan
-    no_dns_resolution: false # Don’t resolve names during scan
-    service_detection: false # Try to fingerprint services/versions
-    service_db: "" # Optional DB path for service sigs
-    os_finger_print: false # Try to fingerprint OS
-    aggressive_scan: false # Faster/noisier timings
-    script_scan: [] # list of scripts/categories (e.g. default, vuln)
-    excluded_hosts: [] # Never scan these (CIDRs/IPs)
-    timing_template: T3 # Nmap-like T0..T5; T3 is balanced
-    host_timeout: "60" # Strings allowed; works with ExprTerpreter (e.g., "random(30,90)")
-    min_rate: "10" # Strings allowed; desired packets/sec
-    max_retries: 0 # Integer retries
-    #source_port: 0              # set specific port as string in some builds (see docs)
-    interface: "" # Network interface name (e.g., eth0)
-    spoof_ip: "" # Source IP spoofing (advanced)
-    randomize_hosts: true # Randomize target order
-    data_length: 0 # Payload length (bytes)
-    delay: "1" # Inter-packet delay (string/ExprTerpreter)
-    mtu_discovery: true # Try to discover MTU (evasion)
-    scan_flags: SYN # Raw flags (advanced; e.g., SYN)
-    ip_fragment: false # Fragment IP packets (evasion)
-    min_port_number: 1 # Minimum port to scan (≥1)
-    max_port_number: 9000 # Maximum port (≤65535; defaults to 9000)
-    max_parallelism: 10 # Parallel probes per target
-    dns_servers: [] # Optional list of DNS servers (e.g., ["1.1.1.1"])
-    proxies: [] # Optional list of proxies for scanning (strings)
+      # Zombie host (only if you know what you’re doing)
+      #host: localhost  
+      # Zombie system port 1..65535         
+      #port: 80 
+    # ICMP discovery                 
+    ping_scan: false 
+    # TCP connect() scan (more likely to be logged/detected)
+    connect_scan: false 
+    # TCP SYN scan
+    syn_scan: false 
+    # UDP scan
+    udp_scan: false 
+    # Don’t resolve names during scan
+    no_dns_resolution: false 
+    # Try to fingerprint services/versions
+    service_detection: false 
+    # Optional DB path for service sigs
+    service_db: "" 
+    # Try to fingerprint OS
+    os_finger_print: false 
+    # Faster/noisier timings
+    aggressive_scan: false 
+    # List of scripts/categories (e.g. default, vuln)
+    script_scan: [] 
+    # Never scan these (CIDRs/IPs)
+    excluded_hosts: [] 
+    # Nmap-like T0..T5; T3 is balanced
+    timing_template: T3 
+    # Strings allowed; works with ExprTerpreter (e.g., "random(30,90)")
+    host_timeout: "60" 
+    # Strings allowed; desired packets/sec
+    min_rate: "10" 
+    # Integer retries
+    max_retries: 0 
+    # Optional source port override (some scans can be blocked if source port is high/unusual)
+    #source_port: "0"
+    # Network interface name (e.g., eth0)              
+    interface: "" 
+    # Source IP spoofing (advanced)
+    spoof_ip: "" 
+    # Randomize target order during scan
+    randomize_hosts: true 
+    # Payload length (bytes)
+    data_length: 0 
+    # Inter-packet delay (string/ExprTerpreter)
+    delay: "1" 
+    # Try to discover MTU (evasion)
+    mtu_discovery: true 
+    # Raw flags (advanced; e.g., SYN)
+    scan_flags: SYN 
+    # Fragment IP packets (evasion)
+    ip_fragment: false 
+    # Minimum port to scan (≥1)
+    min_port_number: 1 
+    # Maximum port (≤65535; defaults to 9000)
+    max_port_number: 9000 
+    # Parallel probes per target
+    max_parallelism: 10 
+    # Optional list of DNS servers (e.g., ["1.1.1.1"])
+    dns_servers: [] 
+    # Optional list of proxies for scanning (strings)
+    proxies: [] 
 
 # --------------------------
 # Events Manager (CEMI)
 # --------------------------
 events:
-  host: 0.0.0.0 # Listen address for Events Manager API
-  port: 8082 # Port for events API
-  timeout: 30 # Request timeout (seconds)
-  sslmode: disable # enable | disable
-  cert_file: "" # If sslmode=enable
-  key_file: "" # If sslmode=enable
+  # Optional public URL for the Events Manager API
+  url: "" 
+  # Listen address for Events Manager API
+  host: 0.0.0.0 
+  # Port for events API
+  port: 8082 
+  # Request timeout (seconds)
+  timeout: 30 
+  # "" | enable | disable TLS for Events Manager API
+  sslmode: disable 
+  # If sslmode=enable
+  cert_file: "" 
+  # If sslmode=enable
+  key_file: "" 
+  # Enable Google Cloud Run mode
+  use_google_cloud_run: false 
+  # Name of master events manager in clustered mode
+  master_events_manager: "" 
+  # Enable Events Manager API docs
+  enable_api_docs: false 
+  # Automatic events removal policy
   automatic_events_removal: "on_success"
-  rate_limit: "1200,1200" # Throttle (string allowed) 1200 requests per second with a burst of 1200 requests
-  readheader_timeout: 30 # Seconds to read headers
-  write_timeout: 30 # Seconds to write responses
+  # Enable heartbeat checks
+  heartbeat_enabled: false 
+  # Heartbeat interval (seconds)
+  heartbeat_interval: "30" 
+  # Heartbeat timeout (seconds)
+  heartbeat_timeout: "10" 
+  # Log heartbeat responses
+  heartbeat_log: false 
+  # Maintenance schedule for system DB
+  sys_db_maintenance_schedule: "" 
+  # Retention policy for sys_db web objects
+  sys_db_webobjects_retention: "" 
+  # Throttle (string allowed) 1200 requests per second with a burst of 1200 requests
+  rate_limit: "1200,1200" 
+  # Seconds to read headers
+  readheader_timeout: 30 
+  # Seconds to write responses
+  write_timeout: 30 
 
 # --------------------------
 # Storage backends
 # --------------------------
 image_storage:
-  type: local # local | http | s3-like (depends on deployment)
-  path: "./data/images" # Base path (local) or bucket/prefix (remote)
-  timeout: 30 # Request timeout (remote backends)
-  #host: ''                     # If remote
-  #port: 0                      # If remote
-  #region: ''                   # If remote
-  #token: ''                    # If remote: auth token
-  #secret: ''                   # If remote: auth secret
-  #sslmode: enable              # TLS to storage backend
+  # local | http | s3-like (depends on deployment)
+  type: local 
+  # Base path (local) or bucket/prefix (remote)
+  path: "./data/images" 
+  # Request timeout (remote backends)
+  timeout: 30 
+  # If type remote (the host)
+  #host: '' 
+  # If type remote (the port)                   
+  #port: 0                      
+  # If type remote (the region)
+  #region: ''                   
+  # If type remote (the auth token)
+  #token: ''                    
+  # If type remote (the auth secret)
+  #secret: ''                              
 
 file_storage:
-  type: local # local | http | s3 (depends on deployment)
+  # local | http | s3 (depends on deployment)
+  type: local 
+  # Base path (local) or bucket/prefix (remote)
   path: "./data/files"
   timeout: 30
-  #host: ''                     # if remote
-  #port: 0                      # if remote
-  #region: ''                   # if remote
-  #token: ''                    # if remote: auth token
-  #secret: ''                   # if remote: auth secret
-  #sslmode: enable              # TLS to storage backend
+  # If type remote (the host)
+  #host: ''
+  # If type remote (the port)
+  #port: 0
+  # If type remote (the region)
+  #region: ''
+  # If type remote (the auth token)
+  #token: ''
+  # If type remote (the auth secret)
+  #secret: ''
+  # If type remote (TLS mode)
+  #sslmode: enable
 
 # --------------------------
 # HTTP header discovery helper (optional)
 # --------------------------
 http_headers:
-  enabled: false # When true, perform HTTP header/SSL discovery passes
-  timeout: 30 # Seconds per request
-  follow_redirects: true # Follow 3xx during discovery
+  # When true, perform HTTP header/SSL discovery passes
+  enabled: false 
+  # Seconds per request
+  timeout: 30 
+  # Follow 3xx during discovery
+  follow_redirects: true 
   ssl_discovery:
-    enabled: false # Probe TLS/SSL info (certs, params)
-  proxies: [] # Optional list of HTTP proxies (objects if enabled; keep empty here)
+    # Probe TLS/SSL info (certs, params)
+    enabled: false 
+    # Collect JARM fingerprint
+    jarm: false 
+    # Collect JA3 fingerprint
+    ja3: false 
+    # Collect JA3S fingerprint
+    ja3s: false 
+    # Collect JA4 fingerprint
+    ja4: false 
+    # Collect JA4S fingerprint
+    ja4s: false 
+    # Collect HASSH fingerprint
+    hassh: false 
+    # Collect HASSH server fingerprint
+    hassh_server: false 
+    # Collect TLSH hash
+    tlsh: false 
+    # Collect SimHash
+    simhash: false 
+    # Collect MinHash
+    minhash: false 
+    # Collect BLAKE2 hash
+    blake2: false 
+    # Collect SHA-256 hash
+    sha256: false 
+    # Collect CityHash
+    cityhash: false 
+    # Collect MurmurHash
+    murmurhash: false 
+    # Enable custom TLS probing
+    custom_tls: false 
+  # Optional list of HTTP proxies (objects if enabled; keep empty here)
+  proxies: [] 
 
 # --------------------------
 # Rulesets loader (where to load YAML rules)
 # --------------------------
-rulesets_schema_path: "./schemas/crowler-rulesets-schema.json" # Path to ruleset JSON Schema (used for rules validation)
+# Path to ruleset JSON Schema (used for rules validation)
+# this option very rarely needs to be changed unless you are placing
+# the schema in a custom location or using a modified version of the schema for some reason
+rulesets_schema_path: "./schemas/crowler-rulesets-schema.json" 
 
 rulesets:
-  - type: local # local | http | s3 (you can mix multiple entries)
+  # local | http | s3 (you can mix multiple entries)
+  - type: local 
+    # One or more paths/globs to load rules from (e.g., "./rules/*.yaml" or "./myrules/" for all YAML files in that directory)
+    # Supports wildcards; multiple paths allowed
     path:
-      - "./rules/*.yaml" # Supports wildcards; multiple paths allowed
-    timeout: 30 # Remote fetch timeout (applies to http/s3 types)
-    sslmode: disable # TLS to ruleset distributor (http/s3)
-    refresh: 0 # Optional: seconds between refresh checks (0=off)
+      - "./rules/*.yaml" 
+    # If type is set to remote (the remote host)
+    host: "" 
+    # If type is set to remote (the remote port)
+    port: "0" 
+    # If type is set to remote (the remote region, if applicable)
+    region: ""
+    # If type is set to remote (the auth token, if applicable)
+    token: "" 
+    # If type is set to remote (the auth secret, if applicable)
+    secret: "" 
+    # if type is set to remote, Remote fetch timeout (applies to http/s3 types)
+    timeout: 30
+    # if type is set to remote, TLS mode for remote fetch (applies to http/s3 types)
+    sslmode: disable 
+    # Optional: seconds between refresh checks (0=off)
+    refresh: 0 
 
 # --------------------------
 # Agents loader (automation flows)
 # --------------------------
 agents:
-  - type: local # local | http | s3 – where agent files are located
+  # local | http | s3 – where agent files are located
+  - type: local 
+    # One or more globs/paths
     path:
-      - "./agents/*.yaml" # One or more globs/paths
-    global_parameters: {} # K/V injected into every agent at runtime
-    timeout: 30 # Loader timeout for remote sources
-    agents_timeout: 30 # Per-agent execution timeout baseline
-    plugins_timeout: 30 # Per-plugin execution timeout baseline
-    #sslmode: disable             # if remote
-    #host: ''                     # For http/s3
-    #port: 0                      # if remote
-    #region: ''                   # if remote
-    #token: ''                    # if remote: auth token
-    #secret: ''                   # if remote: auth secret
-    refresh: 0 # Optional: seconds between refresh checks (0=off)
+      - "./agents/*.yaml" 
+    # If type is set to remote (the remote host)
+    host: "" 
+    # If type is set to remote (the remote port)
+    port: "0" 
+    # If type is set to remote (the remote region, if applicable)
+    region: ""
+    # If type is set to remote (the auth token, if applicable)
+    token: ""
+    # If type is set to remote (the auth secret, if applicable)
+    secret: ""
+    # K/V injected into every agent at runtime
+    global_parameters: {} 
+    # Loader timeout for remote sources
+    timeout: 30 
+    # Per-agent execution timeout baseline (agents can specify their own timeouts in their YAML definitions, which will override this baseline)
+    agents_timeout: 30 
+    # Per-plugin execution timeout baseline (plugins used by agents can specify their own timeouts in their YAML definitions, which will override this baseline)
+    plugins_timeout: 30
+    # if type is set to remote, TLS mode for remote fetch (applies to http/s3 types) 
+    #sslmode: disable 
+    # if type is set to remote, the host for fetching agent definitions remotely (applies to http/s3 types)     
+    #host: ''
+    # if type is set to remote, the port for fetching agent definitions remotely (applies to http/s3 types)                   
+    #port: 0
+    # if type is set to remote, the region for fetching agent definitions remotely (applies to http/s3 types)
+    #region: ''
+    # if type is set to remote, the auth token for fetching agent definitions remotely (applies to http/s3 types)
+    #token: ''
+    # if type is set to remote, the auth secret for fetching agent definitions remotely (applies to http/s3 types)
+    #secret: ''
+    # Optional: seconds between refresh checks (0=off)
+    refresh: 0 
+
+# --------------------------
+# Agent runtime toggles
+# --------------------------
+agent:
+  # Enable runtime identity enforcement for agents
+  identity_enforcement: false 
+  # Enable runtime contract enforcement for agents
+  contract_enforcement: false 
+  # Enable identity-bound memory runtime
+  memory_runtime: false 
 
 # --------------------------
 # Plugins loader (engine/vdi/event plugins)
 # --------------------------
 plugins:
-  global_parameters: {} # K/V available to every plugin (e.g., API keys)
+  # K/V available to every plugin (e.g., API keys)
+  global_parameters: {} 
+  # Plugin loader timeout for remote sources (seconds)
   timeout: 30
+  # Plugin execution timeout baseline (plugins can specify their own timeouts in their YAML definitions, which will override this baseline)
   plugins_timeout: 30
+  # Plugins repository location(s); you can specify multiple entries and types (local/http/s3)
   locations:
-    - type: local # local | http | s3
+    # local | http | s3
+    - type: local 
+      # Directory or specific files/globs
       path:
-        - "./plugins/" # Directory or specific files/globs
-      timeout: 30
-      #sslmode: disable           # TLS to plugin backend
-      #host: ''                   # If remote repository
-      #port: 0                    # If remote
-      #region: ''                 # If remote
-      #token: ''                  # If remote: auth token
-      #secret: ''                 # If remote: auth secret
+        - "./plugins/" 
+      # If type is set to remote (specifies to use HTTPS, FTPS etc. for fetching plugins remotely)
+      #sslmode: disable
+      # If type is set to remote, the host for fetching plugins remotely (applies to http/s3 types)
+      #host: ''
+      # If type is set to remote, the port for fetching plugins remotely (applies to http/s3 types)
+      #port: 0
+      # If type is set to remote, the region for fetching plugins remotely (applies to http/s3 types)
+      #region: ''
+      # If type is set to remote, the auth token for fetching plugins remotely (applies to http/s3 types)
+      #token: ''
+      # If type is set to remote, the auth secret for fetching plugins remotely (applies to http/s3 types)
+      #secret: ''
+      # Optional: seconds between refresh checks (0=off)
       refresh: 0
+
+# --------------------------
+# External detection providers
+# --------------------------
+external_detection:
+  # Abuse IPDB (https://www.abuseipdb.com/) automatic IP reputation checks
+  abuse_ipdb:
+    api_key: ""
+  # Alien Vault OTX (https://otx.alienvault.com/) automatic IOC checks
+  alien_vault:
+    api_key: ""
+  # Censys (https://censys.io/) automatic IOC checks
+  censys:
+    api_id: ""
+    api_secret: ""
+  # Cisco Umbrella (https://umbrella.cisco.com/) automatic IOC checks
+  cisco_umbrella:
+    api_key: ""
+  # Cuckoo Sandbox (https://cuckoosandbox.org/) automatic malware analysis integration
+  cuckoo: {}
+  # Google Safe Browsing (https://developers.google.com/safe-browsing/) automatic URL reputation checks
+  google_safe_browsing:
+    company_id: ""
+    api_key: ""
+  # Hybrid Analysis (https://www.hybrid-analysis.com/) automatic malware analysis integration
+  hybrid_analysis:
+    api_key: ""
+  # IPVoid (https://www.ipvoid.com/) automatic IP reputation checks
+  ipvoid:
+    api_key: ""
+  # OpenPhish (https://www.openphish.com/) automatic phishing URL checks
+  open_phish:
+    api_key: ""
+  # PhishTank (https://www.phishtank.com/) automatic phishing URL checks
+  phish_tank: {}
+  # Shodan (https://www.shodan.io/) automatic IoT and network device checks
+  shodan:
+    api_key: ""
+  # SSL Labs (https://www.ssllabs.com/) automatic SSL/TLS checks
+  ssllabs:
+    api_key: ""
+  # URLhaus (https://urlhaus.abuse.ch/) automatic URL reputation checks
+  url_haus: {}
+  # VirusTotal (https://www.virustotal.com/) automatic malware and URL reputation checks
+  virus_total:
+    api_key: ""
 
 # --------------------------
 # Debugging
