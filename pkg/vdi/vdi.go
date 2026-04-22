@@ -270,17 +270,17 @@ func (p *Pool) Size() int {
 	return len(p.slot)
 }
 
-// Acquire acquires a VDI instance from the pool
 func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
 	if p == nil {
 		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
 	}
 
+	strList = strings.TrimSpace(strList)
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-VDI-Acquire] Trying to acquire VDi: %s", strList)
 
 wait_for_available_vdis:
 	p.mu.Lock()
-	// Check if there are any available VDIs
+
 	available := checkAvailable(p)
 	if available < 0 {
 		p.mu.Unlock()
@@ -295,10 +295,12 @@ wait_for_available_vdis:
 	defer p.mu.Unlock()
 
 	strList = strings.TrimSpace(strList)
-	strIndices := strings.Split(strList, ",")
+
+	var strIndices []string
 	if strList != "" {
+		strIndices = strings.Split(strList, ",")
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
-		// Read full VDIs pool names list and put it in a string comma separated
+
 		poolList := ""
 		for i := 0; i < len(p.slot); i++ {
 			pName := p.slot[i].Config.Name
@@ -317,9 +319,9 @@ wait_for_available_vdis:
 			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
 			continue
 		}
+
 		if !p.busy[i] {
-			if len(strIndices) > 0 {
-				// We have an assigned list, so we need to check if this p is in the list
+			if strList != "" {
 				found := false
 				for _, strIdx := range strIndices {
 					pName := p.slot[i].Config.Name
@@ -334,7 +336,6 @@ wait_for_available_vdis:
 			}
 
 			p.busy[i] = true
-			// Make a deep copy of p.slot[i] to be safe:
 			vdiInstance := SeleniumInstance{
 				Service: p.slot[i].Service,
 				Config:  p.slot[i].Config,
@@ -342,6 +343,7 @@ wait_for_available_vdis:
 			return i, vdiInstance, nil
 		}
 	}
+
 	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
 }
 
