@@ -1,202 +1,525 @@
-# Using Agents with the CROWler
+# CROWler Agents: Omnicomprehensive Authoring and Operations Guide (v1 + v2)
 
-The CROWler allows you to run multiple agents (either in series or in parallel).
- This is useful when you have a large number of agents that you want to run at
- the same time.
- The CROWler will automatically distribute the agents across multiple cores on
- your machine, allowing you to run many agents at once.
+This guide is a **self-contained**, practical reference for writing, operating, and integrating CROWler Agents with other agentic systems (including OpenAI Codex and Anthropic Claude-style workflows).
 
-Agents are also useful when a user does not wish to code complex plugins or
-wish to leverage AI models to perform tasks such ass data validation,
-enrichment, correction, manipulation etc. and combine it with actions.
+---
 
-Agents should be defined in YAML files and stored in the `./agents/` path.
+## 1) What CROWler Agents are
 
-## Compatibility contract
+CROWler Agents are YAML/JSON-defined orchestration units executed by the CROWler events runtime. They let you compose deterministic and AI-assisted workflows from reusable actions (API calls, DB queries, command execution, plugin calls, event emission, branching, and delegation).
 
-- Originally the CROWler used Jobs to allow users to create complex jobs in YAML, this is now known as v1 format.
-- Legacy manifests with `jobs` only are still valid and continue to run unchanged.
-- Identity-enabled manifests with `agent_identity + jobs` are also valid.
-- `format_version` is supported as a compatibility marker:
-  - `v1` for legacy jobs-only mode
-  - `v2` for identity-enabled mode
-- If omitted, compatibility mode is derived automatically:
-  - no `agent_identity` => `v1`
-  - with `agent_identity` => `v2`
+### Code-grounded definition (quoted)
 
-Below an example of such YAML file.
+> “The CROWler is the foundation; the user builds and deploys autonomous or semi-autonomous agents that leverage CROWler's capabilities…”  
 
-## Identity-aware execution guards (Milestone 3)
+### Execution model at a glance
 
-Identity-aware execution is controlled by runtime flags under `agent`:
+- Agents are loaded into an in-memory registry at service startup/reload.
+- Incoming events are matched by `trigger_type` + `trigger_name`.
+- Matching jobs execute serially or in parallel.
+- `Decision` steps can branch and delegate to other agents.
+- Runtime policy gates (identity, contract, memory) can be toggled via `config.yaml`.
 
-- `agent.identity_enforcement` (default `false`)
-- `agent.contract_enforcement` (default `false`)
-- `agent.memory_runtime` (default `false`)
+---
 
-When `identity_enforcement` is enabled, execution uses `agent_identity` metadata
-to enforce:
+## 2) Agent versions and compatibility contract
 
-- action capability checks (`run_command`, `db_query`, `ai_reasoning`,
-  `plugin_execution`, `create_event`, `decision`)
-- trust-level checks for sensitive actions (`RunCommand`, `DBQuery`,
-  `PluginExecution`)
-- constraint budgets (`max_steps`, `time_budget`, `event_rate_limit`)
+CROWler supports two manifest styles that coexist:
 
-Each run also receives an execution context snapshot with run correlation fields
-(`run_id`, `trace_id`, `source`, `owner`, `identity_snapshot`) injected into
-step `config.agent_runtime`.
+## v1 (legacy, jobs-only)
 
-## Decision and delegation model
+- `format_version: v1` (or omitted)
+- No explicit `agent_identity`
+- Backward-compatible behavior preserved
 
-`Decision` branches can now target delegated agents using:
+## v2 (identity-enabled)
 
-- `agent_id` (preferred when present)
-- `agent_name`
-- legacy `call_agent` (name alias)
+- `format_version: v2` (or inferred when `agent_identity` exists)
+- Adds governance metadata, trust/capabilities, constraints, memory, and contract
+- Enables stronger runtime controls when rollout flags are enabled
 
-With `agent.identity_enforcement=true`, delegation also enforces:
+### Automatic inference rules
 
-- caller delegation capability (`delegate`)
-- caller/callee trust compatibility
-- caller/callee contract checks for delegation restrictions
-- target availability checks before execution
-- delegation graph tracking with cycle detection to prevent loops
+- No `agent_identity` => runtime treats manifest as v1
+- With `agent_identity` => runtime treats manifest as v2
 
-Delegation failures are deterministic and surfaced as explicit errors (for
-example, target unavailable, policy denial, or cycle detected).
+---
 
-## AI provider abstraction
+## 3) Manifest anatomy (authoring model)
 
-`AIInteraction` now executes against a provider abstraction (`LLMProvider`)
-internally, so orchestration is provider-agnostic.
+A CROWler agent file has two top-level blocks:
 
-Resolution order for AI provider settings is deterministic:
+1. `agent_identity` (optional in v1, explicit in v2)
+2. `jobs` (required)
 
-1. Step-level `params`
-2. Step config `params.config.ai`
-3. Step config `params.config`
-4. Runtime defaults (provider defaults to `openai-compatible`)
+### 3.1 `agent_identity` (v2)
 
-Supported normalized AI fields include `messages`, `prompt`, `model`,
-`temperature`, `max_tokens`, `top_p`, and related sampling parameters.
+Typical fields:
 
-When identity enforcement is enabled, `AIInteraction` requires the
-`ai_reasoning` capability (legacy alias `ai_interaction` is still accepted for
-backward compatibility) and enforces model/provider policy restrictions from
-agent trust level and contract `forbidden_actions` entries
-(e.g. `model:gpt-4*`, `provider:example*`).
+- `agent_id`, `name`, `version`, `agent_type`, `owner`
+- `trust_level`: `untrusted|restricted|trusted|system`
+- `capabilities`: policy-granted capabilities
+- `constraints`:
+  - `max_steps`
+  - `time_budget` (Go duration, e.g., `30s`, `10m`)
+  - `resource_limits.cpu_percent`, `resource_limits.memory_mb`
+  - `event_rate_limit`
+- `memory`: `scope`, `namespace`, `ttl`, `retention`
+- `reasoning_mode`, `goal`, `description`, `audit_tags`
+- `self_model`
+- `agent_contract` (`guarantees`, `assumptions`, `forbidden_actions`, `failure_policy`)
 
-## Memory runtime semantics
+### 3.2 `jobs`
 
-When `agent.memory_runtime=true`, each step receives a namespaced memory context
-in `params.memory_context` with:
+Each job includes:
 
-- `mode`: `none`, `ephemeral`, or `persistent`
-- `namespace`: effective namespace (`agent_identity.memory.namespace` or
-  fallback to `agent_id`)
-- `records`: current key/value memory map visible to that agent namespace
+- `name`
+- `process`: `serial|parallel`
+- `trigger_type`: `interval|event|manual|signal|agent`
+- `trigger_name`
+- `steps`: ordered action list
 
-Agent memory configuration supports:
-
-- `agent_identity.memory.scope`: `none | ephemeral | persistent`
-- `agent_identity.memory.namespace`: isolates memory by namespace
-- `agent_identity.memory.ttl`: optional Go duration used as default TTL
-  (primarily for ephemeral mode)
-- `agent_identity.memory.retention`: optional max record count retained per
-  namespace
-
-Read/write helper parameters for step flows:
-
-- `memory_read_key`: loads a single key into `params.memory_read_value`
-- `memory_write_key`: key to write after step completion (default:
-  `last_result`)
-- `memory_write_value`: explicit value map to persist; if omitted, step
-  response is used
-- `memory_ttl`: step-level TTL override
-
-Persistent mode supports pluggable backends via the `PersistentMemoryBackend`
-interface; a PostgreSQL implementation writes to the `Memory` table.
-
-## Contracts, auditability, and governance
-
-When `agent.contract_enforcement=true`, runtime now applies contract middleware on
-each step:
-
-- blocks actions listed in `agent_identity.agent_contract.forbidden_actions`
-- enforces `failure_policy` as deterministic runtime behavior (`abort`,
-  `continue`, or `fallback`)
-- keeps delegation restrictions auditable through `Decision` delegation outcomes
-
-The runtime also emits deterministic audit telemetry per run, including:
-
-- identity and ownership context (`agent_id`, `name`, `owner`)
-- capabilities used for each action
-- action outcomes (`allowed`, `denied`, `error`)
-- denied actions and policy reasons
-- delegation outcomes and target refs
-
-Audit events and trace logs are sequenced and deterministic for incident review.
-
-## Examples of configuring Agents
+Step shape:
 
 ```yaml
-
-# Examples of a set of agents configuration file in YAML format:
-
-jobs:
-  - name: "Serial Agent 1"
-    process: "serial"
-    trigger_type: event
-    trigger_name: "event_name"
-    steps:
-      - action: "APIRequest"
-        params:
-          config:
-            url: "http://example.com/api/data"
-      - action: "AIInteraction"
-        params:
-          prompt: "Summarize the following data: $response"
-          config:
-            url: "https://api.openai.com/v1/completions"
-            api_key: "your_api_key"
-
-  - name: "Parallel Agent 1"
-    process: "parallel"
-    trigger_type: event
-    trigger_name: "event_name"
-    steps:
-      - action: "DBQuery"
-        params:
-          query: "INSERT INTO logs (message) VALUES ('Parallel job 1')"
-      - action: "RunCommand"
-        params:
-          command: "echo 'Parallel action $response.status'"
-
-  - name: "Serial Agent 2"
-    process: "serial"
-    trigger_type: agent
-    trigger_name: "agent_name"
-    steps:
-      - action: "PluginExecution"
-        params:
-          plugin_name: "example_plugin"
-
+- action: AIInteraction
+  params:
+    model: gpt-4o-mini
+    prompt: "Summarize: $response"
 ```
 
-## YAML-first authoring workflow
+---
 
-For day-to-day authoring, use YAML templates and the `crowler agents` CLI:
+## 4) Action catalog and step semantics
 
-- Templates:
-  - `agents/templates/legacy-job-only.yaml`
-  - `agents/templates/identity-enabled-agent.yaml`
-  - `agents/templates/multi-agent-delegation.yaml`
-- Commands:
-  - `crowler-agt agents lint <file>`
-  - `crowler-agt agents validate --strict <file>`
-  - `crowler-agt agents convert json2yaml <input.json> [output.yaml]`
-  - `crowler-agt agents convert yaml2json <input.yaml> [output.json]`
+CROWler registers these built-in actions:
 
-A detailed field-by-field guide, migration steps, and common troubleshooting are
-available in [`doc/agents_yaml_authoring.md`](./agents_yaml_authoring.md).
+- `APIRequest`
+- `CreateEvent`
+- `RunCommand`
+- `AIInteraction`
+- `DBQuery`
+- `PluginExecution`
+- `Decision`
+
+### 4.1 Token resolution and variable interpolation
+
+Supported resolution patterns in step params:
+
+- `$response.field.path` from prior step output
+- `{{KEY}}` from key-value store
+
+This allows building dynamic URLs, prompts, commands, and event payloads.
+
+### 4.2 `Decision` + delegation
+
+`Decision` can branch via condition expressions and delegate using:
+
+- `agent_id` (preferred)
+- `agent_name`
+- `call_agent` (legacy alias)
+
+On delegated execution, runtime can enforce:
+
+- caller capability to delegate
+- trust compatibility
+- contract restrictions
+- cycle detection in delegation graph
+
+---
+
+## 5) Governance and runtime feature flags (important)
+
+In `config.yaml` top-level `agent` section:
+
+```yaml
+agent:
+  identity_enforcement: false
+  contract_enforcement: false
+  memory_runtime: false
+```
+
+These are rollout guards with safe defaults (`false`) for legacy compatibility.
+
+### 5.1 Identity enforcement
+
+When enabled, the runtime enforces:
+
+- action capability gates
+- trust-level gates for sensitive actions
+- constraint budgets (`max_steps`, `time_budget`, `event_rate_limit`)
+
+### 5.2 Contract enforcement
+
+When enabled, runtime checks `agent_contract.forbidden_actions` and applies `failure_policy` behavior.
+
+### 5.3 Memory runtime
+
+When enabled, each step gets memory context and optional read/write helpers:
+
+- `memory_read_key` -> inject prior value
+- `memory_write_key`, `memory_write_value`
+- optional `memory_ttl`
+
+Memory modes: `none`, `ephemeral`, `persistent`.
+
+---
+
+## 6) AI provider model (OpenAI, Claude-compatible patterns)
+
+`AIInteraction` uses provider abstraction (`LLMProvider`) with default provider name `openai-compatible`.
+
+### Provider setting precedence
+
+1. Step `params`
+2. `params.config.ai`
+3. `params.config`
+4. Runtime default (`openai-compatible`)
+
+### Normalized AI inputs
+
+- `provider`, `url`, `auth`, `model`
+- `messages` or `prompt`
+- `temperature`, `max_tokens`, `top_p`
+- optional extras (`presence_penalty`, `frequency_penalty`, etc.)
+
+### OpenAI Codex / Anthropic Claude interfacing guidance
+
+Because runtime is provider-agnostic, you can integrate in two common ways:
+
+1. **OpenAI-compatible endpoint path (recommended in current codebase):**
+   - Use `AIInteraction` with `provider: openai-compatible`
+   - Point `url` to your selected chat/completions endpoint
+   - Pass bearer credential in `auth`
+
+2. **Gateway/proxy path for Claude-style backends:**
+   - Keep CROWler on `openai-compatible`
+   - Route through an internal gateway that translates request/response format
+   - Preserve stable manifest shape while swapping backend implementation
+
+### Minimal AI step template
+
+```yaml
+- action: AIInteraction
+  params:
+    provider: openai-compatible
+    url: "https://your-llm-endpoint/v1/chat/completions"
+    auth: "Bearer ${LLM_API_KEY}"
+    model: "gpt-4o-mini"
+    messages:
+      - role: system
+        content: "Return strict JSON."
+      - role: user
+        content: "Analyze: $response"
+```
+
+---
+
+## 7) How to create agents (end-to-end workflow)
+
+## Step 1: Start from templates
+
+Use:
+
+- `agents/templates/legacy-job-only.yaml`
+- `agents/templates/identity-enabled-agent.agent.yaml`
+- `agents/templates/multi-agent-delegation.agent.yaml`
+
+## Step 2: Set trigger strategy
+
+Choose based on source of truth:
+
+- `event` for automatic event-driven workflows
+- `manual` for operator/invoker controlled runs
+- `interval` for scheduled loops
+- `agent` for internal delegation chains
+
+## Step 3: Compose steps
+
+Typical order:
+
+1. collect (API/DB/plugin)
+2. reason (AIInteraction/Decision)
+3. act (CreateEvent/PluginExecution/RunCommand)
+
+## Step 4: Validate and lint
+
+Use CLI:
+
+```bash
+crowler-agt agents lint <file>
+crowler-agt agents validate --strict <file>
+crowler-agt agents convert json2yaml <input.json> [output.yaml]
+crowler-agt agents convert yaml2json <input.yaml> [output.json]
+```
+
+## Step 5: deploy
+
+- Place files under configured `agents.path` glob(s)
+- Reload services (or restart) so registry refreshes
+- Optionally upload at runtime via events API upload endpoint
+
+---
+
+## 8) Using agents through `crowler-events` and `crowler-api`
+
+## 8.1 `crowler-events` (control plane for events + upload)
+
+Key endpoints:
+
+- `POST /v1/event/create`
+- `POST /v1/event/schedule`
+- `GET  /v1/event/status`
+- `GET  /v1/event/list`
+- `POST /v1/upload/agent` (multipart form, file field `agent`)
+
+Operational flow:
+
+1. submit event
+2. event worker routes event type to plugins and agents
+3. matched agents execute
+4. downstream events emitted and persisted
+
+## 8.2 `crowler-api` (data plane / retrieval)
+
+`crowler-api` provides search/console capabilities that agent workflows can consume through `APIRequest` steps (e.g., source status, content retrieval, search endpoints).
+
+Practical pattern:
+
+- Use agents in `crowler-events` to automate orchestration.
+- Use `crowler-api` for discovery, query, and operational data retrieval.
+
+---
+
+## 9) How agents leverage broader CROWler capabilities
+
+Agents can orchestrate core CROWler features by combining actions:
+
+- **Crawler intelligence** via event triggers emitted from crawling lifecycle
+- **Database** reads/writes with `DBQuery` and event persistence
+- **Plugin runtime** with `PluginExecution`
+- **VDI/browser-aware flows** indirectly through plugins
+- **Event bus orchestration** with `CreateEvent`
+- **Policy/audit** with identity+contract enforcement and runtime audit trail
+
+In short: agents are orchestration glue across crawler, DB, plugins, events, and AI.
+
+---
+
+## 10) Best practices
+
+1. **Design event contracts first.**
+
+   - Keep `event_type` stable and namespaced (`security.finding.generated`).
+
+2. **Prefer v2 manifests for new work.**
+
+   - Add `agent_identity`, constraints, and contract from day one.
+
+3. **Use least privilege capabilities.**
+
+   - Avoid `all` unless needed.
+
+4. **Treat `RunCommand` and `DBQuery` as sensitive.**
+
+   - Pair with higher trust and strict contracts.
+
+5. **Enable strict validation in CI.**
+
+   - Catch unresolved delegation and malformed TTL/durations early.
+
+6. **Use memory intentionally.**
+
+   - Ephemeral for short loops; persistent for cross-run accumulation.
+
+7. **Write deterministic AI prompts.**
+
+   - Ask for strict JSON, include schema hints, and set low temperature for control-plane decisions.
+
+8. **Instrument for auditability.**
+
+   - Populate `owner`, `audit_tags`, contract text, and event correlation details.
+
+9. **Separate coordinator and specialists.**
+
+   - Keep orchestrator lightweight; delegate heavy domain logic.
+
+10. **Keep rollback path.**
+
+   - Route low-confidence branches to watchlist/backlog instead of hard fail.
+
+---
+
+## 11) Domain examples
+
+## 11.1 Cyber Security (SOC triage)
+
+Pattern:
+
+- Trigger on `crawler.page_indexed`
+- Enrich with threat intel (`APIRequest`)
+- Score with `AIInteraction`
+- Branch with `Decision`
+- Create incident via plugin + emit `security.incident.recommended`
+
+See shape in `soc-autonomous-triage-v2.agent.yaml` and `cybersecurity-surface-monitor.agent.yaml`.
+
+## 11.2 Marketing (competitor intelligence)
+
+Pattern:
+
+- Manual trigger for campaign analysts
+- Pull competitor feed
+- AI extract launch/theme positioning deltas
+- Emit structured snapshot event
+
+See `marketing-competitor-intel.agent.yaml`.
+
+## 11.3 Scientific Research (new template)
+
+You can model literature + experiment orchestration as:
+
+```yaml
+format_version: v2
+agent_identity:
+  agent_id: scientific-research-orchestrator
+  name: Scientific Research Orchestrator
+  agent_type: planner
+  owner: team:research
+  trust_level: restricted
+  capabilities: [api_requests, ai_reasoning, emit_event, db_read]
+  memory:
+    scope: persistent
+    namespace: research-lab
+    retention: 500
+jobs:
+  - name: Research Intake
+    process: serial
+    trigger_type: manual
+    trigger_name: run_research_cycle
+    steps:
+      - action: APIRequest
+        params:
+          url: "https://internal-repo.local/publications/latest"
+          request_type: GET
+      - action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          prompt: "Extract hypotheses, methods, and unresolved questions as JSON: $response"
+          memory_write_key: latest_research_map
+      - action: CreateEvent
+        params:
+          source: "agent.scientific-research-orchestrator"
+          event_name: "research.map.updated"
+          event_type: "research.map.updated"
+          severity: "info"
+          details:
+            summary: "$response"
+```
+
+## 11.4 Finance/Risk
+
+Pattern:
+
+- Trigger on news ingestion
+- AI classify macro/sector/company risk
+- Emit risk signal event for downstream trading/risk dashboards
+
+See `finance-news-risk-signal.agent.yaml`.
+
+---
+
+## 12) Practical integration playbooks for MCPs and external agents
+
+For Codex/Claude-like orchestrators that generate or maintain CROWler agents:
+
+1. **Generate manifest from intent**
+   - choose v2, explicit identity, explicit constraints
+2. **Run local checks**
+   - lint + strict validate
+3. **Deploy**
+   - commit file under `agents/` or upload via `/v1/upload/agent`
+4. **Trigger test event**
+   - `POST /v1/event/create`
+5. **Observe outputs**
+   - `GET /v1/event/list` and inspect resulting `event_type`s
+6. **Tighten policy**
+   - enable `identity_enforcement`, then `contract_enforcement`, then `memory_runtime`
+
+### Recommended machine-friendly conventions
+
+- Enforce lowercase/hyphen `agent_id`
+- Namespace event names (`domain.subject.verb`)
+- Require every AI step to request strict JSON
+- Include correlation IDs in event details
+- Keep one coordinator + N specialists per domain workflow
+
+---
+
+## 13) Troubleshooting checklist
+
+- Agent not executing?
+  - Verify trigger pair (`trigger_type`, `trigger_name`) matches emitted event.
+- Delegation failing?
+  - Ensure target `agent_id`/`agent_name` exists and no cycle introduced.
+- AI step failing?
+  - Check `url`, `auth`, provider name, and `prompt/messages` presence.
+- Policy denials?
+  - Review trust level, capabilities, and `forbidden_actions` patterns.
+- Memory not present?
+  - Confirm `agent.memory_runtime: true` and memory scope not `none`.
+
+---
+
+## 14) Reference snippets
+
+## 14.1 Minimal v1
+
+```yaml
+format_version: v1
+jobs:
+  - name: LegacyDiscoveryJob
+    process: serial
+    trigger_type: manual
+    trigger_name: legacy_discovery
+    steps:
+      - action: RunCommand
+        params:
+          command: echo "legacy mode"
+```
+
+## 14.2 Minimal v2
+
+```yaml
+format_version: v2
+agent_identity:
+  agent_id: identity-enabled-agent
+  name: IdentityEnabledAgent
+  trust_level: trusted
+  capabilities: [all]
+jobs:
+  - name: IdentityEnabledAgent
+    process: serial
+    trigger_type: event
+    trigger_name: page_crawled
+    steps:
+      - action: CreateEvent
+        params:
+          source: "0"
+          event_name: agent_completed
+          event_type: agent.completed
+```
+
+---
+
+## 15) Final recommendations
+
+If you are building new automations today:
+
+- Use v2 manifests.
+- Start with strict validation in CI.
+- Keep contracts explicit and capabilities narrow.
+- Favor event-driven composition over monolithic job chains.
+- Treat AI as a controlled decision component, not an unconstrained executor.
+
+That approach gives you portable manifests for humans, MCPs, and autonomous coding agents while staying aligned with CROWler runtime guarantees.
