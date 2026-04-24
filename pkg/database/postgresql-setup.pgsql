@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS SearchIndex (
     detected_lang VARCHAR(16)                   -- (URI language) denormalized for fast searches
 );
 
-CREATE INDEX idx_searchindex_title_trgm
+CREATE INDEX IF NOT EXISTS idx_searchindex_title_trgm
 ON SearchIndex
 USING gin(title gin_trgm_ops);
 
@@ -320,10 +320,10 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 -- These two indexes should help boosting JSONB full-text search performance on
 -- the scraped_data field, which is expected to be the most commonly searched
 -- field in the details JSONB document.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
+CREATE INDEX IF NOT EXISTS idx_webobjects_last_updated_object
 ON WebObjects (last_updated_at DESC, object_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_trgm
+CREATE INDEX IF NOT EXISTS idx_webobjects_scraped_data_trgm
 ON WebObjects
 USING gin (
     left((details->'scraped_data')::text, 400000) gin_trgm_ops
@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS Entities (
 --    WHERE a1.object_id != a2.object_id;
 -- While for fuzzy match:
 --    WHERE similarity(a1.normalized_value, a2.normalized_value) > 0.9;
-CREATE TABLE EntityMemberships (
+CREATE TABLE IF NOT EXISTS EntityMemberships (
     entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE CASCADE,
     object_id BIGINT NOT NULL,
     object_type TEXT NOT NULL DEFAULT 'webobject',
@@ -541,7 +541,7 @@ CREATE TABLE IF NOT EXISTS MetaTags (
     UNIQUE(name, content)                       -- Ensure that each name-content pair is unique
 );
 
-CREATE INDEX idx_metatags_content_trgm
+CREATE INDEX IF NOT EXISTS idx_metatags_content_trgm
 ON MetaTags
 USING gin(content gin_trgm_ops);
 
@@ -560,7 +560,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
 );
 
 -- Trigram index for the keywords
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_keywords_keyword_trgm
+CREATE INDEX IF NOT EXISTS idx_keywords_keyword_trgm
 ON Keywords
 USING gin (keyword gin_trgm_ops);
 ----------------------------------------------------------------
@@ -777,7 +777,7 @@ CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     FOREIGN KEY (object_id) REFERENCES WebObjects(object_id) ON DELETE CASCADE
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_woi_object_index
+CREATE INDEX IF NOT EXISTS idx_woi_object_index
 ON WebObjectsIndex(object_id, index_id);
 -------------------------------------------------------------------------------
 
@@ -1396,7 +1396,7 @@ $$;
 -- Creates an index for the Keywords table on the keyword column (for lower-cased searches)
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywords_keyword_lower') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_keywords_keyword_lower_unique') THEN
         CREATE UNIQUE INDEX idx_keywords_keyword_lower_unique ON Keywords (LOWER(keyword));
     END IF;
 END
