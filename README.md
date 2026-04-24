@@ -16,7 +16,7 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 [![Go-VulnCheck](https://github.com/pzaino/thecrowler/actions/workflows/go-vulncheck.yml/badge.svg)](https://github.com/pzaino/thecrowler/actions/workflows/go-vulncheck.yml)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_shield&issueType=license)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler.svg?type=shield&issueType=security)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpzaino%2Fthecrowler?ref=badge_shield&issueType=security)
-![License: ](https://img.shields.io/github/license/pzaino/TheCROWler)
+![GitHub License](https://img.shields.io/github/license/pzaino/thecrowler)
 [![Go Reference](https://pkg.go.dev/badge/github.com/pzaino/thecrowler.svg)](https://pkg.go.dev/github.com/pzaino/thecrowler)
 ![GitHub language count](https://img.shields.io/github/languages/count/pzaino/thecrowler)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/t/pzaino/thecrowler)
