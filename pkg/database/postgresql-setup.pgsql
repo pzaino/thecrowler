@@ -2423,8 +2423,8 @@ ORDER BY rank DESC
 $$;
 
 -- This view aggregates all the relevant details from WebObjects, NetInfo, and HTTPInfo into a single unified view that can be easily queried for correlation and search purposes.
-CREATE OR REPLACE VIEW Artifacts AS
-
+CREATE OR REPLACE VIEW Artifacts
+AS
 SELECT
     'webobject'::text AS object_type,
     wo.object_id AS object_id,
@@ -2468,7 +2468,7 @@ RETURNS TABLE(
     index_id BIGINT,
     page_url TEXT,
     json_field TEXT,
-    json_value TEXT,
+    json_val TEXT,
     created_at TIMESTAMP,
     last_updated_at TIMESTAMP,
     rank REAL
@@ -2512,7 +2512,7 @@ RETURNS TABLE(
     index_id BIGINT,
     page_url TEXT,
     json_field TEXT,
-    json_value TEXT,
+    json_val TEXT,
     created_at TIMESTAMP,
     last_updated_at TIMESTAMP,
     rank REAL
@@ -2551,7 +2551,7 @@ RETURNS TABLE(
     artifact_id BIGINT,
     page_url TEXT,
     json_field TEXT,
-    json_value TEXT,
+    json_val TEXT,
     created_at TIMESTAMP,
     last_updated_at TIMESTAMP,
     rank REAL
@@ -2563,7 +2563,7 @@ SELECT
     oa.object_id AS artifact_id,
     ar.page_url,
     oa.attribute_key AS json_field,
-    oa.attribute_value AS json_value,
+    oa.attribute_value AS json_val,
     ar.created_at,
     ar.last_updated_at,
 
@@ -2593,7 +2593,7 @@ RETURNS TABLE(
     artifact_id BIGINT,
     page_url TEXT,
     json_field TEXT,
-    json_value TEXT,
+    json_val TEXT,
     created_at TIMESTAMP,
     last_updated_at TIMESTAMP,
     rank REAL
@@ -2605,7 +2605,7 @@ SELECT
     oa.object_id AS artifact_id,
     ar.page_url,
     oa.attribute_key AS json_field,
-    oa.attribute_value AS json_value,
+    oa.attribute_value AS json_val,
     ar.created_at,
     ar.last_updated_at,
 
