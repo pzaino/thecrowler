@@ -320,10 +320,10 @@ CREATE TABLE IF NOT EXISTS WebObjects (
 -- These two indexes should help boosting JSONB full-text search performance on
 -- the scraped_data field, which is expected to be the most commonly searched
 -- field in the details JSONB document.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_last_updated_object
+CREATE INDEX IF NOT EXISTS idx_webobjects_last_updated_object
 ON WebObjects (last_updated_at DESC, object_id);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webobjects_scraped_data_trgm
+CREATE INDEX IF NOT EXISTS idx_webobjects_scraped_data_trgm
 ON WebObjects
 USING gin (
     left((details->'scraped_data')::text, 400000) gin_trgm_ops
@@ -560,7 +560,7 @@ CREATE TABLE IF NOT EXISTS Keywords (
 );
 
 -- Trigram index for the keywords
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_keywords_keyword_trgm
+CREATE INDEX IF NOT EXISTS idx_keywords_keyword_trgm
 ON Keywords
 USING gin (keyword gin_trgm_ops);
 ----------------------------------------------------------------
@@ -777,7 +777,7 @@ CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     FOREIGN KEY (object_id) REFERENCES WebObjects(object_id) ON DELETE CASCADE
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_woi_object_index
+CREATE INDEX IF NOT EXISTS idx_woi_object_index
 ON WebObjectsIndex(object_id, index_id);
 -------------------------------------------------------------------------------
 
