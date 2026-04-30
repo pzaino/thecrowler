@@ -1229,8 +1229,7 @@
           },
           "additionalProperties": false,
           "required": [
-            "enabled",
-            "directory"
+            "enabled"
           ]
         },
         "use_google_cloud_run": {
