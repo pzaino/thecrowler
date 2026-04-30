@@ -38,12 +38,19 @@ jobs:
         disable-sudo: true
         egress-policy: block
         allowed-endpoints: >
-          github.com:443
           api.github.com:443
-          github-releases.githubusercontent.com:443
+          dl.google.com:443
+          example.com:43
+          example.com:443
+          github.com:443
+          go.dev:443
+          golang.org:443
           goreportcard.com:443
+          jsonplaceholder.typicode.com:443
           objects.githubusercontent.com:443
           proxy.golang.org:443
+          release-assets.githubusercontent.com:443
           storage.googleapis.com:443
-          golang.org:443
-          go.dev:443
+          sum.golang.org:443
+          whois.iana.org:43
+          winatp-gw-cus.microsoft.com:443
