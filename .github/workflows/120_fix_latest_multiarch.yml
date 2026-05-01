@@ -42,7 +42,7 @@
               password: ${{ secrets.DOCKER_PAT }}
 
           - name: Set up Buildx
-            uses: docker/setup-buildx-action@v3
+            uses: docker/setup-buildx-action@v4
 
           - name: Update latest multi-arch manifest
             run: |
