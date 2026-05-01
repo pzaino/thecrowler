@@ -52,6 +52,7 @@ const (
 	SSDefaultDelayTime = 100
 
 	stdRateLimit = "10,10"
+	stdHost      = "0.0.0.0"
 
 	never = "never"
 )
@@ -299,6 +300,7 @@ func NewConfig() *Config {
 			Port:              8082,
 			SSLMode:           cmn.DisableStr,
 			Timeout:           60,
+			IdleTimeout:       30,
 			CertFile:          "",
 			KeyFile:           "",
 			RateLimit:         stdRateLimit,
@@ -585,6 +587,7 @@ func (c *Config) Validate() error {
 	c.validateCrawler()
 	c.validateDatabase()
 	c.validateAPI()
+	c.validateEvents()
 	c.validateVDI()
 	c.validatePrometheus()
 	c.validateImageStorageAPI()
@@ -1011,7 +1014,7 @@ func (c *Config) validateDatabase() {
 func (c *Config) validateAPI() {
 	// Check API
 	if strings.TrimSpace(c.API.Host) == "" {
-		c.API.Host = "0.0.0.0"
+		c.API.Host = stdHost
 	} else {
 		c.API.Host = strings.TrimSpace(c.API.Host)
 	}
@@ -1020,6 +1023,9 @@ func (c *Config) validateAPI() {
 	}
 	if c.API.Timeout < 1 {
 		c.API.Timeout = 60
+	}
+	if c.API.IdleTimeout < 10 {
+		c.API.IdleTimeout = 30
 	}
 	if strings.TrimSpace(c.API.RateLimit) == "" {
 		c.API.RateLimit = stdRateLimit
@@ -1034,6 +1040,34 @@ func (c *Config) validateAPI() {
 	}
 	if c.API.WriteTimeout < 1 {
 		c.API.WriteTimeout = 30
+	}
+}
+
+func (c *Config) validateEvents() {
+	// Check Events
+	if strings.TrimSpace(c.Events.Host) == "" {
+		c.Events.Host = stdHost
+	}
+	if c.Events.Port < 1 || c.Events.Port > 65535 {
+		c.Events.Port = 8082
+	}
+	if c.Events.Timeout < 1 {
+		c.Events.Timeout = 60
+	}
+	if c.Events.IdleTimeout < 10 {
+		c.Events.IdleTimeout = 30
+	}
+	if strings.TrimSpace(c.Events.RateLimit) == "" {
+		c.Events.RateLimit = stdRateLimit
+	}
+	if c.Events.ReadHeaderTimeout < 1 {
+		c.Events.ReadHeaderTimeout = 15
+	}
+	if c.Events.ReadTimeout < 1 {
+		c.Events.ReadTimeout = 15
+	}
+	if c.Events.WriteTimeout < 1 {
+		c.Events.WriteTimeout = 30
 	}
 }
 
@@ -1467,6 +1501,7 @@ func (c *GeoLookupConfig) validate() {
 	}
 }
 
+// IsEmpty checks if the given APIConfig is empty.
 func (api *API) IsEmpty() bool {
 	if api == nil {
 		return true

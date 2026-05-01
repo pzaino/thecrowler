@@ -1108,6 +1108,12 @@
           "type": "integer",
           "minimum": 10
         },
+        "idle_timeout": {
+          "title": "CROWler General/Search API Idle Timeout",
+          "description": "This is the idle timeout for the API. It is the maximum amount of time that the CROWler will keep a connection to the API open if there are no requests.",
+          "type": "integer",
+          "minimum": 10
+        },
         "disable_default": {
           "title": "CROWler General/Search API Disable default end-points",
           "description": "This is a flag that tells the CROWler to disable the General/Search API default end-points. If you want to use the General/Search API only for custom plugins, you can disable the default end-points to improve performance and security.",
@@ -1435,6 +1441,12 @@
         "timeout": {
           "title": "CROWler Events Manager Timeout",
           "description": "This is the timeout for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond.",
+          "type": "integer",
+          "minimum": 10
+        },
+        "idle_timeout": {
+          "title": "CROWler Events Manager Idle Timeout",
+          "description": "This is the idle timeout for the Events Manager. It is the maximum amount of time that the CROWler will keep the connection with the Events Manager open if there are no events to process.",
           "type": "integer",
           "minimum": 10
         },

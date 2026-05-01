@@ -71,9 +71,9 @@ var (
 
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
-	jobQueue       = make(chan cdb.Event, 120000)  // buffered requests queue
-	internalQ      = make(chan cdb.Event, 10_000)  // buffered small; DB-only work
-	externalQ      = make(chan cdb.Event, 100_000) // buffered larger; JS+DB work
+	jobQueue       = make(chan cdb.Event, 160_000) // buffered requests queue
+	internalQ      = make(chan cdb.Event, 160_000) // buffered small; DB-only work
+	externalQ      = make(chan cdb.Event, 160_000) // buffered larger; JS+DB work
 
 	mainInstance = []string{"crowler-events", "crowler-events-0"}
 )
@@ -137,16 +137,25 @@ func main() {
 			case syscall.SIGINT:
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
+				setSysReady(0)
+				updateMetrics()
+				time.Sleep(2 * time.Second) // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
 			case syscall.SIGTERM:
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
+				setSysReady(0)
+				updateMetrics()
+				time.Sleep(2 * time.Second) // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
+				setSysReady(0)
+				updateMetrics()
+				time.Sleep(2 * time.Second) // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
 			case syscall.SIGHUP:
@@ -226,7 +235,7 @@ func main() {
 		// next request when keep-alive are enabled. If IdleTimeout
 		// is zero, the value of ReadTimeout is used. If both are
 		// zero, there is no timeout.
-		IdleTimeout: time.Duration(config.Events.Timeout) * time.Second,
+		IdleTimeout: time.Duration(config.Events.IdleTimeout) * time.Second,
 	}
 
 	_ = runtime.GOMAXPROCS(runtime.NumCPU())
@@ -622,7 +631,13 @@ func getLimiter(ip string) *rate.Limiter {
 }
 
 func withAll(m http.Handler) http.Handler {
-	return RecoverMiddleware(SecurityHeadersMiddleware(RateLimitMiddleware(m)))
+	return RecoverMiddleware(
+		SecurityHeadersMiddleware(
+			KeepAliveHeadersMiddleware(
+				RateLimitMiddleware(m),
+			),
+		),
+	)
 }
 
 // RecoverMiddleware captures panics from handlers and returns 500 instead of crashing the process.
@@ -647,6 +662,17 @@ func RateLimitMiddleware(next http.Handler) http.Handler {
 			http.Error(w, errTooManyRequests, http.StatusTooManyRequests)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// KeepAliveHeadersMiddleware adds keep-alive headers to responses
+func KeepAliveHeadersMiddleware(next http.Handler) http.Handler {
+	kaTimeout := config.Events.IdleTimeout
+	kaTimeoutStr := fmt.Sprintf("timeout=%d", kaTimeout)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Keep-Alive", kaTimeoutStr)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -736,7 +762,11 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Async process
-	jobQueue <- event
+	//jobQueue <- event
+	if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
+		http.Error(w, "Events queue is full", http.StatusServiceUnavailable)
+		return
+	}
 
 	//response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	response := EventResponse{
@@ -985,7 +1015,11 @@ func handleNotification(payload string) {
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
 		// Put the event in the jobQueue
-		jobQueue <- event
+		if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Job queue full; dropping event %s (type=%s)", event.ID, event.Type)
+			mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
+			return
+		}
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
@@ -1040,11 +1074,11 @@ func eventWorker() {
 			if strings.TrimSpace(e.Action) != "" {
 				// processInternalEvent(e)
 				// internal job
-				_ = enqueueWithTimeout(internalQ, e, 200*time.Millisecond)
+				_ = enqueueWithTimeout(internalQ, e, 250*time.Millisecond)
 			} else {
 				// processEvent(e)
 				// plugin/agent job
-				_ = enqueueWithTimeout(externalQ, e, 200*time.Millisecond)
+				_ = enqueueWithTimeout(externalQ, e, 250*time.Millisecond)
 			}
 		}(event)
 	}

@@ -1340,19 +1340,25 @@ func main() {
 			case syscall.SIGINT:
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
+				setSysReady(0)
 				closeResources(db, &vdiInstances) // Release resources
+				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
 			case syscall.SIGTERM:
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
+				setSysReady(0)
 				closeResources(db, &vdiInstances) // Release resources
+				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
 			case syscall.SIGQUIT:
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
+				setSysReady(0)
 				closeResources(db, &vdiInstances) // Release resources
+				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
 			case syscall.SIGHUP:
