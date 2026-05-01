@@ -298,7 +298,7 @@ func main() {
 		// next request when keep-alive are enabled. If IdleTimeout
 		// is zero, the value of ReadTimeout is used. If both are
 		// zero, there is no timeout.
-		IdleTimeout: time.Duration(config.API.Timeout) * time.Second,
+		IdleTimeout: time.Duration(config.API.IdleTimeout) * time.Second,
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -795,8 +795,12 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]str
 func withAPIPluginMiddlewares(h http.HandlerFunc) http.Handler {
 	return RecoverMiddleware(
 		CIDRFilterMiddleware(
-			SecurityHeadersMiddleware(
-				RateLimitMiddleware(h),
+			CORSHeadersMiddleware(
+				SecurityHeadersMiddleware(
+					KeepAliveHeadersMiddleware(
+						RateLimitMiddleware(h),
+					),
+				),
 			),
 		),
 	)
@@ -845,11 +849,24 @@ func withPublicMiddlewares(h http.HandlerFunc) http.Handler {
 		CIDRFilterMiddleware(
 			CORSHeadersMiddleware(
 				SecurityHeadersMiddleware(
-					RateLimitMiddleware(h),
+					KeepAliveHeadersMiddleware(
+						RateLimitMiddleware(h),
+					),
 				),
 			),
 		),
 	)
+}
+
+// KeepAliveHeadersMiddleware adds keep-alive headers to responses
+func KeepAliveHeadersMiddleware(next http.Handler) http.Handler {
+	kaTimeout := config.Events.IdleTimeout
+	kaTimeoutStr := fmt.Sprintf("timeout=%d", kaTimeout)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Keep-Alive", kaTimeoutStr)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // CORSHeadersMiddleware enables CORS for requests

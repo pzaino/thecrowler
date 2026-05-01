@@ -391,6 +391,7 @@ type API struct {
 	Host              string     `yaml:"host"`                                             // Hostname of the API server
 	Port              int        `yaml:"port"`                                             // Port number of the API server
 	Timeout           int        `yaml:"timeout"`                                          // Timeout for API requests (in seconds)
+	IdleTimeout       int        `yaml:"idle_timeout"`                                     // Idle timeout for API connections (in seconds)
 	ContentSearch     bool       `yaml:"content_search"`                                   // Whether to search in the content too or not
 	DisableDefault    bool       `yaml:"enable_default"`                                   // Whether to enable the default API endpoints or not
 	EnableAPIDocs     bool       `json:"enable_api_docs" yaml:"enable_api_docs"`           // Whether to enable API documentation or not
@@ -468,6 +469,7 @@ type EventsConfig struct {
 	Host                     string `json:"host" yaml:"host"`                                               // Hostname of the events handler server
 	Port                     int    `json:"port" yaml:"port"`                                               // Port number of the events handler server
 	Timeout                  int    `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
+	IdleTimeout              int    `json:"idle_timeout" yaml:"idle_timeout"`                               // Idle timeout for events handler requests (in seconds)
 	SSLMode                  string `json:"sslmode" yaml:"sslmode"`                                         // SSL mode for events handler connection (e.g., "disable")
 	CertFile                 string `json:"cert_file" yaml:"cert_file"`                                     // Path to the SSL certificate file
 	KeyFile                  string `json:"key_file" yaml:"key_file"`                                       // Path to the SSL key file
