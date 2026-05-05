@@ -1165,16 +1165,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_owner_relationships_last_updated_before_update') THEN
-        CREATE TRIGGER trg_update_owner_relationships_last_updated_before_update
-        BEFORE UPDATE ON OwnerRelationships
-        FOR EACH ROW
-        EXECUTE FUNCTION update_last_updated_at_owner_relationships();
-    END IF;
-END
-$$;
+CREATE OR REPLACE TRIGGER trg_update_owner_relationships_last_updated_before_update
+BEFORE UPDATE ON OwnerRelationships
+FOR EACH ROW
+EXECUTE FUNCTION update_last_updated_at_owner_relationships();
 
 
 -- Indexes for the SearchIndex table -------------------------------------------
