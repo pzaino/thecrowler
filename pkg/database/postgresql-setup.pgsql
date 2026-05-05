@@ -74,11 +74,22 @@ CREATE TABLE IF NOT EXISTS Status (
 );
 
 -- Add foreign key constraint to link parent_status_sha256 to status_sha256 in the same table
-ALTER TABLE Status
-ADD CONSTRAINT fk_status_parent
-FOREIGN KEY (parent_status_sha256)
-REFERENCES Status(status_sha256)
-ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_status_parent'
+          AND conrelid = 'status'::regclass
+    ) THEN
+        ALTER TABLE Status
+        ADD CONSTRAINT fk_status_parent
+        FOREIGN KEY (parent_status_sha256)
+        REFERENCES Status(status_sha256)
+        ON DELETE SET NULL;
+    END IF;
+END
+$$;
 
 -- System Status Operations table indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_status_agent
@@ -361,23 +372,23 @@ CREATE TABLE IF NOT EXISTS ObjectAttributes (
     )
 );
 
-CREATE INDEX idx_objattr_fts
+CREATE INDEX IF NOT EXISTS idx_objattr_fts
     ON ObjectAttributes
     USING gin (fts);
 
 -- fast filtering by key
-CREATE INDEX idx_objattr_key
+CREATE INDEX IF NOT EXISTS idx_objattr_key
 ON ObjectAttributes(attribute_key);
 
 -- fast filtering by type
-CREATE INDEX idx_objattr_type
+CREATE INDEX IF NOT EXISTS idx_objattr_type
 ON ObjectAttributes(object_type);
 
 CREATE INDEX IF NOT EXISTS idx_objattr_hash
     ON ObjectAttributes(value_hash)
     WHERE value_hash IS NOT NULL;
 
-CREATE INDEX idx_objattr_key_hash
+CREATE INDEX IF NOT EXISTS idx_objattr_key_hash
 ON ObjectAttributes(attribute_key, value_hash);
 
 CREATE INDEX IF NOT EXISTS idx_objattr_object
@@ -511,20 +522,53 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_cleanup_webobject
-AFTER DELETE ON WebObjects
-FOR EACH ROW
-EXECUTE FUNCTION cleanup_artifact_data('webobject');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_cleanup_webobject'
+          AND tgrelid = 'webobjects'::regclass
+    ) THEN
+        CREATE TRIGGER trg_cleanup_webobject
+        AFTER DELETE ON WebObjects
+        FOR EACH ROW
+        EXECUTE FUNCTION cleanup_artifact_data('webobject');
+    END IF;
+END
+$$;
 
-CREATE TRIGGER trg_cleanup_netinfo
-AFTER DELETE ON NetInfo
-FOR EACH ROW
-EXECUTE FUNCTION cleanup_artifact_data('netinfo');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_cleanup_netinfo'
+          AND tgrelid = 'netinfo'::regclass
+    ) THEN
+        CREATE TRIGGER trg_cleanup_netinfo
+        AFTER DELETE ON NetInfo
+        FOR EACH ROW
+        EXECUTE FUNCTION cleanup_artifact_data('netinfo');
+    END IF;
+END
+$$;
 
-CREATE TRIGGER trg_cleanup_httpinfo
-AFTER DELETE ON HTTPInfo
-FOR EACH ROW
-EXECUTE FUNCTION cleanup_artifact_data('httpinfo');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_cleanup_httpinfo'
+          AND tgrelid = 'httpinfo'::regclass
+    ) THEN
+        CREATE TRIGGER trg_cleanup_httpinfo
+        AFTER DELETE ON HTTPInfo
+        FOR EACH ROW
+        EXECUTE FUNCTION cleanup_artifact_data('httpinfo');
+    END IF;
+END
+$$;
 ----------------------------------------------------------------
 
 
@@ -1121,16 +1165,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_owner_relationships_last_updated_before_update') THEN
-        CREATE TRIGGER trg_update_owner_relationships_last_updated_before_update
-        BEFORE UPDATE ON OwnerRelationships
-        FOR EACH ROW
-        EXECUTE FUNCTION update_last_updated_at_owner_relationships();
-    END IF;
-END
-$$;
+CREATE OR REPLACE TRIGGER trg_update_owner_relationships_last_updated_before_update
+BEFORE UPDATE ON OwnerRelationships
+FOR EACH ROW
+EXECUTE FUNCTION update_last_updated_at_owner_relationships();
 
 
 -- Indexes for the SearchIndex table -------------------------------------------
@@ -1814,6 +1852,23 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+--  Creates a trigger to update the tsvector column on insert or update of SearchIndex
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_searchindex_tsv'
+          AND tgrelid = 'searchindex'::regclass
+    ) THEN
+        CREATE TRIGGER trg_searchindex_tsv
+        BEFORE INSERT OR UPDATE ON SearchIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION searchindex_tsv_trigger();
+    END IF;
+END
+$$;
+
 -- Creates an index for the SearchIndex tsv column
 DO $$
 BEGIN
@@ -1836,6 +1891,14 @@ BEGIN
     END IF;
 END
 $$;
+
+UPDATE WebObjects
+SET object_content_fts = to_tsvector('english', coalesce(object_content, ''))
+WHERE object_content_fts IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_webobjects_object_content_fts
+ON WebObjects
+USING gin(object_content_fts);
 
 -- Create a trigger to update the tsvector column for WebObjects
 CREATE OR REPLACE FUNCTION webobjects_content_trigger() RETURNS trigger AS $$
@@ -2223,7 +2286,15 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION update_sources(integer,character varying,character varying,character varying,character varying,character varying,character varying);
+        DROP FUNCTION IF EXISTS update_sources(
+                                                INTEGER,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR
+                                            );
     END IF;
 END
 $$;
@@ -3028,6 +3099,15 @@ ALTER TABLE sessions OWNER TO :CROWLER_DB_USER;
 ALTER TABLE sourcesessionindex OWNER TO :CROWLER_DB_USER;
 ALTER TABLE sourcecategoryindex OWNER TO :CROWLER_DB_USER;
 ALTER TABLE ownerrelationships OWNER TO :CROWLER_DB_USER;
+ALTER TABLE dbschemaversion OWNER TO :CROWLER_DB_USER;
+ALTER TABLE status OWNER TO :CROWLER_DB_USER;
+ALTER TABLE memory OWNER TO :CROWLER_DB_USER;
+ALTER TABLE objectattributes OWNER TO :CROWLER_DB_USER;
+ALTER TABLE entities OWNER TO :CROWLER_DB_USER;
+ALTER TABLE entitymemberships OWNER TO :CROWLER_DB_USER;
+ALTER TABLE correlationrules OWNER TO :CROWLER_DB_USER;
+ALTER TABLE objectcorrelations OWNER TO :CROWLER_DB_USER;
+ALTER TABLE eventschedules OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
