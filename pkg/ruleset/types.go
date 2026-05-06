@@ -478,6 +478,7 @@ type CrawlingRule struct {
 	RequestType       string             `yaml:"request_type"`
 	TargetElements    []TargetElement    `yaml:"target_elements"`
 	FuzzingParameters []FuzzingParameter `yaml:"fuzzing_parameters"`
+	Lifecycle         *CrawlingLifecycle `json:"lifecycle,omitempty" yaml:"lifecycle,omitempty"`
 }
 
 // TargetElement represents a target element specified in a crawling rule

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 // FuzzURL takes a base URL and a CrawlingRule, generating fuzzed URLs based on the rule's parameters.
@@ -103,4 +104,17 @@ func cloneQueryValues(originalQuery url.Values) url.Values {
 		fuzzedQuery[k] = v
 	}
 	return fuzzedQuery
+}
+
+func FuzzURLWithLifecycle(ctx *ProcessContext, wd *vdi.WebDriver, state *lifecycleRuntimeState, baseURL string, rule rules.CrawlingRule, depth int) ([]string, error) {
+	_ = executeCrawlingLifecycleHook(ctx, wd, state, rule, "pre_fuzz", map[string]interface{}{"url": baseURL, "depth": depth})
+	fuzzedURLs, err := FuzzURL(baseURL, rule)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range fuzzedURLs {
+		_ = executeCrawlingLifecycleHook(ctx, wd, state, rule, "per_fuzz_candidate", map[string]interface{}{"url": baseURL, "depth": depth, "fuzz_candidate": c})
+	}
+	_ = executeCrawlingLifecycleHook(ctx, wd, state, rule, "post_fuzz", map[string]interface{}{"url": baseURL, "depth": depth, "candidate_count": len(fuzzedURLs)})
+	return fuzzedURLs, nil
 }
