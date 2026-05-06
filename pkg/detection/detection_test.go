@@ -16,6 +16,7 @@
 package detection
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -37,6 +38,58 @@ func TestDetectionEntityDetailsIsEmpty(t *testing.T) {
 
 	if nonEmptyDetails.IsEmpty() {
 		t.Errorf("Expected non-empty details to not be empty")
+	}
+}
+
+func TestNormalizeAgentDetectionResult(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   interface{}
+		wantOK  bool
+		wantObj string
+		wantC   float32
+	}{
+		{"valid-detected", map[string]interface{}{"detected": true, "object_name": "wordpress", "confidence": 50.0, "evidence": "meta"}, true, "wordpress", 50},
+		{"valid-not-detected", map[string]interface{}{"detected": false}, true, "", 10},
+		{"invalid-missing-object-name", map[string]interface{}{"detected": true}, false, "", 0},
+		{"invalid-detected-type", map[string]interface{}{"detected": "yes"}, false, "", 0},
+		{"confidence-clamped", map[string]interface{}{"detected": true, "object_name": "nginx", "confidence": 1000.0}, true, "nginx", 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := normalizeAgentDetectionResult(tt.input)
+			if ok != tt.wantOK {
+				t.Fatalf("ok=%v want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if got.ObjectName != tt.wantObj || got.Confidence != tt.wantC {
+				t.Fatalf("unexpected result: %+v", got)
+			}
+		})
+	}
+}
+
+func TestNormalizeAgentDetectionResultJSONString(t *testing.T) {
+	raw := map[string]interface{}{"detected": true, "object_name": "drupal"}
+	b, _ := json.Marshal(raw)
+	got, ok := normalizeAgentDetectionResult(string(b))
+	if !ok || got.Confidence != 10 {
+		t.Fatalf("unexpected parse result: %#v ok=%v", got, ok)
+	}
+}
+
+func TestBuildAgentDetectionContext(t *testing.T) {
+	detected := map[string]detectionEntityDetails{"wp": {entityType: "html", confidence: 12}}
+	body := "<html>ok</html>"
+	ctx := buildAgentDetectionContext(&DContext{TargetURL: "https://example.org", TargetIP: "1.1.1.1", ResponseBody: &body}, &detected)
+	if ctx["url"] != "https://example.org" {
+		t.Fatalf("url not propagated")
+	}
+	list, ok := ctx["detected"].([]map[string]interface{})
+	if !ok || len(list) != 1 {
+		t.Fatalf("detected summary missing: %#v", ctx["detected"])
 	}
 }
 
