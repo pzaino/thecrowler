@@ -391,7 +391,25 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 		case strRegEx:
 			rval = fallbackExtractByRegex(htmlContent, selector.Selector, all)
 		case strPluginCall:
-			results = extractByPlugin(ctx, wd, selector.Selector)
+			req := RuleCallRequest{
+				Kind:       RuleCallKindPlugin,
+				PluginName: selector.Selector,
+				TimeoutSec: 30,
+				OnError:    "fail",
+				Caller:     "scraping.selector",
+			}
+			res := executeRuleCall(ctx, wd, req)
+			if res.Success {
+				results = normalizeRuleCallOutput(res.Value)
+			}
+		case string(RuleCallKindAgent):
+			if selector.AgentCall != nil {
+				req := normalizeFromAgentCall(selector.AgentCall, "scraping.selector")
+				res := executeRuleCall(ctx, wd, req)
+				if res.Success {
+					results = normalizeRuleCallOutput(res.Value)
+				}
+			}
 		}
 		for _, s := range rval {
 			results = append(results, s)
@@ -432,6 +450,16 @@ func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector
 		}
 	}
 	return results
+}
+
+func normalizeRuleCallOutput(value interface{}) []interface{} {
+	if value == nil {
+		return []interface{}{}
+	}
+	if arr, ok := value.([]interface{}); ok {
+		return arr
+	}
+	return []interface{}{value}
 }
 
 func extractDataFromElement(_ *ProcessContext, item interface{}, selector rs.Selector) []string {
@@ -764,11 +792,45 @@ func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, d
 		ppStepSetEnv(ctx, step, data)
 	case strPluginCall:
 		ppStepPluginCall(ctx, step, data)
+	case string(RuleCallKindAgent):
+		ppStepAgentCall(ctx, step, data)
 	case "external_api":
 		ppStepExternalAPI(ctx, step, data)
 	default:
 		cmn.DebugMsg(cmn.DbgLvlError, "Unknown post-processing step type: %v", stepType)
 	}
+}
+
+func ppStepAgentCall(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
+	if step.AgentCall == nil {
+		return
+	}
+	req := normalizeFromAgentCall(step.AgentCall, "scraping.post_processing")
+	res := executeRuleCall(ctx, ctx.GetWebDriver(), req)
+	if !res.Success {
+		return
+	}
+	base := cmn.ConvertJSONToMap(*data)
+	strategy := strings.ToLower(strings.TrimSpace(step.AgentCall.MergeStrategy))
+	if strategy == "" {
+		strategy = "replace"
+	}
+	switch strategy {
+	case "merge":
+		if m, ok := res.Value.(map[string]interface{}); ok {
+			for k, v := range m {
+				base[k] = v
+			}
+		}
+	case "append":
+		existing, _ := base["_agent_results"].([]interface{})
+		base["_agent_results"] = append(existing, res.Value)
+	case "ignore":
+		// no-op
+	default: // replace
+		base["_agent_result"] = res.Value
+	}
+	*data = cmn.ConvertMapToJSON(base)
 }
 
 // ppStepSetEnv applies the "set_env" post-processing step to the provided data.
