@@ -234,7 +234,7 @@ Each item:
 ```yaml
 scraping_rules:
   - rule_name: "scrape-title"
-    scope: "page"
+    scope: "website"
     elements:
       - key: "title"
         selectors:
