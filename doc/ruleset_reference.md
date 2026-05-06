@@ -7,6 +7,12 @@ This reference documents the **current ruleset model** used by CROWler, aligned 
 
 Use this page as a practical guide to authoring rulesets for scraping, actions, detection, crawling/fuzzing, and rule-time orchestration (`plugin_call` and `agent_call`).
 
+For a full introduction to the ruleset concept, design principles, see the [Rulesets documentation](./rulesets.md).
+
+For a reference to the rulesets architecture and how the engine executes rulesets, see the [Ruleset Engine documentation](./ruleset_architecture.md).
+
+For all possible details check the [ruleset schema](../schemas/crowler-ruleset-schema.json).
+
 ---
 
 ## 1) Top-level structure
