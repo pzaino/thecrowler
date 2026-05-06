@@ -253,6 +253,7 @@ type Element struct {
 type Selector struct {
 	SelectorType string              `json:"selector_type" yaml:"selector_type"`
 	Selector     string              `json:"selector" yaml:"selector"`
+	AgentCall    *AgentCall          `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
 	SelectorAttr []SelectorAttribute `json:"selector_attributes,omitempty" yaml:"selector_attributes,omitempty"`
 	Attribute    struct {
 		Name  string `json:"name" yaml:"name"`
@@ -279,16 +280,18 @@ type ItemToExtract struct {
 
 // WaitCondition represents a single wait condition
 type WaitCondition struct {
-	ConditionType string   `json:"condition_type" yaml:"condition_type"`
-	Selector      Selector `json:"selector,omitempty" yaml:"selector,omitempty"`
-	CustomJS      string   `json:"custom_js,omitempty" yaml:"custom_js,omitempty"`
-	Value         string   `json:"value,omitempty" yaml:"value,omitempty"`
+	ConditionType string     `json:"condition_type" yaml:"condition_type"`
+	Selector      Selector   `json:"selector,omitempty" yaml:"selector,omitempty"`
+	CustomJS      string     `json:"custom_js,omitempty" yaml:"custom_js,omitempty"`
+	Value         string     `json:"value,omitempty" yaml:"value,omitempty"`
+	AgentCall     *AgentCall `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
 }
 
 // PostProcessingStep represents a single post-processing step
 type PostProcessingStep struct {
-	Type    string                 `json:"step_type" yaml:"step_type"`
-	Details map[string]interface{} `json:"details" yaml:"details"`
+	Type      string                 `json:"step_type" yaml:"step_type"`
+	Details   map[string]interface{} `json:"details" yaml:"details"`
+	AgentCall *AgentCall             `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
 }
 
 // DetectionRule represents a rule for detecting specific technologies or objects
@@ -303,6 +306,7 @@ type DetectionRule struct {
 	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
 	Implies             []string               `yaml:"implies,omitempty"`
 	PluginCalls         []PluginCall           `yaml:"plugin_calls,omitempty"`
+	AgentCalls          []AgentCall            `json:"agent_calls,omitempty" yaml:"agent_calls,omitempty"`
 	ExternalDetections  []ExternalDetection    `yaml:"external_detection,omitempty"`
 }
 
@@ -478,8 +482,9 @@ type CrawlingRule struct {
 
 // TargetElement represents a target element specified in a crawling rule
 type TargetElement struct {
-	SelectorType string `yaml:"selector_type"`
-	Selector     string `yaml:"selector"`
+	SelectorType string     `yaml:"selector_type"`
+	Selector     string     `yaml:"selector"`
+	AgentCall    *AgentCall `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
 }
 
 // FuzzingParameter represents a parameter to be fuzzed as specified in a crawling rule
