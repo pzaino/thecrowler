@@ -79,6 +79,8 @@ Both are first-class across subsystems.
 - `on_error` *(string, optional; e.g. `continue`/`abort`)*
 - `store_as` *(string, optional)*
 
+**Note**: When calling an agent from a **detection rule**, it's important that the agent stores the final results in the CROWler KV store using the key pattern `{ctx_id}:{agent_name}`. This allows the detection engine to retrieve and process the results after the agent execution.
+
 ---
 
 ## 4) Scraping rules
