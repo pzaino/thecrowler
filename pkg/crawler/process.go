@@ -66,6 +66,7 @@ type ProcessContext struct {
 	SelClosed            bool                      // Flag to indicate if the Selenium instance was closed
 	VDIOperationMutex    sync.Mutex                // Mutex to protect the VDI operations
 	RefreshCrawlingTimer func()                    // Function to refresh the crawling timer
+	ruleCallState        *ruleCallRuntimeState     // Runtime guardrails for plugin/agent rule calls
 }
 
 // GetContextID returns a unique context ID for the ProcessContext

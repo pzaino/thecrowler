@@ -139,3 +139,72 @@
   - **`logging_configuration`** *(object)*: rule log configuration (aka what you want to be logged when the rule execute).
     - **`log_level`** *(string)*: Optional. Specifies the logging level for actions and scraping activities. Must be one of: `['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']`.
     - **`log_message`** *(string)*: Optional. The message you want to log if the rule matches something.
+
+## Runnable `agent_call` Examples
+
+### Action rule agent call
+```yaml
+action_rules:
+  - rule_name: "send-action-context"
+    action_type: "custom"
+    selectors:
+      - selector_type: "agent_call"
+        agent_call:
+          agent_name: "ActionResponder"
+          timeout: 10
+          on_error: "continue"
+          params:
+            current_url: "%current_url%"
+```
+
+### Detection rule agent call
+```yaml
+detection_rules:
+  - rule_name: "detector-bridge"
+    object_name: "CustomDetector"
+    agent_call:
+      agent_name: "DetectionAgent"
+      params:
+        source_url: "%source_url%"
+```
+
+### Scraping selector agent call
+```yaml
+scraping_rules:
+  - rule_name: "scrape-with-agent-selector"
+    elements:
+      - key: "headline"
+        selectors:
+          - selector_type: "agent_call"
+            agent_call:
+              agent_name: "SelectorResolver"
+              store_as: "selector_resolution"
+```
+
+### Scraping post-processing agent call
+```yaml
+post_processing:
+  - step_type: "agent_call"
+    agent_call:
+      agent_name: "NormalizeScrapedData"
+      timeout: 20
+      on_error: "continue"
+```
+
+### Crawling lifecycle agent call
+```yaml
+crawling_rules:
+  - rule_name: "crawl-lifecycle"
+    lifecycle_hooks:
+      on_start:
+        agent_call:
+          agent_name: "CrawlLifecycleAgent"
+          params:
+            stage: "on_start"
+```
+
+## Migration Guidance (`plugin_call` vs `agent_call`)
+
+- Use `plugin_call` when deterministic in-process JS logic is enough and low latency is required.
+- Use `agent_call` when identity, trust, governance policy, failure policy, or external/tool orchestration is required.
+- Keep existing `plugin_call` selectors for pure extraction/transforms and introduce `agent_call` for policy-aware decisions and higher-risk automations.

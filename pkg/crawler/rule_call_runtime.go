@@ -2,7 +2,9 @@ package crawler
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	agent "github.com/pzaino/thecrowler/pkg/agent"
@@ -27,6 +29,9 @@ type RuleCallRequest struct {
 	OnError    string
 	StoreAs    string
 	Caller     string
+	RuleFamily string
+	RuleName   string
+	RuleGroup  string
 }
 
 type RuleCallResult struct {
@@ -39,8 +44,67 @@ type RuleCallResult struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
+type ruleCallRuntimeState struct {
+	mu            sync.Mutex
+	activeDepth   int
+	maxDepth      int
+	callsBySource map[string]int
+	maxPerSource  int
+	activeLoops   map[string]struct{}
+}
+
+func newRuleCallRuntimeState() *ruleCallRuntimeState {
+	return &ruleCallRuntimeState{maxDepth: 8, maxPerSource: 50, callsBySource: map[string]int{}, activeLoops: map[string]struct{}{}}
+}
+
+func (s *ruleCallRuntimeState) beforeCall(sourceID, loopKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.activeLoops[loopKey]; ok {
+		return fmt.Errorf("rule call loop detected")
+	}
+	if s.activeDepth >= s.maxDepth {
+		return fmt.Errorf("rule call nested depth exceeded")
+	}
+	s.activeDepth++
+	s.callsBySource[sourceID]++
+	if s.callsBySource[sourceID] > s.maxPerSource {
+		s.activeDepth--
+		return fmt.Errorf("rule call per-source budget exhausted")
+	}
+	s.activeLoops[loopKey] = struct{}{}
+	return nil
+}
+
+func (s *ruleCallRuntimeState) afterCall(loopKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeDepth > 0 {
+		s.activeDepth--
+	}
+	delete(s.activeLoops, loopKey)
+}
+
 func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest) RuleCallResult {
 	result := RuleCallResult{Kind: req.Kind, Success: false, Metadata: map[string]interface{}{"caller": req.Caller}}
+	if ctx != nil && ctx.ruleCallState == nil {
+		ctx.ruleCallState = newRuleCallRuntimeState()
+	}
+	sourceID := "0"
+	sourceURL := ""
+	if ctx != nil && ctx.source != nil {
+		sourceID = strconv.FormatUint(ctx.source.ID, 10)
+		sourceURL = strings.TrimSpace(ctx.source.URL)
+	}
+	loopKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", req.Kind, req.Caller, req.RuleFamily, req.RuleGroup, req.RuleName, sourceID, sourceURL)
+	if ctx != nil && ctx.ruleCallState != nil {
+		if err := ctx.ruleCallState.beforeCall(sourceID, loopKey); err != nil {
+			result.Error = err.Error()
+			result.Metadata["status"] = "denied"
+			return result
+		}
+		defer ctx.ruleCallState.afterCall(loopKey)
+	}
 	if req.TimeoutSec <= 0 {
 		req.TimeoutSec = 30
 	}
@@ -95,6 +159,14 @@ func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest
 	}
 	result.Value = val
 	result.Success = true
+	result.Metadata["status"] = "success"
+	result.Metadata["rule"] = map[string]string{"family": req.RuleFamily, "group": req.RuleGroup, "name": req.RuleName}
+	result.Metadata["agent_name"] = req.AgentName
+	result.Metadata["source_id"] = sourceID
+	result.Metadata["source_url"] = sourceURL
+	if result.Kind == RuleCallKindAgent {
+		result.Value = map[string]interface{}{"agent_name": req.AgentName, "status": "ok"}
+	}
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "rule call ok kind=%s name=%s caller=%s", req.Kind, result.Name, req.Caller)
 	return result
 }
