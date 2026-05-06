@@ -821,8 +821,6 @@ CREATE TABLE IF NOT EXISTS WebObjectsIndex (
     FOREIGN KEY (object_id) REFERENCES WebObjects(object_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_woi_object_index
-ON WebObjectsIndex(object_id, index_id);
 -------------------------------------------------------------------------------
 
 -- Relationship table between SearchIndex and MetaTags
@@ -1402,15 +1400,6 @@ BEGIN
 END
 $$;
 
--- Creates a combined index for the WebObjectsIndex table on the object_id and index_id columns
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_webobjectsindex_combined') THEN
-        CREATE INDEX idx_webobjectsindex_combined ON WebObjectsIndex(object_id, index_id);
-    END IF;
-END
-$$;
-
 -- Creates an index for the WebObjectsIndex table on the created_at column
 DO $$
 BEGIN
@@ -1609,15 +1598,6 @@ BEGIN
 END
 $$;
 
--- Creates an index for the NetInfo created_at column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_netinfo_created_at') THEN
-        CREATE INDEX idx_netinfo_created_at ON NetInfo(created_at DESC);
-    END IF;
-END
-$$;
-
 -- Indexes for the NetInfoIndex table ------------------------------------------
 
 -- Creates an index for the NetInfoIndex table on the netinfo_id column
@@ -1733,27 +1713,6 @@ BEGIN
 END
 $$;
 
--- Indexes for the SourceInformationSeedIndex table ----------------------------
-
--- Creates an index for SourceInformationSeedIndex source_id column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceinformationseedindex_source_id') THEN
-        CREATE INDEX idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id);
-    END IF;
-END
-$$;
-
--- Creates an index for SourceInformationSeedIndex information_seed_id column
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sourceinformationseedindex_information_seed_id') THEN
-        CREATE INDEX idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id);
-    END IF;
-END
-$$;
-
-
 -- Indexes for the SourceOwnerIndex table ---------------------------------------
 
 -- Creates an index for SourceOwnerIndex source_id column
@@ -1791,15 +1750,6 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_index_id') THEN
         CREATE INDEX idx_ssi_index_id ON SourceSearchIndex(index_id);
-    END IF;
-END
-$$;
-
--- Composite index for SourceSearchIndex
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ssi_combined') THEN
-        CREATE INDEX idx_ssi_combined ON SourceSearchIndex(source_id, index_id);
     END IF;
 END
 $$;
