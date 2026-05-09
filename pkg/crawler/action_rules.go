@@ -683,32 +683,17 @@ func executeActionScroll(r *rules.ActionRule, wd *vdi.WebDriver) error {
 func executeActionJS(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
 	for _, selector := range r.Selectors {
 		if selector.SelectorType == "plugin_call" {
-			// retrieve the JavaScript from the plugins registry using the value as the key
-			plugin, exists := ctx.re.JSPlugins.GetPlugin(selector.Selector)
-			if !exists {
-				return fmt.Errorf("plugin not found: %s", selector.Selector)
+			req := RuleCallRequest{
+				Kind:       RuleCallKindPlugin,
+				PluginName: selector.Selector,
+				Params:     map[string]interface{}{"value": r.Value},
+				TimeoutSec: 30,
+				OnError:    "fail",
+				Caller:     "action.execute_javascript",
 			}
-
-			// Check r.Value for macros:
-			temp := strings.TrimSpace(r.Value)
-			if temp != "" {
-				switch strings.ToLower(temp) {
-				case "%current_url%":
-					rval, _ := (*wd).CurrentURL()
-					temp = rval
-				case "%source_url%":
-					temp = ctx.source.URL
-				}
-			}
-
-			// collect value as an argument to the plugin
-			args := []interface{}{}
-			args = append(args, temp)
-
-			// Execute the JavaScript
-			_, err := (*wd).ExecuteScript(plugin.String(), args)
-			if err != nil {
-				return err
+			res := executeRuleCall(ctx, wd, req)
+			if !res.Success {
+				return fmt.Errorf("%s", res.Error)
 			}
 		}
 	}

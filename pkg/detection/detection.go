@@ -19,12 +19,14 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	agent "github.com/pzaino/thecrowler/pkg/agent"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -148,6 +150,15 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Skipping plugin detection because the WebDriver is nil")
 	}
 
+	// Try to detect technologies using agents
+	AgentCalls := ruleset.GetAllAgentCallsMap(&Patterns)
+	if len(AgentCalls) > 0 {
+		detectTechnologiesWithAgents(dtCtx, &AgentCalls, &detectedTech)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] No detection rules requiring agents")
+	}
+	AgentCalls = nil
+
 	// Check for SSL/TLS technologies
 	if dtCtx.HSSLInfo != nil {
 		sslSignatures := ruleset.GetAllSSLSignaturesMap(&Patterns)
@@ -208,6 +219,177 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 
 	cmn.DebugMsg(cmn.DbgLvlDebug1, "[DEBUG-DetectTech] Detected entities: %v", detectedTechStr)
 	return &detectedTechStr
+}
+
+func detectTechnologiesWithAgents(dtCtx *DContext, agentCalls *map[string][]ruleset.AgentCall, detectedTech *map[string]detectionEntityDetails) {
+	for objName := range *agentCalls {
+		for _, ac := range (*agentCalls)[objName] {
+			if agent.AgentsEngine == nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "agent engine not initialized")
+				continue
+			}
+			agentName := strings.TrimSpace(ac.AgentName)
+			if agentName == "" {
+				cmn.DebugMsg(cmn.DbgLvlError, "invalid agent_name in detection rule")
+				continue
+			}
+			if _, ok := agent.AgentsEngine.GetAgentByName(agentName); !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "agent not found: %s", agentName)
+				continue
+			}
+			params := map[string]interface{}{}
+			for k, v := range ac.Params {
+				params[k] = v
+			}
+			params["detection_context"] = buildAgentDetectionContext(dtCtx, detectedTech)
+			err := agent.AgentsEngine.ExecuteAgent(agentName, params)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "executing agent '%s': %v", agentName, err)
+				continue
+			}
+			// Agent execution succeeded, now we need to check if it produced a detection result in the KV store
+			value, _, err := cmn.KVStore.Get(agentName, dtCtx.CtxID)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "no result found in KV store for agent '%s': %v", agentName, err)
+				continue
+			}
+			result, ok := normalizeAgentDetectionResult(value)
+			if !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "invalid detection agent result for '%s': %T", agentName, value)
+				continue
+			}
+			if !result.Detected {
+				continue
+			}
+			targetObj := strings.ToLower(strings.TrimSpace(result.ObjectName))
+			if targetObj == "" {
+				targetObj = objName
+			}
+			updateDetectedTechCustom(detectedTech, targetObj, result.Confidence, "agent:"+agentName, result.Evidence)
+			updateDetectedType(detectedTech, targetObj, "agent_call")
+			if len(result.Metadata) > 0 {
+				entity := (*detectedTech)[targetObj]
+				if entity.pluginResult == nil {
+					entity.pluginResult = make(map[string]interface{})
+				}
+				entity.pluginResult["agent_metadata"] = result.Metadata
+				(*detectedTech)[targetObj] = entity
+			}
+		}
+	}
+}
+
+type agentDetectionResult struct {
+	Detected   bool
+	ObjectName string
+	Confidence float32
+	Evidence   string
+	Metadata   map[string]interface{}
+}
+
+func normalizeAgentDetectionResult(value interface{}) (agentDetectionResult, bool) {
+	var raw map[string]interface{}
+	switch v := value.(type) {
+	case map[string]interface{}:
+		raw = v
+	case string:
+		if err := json.Unmarshal([]byte(v), &raw); err != nil {
+			return agentDetectionResult{}, false
+		}
+	default:
+		return agentDetectionResult{}, false
+	}
+	detected, ok := raw["detected"].(bool)
+	if !ok {
+		return agentDetectionResult{}, false
+	}
+	res := agentDetectionResult{Detected: detected, Confidence: 10}
+	if s, _ := raw["object_name"].(string); s != "" {
+		res.ObjectName = s
+	}
+	if detected && strings.TrimSpace(res.ObjectName) == "" {
+		return agentDetectionResult{}, false
+	}
+	if ev, _ := raw["evidence"].(string); ev != "" {
+		res.Evidence = ev
+	}
+	if md, ok := raw["metadata"].(map[string]interface{}); ok {
+		res.Metadata = md
+	}
+	if cVal, exists := raw["confidence"]; exists {
+		c, ok := toFloat32(cVal)
+		if !ok {
+			return agentDetectionResult{}, false
+		}
+		if math.IsNaN(float64(c)) || math.IsInf(float64(c), 0) {
+			return agentDetectionResult{}, false
+		}
+		if c < 0 {
+			c = 0
+		}
+		if c > 100 {
+			c = 100
+		}
+		res.Confidence = c
+	}
+	return res, true
+}
+
+func toFloat32(v interface{}) (float32, bool) {
+	switch n := v.(type) {
+	case float32:
+		return n, true
+	case float64:
+		return float32(n), true
+	case int:
+		return float32(n), true
+	case int32:
+		return float32(n), true
+	case int64:
+		return float32(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return float32(f), err == nil
+	default:
+		return 0, false
+	}
+}
+
+func buildAgentDetectionContext(dtCtx *DContext, detectedTech *map[string]detectionEntityDetails) map[string]interface{} {
+	ctx := map[string]interface{}{
+		"url":      dtCtx.TargetURL,
+		"source":   dtCtx.TargetIP,
+		"detected": summarizeDetectedEntities(detectedTech),
+		"headers":  map[string][]string{},
+		"content":  map[string]interface{}{},
+		"tls":      nil,
+	}
+	if dtCtx.Header != nil {
+		headers := map[string][]string{}
+		for k, v := range *dtCtx.Header {
+			headers[k] = v
+		}
+		ctx["headers"] = headers
+	}
+	if dtCtx.ResponseBody != nil {
+		ctx["content"] = map[string]interface{}{"snapshot": *dtCtx.ResponseBody}
+	}
+	if dtCtx.HSSLInfo != nil {
+		ctx["tls"] = dtCtx.HSSLInfo
+	}
+	return ctx
+}
+
+func summarizeDetectedEntities(detectedTech *map[string]detectionEntityDetails) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(*detectedTech))
+	for name, d := range *detectedTech {
+		out = append(out, map[string]interface{}{
+			"object_name": name,
+			"type":        d.entityType,
+			"confidence":  d.confidence,
+		})
+	}
+	return out
 }
 
 func processImpliedTechnologies(detectedTech *map[string]detectionEntityDetails, patterns *[]ruleset.DetectionRule) {

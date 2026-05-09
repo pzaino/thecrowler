@@ -246,6 +246,24 @@ func GetAllPluginCallsMap(d *[]DetectionRule) map[string][]PluginCall {
 	return pluginCalls
 }
 
+// GetAllAgentCallsMap returns a map of all agent calls for the specified detection rules.
+func GetAllAgentCallsMap(d *[]DetectionRule) map[string][]AgentCall {
+	agentCalls := make(map[string][]AgentCall)
+	for i := 0; i < len(*d); i++ {
+		rule := (*d)[i]
+		if rule.AgentCalls == nil {
+			continue
+		}
+		ObjName := strings.ToLower(strings.TrimSpace(rule.ObjectName))
+		if _, ok := agentCalls[ObjName]; ok {
+			agentCalls[ObjName] = append(agentCalls[ObjName], rule.AgentCalls...)
+			continue
+		}
+		agentCalls[ObjName] = rule.AgentCalls
+	}
+	return agentCalls
+}
+
 // GetAllExternalDetectionsMap returns a map of all external detections for the specified detection rules.
 func GetAllExternalDetectionsMap(d *[]DetectionRule) map[string][]ExternalDetection {
 	externalDetections := make(map[string][]ExternalDetection)

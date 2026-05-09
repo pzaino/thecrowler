@@ -27,7 +27,7 @@
       runs-on: ubuntu-latest
 
       strategy:
-        max-parallel: 2
+        max-parallel: 4
         fail-fast: false
         matrix:
           service:
@@ -80,7 +80,7 @@
         - name: Set up Docker Buildx with cache
           uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
           with:
-            install: true
+            use: true
 
         - name: Log in to Docker Hub
           if: ${{ github.event.inputs.dry_run != 'true' }}

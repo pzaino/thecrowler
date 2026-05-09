@@ -220,7 +220,7 @@ The rules in each ruleset will be executed automatically if their name and path 
 
 ### Manually
 
-To use rules "manually" (aka have them executed automatically for a given source), you'll need to specify them in the source configuration.
+To use rules "manually" (aka have them <i>executed automatically for a given source</i>), you'll need to specify them in the source configuration. Basically you can specify which ruleset and which rule group to use for each source. This allows you to have more control over which rules are executed for each source. Note that you can also do that by adding a URL pattern in the ruleset itself, but specifying the ruleset and the rule group in the source configuration allows you to have more control over which rules are executed for each source.
 
 More details on the source configuration [here](./sources.md).
 

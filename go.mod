@@ -21,7 +21,7 @@ require (
 	github.com/evanw/esbuild v0.28.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/spaolacci/murmur3 v1.1.0
-	golang.org/x/crypto v0.50.0
+	golang.org/x/crypto v0.51.0
 )
 
 require golang.org/x/sync v0.20.0 // indirect
@@ -91,7 +91,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/clbanning/mxj/v2 v2.7.0
 	github.com/go-auxiliaries/selenium v0.9.10
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
@@ -103,18 +103,18 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/time v0.15.0
-	google.golang.org/api v0.277.0
+	google.golang.org/api v0.278.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	github.com/google/go-cmp v0.7.0
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 )
 
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	golang.org/x/net v0.53.0
-	golang.org/x/text v0.36.0
+	golang.org/x/text v0.37.0
 )

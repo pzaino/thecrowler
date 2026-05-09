@@ -4562,8 +4562,9 @@ func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkIte
 // TODO: This function needs improvements
 func generateLinks(ctx *ProcessContext, url string) []LinkItem {
 	var links []LinkItem
+	state := newLifecycleRuntimeState(20)
 	for _, rule := range ctx.re.GetAllCrawlingRules() {
-		lnkSet, err := FuzzURL(url, rule)
+		lnkSet, err := FuzzURLWithLifecycle(ctx, &ctx.wd, state, url, rule, int(ctx.Status.CurrentDepth.Load()))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "generating links: %v", err)
 			continue

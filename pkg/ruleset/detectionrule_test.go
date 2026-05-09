@@ -652,6 +652,18 @@ func TestGetAllPluginCallsMap(t *testing.T) {
 	}
 }
 
+func TestGetAllAgentCallsMap(t *testing.T) {
+	detectionRules := []DetectionRule{
+		{ObjectName: "Object1", AgentCalls: []AgentCall{{AgentName: "a1"}, {AgentName: "a2"}}},
+		{ObjectName: "Object2", AgentCalls: []AgentCall{{AgentName: "b1"}}},
+		{ObjectName: "Object1", AgentCalls: []AgentCall{{AgentName: "a3"}}},
+	}
+	got := GetAllAgentCallsMap(&detectionRules)
+	if len(got["object1"]) != 3 || len(got["object2"]) != 1 {
+		t.Fatalf("unexpected map content: %#v", got)
+	}
+}
+
 func TestGetAllExternalDetectionsMap(t *testing.T) {
 	detectionRules := []DetectionRule{
 		{
