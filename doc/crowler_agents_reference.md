@@ -23,7 +23,7 @@ CROWler Agents are part of The CROWler’s broader content discovery and automat
 
 A CROWler Agent is a YAML or JSON-defined orchestration unit executed by the CROWler  runtime (usually either the CROWler Events Manager, the General API or the Engines). An agent describes one or more jobs. Each job contains ordered steps. Each step performs one action, such as an API call, AI interaction, database query, command execution, plugin execution, event creation, or decision branch.
 
-Agents can be simple deterministic workflows or AI-assisted workflows. They can process data, react to events, call plugins, create new events, query databases, delegate to other agents, and integrate with external systems.
+Agents can be simple deterministic workflows or AI-assisted workflows. They can process data, react to events, call plugins, create new events, query databases, delegate to other agents, integrate with external systems, and even create new agents.
 
 A useful mental model is:
 
