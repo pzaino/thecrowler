@@ -35,7 +35,6 @@ Agents can be triggered by:
 * rules,
 * events,
 * intervals,
-* signals where supported,
 * other agents,
 * uploaded manifests or runtime event control flows.
 
@@ -279,8 +278,8 @@ agent_identity:
   owner: team:platform
   trust_level: restricted
   capabilities:
-    - api_request
-    - ai_interaction
+    - api_requests
+    - ai_reasoning
     - emit_event
   constraints:
     max_steps: 10
@@ -289,7 +288,7 @@ agent_identity:
       cpu_percent: 50
       memory_mb: 256
     event_rate_limit: 10
-  reasoning_mode: deterministic-with-ai-assist
+  reasoning_mode: adaptive
   memory:
     scope: ephemeral
     namespace: stable-lowercase-id
@@ -311,8 +310,8 @@ agent_identity:
       - "Input events contain details.url and details.content."
     forbidden_actions:
       - "RunCommand"
-      - "delegate:system"
-    failure_policy: emit_error_event
+      - "call_plugin:system"
+    failure_policy: emit_event
 ```
 
 ### 8.1 `agent_id`
@@ -352,14 +351,12 @@ Use version bumps when changing behavior, event contracts, or delegation topolog
 
 ### 8.4 `agent_type`
 
-A descriptive type marker. Common examples:
+A descriptive type marker. Schema values:
 
+* `observer`,
 * `executor`,
-* `coordinator`,
 * `planner`,
-* `specialist`,
-* `enricher`,
-* `responder`.
+* `coordinator`.
 
 ### 8.5 `owner`
 
@@ -395,20 +392,25 @@ General guidance:
 
 Capabilities are explicit allow-list entries for runtime gates. They should express what the agent is allowed to do.
 
-Common guide-level capabilities:
+Schema capability values are:
 
 ```yaml
 capabilities:
-  - api_request
-  - ai_interaction
-  - db_query
-  - command_execution
+  - all
+  - network_access
+  - file_system_access
+  - db_read
+  - db_write
   - plugin_execution
+  - api_requests
+  - command_execution
   - emit_event
-  - delegate
+  - schedule_event
+  - call_plugin
+  - ai_reasoning
 ```
 
-Some examples may use names such as `api_request`, `ai_reasoning`, or `db_read`. Prefer the exact capability names used by your deployed policy engine. Avoid `all` unless you are creating a tightly controlled platform agent.
+Use only these exact strings when validating against `schemas/crowler-agent-schema.json`.
 
 ### 8.8 `constraints`
 
@@ -439,9 +441,9 @@ A descriptive marker for how the agent reasons or makes decisions. This is usefu
 Examples:
 
 ```yaml
-reasoning_mode: deterministic
-reasoning_mode: ai-assisted-json-only
-reasoning_mode: coordinator-delegation
+reasoning_mode: fixed
+reasoning_mode: adaptive
+reasoning_mode: reflective
 ```
 
 ### 8.10 `memory`
@@ -504,8 +506,8 @@ agent_contract:
     - "The competitor feed endpoint returns JSON."
   forbidden_actions:
     - "RunCommand"
-    - "delegate:system"
-  failure_policy: emit_error_event
+    - "call_plugin:system"
+  failure_policy: emit_event
 ```
 
 Use contracts to communicate intent, enable policy enforcement, and give AI systems guardrails when editing agents.
@@ -563,15 +565,12 @@ Use `serial` unless you specifically need parallel behavior and have verified ru
 
 ### 9.3 `trigger_type`
 
-Guide-level supported trigger types include:
+`trigger_type` values in the current schema are:
 
 * `manual`,
 * `event`,
 * `interval`,
-* `agent`,
-* `signal` where supported by the deployed runtime.
-
-Some schemas may only enumerate `interval`, `event`, and `manual`. Validate against your exact deployed schema.
+* `agent`.
 
 ### 9.4 `trigger_name`
 
@@ -634,7 +633,7 @@ steps:
 
   - action: AIInteraction
     params:
-      provider: openai-compatible
+      provider: openai
       model: gpt-4o-mini
       prompt: "Extract key facts as JSON from $response.body"
 
@@ -718,7 +717,7 @@ Minimal prompt-based form:
 ```yaml
 - action: AIInteraction
   params:
-    provider: openai-compatible
+    provider: openai
     model: gpt-4o-mini
     prompt: "Return strict JSON summarizing: $response.body"
 ```
@@ -728,7 +727,7 @@ Messages-based form:
 ```yaml
 - action: AIInteraction
   params:
-    provider: openai-compatible
+    provider: openai
     url: "https://your-llm-endpoint/v1/chat/completions"
     auth: "Bearer ${LLM_API_KEY}"
     model: gpt-4o-mini
@@ -911,7 +910,7 @@ Strict legacy-compatible form may require `agent_name` in branches:
         agent_name: FailureHandler
 ```
 
-Switch-style decision, where supported:
+Switch-style decision is described in some prose examples, but the current schema only defines `condition_type: if`:
 
 ```yaml
 - action: Decision
@@ -960,7 +959,7 @@ Example coordinator branch:
 
 Runtime policy gates may enforce:
 
-* caller must have `delegate` capability or equivalent,
+* caller must have `call_plugin` capability or equivalent,
 * caller trust level must be greater than or equal to callee trust level,
 * caller and callee contracts must not forbid delegation,
 * forbidden action patterns must not match the delegation path,
@@ -970,7 +969,7 @@ Authoring guidance:
 
 * Prefer `agent_id` for durable cross-file delegation.
 * Use `agent_name` for local readability and backward compatibility.
-* Give coordinator agents `delegate` capability.
+* Give coordinator agents `call_plugin` capability.
 * Keep specialist agents narrow and domain-specific.
 * Avoid deep delegation chains unless necessary.
 * Design explicit fallback branches.
@@ -1035,11 +1034,7 @@ Authoring guidance:
 
 ## 14. AI provider model
 
-`AIInteraction` uses a provider abstraction. The guide-level default provider name is:
-
-```text
-openai-compatible
-```
+`AIInteraction` uses a provider abstraction. The code supports `provider: openai` by default, plus additional providers such as `gemini`, `grok`, and `mock` in tests/integration paths.
 
 Provider settings may be resolved in this precedence order:
 
@@ -1070,7 +1065,7 @@ Recommended current pattern:
 ```yaml
 - action: AIInteraction
   params:
-    provider: openai-compatible
+    provider: openai
     url: "https://your-llm-endpoint/v1/chat/completions"
     auth: "Bearer ${LLM_API_KEY}"
     model: "gpt-4o-mini"
@@ -1085,7 +1080,7 @@ Recommended current pattern:
 
 If a backend does not natively match the expected request or response shape, use a gateway/proxy:
 
-1. Keep the manifest using `provider: openai-compatible`.
+1. Keep the manifest using `provider: openai`.
 2. Point `url` to an internal gateway.
 3. Have the gateway translate between CROWler’s expected shape and the backend provider.
 4. Preserve stable manifest shape while swapping backends internally.
@@ -1201,7 +1196,7 @@ When <trigger> happens, the agent should <collect>, <reason>, and <emit or act>.
 Example:
 
 ```text
-When a security alert event is created, classify its severity, delegate critical alerts to an incident responder, and delegate all others to a low-risk enricher.
+When a security alert event is created, classify its severity, call_plugin critical alerts to an incident responder, and call_plugin all others to a low-risk enricher.
 ```
 
 ### Step 2: Choose v1 or v2
@@ -1223,7 +1218,6 @@ Choose based on source of truth:
 * `manual`: operator-controlled runs,
 * `interval`: scheduled loops,
 * `agent`: internal delegation chains where supported,
-* `signal`: runtime signal handling where supported.
 
 ### Step 4: Design event contracts
 
@@ -1477,8 +1471,8 @@ agent_identity:
     assumptions:
       - "Manual trigger is operator-controlled."
     forbidden_actions:
-      - "delegate:*"
-    failure_policy: fail
+      - "call_plugin:*"
+    failure_policy: fail_fast
 jobs:
   - name: LegacyDiscoveryJob
     process: serial
@@ -1537,7 +1531,7 @@ AI:
 Delegation:
 
 * Prefer `agent_id`.
-* Add `delegate` capability to coordinators.
+* Add `call_plugin` capability to coordinators.
 * Ensure target agents exist.
 * Avoid cycles.
 * Keep specialists narrow.
@@ -1684,9 +1678,9 @@ agent_identity:
   owner: team:secops
   trust_level: trusted
   capabilities:
-    - delegate
+    - call_plugin
     - emit_event
-    - ai_interaction
+    - ai_reasoning
   constraints:
     max_steps: 8
     time_budget: 30s
@@ -1702,7 +1696,7 @@ agent_identity:
       - "Input event details contain alert_payload."
     forbidden_actions:
       - "RunCommand"
-    failure_policy: emit_error_event
+    failure_policy: emit_event
 jobs:
   - name: SOCTriageCoordinator
     process: serial
@@ -1711,7 +1705,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
-          provider: openai-compatible
+          provider: openai
           model: gpt-4o-mini
           temperature: 0.1
           prompt: >
@@ -1759,11 +1753,11 @@ agent_identity:
   owner: team:secops
   trust_level: trusted
   capabilities:
-    - api_request
-    - ai_interaction
+    - api_requests
+    - ai_reasoning
     - plugin_execution
     - emit_event
-    - delegate
+    - call_plugin
   constraints:
     max_steps: 10
     time_budget: 45s
@@ -1778,7 +1772,7 @@ agent_identity:
       - "Input page events contain URL and extracted content."
     forbidden_actions:
       - "RunCommand"
-    failure_policy: emit_error_event
+    failure_policy: emit_event
 jobs:
   - name: CybersecuritySurfaceMonitor
     process: serial
