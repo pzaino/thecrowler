@@ -278,7 +278,7 @@ agent_identity:
   owner: team:platform
   trust_level: restricted
   capabilities:
-    - api_requests
+    - api_request
     - ai_reasoning
     - emit_event
   constraints:
@@ -402,7 +402,7 @@ capabilities:
   - db_read
   - db_write
   - plugin_execution
-  - api_requests
+  - api_request
   - command_execution
   - emit_event
   - schedule_event
@@ -1753,7 +1753,7 @@ agent_identity:
   owner: team:secops
   trust_level: trusted
   capabilities:
-    - api_requests
+    - api_request
     - ai_reasoning
     - plugin_execution
     - emit_event
