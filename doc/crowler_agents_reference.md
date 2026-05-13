@@ -40,6 +40,16 @@ Agents can be triggered by:
 
 Agents are intended to extend CROWler capabilities without writing Go code. They can still use JavaScript plugins through `PluginExecution`, and they can use AI through `AIInteraction`.
 
+A few important notes:
+
+1) The CROWler can perform many tasks natively through rulesets and plugins. Use agents when you need orchestration across multiple steps, complex decision logic, or integration with external systems that is not easily handled in a ruleset or plugin. In other words, you can implement entire systems on top of the CROWler without using Agents, but Agents give you more power and flexibility when you need it.
+
+2) CROWler Agents are not necessarily AI agents. They can be fully deterministic workflows. However, they can include AI steps and can be designed to be generated or modified by AI coding agents.
+
+3) Agents can also be used to improve the possibilities offered by Rulesets. For example, you can have a ruleset that scrapes data and then calls an agent to enrich that data with an AI step before emitting an event. In such a case an Agent doesn't work as a global orchestration layer, but as a microservice that can be called from rulesets to perform specific tasks that are too complex for rules alone. See section 15 for more on ruleset integration.
+
+4) Agents can help reducing the complexity in both Rulesets and Plugins design. For example, if you have a plugin that performs a specific task but requires complex orchestration or error handling, you can design an agent to call that plugin and manage the orchestration and error handling logic. This keeps your plugin focused on its core functionality while the agent manages the workflow around it.
+
 ## 3. How agents fit into CROWler
 
 The CROWler is a web content discovery and data collection development platform. Its core features include crawling, scraping, action execution, technology detection, network information collection, file and image collection, API integration, rulesets, plugins, data storage, event-driven processing, and AI or traditional agents.
