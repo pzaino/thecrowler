@@ -195,7 +195,7 @@ jobs:
         params:
           event_name: agent_completed
           event_type: agent.completed
-          source: identity-enabled-agent
+          source: "0"
 ```
 
 ### 5.3 Compatibility and inference rules
@@ -570,7 +570,8 @@ Use `serial` unless you specifically need parallel behavior and have verified ru
 * `manual`,
 * `event`,
 * `interval`,
-* `agent`.
+* `agent`,
+* `signal`.
 
 ### 9.4 `trigger_name`
 
@@ -910,7 +911,7 @@ Strict legacy-compatible form may require `agent_name` in branches:
         agent_name: FailureHandler
 ```
 
-Switch-style decision is described in some prose examples, but the current schema only defines `condition_type: if`:
+Switch-style decision is also supported by the current schema using `condition_type: switch` with `cases`:
 
 ```yaml
 - action: Decision
@@ -919,9 +920,9 @@ Switch-style decision is described in some prose examples, but the current schem
       condition_type: switch
       expression: "$response.category"
       cases:
-        - value: critical
+        - case: critical
           agent_name: CriticalHandler
-        - value: low
+        - case: low
           agent_name: LowRiskHandler
 ```
 
@@ -1196,7 +1197,7 @@ When <trigger> happens, the agent should <collect>, <reason>, and <emit or act>.
 Example:
 
 ```text
-When a security alert event is created, classify its severity, call_plugin critical alerts to an incident responder, and call_plugin all others to a low-risk enricher.
+When a security alert event is created, classify its severity, delegate critical alerts to an incident responder, and delegate all others to a low-risk enricher.
 ```
 
 ### Step 2: Choose v1 or v2
@@ -1757,7 +1758,6 @@ agent_identity:
     - ai_reasoning
     - plugin_execution
     - emit_event
-    - call_plugin
   constraints:
     max_steps: 10
     time_budget: 45s
@@ -1782,5 +1782,33 @@ jobs:
       - action: APIRequest
         params:
           request_type: GET
-          url: "https://example-threat-intel.local/lookup?url=$re
+          url: "https://example-threat-intel.local/lookup?url=$response.url"
+      - action: AIInteraction
+        params:
+          provider: openai
+          model: gpt-4o-mini
+          temperature: 0.1
+          prompt: >
+            Score risk using page data and threat intel in $response.
+            Return strict JSON with keys risk_score and rationale.
+      - action: Decision
+        params:
+          condition:
+            condition_type: if
+            expression: '$response.risk_score >= 90'
+            on_true:
+              agent_name: SOCIncidentResponder
+            on_false:
+              agent_name: SOCLowRiskEnricher
 ```
+
+## 25. Final notes
+
+Use this guide as an operational and authoring companion, but always validate against the exact schema and runtime version you deploy. In practice:
+
+1. Keep conceptual design in this guide.
+2. Keep manifests schema-valid.
+3. Run strict validation before deployment.
+4. Test with representative events and inspect outcomes.
+
+That balance keeps agents understandable for humans and reliable for production systems.
