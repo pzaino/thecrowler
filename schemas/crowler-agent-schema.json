@@ -70,7 +70,7 @@
                             "db_read",
                             "db_write",
                             "plugin_execution",
-                            "api_requests",
+                            "api_request",
                             "command_execution",
                             "emit_event",
                             "schedule_event",
