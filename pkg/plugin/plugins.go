@@ -2873,7 +2873,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 			cmn.DebugMsg(cmn.DbgLvlError, "marshaling query result to JSON:", err)
 			return otto.UndefinedValue()
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "JSON result: %v", result)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "JSON result: %v", result)
 
 		// Convert the JSON string to a JavaScript-compatible value
 		jsResult, err := vm.ToValue(result)
