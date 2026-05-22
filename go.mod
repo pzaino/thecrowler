@@ -109,12 +109,12 @@ require (
 
 require (
 	github.com/google/go-cmp v0.7.0
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 )
 
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
-	golang.org/x/net v0.54.0
+	golang.org/x/net v0.55.0
 	golang.org/x/text v0.37.0
 )
