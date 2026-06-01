@@ -870,8 +870,10 @@ func KeepAliveHeadersMiddleware(next http.Handler) http.Handler {
 	kaTimeout := config.Events.IdleTimeout
 	kaTimeoutStr := fmt.Sprintf("timeout=%d", kaTimeout)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Keep-Alive", kaTimeoutStr)
+		if r.ProtoMajor == 1 {
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Keep-Alive", kaTimeoutStr)
+		}
 		next.ServeHTTP(w, r)
 	})
 }
