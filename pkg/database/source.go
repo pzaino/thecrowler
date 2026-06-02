@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/lib/pq"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
@@ -205,6 +207,54 @@ func DeleteSource(db *Handler, sourceID uint64) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete source with ID %d: %v", sourceID, err)
 	}
+	return nil
+}
+
+// DeleteSources removes multiple sources from the database by ID.
+func DeleteSources(db *Handler, sourceIDs []uint64) error {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		if sourceID == 0 {
+			continue
+		}
+		if sourceID > uint64(1<<63-1) {
+			return fmt.Errorf("source ID %d exceeds supported database integer range", sourceID)
+		}
+		ids = append(ids, int64(sourceID))
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	if (*db).DBMS() == DBPostgresStr {
+		_, err := (*db).Exec(`DELETE FROM Sources WHERE source_id = ANY($1)`, pq.Array(ids))
+		if err != nil {
+			return fmt.Errorf("failed to delete %d sources: %v", len(ids), err)
+		}
+		return nil
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start source deletion transaction: %w", err)
+	}
+	for _, sourceID := range ids {
+		if _, err = tx.Exec(`DELETE FROM Sources WHERE source_id = $1`, sourceID); err != nil {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				return fmt.Errorf("failed to rollback source deletion transaction: %w (original error: %v)", rollbackErr, err)
+			}
+			return fmt.Errorf("failed to delete source with ID %d: %w", sourceID, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit source deletion transaction: %w", err)
+	}
+
 	return nil
 }
 
