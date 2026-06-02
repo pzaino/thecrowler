@@ -741,8 +741,16 @@ func crawlSources(wb *WorkBlock) uint64 {
 				}
 				starves = 0           // Reset starvation counter
 				RefreshLastActivity() // Reset activity
-				TotalSources.Add(1)   // Increment the total sources counter
-				BusyInstances.Add(1)  // Increment busy instances counter
+
+				// check if the source starts with the `null:` prefix, if yes, skip the crawling
+				// the source it's part of an ongoing test or it's a placeholder.
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source.URL)), "null:") {
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Source URL starts with 'null:', skipping crawling for source ID %d on VDI slot %d", source.ID, vdiSlot+1)
+					continue
+				}
+
+				TotalSources.Add(1)  // Increment the total sources counter
+				BusyInstances.Add(1) // Increment busy instances counter
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
