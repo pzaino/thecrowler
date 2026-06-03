@@ -448,6 +448,44 @@ func getEngineID() int {
 	return engineMultiplier
 }
 
+const nullSourceDeleteBatchSize = 1000
+
+func deleteNullSources(db *cdb.Handler, sourceIDs <-chan uint64) {
+	batch := make([]uint64, 0, nullSourceDeleteBatchSize)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := cdb.DeleteSources(db, batch); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Pipeline] Failed to delete %d null sources: %v", len(batch), err)
+		}
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case sourceID, ok := <-sourceIDs:
+			if !ok {
+				flush()
+				return
+			}
+			if sourceID == 0 {
+				cmn.DebugMsg(cmn.DbgLvlWarn, "[DEBUG-Pipeline] Skipping deletion for null source with empty source ID")
+				continue
+			}
+			batch = append(batch, sourceID)
+			if len(batch) >= nullSourceDeleteBatchSize {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
 func crawlSources(wb *WorkBlock) uint64 {
 
 	var (
@@ -468,6 +506,18 @@ func crawlSources(wb *WorkBlock) uint64 {
 	PipelinesRunning.Store(true)
 	RampUpRunning.Store(true)
 	BusyInstances.Store(0)
+
+	nullSourceDeleteChanSize := wb.Config.Crawler.MaxSources * 2
+	if nullSourceDeleteChanSize < nullSourceDeleteBatchSize {
+		nullSourceDeleteChanSize = nullSourceDeleteBatchSize
+	}
+	nullSourceDeleteChan := make(chan uint64, nullSourceDeleteChanSize)
+	var nullSourceDeleteWg sync.WaitGroup
+	nullSourceDeleteWg.Add(1)
+	go func() {
+		defer nullSourceDeleteWg.Done()
+		deleteNullSources(&wb.db, nullSourceDeleteChan)
+	}()
 
 	// Create the sources' queue (channel)
 	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
@@ -741,8 +791,17 @@ func crawlSources(wb *WorkBlock) uint64 {
 				}
 				starves = 0           // Reset starvation counter
 				RefreshLastActivity() // Reset activity
-				TotalSources.Add(1)   // Increment the total sources counter
-				BusyInstances.Add(1)  // Increment busy instances counter
+
+				// check if the source starts with the `null:` prefix, if yes, skip the crawling
+				// and queue the placeholder source for deletion from the database.
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source.URL)), "null:") {
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Source URL starts with 'null:', skipping crawling and deleting source ID %d on VDI slot %d", source.ID, vdiSlot+1)
+					nullSourceDeleteChan <- source.ID
+					continue
+				}
+
+				TotalSources.Add(1)  // Increment the total sources counter
+				BusyInstances.Add(1) // Increment busy instances counter
 
 				// This makes sur we reuse always the same PipelineStatus index
 				// for this goroutine instance:
@@ -807,6 +866,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	RampUpRunning.Store(false) // Ramp-up phase is over
 	batchWg.Wait()
+	close(nullSourceDeleteChan)
+	nullSourceDeleteWg.Wait()
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "All sources in this batch have been crawled.")
 
