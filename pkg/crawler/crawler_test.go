@@ -273,6 +273,32 @@ func TestIsValidURL(t *testing.T) {
 	}
 }
 
+func TestClassifySourceProtocol(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want SourceProtocol
+	}{
+		{"HTTP URL", "http://example.com", SourceProtocolWeb},
+		{"HTTPS URL", "https://example.com", SourceProtocolWeb},
+		{"FTP URL", "ftp://example.com", SourceProtocolWeb},
+		{"FTPS URL", "ftps://example.com", SourceProtocolWeb},
+		{"Trimmed web URL", "  https://example.com  ", SourceProtocolWeb},
+		{"No scheme", "example.com", SourceProtocolNetwork},
+		{"Unsupported scheme", "sftp://example.com", SourceProtocolNetwork},
+		{"Email scheme", "mailto:example@example.com", SourceProtocolNetwork},
+		{"Empty URL", "", SourceProtocolNetwork},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifySourceProtocol(tt.url); got != tt.want {
+				t.Errorf("classifySourceProtocol() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsValidURIProtocol(t *testing.T) {
 	tests := []struct {
 		name string

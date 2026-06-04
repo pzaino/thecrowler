@@ -73,8 +73,7 @@ const (
 )
 
 var (
-	config           cfg.Config // Configuration "object"
-	allowedProtocols = strings.Split("http://,https://,ftp://,ftps://", ",")
+	config cfg.Config // Configuration "object"
 )
 
 var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
@@ -159,7 +158,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	}()
 
 	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
-	if !IsValidURIProtocol(args.Src.URL) {
+	if classifySourceProtocol(args.Src.URL) != SourceProtocolWeb {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
 		_, err := processCtx.IndexNetInfo(1)
@@ -1916,10 +1915,8 @@ func IsValidURL(u string) bool {
 	}
 
 	// Check if u is ONLY a protocol (aka not a full URL)
-	for _, proto := range allowedProtocols {
-		if u == proto {
-			return false
-		}
+	if strings.HasSuffix(u, "://") && classifySourceProtocol(u) == SourceProtocolWeb {
+		return false
 	}
 
 	// Parse the URL and check for errors
@@ -1929,15 +1926,7 @@ func IsValidURL(u string) bool {
 
 // IsValidURIProtocol checks if the URI has a valid protocol.
 func IsValidURIProtocol(u string) bool {
-	u = strings.TrimSpace(u)
-	found := false
-	for _, proto := range allowedProtocols {
-		if strings.HasPrefix(u, proto) {
-			found = true
-			break
-		}
-	}
-	return found
+	return classifySourceProtocol(u) == SourceProtocolWeb
 }
 
 // extractLinks extracts all the links from the given HTML content.
