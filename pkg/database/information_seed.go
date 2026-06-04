@@ -54,6 +54,13 @@ type InformationSeed struct {
 	Config          *json.RawMessage
 }
 
+// InformationSeedWithStats represents an InformationSeed row with aggregate
+// relationship statistics.
+type InformationSeedWithStats struct {
+	InformationSeed
+	DiscoveredSourceCount uint64
+}
+
 // ClaimInformationSeeds atomically marks eligible InformationSeed rows as processing for engine.
 //
 // Eligible seeds are enabled rows whose status is new or pending, processing rows whose
@@ -86,6 +93,82 @@ func ClaimInformationSeeds(db *Handler, limit int, engine string, processingTime
 	default:
 		return nil, fmt.Errorf("unsupported database type for information seed claims: %s", (*db).DBMS())
 	}
+}
+
+// ListInformationSeedsWithStats returns every information seed with the number
+// of sources currently linked to it. The count is computed in the database with
+// a single LEFT JOIN aggregate so callers do not have to fetch sources one seed
+// at a time.
+func ListInformationSeedsWithStats(db *Handler) ([]InformationSeedWithStats, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+
+	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilter(db)
+	if err != nil {
+		return nil, err
+	}
+
+	query := fmt.Sprintf(`
+		SELECT seed.information_seed_id, seed.created_at, seed.last_updated_at, seed.category_id,
+			seed.usr_id, seed.information_seed, seed.status, seed.priority, seed.engine,
+			seed.last_processed_at, seed.last_error, seed.last_error_at, seed.disabled,
+			seed.attempts, seed.config, COUNT(link.source_id) AS discovered_source_count
+		FROM InformationSeed AS seed
+		LEFT JOIN SourceInformationSeedIndex AS link
+			ON link.information_seed_id = seed.information_seed_id%s
+		GROUP BY seed.information_seed_id, seed.created_at, seed.last_updated_at, seed.category_id,
+			seed.usr_id, seed.information_seed, seed.status, seed.priority, seed.engine,
+			seed.last_processed_at, seed.last_error, seed.last_error_at, seed.disabled,
+			seed.attempts, seed.config
+		ORDER BY seed.created_at ASC, seed.information_seed_id ASC`, joinDeletedFilter)
+
+	rows, err := (*db).ExecuteQuery(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list information seeds with stats: %w", err)
+	}
+	return scanInformationSeedWithStatsRows(rows)
+}
+
+func sourceInformationSeedDeletedAtJoinFilter(db *Handler) (string, error) {
+	exists, err := tableColumnExists(db, "SourceInformationSeedIndex", "deleted_at")
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", nil
+	}
+	return " AND link.deleted_at IS NULL", nil
+}
+
+func tableColumnExists(db *Handler, tableName, columnName string) (bool, error) {
+	var query string
+	var args []interface{}
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBPostgresStr:
+		query = `
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE LOWER(table_name) = LOWER($1) AND LOWER(column_name) = LOWER($2)`
+		args = []interface{}{tableName, columnName}
+	case DBMySQLStr:
+		query = `
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?) AND LOWER(column_name) = LOWER(?)`
+		args = []interface{}{tableName, columnName}
+	case DBSQLiteStr:
+		query = fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info(%q) WHERE name = ?", tableName)
+		args = []interface{}{columnName}
+	default:
+		return false, fmt.Errorf("unsupported database type for schema inspection: %s", (*db).DBMS())
+	}
+
+	var count int
+	if err := (*db).QueryRow(query, args...).Scan(&count); err != nil {
+		return false, fmt.Errorf("failed to inspect column %s.%s: %w", tableName, columnName, err)
+	}
+	return count > 0, nil
 }
 
 func normalizeInformationSeedDBMS(dbms string) string {
@@ -333,6 +416,41 @@ func scanInformationSeedRows(rows *sql.Rows) ([]InformationSeed, error) {
 			&seed.Disabled,
 			&seed.Attempts,
 			&config,
+		); err != nil {
+			return nil, err
+		}
+		if config.Valid {
+			raw := json.RawMessage(config.String)
+			seed.Config = &raw
+		}
+		seeds = append(seeds, seed)
+	}
+	return seeds, rows.Err()
+}
+
+func scanInformationSeedWithStatsRows(rows *sql.Rows) ([]InformationSeedWithStats, error) {
+	defer rows.Close()
+	seeds := []InformationSeedWithStats{}
+	for rows.Next() {
+		var seed InformationSeedWithStats
+		var config sql.NullString
+		if err := rows.Scan(
+			&seed.ID,
+			&seed.CreatedAt,
+			&seed.LastUpdatedAt,
+			&seed.CategoryID,
+			&seed.UsrID,
+			&seed.InformationSeed.InformationSeed,
+			&seed.Status,
+			&seed.Priority,
+			&seed.Engine,
+			&seed.LastProcessedAt,
+			&seed.LastError,
+			&seed.LastErrorAt,
+			&seed.Disabled,
+			&seed.Attempts,
+			&config,
+			&seed.DiscoveredSourceCount,
 		); err != nil {
 			return nil, err
 		}

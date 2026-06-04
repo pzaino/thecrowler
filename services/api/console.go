@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -33,10 +34,60 @@ const (
 	errFailedToStartTransaction    = "Failed to start transaction"
 	errFailedToCommitTransaction   = "Failed to commit transaction"
 
-	infoAllSourcesStatus = "All Sources status"
+	infoAllSourcesStatus    = "All Sources status"
+	infoAllInformationSeeds = "All Information Seeds"
 	//infoSourceStatus     = "Source status"
 	infoSourceRemoved = "Source and related data removed successfully"
 )
+
+func performListInformationSeeds(_ int, db *cdb.Handler) (InformationSeedListResponse, error) {
+	seeds, err := cdb.ListInformationSeedsWithStats(db)
+	if err != nil {
+		return InformationSeedListResponse{Message: "Failed to list information seeds"}, err
+	}
+
+	items := make([]InformationSeedListRow, 0, len(seeds))
+	for _, seed := range seeds {
+		items = append(items, informationSeedListRowFromDB(seed))
+	}
+
+	return InformationSeedListResponse{Message: infoAllInformationSeeds, Items: items}, nil
+}
+
+func informationSeedListRowFromDB(seed cdb.InformationSeedWithStats) InformationSeedListRow {
+	return InformationSeedListRow{
+		ID:                    seed.ID,
+		CreatedAt:             nullTimeString(seed.CreatedAt),
+		LastUpdatedAt:         nullTimeString(seed.LastUpdatedAt),
+		CategoryID:            seed.CategoryID,
+		UsrID:                 seed.UsrID,
+		InformationSeed:       seed.InformationSeed.InformationSeed,
+		Status:                seed.Status,
+		Priority:              seed.Priority,
+		Engine:                seed.Engine,
+		LastProcessedAt:       nullTimeString(seed.LastProcessedAt),
+		LastError:             nullStringString(seed.LastError),
+		LastErrorAt:           nullTimeString(seed.LastErrorAt),
+		Disabled:              seed.Disabled,
+		Attempts:              seed.Attempts,
+		Config:                seed.Config,
+		DiscoveredSourceCount: seed.DiscoveredSourceCount,
+	}
+}
+
+func nullTimeString(value sql.NullTime) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.Time.UTC().Format(time.RFC3339Nano)
+}
+
+func nullStringString(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
 
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var params addSourceRequest

@@ -63,6 +63,10 @@ manage your sources via the API. The end-points added so far are:
 * [GET] `/v1/source/update`: This end-point will update a source in the database.
 * [GET] `/v1/source/vacuum`: This end-point will vacuum the source from all data
   crawled and collected so far (note: it does NOT remove the source, it's owners, categories etc., only crawled data).
+* [GET] `/v1/information-seed/list`: This console end-point lists all
+  information seeds and includes `discovered_source_count`, the number of active
+  `SourceInformationSeedIndex` relationships currently linking discovered
+  sources to each seed. The count is calculated by the database in the list query.
 
 There are equivalent end-points in [POST] for all the above end-points.
 

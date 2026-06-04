@@ -37,6 +37,33 @@ type ConsoleResponse struct {
 	Message string `json:"message" yaml:"message"`
 }
 
+// InformationSeedListResponse represents the list response for information seeds.
+type InformationSeedListResponse struct {
+	Message string                   `json:"message"`
+	Items   []InformationSeedListRow `json:"items"`
+}
+
+// InformationSeedListRow represents one information seed and aggregate stats
+// exposed by the console API.
+type InformationSeedListRow struct {
+	ID                    uint64           `json:"information_seed_id"`
+	CreatedAt             string           `json:"created_at,omitempty"`
+	LastUpdatedAt         string           `json:"last_updated_at,omitempty"`
+	CategoryID            uint64           `json:"category_id"`
+	UsrID                 uint64           `json:"usr_id"`
+	InformationSeed       string           `json:"information_seed"`
+	Status                string           `json:"status"`
+	Priority              string           `json:"priority"`
+	Engine                string           `json:"engine"`
+	LastProcessedAt       string           `json:"last_processed_at,omitempty"`
+	LastError             string           `json:"last_error,omitempty"`
+	LastErrorAt           string           `json:"last_error_at,omitempty"`
+	Disabled              bool             `json:"disabled"`
+	Attempts              int              `json:"attempts"`
+	Config                *json.RawMessage `json:"config,omitempty"`
+	DiscoveredSourceCount uint64           `json:"discovered_source_count"`
+}
+
 // StatusResponse represents the structure of the status response
 type StatusResponse struct {
 	Message string              `json:"message"`

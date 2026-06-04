@@ -603,6 +603,7 @@ func initAPIv1() {
 		vacuumSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(vacuumSourceHandler)))
 		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
+		informationSeedListHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedListHandler)))
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
@@ -621,6 +622,9 @@ func initAPIv1() {
 
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, nil)
+
+		http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "List information seeds with discovered source counts (console)", true, false, 200, nil, nil, InformationSeedListResponse{})
 
 		// Owner endpoints
 		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
@@ -1520,6 +1524,30 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 			totalSuccess.Add(1)
 		}
 		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+// informationSeedListHandler handles information seed list requests.
+func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusOK
+
+		results, err := performListInformationSeeds(getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error listing information seeds: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
