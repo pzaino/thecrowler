@@ -7,6 +7,8 @@ easily adapted to use other databases in the future.
 
 ## InformationSeed claiming semantics
 
+For the full status lifecycle, finalization rules, and rerun idempotency contract, see [Information seed lifecycle](information_seed_lifecycle.md).
+
 `ClaimInformationSeeds` is implemented in the database package with explicit
 DBMS-specific branches selected by `Handler.DBMS()`. All branches skip rows where
 `disabled = true`, claim seeds in `new` or `pending`, reclaim stale `processing`
