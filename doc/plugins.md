@@ -219,6 +219,24 @@ result = {
 
 ---
 
+
+### Information Seed discovery metadata
+
+Plugins that discover candidate sources for an Information Seed should keep
+configuration and provenance separate. Put source-wide crawling behavior in
+`Sources.config`: rulesets, execution-plan options, restrictions, scheduling,
+and plugin parameters that should apply every time the source is crawled. Put
+per-seed discovery evidence on the `SourceInformationSeedIndex` relationship:
+`discovery_provider`, `discovery_query`, `discovery_rank`, `candidate_score`,
+`candidate_reason`, and any provider-specific `discovery_metadata` JSON.
+
+This separation is important because the same URL can be discovered by multiple
+seeds. Updating relationship metadata for one `(source_id, information_seed_id)`
+pair must not rewrite `Sources.config` or any other source/seed relationship.
+When using database helpers or `dbQuery`, prefer an idempotent link for plain
+associations and the richer metadata upsert only when the plugin has discovery
+evidence to record.
+
 ## Best Practices
 
 - **Modularity:**

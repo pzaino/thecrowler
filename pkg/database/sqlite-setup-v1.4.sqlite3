@@ -197,12 +197,29 @@ CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
     source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id INTEGER NOT NULL,
     information_seed_id INTEGER NOT NULL,
+    discovery_provider VARCHAR(255),          -- Provider that discovered this source for this seed.
+    discovery_query TEXT,                     -- Query/dork/prompt used for this discovery.
+    discovery_rank INTEGER,                   -- Rank returned by the discovery provider.
+    candidate_score REAL,                     -- Score assigned before promotion to Sources.
+    candidate_reason TEXT,                    -- Human/model-readable reason for the candidate.
+    discovery_metadata TEXT,                  -- JSON metadata for this source/seed discovery.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, information_seed_id),
     FOREIGN KEY(source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
 );
+
+-- SQLite setup callers that run this script against an existing database must
+-- guard each migration with PRAGMA table_info(SourceInformationSeedIndex) before
+-- executing the ALTER statement. Apply that guard to these data-preserving
+-- per-discovery provenance migrations:
+--   ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_provider VARCHAR(255);
+--   ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_query TEXT;
+--   ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_rank INTEGER;
+--   ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_score REAL;
+--   ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_reason TEXT;
+--   ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_metadata TEXT;
 
 -- SourceOwnerIndex table stores the relationship between sources and their owners
 CREATE TABLE IF NOT EXISTS SourceOwnerIndex (

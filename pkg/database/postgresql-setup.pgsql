@@ -716,11 +716,25 @@ CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
     source_information_seed_id BIGSERIAL PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
     information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
+    discovery_provider VARCHAR(255),          -- Provider that discovered this source for this seed.
+    discovery_query TEXT,                     -- Query/dork/prompt used for this discovery.
+    discovery_rank INTEGER,                   -- Rank returned by the discovery provider.
+    candidate_score DOUBLE PRECISION,         -- Score assigned before promotion to Sources.
+    candidate_reason TEXT,                    -- Human/model-readable reason for the candidate.
+    discovery_metadata JSONB,                 -- Additional per-discovery metadata for this source/seed pair.
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMPTZ,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, information_seed_id)
 );
+
+-- Add per-discovery provenance columns to existing relationship tables without dropping data.
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_provider VARCHAR(255);
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_query TEXT;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_rank INTEGER;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS candidate_score DOUBLE PRECISION;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS candidate_reason TEXT;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_metadata JSONB;
 
 -- SourceOwnerIndex table stores the relationship between sources and their owners
 CREATE TABLE IF NOT EXISTS SourceOwnerIndex (

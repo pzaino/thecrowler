@@ -22,6 +22,19 @@ import (
 	"time"
 )
 
+// InformationSeedDiscoveryMetadata contains provenance recorded on the relationship
+// between a source and the information seed that discovered it. Pointer fields are
+// intentionally used so callers can update only the metadata attributes they know
+// without clearing attributes recorded by an earlier discovery pass.
+type InformationSeedDiscoveryMetadata struct {
+	DiscoveryProvider *string
+	DiscoveryQuery    *string
+	DiscoveryRank     *int
+	CandidateScore    *float64
+	CandidateReason   *string
+	DiscoveryMetadata *json.RawMessage
+}
+
 // InformationSeed represents a row from the InformationSeed table.
 type InformationSeed struct {
 	ID              uint64
@@ -344,4 +357,148 @@ func questionPlaceholders(count int) string {
 		parts[i] = "?"
 	}
 	return strings.Join(parts, ",")
+}
+
+// LinkSourceToInformationSeed idempotently records that a source is associated
+// with an information seed. Duplicate source/seed pairs are ignored and do not
+// modify discovery provenance already stored on the relationship row.
+func LinkSourceToInformationSeed(db *Handler, sourceID, informationSeedID uint64) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if sourceID == 0 || informationSeedID == 0 {
+		return fmt.Errorf("sourceID and informationSeedID must be provided")
+	}
+
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBMySQLStr:
+		_, err := (*db).Exec(`
+			INSERT IGNORE INTO SourceInformationSeedIndex (source_id, information_seed_id)
+			VALUES (?, ?)`, sourceID, informationSeedID)
+		if err != nil {
+			return fmt.Errorf("failed to link source %d to information seed %d: %w", sourceID, informationSeedID, err)
+		}
+	case DBPostgresStr, DBSQLiteStr:
+		_, err := (*db).Exec(`
+			INSERT INTO SourceInformationSeedIndex (source_id, information_seed_id)
+			VALUES ($1, $2)
+			ON CONFLICT (source_id, information_seed_id) DO NOTHING`, sourceID, informationSeedID)
+		if err != nil {
+			return fmt.Errorf("failed to link source %d to information seed %d: %w", sourceID, informationSeedID, err)
+		}
+	default:
+		return fmt.Errorf("unsupported database type for source/information-seed links: %s", (*db).DBMS())
+	}
+
+	return nil
+}
+
+// LinkSourceToInformationSeedWithDiscoveryMetadata inserts or updates the
+// source/seed relationship and records per-discovery provenance on that exact
+// relationship row. Nil metadata fields are left unchanged on duplicate links so
+// partial updates cannot clear unrelated metadata attributes.
+func LinkSourceToInformationSeedWithDiscoveryMetadata(db *Handler, sourceID, informationSeedID uint64, metadata InformationSeedDiscoveryMetadata) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if sourceID == 0 || informationSeedID == 0 {
+		return fmt.Errorf("sourceID and informationSeedID must be provided")
+	}
+
+	metadataJSON, err := discoveryMetadataString(metadata.DiscoveryMetadata)
+	if err != nil {
+		return err
+	}
+
+	args := []interface{}{
+		sourceID,
+		informationSeedID,
+		nullableArg(metadata.DiscoveryProvider),
+		nullableArg(metadata.DiscoveryQuery),
+		nullableArg(metadata.DiscoveryRank),
+		nullableArg(metadata.CandidateScore),
+		nullableArg(metadata.CandidateReason),
+		nullableArg(metadataJSON),
+	}
+
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBPostgresStr:
+		_, err = (*db).Exec(`
+			INSERT INTO SourceInformationSeedIndex (
+				source_id, information_seed_id, discovery_provider, discovery_query,
+				discovery_rank, candidate_score, candidate_reason, discovery_metadata
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+			ON CONFLICT (source_id, information_seed_id) DO UPDATE SET
+				discovery_provider = COALESCE(EXCLUDED.discovery_provider, SourceInformationSeedIndex.discovery_provider),
+				discovery_query = COALESCE(EXCLUDED.discovery_query, SourceInformationSeedIndex.discovery_query),
+				discovery_rank = COALESCE(EXCLUDED.discovery_rank, SourceInformationSeedIndex.discovery_rank),
+				candidate_score = COALESCE(EXCLUDED.candidate_score, SourceInformationSeedIndex.candidate_score),
+				candidate_reason = COALESCE(EXCLUDED.candidate_reason, SourceInformationSeedIndex.candidate_reason),
+				discovery_metadata = CASE
+					WHEN EXCLUDED.discovery_metadata IS NULL THEN SourceInformationSeedIndex.discovery_metadata
+					ELSE COALESCE(SourceInformationSeedIndex.discovery_metadata, '{}'::jsonb) || EXCLUDED.discovery_metadata
+				END`, args...)
+	case DBMySQLStr:
+		_, err = (*db).Exec(`
+			INSERT INTO SourceInformationSeedIndex (
+				source_id, information_seed_id, discovery_provider, discovery_query,
+				discovery_rank, candidate_score, candidate_reason, discovery_metadata
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				discovery_provider = COALESCE(VALUES(discovery_provider), discovery_provider),
+				discovery_query = COALESCE(VALUES(discovery_query), discovery_query),
+				discovery_rank = COALESCE(VALUES(discovery_rank), discovery_rank),
+				candidate_score = COALESCE(VALUES(candidate_score), candidate_score),
+				candidate_reason = COALESCE(VALUES(candidate_reason), candidate_reason),
+				discovery_metadata = CASE
+					WHEN VALUES(discovery_metadata) IS NULL THEN discovery_metadata
+					ELSE JSON_MERGE_PATCH(COALESCE(discovery_metadata, JSON_OBJECT()), VALUES(discovery_metadata))
+				END`, args...)
+	case DBSQLiteStr:
+		_, err = (*db).Exec(`
+			INSERT INTO SourceInformationSeedIndex (
+				source_id, information_seed_id, discovery_provider, discovery_query,
+				discovery_rank, candidate_score, candidate_reason, discovery_metadata
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, json($8))
+			ON CONFLICT (source_id, information_seed_id) DO UPDATE SET
+				discovery_provider = COALESCE(excluded.discovery_provider, SourceInformationSeedIndex.discovery_provider),
+				discovery_query = COALESCE(excluded.discovery_query, SourceInformationSeedIndex.discovery_query),
+				discovery_rank = COALESCE(excluded.discovery_rank, SourceInformationSeedIndex.discovery_rank),
+				candidate_score = COALESCE(excluded.candidate_score, SourceInformationSeedIndex.candidate_score),
+				candidate_reason = COALESCE(excluded.candidate_reason, SourceInformationSeedIndex.candidate_reason),
+				discovery_metadata = CASE
+					WHEN excluded.discovery_metadata IS NULL THEN SourceInformationSeedIndex.discovery_metadata
+					ELSE json_patch(COALESCE(SourceInformationSeedIndex.discovery_metadata, '{}'), excluded.discovery_metadata)
+				END`, args...)
+	default:
+		return fmt.Errorf("unsupported database type for source/information-seed links: %s", (*db).DBMS())
+	}
+	if err != nil {
+		return fmt.Errorf("failed to link source %d to information seed %d with discovery metadata: %w", sourceID, informationSeedID, err)
+	}
+	return nil
+}
+
+func nullableArg[T any](value *T) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func discoveryMetadataString(metadata *json.RawMessage) (*string, error) {
+	if metadata == nil {
+		return nil, nil
+	}
+	if len(*metadata) == 0 {
+		return nil, fmt.Errorf("discovery metadata must be valid JSON when provided")
+	}
+	if !json.Valid(*metadata) {
+		return nil, fmt.Errorf("discovery metadata must be valid JSON")
+	}
+	metadataString := string(*metadata)
+	return &metadataString, nil
 }

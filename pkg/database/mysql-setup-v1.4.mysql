@@ -211,12 +211,46 @@ CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
     source_information_seed_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     source_id BIGINT NOT NULL,
     information_seed_id BIGINT NOT NULL,
+    discovery_provider VARCHAR(255),          -- Provider that discovered this source for this seed.
+    discovery_query TEXT,                     -- Query/dork/prompt used for this discovery.
+    discovery_rank INT,                       -- Rank returned by the discovery provider.
+    candidate_score DOUBLE,                   -- Score assigned before promotion to Sources.
+    candidate_reason TEXT,                    -- Human/model-readable reason for the candidate.
+    discovery_metadata JSON,                  -- Additional per-discovery metadata for this source/seed pair.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE (source_id, information_seed_id),
     FOREIGN KEY(source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
 );
+
+-- Add per-discovery provenance columns to existing SourceInformationSeedIndex tables without dropping data.
+DELIMITER //
+CREATE PROCEDURE add_sourceinformationseed_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'SourceInformationSeedIndex'
+          AND COLUMN_NAME = p_column_name
+    ) THEN
+        SET @add_sourceinformationseed_column_sql = CONCAT('ALTER TABLE SourceInformationSeedIndex ADD COLUMN ', p_column_ddl);
+        PREPARE add_sourceinformationseed_column_stmt FROM @add_sourceinformationseed_column_sql;
+        EXECUTE add_sourceinformationseed_column_stmt;
+        DEALLOCATE PREPARE add_sourceinformationseed_column_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_sourceinformationseed_column_if_missing('discovery_provider', 'discovery_provider VARCHAR(255)');
+CALL add_sourceinformationseed_column_if_missing('discovery_query', 'discovery_query TEXT');
+CALL add_sourceinformationseed_column_if_missing('discovery_rank', 'discovery_rank INT');
+CALL add_sourceinformationseed_column_if_missing('candidate_score', 'candidate_score DOUBLE');
+CALL add_sourceinformationseed_column_if_missing('candidate_reason', 'candidate_reason TEXT');
+CALL add_sourceinformationseed_column_if_missing('discovery_metadata', 'discovery_metadata JSON');
+
+DROP PROCEDURE add_sourceinformationseed_column_if_missing;
 
 -- SourceOwnerIndex table stores the relationship between sources and their owners
 CREATE TABLE IF NOT EXISTS SourceOwnerIndex (

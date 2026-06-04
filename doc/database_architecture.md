@@ -31,6 +31,37 @@ DBMS-specific behavior and limitations:
   provide row-level `SKIP LOCKED`, so concurrent writers are serialized by
   SQLite's database/page-level write locking rather than skipping locked rows.
 
+
+## Source and information seed provenance
+
+`Sources.config` stores the crawler configuration for a source itself: rulesets,
+execution-plan settings, crawling restrictions, and other behavior that should
+travel with the source no matter how many seeds discover it. It should not be
+used for seed-specific discovery evidence because a single source can be
+associated with many information seeds.
+
+`SourceInformationSeedIndex` stores provenance that is specific to one
+`(source_id, information_seed_id)` relationship. The unique pair remains the
+identity of the relationship, while optional discovery columns record metadata
+from the discovery pass that connected that source to that seed:
+
+- `discovery_provider`: search engine, API, plugin, model, or other provider
+  that returned the candidate.
+- `discovery_query`: query, dork, prompt, or request used to produce the
+  candidate.
+- `discovery_rank`: provider rank or result position.
+- `candidate_score`: normalized pre-crawl score assigned to the candidate.
+- `candidate_reason`: concise explanation for why the candidate matched.
+- `discovery_metadata`: JSON/JSONB object for provider-specific fields such as
+  snippets, raw result IDs, query parameters, or scoring features.
+
+`LinkSourceToInformationSeed` is intentionally idempotent and only creates the
+relationship if it is missing. Callers that have discovery evidence should use
+the richer metadata link helper, which upserts only the matching
+`(source_id, information_seed_id)` row and leaves omitted metadata fields
+unchanged. This keeps provenance for other seeds separate even when the same
+source URL is discovered by multiple seeds.
+
 Here below is a diagram of the database architecture:
 
 ```mermaid
@@ -173,6 +204,12 @@ erDiagram
         BIGSERIAL source_information_seed_id PK
         BIGINT source_id FK "REFERENCES Sources(source_id)"
         BIGINT information_seed_id FK "REFERENCES InformationSeed(information_seed_id)"
+        VARCHAR discovery_provider
+        TEXT discovery_query
+        INTEGER discovery_rank
+        FLOAT candidate_score
+        TEXT candidate_reason
+        JSONB discovery_metadata
         TIMESTAMP created_at
         TIMESTAMP last_updated_at
     }

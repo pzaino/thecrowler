@@ -52,18 +52,18 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 			_, err = handler.db.Exec("PRAGMA synchronous=1;")
 		}
 		if err == nil {
-			err = ensureSQLiteInformationSeedLifecycle(handler.db)
+			err = ensureSQLiteInformationSeedSchema(handler.db)
 		}
 	}
 
 	return err
 }
 
-func ensureSQLiteInformationSeedLifecycle(db *sql.DB) error {
+func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
 	var tableName string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'InformationSeed'").Scan(&tableName)
 	if err == sql.ErrNoRows {
-		return nil
+		return ensureSQLiteSourceInformationSeedProvenance(db)
 	}
 	if err != nil {
 		return err
@@ -107,6 +107,43 @@ func ensureSQLiteInformationSeedLifecycle(db *sql.DB) error {
 	for _, statement := range indexes {
 		if _, err = db.Exec(statement); err != nil {
 			return err
+		}
+	}
+
+	return ensureSQLiteSourceInformationSeedProvenance(db)
+}
+
+func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {
+	var tableName string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'SourceInformationSeedIndex'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	columns, err := sqliteColumns(db, "SourceInformationSeedIndex")
+	if err != nil {
+		return err
+	}
+
+	migrations := []struct {
+		column    string
+		statement string
+	}{
+		{column: "discovery_provider", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_provider VARCHAR(255)"},
+		{column: "discovery_query", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_query TEXT"},
+		{column: "discovery_rank", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_rank INTEGER"},
+		{column: "candidate_score", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_score REAL"},
+		{column: "candidate_reason", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_reason TEXT"},
+		{column: "discovery_metadata", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_metadata TEXT"},
+	}
+	for _, migration := range migrations {
+		if !columns[migration.column] {
+			if _, err = db.Exec(migration.statement); err != nil {
+				return err
+			}
 		}
 	}
 
