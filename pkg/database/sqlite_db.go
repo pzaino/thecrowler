@@ -51,9 +51,92 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 		if err == nil {
 			_, err = handler.db.Exec("PRAGMA synchronous=1;")
 		}
+		if err == nil {
+			err = ensureSQLiteInformationSeedLifecycle(handler.db)
+		}
 	}
 
 	return err
+}
+
+func ensureSQLiteInformationSeedLifecycle(db *sql.DB) error {
+	var tableName string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'InformationSeed'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	columns, err := sqliteColumns(db, "InformationSeed")
+	if err != nil {
+		return err
+	}
+
+	migrations := []struct {
+		column    string
+		statement string
+	}{
+		{column: "status", statement: "ALTER TABLE InformationSeed ADD COLUMN status VARCHAR(50) DEFAULT 'new' NOT NULL"},
+		{column: "priority", statement: "ALTER TABLE InformationSeed ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL"},
+		{column: "engine", statement: "ALTER TABLE InformationSeed ADD COLUMN engine VARCHAR(256) DEFAULT '' NOT NULL"},
+		{column: "last_processed_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_processed_at TIMESTAMP"},
+		{column: "last_error", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error TEXT"},
+		{column: "last_error_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error_at TIMESTAMP"},
+		{column: "disabled", statement: "ALTER TABLE InformationSeed ADD COLUMN disabled BOOLEAN DEFAULT FALSE"},
+		{column: "attempts", statement: "ALTER TABLE InformationSeed ADD COLUMN attempts INTEGER DEFAULT 0 NOT NULL"},
+	}
+	for _, migration := range migrations {
+		column, statement := migration.column, migration.statement
+		if !columns[column] {
+			if _, err = db.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)",
+	}
+	for _, statement := range indexes {
+		if _, err = db.Exec(statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func sqliteColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			dfltValue  sql.NullString
+			pk         int
+		)
+		if err = rows.Scan(&cid, &name, &columnType, &notNull, &dfltValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+
+	return columns, rows.Err()
 }
 
 // Close closes the database connection

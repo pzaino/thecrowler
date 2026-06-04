@@ -15,9 +15,47 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
                                                 -- characters due to the fact that it's used to dork
                                                 -- search engines for sources that may be related to
                                                 -- the information seed.
+    status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- Lifecycle status for seed processing.
+    priority VARCHAR(64) DEFAULT '' NOT NULL,   -- Processing priority for the seed.
+    engine VARCHAR(256) DEFAULT '' NOT NULL,    -- Engine processing the seed.
+    last_processed_at TIMESTAMP NULL,           -- The last time the seed was processed.
+    last_error TEXT,                            -- Last processing error for the seed.
+    last_error_at TIMESTAMP NULL,               -- The date/time of the last processing error.
+    disabled BOOLEAN DEFAULT FALSE,             -- If automatic seed processing is disabled.
+    attempts INT DEFAULT 0 NOT NULL,            -- Number of processing attempts.
     config JSON                                 -- Stores JSON document with all details about
                                                 -- the information seed configuration for the crawler
 );
+
+-- Add lifecycle columns to existing InformationSeed tables without dropping data.
+DELIMITER //
+CREATE PROCEDURE add_informationseed_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'InformationSeed'
+          AND COLUMN_NAME = p_column_name
+    ) THEN
+        SET @add_informationseed_column_sql = CONCAT('ALTER TABLE InformationSeed ADD COLUMN ', p_column_ddl);
+        PREPARE add_informationseed_column_stmt FROM @add_informationseed_column_sql;
+        EXECUTE add_informationseed_column_stmt;
+        DEALLOCATE PREPARE add_informationseed_column_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_informationseed_column_if_missing('status', 'status VARCHAR(50) DEFAULT \'new\' NOT NULL');
+CALL add_informationseed_column_if_missing('priority', 'priority VARCHAR(64) DEFAULT \'\' NOT NULL');
+CALL add_informationseed_column_if_missing('engine', 'engine VARCHAR(256) DEFAULT \'\' NOT NULL');
+CALL add_informationseed_column_if_missing('last_processed_at', 'last_processed_at TIMESTAMP NULL');
+CALL add_informationseed_column_if_missing('last_error', 'last_error TEXT');
+CALL add_informationseed_column_if_missing('last_error_at', 'last_error_at TIMESTAMP NULL');
+CALL add_informationseed_column_if_missing('disabled', 'disabled BOOLEAN DEFAULT FALSE');
+CALL add_informationseed_column_if_missing('attempts', 'attempts INT DEFAULT 0 NOT NULL');
+
+DROP PROCEDURE add_informationseed_column_if_missing;
 
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
@@ -278,6 +316,34 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
 
 --------------------------------------------------------------------------------
 -- Indexes and triggers setup
+
+-- Guarded InformationSeed lifecycle indexes
+DELIMITER //
+CREATE PROCEDURE add_informationseed_index_if_missing(IN p_index_name VARCHAR(64), IN p_index_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'InformationSeed'
+          AND INDEX_NAME = p_index_name
+    ) THEN
+        SET @add_informationseed_index_sql = p_index_ddl;
+        PREPARE add_informationseed_index_stmt FROM @add_informationseed_index_sql;
+        EXECUTE add_informationseed_index_stmt;
+        DEALLOCATE PREPARE add_informationseed_index_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_informationseed_index_if_missing('idx_informationseed_status', 'CREATE INDEX idx_informationseed_status ON InformationSeed(status)');
+CALL add_informationseed_index_if_missing('idx_informationseed_priority', 'CREATE INDEX idx_informationseed_priority ON InformationSeed(priority)');
+CALL add_informationseed_index_if_missing('idx_informationseed_disabled', 'CREATE INDEX idx_informationseed_disabled ON InformationSeed(disabled)');
+CALL add_informationseed_index_if_missing('idx_informationseed_last_processed_at', 'CREATE INDEX idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)');
+CALL add_informationseed_index_if_missing('idx_informationseed_last_error_at', 'CREATE INDEX idx_informationseed_last_error_at ON InformationSeed(last_error_at)');
+CALL add_informationseed_index_if_missing('idx_informationseed_processing_stale', 'CREATE INDEX idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)');
+
+DROP PROCEDURE add_informationseed_index_if_missing;
 
 -- Creates an index for the WebObjects table on the object_id column
 CREATE INDEX IF NOT EXISTS idx_webobjects_object_id ON WebObjects (object_id);

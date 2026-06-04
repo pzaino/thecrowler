@@ -15,6 +15,14 @@ erDiagram
         BIGINT category_id
         BIGINT usr_id
         VARCHAR information_seed
+        VARCHAR status
+        VARCHAR priority
+        VARCHAR engine
+        TIMESTAMP last_processed_at
+        TEXT last_error
+        TIMESTAMP last_error_at
+        BOOLEAN disabled
+        INTEGER attempts
         JSONB config
     }
 

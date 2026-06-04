@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.6'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.7'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.6', 'CROWler DB schema version 1.6');
+        VALUES ('1.7', 'CROWler DB schema version 1.7');
     END IF;
 END
 $$;
@@ -134,6 +134,17 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     config JSONB                                -- Stores JSON document with all details about
                                                 -- the information seed configuration for the crawler
 );
+
+-- Lifecycle columns are added with guarded ALTER statements so existing
+-- InformationSeed tables are upgraded in place without dropping seed data.
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new' NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS priority VARCHAR(64) DEFAULT '' NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS engine VARCHAR(256) DEFAULT '' NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_processed_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0 NOT NULL;
 ----------------------------------------------------------------
 
 
@@ -922,6 +933,15 @@ BEGIN
     END IF;
 END
 $$;
+
+CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status);
+CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority);
+CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled);
+CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale
+    ON InformationSeed(status, disabled, last_processed_at)
+    WHERE status = 'processing' AND disabled = FALSE;
 
 
 -- Indexes for the Sources table -----------------------------------------------
