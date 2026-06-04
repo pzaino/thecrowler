@@ -491,7 +491,8 @@ func ExtractHTMLData(n *html.Node) HTMLNode {
 				if text != "" {
 					if isParentSpan {
 						// Merge text directly if parent is also <span>
-						childTextBuffer.WriteString(" " + text)
+						childTextBuffer.WriteByte(' ')
+						childTextBuffer.WriteString(text)
 					} else {
 						// accumulate rather than overwrite to preserve full text
 						if node.Text != "" {
