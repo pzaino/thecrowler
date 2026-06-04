@@ -128,8 +128,7 @@ func BuildProviders(config cfg.InformationSeedConfig) map[string]searchproviders
 		if key == "" {
 			continue
 		}
-		providers[key] = &searchproviders.JSONProvider{ProviderName: key}
-		_ = providerCfg // reserved for provider-specific implementations.
+		providers[key] = searchproviders.NewProvider(key, providerCfg.Provider)
 	}
 	return providers
 }

@@ -1,0 +1,24 @@
+{
+  "_type": "SearchResponse",
+  "webPages": {
+    "webSearchUrl": "https://www.bing.com/search?q=seed+query",
+    "totalEstimatedMatches": 123,
+    "value": [
+      {
+        "id": "https://api.bing.microsoft.com/api/v7/#WebPages.0",
+        "name": "Example Domain",
+        "url": "https://example.com/",
+        "displayUrl": "example.com",
+        "snippet": "Example snippet from Bing.",
+        "dateLastCrawled": "2026-05-15T12:00:00.0000000Z"
+      },
+      {
+        "id": "https://api.bing.microsoft.com/api/v7/#WebPages.1",
+        "name": "Example Org",
+        "url": "https://example.org/",
+        "displayUrl": "example.org",
+        "snippet": "Second Bing snippet."
+      }
+    ]
+  }
+}

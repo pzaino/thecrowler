@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "invalid subscription token api_key=SHOULD_NOT_LEAK"
+  }
+}

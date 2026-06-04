@@ -70,13 +70,40 @@
     processing_timeout: 30 minutes
     provider_allow_list:
       - public_json
+      - brave_search
+      - bing_web_search
     providers:
+      # Generic JSON adapter support is preserved for custom search gateways.
       public_json:
         provider: http_json
         host: https://search-adapter.example.invalid
         endpoint: /v1/search
         api_key_label: api_key
         api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+        timeout: 30
+        rate_limit: 1/s
+        max_requests: 5
+
+      # First-class Brave Search API adapter. The adapter sends q=<query> and
+      # X-Subscription-Token: <api_key>. Host and endpoint are optional when
+      # using the public Brave API defaults shown here.
+      brave_search:
+        provider: brave_search
+        host: https://api.search.brave.com
+        endpoint: /res/v1/web/search
+        api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+        timeout: 30
+        rate_limit: 1/s
+        max_requests: 5
+
+      # First-class Bing Web Search API adapter. The adapter sends q=<query> and
+      # Ocp-Apim-Subscription-Key: <api_key>. Host and endpoint are optional
+      # when using the public Bing Web Search API defaults shown here.
+      bing_web_search:
+        provider: bing_web_search
+        host: https://api.bing.microsoft.com
+        endpoint: /v7.0/search
+        api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
         timeout: 30
         rate_limit: 1/s
         max_requests: 5
