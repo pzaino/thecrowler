@@ -1080,6 +1080,96 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	return ctx.wd, nil
 }
 
+func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string, docType string) (*PageInfo, string, error) {
+	currentURL, _ := ctx.wd.CurrentURL()
+
+	pageInfo := &PageInfo{}
+
+	detectCtx := detect.DContext{
+		CtxID:        ctx.GetContextID(),
+		TargetURL:    currentURL,
+		ResponseBody: nil,
+		Header:       nil,
+		HSSLInfo:     nil,
+		WD:           &ctx.wd,
+		RE:           ctx.re,
+		Config:       &ctx.config,
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	if detectedTech := detect.DetectTechnologies(&detectCtx); detectedTech != nil {
+		pageInfo.DetectedTech = *detectedTech
+		publishDetectionResults(ctx, currentURL, detectedTech)
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	if err := extractPageInfo(&wd, ctx, docType, pageInfo); err != nil {
+		if strings.Contains(err.Error(), errCriticalError) {
+			return pageInfo, currentURL, err
+		}
+		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, ctx.GetContextID(), err)
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	pageInfo.sourceID = ctx.source.ID
+	pageInfo.Links = append(pageInfo.Links, extractLinks(ctx, pageInfo.HTML, currentURL)...)
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	pageInfo.Keywords = extractKeywords(*pageInfo)
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	if ctx.config.Crawler.CollectPerfMetrics {
+		collectNavigationMetrics(&ctx.wd, pageInfo)
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	if ctx.config.Crawler.CollectPageEvents {
+		collectPageLogs(&wd, pageInfo)
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	if ctx.config.Crawler.CollectXHR {
+		collectXHR(ctx, pageInfo)
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
+	if !ctx.config.Crawler.CollectHTML {
+		pageInfo.HTML = ""
+	}
+
+	if !ctx.config.Crawler.CollectContent {
+		pageInfo.BodyText = ""
+	}
+
+	_ = pageURL
+
+	return pageInfo, currentURL, nil
+}
+
 func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

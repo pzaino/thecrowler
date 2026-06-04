@@ -2674,136 +2674,16 @@ func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURL
 	elapsed := time.Since(startTime)
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully retrieved HTML content for '%s' in %v\n", id, url, elapsed)
 
-	// Re-Get current URL (because some Action Rules may change the URL)
-	currentURL, _ := processCtx.wd.CurrentURL()
-
-	// Create PageInfo object to store the extracted information
-	pageCache := PageInfo{}
-
-	// Collect Detected Technologies
-	detectCtx := detect.DContext{
-		CtxID:        processCtx.GetContextID(),
-		TargetURL:    currentURL,
-		ResponseBody: nil,
-		Header:       nil,
-		HSSLInfo:     nil,
-		WD:           &processCtx.wd,
-		RE:           processCtx.re,
-		Config:       &processCtx.config,
-	}
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	// Detect Page/Website technologies
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Detecting technologies for '%s'\n", id, currentURL)
+	// Collect reusable browser-page data from the already-loaded page.
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting loaded page data for '%s'\n", id, url)
 	startTime = time.Now()
-	detectedTech := detect.DetectTechnologies(&detectCtx)
-	if detectedTech != nil {
-		pageCache.DetectedTech = *detectedTech
-		publishDetectionResults(processCtx, currentURL, detectedTech)
-	}
-	elapsed = time.Since(startTime)
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully detected technologies for '%s' in %v\n", id, currentURL, elapsed)
-
-	// Extract page information
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page information for '%s'\n", id, currentURL)
-	startTime = time.Now()
-	err = extractPageInfo(&htmlContent, processCtx, docType, &pageCache)
+	pageCache, currentURL, err := collectLoadedWebPage(processCtx, htmlContent, url, docType)
 	if err != nil {
-		if strings.Contains(err.Error(), errCriticalError) {
-			return &pageCache, currentURL, err
-		}
-		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, id, err)
+		return pageCache, currentURL, err
 	}
-	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	// Get Page Information
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page links for '%s'\n", id, currentURL)
-	startTime = time.Now()
-	pageCache.sourceID = processCtx.source.ID
-	pageCache.Links = append(pageCache.Links, extractLinks(processCtx, pageCache.HTML, currentURL)...)
 	pageCache.Links = append(pageCache.Links, skippedURLs...)
 	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully extracted page links for '%s' in %v\n", id, currentURL, elapsed)
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	// Generate Keywords
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Extracting page keywords for '%s'\n", id, currentURL)
-	startTime = time.Now()
-	pageCache.Keywords = extractKeywords(pageCache)
-	elapsed = time.Since(startTime)
-	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully extracted page information for '%s' in %v\n", id, currentURL, elapsed)
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	// Collect Navigation Timing metrics
-	if processCtx.config.Crawler.CollectPerfMetrics {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting navigation metrics for '%s'\n", id, currentURL)
-		startTime = time.Now()
-		collectNavigationMetrics(&processCtx.wd, &pageCache)
-		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully collected navigation metrics for '%s' in %v\n", id, currentURL, elapsed)
-	}
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	// Collect Page logs
-	if processCtx.config.Crawler.CollectPageEvents {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting page logs for '%s'\n", id, currentURL)
-		startTime = time.Now()
-		collectPageLogs(&htmlContent, &pageCache)
-		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully collected page logs for '%s' in %v\n", id, currentURL, elapsed)
-	}
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	// Collect XHR
-	if processCtx.config.Crawler.CollectXHR {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting XHR for '%s'\n", id, currentURL)
-		startTime = time.Now()
-		collectXHR(processCtx, &pageCache)
-		elapsed = time.Since(startTime)
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Completed XHR collection for '%s' in %v\n", id, currentURL, elapsed)
-	}
-	if processCtx.RefreshCrawlingTimer != nil {
-		processCtx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
-
-	if !processCtx.config.Crawler.CollectHTML {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting HTML content is disabled, clearing HTML content for '%s'\n", id, currentURL)
-		// If we don't need to collect HTML content, clear it
-		pageCache.HTML = ""
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Cleared HTML content for '%s'\n", id, currentURL)
-	}
-
-	if !processCtx.config.Crawler.CollectContent {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting content is disabled, clearing body text content for '%s'\n", id, currentURL)
-		// If we don't need to collect content, clear it
-		pageCache.BodyText = ""
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Cleared body text content for '%s'\n", id, currentURL)
-	}
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Successfully collected loaded page data for '%s' in %v\n", id, currentURL, elapsed)
 
 	// Delay before processing the next job (if total elapsed time is just few seconds)
 	totalElapsedTime := time.Since(processJobStartTime)
@@ -2818,7 +2698,7 @@ func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURL
 		processCtx.Status.LastDelay = totalElapsedTime.Seconds()
 	}
 
-	return &pageCache, currentURL, nil
+	return pageCache, currentURL, nil
 }
 
 func processJob(processCtx *ProcessContext, id, url string, skippedURLs []LinkItem) error {
