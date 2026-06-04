@@ -54,11 +54,238 @@ type InformationSeed struct {
 	Config          *json.RawMessage
 }
 
+// InformationSeedFilter describes optional predicates and pagination for
+// listing information seeds. Zero-valued scalar fields are ignored; use pointer
+// fields where zero is a meaningful database value.
+type InformationSeedFilter struct {
+	ID         uint64
+	Status     string
+	Priority   string
+	Disabled   *bool
+	CategoryID *uint64
+	UsrID      *uint64
+	UserID     *uint64
+	Limit      int
+	Offset     int
+}
+
+// SourceSeedLink represents a relationship between a source and an information
+// seed. Inserting an already-existing source/seed pair is treated as success.
+type SourceSeedLink struct {
+	SourceID          uint64
+	InformationSeedID uint64
+}
+
 // InformationSeedWithStats represents an InformationSeed row with aggregate
 // relationship statistics.
 type InformationSeedWithStats struct {
 	InformationSeed
 	DiscoveredSourceCount uint64
+}
+
+// CreateInformationSeed inserts a new information seed and returns its database ID.
+func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
+	if db == nil || *db == nil {
+		return 0, fmt.Errorf("database handler is nil")
+	}
+	if seed == nil {
+		return 0, fmt.Errorf("information seed is nil")
+	}
+
+	seedText := strings.TrimSpace(seed.InformationSeed)
+	if seedText == "" {
+		return 0, fmt.Errorf("information seed text is required")
+	}
+	status := strings.TrimSpace(seed.Status)
+	if status == "" {
+		status = "new"
+	}
+	priority := strings.TrimSpace(seed.Priority)
+	engine := strings.TrimSpace(seed.Engine)
+	config, err := informationSeedConfigString(seed.Config)
+	if err != nil {
+		return 0, err
+	}
+
+	args := []interface{}{seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config}
+
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBPostgresStr:
+		var id uint64
+		err = (*db).QueryRow(`
+			INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+			RETURNING information_seed_id`, args...).Scan(&id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create PostgreSQL information seed: %w", err)
+		}
+		return id, nil
+	case DBSQLiteStr:
+		var id uint64
+		err = (*db).QueryRow(`
+			INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			RETURNING information_seed_id`, args...).Scan(&id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create SQLite information seed: %w", err)
+		}
+		return id, nil
+	case DBMySQLStr:
+		result, err := (*db).Exec(`
+			INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, args...)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create MySQL information seed: %w", err)
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("failed to retrieve MySQL information seed ID: %w", err)
+		}
+		if id < 0 {
+			return 0, fmt.Errorf("failed to retrieve MySQL information seed ID: negative ID %d", id)
+		}
+		return uint64(id), nil
+	default:
+		return 0, fmt.Errorf("unsupported database type for information seed creation: %s", (*db).DBMS())
+	}
+}
+
+// GetInformationSeedByID retrieves an information seed by its ID.
+func GetInformationSeedByID(db *Handler, id uint64) (*InformationSeed, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+	if id == 0 {
+		return nil, fmt.Errorf("information seed ID must be provided")
+	}
+
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return nil, fmt.Errorf("unsupported database type for information seed retrieval: %s", (*db).DBMS())
+	}
+	placeholder := informationSeedPlaceholderForDBMS(dbms, 1)
+	row := (*db).QueryRow(fmt.Sprintf(`
+		SELECT %s
+		FROM InformationSeed
+		WHERE information_seed_id = %s`, informationSeedSelectColumns(), placeholder), id)
+	seed, err := scanInformationSeedRow(row)
+	if err != nil {
+		return nil, fmt.Errorf("no information seed found with ID %d: %w", id, err)
+	}
+	return seed, nil
+}
+
+// ListInformationSeeds retrieves information seeds matching the supplied filter.
+func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]InformationSeed, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return nil, fmt.Errorf("unsupported database type for information seed listing: %s", (*db).DBMS())
+	}
+	placeholders := newInformationSeedPlaceholders(dbms)
+	query := fmt.Sprintf("SELECT %s FROM InformationSeed", informationSeedSelectColumns())
+	conditions := []string{}
+	args := []interface{}{}
+
+	if filter.ID != 0 {
+		conditions = append(conditions, "information_seed_id = "+placeholders.Next())
+		args = append(args, filter.ID)
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		conditions = append(conditions, "status = "+placeholders.Next())
+		args = append(args, strings.TrimSpace(filter.Status))
+	}
+	if strings.TrimSpace(filter.Priority) != "" {
+		conditions = append(conditions, "priority = "+placeholders.Next())
+		args = append(args, strings.TrimSpace(filter.Priority))
+	}
+	if filter.Disabled != nil {
+		conditions = append(conditions, "disabled = "+placeholders.Next())
+		args = append(args, *filter.Disabled)
+	}
+	if filter.CategoryID != nil {
+		conditions = append(conditions, "category_id = "+placeholders.Next())
+		args = append(args, *filter.CategoryID)
+	}
+	userID := filter.UsrID
+	if userID == nil {
+		userID = filter.UserID
+	}
+	if userID != nil {
+		conditions = append(conditions, "usr_id = "+placeholders.Next())
+		args = append(args, *userID)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY created_at ASC, information_seed_id ASC"
+	if filter.Limit > 0 {
+		query += " LIMIT " + placeholders.Next()
+		args = append(args, filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query += " OFFSET " + placeholders.Next()
+		args = append(args, filter.Offset)
+	}
+
+	rows, err := (*db).ExecuteQuery(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list information seeds: %w", err)
+	}
+	return scanInformationSeedRows(rows)
+}
+
+// UpdateInformationSeedStatus updates a seed's lifecycle status and latest error details.
+func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText string) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if id == 0 {
+		return fmt.Errorf("information seed ID must be provided")
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return fmt.Errorf("status is required")
+	}
+
+	errText = strings.TrimSpace(errText)
+	var lastError interface{}
+	var lastErrorAt interface{}
+	if errText != "" {
+		lastError = errText
+		lastErrorAt = time.Now().UTC()
+	}
+
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for information seed status update: %s", (*db).DBMS())
+	}
+	nowExpr := "CURRENT_TIMESTAMP"
+	if dbms == DBPostgresStr {
+		nowExpr = "NOW()"
+	}
+	p1 := informationSeedPlaceholderForDBMS(dbms, 1)
+	p2 := informationSeedPlaceholderForDBMS(dbms, 2)
+	p3 := informationSeedPlaceholderForDBMS(dbms, 3)
+	p4 := informationSeedPlaceholderForDBMS(dbms, 4)
+	query := fmt.Sprintf(`
+		UPDATE InformationSeed
+		SET status = %s,
+			last_error = %s,
+			last_error_at = %s,
+			last_processed_at = %s
+		WHERE information_seed_id = %s`, p1, p2, p3, nowExpr, p4)
+	result, err := (*db).Exec(query, status, lastError, lastErrorAt, id)
+	if err != nil {
+		return fmt.Errorf("failed to update information seed %d status: %w", id, err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return fmt.Errorf("no information seed found with ID %d", id)
+	}
+	return nil
 }
 
 // ClaimInformationSeeds atomically marks eligible InformationSeed rows as processing for engine.
@@ -394,6 +621,84 @@ func scanInformationSeedIDs(rows *sql.Rows) ([]uint64, error) {
 	return ids, rows.Err()
 }
 
+func informationSeedSelectColumns() string {
+	return `information_seed_id, created_at, last_updated_at, category_id, usr_id,
+		information_seed, status, priority, engine, last_processed_at, last_error,
+		last_error_at, disabled, attempts, config`
+}
+
+func informationSeedConfigString(config *json.RawMessage) (interface{}, error) {
+	if config == nil {
+		return nil, nil
+	}
+	if len(*config) == 0 {
+		return nil, fmt.Errorf("information seed config must be valid JSON when provided")
+	}
+	if !json.Valid(*config) {
+		return nil, fmt.Errorf("information seed config must be valid JSON")
+	}
+	return string(*config), nil
+}
+
+type informationSeedPlaceholders struct {
+	dbms  string
+	count int
+}
+
+func newInformationSeedPlaceholders(dbms string) *informationSeedPlaceholders {
+	return &informationSeedPlaceholders{dbms: dbms}
+}
+
+func (placeholders *informationSeedPlaceholders) Next() string {
+	placeholders.count++
+	return informationSeedPlaceholderForDBMS(placeholders.dbms, placeholders.count)
+}
+
+func isSupportedInformationSeedDBMS(dbms string) bool {
+	switch dbms {
+	case DBPostgresStr, DBMySQLStr, DBSQLiteStr:
+		return true
+	default:
+		return false
+	}
+}
+
+func informationSeedPlaceholderForDBMS(dbms string, position int) string {
+	if dbms == DBMySQLStr {
+		return "?"
+	}
+	return fmt.Sprintf("$%d", position)
+}
+
+func scanInformationSeedRow(row *sql.Row) (*InformationSeed, error) {
+	var seed InformationSeed
+	var config sql.NullString
+	if err := row.Scan(
+		&seed.ID,
+		&seed.CreatedAt,
+		&seed.LastUpdatedAt,
+		&seed.CategoryID,
+		&seed.UsrID,
+		&seed.InformationSeed,
+		&seed.Status,
+		&seed.Priority,
+		&seed.Engine,
+		&seed.LastProcessedAt,
+		&seed.LastError,
+		&seed.LastErrorAt,
+		&seed.Disabled,
+		&seed.Attempts,
+		&config,
+	); err != nil {
+		return nil, err
+	}
+	if config.Valid {
+		raw := json.RawMessage(config.String)
+		seed.Config = &raw
+	}
+	return &seed, nil
+}
+
 func scanInformationSeedRows(rows *sql.Rows) ([]InformationSeed, error) {
 	defer rows.Close()
 	seeds := []InformationSeed{}
@@ -463,6 +768,35 @@ func scanInformationSeedWithStatsRows(rows *sql.Rows) ([]InformationSeedWithStat
 	return seeds, rows.Err()
 }
 
+func scanInformationSeedSourceRows(rows *sql.Rows) ([]Source, error) {
+	defer rows.Close()
+	sources := []Source{}
+	for rows.Next() {
+		var source Source
+		var config sql.NullString
+		if err := rows.Scan(
+			&source.ID,
+			&source.Priority,
+			&source.CategoryID,
+			&source.Name,
+			&source.UsrID,
+			&source.URL,
+			&source.Restricted,
+			&source.Flags,
+			&config,
+			&source.Disabled,
+		); err != nil {
+			return nil, err
+		}
+		if config.Valid {
+			raw := json.RawMessage(config.String)
+			source.Config = &raw
+		}
+		sources = append(sources, source)
+	}
+	return sources, rows.Err()
+}
+
 func rollbackIfUncommitted(tx *sql.Tx, committed *bool) {
 	if !*committed {
 		_ = tx.Rollback()
@@ -475,6 +809,88 @@ func questionPlaceholders(count int) string {
 		parts[i] = "?"
 	}
 	return strings.Join(parts, ",")
+}
+
+// LinkSourcesToInformationSeed idempotently records source/information-seed
+// relationships. Duplicate source/seed pairs are ignored and treated as success.
+func LinkSourcesToInformationSeed(db *Handler, links []SourceSeedLink) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if len(links) == 0 {
+		return nil
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start source/information-seed link transaction: %w", err)
+	}
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+
+	var query string
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBMySQLStr:
+		query = `
+			INSERT IGNORE INTO SourceInformationSeedIndex (source_id, information_seed_id)
+			VALUES (?, ?)`
+	case DBPostgresStr, DBSQLiteStr:
+		query = `
+			INSERT INTO SourceInformationSeedIndex (source_id, information_seed_id)
+			VALUES ($1, $2)
+			ON CONFLICT (source_id, information_seed_id) DO NOTHING`
+	default:
+		return fmt.Errorf("unsupported database type for source/information-seed links: %s", (*db).DBMS())
+	}
+
+	for _, link := range links {
+		if link.SourceID == 0 || link.InformationSeedID == 0 {
+			return fmt.Errorf("sourceID and informationSeedID must be provided")
+		}
+		if _, err = tx.Exec(query, link.SourceID, link.InformationSeedID); err != nil {
+			return fmt.Errorf("failed to link source %d to information seed %d: %w", link.SourceID, link.InformationSeedID, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit source/information-seed link transaction: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// GetSourcesForInformationSeed returns the sources linked to an information seed.
+func GetSourcesForInformationSeed(db *Handler, seedID uint64) ([]Source, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+	if seedID == 0 {
+		return nil, fmt.Errorf("information seed ID must be provided")
+	}
+
+	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilter(db)
+	if err != nil {
+		return nil, err
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return nil, fmt.Errorf("unsupported database type for source/information-seed lookup: %s", (*db).DBMS())
+	}
+	placeholder := informationSeedPlaceholderForDBMS(dbms, 1)
+	query := fmt.Sprintf(`
+		SELECT source.source_id, source.priority, source.category_id, source.name,
+			source.usr_id, source.url, source.restricted, source.flags, source.config,
+			source.disabled
+		FROM Sources AS source
+		INNER JOIN SourceInformationSeedIndex AS link
+			ON link.source_id = source.source_id%s
+		WHERE link.information_seed_id = %s
+		ORDER BY source.source_id ASC`, joinDeletedFilter, placeholder)
+	rows, err := (*db).ExecuteQuery(query, seedID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sources for information seed %d: %w", seedID, err)
+	}
+	return scanInformationSeedSourceRows(rows)
 }
 
 // LinkSourceToInformationSeed idempotently records that a source is associated
