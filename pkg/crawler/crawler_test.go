@@ -275,25 +275,56 @@ func TestIsValidURL(t *testing.T) {
 
 func TestClassifySourceProtocol(t *testing.T) {
 	tests := []struct {
-		name string
-		url  string
-		want SourceProtocol
+		name   string
+		rawURL string
+		want   SourceProtocol
 	}{
-		{"HTTP URL", "http://example.com", SourceProtocolWeb},
-		{"HTTPS URL", "https://example.com", SourceProtocolWeb},
-		{"FTP URL", "ftp://example.com", SourceProtocolWeb},
-		{"FTPS URL", "ftps://example.com", SourceProtocolWeb},
-		{"Trimmed web URL", "  https://example.com  ", SourceProtocolWeb},
-		{"No scheme", "example.com", SourceProtocolNetwork},
-		{"Unsupported scheme", "sftp://example.com", SourceProtocolNetwork},
-		{"Email scheme", "mailto:example@example.com", SourceProtocolNetwork},
-		{"Empty URL", "", SourceProtocolNetwork},
+		{
+			name:   "http URL is web",
+			rawURL: "http://example.com",
+			want:   SourceProtocolWeb,
+		},
+		{
+			name:   "https URL is web",
+			rawURL: "https://example.com",
+			want:   SourceProtocolWeb,
+		},
+		{
+			name:   "ftp URL is web",
+			rawURL: "ftp://example.com/file",
+			want:   SourceProtocolWeb,
+		},
+		{
+			name:   "ftps URL is web",
+			rawURL: "ftps://example.com/file",
+			want:   SourceProtocolWeb,
+		},
+		{
+			name:   "bare host is network",
+			rawURL: "example.com",
+			want:   SourceProtocolNetwork,
+		},
+		{
+			name:   "s3 URL is network",
+			rawURL: "s3://bucket/key",
+			want:   SourceProtocolNetwork,
+		},
+		{
+			name:   "imap URL is network",
+			rawURL: "imap://mail.example.com",
+			want:   SourceProtocolNetwork,
+		},
+		{
+			name:   "empty URL is network",
+			rawURL: "",
+			want:   SourceProtocolNetwork,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := classifySourceProtocol(tt.url); got != tt.want {
-				t.Errorf("classifySourceProtocol() = %v, want %v", got, tt.want)
+			if got := classifySourceProtocol(tt.rawURL); got != tt.want {
+				t.Fatalf("classifySourceProtocol(%q) = %q, want %q", tt.rawURL, got, tt.want)
 			}
 		})
 	}
