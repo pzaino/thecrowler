@@ -46,11 +46,13 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP,
     usr_id INTEGER DEFAULT 0 NOT NULL,          -- The user that created the source.
     category_id INTEGER DEFAULT 0 NOT NULL,     -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
+    priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source.
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
     last_crawled_at TIMESTAMP,                  -- The last time the source was crawled.

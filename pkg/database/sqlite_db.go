@@ -52,11 +52,51 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 			_, err = handler.db.Exec("PRAGMA synchronous=1;")
 		}
 		if err == nil {
+			err = ensureSQLiteSourceSchema(handler.db)
+		}
+		if err == nil {
 			err = ensureSQLiteInformationSeedSchema(handler.db)
 		}
 	}
 
 	return err
+}
+
+func ensureSQLiteSourceSchema(db *sql.DB) error {
+	var tableName string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Sources'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	columns, err := sqliteColumns(db, "Sources")
+	if err != nil {
+		return err
+	}
+
+	migrations := []struct {
+		column    string
+		statement string
+	}{
+		{column: "name", statement: "ALTER TABLE Sources ADD COLUMN name VARCHAR(255)"},
+		{column: "priority", statement: "ALTER TABLE Sources ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL"},
+	}
+	for _, migration := range migrations {
+		if !columns[migration.column] {
+			if _, err = db.Exec(migration.statement); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_sources_priority ON Sources(priority)"); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func ensureSQLiteInformationSeedSchema(db *sql.DB) error {

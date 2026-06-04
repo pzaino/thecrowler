@@ -60,11 +60,13 @@ DROP PROCEDURE add_informationseed_column_if_missing;
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     usr_id BIGINT DEFAULT 0 NOT NULL,           -- The user that created the source.
     category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
+    priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source.
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
     last_crawled_at TIMESTAMP,                  -- The last time the source was crawled.
@@ -83,6 +85,30 @@ CREATE TABLE IF NOT EXISTS Sources (
     config JSON                                 -- Stores JSON document with all details about
                                                 -- the source configuration for the crawler.
 );
+
+-- Add source discovery columns to existing Sources tables without dropping data.
+DELIMITER //
+CREATE PROCEDURE add_source_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Sources'
+          AND COLUMN_NAME = p_column_name
+    ) THEN
+        SET @add_source_column_sql = CONCAT('ALTER TABLE Sources ADD COLUMN ', p_column_ddl);
+        PREPARE add_source_column_stmt FROM @add_source_column_sql;
+        EXECUTE add_source_column_stmt;
+        DEALLOCATE PREPARE add_source_column_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_source_column_if_missing('name', 'name VARCHAR(255)');
+CALL add_source_column_if_missing('priority', 'priority VARCHAR(64) DEFAULT '''' NOT NULL');
+
+DROP PROCEDURE add_source_column_if_missing;
 
 -- Owners table stores the information about the owners of the sources
 CREATE TABLE IF NOT EXISTS Owners (
@@ -414,6 +440,7 @@ CREATE INDEX IF NOT EXISTS idx_sources_url ON Sources(url);
 
 -- Creates an index for the Sources status column
 CREATE INDEX IF NOT EXISTS idx_sources_status ON Sources(status);
+CREATE INDEX IF NOT EXISTS idx_sources_priority ON Sources(priority);
 
 -- Creates an index for the Sources last_crawled_at column
 CREATE INDEX IF NOT EXISTS idx_sources_last_crawled_at ON Sources(last_crawled_at);

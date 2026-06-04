@@ -41,6 +41,13 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 
 // CreateSource inserts a new source into the database with detailed configuration validation and marshaling.
 func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
+	if db == nil || *db == nil {
+		return 0, fmt.Errorf("database handler is nil")
+	}
+	if source == nil {
+		return 0, fmt.Errorf("source is nil")
+	}
+
 	// Validate source config
 	if !config.IsEmpty() {
 		if err := validateSourceConfig(config); err != nil {
@@ -54,11 +61,57 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 		return 0, fmt.Errorf("failed to marshal source configuration: %v", err)
 	}
 
-	// Trim strings to guarantee consistency
-	url := strings.TrimSpace(source.URL)
-	name := strings.TrimSpace(source.Name)
-	priority := strings.TrimSpace(source.Priority)
+	prepared := preparedSourceInsert{
+		URL:        strings.TrimSpace(source.URL),
+		Name:       strings.TrimSpace(source.Name),
+		Priority:   strings.TrimSpace(source.Priority),
+		CategoryID: source.CategoryID,
+		UsrID:      source.UsrID,
+		Restricted: source.Restricted,
+		Flags:      source.Flags,
+		Config:     details,
+		Disabled:   source.Disabled,
+	}
 
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBPostgresStr:
+		return createSourcePostgres(db, prepared)
+	case DBSQLiteStr:
+		return createSourceSQLite(db, prepared)
+	case DBMySQLStr:
+		return createSourceMySQL(db, prepared)
+	default:
+		return 0, fmt.Errorf("unsupported database type for source creation: %s", (*db).DBMS())
+	}
+}
+
+type preparedSourceInsert struct {
+	URL        string
+	Name       string
+	Priority   string
+	CategoryID uint64
+	UsrID      uint64
+	Restricted uint
+	Flags      uint
+	Config     []byte
+	Disabled   bool
+}
+
+func (source preparedSourceInsert) args() []interface{} {
+	return []interface{}{
+		source.URL,
+		source.Name,
+		source.Priority,
+		source.CategoryID,
+		source.UsrID,
+		source.Restricted,
+		source.Flags,
+		source.Config,
+		source.Disabled,
+	}
+}
+
+func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, error) {
 	var sourceID uint64
 
 	query := `
@@ -137,24 +190,156 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
         RETURNING source_id;
     `
 
-	err = (*db).QueryRow(
-		query,
-		url,
-		name,
-		priority,
-		source.CategoryID,
-		source.UsrID,
-		source.Restricted,
-		source.Flags,
-		details,
-		source.Disabled,
-	).Scan(&sourceID)
-
+	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create source: %v", err)
+		return 0, fmt.Errorf("failed to create PostgreSQL source: %v", err)
 	}
 
 	return sourceID, nil
+}
+
+func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error) {
+	var sourceID uint64
+
+	query := `
+		INSERT INTO Sources
+			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new')
+		ON CONFLICT (url) DO UPDATE SET
+			name = CASE
+				WHEN Sources.status <> 'processing'
+					 AND TRIM(excluded.name) <> ''
+				THEN excluded.name
+				ELSE Sources.name
+			END,
+			priority = CASE
+				WHEN Sources.status <> 'processing'
+					 AND TRIM(excluded.priority) <> ''
+				THEN excluded.priority
+				ELSE Sources.priority
+			END,
+			category_id = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.category_id
+				ELSE Sources.category_id
+			END,
+			usr_id = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.usr_id
+				ELSE Sources.usr_id
+			END,
+			restricted = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.restricted
+				ELSE Sources.restricted
+			END,
+			flags = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.flags
+				ELSE Sources.flags
+			END,
+			config = CASE
+				WHEN Sources.status <> 'processing'
+					 AND excluded.config IS NOT NULL
+					 AND TRIM(excluded.config) <> ''
+					 AND TRIM(excluded.config) <> '{}'
+					 AND COALESCE(excluded.config, '') <> COALESCE(Sources.config, '')
+				THEN excluded.config
+				ELSE Sources.config
+			END,
+			disabled = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.disabled
+				ELSE Sources.disabled
+			END,
+			status = CASE
+				WHEN Sources.status = 'processing'
+				THEN Sources.status
+				ELSE excluded.status
+			END,
+			last_updated_at = CURRENT_TIMESTAMP
+		RETURNING source_id`
+
+	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create SQLite source: %v", err)
+	}
+
+	return sourceID, nil
+}
+
+func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error) {
+	query := `
+		INSERT INTO Sources
+			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+		ON DUPLICATE KEY UPDATE
+			source_id = LAST_INSERT_ID(source_id),
+			name = CASE
+				WHEN status <> 'processing'
+					 AND TRIM(VALUES(name)) <> ''
+				THEN VALUES(name)
+				ELSE name
+			END,
+			priority = CASE
+				WHEN status <> 'processing'
+					 AND TRIM(VALUES(priority)) <> ''
+				THEN VALUES(priority)
+				ELSE priority
+			END,
+			category_id = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(category_id)
+				ELSE category_id
+			END,
+			usr_id = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(usr_id)
+				ELSE usr_id
+			END,
+			restricted = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(restricted)
+				ELSE restricted
+			END,
+			flags = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(flags)
+				ELSE flags
+			END,
+			config = CASE
+				WHEN status <> 'processing'
+					 AND VALUES(config) IS NOT NULL
+					 AND JSON_LENGTH(VALUES(config)) > 0
+					 AND COALESCE(MD5(CAST(VALUES(config) AS CHAR)), '') <> COALESCE(MD5(CAST(config AS CHAR)), '')
+				THEN VALUES(config)
+				ELSE config
+			END,
+			disabled = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(disabled)
+				ELSE disabled
+			END,
+			status = CASE
+				WHEN status = 'processing'
+				THEN status
+				ELSE VALUES(status)
+			END,
+			last_updated_at = CURRENT_TIMESTAMP`
+
+	result, err := (*db).Exec(query, source.args()...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create MySQL source: %v", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to retrieve MySQL source ID: %v", err)
+	}
+	if id < 0 {
+		return 0, fmt.Errorf("failed to retrieve MySQL source ID: negative ID %d", id)
+	}
+
+	return uint64(id), nil
 }
 
 // validateSourceConfig validates the SourceConfig struct.
