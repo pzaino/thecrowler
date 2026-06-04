@@ -22,6 +22,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -45,6 +46,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	infoseed "github.com/pzaino/thecrowler/pkg/infoseed"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 	"golang.org/x/time/rate"
@@ -1467,6 +1469,17 @@ func main() {
 	// Start events listener
 	notifyTimeout := 90 * time.Second
 	go cdb.ListenForEvents(&db, handleNotification, notifyTimeout)
+
+	// Start the information seed scheduler when configured. It polls the database
+	// and reclaims stale processing seeds through ClaimInformationSeeds.
+	seedRunner := infoseed.NewRunner(&db, config.InformationSeed)
+	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
+		for _, seedPlugin := range seedPlugins {
+			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout})
+		}
+	}
+	stopInformationSeeds := infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID())
+	defer stopInformationSeeds()
 
 	// Start the checkSources function in a goroutine
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting processing data (if any)...")
