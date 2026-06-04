@@ -4,6 +4,33 @@ The CROWler uses a PostgreSQL database to store the data it collects. However
 it's internal data API is designed to be database agnostic, so it could be
 easily adapted to use other databases in the future.
 
+
+## InformationSeed claiming semantics
+
+`ClaimInformationSeeds` is implemented in the database package with explicit
+DBMS-specific branches selected by `Handler.DBMS()`. All branches skip rows where
+`disabled = true`, claim seeds in `new` or `pending`, reclaim stale `processing`
+seeds only when `last_processed_at` is older than the configured
+`processingTimeout`, and retry `error` seeds only when `last_error_at` is older
+than the configured `retryAfter`.
+
+DBMS-specific behavior and limitations:
+
+- **PostgreSQL** uses a single transactional `UPDATE ... FROM (SELECT ... FOR
+  UPDATE SKIP LOCKED LIMIT ...) RETURNING ...` claim. Concurrent claimers skip
+  locked eligible rows and receive only the rows they atomically changed.
+- **MySQL** uses the project-supported MySQL 8 style `SELECT ... FOR UPDATE SKIP
+  LOCKED` inside a transaction, followed by a guarded `UPDATE` of the locked
+  primary keys and a select of rows assigned to the claiming `engine`. This
+  requires InnoDB row locks and MySQL versions that support `SKIP LOCKED`; older
+  MySQL versions may block on locked rows or require a different guarded-update
+  fallback.
+- **SQLite** uses a transaction-safe bounded `UPDATE InformationSeed ... WHERE
+  information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows
+  assigned to the same `engine` and exact claim timestamp. SQLite does not
+  provide row-level `SKIP LOCKED`, so concurrent writers are serialized by
+  SQLite's database/page-level write locking rather than skipping locked rows.
+
 Here below is a diagram of the database architecture:
 
 ```mermaid
