@@ -129,6 +129,99 @@ func TestClaimInformationSeedsSQLiteFiltersByPriority(t *testing.T) {
 	}
 }
 
+func TestClaimInformationSeedsSQLiteLifecycleEligibility(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	now := time.Now().UTC()
+	newID := createLifecycleInformationSeedTestSeed(t, &handler, db, "new seed", "new", false, sql.NullTime{}, sql.NullTime{}, 0)
+	pendingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "pending seed", "pending", false, sql.NullTime{}, sql.NullTime{}, 0)
+	disabledID := createLifecycleInformationSeedTestSeed(t, &handler, db, "disabled seed", "new", true, sql.NullTime{}, sql.NullTime{}, 0)
+	freshProcessingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "fresh processing seed", "processing", false, sql.NullTime{Time: now.Add(-10 * time.Minute), Valid: true}, sql.NullTime{}, 2)
+	staleProcessingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "stale processing seed", "processing", false, sql.NullTime{Time: now.Add(-2 * time.Hour), Valid: true}, sql.NullTime{}, 3)
+	freshErrorID := createLifecycleInformationSeedTestSeed(t, &handler, db, "fresh error seed", "error", false, sql.NullTime{}, sql.NullTime{Time: now.Add(-10 * time.Minute), Valid: true}, 4)
+	oldErrorID := createLifecycleInformationSeedTestSeed(t, &handler, db, "old error seed", "error", false, sql.NullTime{}, sql.NullTime{Time: now.Add(-2 * time.Hour), Valid: true}, 5)
+
+	claimed, err := ClaimInformationSeeds(&handler, 10, "", "eligibility-engine", time.Hour, time.Hour)
+	if err != nil {
+		t.Fatalf("claim information seeds by lifecycle eligibility: %v", err)
+	}
+	assertInformationSeedIDs(t, claimed, []uint64{newID, pendingID, staleProcessingID, oldErrorID})
+	for _, seed := range claimed {
+		if seed.Status != "processing" || seed.Engine != "eligibility-engine" || !seed.LastProcessedAt.Valid {
+			t.Fatalf("unexpected claimed seed state: %#v", seed)
+		}
+	}
+	assertInformationSeedAttempts(t, claimed, map[uint64]int{
+		newID:             1,
+		pendingID:         1,
+		staleProcessingID: 4,
+		oldErrorID:        6,
+	})
+
+	assertInformationSeedUnclaimed(t, &handler, disabledID, "new", "", 0)
+	assertInformationSeedUnclaimed(t, &handler, freshProcessingID, "processing", "previous-engine", 2)
+	assertInformationSeedUnclaimed(t, &handler, freshErrorID, "error", "", 4)
+}
+
+func TestInformationSeedSQLiteLinkSourceIdempotencyAndDiscoveryMetadata(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	seedID, err := CreateInformationSeed(&handler, &InformationSeed{InformationSeed: "metadata seed"})
+	if err != nil {
+		t.Fatalf("create information seed: %v", err)
+	}
+	sourceID := insertInformationSeedTestSource(t, db, "https://metadata.example", "metadata")
+
+	if err = LinkSourceToInformationSeed(&handler, sourceID, seedID); err != nil {
+		t.Fatalf("link source to information seed: %v", err)
+	}
+	if err = LinkSourceToInformationSeed(&handler, sourceID, seedID); err != nil {
+		t.Fatalf("link duplicate source to information seed: %v", err)
+	}
+	assertSourceInformationSeedLinkCount(t, db, sourceID, seedID, 1)
+
+	provider := "provider-a"
+	query := "dork one"
+	rank := 3
+	score := 0.75
+	reason := "promising"
+	metadata := json.RawMessage(`{"first":true,"keep":"yes"}`)
+	if err = LinkSourceToInformationSeedWithDiscoveryMetadata(&handler, sourceID, seedID, InformationSeedDiscoveryMetadata{
+		DiscoveryProvider: &provider,
+		DiscoveryQuery:    &query,
+		DiscoveryRank:     &rank,
+		CandidateScore:    &score,
+		CandidateReason:   &reason,
+		DiscoveryMetadata: &metadata,
+	}); err != nil {
+		t.Fatalf("link source with discovery metadata: %v", err)
+	}
+
+	updatedQuery := "dork two"
+	updatedMetadata := json.RawMessage(`{"second":2,"keep":"updated"}`)
+	if err = LinkSourceToInformationSeedWithDiscoveryMetadata(&handler, sourceID, seedID, InformationSeedDiscoveryMetadata{
+		DiscoveryQuery:    &updatedQuery,
+		DiscoveryMetadata: &updatedMetadata,
+	}); err != nil {
+		t.Fatalf("upsert source discovery metadata: %v", err)
+	}
+	assertSourceInformationSeedLinkCount(t, db, sourceID, seedID, 1)
+
+	row := getSourceInformationSeedMetadataRow(t, db, sourceID, seedID)
+	if row.discoveryProvider != provider || row.discoveryQuery != updatedQuery || row.discoveryRank != rank || row.candidateScore != score || row.candidateReason != reason {
+		t.Fatalf("unexpected preserved/upserted discovery columns: %#v", row)
+	}
+	if row.discoveryMetadata["first"] != true || row.discoveryMetadata["second"] != float64(2) || row.discoveryMetadata["keep"] != "updated" {
+		t.Fatalf("unexpected merged discovery metadata: %#v", row.discoveryMetadata)
+	}
+}
+
 func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(`
@@ -165,6 +258,12 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id INTEGER NOT NULL,
 			information_seed_id INTEGER NOT NULL,
+			discovery_provider VARCHAR(255),
+			discovery_query TEXT,
+			discovery_rank INTEGER,
+			candidate_score REAL,
+			candidate_reason TEXT,
+			discovery_metadata TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE (source_id, information_seed_id),
@@ -208,6 +307,128 @@ func insertInformationSeedTestSource(t *testing.T, db *sql.DB, sourceURL, name s
 		t.Fatalf("get source id: %v", err)
 	}
 	return uint64(id)
+}
+
+func createLifecycleInformationSeedTestSeed(t *testing.T, handler *Handler, db *sql.DB, text, status string, disabled bool, lastProcessedAt, lastErrorAt sql.NullTime, attempts int) uint64 {
+	t.Helper()
+	id, err := CreateInformationSeed(handler, &InformationSeed{
+		InformationSeed: text,
+		Status:          status,
+		Disabled:        disabled,
+	})
+	if err != nil {
+		t.Fatalf("create lifecycle information seed %q: %v", text, err)
+	}
+	engine := ""
+	if status == "processing" {
+		engine = "previous-engine"
+	}
+	var lastError interface{}
+	if lastErrorAt.Valid {
+		lastError = "previous error"
+	}
+	if _, err = db.Exec(`
+		UPDATE InformationSeed
+		SET status = ?, disabled = ?, engine = ?, last_processed_at = ?, last_error = ?, last_error_at = ?, attempts = ?
+		WHERE information_seed_id = ?`, status, disabled, engine, nullableTimeArg(lastProcessedAt), lastError, nullableTimeArg(lastErrorAt), attempts, id); err != nil {
+		t.Fatalf("set lifecycle fields for information seed %d: %v", id, err)
+	}
+	return id
+}
+
+func nullableTimeArg(value sql.NullTime) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Time
+}
+
+func assertInformationSeedIDs(t *testing.T, seeds []InformationSeed, expected []uint64) {
+	t.Helper()
+	if len(seeds) != len(expected) {
+		t.Fatalf("expected seed IDs %v, got %#v", expected, seeds)
+	}
+	for i, id := range expected {
+		if seeds[i].ID != id {
+			t.Fatalf("expected seed IDs %v, got %#v", expected, seeds)
+		}
+	}
+}
+
+func assertInformationSeedAttempts(t *testing.T, seeds []InformationSeed, expected map[uint64]int) {
+	t.Helper()
+	for _, seed := range seeds {
+		if seed.Attempts != expected[seed.ID] {
+			t.Fatalf("expected seed %d attempts %d, got %d", seed.ID, expected[seed.ID], seed.Attempts)
+		}
+	}
+}
+
+func assertInformationSeedUnclaimed(t *testing.T, handler *Handler, seedID uint64, expectedStatus, expectedEngine string, expectedAttempts int) {
+	t.Helper()
+	seed, err := GetInformationSeedByID(handler, seedID)
+	if err != nil {
+		t.Fatalf("get unclaimed information seed %d: %v", seedID, err)
+	}
+	if seed.Status != expectedStatus || seed.Engine != expectedEngine || seed.Attempts != expectedAttempts {
+		t.Fatalf("unexpected unclaimed seed %d: status=%q engine=%q attempts=%d", seedID, seed.Status, seed.Engine, seed.Attempts)
+	}
+}
+
+func assertSourceInformationSeedLinkCount(t *testing.T, db *sql.DB, sourceID, seedID uint64, expected int) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM SourceInformationSeedIndex
+		WHERE source_id = ? AND information_seed_id = ?`, sourceID, seedID).Scan(&count); err != nil {
+		t.Fatalf("count source/information seed links: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("expected %d source/information seed links, got %d", expected, count)
+	}
+}
+
+type sourceInformationSeedMetadataTestRow struct {
+	discoveryProvider string
+	discoveryQuery    string
+	discoveryRank     int
+	candidateScore    float64
+	candidateReason   string
+	discoveryMetadata map[string]interface{}
+}
+
+func getSourceInformationSeedMetadataRow(t *testing.T, db *sql.DB, sourceID, seedID uint64) sourceInformationSeedMetadataTestRow {
+	t.Helper()
+	var (
+		provider sql.NullString
+		query    sql.NullString
+		rank     sql.NullInt64
+		score    sql.NullFloat64
+		reason   sql.NullString
+		metadata sql.NullString
+	)
+	if err := db.QueryRow(`
+		SELECT discovery_provider, discovery_query, discovery_rank, candidate_score, candidate_reason, discovery_metadata
+		FROM SourceInformationSeedIndex
+		WHERE source_id = ? AND information_seed_id = ?`, sourceID, seedID).Scan(&provider, &query, &rank, &score, &reason, &metadata); err != nil {
+		t.Fatalf("get source/information seed metadata row: %v", err)
+	}
+	if !provider.Valid || !query.Valid || !rank.Valid || !score.Valid || !reason.Valid || !metadata.Valid {
+		t.Fatalf("expected all discovery metadata fields to be set: provider=%#v query=%#v rank=%#v score=%#v reason=%#v metadata=%#v", provider, query, rank, score, reason, metadata)
+	}
+	decoded := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(metadata.String), &decoded); err != nil {
+		t.Fatalf("decode discovery metadata %q: %v", metadata.String, err)
+	}
+	return sourceInformationSeedMetadataTestRow{
+		discoveryProvider: provider.String,
+		discoveryQuery:    query.String,
+		discoveryRank:     int(rank.Int64),
+		candidateScore:    score.Float64,
+		candidateReason:   reason.String,
+		discoveryMetadata: decoded,
+	}
 }
 
 func uint64Ptr(value uint64) *uint64 {
