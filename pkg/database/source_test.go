@@ -120,3 +120,65 @@ func assertSourceRow(t *testing.T, db *sql.DB, id uint64, expectedName, expected
 		t.Fatalf("expected valid JSON config, got %q", config.String)
 	}
 }
+
+func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite database: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE Sources (
+			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			url TEXT NOT NULL UNIQUE,
+			status TEXT,
+			priority TEXT,
+			engine TEXT,
+			created_at TEXT,
+			last_updated_at TEXT,
+			last_crawled_at TEXT,
+			last_error TEXT,
+			last_error_at TEXT,
+			restricted INTEGER DEFAULT 2 NOT NULL,
+			disabled BOOLEAN DEFAULT FALSE,
+			flags INTEGER DEFAULT 0 NOT NULL,
+			config TEXT
+		)`)
+	if err != nil {
+		t.Fatalf("create Sources table: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO Sources
+			(url, status, priority, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config)
+		VALUES
+			('https://example.test/path', 'new', 'high', 'engine-a', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z', '', '', 2, FALSE, 7, '{}'),
+			('https://other.test', 'processing', 'low', 'engine-b', '2026-01-04T00:00:00Z', '2026-01-05T00:00:00Z', '2026-01-06T00:00:00Z', 'boom', '2026-01-07T00:00:00Z', 1, TRUE, 8, '{}')`)
+	if err != nil {
+		t.Fatalf("insert source statuses: %v", err)
+	}
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	matches, err := GetSourceStatusByURL(&handler, " HTTPS://EXAMPLE.TEST/PATH/ ")
+	if err != nil {
+		t.Fatalf("get source status by URL: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one normalized URL match, got %d", len(matches))
+	}
+	if !matches[0].URL.Valid || matches[0].URL.String != "https://example.test/path" {
+		t.Fatalf("unexpected URL match: %#v", matches[0].URL)
+	}
+	if matches[0].Flags != 7 {
+		t.Fatalf("unexpected flags for matched status: %d", matches[0].Flags)
+	}
+
+	statuses, err := ListSourceStatuses(&handler)
+	if err != nil {
+		t.Fatalf("list source statuses: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("expected two statuses, got %d", len(statuses))
+	}
+}

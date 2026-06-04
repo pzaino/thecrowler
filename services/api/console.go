@@ -299,7 +299,6 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 }
 
 func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
-	var results StatusResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
 	if qType == getQuery {
@@ -311,137 +310,73 @@ func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusRespon
 		return StatusResponse{Message: "Invalid request"}, nil
 	}
 
-	// Start a transaction
-	tx, err := (*db).Begin()
-	if err != nil {
-		return StatusResponse{Message: errFailedToStartTransaction}, err
-	}
-
-	// Proceed with getting the status
-	results, err = getURLStatus(tx, sourceURL)
+	results, err := getURLStatus(db, sourceURL)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get the status"}, err
-	}
-
-	// If everything went well, commit the transaction
-	err = tx.Commit()
-	if err != nil {
-		return StatusResponse{Message: errFailedToCommitTransaction}, err
 	}
 
 	return results, nil
 }
 
-func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
+func getURLStatus(db *cdb.Handler, sourceURL string) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get the status"
 
-	sourceURL = cmn.NormalizeURL(sourceURL)
-	sourceURL = fmt.Sprintf("%%%s%%", sourceURL)
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Source URL: %s", sourceURL)
-
-	query := `
-		SELECT source_id,
-			   url,
-			   status,
-			   priority,
-			   engine,
-			   created_at,
-			   last_updated_at,
-			   last_crawled_at,
-			   last_error,
-			   last_error_at,
-			   restricted,
-			   disabled,
-			   flags,
-			   config
-		FROM Sources
-		WHERE url LIKE $1`
-
-	// Get the status
-	rows, err := tx.Query(query, sourceURL)
+	statuses, err := cdb.GetSourceStatusByURL(db, sourceURL)
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
-
-	var statuses []StatusResponseRow
-	for rows.Next() {
-		var row StatusResponseRow
-		var configJSON []byte
-		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
-		if err != nil {
-			return results, err
-		}
-		if configJSON != nil {
-			if err := json.Unmarshal(configJSON, &row.Config); err != nil {
-				return results, err
-			}
-		}
-
-		statuses = append(statuses, row)
-	}
 
 	results.Message = infoAllSourcesStatus
-	results.Items = statuses
+	results.Items = sourceStatusRowsFromDB(statuses)
 	return results, nil
 }
 
 func performGetAllURLStatus(_ int, db *cdb.Handler) (StatusResponse, error) {
 	// using _ instead of qType because for now we don't need it
-
-	// Start a transaction
-	tx, err := (*db).Begin()
-	if err != nil {
-		return StatusResponse{Message: errFailedToStartTransaction}, err
-	}
-
-	// Proceed with getting all statuses
-	results, err := getAllURLStatus(tx)
+	results, err := getAllURLStatus(db)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get all statuses"}, err
-	}
-
-	// If everything went well, commit the transaction
-	err = tx.Commit()
-	if err != nil {
-		return StatusResponse{Message: errFailedToCommitTransaction}, err
 	}
 
 	return results, nil
 }
 
-func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
+func getAllURLStatus(db *cdb.Handler) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get all statuses"
 
-	// Proceed with getting all statuses
-	rows, err := tx.Query("SELECT source_id, url, status, priority, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config FROM Sources")
+	statuses, err := cdb.ListSourceStatuses(db)
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
-
-	var statuses []StatusResponseRow
-	for rows.Next() {
-		var row StatusResponseRow
-		var configJSON []byte
-		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
-		if err != nil {
-			return results, err
-		}
-		if configJSON != nil {
-			if err := json.Unmarshal(configJSON, &row.Config); err != nil {
-				return results, err
-			}
-		}
-
-		statuses = append(statuses, row)
-	}
 
 	results.Message = infoAllSourcesStatus
-	results.Items = statuses
+	results.Items = sourceStatusRowsFromDB(statuses)
 	return results, nil
+}
+
+func sourceStatusRowsFromDB(rows []cdb.SourceStatusRow) []StatusResponseRow {
+	statuses := make([]StatusResponseRow, 0, len(rows))
+	for _, row := range rows {
+		statuses = append(statuses, StatusResponseRow{
+			SourceID:      row.SourceID,
+			URL:           row.URL,
+			Status:        row.Status,
+			Priority:      row.Priority,
+			Engine:        row.Engine,
+			CreatedAt:     row.CreatedAt,
+			LastUpdatedAt: row.LastUpdatedAt,
+			LastCrawledAt: row.LastCrawledAt,
+			LastError:     row.LastError,
+			LastErrorAt:   row.LastErrorAt,
+			Restricted:    row.Restricted,
+			Disabled:      row.Disabled,
+			Flags:         row.Flags,
+			Config:        row.Config,
+		})
+	}
+	return statuses
 }
 
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
