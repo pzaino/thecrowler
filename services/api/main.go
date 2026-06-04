@@ -603,7 +603,11 @@ func initAPIv1() {
 		vacuumSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(vacuumSourceHandler)))
 		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
 		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
+		informationSeedAddHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedAddHandler)))
+		informationSeedStatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedStatusHandler)))
 		informationSeedListHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedListHandler)))
+		informationSeedRetryHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedRetryHandler)))
+		informationSeedDisableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedDisableHandler)))
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
@@ -623,8 +627,24 @@ func initAPIv1() {
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, nil)
 
+		http.Handle("/v1/information_seed/add", informationSeedAddHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/add", []string{"POST"}, "Add information seed endpoint (console)", true, false, 201, informationSeedAddRequest{}, nil, InformationSeedResponse{})
+
+		http.Handle("/v1/information_seed/status", informationSeedStatusHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/status", []string{"GET"}, "Information seed status endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedResponse{})
+
+		http.Handle("/v1/information_seed/list", informationSeedListHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with discovered source counts (console)", true, false, 200, nil, nil, InformationSeedListResponse{})
+
+		http.Handle("/v1/information_seed/retry", informationSeedRetryHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/retry", []string{"POST"}, "Retry information seed endpoint (console)", true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
+
+		http.Handle("/v1/information_seed/disable", informationSeedDisableHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/disable", []string{"POST"}, "Disable information seed endpoint (console)", true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
+
+		// Backward-compatible alias. /v1/information_seed is the canonical namespace.
 		http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "List information seeds with discovered source counts (console)", true, false, 200, nil, nil, InformationSeedListResponse{})
+		cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "Deprecated alias for /v1/information_seed/list", true, false, 200, nil, nil, InformationSeedListResponse{})
 
 		// Owner endpoints
 		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
@@ -1533,8 +1553,70 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func parseInformationSeedIDFromRequest(r *http.Request) (uint64, error) {
+	value := r.URL.Query().Get("information_seed_id")
+	if value == "" {
+		value = r.URL.Query().Get("id")
+	}
+	if value == "" {
+		value = r.URL.Query().Get("q")
+	}
+	if value == "" {
+		return 0, fmt.Errorf("information_seed_id is required")
+	}
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || id == 0 {
+		return 0, fmt.Errorf("invalid information_seed_id")
+	}
+	return id, nil
+}
+
+func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusCreated)
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performAddInformationSeed(query, qType, db)
+	})
+}
+
+func informationSeedStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed status request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+		results, err := performGetInformationSeedStatus(id, &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error getting information seed status: %v", http.StatusInternalServerError, http.StatusOK)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
 // informationSeedListHandler handles information seed list requests.
 func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
@@ -1555,6 +1637,28 @@ func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
 		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}
+}
+
+func informationSeedRetryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
+		return performRetryInformationSeed(query, db)
+	})
+}
+
+func informationSeedDisableHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
+		return performDisableInformationSeed(query, db)
+	})
 }
 
 func addOwnerHandler(w http.ResponseWriter, r *http.Request) {

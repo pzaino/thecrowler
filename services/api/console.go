@@ -40,38 +40,141 @@ const (
 	infoSourceRemoved = "Source and related data removed successfully"
 )
 
+func performAddInformationSeed(query string, qType int, db *cdb.Handler) (InformationSeedResponse, error) {
+	var params informationSeedAddRequest
+	if qType == getQuery {
+		params.InformationSeed = strings.TrimSpace(query)
+	} else if err := json.Unmarshal([]byte(query), &params); err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed request"}, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	params.InformationSeed = strings.TrimSpace(params.InformationSeed)
+	if params.InformationSeed == "" {
+		return InformationSeedResponse{Message: "Information seed text is required"}, fmt.Errorf("information_seed is required")
+	}
+	if params.UsrID == 0 && params.UserID != 0 {
+		params.UsrID = params.UserID
+	}
+	if params.Status == "" {
+		params.Status = "new"
+	}
+
+	id, err := cdb.CreateInformationSeed(db, &cdb.InformationSeed{
+		CategoryID:      params.CategoryID,
+		UsrID:           params.UsrID,
+		InformationSeed: params.InformationSeed,
+		Status:          params.Status,
+		Priority:        params.Priority,
+		Engine:          params.Engine,
+		Disabled:        params.Disabled,
+		Config:          params.Config,
+	})
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to add information seed"}, err
+	}
+
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load added information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed added successfully", Item: row}, nil
+}
+
+func performGetInformationSeedStatus(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to get information seed status"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed status", Item: row}, nil
+}
+
 func performListInformationSeeds(_ int, db *cdb.Handler) (InformationSeedListResponse, error) {
 	seeds, err := cdb.ListInformationSeedsWithStats(db)
 	if err != nil {
 		return InformationSeedListResponse{Message: "Failed to list information seeds"}, err
 	}
 
-	items := make([]InformationSeedListRow, 0, len(seeds))
+	items := make([]InformationSeedRow, 0, len(seeds))
 	for _, seed := range seeds {
-		items = append(items, informationSeedListRowFromDB(seed))
+		items = append(items, informationSeedRowFromDB(seed.InformationSeed, seed.DiscoveredSourceCount))
 	}
 
 	return InformationSeedListResponse{Message: infoAllInformationSeeds, Items: items}, nil
 }
 
-func informationSeedListRowFromDB(seed cdb.InformationSeedWithStats) InformationSeedListRow {
-	return InformationSeedListRow{
+func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	id, err := parseInformationSeedIDFromJSON(query)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed retry request"}, err
+	}
+	if err = cdb.UpdateInformationSeedStatus(db, id, "pending", ""); err != nil {
+		return InformationSeedResponse{Message: "Failed to retry information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load retried information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed queued for retry", Item: row}, nil
+}
+
+func performDisableInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	id, err := parseInformationSeedIDFromJSON(query)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed disable request"}, err
+	}
+	if err = cdb.SetInformationSeedDisabled(db, id, true); err != nil {
+		return InformationSeedResponse{Message: "Failed to disable information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load disabled information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed disabled", Item: row}, nil
+}
+
+func parseInformationSeedIDFromJSON(query string) (uint64, error) {
+	var req informationSeedIDRequest
+	if err := json.Unmarshal([]byte(query), &req); err != nil {
+		return 0, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if req.InformationSeedID == 0 {
+		return 0, fmt.Errorf("information_seed_id is required")
+	}
+	return req.InformationSeedID, nil
+}
+
+func informationSeedRowByID(db *cdb.Handler, id uint64) (InformationSeedRow, error) {
+	seed, err := cdb.GetInformationSeedByID(db, id)
+	if err != nil {
+		return InformationSeedRow{}, err
+	}
+	sources, err := cdb.GetSourcesForInformationSeed(db, id)
+	if err != nil {
+		return InformationSeedRow{}, err
+	}
+	return informationSeedRowFromDB(*seed, uint64(len(sources))), nil
+}
+
+func informationSeedRowFromDB(seed cdb.InformationSeed, discoveredSourceCount uint64) InformationSeedRow {
+	lastError := nullStringString(seed.LastError)
+	return InformationSeedRow{
 		ID:                    seed.ID,
 		CreatedAt:             nullTimeString(seed.CreatedAt),
 		LastUpdatedAt:         nullTimeString(seed.LastUpdatedAt),
 		CategoryID:            seed.CategoryID,
 		UsrID:                 seed.UsrID,
-		InformationSeed:       seed.InformationSeed.InformationSeed,
+		InformationSeed:       seed.InformationSeed,
 		Status:                seed.Status,
 		Priority:              seed.Priority,
 		Engine:                seed.Engine,
 		LastProcessedAt:       nullTimeString(seed.LastProcessedAt),
-		LastError:             nullStringString(seed.LastError),
+		HasError:              lastError != "" || seed.LastErrorAt.Valid,
+		LastError:             lastError,
 		LastErrorAt:           nullTimeString(seed.LastErrorAt),
 		Disabled:              seed.Disabled,
 		Attempts:              seed.Attempts,
 		Config:                seed.Config,
-		DiscoveredSourceCount: seed.DiscoveredSourceCount,
+		DiscoveredSourceCount: discoveredSourceCount,
 	}
 }
 

@@ -37,15 +37,21 @@ type ConsoleResponse struct {
 	Message string `json:"message" yaml:"message"`
 }
 
-// InformationSeedListResponse represents the list response for information seeds.
-type InformationSeedListResponse struct {
-	Message string                   `json:"message"`
-	Items   []InformationSeedListRow `json:"items"`
+// InformationSeedResponse represents a single information seed response.
+type InformationSeedResponse struct {
+	Message string             `json:"message"`
+	Item    InformationSeedRow `json:"item"`
 }
 
-// InformationSeedListRow represents one information seed and aggregate stats
+// InformationSeedListResponse represents the list response for information seeds.
+type InformationSeedListResponse struct {
+	Message string               `json:"message"`
+	Items   []InformationSeedRow `json:"items"`
+}
+
+// InformationSeedRow represents one information seed and aggregate stats
 // exposed by the console API.
-type InformationSeedListRow struct {
+type InformationSeedRow struct {
 	ID                    uint64           `json:"information_seed_id"`
 	CreatedAt             string           `json:"created_at,omitempty"`
 	LastUpdatedAt         string           `json:"last_updated_at,omitempty"`
@@ -56,12 +62,31 @@ type InformationSeedListRow struct {
 	Priority              string           `json:"priority"`
 	Engine                string           `json:"engine"`
 	LastProcessedAt       string           `json:"last_processed_at,omitempty"`
+	HasError              bool             `json:"has_error"`
 	LastError             string           `json:"last_error,omitempty"`
 	LastErrorAt           string           `json:"last_error_at,omitempty"`
 	Disabled              bool             `json:"disabled"`
 	Attempts              int              `json:"attempts"`
 	Config                *json.RawMessage `json:"config,omitempty"`
 	DiscoveredSourceCount uint64           `json:"discovered_source_count"`
+}
+
+// informationSeedAddRequest represents a request to create an information seed.
+type informationSeedAddRequest struct {
+	CategoryID      uint64           `json:"category_id,omitempty"`
+	UsrID           uint64           `json:"usr_id,omitempty"`
+	UserID          uint64           `json:"user_id,omitempty"`
+	InformationSeed string           `json:"information_seed"`
+	Status          string           `json:"status,omitempty"`
+	Priority        string           `json:"priority,omitempty"`
+	Engine          string           `json:"engine,omitempty"`
+	Disabled        bool             `json:"disabled,omitempty"`
+	Config          *json.RawMessage `json:"config,omitempty"`
+}
+
+// informationSeedIDRequest represents a request targeting one information seed.
+type informationSeedIDRequest struct {
+	InformationSeedID uint64 `json:"information_seed_id"`
 }
 
 // StatusResponse represents the structure of the status response

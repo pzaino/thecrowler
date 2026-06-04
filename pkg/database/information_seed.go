@@ -288,6 +288,35 @@ func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText 
 	return nil
 }
 
+// SetInformationSeedDisabled updates whether an information seed is disabled.
+func SetInformationSeedDisabled(db *Handler, id uint64, disabled bool) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if id == 0 {
+		return fmt.Errorf("information seed ID must be provided")
+	}
+
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for information seed disabled update: %s", (*db).DBMS())
+	}
+	p1 := informationSeedPlaceholderForDBMS(dbms, 1)
+	p2 := informationSeedPlaceholderForDBMS(dbms, 2)
+	query := fmt.Sprintf(`
+		UPDATE InformationSeed
+		SET disabled = %s
+		WHERE information_seed_id = %s`, p1, p2)
+	result, err := (*db).Exec(query, disabled, id)
+	if err != nil {
+		return fmt.Errorf("failed to update information seed %d disabled flag: %w", id, err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return fmt.Errorf("no information seed found with ID %d", id)
+	}
+	return nil
+}
+
 // ClaimInformationSeeds atomically marks eligible InformationSeed rows as processing for engine.
 //
 // Eligible seeds are enabled rows whose status is new or pending, processing rows whose

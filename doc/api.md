@@ -63,12 +63,39 @@ manage your sources via the API. The end-points added so far are:
 * [GET] `/v1/source/update`: This end-point will update a source in the database.
 * [GET] `/v1/source/vacuum`: This end-point will vacuum the source from all data
   crawled and collected so far (note: it does NOT remove the source, it's owners, categories etc., only crawled data).
-* [GET] `/v1/information-seed/list`: This console end-point lists all
-  information seeds and includes `discovered_source_count`, the number of active
-  `SourceInformationSeedIndex` relationships currently linking discovered
-  sources to each seed. The count is calculated by the database in the list query.
 
-There are equivalent end-points in [POST] for all the above end-points.
+### Information seed administration
+
+The canonical namespace for information seed console end-points is
+`/v1/information_seed/*` (underscore). The older hyphenated
+`/v1/information-seed/list` route is kept only as a backward-compatible alias
+for `/v1/information_seed/list`.
+
+All information seed responses include the seed identity and state fields:
+`information_seed_id`, `status`, `has_error`, `last_error`, `last_error_at`,
+`attempts`, `disabled`, `priority`, `engine`, timestamps, `config`, and
+`discovered_source_count` where the source relationship count is applicable.
+
+* [POST] `/v1/information_seed/add`: Adds a new information seed. The JSON body
+  accepts `information_seed` (required), `category_id`, `usr_id` (or `user_id`),
+  `status` (defaults to `new`), `priority`, `engine`, `disabled`, and `config`.
+  The response returns the created seed under `item`.
+* [GET] `/v1/information_seed/status?information_seed_id=<id>`: Returns the
+  current status for a single information seed. The `id` or `q` query parameter
+  may also be used for the seed ID.
+* [GET] `/v1/information_seed/list`: Lists all information seeds and includes
+  `discovered_source_count`, the number of active `SourceInformationSeedIndex`
+  relationships currently linking discovered sources to each seed. The count is
+  calculated by the database in the list query.
+* [POST] `/v1/information_seed/retry`: Queues an information seed for another
+  discovery attempt by setting its status to `pending` and clearing the current
+  error state. The JSON body is `{"information_seed_id": <id>}`.
+* [POST] `/v1/information_seed/disable`: Disables an information seed so it is
+  no longer eligible for discovery claiming. The JSON body is
+  `{"information_seed_id": <id>}`.
+
+There are equivalent end-points in [POST] for the source administration
+end-points above unless a method is explicitly shown.
 
 You can also check what's going on with the crawler by checking the logs of the
 CROWler engine and/or use the following console end-points:
