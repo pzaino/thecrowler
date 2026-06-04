@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -88,6 +89,46 @@ func TestInformationSeedCRUDAndLinksSQLite(t *testing.T) {
 	}
 }
 
+func TestClaimInformationSeedsSQLiteFiltersByPriority(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	lowID := createClaimInformationSeedTestSeed(t, &handler, db, "low seed", "low", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	highID := createClaimInformationSeedTestSeed(t, &handler, db, "high seed", "high", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	nextHighID := createClaimInformationSeedTestSeed(t, &handler, db, "next high seed", "high", time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
+
+	claimed, err := ClaimInformationSeeds(&handler, 10, " high ", "test-engine", time.Hour, time.Hour)
+	if err != nil {
+		t.Fatalf("claim high-priority information seeds: %v", err)
+	}
+	if len(claimed) != 2 || claimed[0].ID != highID || claimed[1].ID != nextHighID {
+		t.Fatalf("expected high-priority seeds in creation order, got %#v", claimed)
+	}
+	for _, seed := range claimed {
+		if seed.Priority != "high" || seed.Status != "processing" || seed.Engine != "test-engine" || !seed.LastProcessedAt.Valid || seed.Attempts != 1 {
+			t.Fatalf("unexpected claimed seed: %#v", seed)
+		}
+	}
+
+	lowSeed, err := GetInformationSeedByID(&handler, lowID)
+	if err != nil {
+		t.Fatalf("get low-priority information seed: %v", err)
+	}
+	if lowSeed.Status != "new" || lowSeed.Engine != "" || lowSeed.Attempts != 0 {
+		t.Fatalf("priority filter claimed non-matching seed: %#v", lowSeed)
+	}
+
+	claimed, err = ClaimInformationSeeds(&handler, 10, "", "fallback-engine", time.Hour, time.Hour)
+	if err != nil {
+		t.Fatalf("claim information seeds without priority filter: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != lowID || claimed[0].Priority != "low" {
+		t.Fatalf("expected unfiltered claim to pick remaining low-priority seed, got %#v", claimed)
+	}
+}
+
 func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(`
@@ -133,6 +174,25 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 	if err != nil {
 		t.Fatalf("create information seed test schema: %v", err)
 	}
+}
+
+func createClaimInformationSeedTestSeed(t *testing.T, handler *Handler, db *sql.DB, text string, priority string, createdAt time.Time) uint64 {
+	t.Helper()
+	id, err := CreateInformationSeed(handler, &InformationSeed{
+		InformationSeed: text,
+		Priority:        priority,
+		Status:          "new",
+	})
+	if err != nil {
+		t.Fatalf("create %s information seed: %v", priority, err)
+	}
+	if _, err = db.Exec(`
+		UPDATE InformationSeed
+		SET created_at = ?, last_updated_at = ?
+		WHERE information_seed_id = ?`, createdAt, createdAt, id); err != nil {
+		t.Fatalf("set created_at for information seed %d: %v", id, err)
+	}
+	return id
 }
 
 func insertInformationSeedTestSource(t *testing.T, db *sql.DB, sourceURL, name string) uint64 {

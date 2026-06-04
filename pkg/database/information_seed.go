@@ -292,15 +292,17 @@ func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText 
 //
 // Eligible seeds are enabled rows whose status is new or pending, processing rows whose
 // last_processed_at is older than processingTimeout, and error rows whose last_error_at is
-// older than retryAfter. The implementation deliberately branches by DBMS because row-locking
-// and UPDATE ... RETURNING support differ across supported databases.
-func ClaimInformationSeeds(db *Handler, limit int, engine string, processingTimeout, retryAfter time.Duration) ([]InformationSeed, error) {
+// older than retryAfter. When priority is non-empty, only seeds matching that priority are
+// eligible. The implementation deliberately branches by DBMS because row-locking and
+// UPDATE ... RETURNING support differ across supported databases.
+func ClaimInformationSeeds(db *Handler, limit int, priority string, engine string, processingTimeout, retryAfter time.Duration) ([]InformationSeed, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
 	if limit <= 0 {
 		return []InformationSeed{}, nil
 	}
+	priority = strings.TrimSpace(priority)
 	engine = strings.TrimSpace(engine)
 	if engine == "" {
 		return nil, fmt.Errorf("engine is required to claim information seeds")
@@ -312,11 +314,11 @@ func ClaimInformationSeeds(db *Handler, limit int, engine string, processingTime
 
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
 	case DBPostgresStr:
-		return claimInformationSeedsPostgres(db, limit, engine, now, processingBefore, retryBefore)
+		return claimInformationSeedsPostgres(db, limit, priority, engine, now, processingBefore, retryBefore)
 	case DBMySQLStr:
-		return claimInformationSeedsMySQL(db, limit, engine, now, processingBefore, retryBefore)
+		return claimInformationSeedsMySQL(db, limit, priority, engine, now, processingBefore, retryBefore)
 	case DBSQLiteStr:
-		return claimInformationSeedsSQLite(db, limit, engine, now, processingBefore, retryBefore)
+		return claimInformationSeedsSQLite(db, limit, priority, engine, now, processingBefore, retryBefore)
 	default:
 		return nil, fmt.Errorf("unsupported database type for information seed claims: %s", (*db).DBMS())
 	}
@@ -412,7 +414,7 @@ func normalizeInformationSeedDBMS(dbms string) string {
 	}
 }
 
-func claimInformationSeedsPostgres(db *Handler, limit int, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
+func claimInformationSeedsPostgres(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
 	tx, err := (*db).Begin()
 	if err != nil {
 		return nil, err
@@ -430,21 +432,22 @@ func claimInformationSeedsPostgres(db *Handler, limit int, engine string, claime
 				OR (LOWER(TRIM(status)) = 'processing' AND (last_processed_at IS NULL OR last_processed_at < $1))
 				OR (LOWER(TRIM(status)) = 'error' AND (last_error_at IS NULL OR last_error_at < $2))
 			  )
+			  AND ($3 = '' OR priority = $3)
 			ORDER BY created_at ASC, information_seed_id ASC
 			FOR UPDATE SKIP LOCKED
-			LIMIT $3
+			LIMIT $4
 		)
 		UPDATE InformationSeed AS seed
 		SET status = 'processing',
-			engine = $4,
-			last_processed_at = $5,
+			engine = $5,
+			last_processed_at = $6,
 			attempts = COALESCE(seed.attempts, 0) + 1
 		FROM selected
 		WHERE seed.information_seed_id = selected.information_seed_id
 		RETURNING seed.information_seed_id, seed.created_at, seed.last_updated_at, seed.category_id,
 			seed.usr_id, seed.information_seed, seed.status, seed.priority, seed.engine,
 			seed.last_processed_at, seed.last_error, seed.last_error_at, seed.disabled,
-			seed.attempts, seed.config`, processingBefore, retryBefore, limit, engine, claimedAt)
+			seed.attempts, seed.config`, processingBefore, retryBefore, priority, limit, engine, claimedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +464,7 @@ func claimInformationSeedsPostgres(db *Handler, limit int, engine string, claime
 	return seeds, nil
 }
 
-func claimInformationSeedsMySQL(db *Handler, limit int, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
+func claimInformationSeedsMySQL(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
 	tx, err := (*db).Begin()
 	if err != nil {
 		return nil, err
@@ -478,9 +481,10 @@ func claimInformationSeedsMySQL(db *Handler, limit int, engine string, claimedAt
 			OR (LOWER(TRIM(status)) = 'processing' AND (last_processed_at IS NULL OR last_processed_at < ?))
 			OR (LOWER(TRIM(status)) = 'error' AND (last_error_at IS NULL OR last_error_at < ?))
 		  )
+		  AND (? = '' OR priority = ?)
 		ORDER BY created_at ASC, information_seed_id ASC
 		LIMIT ?
-		FOR UPDATE SKIP LOCKED`, processingBefore, retryBefore, limit)
+		FOR UPDATE SKIP LOCKED`, processingBefore, retryBefore, priority, priority, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -497,12 +501,12 @@ func claimInformationSeedsMySQL(db *Handler, limit int, engine string, claimedAt
 	}
 
 	placeholders := questionPlaceholders(len(ids))
-	args := make([]interface{}, 0, len(ids)+3)
+	args := make([]interface{}, 0, len(ids)+5)
 	args = append(args, engine, claimedAt)
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	args = append(args, processingBefore, retryBefore)
+	args = append(args, processingBefore, retryBefore, priority, priority)
 
 	_, err = tx.Exec(fmt.Sprintf(`
 		UPDATE InformationSeed
@@ -516,7 +520,8 @@ func claimInformationSeedsMySQL(db *Handler, limit int, engine string, claimedAt
 			LOWER(TRIM(status)) IN ('new', 'pending')
 			OR (LOWER(TRIM(status)) = 'processing' AND (last_processed_at IS NULL OR last_processed_at < ?))
 			OR (LOWER(TRIM(status)) = 'error' AND (last_error_at IS NULL OR last_error_at < ?))
-		  )`, placeholders), args...)
+		  )
+		  AND (? = '' OR priority = ?)`, placeholders), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +537,7 @@ func claimInformationSeedsMySQL(db *Handler, limit int, engine string, claimedAt
 	return seeds, nil
 }
 
-func claimInformationSeedsSQLite(db *Handler, limit int, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
+func claimInformationSeedsSQLite(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
 	tx, err := (*db).Begin()
 	if err != nil {
 		return nil, err
@@ -555,9 +560,10 @@ func claimInformationSeedsSQLite(db *Handler, limit int, engine string, claimedA
 				OR (LOWER(TRIM(status)) = 'processing' AND (last_processed_at IS NULL OR last_processed_at < ?))
 				OR (LOWER(TRIM(status)) = 'error' AND (last_error_at IS NULL OR last_error_at < ?))
 			  )
+			  AND (? = '' OR priority = ?)
 			ORDER BY created_at ASC, information_seed_id ASC
 			LIMIT ?
-		)`, engine, claimedAt, processingBefore, retryBefore, limit)
+		)`, engine, claimedAt, processingBefore, retryBefore, priority, priority, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -570,7 +576,8 @@ func claimInformationSeedsSQLite(db *Handler, limit int, engine string, claimedA
 		WHERE engine = ?
 		  AND status = 'processing'
 		  AND last_processed_at = ?
-		ORDER BY created_at ASC, information_seed_id ASC`, engine, claimedAt)
+		  AND (? = '' OR priority = ?)
+		ORDER BY created_at ASC, information_seed_id ASC`, engine, claimedAt, priority, priority)
 	if err != nil {
 		return nil, err
 	}
