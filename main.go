@@ -1475,7 +1475,7 @@ func main() {
 	seedRunner := infoseed.NewRunner(&db, config.InformationSeed)
 	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
 		for _, seedPlugin := range seedPlugins {
-			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout})
+			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout, MaxOutputSizeBytes: config.InformationSeed.PluginLimits.MaxOutputSizeBytes})
 		}
 	}
 	stopInformationSeeds := infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID())

@@ -858,6 +858,27 @@ Authoring guidance:
 * Plugins are JavaScript-based in the CROWler plugin model.
 * Use plugins for domain-specific transformations, enrichment, integration, or browser/runtime capabilities not directly represented by built-in actions.
 
+
+#### Information Seed candidate plugin contract
+
+Plugins registered with `event_type: information_seed_candidate` are used by
+Information Seed discovery as candidate policy gates. They receive `params.seed`,
+`params.candidate`, `params.metadata`, and `params.source_defaults`; they must
+return `accepted`, `score`, and `reason`, with optional `source_overrides`,
+`tags`, and `metadata`. Source overrides are intentionally limited to `name`,
+`priority`, `restricted`, `flags`, and `source_config` so plugins cannot change
+candidate URL, category, user ownership, or seed linkage.
+
+The Information Seed runner enforces the configured plugin timeout, maximum JSON
+output size, output schema validation, and safe override validation. Empty plugin
+chains pass candidates through unchanged. Valid `accepted: false` output rejects
+only that candidate. Malformed output, timeout, oversize output, or unsafe
+overrides reject that candidate and are reported as processor errors; if no
+candidates remain, the seed is marked failed. See
+[`doc/plugins.md`](plugins.md#information-seed-candidate-plugins) and
+[`schemas/crowler-infoseed-candidate-plugin-schema.json`](../schemas/crowler-infoseed-candidate-plugin-schema.json)
+for the full contract.
+
 ### 11.6 `CreateEvent`
 
 Use `CreateEvent` to emit an event into CROWler.

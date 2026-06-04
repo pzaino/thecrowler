@@ -4,6 +4,7 @@
 package infoseed
 
 import (
+	"encoding/json"
 	"net"
 	"net/url"
 	"sort"
@@ -12,15 +13,28 @@ import (
 
 // Candidate is a normalized source candidate discovered from an information seed.
 type Candidate struct {
-	URL      string
-	Host     string
-	Title    string
-	Provider string
-	Query    string
-	Rank     int
-	Score    float64
-	Reason   string
-	Metadata map[string]interface{}
+	URL             string                 `json:"url"`
+	Host            string                 `json:"host"`
+	Title           string                 `json:"title"`
+	Provider        string                 `json:"provider"`
+	Query           string                 `json:"query"`
+	Rank            int                    `json:"rank"`
+	Score           float64                `json:"score"`
+	Reason          string                 `json:"reason"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	SourceOverrides SourceOverrides        `json:"source_overrides,omitempty"`
+}
+
+// SourceOverrides contains the safe subset of Source fields and SourceConfig
+// that candidate plugins may override for a single accepted candidate.
+// Identity and ownership fields such as URL, category_id, and usr_id are
+// intentionally excluded and always come from the seed/default candidate flow.
+type SourceOverrides struct {
+	Name         *string         `json:"name,omitempty"`
+	Priority     *string         `json:"priority,omitempty"`
+	Restricted   *uint           `json:"restricted,omitempty"`
+	Flags        *uint           `json:"flags,omitempty"`
+	SourceConfig json.RawMessage `json:"source_config,omitempty"`
 }
 
 // CandidateOptions controls URL normalization and de-duplication.

@@ -237,6 +237,76 @@ When using database helpers or `dbQuery`, prefer an idempotent link for plain
 associations and the richer metadata upsert only when the plugin has discovery
 evidence to record.
 
+### Information Seed candidate plugins
+
+Information Seed candidate plugins are engine plugins registered with
+`event_type: information_seed_candidate`. They run after provider discovery,
+URL normalization, de-duplication, and candidate limiting, and before Sources
+are persisted. An empty candidate plugin chain is a pass-through: normalized
+candidates are persisted with the proposed source defaults.
+
+Each plugin receives a strict JSON input through `params`:
+
+* `seed`: the seed object (`id`, `information_seed`, `category_id`, `usr_id`,
+  `status`, and `priority`).
+* `candidate`: the normalized candidate object (`url`, `host`, `title`,
+  `provider`, `query`, `rank`, `score`, `reason`, and provider metadata).
+* `metadata`: provider/query/rank metadata copied from the candidate for easy
+  policy checks.
+* `source_defaults`: the Source values the runner proposes to create when the
+  candidate is accepted (`name`, `priority`, `category_id`, `usr_id`,
+  `restricted`, `flags`, and optional `source_config`).
+
+The plugin output is schema validated and must be an object with:
+
+* `accepted` *(boolean, required)*: `false` rejects the candidate without
+  failing the whole seed when the output is otherwise valid.
+* `score` *(number, required)*: the final candidate score persisted in
+  discovery metadata.
+* `reason` *(string, required)*: the explanation persisted as the candidate
+  reason.
+* `source_overrides` *(object, optional)*: safe per-candidate overrides. Only
+  `name`, `priority`, `restricted`, `flags`, and `source_config` are accepted;
+  plugins cannot override URL, category, user ownership, or seed linkage.
+* `tags` *(array of strings, optional)* and `metadata` *(object, optional)*:
+  custom metadata persisted with discovery metadata under `tags` and
+  `plugin_metadata`.
+
+```js
+// @name: seed_candidate_quality_gate
+// @description: Accepts or rejects information-seed candidates.
+// @type: engine_plugin
+// @event_type: information_seed_candidate
+// @version: 1.0.0
+
+var candidate = params.candidate;
+var defaults = params.source_defaults;
+var trusted = candidate.host.endsWith(".example.com");
+
+result = {
+  accepted: trusted,
+  score: trusted ? 0.92 : 0.1,
+  reason: trusted ? "trusted example.com host" : "host outside trusted scope",
+  source_overrides: trusted ? {
+    name: defaults.name || candidate.title || candidate.host,
+    priority: "normal",
+    restricted: 1
+  } : undefined,
+  tags: trusted ? ["trusted-host"] : [],
+  metadata: { provider_rank: params.metadata.rank }
+};
+```
+
+Information Seed plugin execution is bounded by `information_seed.plugin_limits`:
+`timeout` enforces per-plugin runtime and `max_output_size_bytes` rejects overly
+large JSON output. Malformed output, timeouts, oversize output, and unsafe
+`source_overrides` reject the current candidate and are collected as candidate
+processor errors. If every candidate is rejected by such processor errors, the
+seed run ends in error; otherwise the runner persists the remaining accepted
+candidates and returns the processor error for observability. The payload
+contract is also captured in
+[`schemas/crowler-infoseed-candidate-plugin-schema.json`](../schemas/crowler-infoseed-candidate-plugin-schema.json).
+
 ## Best Practices
 
 - **Modularity:**
