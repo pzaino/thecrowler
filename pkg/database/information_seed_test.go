@@ -434,3 +434,58 @@ func getSourceInformationSeedMetadataRow(t *testing.T, db *sql.DB, sourceID, see
 func uint64Ptr(value uint64) *uint64 {
 	return &value
 }
+
+func TestCreateInformationSeedAndNotifyWakesOnlyEnabledClaimableSeedsSQLite(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+
+	wakeups, stop := SubscribeInformationSeedWakeups()
+	defer stop()
+
+	id, err := CreateInformationSeedAndNotify(nil, &handler, &InformationSeed{InformationSeed: "notify me", Status: "new"})
+	if err != nil {
+		t.Fatalf("create and notify information seed: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected seed ID")
+	}
+	assertInformationSeedWakeup(t, wakeups, true)
+
+	if _, err = CreateInformationSeedAndNotify(nil, &handler, &InformationSeed{InformationSeed: "disabled", Disabled: true}); err != nil {
+		t.Fatalf("create disabled information seed: %v", err)
+	}
+	assertInformationSeedWakeup(t, wakeups, false)
+
+	if _, err = CreateInformationSeedAndNotify(nil, &handler, &InformationSeed{InformationSeed: "completed", Status: "completed"}); err != nil {
+		t.Fatalf("create completed information seed: %v", err)
+	}
+	assertInformationSeedWakeup(t, wakeups, false)
+}
+
+func TestInformationSeedWakeupsAreCoalesced(t *testing.T) {
+	wakeups, stop := SubscribeInformationSeedWakeups()
+	defer stop()
+
+	WakeInformationSeedSchedulers()
+	WakeInformationSeedSchedulers()
+	WakeInformationSeedSchedulers()
+
+	assertInformationSeedWakeup(t, wakeups, true)
+	assertInformationSeedWakeup(t, wakeups, false)
+}
+
+func assertInformationSeedWakeup(t *testing.T, wakeups <-chan struct{}, expected bool) {
+	t.Helper()
+	select {
+	case <-wakeups:
+		if !expected {
+			t.Fatal("received unexpected information seed wakeup")
+		}
+	case <-time.After(100 * time.Millisecond):
+		if expected {
+			t.Fatal("timed out waiting for information seed wakeup")
+		}
+	}
+}

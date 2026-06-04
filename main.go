@@ -1470,8 +1470,9 @@ func main() {
 	notifyTimeout := 90 * time.Second
 	go cdb.ListenForEvents(&db, handleNotification, notifyTimeout)
 
-	// Start the information seed scheduler when configured. It polls the database
-	// and reclaims stale processing seeds through ClaimInformationSeeds.
+	// Start the information seed scheduler when configured. It wakes on
+	// InformationSeed creation notifications, keeps polling as recovery, and
+	// reclaims stale processing seeds through ClaimInformationSeeds.
 	seedRunner := infoseed.NewRunner(&db, config.InformationSeed)
 	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
 		for _, seedPlugin := range seedPlugins {

@@ -35,12 +35,19 @@ func StartScheduler(parent context.Context, db *cdb.Handler, config cfg.Informat
 	if scheduler.Engine == "" {
 		scheduler.Engine = "infoseed"
 	}
-	go scheduler.Run(ctx)
-	return cancel
+	wakeups, stopWakeups := cdb.SubscribeInformationSeedWakeups()
+	go scheduler.listenForDatabaseWakeups(ctx)
+	go scheduler.Run(ctx, wakeups)
+	return func() {
+		cancel()
+		stopWakeups()
+	}
 }
 
-// Run polls ClaimInformationSeeds until ctx is cancelled.
-func (s Scheduler) Run(ctx context.Context) {
+// Run polls ClaimInformationSeeds until ctx is cancelled. The wakeups channel is
+// optional and only advances the next poll; periodic polling remains the durable
+// recovery path for missed or unsupported notifications.
+func (s Scheduler) Run(ctx context.Context, wakeups <-chan struct{}) {
 	queryTimer := time.Duration(s.Config.QueryTimer) * time.Second
 	if queryTimer <= 0 {
 		queryTimer = 5 * time.Minute
@@ -57,11 +64,63 @@ func (s Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(queryTimer)
 	defer ticker.Stop()
 	for {
+		drainWakeups(wakeups)
 		s.runOnce(ctx, limit, processingTimeout, retryAfter)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-wakeups:
+		}
+	}
+}
+
+func (s Scheduler) listenForDatabaseWakeups(ctx context.Context) {
+	if s.DB == nil || *s.DB == nil || strings.ToLower(strings.TrimSpace((*s.DB).DBMS())) == "" {
+		return
+	}
+	if cdb.InformationSeedCreatedChannel == "" || !strings.Contains(strings.ToLower((*s.DB).DBMS()), "postgres") {
+		return
+	}
+	listener := (*s.DB).NewListener()
+	if listener == nil {
+		return
+	}
+	defer func() { _ = listener.Close() }()
+	if err := listener.Connect(cfg.Config{}, 10*time.Second, 90*time.Second, func(_ cdb.ListenerEventType, err error) {
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "information seed listener error: %v", err)
+		}
+	}); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "information seed listener connect failed; polling remains active: %v", err)
+		return
+	}
+	if err := listener.Listen(cdb.InformationSeedCreatedChannel); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "information seed LISTEN failed; polling remains active: %v", err)
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			_ = listener.UnlistenAll()
+			return
+		case n, ok := <-listener.Notify():
+			if !ok {
+				return
+			}
+			if n != nil {
+				cdb.WakeInformationSeedSchedulers()
+			}
+		}
+	}
+}
+
+func drainWakeups(wakeups <-chan struct{}) {
+	for {
+		select {
+		case <-wakeups:
+		default:
+			return
 		}
 	}
 }

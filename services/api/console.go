@@ -59,7 +59,7 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 		params.Status = "new"
 	}
 
-	id, err := cdb.CreateInformationSeed(db, &cdb.InformationSeed{
+	id, err := cdb.CreateInformationSeedAndNotify(nil, db, &cdb.InformationSeed{
 		CategoryID:      params.CategoryID,
 		UsrID:           params.UsrID,
 		InformationSeed: params.InformationSeed,

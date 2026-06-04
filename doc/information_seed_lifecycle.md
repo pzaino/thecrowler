@@ -102,19 +102,24 @@ phase order on every run:
 1. A caller inserts an `InformationSeed` row with `status = 'new'` or
    `status = 'pending'`, `disabled = false`, and optional JSON in
    `InformationSeed.config`.
-2. The scheduler polls for claimable rows. Until the immediate notification card
-   is implemented, seed creation does not wake a worker directly; discovery may
-   wait until the next `information_seed.query_timer` polling cycle.
-3. The claim helper atomically moves eligible rows to `processing`, records the
+2. API and database package creation helpers wake the in-process scheduler for
+   enabled `new` or `pending` seeds. PostgreSQL deployments also emit a
+   `LISTEN/NOTIFY` message on `information_seed_created` so other processes can
+   wake promptly.
+3. The scheduler coalesces duplicate wake-ups and still polls on every
+   `information_seed.query_timer` interval, so missed notifications, unsupported
+   database backends, and process restarts recover through the normal polling
+   path.
+4. The claim helper atomically moves eligible rows to `processing`, records the
    claiming engine, increments `attempts`, and stamps `last_processed_at`.
-4. The runner parses and validates `InformationSeed.config` into the per-run
+5. The runner parses and validates `InformationSeed.config` into the per-run
    contract shown below.
-5. Built-in phases render queries, select configured providers, fan out bounded
+6. Built-in phases render queries, select configured providers, fan out bounded
    provider requests, normalize URLs, remove duplicate URLs or hosts according
    to seed options, enforce candidate limits, persist accepted candidates as
    `Sources`, link them through `SourceInformationSeedIndex`, and emit discovery
    events.
-6. Custom candidate plugin phases run only after built-in provider discovery and
+7. Custom candidate plugin phases run only after built-in provider discovery and
    URL normalization/de-duplication. Plugins may reject candidates or apply the
    documented safe source overrides, but they do not replace the built-in source
    persistence, source/seed linking, lifecycle finalization, or event emission
@@ -282,11 +287,27 @@ claim recovery, process crashes, and retry of `error` rows.
 - A rerun that has no new candidates and no missing links to repair should also
   finish as `completed`.
 
-## Direct database insertion and polling
+## Creation notifications and polling fallback
 
-Direct insertion into `InformationSeed` is supported as long as the row uses a
-valid status, normally `new` or `pending`, and `disabled = false`. The row is
-picked up by the normal polling claim path:
+Use exported database helpers such as `CreateInformationSeedAndNotify` for
+application seed creation. They insert the row inside `pkg/database` and, when
+the new row is enabled and immediately claimable (`status = 'new'` or
+`status = 'pending'`), trigger scheduler wake-up behavior:
+
+1. Every supported database wakes registered in-process schedulers through a
+   coalesced channel. Multiple creation events that arrive while a scheduler is
+   already awake collapse into one immediate claim cycle.
+2. PostgreSQL additionally sends `pg_notify('information_seed_created', seed_id)`.
+   Other CROWler processes that are listening on that channel wake without
+   waiting for their next polling tick.
+3. SQLite and MySQL rely on the in-process wake-up when the creator and
+   scheduler share a process. When no local scheduler is registered, or a wake-up
+   is missed, periodic polling remains the recovery mechanism.
+
+Direct insertion into `InformationSeed` is still supported for integrations that
+cannot call the helper, as long as the row uses a valid status, normally `new` or
+`pending`, and `disabled = false`. Direct inserts do not emit the helper
+notification, so they are discovered by the normal polling claim path:
 
 1. A worker periodically calls the claim operation with a batch limit, engine
    identifier, `processingTimeout`, and retry delay.
@@ -295,7 +316,8 @@ picked up by the normal polling claim path:
 3. The worker processes claimed seeds and writes final `completed` or `error`
    state.
 
-No database trigger, PostgreSQL `LISTEN/NOTIFY`, MySQL trigger, SQLite trigger,
-or in-process listener is required to enqueue or wake workers for directly
-inserted seeds. Database triggers may still exist for audit fields such as
-`last_updated_at`; those audit triggers do not drive seed discovery.
+The scheduler always preserves stale processing recovery and retry delay
+behavior because notifications only advance the next claim attempt; they do not
+change the eligibility predicates used by `ClaimInformationSeeds`. Database
+triggers may still exist for audit fields such as `last_updated_at`; those audit
+triggers do not drive seed discovery.
