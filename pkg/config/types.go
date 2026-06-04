@@ -572,6 +572,50 @@ type PluginConfig struct {
 }
 
 /////////////////////////////////////////////////
+//// ------- Information Seed Config ------- ////
+
+// InformationSeedProviderConfig represents credentials and runtime settings for
+// an information seed discovery provider.
+type InformationSeedProviderConfig struct {
+	Provider    string `json:"provider" yaml:"provider"`           // Provider identifier (for example, "google", "bing", "plugin")
+	Host        string `json:"host" yaml:"host"`                   // Provider host or base URL
+	Endpoint    string `json:"endpoint" yaml:"endpoint"`           // Provider endpoint path
+	APIKeyLabel string `json:"api_key_label" yaml:"api_key_label"` // Header or query parameter name for API keys
+	APIKey      string `json:"api_key" yaml:"api_key"`             // API key credential
+	APIID       string `json:"api_id" yaml:"api_id"`               // API identifier credential
+	APISecret   string `json:"api_secret" yaml:"api_secret"`       // API secret credential
+	APIToken    string `json:"api_token" yaml:"api_token"`         // API token credential
+	Token       string `json:"token" yaml:"token"`                 // Generic token credential
+	Secret      string `json:"secret" yaml:"secret"`               // Generic secret credential
+	Username    string `json:"username" yaml:"username"`           // Username credential
+	Password    string `json:"password" yaml:"password"`           // Password credential
+	Timeout     int    `json:"timeout" yaml:"timeout"`             // Provider request timeout (in seconds)
+	RateLimit   string `json:"rate_limit" yaml:"rate_limit"`       // Provider request rate limit expression
+	MaxRequests int    `json:"max_requests" yaml:"max_requests"`   // Maximum provider requests per seed
+}
+
+// InformationSeedPluginLimitsConfig represents bounded plugin execution limits
+// used by information seed discovery.
+type InformationSeedPluginLimitsConfig struct {
+	Timeout            int `json:"timeout" yaml:"timeout"`                             // Plugin execution timeout (in seconds)
+	MaxOutputSizeBytes int `json:"max_output_size_bytes" yaml:"max_output_size_bytes"` // Maximum plugin output size (in bytes)
+}
+
+// InformationSeedConfig represents bounded configuration for information seed discovery.
+type InformationSeedConfig struct {
+	Enabled              bool                                     `json:"enabled" yaml:"enabled"`                                 // Whether information seed discovery is enabled
+	QueryTimer           int                                      `json:"query_timer" yaml:"query_timer"`                         // Time to wait between seed discovery cycles (in seconds)
+	MaxConcurrentSeeds   int                                      `json:"max_concurrent_seeds" yaml:"max_concurrent_seeds"`       // Maximum seed discovery jobs to run concurrently
+	MaxQueriesPerSeed    int                                      `json:"max_queries_per_seed" yaml:"max_queries_per_seed"`       // Maximum provider queries generated per seed
+	MaxCandidatesPerSeed int                                      `json:"max_candidates_per_seed" yaml:"max_candidates_per_seed"` // Maximum candidate sources accepted per seed
+	RetryInterval        int                                      `json:"retry_interval" yaml:"retry_interval"`                   // Time to wait before retrying failed seed discovery (in seconds)
+	ProcessingTimeout    string                                   `json:"processing_timeout" yaml:"processing_timeout"`           // Maximum time to process one seed
+	Providers            map[string]InformationSeedProviderConfig `json:"providers" yaml:"providers"`                             // Provider settings and credentials
+	ProviderAllowList    []string                                 `json:"provider_allow_list" yaml:"provider_allow_list"`         // Providers allowed to run; empty disables provider execution
+	PluginLimits         InformationSeedPluginLimitsConfig        `json:"plugin_limits" yaml:"plugin_limits"`                     // Plugin timeout and output-size limits
+}
+
+/////////////////////////////////////////////////
 ////    ------- Prometheus Config --------   ////
 
 // PrometheusConfig represents the Prometheus configuration
@@ -705,6 +749,9 @@ type Config struct {
 
 	// Crawler configuration
 	Crawler Crawler `json:"crawler" yaml:"crawler"`
+
+	// Information seed discovery configuration
+	InformationSeed InformationSeedConfig `json:"information_seed" yaml:"information_seed"`
 
 	// Attributes indexing configuration
 	AttributesIndexing AttributeIndexingConfig `json:"attributes_indexing" yaml:"attributes_indexing"` // Configuration for attributes indexing

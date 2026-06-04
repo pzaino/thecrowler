@@ -1868,3 +1868,102 @@ func TestGeoLookupConfigIsEmpty(t *testing.T) {
 		t.Errorf("Expected IsEmpty to return true for an empty GeoLookupConfig")
 	}
 }
+
+func TestInformationSeedDefaultsAndValidation(t *testing.T) {
+	cfg := NewConfig()
+	if cfg == nil {
+		t.Fatal("expected NewConfig to return non-nil config")
+	}
+	if cfg.InformationSeed.Enabled {
+		t.Fatal("expected information_seed.enabled default to false")
+	}
+	if cfg.InformationSeed.QueryTimer != informationSeedDefaultQueryTimer {
+		t.Errorf(errExpected, informationSeedDefaultQueryTimer, cfg.InformationSeed.QueryTimer)
+	}
+	if cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes != informationSeedDefaultPluginOutputSize {
+		t.Errorf(errExpected, informationSeedDefaultPluginOutputSize, cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes)
+	}
+
+	cfg.InformationSeed = InformationSeedConfig{
+		Enabled:              true,
+		QueryTimer:           -1,
+		MaxConcurrentSeeds:   1000,
+		MaxQueriesPerSeed:    2,
+		MaxCandidatesPerSeed: 0,
+		RetryInterval:        999999,
+		ProcessingTimeout:    " 1 hour ",
+		ProviderAllowList:    []string{" Example ", "example", " plugin "},
+		Providers: map[string]InformationSeedProviderConfig{
+			" Example ": {
+				Host:        " https://api.example.com ",
+				Endpoint:    " /v1/search ",
+				APIKeyLabel: " X-API-Key ",
+				Timeout:     999,
+				MaxRequests: 999,
+			},
+			"blocked": {
+				Timeout:     10,
+				MaxRequests: 1,
+			},
+		},
+		PluginLimits: InformationSeedPluginLimitsConfig{
+			Timeout:            0,
+			MaxOutputSizeBytes: 99999999,
+		},
+	}
+
+	cfg.validateInformationSeed()
+
+	if cfg.InformationSeed.QueryTimer != informationSeedDefaultQueryTimer {
+		t.Errorf(errExpected, informationSeedDefaultQueryTimer, cfg.InformationSeed.QueryTimer)
+	}
+	if cfg.InformationSeed.MaxConcurrentSeeds != informationSeedMaxConcurrentSeeds {
+		t.Errorf(errExpected, informationSeedMaxConcurrentSeeds, cfg.InformationSeed.MaxConcurrentSeeds)
+	}
+	if cfg.InformationSeed.MaxQueriesPerSeed != 2 {
+		t.Errorf(errExpected, 2, cfg.InformationSeed.MaxQueriesPerSeed)
+	}
+	if cfg.InformationSeed.MaxCandidatesPerSeed != informationSeedDefaultMaxCandidatesPerSeed {
+		t.Errorf(errExpected, informationSeedDefaultMaxCandidatesPerSeed, cfg.InformationSeed.MaxCandidatesPerSeed)
+	}
+	if cfg.InformationSeed.RetryInterval != informationSeedMaxRetryInterval {
+		t.Errorf(errExpected, informationSeedMaxRetryInterval, cfg.InformationSeed.RetryInterval)
+	}
+	if cfg.InformationSeed.ProcessingTimeout != "1 hour" {
+		t.Errorf(errExpected, "1 hour", cfg.InformationSeed.ProcessingTimeout)
+	}
+	if !reflect.DeepEqual(cfg.InformationSeed.ProviderAllowList, []string{"example", "plugin"}) {
+		t.Errorf(errExpected, []string{"example", "plugin"}, cfg.InformationSeed.ProviderAllowList)
+	}
+	if _, exists := cfg.InformationSeed.Providers["blocked"]; exists {
+		t.Fatal("expected provider outside allow-list to be removed")
+	}
+	provider, exists := cfg.InformationSeed.Providers["example"]
+	if !exists {
+		t.Fatal("expected normalized example provider to remain")
+	}
+	if provider.Provider != "example" {
+		t.Errorf(errExpected, "example", provider.Provider)
+	}
+	if provider.Timeout != informationSeedMaxPluginTimeout {
+		t.Errorf(errExpected, informationSeedMaxPluginTimeout, provider.Timeout)
+	}
+	if provider.MaxRequests != cfg.InformationSeed.MaxQueriesPerSeed {
+		t.Errorf(errExpected, cfg.InformationSeed.MaxQueriesPerSeed, provider.MaxRequests)
+	}
+	if cfg.InformationSeed.PluginLimits.Timeout != informationSeedDefaultPluginTimeout {
+		t.Errorf(errExpected, informationSeedDefaultPluginTimeout, cfg.InformationSeed.PluginLimits.Timeout)
+	}
+	if cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes != informationSeedMaxPluginOutputSize {
+		t.Errorf(errExpected, informationSeedMaxPluginOutputSize, cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes)
+	}
+
+	cfg.InformationSeed.ProviderAllowList = nil
+	cfg.InformationSeed.Providers = map[string]InformationSeedProviderConfig{
+		"example": {Timeout: 10, MaxRequests: 1},
+	}
+	cfg.validateInformationSeed()
+	if len(cfg.InformationSeed.Providers) != 0 {
+		t.Fatalf("expected empty information_seed.provider_allow_list to remove configured providers, got %v", cfg.InformationSeed.Providers)
+	}
+}

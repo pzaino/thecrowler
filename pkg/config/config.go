@@ -51,6 +51,22 @@ const (
 	// SSDefaultDelayTime Default delay time for service scout
 	SSDefaultDelayTime = 100
 
+	informationSeedDefaultQueryTimer           = 300
+	informationSeedMaxQueryTimer               = 86400
+	informationSeedDefaultMaxConcurrentSeeds   = 2
+	informationSeedMaxConcurrentSeeds          = 32
+	informationSeedDefaultMaxQueriesPerSeed    = 5
+	informationSeedMaxQueriesPerSeed           = 100
+	informationSeedDefaultMaxCandidatesPerSeed = 50
+	informationSeedMaxCandidatesPerSeed        = 1000
+	informationSeedDefaultRetryInterval        = 60
+	informationSeedMaxRetryInterval            = 86400
+	informationSeedDefaultProcessingTimeout    = "30 minutes"
+	informationSeedDefaultPluginTimeout        = 30
+	informationSeedMaxPluginTimeout            = 300
+	informationSeedDefaultPluginOutputSize     = 1048576
+	informationSeedMaxPluginOutputSize         = 10485760
+
 	stdRateLimit = "10,10"
 	stdHost      = "0.0.0.0"
 
@@ -248,6 +264,21 @@ func NewConfig() *Config {
 				ReadHeaderTimeout: 15,
 				ReadTimeout:       15,
 				WriteTimeout:      30,
+			},
+		},
+		InformationSeed: InformationSeedConfig{
+			Enabled:              false,
+			QueryTimer:           informationSeedDefaultQueryTimer,
+			MaxConcurrentSeeds:   informationSeedDefaultMaxConcurrentSeeds,
+			MaxQueriesPerSeed:    informationSeedDefaultMaxQueriesPerSeed,
+			MaxCandidatesPerSeed: informationSeedDefaultMaxCandidatesPerSeed,
+			RetryInterval:        informationSeedDefaultRetryInterval,
+			ProcessingTimeout:    informationSeedDefaultProcessingTimeout,
+			Providers:            map[string]InformationSeedProviderConfig{},
+			ProviderAllowList:    []string{},
+			PluginLimits: InformationSeedPluginLimitsConfig{
+				Timeout:            informationSeedDefaultPluginTimeout,
+				MaxOutputSizeBytes: informationSeedDefaultPluginOutputSize,
 			},
 		},
 		API: API{
@@ -585,6 +616,7 @@ func ParseConfig(data []byte) (*Config, error) {
 func (c *Config) Validate() error {
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
+	c.validateInformationSeed()
 	c.validateDatabase()
 	c.validateAPI()
 	c.validateEvents()
@@ -960,6 +992,107 @@ func (c *Config) setDefaultControl() {
 	if c.Crawler.Control.WriteTimeout < 1 {
 		c.Crawler.Control.WriteTimeout = 30
 	}
+}
+
+func (c *Config) validateInformationSeed() {
+	if c.InformationSeed.QueryTimer < 1 {
+		c.InformationSeed.QueryTimer = informationSeedDefaultQueryTimer
+	} else if c.InformationSeed.QueryTimer > informationSeedMaxQueryTimer {
+		c.InformationSeed.QueryTimer = informationSeedMaxQueryTimer
+	}
+
+	if c.InformationSeed.MaxConcurrentSeeds < 1 {
+		c.InformationSeed.MaxConcurrentSeeds = informationSeedDefaultMaxConcurrentSeeds
+	} else if c.InformationSeed.MaxConcurrentSeeds > informationSeedMaxConcurrentSeeds {
+		c.InformationSeed.MaxConcurrentSeeds = informationSeedMaxConcurrentSeeds
+	}
+
+	if c.InformationSeed.MaxQueriesPerSeed < 1 {
+		c.InformationSeed.MaxQueriesPerSeed = informationSeedDefaultMaxQueriesPerSeed
+	} else if c.InformationSeed.MaxQueriesPerSeed > informationSeedMaxQueriesPerSeed {
+		c.InformationSeed.MaxQueriesPerSeed = informationSeedMaxQueriesPerSeed
+	}
+
+	if c.InformationSeed.MaxCandidatesPerSeed < 1 {
+		c.InformationSeed.MaxCandidatesPerSeed = informationSeedDefaultMaxCandidatesPerSeed
+	} else if c.InformationSeed.MaxCandidatesPerSeed > informationSeedMaxCandidatesPerSeed {
+		c.InformationSeed.MaxCandidatesPerSeed = informationSeedMaxCandidatesPerSeed
+	}
+
+	if c.InformationSeed.RetryInterval < 1 {
+		c.InformationSeed.RetryInterval = informationSeedDefaultRetryInterval
+	} else if c.InformationSeed.RetryInterval > informationSeedMaxRetryInterval {
+		c.InformationSeed.RetryInterval = informationSeedMaxRetryInterval
+	}
+
+	if strings.TrimSpace(c.InformationSeed.ProcessingTimeout) == "" {
+		c.InformationSeed.ProcessingTimeout = informationSeedDefaultProcessingTimeout
+	} else {
+		c.InformationSeed.ProcessingTimeout = strings.TrimSpace(c.InformationSeed.ProcessingTimeout)
+	}
+
+	if c.InformationSeed.PluginLimits.Timeout < 1 {
+		c.InformationSeed.PluginLimits.Timeout = informationSeedDefaultPluginTimeout
+	} else if c.InformationSeed.PluginLimits.Timeout > informationSeedMaxPluginTimeout {
+		c.InformationSeed.PluginLimits.Timeout = informationSeedMaxPluginTimeout
+	}
+
+	if c.InformationSeed.PluginLimits.MaxOutputSizeBytes < 1 {
+		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedDefaultPluginOutputSize
+	} else if c.InformationSeed.PluginLimits.MaxOutputSizeBytes > informationSeedMaxPluginOutputSize {
+		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedMaxPluginOutputSize
+	}
+
+	if c.InformationSeed.Providers == nil {
+		c.InformationSeed.Providers = map[string]InformationSeedProviderConfig{}
+	}
+
+	allowList := make([]string, 0, len(c.InformationSeed.ProviderAllowList))
+	allowed := map[string]struct{}{}
+	for _, provider := range c.InformationSeed.ProviderAllowList {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if provider == "" {
+			continue
+		}
+		if _, exists := allowed[provider]; exists {
+			continue
+		}
+		allowed[provider] = struct{}{}
+		allowList = append(allowList, provider)
+	}
+	c.InformationSeed.ProviderAllowList = allowList
+
+	providers := make(map[string]InformationSeedProviderConfig, len(c.InformationSeed.Providers))
+	for name, provider := range c.InformationSeed.Providers {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+
+		provider.Provider = strings.ToLower(strings.TrimSpace(provider.Provider))
+		if provider.Provider == "" {
+			provider.Provider = key
+		}
+		provider.Host = strings.TrimSpace(provider.Host)
+		provider.Endpoint = strings.TrimSpace(provider.Endpoint)
+		provider.APIKeyLabel = strings.TrimSpace(provider.APIKeyLabel)
+		provider.RateLimit = strings.TrimSpace(provider.RateLimit)
+		if provider.Timeout < 1 {
+			provider.Timeout = c.InformationSeed.PluginLimits.Timeout
+		} else if provider.Timeout > informationSeedMaxPluginTimeout {
+			provider.Timeout = informationSeedMaxPluginTimeout
+		}
+		if provider.MaxRequests < 1 {
+			provider.MaxRequests = c.InformationSeed.MaxQueriesPerSeed
+		} else if provider.MaxRequests > c.InformationSeed.MaxQueriesPerSeed {
+			provider.MaxRequests = c.InformationSeed.MaxQueriesPerSeed
+		}
+		providers[key] = provider
+	}
+	c.InformationSeed.Providers = providers
 }
 
 func (c *Config) validateDatabase() {
@@ -2446,6 +2579,14 @@ func DeepCopyConfig(src *Config) *Config {
 
 	// Deep copy Crawler (struct can be copied directly)
 	copyConfig.Crawler = src.Crawler
+
+	// Deep copy InformationSeed maps and slices
+	copyConfig.InformationSeed = src.InformationSeed
+	copyConfig.InformationSeed.ProviderAllowList = append([]string(nil), src.InformationSeed.ProviderAllowList...)
+	copyConfig.InformationSeed.Providers = make(map[string]InformationSeedProviderConfig, len(src.InformationSeed.Providers))
+	for k, v := range src.InformationSeed.Providers {
+		copyConfig.InformationSeed.Providers[k] = v
+	}
 
 	// Deep copy API (struct can be copied directly)
 	copyConfig.API = src.API

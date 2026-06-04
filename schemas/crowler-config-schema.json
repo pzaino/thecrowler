@@ -866,6 +866,131 @@
       },
       "additionalProperties": false
     },
+    "information_seed": {
+      "title": "CROWler Information Seed Discovery Configuration",
+      "description": "Bounded configuration for discovering new information seeds through approved providers and plugins.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "title": "Information Seed Discovery Enabled",
+          "description": "Enables or disables bounded information seed discovery.",
+          "type": "boolean"
+        },
+        "query_timer": {
+          "title": "Information Seed Query Timer",
+          "description": "Seconds between seed discovery cycles.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "examples": [300]
+        },
+        "max_concurrent_seeds": {
+          "title": "Information Seed Maximum Concurrent Seeds",
+          "description": "Maximum number of seeds processed concurrently.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "examples": [2]
+        },
+        "max_queries_per_seed": {
+          "title": "Information Seed Maximum Queries Per Seed",
+          "description": "Maximum provider queries generated from a single seed.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "examples": [5]
+        },
+        "max_candidates_per_seed": {
+          "title": "Information Seed Maximum Candidates Per Seed",
+          "description": "Maximum candidate sources accepted from a single seed.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "examples": [50]
+        },
+        "retry_interval": {
+          "title": "Information Seed Retry Interval",
+          "description": "Seconds to wait before retrying failed seed discovery work.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "examples": [60]
+        },
+        "processing_timeout": {
+          "title": "Information Seed Processing Timeout",
+          "description": "Maximum wall-clock time to spend processing one seed. Supports the same duration strings used by crawler processing_timeout.",
+          "type": "string",
+          "examples": ["30 minutes", "1 hour"]
+        },
+        "providers": {
+          "title": "Information Seed Providers",
+          "description": "Provider settings and credentials keyed by provider name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": { "type": "string", "description": "Provider identifier." },
+              "host": { "type": "string", "description": "Provider host or base URL." },
+              "endpoint": { "type": "string", "description": "Provider endpoint path." },
+              "api_key_label": { "type": "string", "description": "Header or query parameter name for API keys." },
+              "api_key": { "type": "string", "description": "API key credential." },
+              "api_id": { "type": "string", "description": "API identifier credential." },
+              "api_secret": { "type": "string", "description": "API secret credential." },
+              "api_token": { "type": "string", "description": "API token credential." },
+              "token": { "type": "string", "description": "Generic token credential." },
+              "secret": { "type": "string", "description": "Generic secret credential." },
+              "username": { "type": "string", "description": "Username credential." },
+              "password": { "type": "string", "description": "Password credential." },
+              "timeout": {
+                "type": "integer",
+                "description": "Provider request timeout in seconds.",
+                "minimum": 1,
+                "maximum": 300
+              },
+              "rate_limit": { "type": "string", "description": "Provider request rate limit expression." },
+              "max_requests": {
+                "type": "integer",
+                "description": "Maximum provider requests per seed.",
+                "minimum": 1,
+                "maximum": 100
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "provider_allow_list": {
+          "title": "Information Seed Provider Allow List",
+          "description": "Provider names allowed to run. Leave empty to prevent provider execution until an explicit allow-list is configured.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "plugin_limits": {
+          "title": "Information Seed Plugin Limits",
+          "description": "Timeout and output-size limits for information seed plugins.",
+          "type": "object",
+          "properties": {
+            "timeout": {
+              "title": "Information Seed Plugin Timeout",
+              "description": "Plugin execution timeout in seconds.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300,
+              "examples": [30]
+            },
+            "max_output_size_bytes": {
+              "title": "Information Seed Plugin Maximum Output Size",
+              "description": "Maximum plugin output size in bytes.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10485760,
+              "examples": [1048576]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "attributes_indexing": {
       "title": "CROWler Attributes Indexing Configuration",
       "description": "This is the CROWler's attributes indexing configuration. It is used to configure the indexing of the attributes of the web objects, net info and http info in the database. This is required in order to implement data correlation features.",

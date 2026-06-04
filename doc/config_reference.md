@@ -43,6 +43,19 @@
   - **`collect_content`** *(boolean)*: This is a flag that tells the CROWler to collect the text content of a website. This is useful for AI datasets creation and knowledge bases.
   - **`collect_keywords`** *(boolean)*: This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases.
   - **`collect_metatags`** *(boolean)*: This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases.
+- **`information_seed`** *(object)*: Bounded information seed discovery configuration. The section is disabled by default and is designed to keep seed expansion constrained by explicit concurrency, query, candidate, timeout, provider allow-list, plugin timeout, and plugin output-size limits.
+  - **`enabled`** *(boolean)*: Enables or disables information seed discovery.
+  - **`query_timer`** *(integer)*: Seconds between seed discovery cycles. Values are clamped to the safe range `1..86400`; invalid or missing values default to `300`.
+  - **`max_concurrent_seeds`** *(integer)*: Maximum seed discovery jobs processed concurrently. Values are clamped to `1..32`; invalid or missing values default to `2`.
+  - **`max_queries_per_seed`** *(integer)*: Maximum provider queries generated from each seed. Values are clamped to `1..100`; invalid or missing values default to `5`.
+  - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
+  - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
+  - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, and `max_requests`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`.
+  - **`provider_allow_list`** *(array of strings)*: Explicit provider allow-list. Entries are trimmed, lower-cased, and de-duplicated; configured providers are ignored unless their normalized key is present in the allow-list, so an empty allow-list prevents provider execution.
+  - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
+    - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
+    - **`max_output_size_bytes`** *(integer)*: Maximum plugin output size in bytes. Values are clamped to `1..10485760`; invalid or missing values default to `1048576`.
 - **`api`** *(object)*: This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world.
   - **`host`** *(string)*: This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address.
   - **`port`** *(integer)*: This is the port that the API will use to communicate with the outside world.

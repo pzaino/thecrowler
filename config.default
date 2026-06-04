@@ -201,6 +201,46 @@ crawler:
     write_timeout: 30 
 
 # --------------------------
+# Information seed discovery (bounded)
+# --------------------------
+information_seed:
+  # Enable bounded discovery of candidate Sources from information seeds
+  enabled: false
+  # Seconds between seed discovery cycles (clamped to 1..86400)
+  query_timer: 300
+  # Maximum seed discovery jobs to process concurrently (clamped to 1..32)
+  max_concurrent_seeds: 2
+  # Maximum provider queries generated from each seed (clamped to 1..100)
+  max_queries_per_seed: 5
+  # Maximum candidate Sources accepted from each seed (clamped to 1..1000)
+  max_candidates_per_seed: 50
+  # Seconds before retrying failed seed discovery work (clamped to 1..86400)
+  retry_interval: 60
+  # Maximum time to process one seed; supports duration strings such as "30 minutes" or "1 hour"
+  processing_timeout: 30 minutes
+  # Providers that are allowed to run. Keep empty to prevent provider execution until explicitly enabled.
+  provider_allow_list: []
+  # Provider settings and credentials keyed by provider name. Credentials may use environment variables.
+  providers: {}
+  # Example provider entry:
+  # providers:
+  #   example_provider:
+  #     provider: example_provider
+  #     host: https://api.example.com
+  #     endpoint: /v1/search
+  #     api_key_label: X-API-Key
+  #     api_key: ${INFORMATION_SEED_EXAMPLE_API_KEY}
+  #     timeout: 30
+  #     rate_limit: "1,10"
+  #     max_requests: 5
+  # Hard limits for plugins used by seed discovery
+  plugin_limits:
+    # Plugin execution timeout in seconds (clamped to 1..300)
+    timeout: 30
+    # Maximum plugin output in bytes (clamped to 1..10485760)
+    max_output_size_bytes: 1048576
+
+# --------------------------
 # Attributes indexing
 # --------------------------
 attributes_indexing:
