@@ -99,6 +99,31 @@ func ensureSQLiteSourceSchema(db *sql.DB) error {
 	return nil
 }
 
+type sqliteColumnMigration struct {
+	column    string
+	statement string
+}
+
+var sqliteInformationSeedLifecycleMigrations = []sqliteColumnMigration{
+	{column: "status", statement: "ALTER TABLE InformationSeed ADD COLUMN status VARCHAR(50) DEFAULT 'new' NOT NULL"},
+	{column: "priority", statement: "ALTER TABLE InformationSeed ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL"},
+	{column: "engine", statement: "ALTER TABLE InformationSeed ADD COLUMN engine VARCHAR(256) DEFAULT '' NOT NULL"},
+	{column: "last_processed_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_processed_at TIMESTAMP"},
+	{column: "last_error", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error TEXT"},
+	{column: "last_error_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error_at TIMESTAMP"},
+	{column: "disabled", statement: "ALTER TABLE InformationSeed ADD COLUMN disabled BOOLEAN DEFAULT FALSE"},
+	{column: "attempts", statement: "ALTER TABLE InformationSeed ADD COLUMN attempts INTEGER DEFAULT 0 NOT NULL"},
+}
+
+var sqliteInformationSeedLifecycleIndexes = []string{
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)",
+}
+
 func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
 	var tableName string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'InformationSeed'").Scan(&tableName)
@@ -109,48 +134,36 @@ func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
 		return err
 	}
 
-	columns, err := sqliteColumns(db, "InformationSeed")
-	if err != nil {
+	if err = applySQLiteColumnMigrations(db, "InformationSeed", sqliteInformationSeedLifecycleMigrations); err != nil {
 		return err
 	}
 
-	migrations := []struct {
-		column    string
-		statement string
-	}{
-		{column: "status", statement: "ALTER TABLE InformationSeed ADD COLUMN status VARCHAR(50) DEFAULT 'new' NOT NULL"},
-		{column: "priority", statement: "ALTER TABLE InformationSeed ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL"},
-		{column: "engine", statement: "ALTER TABLE InformationSeed ADD COLUMN engine VARCHAR(256) DEFAULT '' NOT NULL"},
-		{column: "last_processed_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_processed_at TIMESTAMP"},
-		{column: "last_error", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error TEXT"},
-		{column: "last_error_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error_at TIMESTAMP"},
-		{column: "disabled", statement: "ALTER TABLE InformationSeed ADD COLUMN disabled BOOLEAN DEFAULT FALSE"},
-		{column: "attempts", statement: "ALTER TABLE InformationSeed ADD COLUMN attempts INTEGER DEFAULT 0 NOT NULL"},
-	}
-	for _, migration := range migrations {
-		column, statement := migration.column, migration.statement
-		if !columns[column] {
-			if _, err = db.Exec(statement); err != nil {
-				return err
-			}
-		}
-	}
-
-	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status)",
-		"CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority)",
-		"CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled)",
-		"CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)",
-		"CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at)",
-		"CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)",
-	}
-	for _, statement := range indexes {
+	for _, statement := range sqliteInformationSeedLifecycleIndexes {
 		if _, err = db.Exec(statement); err != nil {
 			return err
 		}
 	}
 
 	return ensureSQLiteSourceInformationSeedProvenance(db)
+}
+
+func applySQLiteColumnMigrations(db *sql.DB, table string, migrations []sqliteColumnMigration) error {
+	columns, err := sqliteColumns(db, table)
+	if err != nil {
+		return err
+	}
+
+	for _, migration := range migrations {
+		if columns[migration.column] {
+			continue
+		}
+		if _, err = db.Exec(migration.statement); err != nil {
+			return err
+		}
+		columns[migration.column] = true
+	}
+
+	return nil
 }
 
 func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {
@@ -163,15 +176,7 @@ func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {
 		return err
 	}
 
-	columns, err := sqliteColumns(db, "SourceInformationSeedIndex")
-	if err != nil {
-		return err
-	}
-
-	migrations := []struct {
-		column    string
-		statement string
-	}{
+	migrations := []sqliteColumnMigration{
 		{column: "discovery_provider", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_provider VARCHAR(255)"},
 		{column: "discovery_query", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_query TEXT"},
 		{column: "discovery_rank", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_rank INTEGER"},
@@ -179,19 +184,12 @@ func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {
 		{column: "candidate_reason", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_reason TEXT"},
 		{column: "discovery_metadata", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_metadata TEXT"},
 	}
-	for _, migration := range migrations {
-		if !columns[migration.column] {
-			if _, err = db.Exec(migration.statement); err != nil {
-				return err
-			}
-		}
-	}
 
-	return nil
+	return applySQLiteColumnMigrations(db, "SourceInformationSeedIndex", migrations)
 }
 
 func sqliteColumns(db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	rows, err := db.Query("PRAGMA table_info('" + strings.ReplaceAll(table, "'", "''") + "')")
 	if err != nil {
 		return nil, err
 	}

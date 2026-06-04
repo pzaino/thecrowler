@@ -28,13 +28,13 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 );
 
 -- SQLite does not support `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in every
--- supported version. Setup callers that run this script against an existing
--- database must guard each migration with PRAGMA table_info(InformationSeed)
--- before executing the ALTER statement, for example:
---   SELECT 1 FROM pragma_table_info('InformationSeed') WHERE name = 'status';
---   -- only if no row is returned:
+-- supported version. The SQLite setup code path applies the executable,
+-- data-preserving migrations below by first reading existing columns with:
+--   PRAGMA table_info('InformationSeed');
+-- and then running only the ALTER statements whose target columns are absent.
+-- This keeps setup idempotent for databases created before these lifecycle
+-- columns were added while preserving existing InformationSeed rows:
 --   ALTER TABLE InformationSeed ADD COLUMN status VARCHAR(50) DEFAULT 'new' NOT NULL;
--- Apply the same PRAGMA guard to these in-place, data-preserving migrations:
 --   ALTER TABLE InformationSeed ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL;
 --   ALTER TABLE InformationSeed ADD COLUMN engine VARCHAR(256) DEFAULT '' NOT NULL;
 --   ALTER TABLE InformationSeed ADD COLUMN last_processed_at TIMESTAMP;
