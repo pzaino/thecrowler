@@ -17,13 +17,19 @@ package crawler
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
+	"image"
+	"image/png"
 	"math"
 	"math/rand/v2"
+	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -33,6 +39,11 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/abadojack/whatlanggo"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -184,6 +195,465 @@ func cleanUpBrowser(wd vdi.WebDriver) error {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to delete cookies: %v", err)
 	}
 	return err
+}
+
+// TakeScreenshot takes a screenshot of the current page and saves it to the filesystem
+func (ctx *ProcessContext) TakeScreenshot(wd vdi.WebDriver, url string, indexID uint64) {
+	// Take screenshot if enabled
+	takeScreenshot := false
+
+	tmpURL1 := strings.ToLower(strings.TrimSpace(url))
+	tmpURL2 := strings.ToLower(strings.TrimSpace(ctx.source.URL))
+
+	if tmpURL1 == tmpURL2 {
+		takeScreenshot = ctx.config.Crawler.SourceScreenshot
+	} else {
+		takeScreenshot = ctx.config.Crawler.FullSiteScreenshot
+	}
+
+	if takeScreenshot {
+		// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
+		sid := strconv.FormatUint(ctx.source.ID, 10)
+		imageName := "s" + sid + "-" + generateUniqueName(url, "-desktop")
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Taking screenshot: %s", imageName)
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Taking screenshot of %s...", url)
+		ss, err := TakeScreenshot(&wd, imageName, ctx.config.Crawler.ScreenshotMaxHeight)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "taking screenshot: %v", err)
+		}
+		ss.IndexID = indexID
+		if ss.IndexID == 0 {
+			ss.IndexID = ctx.fpIdx
+		}
+
+		// Update DB SearchIndex Table with the screenshot filename
+		dbx := *ctx.db
+		err = insertScreenshot(dbx, ss)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "updating database with screenshot URL: %v", err)
+		}
+	}
+}
+
+// generateImageName generates a unique name for a web object using the URL and the type
+func generateUniqueName(url string, imageType string) string {
+	// Hash the URL using SHA-256
+	hasher := sha256.New()
+	hasher.Write([]byte(url + imageType))
+	hashBytes := hasher.Sum(nil)
+
+	// Convert the hash to a hexadecimal string
+	hashStr := hex.EncodeToString(hashBytes)
+
+	// Create imageName using the hash. Adding a suffix like '.png' is optional depending on your use case.
+	imageName := fmt.Sprintf("%s.png", hashStr)
+
+	return imageName
+}
+
+// insertScreenshot inserts a screenshot into the database
+func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
+	if screenshot.IndexID == 0 {
+		return errors.New("index ID is required")
+	}
+
+	_, err := db.Exec(`
+        INSERT INTO Screenshots (
+            index_id,
+            screenshot_link,
+            height,
+            width,
+            byte_size,
+            thumbnail_height,
+            thumbnail_width,
+            thumbnail_link,
+            format
+        )
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+        WHERE NOT EXISTS (
+            SELECT 1 FROM Screenshots
+            WHERE index_id = $1 AND screenshot_link = $2
+        );
+    `,
+		screenshot.IndexID,
+		screenshot.ScreenshotLink,
+		screenshot.Height,
+		screenshot.Width,
+		screenshot.ByteSize,
+		screenshot.ThumbnailHeight,
+		screenshot.ThumbnailWidth,
+		screenshot.ThumbnailLink,
+		screenshot.Format,
+	)
+	return err
+}
+
+// TakeScreenshot is responsible for taking a screenshot of the current page
+func TakeScreenshot(wd *vdi.WebDriver, filename string, maxHeight int) (Screenshot, error) {
+	ss := Screenshot{}
+
+	// Execute JavaScript to get the viewport height and width
+	windowHeight, windowWidth, err := getWindowSize(wd)
+	if err != nil {
+		return Screenshot{}, err
+	}
+
+	totalHeight, err := getTotalHeight(wd)
+	if err != nil {
+		return Screenshot{}, err
+	}
+	if maxHeight > 0 && totalHeight > maxHeight {
+		totalHeight = maxHeight
+	}
+
+	screenshots, err := captureScreenshots(wd, totalHeight, windowHeight)
+	if err != nil {
+		return Screenshot{}, err
+	}
+
+	finalImg, err := stitchScreenshots(screenshots, windowWidth, totalHeight)
+	if err != nil {
+		return Screenshot{}, err
+	}
+
+	screenshot, err := encodeImage(finalImg)
+	if err != nil {
+		return Screenshot{}, err
+	}
+
+	location, err := saveScreenshot(filename, screenshot)
+	if err != nil {
+		return Screenshot{}, err
+	}
+
+	ss.ScreenshotLink = location
+	ss.Format = "png"
+	ss.Width = windowWidth
+	ss.Height = totalHeight
+	ss.ByteSize = len(screenshot)
+
+	return ss, nil
+}
+
+func getWindowSize(wd *vdi.WebDriver) (int, int, error) {
+	// Execute JavaScript to get the viewport height and width
+	viewportSizeScript := "return [window.innerHeight, window.innerWidth]"
+	viewportSizeRes, err := (*wd).ExecuteScript(viewportSizeScript, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	viewportSize, ok := viewportSizeRes.([]interface{})
+	if !ok || len(viewportSize) != 2 {
+		return 0, 0, fmt.Errorf("unexpected result format for viewport size: %+v", viewportSizeRes)
+	}
+	windowHeight, err := strconv.Atoi(fmt.Sprint(viewportSize[0]))
+	if err != nil {
+		return 0, 0, err
+	}
+	windowWidth, err := strconv.Atoi(fmt.Sprint(viewportSize[1]))
+	if err != nil {
+		return 0, 0, err
+	}
+	return windowHeight, windowWidth, nil
+}
+
+func getTotalHeight(wd *vdi.WebDriver) (int, error) {
+	// Execute JavaScript to get the total height of the page
+	totalHeightScript := "return document.body.parentNode.scrollHeight"
+	totalHeightRes, err := (*wd).ExecuteScript(totalHeightScript, nil)
+	if err != nil {
+		return 0, err
+	}
+	totalHeight, err := strconv.Atoi(fmt.Sprint(totalHeightRes))
+	if err != nil {
+		return 0, err
+	}
+	return totalHeight, nil
+}
+
+func captureScreenshots(wd *vdi.WebDriver, totalHeight, windowHeight int) ([][]byte, error) {
+	var screenshots [][]byte
+	for y := 0; y < totalHeight; y += windowHeight {
+		// Scroll to the next part of the page
+		scrollScript := fmt.Sprintf("window.scrollTo(0, %d);", y)
+		_, err := (*wd).ExecuteScript(scrollScript, nil)
+		if err != nil {
+			return nil, err
+		}
+		time.Sleep(time.Duration(config.Crawler.ScreenshotSectionWait) * time.Second) // Pause to let page load
+
+		// Take screenshot of the current view
+		screenshot, err := (*wd).Screenshot()
+		if err != nil {
+			// Check if the error is due to an alert
+			if strings.Contains(err.Error(), "unexpected alert open") {
+				// Accept the alert and retry
+				err2 := (*wd).AcceptAlert()
+				if err2 != nil {
+					return nil, err
+				}
+				screenshot, err = (*wd).Screenshot()
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, err
+			}
+		}
+
+		screenshots = append(screenshots, screenshot)
+	}
+	return screenshots, nil
+}
+
+func stitchScreenshots(screenshots [][]byte, windowWidth, totalHeight int) (*image.RGBA, error) {
+	finalImg := image.NewRGBA(image.Rect(0, 0, windowWidth, totalHeight))
+	currentY := 0
+	for i, screenshot := range screenshots {
+		img, _, err := image.Decode(bytes.NewReader(screenshot))
+		if err != nil {
+			return nil, err
+		}
+
+		// If this is the last screenshot, we may need to adjust the y offset to avoid duplication
+		if i == len(screenshots)-1 {
+			// Calculate the remaining height to capture
+			remainingHeight := totalHeight - currentY
+			bounds := img.Bounds()
+			imgHeight := bounds.Dy()
+
+			// If the remaining height is less than the image height, adjust the bounds
+			if remainingHeight < imgHeight {
+				bounds = image.Rect(bounds.Min.X, bounds.Max.Y-remainingHeight, bounds.Max.X, bounds.Max.Y)
+			}
+
+			// Draw the remaining part of the image onto the final image
+			currentY = drawRemainingImage(finalImg, img, bounds, currentY)
+		} else {
+			currentY = drawImage(finalImg, img, currentY)
+		}
+	}
+	return finalImg, nil
+}
+
+func drawRemainingImage(finalImg *image.RGBA, img image.Image, bounds image.Rectangle, currentY int) int {
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			finalImg.Set(x, currentY, img.At(x, y))
+		}
+		currentY++
+	}
+	return currentY
+}
+
+func drawImage(finalImg *image.RGBA, img image.Image, currentY int) int {
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			finalImg.Set(x, currentY, img.At(x, y))
+		}
+		currentY++
+	}
+	return currentY
+}
+
+func encodeImage(img *image.RGBA) ([]byte, error) {
+	buffer := new(bytes.Buffer)
+	err := png.Encode(buffer, img)
+	if err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+// saveScreenshot is responsible for saving a screenshot to a file
+func saveScreenshot(filename string, screenshot []byte) (string, error) {
+	// Check if ImageStorageAPI is set
+	if config.ImageStorageAPI.Host != "" {
+		// Validate the ImageStorageAPI configuration
+		if err := validateImageStorageAPIConfig(config); err != nil {
+			return "", err
+		}
+
+		saveCfg := config.ImageStorageAPI
+
+		// Determine storage method and call appropriate function
+		switch config.ImageStorageAPI.Type {
+		case cmn.HTTPStr:
+			return writeDataViaHTTP(filename, screenshot, saveCfg)
+		case "s3":
+			return writeDataToToS3(filename, screenshot, saveCfg)
+		// Add cases for other types if needed, e.g., shared volume, message queue, etc.
+		default:
+			return "", errors.New("unsupported storage type")
+		}
+	} else {
+		// Fallback to local file saving
+		return writeToFile(config.ImageStorageAPI.Path+"/"+filename, screenshot)
+	}
+}
+
+// validateImageStorageAPIConfig validates the ImageStorageAPI configuration
+func validateImageStorageAPIConfig(checkCfg cfg.Config) error {
+	if checkCfg.ImageStorageAPI.Host == "" || checkCfg.ImageStorageAPI.Port == 0 {
+		return errors.New("invalid ImageStorageAPI configuration: host and port must be set")
+	}
+	// Add additional validation as needed
+	return nil
+}
+
+// saveScreenshotViaHTTP sends the screenshot to a remote API
+func writeDataViaHTTP(filename string, data []byte, saveCfg cfg.FileStorageAPI) (string, error) {
+	// Check if Host IP is allowed:
+	if cmn.IsDisallowedIP(saveCfg.Host, 1) {
+		return "", fmt.Errorf("host %s is not allowed", saveCfg.Host)
+	}
+
+	var protocol string
+	if saveCfg.SSLMode == cmn.EnableStr {
+		protocol = cmn.HTTPSStr
+	} else {
+		protocol = cmn.HTTPStr
+	}
+
+	// Construct the API endpoint URL
+	apiURL := fmt.Sprintf(protocol+"://%s:%d/"+saveCfg.Path, saveCfg.Host, saveCfg.Port)
+
+	// Prepare the request
+	httpClient := &http.Client{
+		Transport: cmn.SafeTransport(saveCfg.Timeout, saveCfg.SSLMode),
+	}
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Filename", filename)
+	req.Header.Set("Authorization", "Bearer "+saveCfg.Token) // Assuming token-based auth
+
+	// Send the request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
+	// Check for a successful response
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to save file, status code: %d", resp.StatusCode)
+	}
+	// Return the location of the saved file
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", errors.New("location header not found")
+	}
+
+	return location, nil
+}
+
+// writeToFile is responsible for writing data to a file
+func writeToFile(filename string, data []byte) (string, error) {
+	// Write data to a file
+	err := writeDataToFile(filename, data)
+	if err != nil {
+		return "", err
+	}
+
+	return filename, nil
+}
+
+// writeDataToFile is responsible for writing data to a file
+func writeDataToFile(filename string, data []byte) error {
+	// open file using READ & WRITE permission
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, cmn.DefaultFilePerms) //nolint:gosec // filename and path here is provided by the admin
+	if err != nil {
+		return err
+	}
+	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
+
+	// write data to file
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writeDataToToS3 is responsible for saving a screenshot to an S3 bucket
+func writeDataToToS3(filename string, data []byte, saveCfg cfg.FileStorageAPI) (string, error) {
+	// saveScreenshotToS3 uses:
+	// - config.ImageStorageAPI.Region as AWS region
+	// - config.ImageStorageAPI.Token as AWS access key ID
+	// - config.ImageStorageAPI.Secret as AWS secret access key
+	// - config.ImageStorageAPI.Path as S3 bucket name
+	// - filename as S3 object key
+
+	if saveCfg.Region == "" {
+		return "", fmt.Errorf("missing AWS region")
+	}
+	if saveCfg.Path == "" {
+		return "", fmt.Errorf("missing S3 bucket (saveCfg.Path)")
+	}
+	if filename == "" {
+		return "", fmt.Errorf("missing object key (filename)")
+	}
+
+	// Use a bounded context since we can’t accept ctx from the caller.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Build config options. If Token/Secret are empty, fall back to default chain (env/IMDS/etc).
+	opts := []func(*awscfg.LoadOptions) error{
+		awscfg.WithRegion(saveCfg.Region),
+	}
+	if saveCfg.Token != "" && saveCfg.Secret != "" {
+		opts = append(opts, awscfg.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(saveCfg.Token, saveCfg.Secret, ""),
+		))
+	}
+
+	awsCfg, err := awscfg.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return "", fmt.Errorf("aws config: %w", err)
+	}
+
+	// Create S3 client (default AWS endpoint; if you later add Endpoint/UsePathStyle
+	// to FileStorageAPI, you can pass an options func here without changing the signature).
+	client := s3.NewFromConfig(awsCfg)
+
+	// Best-effort content type and length
+	ct := httpDetectContentType(data)
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(saveCfg.Path),
+		Key:           aws.String(filename),
+		Body:          bytes.NewReader(data),
+		ContentType:   aws.String(ct),
+		ContentLength: aws.Int64(int64(len(data))),
+		// Optional hardening (uncomment when needed):
+		// ACL:                  types.ObjectCannedACLPrivate,
+		// ServerSideEncryption: types.ServerSideEncryptionAwsKms,
+		// SSEKMSKeyId:          aws.String("arn:aws:kms:..."),
+	})
+	if err != nil {
+		return "", fmt.Errorf("s3 PutObject: %w", err)
+	}
+
+	// Keep the original return format (s3://…)
+	return fmt.Sprintf("s3://%s/%s", saveCfg.Path, filename), nil
+}
+
+// httpDetectContentType uses net/http’s sniffer on up to 512 bytes.
+func httpDetectContentType(b []byte) string {
+	const sniff = 512
+	if len(b) == 0 {
+		return "application/octet-stream"
+	}
+	if len(b) > sniff {
+		return http.DetectContentType(b[:sniff])
+	}
+	return http.DetectContentType(b)
 }
 
 func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
