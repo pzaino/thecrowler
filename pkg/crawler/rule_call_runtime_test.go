@@ -27,4 +27,3 @@ func TestRuleCallRuntimeStateLoopDetection(t *testing.T) {
 		t.Fatal("expected loop detection error")
 	}
 }
-
