@@ -11,7 +11,7 @@
         },
         "event_type": {
             "type": "string",
-            "description": "The type of the event."
+            "description": "The type of the event. Information-seed discovery emits information_seed.discovery_started, information_seed.candidate_found, information_seed.candidate_rejected, information_seed.source_created, information_seed.discovery_completed, and information_seed.discovery_failed."
         },
         "event_severity": {
             "type": "string",
@@ -25,7 +25,7 @@
         "details": {
             "type": "object",
             "additionalProperties": true,
-            "description": "The details of the event. Custom JSON for the user to send to the plugins and/or Agents designed to handle the event"
+            "description": "The details of the event. Custom JSON for the user to send to the plugins and/or Agents designed to handle the event. Information-seed discovery events include information_seed_id, information_seed, source_id, provider_counts, candidates_found, candidates_accepted, candidates_rejected, candidate_rejection_counts, sources_created, sources_linked, and error_summaries."
         }
     },
     "required": [

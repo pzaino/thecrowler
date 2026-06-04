@@ -116,6 +116,51 @@ In short: `completed` means the discovery lifecycle ran to a deterministic end,
 not necessarily that new sources were found. `error` means the lifecycle could
 not complete durably and automatic retry is appropriate.
 
+
+## Discovery events
+
+The seed runner emits operational events during each discovery run. Events that
+belong to the seed as a whole use `source_id = 0` so they can be stored in the
+existing `Events` table even when no `Sources` row exists yet. Events that refer
+to a persisted candidate source use that source's `source_id`.
+
+| Event type | Source ID | Meaning |
+| --- | --- | --- |
+| `information_seed.discovery_started` | `0` | The runner parsed the seed configuration, rendered queries, and began provider discovery. |
+| `information_seed.candidate_found` | `0` | Provider discovery completed and the runner recorded the aggregate number of raw candidates found. |
+| `information_seed.candidate_rejected` | `0` | One batched rejection event for the run when normalization, de-duplication, limits, or candidate processors reject candidates. Per-candidate rejection events are intentionally avoided to reduce noise. |
+| `information_seed.source_created` | Created source ID | A candidate was persisted through `CreateSource`; the payload includes the current run counters and the source ID is stored in the event row. |
+| `information_seed.discovery_completed` | `0` | Discovery reached a durable terminal `completed` status. This may include no-result runs and runs with non-blocking provider or processor warnings. |
+| `information_seed.discovery_failed` | `0` | Discovery hit a lifecycle-blocking parse, query, provider, processor, persistence, or final status error and the seed is marked `error` when possible. |
+
+Every information-seed event payload includes the same aggregate keys so Agents
+and plugins can subscribe to any individual phase without needing a different
+schema per event:
+
+```json
+{
+  "information_seed_id": 123,
+  "information_seed": "renewable energy market signals",
+  "source_id": 0,
+  "provider_counts": { "example_provider": 12 },
+  "candidates_found": 12,
+  "candidates_accepted": 8,
+  "candidates_rejected": 4,
+  "candidate_rejection_counts": {
+    "normalization_or_deduplication": 2,
+    "candidate_limit": 1,
+    "candidate_processor": 1
+  },
+  "sources_created": 8,
+  "sources_linked": 8,
+  "error_summaries": []
+}
+```
+
+`error_summaries` contains concise messages only; provider, plugin, or database
+errors should be summarized rather than storing unbounded logs or secrets in
+`Events.details`.
+
 ## Idempotency and reruns
 
 Information seed processing must be safe to rerun after manual resets, stale

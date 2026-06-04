@@ -59,9 +59,55 @@ type SeedRunConfig struct {
 
 // Result summarizes one seed processing run.
 type Result struct {
-	SeedID     uint64
-	Candidates int
-	Linked     int
+	SeedID             uint64
+	Candidates         int
+	CandidatesFound    int
+	CandidatesRejected int
+	SourcesCreated     int
+	Linked             int
+}
+
+const (
+	informationSeedDiscoveryStarted   = "information_seed.discovery_started"
+	informationSeedCandidateFound     = "information_seed.candidate_found"
+	informationSeedCandidateRejected  = "information_seed.candidate_rejected"
+	informationSeedSourceCreated      = "information_seed.source_created"
+	informationSeedDiscoveryCompleted = "information_seed.discovery_completed"
+	informationSeedDiscoveryFailed    = "information_seed.discovery_failed"
+)
+
+type seedDiscoveryStats struct {
+	ProviderCounts     map[string]int
+	CandidatesFound    int
+	CandidatesAccepted int
+	CandidatesRejected int
+	SourcesCreated     int
+	SourcesLinked      int
+	RejectionCounts    map[string]int
+	ErrorSummaries     []string
+}
+
+func newSeedDiscoveryStats() *seedDiscoveryStats {
+	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, RejectionCounts: map[string]int{}}
+}
+
+func (stats *seedDiscoveryStats) addRejected(reason string, count int) {
+	if stats == nil || count <= 0 {
+		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "unspecified"
+	}
+	stats.CandidatesRejected += count
+	stats.RejectionCounts[reason] += count
+}
+
+func (stats *seedDiscoveryStats) addError(err error) {
+	if stats == nil || err == nil {
+		return
+	}
+	stats.ErrorSummaries = append(stats.ErrorSummaries, trimEventString(err.Error(), 512))
 }
 
 // NewRunner constructs a runner with providers from configuration.
@@ -88,6 +134,70 @@ func BuildProviders(config cfg.InformationSeedConfig) map[string]searchproviders
 	return providers
 }
 
+func (r *Runner) emitInformationSeedEvent(ctx context.Context, seed cdb.InformationSeed, sourceID uint64, eventType, severity string, stats *seedDiscoveryStats) error {
+	if r == nil || r.DB == nil {
+		return nil
+	}
+	now := time.Now
+	if r.Now != nil {
+		now = r.Now
+	}
+	_, err := cdb.CreateEvent(ctx, r.DB, cdb.Event{
+		SourceID:  sourceID,
+		Type:      eventType,
+		Severity:  severity,
+		Timestamp: now().UTC().Format(time.RFC3339),
+		Details:   informationSeedEventPayload(seed, sourceID, stats),
+	})
+	return err
+}
+
+func informationSeedEventPayload(seed cdb.InformationSeed, sourceID uint64, stats *seedDiscoveryStats) map[string]interface{} {
+	payload := map[string]interface{}{
+		"information_seed_id":        seed.ID,
+		"information_seed":           seed.InformationSeed,
+		"source_id":                  sourceID,
+		"provider_counts":            map[string]int{},
+		"candidates_found":           0,
+		"candidates_accepted":        0,
+		"candidates_rejected":        0,
+		"sources_created":            0,
+		"sources_linked":             0,
+		"error_summaries":            []string{},
+		"candidate_rejection_counts": map[string]int{},
+	}
+	if stats == nil {
+		return payload
+	}
+	payload["provider_counts"] = stats.ProviderCounts
+	payload["candidates_found"] = stats.CandidatesFound
+	payload["candidates_accepted"] = stats.CandidatesAccepted
+	payload["candidates_rejected"] = stats.CandidatesRejected
+	payload["sources_created"] = stats.SourcesCreated
+	payload["sources_linked"] = stats.SourcesLinked
+	payload["error_summaries"] = stats.ErrorSummaries
+	payload["candidate_rejection_counts"] = stats.RejectionCounts
+	return payload
+}
+
+func trimEventString(value string, maxLength int) string {
+	value = strings.TrimSpace(value)
+	if maxLength <= 0 || len(value) <= maxLength {
+		return value
+	}
+	if maxLength <= 3 {
+		return value[:maxLength]
+	}
+	return value[:maxLength-3] + "..."
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // RunSeed processes one already-claimed information seed and writes its final lifecycle status.
 func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result, error) {
 	result := Result{SeedID: seed.ID}
@@ -98,8 +208,11 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 		return result, cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "disabled", "")
 	}
 
+	stats := newSeedDiscoveryStats()
 	runCfg, err := parseSeedRunConfig(seed)
 	if err != nil {
+		stats.addError(err)
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
 		return result, err
 	}
@@ -111,41 +224,76 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 	queries, err := renderQueries(seed, runCfg, r.Config.MaxQueriesPerSeed)
 	if err != nil {
+		stats.addError(err)
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
 		return result, err
 	}
+	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryStarted, cdb.EventSeverityInfo, stats)
+
 	candidates, err := r.queryProviders(ctx, seed, runCfg, queries)
+	for _, candidate := range candidates {
+		stats.ProviderCounts[candidate.Provider]++
+	}
+	stats.CandidatesFound = len(candidates)
+	result.CandidatesFound = stats.CandidatesFound
+	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedCandidateFound, cdb.EventSeverityInfo, stats)
+	if err != nil {
+		stats.addError(err)
+	}
 	if err != nil && len(candidates) == 0 {
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
 		return result, err
 	}
 
 	trackingParams := append(defaultTrackingParams(), runCfg.TrackingParams...)
-	candidates = NormalizeCandidates(candidates, CandidateOptions{TrackingParams: trackingParams, DeduplicateHost: runCfg.DeduplicateHost})
+	normalized := NormalizeCandidates(candidates, CandidateOptions{TrackingParams: trackingParams, DeduplicateHost: runCfg.DeduplicateHost})
+	stats.addRejected("normalization_or_deduplication", len(candidates)-len(normalized))
 	limit := r.Config.MaxCandidatesPerSeed
 	if runCfg.MaxCandidates > 0 && runCfg.MaxCandidates < limit {
 		limit = runCfg.MaxCandidates
 	}
-	if limit > 0 && len(candidates) > limit {
-		candidates = candidates[:limit]
+	if limit > 0 && len(normalized) > limit {
+		stats.addRejected("candidate_limit", len(normalized)-limit)
+		normalized = normalized[:limit]
 	}
-	result.Candidates = len(candidates)
+	candidates = normalized
 
+	beforeProcessors := len(candidates)
 	candidates, err = r.applyProcessors(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins)
+	stats.addRejected("candidate_processor", beforeProcessors-len(candidates))
+	if err != nil {
+		stats.addError(err)
+	}
+	stats.CandidatesAccepted = len(candidates)
+	stats.CandidatesRejected = maxInt(stats.CandidatesFound-stats.CandidatesAccepted, stats.CandidatesRejected)
+	result.Candidates = len(candidates)
+	result.CandidatesRejected = stats.CandidatesRejected
+	if stats.CandidatesRejected > 0 {
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedCandidateRejected, cdb.EventSeverityInfo, stats)
+	}
 	if err != nil && len(candidates) == 0 {
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
 		return result, err
 	}
 
-	linked, persistErr := r.persistCandidates(seed, runCfg, candidates)
+	linked, persistErr := r.persistCandidates(ctx, seed, runCfg, candidates, stats)
 	result.Linked = linked
+	result.SourcesCreated = stats.SourcesCreated
 	if persistErr != nil {
+		stats.addError(persistErr)
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", persistErr.Error())
 		return result, persistErr
 	}
 	if err := cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "completed", ""); err != nil {
+		stats.addError(err)
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		return result, err
 	}
+	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryCompleted, cdb.EventSeverityInfo, stats)
 	return result, err
 }
 
@@ -317,7 +465,7 @@ func selectProcessors(processors []CandidateProcessor, enabledNames []string) []
 	return selected
 }
 
-func (r *Runner) persistCandidates(seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate) (int, error) {
+func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, stats *seedDiscoveryStats) (int, error) {
 	defaultSourceConfig, err := sourceConfigFromRaw(runCfg.SourceConfig)
 	if err != nil {
 		return 0, err
@@ -357,11 +505,18 @@ func (r *Runner) persistCandidates(seed cdb.InformationSeed, runCfg SeedRunConfi
 		if err != nil {
 			return linked, fmt.Errorf("creating source for seed %d candidate %s: %w", seed.ID, candidate.URL, err)
 		}
+		if stats != nil {
+			stats.SourcesCreated++
+		}
+		_ = r.emitInformationSeedEvent(ctx, seed, sourceID, informationSeedSourceCreated, cdb.EventSeverityInfo, stats)
 		metadata := discoveryMetadata(candidate)
 		if err := cdb.LinkSourceToInformationSeedWithDiscoveryMetadata(r.DB, sourceID, seed.ID, metadata); err != nil {
 			return linked, err
 		}
 		linked++
+		if stats != nil {
+			stats.SourcesLinked = linked
+		}
 	}
 	return linked, nil
 }

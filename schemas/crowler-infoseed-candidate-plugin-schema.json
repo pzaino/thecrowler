@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-infoseed-candidate-plugin-schema.json",
+  "title": "CROWler Information Seed Candidate Plugin Payloads",
+  "description": "Input and output contracts for plugins handling information_seed_candidate candidates.",
+  "type": "object",
+  "properties": {
+    "input": { "$ref": "#/definitions/input" },
+    "output": { "$ref": "#/definitions/output" }
+  },
+  "definitions": {
+    "seed": {
+      "type": "object",
+      "required": ["id", "information_seed", "category_id", "usr_id"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "information_seed": { "type": "string" },
+        "category_id": { "type": "integer", "minimum": 0 },
+        "usr_id": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string" },
+        "priority": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["url", "host", "provider", "query", "rank", "score"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "host": { "type": "string" },
+        "title": { "type": "string" },
+        "provider": { "type": "string" },
+        "query": { "type": "string" },
+        "rank": { "type": "integer", "minimum": 0 },
+        "score": { "type": "number" },
+        "reason": { "type": "string" },
+        "metadata": { "type": "object" },
+        "source_overrides": { "$ref": "#/definitions/source_overrides" }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["provider", "query", "rank", "score"],
+      "properties": {
+        "provider": { "type": "string" },
+        "query": { "type": "string" },
+        "rank": { "type": "integer", "minimum": 0 },
+        "score": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "source_defaults": {
+      "type": "object",
+      "required": ["name", "priority", "category_id", "usr_id", "restricted", "flags"],
+      "properties": {
+        "name": { "type": "string" },
+        "priority": { "type": "string" },
+        "category_id": { "type": "integer", "minimum": 0 },
+        "usr_id": { "type": "integer", "minimum": 0 },
+        "restricted": { "type": "integer", "minimum": 0 },
+        "flags": { "type": "integer", "minimum": 0 },
+        "source_config": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "source_overrides": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "priority": { "type": "string" },
+        "restricted": { "type": "integer", "minimum": 0 },
+        "flags": { "type": "integer", "minimum": 0 },
+        "source_config": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": ["seed", "candidate", "metadata", "source_defaults"],
+      "properties": {
+        "seed": { "$ref": "#/definitions/seed" },
+        "candidate": { "$ref": "#/definitions/candidate" },
+        "metadata": { "$ref": "#/definitions/metadata" },
+        "source_defaults": { "$ref": "#/definitions/source_defaults" }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": ["accepted", "score", "reason"],
+      "properties": {
+        "accepted": { "type": "boolean" },
+        "score": { "type": "number" },
+        "reason": { "type": "string", "minLength": 1 },
+        "source_overrides": { "$ref": "#/definitions/source_overrides" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
