@@ -56,6 +56,39 @@
   - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
     - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
     - **`max_output_size_bytes`** *(integer)*: Maximum plugin output size in bytes. Values are clamped to `1..10485760`; invalid or missing values default to `1048576`.
+
+  Example global provider configuration with placeholder credentials:
+
+  ```yaml
+  information_seed:
+    enabled: true
+    query_timer: 300
+    max_concurrent_seeds: 2
+    max_queries_per_seed: 5
+    max_candidates_per_seed: 50
+    retry_interval: 60
+    processing_timeout: 30 minutes
+    provider_allow_list:
+      - public_json
+    providers:
+      public_json:
+        provider: http_json
+        host: https://search-adapter.example.invalid
+        endpoint: /v1/search
+        api_key_label: api_key
+        api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+        timeout: 30
+        rate_limit: 1/s
+        max_requests: 5
+    plugin_limits:
+      timeout: 30
+      max_output_size_bytes: 1048576
+  ```
+
+  Per-seed query templates, selected provider names, source defaults, and
+  `candidate_plugins` live in `InformationSeed.config`; see
+  [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example)
+  for the complete seed-level contract.
 - **`api`** *(object)*: This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world.
   - **`host`** *(string)*: This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address.
   - **`port`** *(integer)*: This is the port that the API will use to communicate with the outside world.

@@ -94,6 +94,92 @@ worker changes final status to `error`, it must set both `last_error` and
   operator filtering, and future scheduler policies. Workers that implement
   priority-aware polling must preserve the same idempotency and retry rules.
 
+## End-to-end discovery contract
+
+An enabled seed reaches a terminal lifecycle state through the same deterministic
+phase order on every run:
+
+1. A caller inserts an `InformationSeed` row with `status = 'new'` or
+   `status = 'pending'`, `disabled = false`, and optional JSON in
+   `InformationSeed.config`.
+2. The scheduler polls for claimable rows. Until the immediate notification card
+   is implemented, seed creation does not wake a worker directly; discovery may
+   wait until the next `information_seed.query_timer` polling cycle.
+3. The claim helper atomically moves eligible rows to `processing`, records the
+   claiming engine, increments `attempts`, and stamps `last_processed_at`.
+4. The runner parses and validates `InformationSeed.config` into the per-run
+   contract shown below.
+5. Built-in phases render queries, select configured providers, fan out bounded
+   provider requests, normalize URLs, remove duplicate URLs or hosts according
+   to seed options, enforce candidate limits, persist accepted candidates as
+   `Sources`, link them through `SourceInformationSeedIndex`, and emit discovery
+   events.
+6. Custom candidate plugin phases run only after built-in provider discovery and
+   URL normalization/de-duplication. Plugins may reject candidates or apply the
+   documented safe source overrides, but they do not replace the built-in source
+   persistence, source/seed linking, lifecycle finalization, or event emission
+   phases.
+7. The runner writes `completed`, `error`, or `disabled` as the terminal status
+   for the current attempt according to the final-status table.
+
+## `InformationSeed.config` example
+
+`InformationSeed.config` is seed-specific JSON. It selects from providers that
+are already present in the global `information_seed.providers` map and allowed
+by `information_seed.provider_allow_list`; it does not define provider
+credentials. All fields are optional, but this example shows the complete
+production contract for the current runner:
+
+```json
+{
+  "query_templates": [
+    "{{ .Seed }} official site",
+    "{{ .Seed }} research portal",
+    "{{ .Seed }} annual report"
+  ],
+  "providers": ["public_json", "partner_search"],
+  "tracking_params": ["utm_source", "utm_medium", "utm_campaign"],
+  "deduplicate_host": true,
+  "max_candidates": 25,
+  "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
+  "source_priority": "normal",
+  "restricted": 1,
+  "flags": 0,
+  "source_config": {
+    "version": "1.0",
+    "format_version": "1.0",
+    "source_name": "information-seed-default",
+    "crawling_config": {
+      "site": "https://example.invalid/placeholder",
+      "source_type": "website"
+    },
+    "custom": {
+      "created_by": "information_seed"
+    }
+  },
+  "candidate_plugins": ["domain-policy", "source-overrides"]
+}
+```
+
+Configuration behavior:
+
+- `query_templates` are rendered with the seed text and produce provider query
+  strings. Literal `queries` may also be supplied; rendered and literal queries
+  are bounded by `information_seed.max_queries_per_seed`.
+- `providers` is an ordered selection of global provider names for this seed. If
+  omitted, the runner uses the global provider allow-list order.
+- `tracking_params` are removed during URL normalization before de-duplication
+  and source lookup.
+- `deduplicate_host` keeps at most one normalized candidate per host; otherwise
+  duplicate filtering is by normalized URL.
+- `max_candidates` is capped by `information_seed.max_candidates_per_seed`.
+- `source_name_template`, `source_priority`, `restricted`, `flags`, and
+  `source_config` provide defaults for accepted candidates. Candidate plugins may
+  override only the safe subset documented in the plugin contract.
+- `candidate_plugins` is a seed-level selection list. When omitted, all
+  registered information-seed candidate processors are eligible; when present,
+  only named processors matching the list are selected.
+
 ## Final status behavior
 
 Discovery runs often involve multiple providers followed by plugin validation.
@@ -111,6 +197,19 @@ whether any accepted source links remain after validation.
 | Plugin validation or plugin timeout rejects only some candidates and at least one accepted candidate is linked. | `completed` | Treat as partial validation failure. Keep the run completed and record validation details outside the lifecycle error fields. |
 | Plugin validation or plugin timeout prevents all validation from completing, or policy requires plugin runtime errors to fail the whole run. | `error` | Set `last_error` with the plugin name/reason and set `last_error_at`. |
 | Linking or source persistence fails for otherwise accepted candidates. | `error` | Set `last_error` and `last_error_at` because accepted work could not be made durable. |
+
+## Candidate edge cases
+
+| Edge case | Contract |
+| --- | --- |
+| Duplicate provider URLs after normalization. | Keep one candidate for the normalized URL and reject duplicate URLs before plugin processing. The final status remains governed by the remaining candidates. |
+| Multiple URLs on the same host with `deduplicate_host = true`. | Keep one candidate for that host and reject later same-host candidates before plugin processing. |
+| Existing `Sources.url` already matches an accepted normalized URL. | Reuse the existing `Sources` row and ensure the `SourceInformationSeedIndex` relationship exists. Do not create a duplicate source row. |
+| Existing source/seed link already exists. | Treat the link as idempotent and update or preserve relationship discovery metadata according to database helper semantics. |
+| A rerun discovers only already-linked sources. | Finish as `completed`; no new source rows are required for a successful rerun. |
+| A rerun repairs missing source/seed links for existing sources. | Finish as `completed` after durable link repair. |
+| A candidate plugin rejects every candidate without a lifecycle-blocking runtime error. | Finish as `completed` with rejection summaries rather than source rows. |
+| A candidate plugin returns invalid source overrides or invalid `source_config`. | Treat the affected validation as plugin/persistence failure. If validation prevents durable completion, finish as `error`. |
 
 In short: `completed` means the discovery lifecycle ran to a deterministic end,
 not necessarily that new sources were found. `error` means the lifecycle could
