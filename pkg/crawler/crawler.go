@@ -266,9 +266,13 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	go func() {
 		defer close(done)
 
-		// Crawl the initial URL and get the HTML content
-		var pageSource vdi.WebDriver
-		pageSource, tErr := processCtx.CrawlInitialURL(sel)
+		// Crawl the initial URL and collect its page data.
+		var (
+			pageSource   vdi.WebDriver
+			htmlContent  string
+			initialLinks []LinkItem
+		)
+		pageSource, htmlContent, initialLinks, tErr := processCtx.CrawlInitialURL(sel)
 		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
 			processCtx.Status.EndTime = time.Now()
@@ -286,21 +290,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.RefreshCrawlingTimer()
 		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
-		// Extract the HTML content and extract links
-		var htmlContent string
-		htmlContent, tErr = pageSource.PageSource()
-		if tErr != nil {
-			// Return the Selenium instance to the channel
-			// and update the source state in the database
-			cmn.DebugMsg(cmn.DbgLvlError, "getting page source: %v", err)
-			processCtx.Status.EndTime = time.Now()
-			processCtx.Status.CrawlingRunning.Store(3)
-			processCtx.Status.PipelineRunning.Store(3)
-			processCtx.Status.TotalErrors.Add(1)
-			processCtx.Status.LastError = tErr.Error()
-			return
-		}
-		initialLinks := extractLinks(processCtx, htmlContent, args.Src.URL)
+		// Initial links were collected with the initial page data. Keep the
+		// existing refresh point that occurred after first-page link extraction.
 		processCtx.RefreshCrawlingTimer()
 		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
@@ -2677,7 +2668,7 @@ func processJobVDI(processCtx *ProcessContext, id string, url string, skippedURL
 	// Collect reusable browser-page data from the already-loaded page.
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Collecting loaded page data for '%s'\n", id, url)
 	startTime = time.Now()
-	pageCache, currentURL, err := collectLoadedWebPage(processCtx, htmlContent, url, docType)
+	pageCache, currentURL, _, err := collectLoadedWebPage(processCtx, htmlContent, url, docType)
 	if err != nil {
 		return pageCache, currentURL, err
 	}

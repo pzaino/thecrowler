@@ -961,7 +961,7 @@ func (ctx *ProcessContext) tryAlternativeLinksLocked(
 	return wd, docType, err
 }
 
-func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, error) {
+func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, string, []LinkItem, error) {
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
 
@@ -974,7 +974,7 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, er
 		pageSource, docType, err = ctx.tryAlternativeLinksLocked(wid, err)
 		if err != nil {
 			UpdateSourceState(*ctx.db, ctx.source.URL, err)
-			return nil, "", err
+			return nil, "", "", nil, err
 		}
 	}
 
@@ -986,56 +986,20 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, er
 	url, err := ctx.wd.CurrentURL()
 	if err != nil {
 		UpdateSourceState(*ctx.db, ctx.source.URL, err)
-		return nil, "", err
+		return nil, "", "", nil, err
 	}
 
-	pageInfo := &PageInfo{}
-
-	detectCtx := detect.DContext{
-		CtxID:     ctx.GetContextID(),
-		TargetURL: url,
-		WD:        &ctx.wd,
-		RE:        ctx.re,
-		Config:    &ctx.config,
+	pageInfo, currentURL, htmlContent, err := collectLoadedWebPage(ctx, pageSource, url, docType)
+	if err != nil {
+		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+		return pageInfo, currentURL, htmlContent, nil, err
 	}
-	// tech detect
-	if detectedTech := detect.DetectTechnologies(&detectCtx); detectedTech != nil {
-		pageInfo.DetectedTech = *detectedTech
-		publishDetectionResults(ctx, url, detectedTech)
-	}
-
-	// extract page info (uses pageSource, and may use wd depending on your implementation)
-	if err := extractPageInfo(&pageSource, ctx, docType, pageInfo); err != nil {
-		if strings.Contains(err.Error(), errCriticalError) {
-			UpdateSourceState(*ctx.db, ctx.source.URL, err)
-			return pageInfo, url, err
-		}
-	}
-
-	pageInfo.DetectedType = docType
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 
-	// links, keywords, metrics, logs, XHR
-	pageInfo.Links = extractLinks(ctx, pageInfo.HTML, url)
-	pageInfo.Keywords = extractKeywords(*pageInfo)
-
-	if ctx.config.Crawler.CollectPerfMetrics {
-		collectNavigationMetrics(&ctx.wd, pageInfo)
-	}
-	if ctx.config.Crawler.CollectPageEvents {
-		collectPageLogs(&pageSource, pageInfo)
-	}
-	if ctx.config.Crawler.CollectXHR {
-		collectXHR(ctx, pageInfo)
-	}
-
-	if !ctx.config.Crawler.CollectHTML {
-		pageInfo.HTML = ""
-	}
-	if !ctx.config.Crawler.CollectContent {
-		pageInfo.BodyText = ""
-	}
+	// Keep initial queueing semantics unchanged: CrawlWebsite historically queued
+	// links extracted with the configured source URL as the page URL.
+	initialLinks := extractLinks(ctx, htmlContent, ctx.source.URL)
 
 	// Delay after full page collection
 	if ctx.config.Crawler.Delay != "0" {
@@ -1044,19 +1008,19 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, er
 		ctx.Status.LastDelay = totalDelay.Seconds()
 	}
 
-	return pageInfo, url, nil
+	return pageInfo, currentURL, htmlContent, initialLinks, nil
 }
 
 // CrawlInitialURL is responsible for crawling the initial URL of a Source
-func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDriver, error) {
+func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDriver, string, []LinkItem, error) {
 	wid := ctx.GetContextID() + "_0"
 
-	pageInfo, url, err := ctx.crawlInitialURLVDI(wid)
+	pageInfo, url, htmlContent, initialLinks, err := ctx.crawlInitialURLVDI(wid)
 	if err != nil {
-		return ctx.wd, err
+		return ctx.wd, htmlContent, initialLinks, err
 	}
 	if pageInfo == nil {
-		return ctx.wd, nil
+		return ctx.wd, htmlContent, initialLinks, nil
 	}
 
 	// Index outside mutex
@@ -1077,10 +1041,10 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 
 	resetPageInfo(pageInfo)
 
-	return ctx.wd, nil
+	return ctx.wd, htmlContent, initialLinks, nil
 }
 
-func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string, docType string) (*PageInfo, string, error) {
+func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string, docType string) (*PageInfo, string, string, error) {
 	currentURL, _ := ctx.wd.CurrentURL()
 
 	pageInfo := &PageInfo{}
@@ -1111,7 +1075,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 
 	if err := extractPageInfo(&wd, ctx, docType, pageInfo); err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
-			return pageInfo, currentURL, err
+			return pageInfo, currentURL, "", err
 		}
 		cmn.DebugMsg(cmn.DbgLvlError, errWExtractingPageInfo, ctx.GetContextID(), err)
 	}
@@ -1157,6 +1121,8 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	}
 	_ = vdi.Refresh(ctx)
 
+	htmlContent := pageInfo.HTML
+
 	if !ctx.config.Crawler.CollectHTML {
 		pageInfo.HTML = ""
 	}
@@ -1167,7 +1133,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 
 	_ = pageURL
 
-	return pageInfo, currentURL, nil
+	return pageInfo, currentURL, htmlContent, nil
 }
 
 func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
