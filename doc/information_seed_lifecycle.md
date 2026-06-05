@@ -243,6 +243,263 @@ Configuration behavior:
   matching the list are selected, they run in the list order, and duplicate or
   unknown names are ignored.
 
+## Production enablement example: Tyrell Corporation
+
+The following complete example shows how an operator can enable a production
+seed with bounded provider usage, deterministic query rendering, plugin
+selection, expected source defaults, and provenance inspection. It uses only
+placeholder credentials and example domains.
+
+### Global provider configuration
+
+Add the providers to `config.yaml` and allow only the provider names intended for
+production. The request limits shown below keep the run bounded: at most three
+rendered queries per seed, one provider page per query, ten results per page, and
+no more than twenty accepted candidates.
+
+```yaml
+information_seed:
+  enabled: true
+  query_timer: 300
+  max_concurrent_seeds: 2
+  max_queries_per_seed: 3
+  max_candidates_per_seed: 20
+  retry_interval: 300
+  processing_timeout: 30 minutes
+  provider_allow_list:
+    - brave_search
+    - public_json
+  providers:
+    brave_search:
+      provider: brave_search
+      host: https://api.search.brave.com
+      endpoint: /res/v1/web/search
+      api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+      timeout: 30
+      rate_limit: 1/s
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+    public_json:
+      provider: http_json
+      host: https://search-adapter.example.invalid
+      endpoint: /v1/search
+      api_key_label: api_key
+      api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+      parameters:
+        safe_search: strict
+        locale: en-US
+      timeout: 30
+      rate_limit: 1/s
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+  plugin_limits:
+    timeout: 30
+    max_output_size_bytes: 1048576
+```
+
+### API request body
+
+Submit the seed with `POST /v1/information_seed/add`. The seed-level `config`
+selects the already-configured providers, renders three queries, limits accepted
+candidates, and chooses the candidate plugins that may run. The source defaults
+are safe for accepted sources: created sources are enabled, set to `new`, use a
+restricted crawl scope, and carry a source config that can pass normal source
+configuration validation.
+
+```json
+{
+  "information_seed": "Tyrell Corporation",
+  "category_id": 42,
+  "usr_id": 7,
+  "priority": 10,
+  "status": "new",
+  "disabled": false,
+  "config": {
+    "query_templates": [
+      "{{ .Seed }} official website",
+      "{{ .Seed }} investor relations",
+      "{{ .Seed }} contact support"
+    ],
+    "providers": ["brave_search", "public_json"],
+    "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
+    "deduplicate_host": true,
+    "max_candidates": 10,
+    "required_url_schemes": ["https"],
+    "min_score": 0.2,
+    "max_candidates_per_host": 1,
+    "max_candidates_per_domain": 3,
+    "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
+    "source_priority": "normal",
+    "create_sources": true,
+    "link_existing_sources": true,
+    "update_existing_source_config": false,
+    "disabled": false,
+    "status": "new",
+    "restricted": 1,
+    "flags": 0,
+    "source_config": {
+      "version": "1.0",
+      "format_version": "1.0",
+      "source_name": "tyrell-information-seed",
+      "crawling_config": {
+        "site": "https://www.tyrell.example/",
+        "source_type": "website"
+      },
+      "custom": {
+        "created_by": "information_seed",
+        "seed_label": "tyrell-corporation"
+      }
+    },
+    "candidate_plugins": ["domain-policy", "source-overrides"]
+  }
+}
+```
+
+### Rendered queries and provider selection
+
+For a seed created with the text `Tyrell Corporation`, the query templates render
+as follows. Rendering happens before provider execution, empty or duplicate
+queries are removed, and the resulting list is capped by
+`information_seed.max_queries_per_seed`.
+
+```text
+Tyrell Corporation official website
+Tyrell Corporation investor relations
+Tyrell Corporation contact support
+```
+
+The run selects providers in the seed-level order: `brave_search`, then
+`public_json`. Both names must also exist in the global `providers` map and in
+`provider_allow_list`; otherwise the runner skips the missing or disallowed name.
+With the limits above, each provider receives at most three requests, one page
+per request, and ten results per page.
+
+### Candidate plugins
+
+The `candidate_plugins` list is both the ordered execution plan and the
+allow-list for registered information-seed candidate processors. In this example
+only `domain-policy` and `source-overrides` are eligible. If the processors are
+not registered in the running engine, they are ignored; if they reject
+candidates without a lifecycle-blocking runtime error, the seed can still finish
+as `completed` with rejection evidence.
+
+### Expected source configuration
+
+An accepted Tyrell candidate that does not already exist in `Sources` is created
+with source defaults equivalent to the following values, subject to candidate
+plugin safe overrides:
+
+```json
+{
+  "name": "Tyrell Corporation — <candidate title>",
+  "priority": "normal",
+  "category_id": 42,
+  "usr_id": 7,
+  "restricted": 1,
+  "flags": 0,
+  "disabled": false,
+  "status": "new",
+  "config": {
+    "version": "1.0",
+    "format_version": "1.0",
+    "source_name": "tyrell-information-seed",
+    "crawling_config": {
+      "site": "https://www.tyrell.example/",
+      "source_type": "website"
+    },
+    "custom": {
+      "created_by": "information_seed",
+      "seed_label": "tyrell-corporation"
+    }
+  }
+}
+```
+
+Because `update_existing_source_config` is `false`, an already-existing source
+can be linked to the seed without having its existing `Sources.config` replaced
+by the seed default.
+
+### Provenance inspection
+
+After the worker processes the seed, inspect status, linked sources, and
+candidate decision evidence. Replace `123` with the `information_seed_id` from
+the add response.
+
+```bash
+curl -sS 'http://localhost:8080/v1/information_seed/status?information_seed_id=123'
+curl -sS 'http://localhost:8080/v1/information_seed/sources?information_seed_id=123&limit=50&offset=0'
+curl -sS 'http://localhost:8080/v1/information_seed/candidates?information_seed_id=123&limit=100&offset=0'
+```
+
+Linked source responses include `source_information_seed_index`, where operators
+can inspect `discovery_provider`, `discovery_query`, `discovery_rank`,
+`candidate_score`, `candidate_reason`, `discovery_metadata`, and link
+timestamps. Candidate responses expose accepted and rejected decision rows,
+including provider, query, rank, score, rejection reason, metadata, and run
+attempt, so operators can explain why a Tyrell URL became a source or why it was
+filtered.
+
+## Operator commands
+
+Use the following API commands from a shell with access to the API service.
+
+Add a seed:
+
+```bash
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/add' \
+  -H 'Content-Type: application/json' \
+  -d @tyrell-information-seed.json
+```
+
+Check seed status:
+
+```bash
+curl -sS 'http://localhost:8080/v1/information_seed/status?information_seed_id=123'
+```
+
+List sources linked to a seed:
+
+```bash
+curl -sS 'http://localhost:8080/v1/information_seed/sources?information_seed_id=123&limit=50&offset=0'
+```
+
+List candidate decisions, when candidate evidence persistence is available:
+
+```bash
+curl -sS 'http://localhost:8080/v1/information_seed/candidates?information_seed_id=123&limit=100&offset=0'
+```
+
+Queue a retry after correcting configuration or credentials:
+
+```bash
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/retry' \
+  -H 'Content-Type: application/json' \
+  -d '{"information_seed_id":123}'
+```
+
+Disable a seed so it is no longer claimed by workers:
+
+```bash
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/disable' \
+  -H 'Content-Type: application/json' \
+  -d '{"information_seed_id":123}'
+```
+
+## Troubleshooting production seed runs
+
+| Symptom | Likely cause | Remediation |
+| --- | --- | --- |
+| Providers are missing or never run. | The provider is disabled, absent, disallowed, misspelled, or not loaded by the worker. | Enable `information_seed`, add and allow-list the provider, restart/reload workers, then retry. |
+| Credentials are rejected. | Placeholder credentials, wrong credential fields, inactive subscriptions, or provider-specific auth requirements. | Use environment variables, verify adapter fields, test credentials externally, then retry after replacing secrets. |
+| Rate limits or quota errors occur. | Provider quota is lower than configured concurrency, request rate, page count, or query volume. | Lower concurrency and request/page limits, slow `rate_limit`, increase `retry_interval`, then retry after reset. |
+| Plugins reject all candidates. | Selected processors enforce stricter domain, score, or source override policy than expected. | Inspect candidate decisions, loosen filters or plugin policy, confirm plugin registration/order, then retry if needed. |
+| Source config validation fails. | Seed-level or plugin-provided `source_config` is invalid for source creation/update. | Validate normal source config fields, start from the safe example, remove unsafe overrides, then retry. |
+| Duplicate or existing sources appear in results. | A normalized URL or source/seed link already exists from a prior run. | Treat this as idempotent; inspect provenance and use `update_existing_source_config: false` when configs must not change. |
+| The seed remains disabled or is never claimed. | `disabled` is true, status is terminal, or the global scheduler is disabled. | Re-enable the seed, use `/v1/information_seed/retry` when appropriate, and confirm global discovery is enabled. |
+
+
 ## Final status behavior
 
 Discovery runs often involve multiple providers followed by plugin validation.

@@ -79,7 +79,11 @@ All information seed responses include the seed identity and state fields:
 * [POST] `/v1/information_seed/add`: Adds a new information seed. The JSON body
   accepts `information_seed` (required), `category_id`, `usr_id` (or `user_id`),
   `status` (defaults to `new`), `priority`, `engine`, `disabled`, and `config`.
-  The response returns the created seed under `item`.
+  The seed-level `config` may include `query_templates`, literal `queries`,
+  selected provider names, request-bounding candidate filters, source defaults,
+  and `candidate_plugins`; provider credentials are configured globally under
+  `information_seed.providers` rather than in the request body. The response
+  returns the created seed under `item`.
 * [GET] `/v1/information_seed/status?information_seed_id=<id>`: Returns the
   current status for a single information seed. The `id` or `q` query parameter
   may also be used for the seed ID.
@@ -106,6 +110,71 @@ All information seed responses include the seed identity and state fields:
 * [POST] `/v1/information_seed/disable`: Disables an information seed so it is
   no longer eligible for discovery claiming. The JSON body is
   `{"information_seed_id": <id>}`.
+
+Example production seed request using placeholder-free runtime credentials from
+the global provider configuration:
+
+```bash
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/add' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "information_seed": "Tyrell Corporation",
+    "category_id": 42,
+    "usr_id": 7,
+    "priority": 10,
+    "status": "new",
+    "disabled": false,
+    "config": {
+      "query_templates": [
+        "{{ .Seed }} official website",
+        "{{ .Seed }} investor relations",
+        "{{ .Seed }} contact support"
+      ],
+      "providers": ["brave_search", "public_json"],
+      "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
+      "deduplicate_host": true,
+      "max_candidates": 10,
+      "required_url_schemes": ["https"],
+      "min_score": 0.2,
+      "max_candidates_per_host": 1,
+      "max_candidates_per_domain": 3,
+      "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
+      "source_priority": "normal",
+      "create_sources": true,
+      "link_existing_sources": true,
+      "update_existing_source_config": false,
+      "disabled": false,
+      "status": "new",
+      "restricted": 1,
+      "flags": 0,
+      "source_config": {
+        "version": "1.0",
+        "format_version": "1.0",
+        "source_name": "tyrell-information-seed",
+        "crawling_config": {
+          "site": "https://www.tyrell.example/",
+          "source_type": "website"
+        },
+        "custom": {
+          "created_by": "information_seed",
+          "seed_label": "tyrell-corporation"
+        }
+      },
+      "candidate_plugins": ["domain-policy", "source-overrides"]
+    }
+  }'
+```
+
+For this request the runner renders `Tyrell Corporation official website`,
+`Tyrell Corporation investor relations`, and `Tyrell Corporation contact support`
+before querying the selected providers. Inspect provenance with:
+
+```bash
+curl -sS 'http://localhost:8080/v1/information_seed/status?information_seed_id=123'
+curl -sS 'http://localhost:8080/v1/information_seed/sources?information_seed_id=123&limit=50&offset=0'
+curl -sS 'http://localhost:8080/v1/information_seed/candidates?information_seed_id=123&limit=100&offset=0'
+```
+
 
 There are equivalent end-points in [POST] for the source administration
 end-points above unless a method is explicitly shown.

@@ -1,0 +1,250 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+
+	_ "github.com/mattn/go-sqlite3"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
+)
+
+type informationSeedAPITestHandler struct{ db *sql.DB }
+
+func (h *informationSeedAPITestHandler) Connect(cfg.Config) error { return nil }
+func (h *informationSeedAPITestHandler) Close() error             { return h.db.Close() }
+func (h *informationSeedAPITestHandler) Ping() error              { return h.db.Ping() }
+func (h *informationSeedAPITestHandler) ExecuteQuery(query string, args ...interface{}) (*sql.Rows, error) {
+	return h.db.Query(query, args...)
+}
+func (h *informationSeedAPITestHandler) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return h.db.Exec(query, args...)
+}
+func (h *informationSeedAPITestHandler) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return h.db.ExecContext(ctx, query, args...)
+}
+func (h *informationSeedAPITestHandler) DBMS() string            { return cdb.DBSQLiteStr }
+func (h *informationSeedAPITestHandler) Begin() (*sql.Tx, error) { return h.db.Begin() }
+func (h *informationSeedAPITestHandler) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return h.db.BeginTx(ctx, opts)
+}
+func (h *informationSeedAPITestHandler) Commit(tx *sql.Tx) error   { return tx.Commit() }
+func (h *informationSeedAPITestHandler) Rollback(tx *sql.Tx) error { return tx.Rollback() }
+func (h *informationSeedAPITestHandler) QueryRow(query string, args ...interface{}) *sql.Row {
+	return h.db.QueryRow(query, args...)
+}
+func (h *informationSeedAPITestHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return h.db.QueryContext(ctx, query, args...)
+}
+func (h *informationSeedAPITestHandler) CheckConnection(cfg.Config) error { return nil }
+func (h *informationSeedAPITestHandler) NewListener() cdb.Listener        { return nil }
+
+func TestInformationSeedListHandlerFiltersAndPagination(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedOne := createInformationSeedAPITestSeed(t, &handler, "first", "pending", "high", 2, 20, false)
+	createInformationSeedAPITestSeed(t, &handler, "second", "pending", "high", 2, 20, true)
+	createInformationSeedAPITestSeed(t, &handler, "third", "new", "low", 3, 30, false)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/list?status=pending&priority=high&disabled=false&category=2&user=20&limit=1&offset=0", nil)
+	informationSeedListHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if resp.Limit != 1 || resp.Offset != 0 || len(resp.Items) != 1 || resp.Items[0].ID != seedOne {
+		t.Fatalf("unexpected filtered page for seed %d: %#v", seedOne, resp)
+	}
+}
+
+func TestInformationSeedListHandlerBadFilters(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/list?disabled=maybe", nil)
+	informationSeedListHandler(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad disabled filter, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInformationSeedSourcesHandlerSuccessNotFoundAndPagination(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "with sources", "pending", "high", 2, 20, false)
+	sourceOne := insertInformationSeedAPITestSource(t, handler.(*informationSeedAPITestHandler).db, "https://api-one.example", "api one")
+	sourceTwo := insertInformationSeedAPITestSource(t, handler.(*informationSeedAPITestHandler).db, "https://api-two.example", "api two")
+	provider := "api-provider"
+	rank := 4
+	metadata := json.RawMessage(`{"api":true}`)
+	if err := cdb.LinkSourceToInformationSeedWithDiscoveryMetadata(&handler, sourceOne, seedID, cdb.InformationSeedDiscoveryMetadata{DiscoveryProvider: &provider, DiscoveryRank: &rank, DiscoveryMetadata: &metadata}); err != nil {
+		t.Fatalf("link source one: %v", err)
+	}
+	if err := cdb.LinkSourceToInformationSeed(&handler, sourceTwo, seedID); err != nil {
+		t.Fatalf("link source two: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/sources?information_seed_id="+itoa(seedID)+"&limit=1&offset=0", nil)
+	informationSeedSourcesHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedLinkedSourceListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode linked sources response: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].SourceID != sourceOne || resp.Items[0].SourceInformationSeedIndex.DiscoveryProvider != provider || resp.Items[0].SourceInformationSeedIndex.DiscoveryRank == nil || *resp.Items[0].SourceInformationSeedIndex.DiscoveryRank != rank {
+		t.Fatalf("unexpected linked source page: %#v", resp)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/information_seed/sources?information_seed_id=9999", nil)
+	informationSeedSourcesHandler(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing seed, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInformationSeedCandidateDecisionsHandlerSuccess(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "candidate api", "pending", "high", 2, 20, false)
+	if err := cdb.UpsertInformationSeedCandidateDecisions(&handler, []cdb.InformationSeedCandidate{{InformationSeedID: seedID, NormalizedURL: "https://candidate.example/", Host: "candidate.example", Provider: "unit", Query: "seed", Rank: 1, Score: 0.8, DecisionStatus: cdb.InformationSeedCandidateDecisionAccepted, RunAttempt: 1}}); err != nil {
+		t.Fatalf("upsert candidate decision: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/candidates?information_seed_id="+itoa(seedID)+"&limit=1", nil)
+	informationSeedCandidateDecisionsHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedCandidateListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode candidate response: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].NormalizedURL != "https://candidate.example/" || resp.Items[0].DecisionStatus != cdb.InformationSeedCandidateDecisionAccepted {
+		t.Fatalf("unexpected candidate response: %#v", resp)
+	}
+}
+
+func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	if _, err = db.Exec(`
+		CREATE TABLE InformationSeed (
+			information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			category_id INTEGER DEFAULT 0 NOT NULL,
+			usr_id INTEGER DEFAULT 0 NOT NULL,
+			information_seed VARCHAR(256) NOT NULL,
+			status VARCHAR(50) DEFAULT 'new' NOT NULL,
+			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			engine VARCHAR(256) DEFAULT '' NOT NULL,
+			last_processed_at TIMESTAMP,
+			last_error TEXT,
+			last_error_at TIMESTAMP,
+			disabled BOOLEAN DEFAULT FALSE,
+			attempts INTEGER DEFAULT 0 NOT NULL,
+			config TEXT
+		);
+		CREATE TABLE InformationSeedCandidate (
+			information_seed_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			information_seed_id INTEGER NOT NULL,
+			normalized_url VARCHAR(2048) NOT NULL,
+			host VARCHAR(255),
+			provider VARCHAR(255),
+			query TEXT,
+			rank INTEGER DEFAULT 0 NOT NULL,
+			score REAL DEFAULT 0 NOT NULL,
+			decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+			rejection_reason TEXT DEFAULT '' NOT NULL,
+			metadata TEXT,
+			run_attempt INTEGER DEFAULT 0 NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt)
+		);
+		CREATE TABLE Sources (
+			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name VARCHAR(255),
+			usr_id INTEGER DEFAULT 0 NOT NULL,
+			category_id INTEGER DEFAULT 0 NOT NULL,
+			url TEXT NOT NULL UNIQUE,
+			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			restricted INTEGER DEFAULT 2 NOT NULL,
+			disabled BOOLEAN DEFAULT FALSE,
+			flags INTEGER DEFAULT 0 NOT NULL,
+			config TEXT
+		);
+		CREATE TABLE SourceInformationSeedIndex (
+			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER NOT NULL,
+			information_seed_id INTEGER NOT NULL,
+			discovery_provider VARCHAR(255),
+			discovery_query TEXT,
+			discovery_rank INTEGER,
+			candidate_score REAL,
+			candidate_reason TEXT,
+			discovery_metadata TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (source_id, information_seed_id)
+		);`); err != nil {
+		t.Fatalf("create test schema: %v", err)
+	}
+	handler := cdb.Handler(&informationSeedAPITestHandler{db: db})
+	return handler, func() { _ = db.Close() }
+}
+
+func createInformationSeedAPITestSeed(t *testing.T, handler *cdb.Handler, text, status, priority string, categoryID, usrID uint64, disabled bool) uint64 {
+	t.Helper()
+	id, err := cdb.CreateInformationSeed(handler, &cdb.InformationSeed{InformationSeed: text, Status: status, Priority: priority, CategoryID: categoryID, UsrID: usrID, Disabled: disabled})
+	if err != nil {
+		t.Fatalf("create api test seed: %v", err)
+	}
+	return id
+}
+
+func insertInformationSeedAPITestSource(t *testing.T, db *sql.DB, sourceURL, name string) uint64 {
+	t.Helper()
+	result, err := db.Exec(`INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config, disabled) VALUES (?, ?, 'medium', 7, 11, 2, 3, '{}', FALSE)`, sourceURL, name)
+	if err != nil {
+		t.Fatalf("insert source: %v", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("source id: %v", err)
+	}
+	return uint64(id)
+}
+
+func itoa(value uint64) string {
+	return strconv.FormatUint(value, 10)
+}

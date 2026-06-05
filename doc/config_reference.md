@@ -163,6 +163,86 @@
   `candidate_plugins` live in `InformationSeed.config`; see
   [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example)
   for the complete seed-level contract.
+  Supported production provider adapters are selected by the provider block's
+  `provider` value. The runner currently recognizes `http_json` (also `json` or
+  `generic_json`), `brave_search` (including Brave aliases),
+  `bing_web_search` (including Bing aliases), and the explicit opt-in
+  `browser_search` HTML adapter. Unknown provider values intentionally fall back
+  to the generic JSON adapter so deployments can front additional search systems
+  with an internal gateway. Keep request limits conservative in production: set
+  `max_requests` no higher than the global `max_queries_per_seed`, keep
+  `max_pages` at `1` unless the provider quota has been reviewed, and prefer
+  `rate_limit: 1/s` or slower for external APIs.
+
+  Minimal snippets for each supported provider, using placeholder credentials,
+  are shown below. Copy only the provider blocks you intend to enable and add the
+  corresponding provider names to `provider_allow_list`.
+
+  ```yaml
+  information_seed:
+    enabled: true
+    max_queries_per_seed: 5
+    max_candidates_per_seed: 50
+    provider_allow_list:
+      - public_json
+      - brave_search
+      - bing_web_search
+      # browser_search requires an explicit site policy review before enabling.
+      # - approved_fixture_search
+    providers:
+      public_json:
+        provider: http_json
+        host: https://search-adapter.example.invalid
+        endpoint: /v1/search
+        api_key_label: api_key
+        api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+        timeout: 30
+        rate_limit: 1/s
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      brave_search:
+        provider: brave_search
+        host: https://api.search.brave.com
+        endpoint: /res/v1/web/search
+        api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+        timeout: 30
+        rate_limit: 1/s
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      bing_web_search:
+        provider: bing_web_search
+        host: https://api.bing.microsoft.com
+        endpoint: /v7.0/search
+        api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
+        timeout: 30
+        rate_limit: 1/s
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      approved_fixture_search:
+        provider: browser_search
+        host: https://search.example.invalid
+        endpoint: /search
+        parameters:
+          result_container_selector: article.result
+          url_selector: a.result-url
+          title_selector: h2.result-title
+          snippet_selector: p.result-snippet
+          next_page_selector: a[rel='next']
+          consent_page_selector: '#consent-wall'
+          safe_search: strict
+        timeout: 5
+        rate_limit: 1s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+  ```
+
 - **`api`** *(object)*: This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world.
   - **`host`** *(string)*: This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address.
   - **`port`** *(integer)*: This is the port that the API will use to communicate with the outside world.
