@@ -33,13 +33,24 @@ type NamedCandidateProcessor interface {
 	ProcessorName() string
 }
 
+// AgentIdentity identifies the system or user agent responsible for a seed run.
+type AgentIdentity struct {
+	ID          string
+	Name        string
+	Type        string
+	TrustLevel  string
+	Origin      string
+	RuntimePath string
+}
+
 // Runner executes information-seed discovery work.
 type Runner struct {
-	DB         *cdb.Handler
-	Config     cfg.InformationSeedConfig
-	Providers  map[string]searchproviders.Provider
-	Processors []CandidateProcessor
-	Now        func() time.Time
+	DB            *cdb.Handler
+	Config        cfg.InformationSeedConfig
+	Providers     map[string]searchproviders.Provider
+	Processors    []CandidateProcessor
+	Now           func() time.Time
+	AgentIdentity AgentIdentity
 }
 
 // SeedRunConfig is read from InformationSeed.config. All fields are optional.
@@ -80,6 +91,13 @@ type Result struct {
 }
 
 const (
+	InformationSeedBuiltInAgentID          = "system.infoseed.runner"
+	InformationSeedBuiltInAgentName        = "Information Seed Agent"
+	InformationSeedBuiltInAgentType        = "system"
+	InformationSeedBuiltInAgentTrustLevel  = "system"
+	InformationSeedBuiltInAgentOrigin      = "built_in"
+	InformationSeedBuiltInAgentRuntimePath = "infoseed.Runner"
+
 	informationSeedDiscoveryStarted   = "information_seed.discovery_started"
 	informationSeedCandidateFound     = "information_seed.candidate_found"
 	informationSeedCandidateRejected  = "information_seed.candidate_rejected"
@@ -222,11 +240,54 @@ func (e providerQueryError) ProviderFailures() []providerFailure {
 // NewRunner constructs a runner with providers from configuration.
 func NewRunner(db *cdb.Handler, config cfg.InformationSeedConfig) *Runner {
 	return &Runner{
-		DB:        db,
-		Config:    config,
-		Providers: BuildProviders(config),
-		Now:       time.Now,
+		DB:            db,
+		Config:        config,
+		Providers:     BuildProviders(config),
+		Now:           time.Now,
+		AgentIdentity: DefaultInformationSeedAgentIdentity(),
 	}
+}
+
+// DefaultInformationSeedAgentIdentity returns the built-in system-agent identity
+// used when operators have not provided an explicit test/runtime override.
+func DefaultInformationSeedAgentIdentity() AgentIdentity {
+	return AgentIdentity{
+		ID:          InformationSeedBuiltInAgentID,
+		Name:        InformationSeedBuiltInAgentName,
+		Type:        InformationSeedBuiltInAgentType,
+		TrustLevel:  InformationSeedBuiltInAgentTrustLevel,
+		Origin:      InformationSeedBuiltInAgentOrigin,
+		RuntimePath: InformationSeedBuiltInAgentRuntimePath,
+	}
+}
+
+func normalizeInformationSeedAgentIdentity(identity AgentIdentity) AgentIdentity {
+	defaultIdentity := DefaultInformationSeedAgentIdentity()
+	identity.ID = strings.TrimSpace(identity.ID)
+	identity.Name = strings.TrimSpace(identity.Name)
+	identity.Type = strings.TrimSpace(identity.Type)
+	identity.TrustLevel = strings.TrimSpace(identity.TrustLevel)
+	identity.Origin = strings.TrimSpace(identity.Origin)
+	identity.RuntimePath = strings.TrimSpace(identity.RuntimePath)
+	if identity.ID == "" {
+		identity.ID = defaultIdentity.ID
+	}
+	if identity.Name == "" {
+		identity.Name = defaultIdentity.Name
+	}
+	if identity.Type == "" {
+		identity.Type = defaultIdentity.Type
+	}
+	if identity.TrustLevel == "" {
+		identity.TrustLevel = defaultIdentity.TrustLevel
+	}
+	if identity.Origin == "" {
+		identity.Origin = defaultIdentity.Origin
+	}
+	if identity.RuntimePath == "" {
+		identity.RuntimePath = defaultIdentity.RuntimePath
+	}
+	return identity
 }
 
 // BuildProviders creates configured provider implementations.
@@ -276,6 +337,7 @@ func (r *Runner) emitInformationSeedEvent(ctx context.Context, seed cdb.Informat
 		Details: informationSeedEventPayloadWithOptions(seed, stats, informationSeedEventPayloadOptions{
 			SourceID:        sourceID,
 			ProviderConfigs: r.Config.Providers,
+			AgentIdentity:   normalizeInformationSeedAgentIdentity(r.AgentIdentity),
 		}),
 	})
 	return err

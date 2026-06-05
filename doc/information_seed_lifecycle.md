@@ -596,13 +596,40 @@ to a persisted candidate source use that source's `source_id`.
 Every information-seed event payload includes the same stable run diagnostics
 contract (`schema_version = information_seed.run_diagnostics.v1`) so Agents,
 operators, and plugins can subscribe to any individual phase without needing a
-different schema per event. All events emitted during one claimed attempt share
-`run_id`; `run_attempt` is the `InformationSeed.attempts` value from the claimed
-row.
+different schema per event. This implementation uses orchestration option 1:
+the existing `infoseed.Runner` is the built-in Information Seed Agent. Every
+seed run therefore carries an explicit system-agent identity (`agent.agent_id =
+system.infoseed.runner`) and `orchestration_model = built_in_infoseed_runner` in
+event details, even though the pre-coded runner is not invoked through a user
+agent manifest. All events emitted during one claimed attempt share `run_id`;
+`run_attempt` is the `InformationSeed.attempts` value from the claimed row.
+
+The payload also includes `phase_catalog` so operators can separate pre-coded
+platform phases from user/plugin phases. Phases with `origin = built_in` are
+implemented by the platform runner or database helpers. Phases with `origin =
+user_or_plugin` are controlled by configured candidate processors, plugin
+contracts, or source override metadata.
 
 ```json
 {
   "schema_version": "information_seed.run_diagnostics.v1",
+  "orchestration_model": "built_in_infoseed_runner",
+  "agent": {
+    "agent_id": "system.infoseed.runner",
+    "agent_name": "Information Seed Agent",
+    "agent_type": "system",
+    "trust_level": "system",
+    "origin": "built_in",
+    "runtime_path": "infoseed.Runner"
+  },
+  "phase_catalog": [
+    { "phase": "provider_discovery", "origin": "built_in", "runtime": "infoseed.Runner.queryProviders" },
+    { "phase": "normalization", "origin": "built_in", "runtime": "infoseed.Runner.normalizeCandidates" },
+    { "phase": "built_in_filters", "origin": "built_in", "runtime": "infoseed.Runner.applyBuiltInCandidateFilters" },
+    { "phase": "user_candidate_plugins", "origin": "user_or_plugin", "runtime": "infoseed.CandidateProcessor" },
+    { "phase": "source_override_validation", "origin": "user_or_plugin", "runtime": "infoseed.CandidateProcessor.source_override" },
+    { "phase": "source_persistence", "origin": "built_in", "runtime": "pkg/database information-seed helpers" }
+  ],
   "information_seed_id": 123,
   "information_seed": "renewable energy market signals",
   "run_id": "information-seed-123-attempt-4",

@@ -16,12 +16,16 @@ const informationSeedRedactedValue = "REDACTED"
 type informationSeedEventPayloadOptions struct {
 	SourceID        uint64
 	ProviderConfigs map[string]cfg.InformationSeedProviderConfig
+	AgentIdentity   AgentIdentity
 }
 
 func buildInformationSeedEventPayload(seed cdb.InformationSeed, stats *seedDiscoveryStats, options informationSeedEventPayloadOptions) map[string]interface{} {
 	runAttempt := seed.Attempts
 	payload := map[string]interface{}{
 		"schema_version":             "information_seed.run_diagnostics.v1",
+		"orchestration_model":        "built_in_infoseed_runner",
+		"agent":                      informationSeedAgentPayload(options.AgentIdentity),
+		"phase_catalog":              informationSeedPhaseCatalog(),
 		"information_seed_id":        seed.ID,
 		"information_seed":           seed.InformationSeed,
 		"run_id":                     informationSeedRunID(seed.ID, runAttempt),
@@ -76,6 +80,29 @@ func buildInformationSeedEventPayload(seed cdb.InformationSeed, stats *seedDisco
 	payload["candidate_rejection_stages"] = stages
 	payload["plugin_metadata"] = pluginMetadata
 	return payload
+}
+
+func informationSeedAgentPayload(identity AgentIdentity) map[string]interface{} {
+	identity = normalizeInformationSeedAgentIdentity(identity)
+	return map[string]interface{}{
+		"agent_id":     identity.ID,
+		"agent_name":   identity.Name,
+		"agent_type":   identity.Type,
+		"trust_level":  identity.TrustLevel,
+		"origin":       identity.Origin,
+		"runtime_path": identity.RuntimePath,
+	}
+}
+
+func informationSeedPhaseCatalog() []map[string]interface{} {
+	return []map[string]interface{}{
+		{"phase": "provider_discovery", "origin": "built_in", "runtime": "infoseed.Runner.queryProviders"},
+		{"phase": CandidateRejectionStageNormalization, "origin": "built_in", "runtime": "infoseed.Runner.normalizeCandidates"},
+		{"phase": CandidateRejectionStageBuiltInFilters, "origin": "built_in", "runtime": "infoseed.Runner.applyBuiltInCandidateFilters"},
+		{"phase": CandidateRejectionStageUserPlugins, "origin": "user_or_plugin", "runtime": "infoseed.CandidateProcessor"},
+		{"phase": CandidateRejectionStageSourceOverrideValidation, "origin": "user_or_plugin", "runtime": "infoseed.CandidateProcessor.source_override"},
+		{"phase": "source_persistence", "origin": "built_in", "runtime": "pkg/database information-seed helpers"},
+	}
 }
 
 func informationSeedRunID(seedID uint64, attempt int) string {

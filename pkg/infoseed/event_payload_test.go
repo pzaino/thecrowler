@@ -24,6 +24,9 @@ func TestInformationSeedEventPayloadStableShape(t *testing.T) {
 	payload := informationSeedEventPayload(cdb.InformationSeed{ID: 7, InformationSeed: "seed text", Attempts: 2}, 42, stats)
 
 	assertPayloadKey(t, payload, "schema_version")
+	assertPayloadKey(t, payload, "orchestration_model")
+	assertPayloadKey(t, payload, "agent")
+	assertPayloadKey(t, payload, "phase_catalog")
 	assertPayloadKey(t, payload, "information_seed_id")
 	assertPayloadKey(t, payload, "information_seed")
 	assertPayloadKey(t, payload, "run_id")
@@ -41,6 +44,27 @@ func TestInformationSeedEventPayloadStableShape(t *testing.T) {
 
 	if payload["run_id"] != "information-seed-7-attempt-2" || payload["run_attempt"] != 2 {
 		t.Fatalf("unexpected run correlation fields: %#v", payload)
+	}
+	agent := payload["agent"].(map[string]interface{})
+	if agent["agent_id"] != InformationSeedBuiltInAgentID || agent["agent_type"] != InformationSeedBuiltInAgentType || agent["origin"] != InformationSeedBuiltInAgentOrigin {
+		t.Fatalf("unexpected default agent identity: %#v", agent)
+	}
+	phaseCatalog := payload["phase_catalog"].([]map[string]interface{})
+	if len(phaseCatalog) == 0 {
+		t.Fatal("expected phase catalog to distinguish built-in and user/plugin phases")
+	}
+	foundBuiltIn := false
+	foundPlugin := false
+	for _, phase := range phaseCatalog {
+		if phase["origin"] == "built_in" {
+			foundBuiltIn = true
+		}
+		if phase["origin"] == "user_or_plugin" {
+			foundPlugin = true
+		}
+	}
+	if !foundBuiltIn || !foundPlugin {
+		t.Fatalf("expected built-in and user/plugin phases, got %#v", phaseCatalog)
 	}
 	candidateCounts := payload["candidate_counts"].(map[string]interface{})
 	if candidateCounts["found"] != 3 || candidateCounts["accepted"] != 2 || candidateCounts["rejected"] != 1 {
@@ -135,5 +159,22 @@ func assertNoSecret(t *testing.T, value string) {
 		if strings.Contains(value, secret) {
 			t.Fatalf("payload leaked %s: %s", secret, value)
 		}
+	}
+}
+
+func TestInformationSeedEventPayloadUsesExplicitAgentIdentity(t *testing.T) {
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, nil, informationSeedEventPayloadOptions{
+		AgentIdentity: AgentIdentity{
+			ID:          "system.infoseed.test",
+			Name:        "Test Seed Agent",
+			Type:        "system",
+			TrustLevel:  "system",
+			Origin:      "built_in",
+			RuntimePath: "infoseed.Runner.test",
+		},
+	})
+	agent := payload["agent"].(map[string]interface{})
+	if agent["agent_id"] != "system.infoseed.test" || agent["runtime_path"] != "infoseed.Runner.test" {
+		t.Fatalf("expected explicit agent identity in payload, got %#v", agent)
 	}
 }

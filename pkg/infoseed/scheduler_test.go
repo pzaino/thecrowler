@@ -3,6 +3,7 @@ package infoseed
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +44,41 @@ func TestSchedulerPollingFallbackProcessesSeedWithoutNotification(t *testing.T) 
 		t.Fatalf("create seed without notification: %v", err)
 	}
 	assertSchedulerSeedStatus(t, handler, id, "completed", 3*time.Second)
+}
+
+func TestSchedulerCreatedSeedEmitsConfiguredAgentIdentity(t *testing.T) {
+	handler := openSchedulerSQLiteDB(t)
+	defer (*handler).Close()
+
+	config := schedulerTestConfig(60)
+	runner := NewRunner(handler, config)
+	runner.AgentIdentity = AgentIdentity{
+		ID:          "system.infoseed.configured-test",
+		Name:        "Configured Test Information Seed Agent",
+		Type:        "system",
+		TrustLevel:  "system",
+		Origin:      "built_in",
+		RuntimePath: "infoseed.Runner.configured-test",
+	}
+	stop := StartScheduler(context.Background(), handler, config, runner, "test-engine-agent-path")
+	defer stop()
+
+	id, err := cdb.CreateInformationSeedAndNotify(context.Background(), handler, &cdb.InformationSeed{InformationSeed: "agent path seed"})
+	if err != nil {
+		t.Fatalf("create and notify seed: %v", err)
+	}
+	assertSchedulerSeedStatus(t, handler, id, "completed", 2*time.Second)
+	details := assertSchedulerSeedEventDetails(t, handler, id, informationSeedDiscoveryCompleted, 2*time.Second)
+	agent, ok := details["agent"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected event details to include agent identity, got %#v", details)
+	}
+	if agent["agent_id"] != "system.infoseed.configured-test" || agent["runtime_path"] != "infoseed.Runner.configured-test" {
+		t.Fatalf("expected scheduler to trigger configured agent path, got %#v", agent)
+	}
+	if details["orchestration_model"] != "built_in_infoseed_runner" {
+		t.Fatalf("expected built-in runner orchestration model, got %#v", details["orchestration_model"])
+	}
 }
 
 func TestDrainWakeupsCoalescesPendingNotifications(t *testing.T) {
@@ -180,4 +216,39 @@ func assertSchedulerSeedStatus(t *testing.T, handler *cdb.Handler, id uint64, ex
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("seed %d did not reach status %q before timeout; last status/error: %s", id, expected, lastStatus)
+}
+
+func assertSchedulerSeedEventDetails(t *testing.T, handler *cdb.Handler, seedID uint64, eventType string, timeout time.Duration) map[string]interface{} {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastDetails string
+	for time.Now().Before(deadline) {
+		rows, err := (*handler).ExecuteQuery(`SELECT details FROM Events WHERE event_type = ? ORDER BY created_at DESC`, eventType)
+		if err != nil {
+			lastDetails = err.Error()
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		for rows.Next() {
+			var details string
+			if err := rows.Scan(&details); err != nil {
+				lastDetails = err.Error()
+				continue
+			}
+			lastDetails = details
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(details), &payload); err != nil {
+				lastDetails = err.Error()
+				continue
+			}
+			if numericID, ok := payload["information_seed_id"].(float64); ok && uint64(numericID) == seedID {
+				_ = rows.Close()
+				return payload
+			}
+		}
+		_ = rows.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("seed %d did not emit event %q before timeout; last details/error: %s", seedID, eventType, lastDetails)
+	return nil
 }
