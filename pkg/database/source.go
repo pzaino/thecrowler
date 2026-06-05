@@ -95,6 +95,7 @@ type preparedSourceInsert struct {
 	Flags      uint
 	Config     []byte
 	Disabled   bool
+	Status     string
 }
 
 func (source preparedSourceInsert) args() []interface{} {
@@ -109,6 +110,11 @@ func (source preparedSourceInsert) args() []interface{} {
 		source.Config,
 		source.Disabled,
 	}
+}
+
+func (source preparedSourceInsert) argsWithStatus() []interface{} {
+	args := source.args()
+	return append(args, source.Status)
 }
 
 func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, error) {

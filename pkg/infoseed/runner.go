@@ -44,24 +44,29 @@ type Runner struct {
 
 // SeedRunConfig is read from InformationSeed.config. All fields are optional.
 type SeedRunConfig struct {
-	Queries                []string        `json:"queries" yaml:"queries"`
-	QueryTemplates         []string        `json:"query_templates" yaml:"query_templates"`
-	Providers              []string        `json:"providers" yaml:"providers"`
-	TrackingParams         []string        `json:"tracking_params" yaml:"tracking_params"`
-	DeduplicateHost        bool            `json:"deduplicate_host" yaml:"deduplicate_host"`
-	MaxCandidates          int             `json:"max_candidates" yaml:"max_candidates"`
-	AllowedDomains         []string        `json:"allowed_domains" yaml:"allowed_domains"`
-	DeniedDomains          []string        `json:"denied_domains" yaml:"denied_domains"`
-	RequiredURLSchemes     []string        `json:"required_url_schemes" yaml:"required_url_schemes"`
-	MinScore               *float64        `json:"min_score" yaml:"min_score"`
-	MaxCandidatesPerHost   int             `json:"max_candidates_per_host" yaml:"max_candidates_per_host"`
-	MaxCandidatesPerDomain int             `json:"max_candidates_per_domain" yaml:"max_candidates_per_domain"`
-	SourceNameTemplate     string          `json:"source_name_template" yaml:"source_name_template"`
-	SourcePriority         string          `json:"source_priority" yaml:"source_priority"`
-	Restricted             uint            `json:"restricted" yaml:"restricted"`
-	Flags                  uint            `json:"flags" yaml:"flags"`
-	CandidatePlugins       []string        `json:"candidate_plugins" yaml:"candidate_plugins"`
-	SourceConfig           json.RawMessage `json:"source_config" yaml:"source_config"`
+	Queries                    []string        `json:"queries" yaml:"queries"`
+	QueryTemplates             []string        `json:"query_templates" yaml:"query_templates"`
+	Providers                  []string        `json:"providers" yaml:"providers"`
+	TrackingParams             []string        `json:"tracking_params" yaml:"tracking_params"`
+	DeduplicateHost            bool            `json:"deduplicate_host" yaml:"deduplicate_host"`
+	MaxCandidates              int             `json:"max_candidates" yaml:"max_candidates"`
+	AllowedDomains             []string        `json:"allowed_domains" yaml:"allowed_domains"`
+	DeniedDomains              []string        `json:"denied_domains" yaml:"denied_domains"`
+	RequiredURLSchemes         []string        `json:"required_url_schemes" yaml:"required_url_schemes"`
+	MinScore                   *float64        `json:"min_score" yaml:"min_score"`
+	MaxCandidatesPerHost       int             `json:"max_candidates_per_host" yaml:"max_candidates_per_host"`
+	MaxCandidatesPerDomain     int             `json:"max_candidates_per_domain" yaml:"max_candidates_per_domain"`
+	SourceNameTemplate         string          `json:"source_name_template" yaml:"source_name_template"`
+	SourcePriority             string          `json:"source_priority" yaml:"source_priority"`
+	CreateSources              bool            `json:"create_sources" yaml:"create_sources"`
+	LinkExistingSources        bool            `json:"link_existing_sources" yaml:"link_existing_sources"`
+	UpdateExistingSourceConfig bool            `json:"update_existing_source_config" yaml:"update_existing_source_config"`
+	Disabled                   bool            `json:"disabled" yaml:"disabled"`
+	Status                     string          `json:"status" yaml:"status"`
+	Restricted                 uint            `json:"restricted" yaml:"restricted"`
+	Flags                      uint            `json:"flags" yaml:"flags"`
+	CandidatePlugins           []string        `json:"candidate_plugins" yaml:"candidate_plugins"`
+	SourceConfig               json.RawMessage `json:"source_config" yaml:"source_config"`
 }
 
 // Result summarizes one seed processing run.
@@ -421,13 +426,27 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 }
 
 func parseSeedRunConfig(seed cdb.InformationSeed) (SeedRunConfig, error) {
-	runCfg := SeedRunConfig{}
+	runCfg := defaultSeedRunConfig()
 	if seed.Config != nil && len(*seed.Config) > 0 && string(*seed.Config) != "null" {
 		if err := json.Unmarshal(*seed.Config, &runCfg); err != nil {
 			return runCfg, fmt.Errorf("invalid information seed config: %w", err)
 		}
 	}
+	runCfg.Status = strings.TrimSpace(runCfg.Status)
+	if runCfg.Status == "" {
+		runCfg.Status = "new"
+	}
 	return runCfg, nil
+}
+
+func defaultSeedRunConfig() SeedRunConfig {
+	return SeedRunConfig{
+		CreateSources:              true,
+		LinkExistingSources:        true,
+		UpdateExistingSourceConfig: true,
+		Disabled:                   false,
+		Status:                     "new",
+	}
 }
 
 func renderQueries(seed cdb.InformationSeed, runCfg SeedRunConfig, maxQueries int) ([]string, error) {
@@ -906,16 +925,30 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 				return linked, err
 			}
 		}
-		sourceID, err := cdb.CreateSource(r.DB, &cdb.Source{URL: candidate.URL, Name: name, Priority: priority, CategoryID: seed.CategoryID, UsrID: seed.UsrID, Restricted: restricted, Flags: flags}, sourceConfig)
+		upsertResult, err := cdb.UpsertSourceWithPolicy(r.DB, &cdb.Source{URL: candidate.URL, Name: name, Priority: priority, CategoryID: seed.CategoryID, UsrID: seed.UsrID, Restricted: restricted, Flags: flags}, sourceConfig, cdb.SourceUpsertPolicy{
+			CreateSources:              runCfg.CreateSources,
+			LinkExistingSources:        runCfg.LinkExistingSources,
+			UpdateExistingSourceConfig: runCfg.UpdateExistingSourceConfig,
+			Disabled:                   runCfg.Disabled,
+			Status:                     runCfg.Status,
+		})
 		if err != nil {
 			return linked, fmt.Errorf("creating source for seed %d candidate %s: %w", seed.ID, candidate.URL, err)
 		}
-		if stats != nil {
-			stats.SourcesCreated++
+		if upsertResult.SourceID == 0 {
+			continue
 		}
-		_ = r.emitInformationSeedEvent(ctx, seed, sourceID, informationSeedSourceCreated, cdb.EventSeverityInfo, stats)
+		if upsertResult.Created {
+			if stats != nil {
+				stats.SourcesCreated++
+			}
+			_ = r.emitInformationSeedEvent(ctx, seed, upsertResult.SourceID, informationSeedSourceCreated, cdb.EventSeverityInfo, stats)
+		}
+		if upsertResult.Existing && !runCfg.LinkExistingSources {
+			continue
+		}
 		metadata := discoveryMetadata(candidate)
-		if err := cdb.LinkSourceToInformationSeedWithDiscoveryMetadata(r.DB, sourceID, seed.ID, metadata); err != nil {
+		if err := cdb.LinkSourceToInformationSeedWithDiscoveryMetadata(r.DB, upsertResult.SourceID, seed.ID, metadata); err != nil {
 			return linked, err
 		}
 		linked++

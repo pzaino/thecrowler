@@ -120,7 +120,12 @@ phase order on every run:
    allowed domains, denied domains, required URL schemes, minimum score, maximum
    candidates per host/domain, and the seed/global candidate limit before any
    user plugin can run.
-7. Custom candidate plugin phases run only after built-in provider discovery,
+7. Source persistence applies the seed source policy before linking. New sources
+   are created only when `create_sources` is `true`; existing sources are linked
+   only when `link_existing_sources` is `true`; and existing source configs are
+   refreshed only when `update_existing_source_config` is `true`. Linking uses
+   the unique source/seed pair and is idempotent across reruns.
+8. Custom candidate plugin phases run only after built-in provider discovery,
    URL normalization/de-duplication, and built-in filters. `candidate_plugins`
    is both the ordered execution list and the allow-list: when omitted, all
    registered candidate processors run in registration order; when present, only
@@ -130,7 +135,7 @@ phase order on every run:
    before any decision or override is applied. Plugins do not replace built-in
    source persistence, source/seed linking, lifecycle finalization, or event
    emission phases.
-8. The runner writes `completed`, `error`, or `disabled` as the terminal status
+9. The runner writes `completed`, `error`, or `disabled` as the terminal status
    for the current attempt according to the final-status table.
 
 ## `InformationSeed.config` example
@@ -166,6 +171,11 @@ example shows the complete production contract for the current runner:
   "max_candidates_per_domain": 10,
   "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
   "source_priority": "normal",
+  "create_sources": true,
+  "link_existing_sources": true,
+  "update_existing_source_config": true,
+  "disabled": false,
+  "status": "new",
   "restricted": 1,
   "flags": 0,
   "source_config": {
@@ -207,9 +217,26 @@ Configuration behavior:
 - `max_candidates_per_host` and `max_candidates_per_domain` keep the first N
   candidates in deterministic candidate order for each host or registrable
   domain.
-- `source_name_template`, `source_priority`, `restricted`, `flags`, and
-  `source_config` provide defaults for accepted candidates. Candidate plugins may
-  override only the safe subset documented in the plugin contract.
+- `source_name_template`, `source_priority`, `restricted`, `flags`, `disabled`,
+  `status`, and `source_config` provide defaults for accepted candidates that
+  become new `Sources` rows. Candidate plugins may override only the safe subset
+  documented in the plugin contract.
+- `create_sources` defaults to `true`. Set it to `false` to make the run
+  discovery/link-only: candidates with URLs that are not already present in
+  `Sources` are skipped instead of inserted.
+- `link_existing_sources` defaults to `true`. Set it to `false` when an
+  accepted candidate may create a missing source but must not attach an already
+  existing source to the seed. Source/seed linking remains idempotent under both
+  settings.
+- `update_existing_source_config` defaults to `true` to preserve the previous
+  behavior for non-empty `source_config` updates on existing, non-processing
+  sources. Set it to `false` to prevent seed-level or plugin-provided
+  `source_config` from changing an existing source. Existing source identity,
+  ownership, priority, restriction, flags, disabled state, and status are not
+  overwritten by information-seed discovery.
+- Seed-level and plugin-provided `source_config` values are validated against the
+  same source configuration requirements before they are persisted. Invalid
+  configs fail the persistence phase rather than creating or updating a source.
 - `candidate_plugins` is both a seed-level ordered execution list and an
   allow-list. When omitted, all registered information-seed candidate processors
   are eligible in registration order. When present, only named processors
