@@ -106,6 +106,9 @@ type seedDiscoveryStats struct {
 	RejectionCounts    map[string]int
 	RejectionStages    map[string]map[string]int
 	ErrorSummaries     []string
+	SourceIDsCreated   []uint64
+	SourceIDsLinked    []uint64
+	PluginMetadata     []map[string]interface{}
 }
 
 func newSeedDiscoveryStats() *seedDiscoveryStats {
@@ -162,6 +165,23 @@ func (stats *seedDiscoveryStats) addRejectedDecisions(decisions []candidateDecis
 		if decision.Status == cdb.InformationSeedCandidateDecisionRejected {
 			stats.addRejectedAtStage(decision.Stage, decision.Reason, 1)
 		}
+	}
+}
+
+func (stats *seedDiscoveryStats) addPluginMetadataFromCandidates(candidates []Candidate) {
+	if stats == nil {
+		return
+	}
+	for _, candidate := range candidates {
+		metadata, ok := candidate.Metadata["plugin_metadata"].(map[string]interface{})
+		if !ok || len(metadata) == 0 {
+			continue
+		}
+		stats.PluginMetadata = append(stats.PluginMetadata, map[string]interface{}{
+			"provider": candidate.Provider,
+			"host":     candidate.Host,
+			"metadata": metadata,
+		})
 	}
 }
 
@@ -253,41 +273,20 @@ func (r *Runner) emitInformationSeedEvent(ctx context.Context, seed cdb.Informat
 		Type:      eventType,
 		Severity:  severity,
 		Timestamp: now().UTC().Format(time.RFC3339),
-		Details:   informationSeedEventPayload(seed, sourceID, stats),
+		Details: informationSeedEventPayloadWithOptions(seed, stats, informationSeedEventPayloadOptions{
+			SourceID:        sourceID,
+			ProviderConfigs: r.Config.Providers,
+		}),
 	})
 	return err
 }
 
 func informationSeedEventPayload(seed cdb.InformationSeed, sourceID uint64, stats *seedDiscoveryStats) map[string]interface{} {
-	payload := map[string]interface{}{
-		"information_seed_id":        seed.ID,
-		"information_seed":           seed.InformationSeed,
-		"source_id":                  sourceID,
-		"provider_counts":            map[string]int{},
-		"provider_metrics":           map[string]map[string]int{},
-		"candidates_found":           0,
-		"candidates_accepted":        0,
-		"candidates_rejected":        0,
-		"sources_created":            0,
-		"sources_linked":             0,
-		"error_summaries":            []string{},
-		"candidate_rejection_counts": map[string]int{},
-		"candidate_rejection_stages": map[string]map[string]int{},
-	}
-	if stats == nil {
-		return payload
-	}
-	payload["provider_counts"] = stats.ProviderCounts
-	payload["provider_metrics"] = stats.ProviderMetrics
-	payload["candidates_found"] = stats.CandidatesFound
-	payload["candidates_accepted"] = stats.CandidatesAccepted
-	payload["candidates_rejected"] = stats.CandidatesRejected
-	payload["sources_created"] = stats.SourcesCreated
-	payload["sources_linked"] = stats.SourcesLinked
-	payload["error_summaries"] = stats.ErrorSummaries
-	payload["candidate_rejection_counts"] = stats.RejectionCounts
-	payload["candidate_rejection_stages"] = stats.RejectionStages
-	return payload
+	return informationSeedEventPayloadWithOptions(seed, stats, informationSeedEventPayloadOptions{SourceID: sourceID})
+}
+
+func informationSeedEventPayloadWithOptions(seed cdb.InformationSeed, stats *seedDiscoveryStats, options informationSeedEventPayloadOptions) map[string]interface{} {
+	return buildInformationSeedEventPayload(seed, stats, options)
 }
 
 func trimEventString(value string, maxLength int) string {
@@ -379,6 +378,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if err != nil {
 		stats.addError(err)
 	}
+	stats.addPluginMetadataFromCandidates(candidates)
 	stats.CandidatesAccepted = len(candidates)
 	stats.CandidatesRejected = maxInt(stats.CandidatesFound-stats.CandidatesAccepted, stats.CandidatesRejected)
 	result.Candidates = len(candidates)
@@ -719,21 +719,31 @@ func copyProviderMap(values map[string]string) map[string]string {
 }
 
 func redactInformationSeedError(message string) string {
-	for _, marker := range []string{"api_key=", "apikey=", "key=", "token=", "secret=", "password=", "authorization:", "x-subscription-token:", "ocp-apim-subscription-key:"} {
-		lower := strings.ToLower(message)
-		idx := strings.Index(lower, marker)
-		if idx < 0 {
-			continue
+	message = redactInformationSeedURL(message)
+	for _, marker := range []string{"api_key=", "apikey=", "key=", "token=", "secret=", "password=", "client_secret=", "access_token=", "refresh_token=", "authorization:", "x-subscription-token:", "ocp-apim-subscription-key:"} {
+		searchFrom := 0
+		for searchFrom < len(message) {
+			lower := strings.ToLower(message[searchFrom:])
+			relativeIdx := strings.Index(lower, marker)
+			if relativeIdx < 0 {
+				break
+			}
+			idx := searchFrom + relativeIdx
+			valueStart := idx + len(marker)
+			for valueStart < len(message) && strings.ContainsRune(" 	", rune(message[valueStart])) {
+				valueStart++
+			}
+			end := valueStart
+			terminators := " &;\n\t\r"
+			if strings.HasSuffix(marker, ":") {
+				terminators = ";\n\t\r"
+			}
+			for end < len(message) && !strings.ContainsRune(terminators, rune(message[end])) {
+				end++
+			}
+			message = message[:idx+len(marker)] + informationSeedRedactedValue + message[end:]
+			searchFrom = idx + len(marker) + len(informationSeedRedactedValue)
 		}
-		valueStart := idx + len(marker)
-		for valueStart < len(message) && strings.ContainsRune(" \t", rune(message[valueStart])) {
-			valueStart++
-		}
-		end := valueStart
-		for end < len(message) && !strings.ContainsRune(" &;\n\t\r", rune(message[end])) {
-			end++
-		}
-		message = message[:idx+len(marker)] + "REDACTED" + message[end:]
 	}
 	return message
 }
@@ -941,6 +951,7 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 		if upsertResult.Created {
 			if stats != nil {
 				stats.SourcesCreated++
+				stats.SourceIDsCreated = append(stats.SourceIDsCreated, upsertResult.SourceID)
 			}
 			_ = r.emitInformationSeedEvent(ctx, seed, upsertResult.SourceID, informationSeedSourceCreated, cdb.EventSeverityInfo, stats)
 		}
@@ -954,6 +965,7 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 		linked++
 		if stats != nil {
 			stats.SourcesLinked = linked
+			stats.SourceIDsLinked = append(stats.SourceIDsLinked, upsertResult.SourceID)
 		}
 	}
 	return linked, nil

@@ -295,16 +295,47 @@ to a persisted candidate source use that source's `source_id`.
 | `information_seed.discovery_completed` | `0` | Discovery reached a durable terminal `completed` status. This may include no-result runs and runs with non-blocking provider or processor warnings. |
 | `information_seed.discovery_failed` | `0` | Discovery hit a lifecycle-blocking parse, query, provider, processor, persistence, or final status error and the seed is marked `error` when possible. |
 
-Every information-seed event payload includes the same aggregate keys so Agents
-and plugins can subscribe to any individual phase without needing a different
-schema per event:
+Every information-seed event payload includes the same stable run diagnostics
+contract (`schema_version = information_seed.run_diagnostics.v1`) so Agents,
+operators, and plugins can subscribe to any individual phase without needing a
+different schema per event. All events emitted during one claimed attempt share
+`run_id`; `run_attempt` is the `InformationSeed.attempts` value from the claimed
+row.
 
 ```json
 {
+  "schema_version": "information_seed.run_diagnostics.v1",
   "information_seed_id": 123,
   "information_seed": "renewable energy market signals",
+  "run_id": "information-seed-123-attempt-4",
+  "run_attempt": 4,
   "source_id": 0,
   "provider_counts": { "example_provider": 12 },
+  "provider_metrics": { "example_provider": { "candidates": 12, "errors": 0 } },
+  "provider_configs": {
+    "example_provider": {
+      "provider": "http_json",
+      "host": "https://search.example/?api_key=REDACTED",
+      "max_requests": 3,
+      "max_pages": 1,
+      "page_size": 10,
+      "parameters": { "api_key": "REDACTED", "safe": "value" },
+      "headers": { "Authorization": "REDACTED", "X-Trace": "trace" }
+    }
+  },
+  "candidate_counts": {
+    "found": 12,
+    "accepted": 8,
+    "rejected": 4,
+    "by_stage": {
+      "provider_discovery": 12,
+      "normalization": 2,
+      "built_in_filters": 1,
+      "user_candidate_plugins": 1,
+      "source_override_validation": 0,
+      "source_persistence": 8
+    }
+  },
   "candidates_found": 12,
   "candidates_accepted": 8,
   "candidates_rejected": 4,
@@ -320,16 +351,27 @@ schema per event:
   },
   "sources_created": 8,
   "sources_linked": 8,
-  "error_summaries": []
+  "source_ids_created": [501, 502],
+  "source_ids_linked": [501, 502, 503],
+  "error_summaries": [],
+  "plugin_metadata": []
 }
 ```
 
 `candidate_rejection_stages` groups the same stable reason constants by the
 phase that rejected them, including `normalization`, `built_in_filters`,
 `user_candidate_plugins`, and `source_override_validation` when those phases
-reject at least one candidate. `error_summaries` contains concise messages only;
-provider, plugin, or database errors should be summarized rather than storing
-unbounded logs or secrets in `Events.details`.
+reject at least one candidate. The top-level `candidates_*` counters are retained
+for compatibility; new consumers should prefer `candidate_counts` for stage
+summaries.
+
+Operators may inspect `provider_configs`, `plugin_metadata`, and
+`error_summaries` for diagnostics, but these fields are redacted before storage.
+Provider API keys/tokens, configured headers such as `Authorization`, sensitive
+query parameters, plugin metadata keys containing words such as `secret`,
+`token`, `password`, or `credential`, and matching error fragments are replaced
+with `REDACTED`. Provider, plugin, or database errors should remain concise
+summaries rather than unbounded logs in `Events.details`.
 
 ## Idempotency and reruns
 

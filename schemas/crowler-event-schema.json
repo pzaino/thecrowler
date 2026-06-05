@@ -25,7 +25,7 @@
         "details": {
             "type": "object",
             "additionalProperties": true,
-            "description": "The details of the event. Custom JSON for the user to send to the plugins and/or Agents designed to handle the event. Information-seed discovery events include information_seed_id, information_seed, source_id, provider_counts, candidates_found, candidates_accepted, candidates_rejected, candidate_rejection_counts, sources_created, sources_linked, and error_summaries."
+            "description": "The details of the event. Information-seed discovery events use the InformationSeedRunDiagnosticsDetails contract with redacted provider configuration, plugin metadata, and errors."
         }
     },
     "required": [
@@ -33,5 +33,236 @@
         "event_type",
         "details"
     ],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "allOf": [
+        {
+            "if": {
+                "properties": {
+                    "event_type": {
+                        "pattern": "^information_seed\\."
+                    }
+                },
+                "required": [
+                    "event_type"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "details": {
+                        "$ref": "#/definitions/InformationSeedRunDiagnosticsDetails"
+                    }
+                }
+            }
+        }
+    ],
+    "definitions": {
+        "InformationSeedRunDiagnosticsDetails": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "schema_version": {
+                    "type": "string",
+                    "const": "information_seed.run_diagnostics.v1"
+                },
+                "information_seed_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "InformationSeed row identifier."
+                },
+                "information_seed": {
+                    "type": "string",
+                    "description": "The seed text."
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Stable correlation ID shared by all information_seed.* events from one run attempt."
+                },
+                "run_attempt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "InformationSeed.attempts value for the claimed run."
+                },
+                "source_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Source ID associated with this event, or 0 for seed-level events."
+                },
+                "provider_counts": {
+                    "$ref": "#/definitions/IntegerMap"
+                },
+                "provider_metrics": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/IntegerMap"
+                    }
+                },
+                "provider_configs": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/RedactedProviderConfig"
+                    }
+                },
+                "candidate_counts": {
+                    "$ref": "#/definitions/InformationSeedCandidateCounts"
+                },
+                "candidates_found": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "candidates_accepted": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "candidates_rejected": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "candidate_rejection_counts": {
+                    "$ref": "#/definitions/IntegerMap"
+                },
+                "candidate_rejection_stages": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/IntegerMap"
+                    }
+                },
+                "sources_created": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "sources_linked": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "source_ids_created": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                },
+                "source_ids_linked": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                },
+                "error_summaries": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Redacted concise error summaries."
+                },
+                "plugin_metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    },
+                    "description": "Redacted plugin metadata summaries; secret-like keys must contain REDACTED rather than raw values."
+                }
+            },
+            "required": [
+                "schema_version",
+                "information_seed_id",
+                "information_seed",
+                "run_id",
+                "run_attempt",
+                "source_id",
+                "provider_counts",
+                "provider_metrics",
+                "provider_configs",
+                "candidate_counts",
+                "candidates_found",
+                "candidates_accepted",
+                "candidates_rejected",
+                "candidate_rejection_counts",
+                "candidate_rejection_stages",
+                "sources_created",
+                "sources_linked",
+                "source_ids_created",
+                "source_ids_linked",
+                "error_summaries",
+                "plugin_metadata"
+            ]
+        },
+        "InformationSeedCandidateCounts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "found": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "accepted": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "rejected": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "by_stage": {
+                    "$ref": "#/definitions/IntegerMap"
+                }
+            },
+            "required": [
+                "found",
+                "accepted",
+                "rejected",
+                "by_stage"
+            ]
+        },
+        "RedactedProviderConfig": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "provider": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "max_requests": {
+                    "type": "integer"
+                },
+                "max_pages": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            },
+            "required": [
+                "provider",
+                "host",
+                "max_requests",
+                "max_pages",
+                "page_size",
+                "parameters",
+                "headers"
+            ]
+        },
+        "IntegerMap": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+            }
+        }
+    }
 }
