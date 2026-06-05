@@ -143,14 +143,29 @@ phase order on every run:
 `InformationSeed.config` is seed-specific JSON. It selects from providers that
 are already present in the global `information_seed.providers` map and allowed
 by `information_seed.provider_allow_list`; it does not define provider
-credentials. API-based providers (for example Brave Search, Bing Web Search, or a
-custom `http_json` gateway) are the recommended production path. The
-`browser_search` HTML adapter is disabled unless it is explicitly configured and
-allow-listed; use it only for local fixtures or after reviewing the target site's
-robots.txt, terms of service, consent flow, and rate-limit expectations. Its CSS
-selectors are site-specific, credentials are stripped rather than sent, and strict
-page/request/timeout/debug-output caps apply. All fields are optional, but this
-example shows the complete production contract for the current runner:
+credentials. Free/public discovery options such as `rss_feed` and
+`common_crawl_index` should appear before paid/API-key integrations in operator
+configuration so seed runs prefer lower-friction sources. API-based providers
+(for example Brave Search, Bing Web Search, Google CSE, Shodan, or a custom
+`http_json` gateway with credentials) must be clearly labelled as paid,
+commercial, or API-key integrations in shared examples and deployment runbooks.
+
+The `browser_search` HTML adapter is disabled unless it is explicitly configured
+and allow-listed. Use it only for local fixtures or after reviewing the target
+site's robots.txt, terms of service, consent flow, anti-abuse policy, and
+rate-limit expectations. Scraping public search result pages can create legal,
+contractual, privacy, and service-reliability risk; prefer official APIs when a
+provider offers them, identify your crawler with an appropriate User-Agent where
+allowed, do not bypass consent or access controls, do not send credentials to
+HTML search pages, and keep deterministic fixtures in tests instead of hitting
+live search engines. Always configure explicit provider limits such as
+`rate_limit`, `max_requests`, `max_pages`, `page_size`, and `timeout`; use
+conservative values such as `rate_limit: 30s`, `max_requests: 1`, and
+`max_pages: 1` for public HTML search pages until the site owner or applicable
+policy permits more. Its CSS selectors are site-specific, credentials are
+stripped rather than sent, and strict page/request/timeout/debug-output caps
+apply. All fields are optional, but this example shows the complete production
+contract for the current runner:
 
 ```json
 {
@@ -253,9 +268,10 @@ placeholder credentials and example domains.
 ### Global provider configuration
 
 Add the providers to `config.yaml` and allow only the provider names intended for
-production. The request limits shown below keep the run bounded: at most three
-rendered queries per seed, one provider page per query, ten results per page, and
-no more than twenty accepted candidates.
+production. List free/public providers first and keep paid/API-key integrations
+clearly labelled. The request limits shown below keep the run bounded: at most
+three rendered queries per seed, one provider page per query, ten results per
+page, and no more than twenty accepted candidates.
 
 ```yaml
 information_seed:
@@ -267,30 +283,54 @@ information_seed:
   retry_interval: 300
   processing_timeout: 30 minutes
   provider_allow_list:
-    - brave_search
+    - rss_public_news
+    - common_crawl_latest
     - public_json
+    # Paid/API-key provider; enable only with a valid subscription.
+    # - brave_search_api
   providers:
-    brave_search:
-      provider: brave_search
-      host: https://api.search.brave.com
-      endpoint: /res/v1/web/search
-      api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
-      timeout: 30
-      rate_limit: 1/s
-      max_requests: 3
+    rss_public_news:
+      provider: rss_feed
+      host: https://www.cisa.gov
+      endpoint: /news.xml
+      timeout: 10
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+    common_crawl_latest:
+      provider: common_crawl_index
+      host: https://index.commoncrawl.org
+      endpoint: /CC-MAIN-2026-18-index
+      parameters:
+        output: json
+        filter: status:200
+        collapse: urlkey
+      timeout: 15
+      rate_limit: 10s
+      max_requests: 1
       page_size: 10
       max_pages: 1
     public_json:
       provider: http_json
       host: https://search-adapter.example.invalid
       endpoint: /v1/search
-      api_key_label: api_key
-      api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
       parameters:
         safe_search: strict
         locale: en-US
       timeout: 30
-      rate_limit: 1/s
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+    # Paid/API-key provider.
+    brave_search_api:
+      provider: brave_search
+      host: https://api.search.brave.com
+      endpoint: /res/v1/web/search
+      api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+      timeout: 30
+      rate_limit: "1"
       max_requests: 3
       page_size: 10
       max_pages: 1
@@ -322,7 +362,7 @@ configuration validation.
       "{{ .Seed }} investor relations",
       "{{ .Seed }} contact support"
     ],
-    "providers": ["brave_search", "public_json"],
+    "providers": ["rss_public_news", "common_crawl_latest", "public_json"],
     "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
     "deduplicate_host": true,
     "max_candidates": 10,
@@ -370,11 +410,12 @@ Tyrell Corporation investor relations
 Tyrell Corporation contact support
 ```
 
-The run selects providers in the seed-level order: `brave_search`, then
-`public_json`. Both names must also exist in the global `providers` map and in
-`provider_allow_list`; otherwise the runner skips the missing or disallowed name.
-With the limits above, each provider receives at most three requests, one page
-per request, and ten results per page.
+The run selects providers in the seed-level order: `rss_public_news`,
+`common_crawl_latest`, then `public_json`. All names must also exist in the
+global `providers` map and in `provider_allow_list`; otherwise the runner skips
+the missing or disallowed name. With the limits above, each provider receives at
+most its configured request budget, one page per request, and ten results per
+page.
 
 ### Candidate plugins
 

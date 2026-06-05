@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom Feed</title>
+  <entry>
+    <title>Beta public research note</title>
+    <link href="https://example.com/research/beta" rel="alternate" />
+    <summary>Beta snippet from an Atom fixture.</summary>
+    <updated>2026-06-05T00:00:00Z</updated>
+    <id>tag:example.com,2026:beta</id>
+  </entry>
+</feed>

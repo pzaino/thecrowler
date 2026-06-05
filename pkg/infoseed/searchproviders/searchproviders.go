@@ -104,6 +104,10 @@ func NewProvider(name, provider string) Provider {
 		return &BingProvider{ProviderName: stableName}
 	case ProviderBrowserSearch:
 		return &BrowserSearchProvider{ProviderName: stableName}
+	case ProviderRSSFeed:
+		return &RSSFeedProvider{ProviderName: stableName}
+	case ProviderCommonCrawlIndex:
+		return &CommonCrawlIndexProvider{ProviderName: stableName}
 	default:
 		return &JSONProvider{ProviderName: stableName}
 	}
@@ -118,6 +122,10 @@ func normalizeProviderName(values ...string) string {
 			return ProviderBing
 		case "browser", "browser_search", "html_search", "browser_html_search":
 			return ProviderBrowserSearch
+		case "rss", "rss_feed", "atom", "atom_feed", "feed":
+			return ProviderRSSFeed
+		case "common_crawl", "common_crawl_index", "cc_index", "commoncrawl":
+			return ProviderCommonCrawlIndex
 		case "", "json", "http_json", "generic_json":
 			continue
 		}

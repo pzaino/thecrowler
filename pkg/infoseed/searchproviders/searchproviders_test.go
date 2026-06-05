@@ -124,6 +124,9 @@ func TestNewProviderSelectsNativeAdaptersAndPreservesGenericJSON(t *testing.T) {
 		{name: "bing_web_search", wantProvider: "*searchproviders.BingProvider"},
 		{name: "browser_search", wantProvider: "*searchproviders.BrowserSearchProvider"},
 		{name: "custom_browser", provider: "browser", wantProvider: "*searchproviders.BrowserSearchProvider"},
+		{name: "rss_feed", wantProvider: "*searchproviders.RSSFeedProvider"},
+		{name: "custom_atom", provider: "atom", wantProvider: "*searchproviders.RSSFeedProvider"},
+		{name: "common_crawl_index", wantProvider: "*searchproviders.CommonCrawlIndexProvider"},
 		{name: "custom_json", provider: "http_json", wantProvider: "*searchproviders.JSONProvider"},
 		{name: "legacy_adapter", provider: "unknown", wantProvider: "*searchproviders.JSONProvider"},
 	}
@@ -219,6 +222,79 @@ func browserSearchFixtureParameters() map[string]string {
 		"consent_page_selector":     "#consent-wall",
 		"api_key":                   "SHOULD_NOT_LEAK",
 		"debug_screenshots":         "true",
+	}
+}
+
+func TestRSSFeedProviderFixtureParsesRSSAndAtom(t *testing.T) {
+	t.Run("rss", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("utm_source"); got != "fixture" {
+				t.Fatalf("utm_source = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/rss+xml")
+			_, _ = w.Write(mustReadFixture(t, "rss_feed.xml"))
+		}))
+		t.Cleanup(server.Close)
+
+		provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+		results, err := provider.Search(context.Background(), "alpha", Options{Host: server.URL, Parameters: map[string]string{"utm_source": "fixture"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+		if err != nil {
+			t.Fatalf("Search returned error: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected one filtered RSS result, got %#v", results)
+		}
+		assertResult(t, results, "https://example.com/research/alpha", "Alpha public research update", "Alpha snippet from an RSS fixture.", 1)
+		if providerName, _ := results[0].Metadata["provider"].(string); providerName != ProviderRSSFeed {
+			t.Fatalf("metadata provider = %q", providerName)
+		}
+	})
+
+	t.Run("atom", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/atom+xml")
+			_, _ = w.Write(mustReadFixture(t, "atom_feed.xml"))
+		}))
+		t.Cleanup(server.Close)
+
+		provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+		results, err := provider.Search(context.Background(), "beta", Options{Host: server.URL, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+		if err != nil {
+			t.Fatalf("Search returned error: %v", err)
+		}
+		assertResult(t, results, "https://example.com/research/beta", "Beta public research note", "Beta snippet from an Atom fixture.", 1)
+	})
+}
+
+func TestCommonCrawlIndexProviderFixtureParsesJSONLines(t *testing.T) {
+	var request *http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request = r.Clone(r.Context())
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write(mustReadFixture(t, "common_crawl_index.jsonl"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &CommonCrawlIndexProvider{ProviderName: ProviderCommonCrawlIndex}
+	results, err := provider.Search(context.Background(), "example.com/*", Options{Host: server.URL, Endpoint: "/CC-MAIN-2026-18-index", Parameters: map[string]string{"filter": "status:200"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if got := request.URL.Query().Get("url"); got != "example.com/*" {
+		t.Fatalf("url query = %q", got)
+	}
+	if got := request.URL.Query().Get("output"); got != "json" {
+		t.Fatalf("output query = %q", got)
+	}
+	if got := request.URL.Query().Get("filter"); got != "status:200" {
+		t.Fatalf("filter query = %q", got)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected Common Crawl fixture results, got %#v", results)
+	}
+	assertResult(t, results, "https://example.com/", "Common Crawl capture 20260530010203", "", 1)
+	if providerName, _ := results[0].Metadata["provider"].(string); providerName != ProviderCommonCrawlIndex {
+		t.Fatalf("metadata provider = %q", providerName)
 	}
 }
 

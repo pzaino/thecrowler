@@ -6,64 +6,156 @@ information_seed:
   max_candidates_per_seed: 20
   retry_interval: 300
   processing_timeout: 30 minutes
+
+  # Free/public providers are listed first. Keep HTML result-page providers
+  # disabled until legal/policy review confirms the target search engine allows
+  # automated access for your use case.
   provider_allow_list:
-    - public_json
-    - brave_search
-    - bing_web_search
-    # Add browser_search only after explicit policy review.
-    # - approved_fixture_search
+    - rss_public_news
+    - common_crawl_latest
+    - public_json_adapter
+    # Enable only after explicit policy review and conservative rate limits.
+    # - duckduckgo_html_search
+    # - bing_html_search
+    # Paid/API-key providers; enable only with valid subscriptions and contracts.
+    # - brave_search_api
+    # - bing_web_search_api
+    # - google_cse_api
+    # - shodan_api
+
   providers:
-    public_json:
+    # --- Free/public providers -------------------------------------------------
+    rss_public_news:
+      provider: rss_feed
+      host: https://www.cisa.gov
+      endpoint: /news.xml
+      timeout: 10
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    common_crawl_latest:
+      provider: common_crawl_index
+      host: https://index.commoncrawl.org
+      # Update the collection ID when Common Crawl publishes a newer index.
+      endpoint: /CC-MAIN-2026-18-index
+      parameters:
+        output: json
+        filter: status:200
+        collapse: urlkey
+      timeout: 15
+      rate_limit: 10s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    public_json_adapter:
       provider: http_json
       host: https://search-adapter.example.invalid
       endpoint: /v1/search
-      api_key_label: api_key
-      api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
       timeout: 30
-      rate_limit: 1/s
+      rate_limit: "1"
       max_requests: 3
       page_size: 10
       max_pages: 1
 
-    brave_search:
+    # Public HTML search result page examples. These are intentionally omitted
+    # from the allow-list above until policy review confirms automated access is
+    # permitted, robots/terms/consent expectations are satisfied, and the rate
+    # limits below are appropriate for the deployment.
+    duckduckgo_html_search:
+      provider: browser_search
+      host: https://duckduckgo.com
+      endpoint: /html/
+      parameters:
+        result_container_selector: .result
+        url_selector: a.result__a
+        title_selector: a.result__a
+        snippet_selector: .result__snippet
+        next_page_selector: .result--more a.result--more__btn
+        consent_page_selector: '#consent, .modal--popout'
+        kl: us-en
+        kp: "1"
+      headers:
+        User-Agent: CROWler information-seed compliance-reviewed example (+https://example.invalid/contact)
+      timeout: 5
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    bing_html_search:
+      provider: browser_search
+      host: https://www.bing.com
+      endpoint: /search
+      parameters:
+        result_container_selector: li.b_algo
+        url_selector: h2 a
+        title_selector: h2
+        snippet_selector: .b_caption p
+        next_page_selector: a.sb_pagN
+        consent_page_selector: '#bnp_container, #bnp_ttc_div'
+        mkt: en-US
+        safeSearch: Strict
+      headers:
+        User-Agent: CROWler information-seed compliance-reviewed example (+https://example.invalid/contact)
+      timeout: 5
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    # --- Paid/API-key or commercial integrations ------------------------------
+    brave_search_api:
       provider: brave_search
       host: https://api.search.brave.com
       endpoint: /res/v1/web/search
       api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
       timeout: 30
-      rate_limit: 1/s
+      rate_limit: "1"
       max_requests: 3
       page_size: 10
       max_pages: 1
 
-    bing_web_search:
+    bing_web_search_api:
       provider: bing_web_search
       host: https://api.bing.microsoft.com
       endpoint: /v7.0/search
       api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
       timeout: 30
-      rate_limit: 1/s
+      rate_limit: "1"
       max_requests: 3
       page_size: 10
       max_pages: 1
 
-    approved_fixture_search:
-      provider: browser_search
-      host: https://search.example.invalid
-      endpoint: /search
+    google_cse_api:
+      provider: http_json
+      host: https://www.googleapis.com
+      endpoint: /customsearch/v1
+      api_key_label: key
+      api_key: ${INFORMATION_SEED_GOOGLE_CSE_API_KEY}
       parameters:
-        result_container_selector: article.result
-        url_selector: a.result-url
-        title_selector: h2.result-title
-        snippet_selector: p.result-snippet
-        next_page_selector: a[rel='next']
-        consent_page_selector: '#consent-wall'
-        safe_search: strict
-      timeout: 5
-      rate_limit: 1s
-      max_requests: 1
+        cx: ${INFORMATION_SEED_GOOGLE_CSE_ID}
+        safe: active
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
       page_size: 10
       max_pages: 1
+
+    shodan_api:
+      provider: http_json
+      host: https://api.shodan.io
+      endpoint: /shodan/host/search
+      api_key_label: key
+      api_key: ${INFORMATION_SEED_SHODAN_API_KEY}
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+
   plugin_limits:
     timeout: 30
     max_output_size_bytes: 1048576

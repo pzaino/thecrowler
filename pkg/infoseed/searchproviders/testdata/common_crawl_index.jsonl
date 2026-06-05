@@ -1,0 +1,2 @@
+{"url":"https://example.com/","mime":"text/html","status":"200","digest":"ABC123","timestamp":"20260530010203","filename":"crawl-data/CC-MAIN-2026-18/segments/example.warc.gz"}
+{"url":"https://example.com/about","mime":"text/html","status":"200","digest":"DEF456","timestamp":"20260530040506","filename":"crawl-data/CC-MAIN-2026-18/segments/example.warc.gz"}

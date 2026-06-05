@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Public Feed</title>
+    <item>
+      <title>Alpha public research update</title>
+      <link>https://example.com/research/alpha</link>
+      <description>Alpha snippet from an RSS fixture.</description>
+      <pubDate>Fri, 05 Jun 2026 00:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Unrelated update</title>
+      <link>https://example.com/other</link>
+      <description>This entry should be filtered by the query.</description>
+    </item>
+  </channel>
+</rss>

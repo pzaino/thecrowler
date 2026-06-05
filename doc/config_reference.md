@@ -52,7 +52,7 @@
   - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
   - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
   - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
-  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values. The explicit opt-in `browser_search` provider reads its CSS selectors from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values, list free/public provider blocks before paid/API-key integrations, and label commercial providers clearly. The `rss_feed` provider reads RSS/Atom documents, `common_crawl_index` reads Common Crawl CDX index JSON/JSONL responses, and the explicit opt-in `browser_search` provider reads its CSS selectors from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`. Scraping public search result pages requires site-specific review of robots.txt, terms, consent flows, and anti-abuse policies; prefer official APIs, avoid bypassing controls, keep tests on fixtures rather than live search engines, and configure explicit conservative limits such as `rate_limit: 30s`, `max_requests: 1`, `max_pages: 1`, and short `timeout` values.
   - **`provider_allow_list`** *(array of strings)*: Explicit provider allow-list. Entries are trimmed, lower-cased, and de-duplicated; configured providers are ignored unless their normalized key is present in the allow-list, so an empty allow-list prevents provider execution.
   - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
     - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
@@ -70,13 +70,42 @@
     retry_interval: 60
     processing_timeout: 30 minutes
     provider_allow_list:
+      - rss_public_news
+      - common_crawl_latest
       - public_json
-      - brave_search
-      - bing_web_search
+      # Paid/API-key providers; enable only with valid subscriptions.
+      # - brave_search
+      # - bing_web_search
       # Add browser_search only after explicit policy review; otherwise the
       # configured browser_search block below remains disabled.
       # - browser_search
     providers:
+      # Free/public RSS or Atom feed adapter.
+      rss_public_news:
+        provider: rss_feed
+        host: https://www.cisa.gov
+        endpoint: /news.xml
+        timeout: 10
+        rate_limit: 30s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
+      # Free/public Common Crawl index adapter.
+      common_crawl_latest:
+        provider: common_crawl_index
+        host: https://index.commoncrawl.org
+        endpoint: /CC-MAIN-2026-18-index
+        parameters:
+          output: json
+          filter: status:200
+          collapse: urlkey
+        timeout: 15
+        rate_limit: 10s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
       # Generic JSON adapter support is preserved for custom search gateways.
       public_json:
         provider: http_json
@@ -91,14 +120,15 @@
           X-Request-ID: ${INFORMATION_SEED_REQUEST_ID}
           X-Client-Token: ${INFORMATION_SEED_PUBLIC_JSON_CLIENT_TOKEN}
         timeout: 30
-        rate_limit: 1/s
+        rate_limit: "1"
         max_requests: 5
         page_size: 10
         max_pages: 1
 
-      # First-class Brave Search API adapter. The adapter sends q=<query> and
+      # Paid/API-key Brave Search API adapter. The adapter sends q=<query> and
       # X-Subscription-Token: <api_key>. Host and endpoint are optional when
       # using the public Brave API defaults shown here.
+      # Paid/API-key provider.
       brave_search:
         provider: brave_search
         host: https://api.search.brave.com
@@ -107,14 +137,15 @@
         parameters:
           country: ${INFORMATION_SEED_BRAVE_COUNTRY}
         timeout: 30
-        rate_limit: 1/s
+        rate_limit: "1"
         max_requests: 5
         page_size: 10
         max_pages: 1
 
-      # First-class Bing Web Search API adapter. The adapter sends q=<query> and
+      # Paid/API-key Bing Web Search API adapter. The adapter sends q=<query> and
       # Ocp-Apim-Subscription-Key: <api_key>. Host and endpoint are optional
       # when using the public Bing Web Search API defaults shown here.
+      # Paid/API-key provider.
       bing_web_search:
         provider: bing_web_search
         host: https://api.bing.microsoft.com
@@ -123,7 +154,7 @@
         headers:
           X-Search-Trace: ${INFORMATION_SEED_BING_TRACE_ID}
         timeout: 30
-        rate_limit: 1/s
+        rate_limit: "1"
         max_requests: 5
         page_size: 10
         max_pages: 1
@@ -165,14 +196,15 @@
   for the complete seed-level contract.
   Supported production provider adapters are selected by the provider block's
   `provider` value. The runner currently recognizes `http_json` (also `json` or
-  `generic_json`), `brave_search` (including Brave aliases),
-  `bing_web_search` (including Bing aliases), and the explicit opt-in
-  `browser_search` HTML adapter. Unknown provider values intentionally fall back
+  `generic_json`), `rss_feed`, `common_crawl_index`, `brave_search`
+  (including Brave aliases), `bing_web_search` (including Bing aliases), and the
+  explicit opt-in `browser_search` HTML adapter. Unknown provider values intentionally fall back
   to the generic JSON adapter so deployments can front additional search systems
   with an internal gateway. Keep request limits conservative in production: set
   `max_requests` no higher than the global `max_queries_per_seed`, keep
   `max_pages` at `1` unless the provider quota has been reviewed, and prefer
-  `rate_limit: 1/s` or slower for external APIs.
+  `rate_limit: "1"` (one request per second), duration-based limits such as
+  `rate_limit: 30s`, or slower values for external APIs.
 
   Minimal snippets for each supported provider, using placeholder credentials,
   are shown below. Copy only the provider blocks you intend to enable and add the
@@ -184,12 +216,38 @@
     max_queries_per_seed: 5
     max_candidates_per_seed: 50
     provider_allow_list:
+      - rss_public_news
+      - common_crawl_latest
       - public_json
-      - brave_search
-      - bing_web_search
+      # Paid/API-key providers; enable only with valid subscriptions.
+      # - brave_search
+      # - bing_web_search
       # browser_search requires an explicit site policy review before enabling.
       # - approved_fixture_search
     providers:
+      rss_public_news:
+        provider: rss_feed
+        host: https://www.cisa.gov
+        endpoint: /news.xml
+        timeout: 10
+        rate_limit: 30s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
+      common_crawl_latest:
+        provider: common_crawl_index
+        host: https://index.commoncrawl.org
+        endpoint: /CC-MAIN-2026-18-index
+        parameters:
+          output: json
+          filter: status:200
+        timeout: 15
+        rate_limit: 10s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
       public_json:
         provider: http_json
         host: https://search-adapter.example.invalid
@@ -197,29 +255,31 @@
         api_key_label: api_key
         api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
         timeout: 30
-        rate_limit: 1/s
+        rate_limit: "1"
         max_requests: 5
         page_size: 10
         max_pages: 1
 
+      # Paid/API-key provider.
       brave_search:
         provider: brave_search
         host: https://api.search.brave.com
         endpoint: /res/v1/web/search
         api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
         timeout: 30
-        rate_limit: 1/s
+        rate_limit: "1"
         max_requests: 5
         page_size: 10
         max_pages: 1
 
+      # Paid/API-key provider.
       bing_web_search:
         provider: bing_web_search
         host: https://api.bing.microsoft.com
         endpoint: /v7.0/search
         api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
         timeout: 30
-        rate_limit: 1/s
+        rate_limit: "1"
         max_requests: 5
         page_size: 10
         max_pages: 1
