@@ -51,7 +51,7 @@
   - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
   - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
   - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
-  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, and `max_requests`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values.
   - **`provider_allow_list`** *(array of strings)*: Explicit provider allow-list. Entries are trimmed, lower-cased, and de-duplicated; configured providers are ignored unless their normalized key is present in the allow-list, so an empty allow-list prevents provider execution.
   - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
     - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
@@ -80,9 +80,17 @@
         endpoint: /v1/search
         api_key_label: api_key
         api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+        parameters:
+          locale: ${INFORMATION_SEED_SEARCH_LOCALE}
+          safe_search: ${INFORMATION_SEED_SAFE_SEARCH}
+        headers:
+          X-Request-ID: ${INFORMATION_SEED_REQUEST_ID}
+          X-Client-Token: ${INFORMATION_SEED_PUBLIC_JSON_CLIENT_TOKEN}
         timeout: 30
         rate_limit: 1/s
         max_requests: 5
+        page_size: 10
+        max_pages: 1
 
       # First-class Brave Search API adapter. The adapter sends q=<query> and
       # X-Subscription-Token: <api_key>. Host and endpoint are optional when
@@ -92,9 +100,13 @@
         host: https://api.search.brave.com
         endpoint: /res/v1/web/search
         api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+        parameters:
+          country: ${INFORMATION_SEED_BRAVE_COUNTRY}
         timeout: 30
         rate_limit: 1/s
         max_requests: 5
+        page_size: 10
+        max_pages: 1
 
       # First-class Bing Web Search API adapter. The adapter sends q=<query> and
       # Ocp-Apim-Subscription-Key: <api_key>. Host and endpoint are optional
@@ -104,9 +116,13 @@
         host: https://api.bing.microsoft.com
         endpoint: /v7.0/search
         api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
+        headers:
+          X-Search-Trace: ${INFORMATION_SEED_BING_TRACE_ID}
         timeout: 30
         rate_limit: 1/s
         max_requests: 5
+        page_size: 10
+        max_pages: 1
     plugin_limits:
       timeout: 30
       max_output_size_bytes: 1048576

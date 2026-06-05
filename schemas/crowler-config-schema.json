@@ -953,6 +953,28 @@
                 "description": "Maximum provider requests per seed.",
                 "minimum": 1,
                 "maximum": 100
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Additional provider query parameters. Use placeholders for sensitive values.",
+                "additionalProperties": { "type": "string" }
+              },
+              "headers": {
+                "type": "object",
+                "description": "Additional provider HTTP headers. Use placeholders for sensitive values.",
+                "additionalProperties": { "type": "string" }
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Maximum results requested per provider page.",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "max_pages": {
+                "type": "integer",
+                "description": "Maximum provider pages requested per seed.",
+                "minimum": 1,
+                "maximum": 10
               }
             },
             "additionalProperties": false

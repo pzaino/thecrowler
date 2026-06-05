@@ -122,15 +122,33 @@ func NewRunner(db *cdb.Handler, config cfg.InformationSeedConfig) *Runner {
 
 // BuildProviders creates configured provider implementations.
 func BuildProviders(config cfg.InformationSeedConfig) map[string]searchproviders.Provider {
+	allowed := informationSeedAllowedProviders(config.ProviderAllowList)
 	providers := make(map[string]searchproviders.Provider, len(config.Providers))
 	for name, providerCfg := range config.Providers {
 		key := strings.ToLower(strings.TrimSpace(name))
 		if key == "" {
 			continue
 		}
+		if len(allowed) == 0 {
+			continue
+		}
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
 		providers[key] = searchproviders.NewProvider(key, providerCfg.Provider)
 	}
 	return providers
+}
+
+func informationSeedAllowedProviders(allowList []string) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(allowList))
+	for _, provider := range allowList {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if provider != "" {
+			allowed[provider] = struct{}{}
+		}
+	}
+	return allowed
 }
 
 func (r *Runner) emitInformationSeedEvent(ctx context.Context, seed cdb.InformationSeed, sourceID uint64, eventType, severity string, stats *seedDiscoveryStats) error {
@@ -357,7 +375,8 @@ func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, r
 	for _, providerName := range providerNames {
 		provider := r.Providers[providerName]
 		providerCfg := r.Config.Providers[providerName]
-		for _, query := range queries {
+		providerQueries := cappedProviderQueries(queries, r.Config.MaxQueriesPerSeed, providerCfg)
+		for _, query := range providerQueries {
 			wg.Add(1)
 			go func(providerName string, provider searchproviders.Provider, providerCfg cfg.InformationSeedProviderConfig, query string) {
 				defer wg.Done()
@@ -371,7 +390,7 @@ func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, r
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: %v", providerName, err))
+					errs = append(errs, fmt.Sprintf("%s: %s", providerName, redactInformationSeedError(err.Error())))
 					return
 				}
 				for _, searchResult := range results {
@@ -392,19 +411,85 @@ func (r *Runner) providerNames(runCfg SeedRunConfig) []string {
 	if len(configured) == 0 {
 		configured = r.Config.ProviderAllowList
 	}
+	allowed := informationSeedAllowedProviders(r.Config.ProviderAllowList)
 	names := make([]string, 0, len(configured))
+	seen := map[string]struct{}{}
 	for _, name := range configured {
 		name = strings.ToLower(strings.TrimSpace(name))
 		if name == "" || r.Providers[name] == nil {
 			continue
 		}
+		if len(allowed) == 0 {
+			continue
+		}
+		if _, ok := allowed[name]; !ok {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
 		names = append(names, name)
 	}
 	return names
 }
 
+func cappedProviderQueries(queries []string, globalMaxQueries int, providerCfg cfg.InformationSeedProviderConfig) []string {
+	limit := len(queries)
+	if globalMaxQueries > 0 && globalMaxQueries < limit {
+		limit = globalMaxQueries
+	}
+	maxRequests := providerCfg.MaxRequests
+	if maxRequests < 1 || maxRequests > limit {
+		maxRequests = limit
+	}
+	maxPages := providerCfg.MaxPages
+	if maxPages < 1 {
+		maxPages = 1
+	}
+	searchesByRequests := maxRequests / maxPages
+	if searchesByRequests < 1 {
+		searchesByRequests = 1
+	}
+	if searchesByRequests < limit {
+		limit = searchesByRequests
+	}
+	return queries[:limit]
+}
+
 func providerOptions(name string, providerCfg cfg.InformationSeedProviderConfig) searchproviders.Options {
-	return searchproviders.Options{Name: name, Provider: providerCfg.Provider, Host: providerCfg.Host, Endpoint: providerCfg.Endpoint, APIKeyLabel: providerCfg.APIKeyLabel, APIKey: providerCfg.APIKey, APIToken: providerCfg.APIToken, Token: providerCfg.Token, Timeout: time.Duration(providerCfg.Timeout) * time.Second, MaxRequests: providerCfg.MaxRequests}
+	return searchproviders.Options{Name: name, Provider: providerCfg.Provider, Host: providerCfg.Host, Endpoint: providerCfg.Endpoint, APIKeyLabel: providerCfg.APIKeyLabel, APIKey: providerCfg.APIKey, APIToken: providerCfg.APIToken, Token: providerCfg.Token, Timeout: time.Duration(providerCfg.Timeout) * time.Second, MaxRequests: providerCfg.MaxRequests, Parameters: copyProviderMap(providerCfg.Parameters), Headers: copyProviderMap(providerCfg.Headers), PageSize: providerCfg.PageSize, MaxPages: providerCfg.MaxPages}
+}
+
+func copyProviderMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	copyValues := make(map[string]string, len(values))
+	for key, value := range values {
+		copyValues[key] = value
+	}
+	return copyValues
+}
+
+func redactInformationSeedError(message string) string {
+	for _, marker := range []string{"api_key=", "apikey=", "key=", "token=", "secret=", "password=", "authorization:", "x-subscription-token:", "ocp-apim-subscription-key:"} {
+		lower := strings.ToLower(message)
+		idx := strings.Index(lower, marker)
+		if idx < 0 {
+			continue
+		}
+		valueStart := idx + len(marker)
+		for valueStart < len(message) && strings.ContainsRune(" \t", rune(message[valueStart])) {
+			valueStart++
+		}
+		end := valueStart
+		for end < len(message) && !strings.ContainsRune(" &;\n\t\r", rune(message[end])) {
+			end++
+		}
+		message = message[:idx+len(marker)] + "REDACTED" + message[end:]
+	}
+	return message
 }
 
 func (r *Runner) applyProcessors(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, error) {

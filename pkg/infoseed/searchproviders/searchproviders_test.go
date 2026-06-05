@@ -33,6 +33,85 @@ func TestJSONProviderSearchParsesCommonResultShape(t *testing.T) {
 	}
 }
 
+func TestJSONProviderSendsHeadersParametersAndPaginatesWithinCaps(t *testing.T) {
+	var requests []*http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Clone(r.Context()))
+		if got := r.Header.Get("X-Request-ID"); got != "${INFORMATION_SEED_REQUEST_ID}" {
+			t.Fatalf("X-Request-ID = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer ${INFORMATION_SEED_TOKEN}" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if got := r.URL.Query().Get("safe"); got != "value" {
+			t.Fatalf("safe parameter = %q", got)
+		}
+		if got := r.URL.Query().Get("page_size"); got != "2" {
+			t.Fatalf("page_size = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{"url": fmt.Sprintf("https://example.com/%d", len(requests))}},
+		})
+	}))
+	defer server.Close()
+
+	provider := &JSONProvider{ProviderName: "public_json"}
+	results, err := provider.Search(context.Background(), "seed query", Options{
+		Host:        server.URL,
+		Timeout:     time.Second,
+		Parameters:  map[string]string{"safe": "value"},
+		Headers:     map[string]string{"X-Request-ID": "${INFORMATION_SEED_REQUEST_ID}", "Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"},
+		PageSize:    2,
+		MaxPages:    2,
+		MaxRequests: 2,
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 paged requests, got %d", len(requests))
+	}
+	if got := requests[0].URL.Query().Get("page"); got != "" {
+		t.Fatalf("first page should not set page parameter, got %q", got)
+	}
+	if got := requests[1].URL.Query().Get("page"); got != "2" {
+		t.Fatalf("second page = %q", got)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 capped results, got %#v", results)
+	}
+}
+
+func TestJSONProviderMaxRequestsCapsMaxPages(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{"url": fmt.Sprintf("https://example.com/%d", requests)}},
+		})
+	}))
+	defer server.Close()
+
+	provider := &JSONProvider{ProviderName: "public_json"}
+	_, err := provider.Search(context.Background(), "seed query", Options{Host: server.URL, Timeout: time.Second, PageSize: 1, MaxPages: 5, MaxRequests: 1})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected MaxRequests to cap pages at 1, got %d requests", requests)
+	}
+}
+
+func TestRedactSensitiveCustomHeaderAndParameterNames(t *testing.T) {
+	message := redactSensitive(`Get "https://example.invalid/search?client_secret=SHOULD_NOT_LEAK&safe=value": Authorization: SECRET_TOKEN`)
+	if strings.Contains(message, "SHOULD_NOT_LEAK") || strings.Contains(message, "SECRET_TOKEN") {
+		t.Fatalf("redaction leaked sensitive value: %s", message)
+	}
+	if !strings.Contains(message, "client_secret=REDACTED") || !strings.Contains(strings.ToLower(message), "authorization:redacted") {
+		t.Fatalf("redaction did not mark sensitive fields: %s", message)
+	}
+}
+
 func TestNewProviderSelectsNativeAdaptersAndPreservesGenericJSON(t *testing.T) {
 	tests := []struct {
 		name         string

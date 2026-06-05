@@ -1900,6 +1900,10 @@ func TestInformationSeedDefaultsAndValidation(t *testing.T) {
 				APIKeyLabel: " X-API-Key ",
 				Timeout:     999,
 				MaxRequests: 999,
+				Parameters:  map[string]string{" api_key ": " ${INFORMATION_SEED_API_KEY} ", "": "ignored"},
+				Headers:     map[string]string{" Authorization ": " Bearer ${INFORMATION_SEED_TOKEN} ", " ": "ignored"},
+				PageSize:    999,
+				MaxPages:    999,
 			},
 			"blocked": {
 				Timeout:     10,
@@ -1951,6 +1955,18 @@ func TestInformationSeedDefaultsAndValidation(t *testing.T) {
 	if provider.MaxRequests != cfg.InformationSeed.MaxQueriesPerSeed {
 		t.Errorf(errExpected, cfg.InformationSeed.MaxQueriesPerSeed, provider.MaxRequests)
 	}
+	if provider.PageSize != informationSeedMaxProviderPageSize {
+		t.Errorf(errExpected, informationSeedMaxProviderPageSize, provider.PageSize)
+	}
+	if provider.MaxPages != provider.MaxRequests {
+		t.Errorf(errExpected, provider.MaxRequests, provider.MaxPages)
+	}
+	if !reflect.DeepEqual(provider.Parameters, map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"}) {
+		t.Errorf(errExpected, map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"}, provider.Parameters)
+	}
+	if !reflect.DeepEqual(provider.Headers, map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"}) {
+		t.Errorf(errExpected, map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"}, provider.Headers)
+	}
 	if cfg.InformationSeed.PluginLimits.Timeout != informationSeedDefaultPluginTimeout {
 		t.Errorf(errExpected, informationSeedDefaultPluginTimeout, cfg.InformationSeed.PluginLimits.Timeout)
 	}
@@ -1965,5 +1981,39 @@ func TestInformationSeedDefaultsAndValidation(t *testing.T) {
 	cfg.validateInformationSeed()
 	if len(cfg.InformationSeed.Providers) != 0 {
 		t.Fatalf("expected empty information_seed.provider_allow_list to remove configured providers, got %v", cfg.InformationSeed.Providers)
+	}
+}
+
+func TestInformationSeedProviderMapCopyIsolation(t *testing.T) {
+	original := NewConfig()
+	original.InformationSeed.ProviderAllowList = []string{"example"}
+	original.InformationSeed.Providers = map[string]InformationSeedProviderConfig{
+		"example": {
+			Parameters: map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"},
+			Headers:    map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"},
+		},
+	}
+
+	clone := DeepCopyConfig(original)
+	clone.InformationSeed.Providers["example"].Parameters["api_key"] = "changed"
+	clone.InformationSeed.Providers["example"].Headers["Authorization"] = "changed"
+
+	if got := original.InformationSeed.Providers["example"].Parameters["api_key"]; got != "${INFORMATION_SEED_API_KEY}" {
+		t.Fatalf("parameters map was aliased, got %q", got)
+	}
+	if got := original.InformationSeed.Providers["example"].Headers["Authorization"]; got != "Bearer ${INFORMATION_SEED_TOKEN}" {
+		t.Fatalf("headers map was aliased, got %q", got)
+	}
+
+	sourceParams := original.InformationSeed.Providers["example"].Parameters
+	sourceHeaders := original.InformationSeed.Providers["example"].Headers
+	original.validateInformationSeed()
+	sourceParams["api_key"] = "changed after validation"
+	sourceHeaders["Authorization"] = "changed after validation"
+	if got := original.InformationSeed.Providers["example"].Parameters["api_key"]; got != "${INFORMATION_SEED_API_KEY}" {
+		t.Fatalf("validated parameters map should be isolated from input map, got %q", got)
+	}
+	if got := original.InformationSeed.Providers["example"].Headers["Authorization"]; got != "Bearer ${INFORMATION_SEED_TOKEN}" {
+		t.Fatalf("validated headers map should be isolated from input map, got %q", got)
 	}
 }

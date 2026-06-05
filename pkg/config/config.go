@@ -66,6 +66,10 @@ const (
 	informationSeedMaxPluginTimeout            = 300
 	informationSeedDefaultPluginOutputSize     = 1048576
 	informationSeedMaxPluginOutputSize         = 10485760
+	informationSeedDefaultProviderPageSize     = 10
+	informationSeedMaxProviderPageSize         = 100
+	informationSeedDefaultProviderMaxPages     = 1
+	informationSeedMaxProviderMaxPages         = 10
 
 	stdRateLimit = "10,10"
 	stdHost      = "0.0.0.0"
@@ -1080,6 +1084,8 @@ func (c *Config) validateInformationSeed() {
 		provider.Endpoint = strings.TrimSpace(provider.Endpoint)
 		provider.APIKeyLabel = strings.TrimSpace(provider.APIKeyLabel)
 		provider.RateLimit = strings.TrimSpace(provider.RateLimit)
+		provider.Parameters = normalizeInformationSeedStringMap(provider.Parameters)
+		provider.Headers = normalizeInformationSeedStringMap(provider.Headers)
 		if provider.Timeout < 1 {
 			provider.Timeout = c.InformationSeed.PluginLimits.Timeout
 		} else if provider.Timeout > informationSeedMaxPluginTimeout {
@@ -1090,9 +1096,51 @@ func (c *Config) validateInformationSeed() {
 		} else if provider.MaxRequests > c.InformationSeed.MaxQueriesPerSeed {
 			provider.MaxRequests = c.InformationSeed.MaxQueriesPerSeed
 		}
+		if provider.PageSize < 1 {
+			provider.PageSize = informationSeedDefaultProviderPageSize
+		} else if provider.PageSize > informationSeedMaxProviderPageSize {
+			provider.PageSize = informationSeedMaxProviderPageSize
+		}
+		if provider.MaxPages < 1 {
+			provider.MaxPages = informationSeedDefaultProviderMaxPages
+		} else if provider.MaxPages > informationSeedMaxProviderMaxPages {
+			provider.MaxPages = informationSeedMaxProviderMaxPages
+		}
+		if provider.MaxPages > provider.MaxRequests {
+			provider.MaxPages = provider.MaxRequests
+		}
 		providers[key] = provider
 	}
 	c.InformationSeed.Providers = providers
+}
+
+func normalizeInformationSeedStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copyValues := make(map[string]string, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		copyValues[key] = strings.TrimSpace(value)
+	}
+	if len(copyValues) == 0 {
+		return nil
+	}
+	return copyValues
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	copyValues := make(map[string]string, len(values))
+	for key, value := range values {
+		copyValues[key] = value
+	}
+	return copyValues
 }
 
 func (c *Config) validateDatabase() {
@@ -2585,6 +2633,8 @@ func DeepCopyConfig(src *Config) *Config {
 	copyConfig.InformationSeed.ProviderAllowList = append([]string(nil), src.InformationSeed.ProviderAllowList...)
 	copyConfig.InformationSeed.Providers = make(map[string]InformationSeedProviderConfig, len(src.InformationSeed.Providers))
 	for k, v := range src.InformationSeed.Providers {
+		v.Parameters = copyStringMap(v.Parameters)
+		v.Headers = copyStringMap(v.Headers)
 		copyConfig.InformationSeed.Providers[k] = v
 	}
 

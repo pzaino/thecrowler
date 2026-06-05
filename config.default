@@ -231,8 +231,16 @@ information_seed:
   #     api_key_label: X-API-Key
   #     api_key: ${INFORMATION_SEED_EXAMPLE_API_KEY}
   #     timeout: 30
+  #     parameters:
+  #       locale: ${INFORMATION_SEED_EXAMPLE_LOCALE}
+  #       safe_search: ${INFORMATION_SEED_SAFE_SEARCH}
+  #     headers:
+  #       X-Request-ID: ${INFORMATION_SEED_REQUEST_ID}
+  #       X-Client-Token: ${INFORMATION_SEED_EXAMPLE_CLIENT_TOKEN}
   #     rate_limit: "1,10"
   #     max_requests: 5
+  #     page_size: 10
+  #     max_pages: 1
   # Hard limits for plugins used by seed discovery
   plugin_limits:
     # Plugin execution timeout in seconds (clamped to 1..300)

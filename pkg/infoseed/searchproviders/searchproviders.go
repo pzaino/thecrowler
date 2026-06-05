@@ -58,6 +58,8 @@ type Options struct {
 	MaxRequests int
 	Parameters  map[string]string
 	Headers     map[string]string
+	PageSize    int
+	MaxPages    int
 }
 
 // Result is one candidate returned by a provider.
@@ -127,6 +129,26 @@ func (p *JSONProvider) Name() string {
 // Search queries a JSON HTTP endpoint. The query is sent as a q parameter unless
 // options.Parameters overrides the parameter set.
 func (p *JSONProvider) Search(ctx context.Context, query string, options Options) ([]Result, error) {
+	options = boundedOptions(options)
+	results := make([]Result, 0, options.PageSize)
+	for page := 1; page <= options.MaxPages; page++ {
+		body, err := p.searchPage(ctx, query, options, page)
+		if err != nil {
+			return nil, err
+		}
+		pageResults, err := parseResults(body)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, pageResults...)
+		if len(pageResults) == 0 || len(results) >= options.PageSize*options.MaxPages {
+			break
+		}
+	}
+	return trimResults(results, options.PageSize*options.MaxPages), nil
+}
+
+func (p *JSONProvider) searchPage(ctx context.Context, query string, options Options, page int) ([]byte, error) {
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
@@ -135,11 +157,8 @@ func (p *JSONProvider) Search(ctx context.Context, query string, options Options
 	if query != "" && values.Get("q") == "" && values.Get("query") == "" {
 		values.Set("q", query)
 	}
-	for key, value := range options.Parameters {
-		if strings.TrimSpace(key) != "" {
-			values.Set(key, value)
-		}
-	}
+	applyParameters(values, options.Parameters)
+	applyPagination(values, ProviderHTTPJSON, options.PageSize, page)
 	if options.APIKeyLabel != "" && options.APIKey != "" {
 		values.Set(options.APIKeyLabel, options.APIKey)
 	}
@@ -150,22 +169,14 @@ func (p *JSONProvider) Search(ctx context.Context, query string, options Options
 		return nil, safeProviderError(p.Name(), err)
 	}
 	req.Header.Set("Accept", "application/json")
-	for key, value := range options.Headers {
-		if strings.TrimSpace(key) != "" {
-			req.Header.Set(key, value)
-		}
-	}
+	applyHeaders(req.Header, options.Headers)
 	if options.APIToken != "" {
 		req.Header.Set("Authorization", "Bearer "+options.APIToken)
 	} else if options.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+options.Token)
 	}
 
-	body, err := doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
-	if err != nil {
-		return nil, err
-	}
-	return parseResults(body)
+	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
 }
 
 // BraveProvider implements the Brave Search API web-search adapter.
@@ -182,15 +193,26 @@ func (p *BraveProvider) Name() string {
 }
 
 func (p *BraveProvider) Search(ctx context.Context, query string, options Options) ([]Result, error) {
-	body, err := p.search(ctx, query, options)
-	if err != nil {
-		return nil, err
+	options = withDefaults(boundedOptions(options), braveDefaultHost, braveDefaultEndpoint)
+	results := make([]Result, 0, options.PageSize)
+	for page := 1; page <= options.MaxPages; page++ {
+		body, err := p.searchPage(ctx, query, options, page)
+		if err != nil {
+			return nil, err
+		}
+		pageResults, err := parseBraveResults(body)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, pageResults...)
+		if len(pageResults) == 0 || len(results) >= options.PageSize*options.MaxPages {
+			break
+		}
 	}
-	return parseBraveResults(body)
+	return trimResults(results, options.PageSize*options.MaxPages), nil
 }
 
-func (p *BraveProvider) search(ctx context.Context, query string, options Options) ([]byte, error) {
-	options = withDefaults(options, braveDefaultHost, braveDefaultEndpoint)
+func (p *BraveProvider) searchPage(ctx context.Context, query string, options Options, page int) ([]byte, error) {
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
@@ -199,11 +221,8 @@ func (p *BraveProvider) search(ctx context.Context, query string, options Option
 	if query != "" && values.Get("q") == "" {
 		values.Set("q", query)
 	}
-	for key, value := range options.Parameters {
-		if strings.TrimSpace(key) != "" {
-			values.Set(key, value)
-		}
-	}
+	applyParameters(values, options.Parameters)
+	applyPagination(values, ProviderBrave, options.PageSize, page)
 	endpoint.RawQuery = values.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -217,11 +236,7 @@ func (p *BraveProvider) search(ctx context.Context, query string, options Option
 	} else if options.Token != "" {
 		req.Header.Set("X-Subscription-Token", options.Token)
 	}
-	for key, value := range options.Headers {
-		if strings.TrimSpace(key) != "" {
-			req.Header.Set(key, value)
-		}
-	}
+	applyHeaders(req.Header, options.Headers)
 	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
 }
 
@@ -239,15 +254,26 @@ func (p *BingProvider) Name() string {
 }
 
 func (p *BingProvider) Search(ctx context.Context, query string, options Options) ([]Result, error) {
-	body, err := p.search(ctx, query, options)
-	if err != nil {
-		return nil, err
+	options = withDefaults(boundedOptions(options), bingDefaultHost, bingDefaultEndpoint)
+	results := make([]Result, 0, options.PageSize)
+	for page := 1; page <= options.MaxPages; page++ {
+		body, err := p.searchPage(ctx, query, options, page)
+		if err != nil {
+			return nil, err
+		}
+		pageResults, err := parseBingResults(body)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, pageResults...)
+		if len(pageResults) == 0 || len(results) >= options.PageSize*options.MaxPages {
+			break
+		}
 	}
-	return parseBingResults(body)
+	return trimResults(results, options.PageSize*options.MaxPages), nil
 }
 
-func (p *BingProvider) search(ctx context.Context, query string, options Options) ([]byte, error) {
-	options = withDefaults(options, bingDefaultHost, bingDefaultEndpoint)
+func (p *BingProvider) searchPage(ctx context.Context, query string, options Options, page int) ([]byte, error) {
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
@@ -256,11 +282,8 @@ func (p *BingProvider) search(ctx context.Context, query string, options Options
 	if query != "" && values.Get("q") == "" {
 		values.Set("q", query)
 	}
-	for key, value := range options.Parameters {
-		if strings.TrimSpace(key) != "" {
-			values.Set(key, value)
-		}
-	}
+	applyParameters(values, options.Parameters)
+	applyPagination(values, ProviderBing, options.PageSize, page)
 	endpoint.RawQuery = values.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -274,12 +297,72 @@ func (p *BingProvider) search(ctx context.Context, query string, options Options
 	} else if options.Token != "" {
 		req.Header.Set("Ocp-Apim-Subscription-Key", options.Token)
 	}
-	for key, value := range options.Headers {
+	applyHeaders(req.Header, options.Headers)
+	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
+}
+
+func boundedOptions(options Options) Options {
+	if options.PageSize < 1 {
+		options.PageSize = 10
+	} else if options.PageSize > 100 {
+		options.PageSize = 100
+	}
+	if options.MaxPages < 1 {
+		options.MaxPages = 1
+	} else if options.MaxPages > 10 {
+		options.MaxPages = 10
+	}
+	if options.MaxRequests > 0 && options.MaxPages > options.MaxRequests {
+		options.MaxPages = options.MaxRequests
+	}
+	return options
+}
+
+func applyParameters(values url.Values, parameters map[string]string) {
+	for key, value := range parameters {
 		if strings.TrimSpace(key) != "" {
-			req.Header.Set(key, value)
+			values.Set(key, value)
 		}
 	}
-	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
+}
+
+func applyHeaders(headers http.Header, configured map[string]string) {
+	for key, value := range configured {
+		if strings.TrimSpace(key) != "" {
+			headers.Set(key, value)
+		}
+	}
+}
+
+func applyPagination(values url.Values, provider string, pageSize, page int) {
+	if pageSize > 0 && values.Get("page_size") == "" && values.Get("count") == "" {
+		switch provider {
+		case ProviderBrave, ProviderBing:
+			values.Set("count", fmt.Sprintf("%d", pageSize))
+		default:
+			values.Set("page_size", fmt.Sprintf("%d", pageSize))
+		}
+	}
+	if page <= 1 {
+		return
+	}
+	switch provider {
+	case ProviderBing:
+		if values.Get("offset") == "" {
+			values.Set("offset", fmt.Sprintf("%d", (page-1)*pageSize))
+		}
+	default:
+		if values.Get("page") == "" {
+			values.Set("page", fmt.Sprintf("%d", page))
+		}
+	}
+}
+
+func trimResults(results []Result, limit int) []Result {
+	if limit > 0 && len(results) > limit {
+		return results[:limit]
+	}
+	return results
 }
 
 func withDefaults(options Options, host, endpoint string) Options {
@@ -641,7 +724,7 @@ func redactSensitive(message string) string {
 		parsed.RawQuery = query.Encode()
 		message = parsed.String()
 	}
-	for _, marker := range []string{"api_key=", "apikey=", "key=", "token=", "subscription-key=", "Ocp-Apim-Subscription-Key:"} {
+	for _, marker := range []string{"api_key=", "apikey=", "key=", "token=", "secret=", "password=", "authorization:", "subscription-key=", "Ocp-Apim-Subscription-Key:", "X-Subscription-Token:"} {
 		idx := strings.Index(strings.ToLower(message), strings.ToLower(marker))
 		if idx >= 0 {
 			valueStart := idx + len(marker)
@@ -660,10 +743,11 @@ func redactSensitive(message string) string {
 
 func isSensitiveKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "api_key", "apikey", "key", "token", "api_token", "subscription-key", "ocp-apim-subscription-key", "x-subscription-token":
+	case "api_key", "apikey", "key", "token", "api_token", "subscription-key", "ocp-apim-subscription-key", "x-subscription-token", "authorization", "password", "secret", "api_secret":
 		return true
 	default:
-		return false
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		return strings.Contains(normalized, "secret") || strings.Contains(normalized, "token") || strings.Contains(normalized, "password") || strings.Contains(normalized, "credential")
 	}
 }
 
