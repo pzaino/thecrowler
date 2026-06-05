@@ -279,6 +279,88 @@ func TestInformationSeedCandidateDecisionsHandlerSuccess(t *testing.T) {
 	}
 }
 
+func TestInformationSeedPathLifecycleHandlers(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "path lifecycle", "completed", "high", 2, 20, false)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/information_seed/"+itoa(seedID)+"/rerun", nil)
+	informationSeedRerunHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected rerun 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode rerun response: %v", err)
+	}
+	if resp.Item.Status != "pending" || resp.Item.Disabled {
+		t.Fatalf("expected completed seed to move to pending without disabling, got %#v", resp.Item)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/information_seed/"+itoa(seedID)+"/disable", nil)
+	informationSeedPathDisableHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected disable 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode disable response: %v", err)
+	}
+	if !resp.Item.Disabled || resp.Item.Status != "pending" {
+		t.Fatalf("expected disabled flag without status change, got %#v", resp.Item)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/information_seed/"+itoa(seedID)+"/enable", bytes.NewReader([]byte(`{"queue_pending":true}`)))
+	informationSeedEnableHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected enable 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode enable response: %v", err)
+	}
+	if resp.Item.Disabled || resp.Item.Status != "pending" {
+		t.Fatalf("expected enabled pending seed, got %#v", resp.Item)
+	}
+}
+
+func TestInformationSeedEventsHandlerPagination(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "events api", "completed", "", 0, 0, false)
+	otherID := createInformationSeedAPITestSeed(t, &handler, "other events api", "completed", "", 0, 0, false)
+	db := handler.(*informationSeedAPITestHandler).db
+	if _, err := db.Exec(`INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details) VALUES (?, ?, ?, ?, ?, ?)`, "evt-old", nil, "information_seed.discovery_started", cdb.EventSeverityInfo, "2026-01-01T00:00:00Z", `{"information_seed_id":`+itoa(seedID)+`,"run_attempt":1}`); err != nil {
+		t.Fatalf("insert old event: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details) VALUES (?, ?, ?, ?, ?, ?)`, "evt-new", nil, "information_seed.discovery_completed", cdb.EventSeverityInfo, "2026-01-02T00:00:00Z", `{"information_seed_id":`+itoa(seedID)+`,"run_attempt":1}`); err != nil {
+		t.Fatalf("insert new event: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details) VALUES (?, ?, ?, ?, ?, ?)`, "evt-other", nil, "information_seed.discovery_completed", cdb.EventSeverityInfo, "2026-01-03T00:00:00Z", `{"information_seed_id":`+itoa(otherID)+`,"run_attempt":1}`); err != nil {
+		t.Fatalf("insert other event: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/"+itoa(seedID)+"/events?limit=1&offset=0", nil)
+	informationSeedEventsHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected events 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedEventListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode events response: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != "evt-new" || resp.Items[0].Type != "information_seed.discovery_completed" {
+		t.Fatalf("unexpected events page: %#v", resp)
+	}
+}
+
 func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -345,6 +427,15 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE (source_id, information_seed_id)
+		);
+		CREATE TABLE Events (
+			event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_sha256 VARCHAR(64) NOT NULL UNIQUE,
+			source_id INTEGER,
+			event_type VARCHAR(255) NOT NULL,
+			event_severity VARCHAR(50) NOT NULL,
+			event_timestamp TIMESTAMP NOT NULL,
+			details TEXT
 		);`); err != nil {
 		t.Fatalf("create test schema: %v", err)
 	}

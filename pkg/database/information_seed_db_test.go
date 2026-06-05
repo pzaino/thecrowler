@@ -181,6 +181,7 @@ func TestClaimInformationSeedsSQLiteLifecycleEligibility(t *testing.T) {
 	newID := createLifecycleInformationSeedTestSeed(t, &handler, db, "new seed", "new", false, sql.NullTime{}, sql.NullTime{}, 0)
 	pendingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "pending seed", "pending", false, sql.NullTime{}, sql.NullTime{}, 0)
 	disabledID := createLifecycleInformationSeedTestSeed(t, &handler, db, "disabled seed", "new", true, sql.NullTime{}, sql.NullTime{}, 0)
+	disabledPendingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "disabled pending seed", "pending", true, sql.NullTime{}, sql.NullTime{}, 0)
 	freshProcessingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "fresh processing seed", "processing", false, sql.NullTime{Time: now.Add(-10 * time.Minute), Valid: true}, sql.NullTime{}, 2)
 	staleProcessingID := createLifecycleInformationSeedTestSeed(t, &handler, db, "stale processing seed", "processing", false, sql.NullTime{Time: now.Add(-2 * time.Hour), Valid: true}, sql.NullTime{}, 3)
 	freshErrorID := createLifecycleInformationSeedTestSeed(t, &handler, db, "fresh error seed", "error", false, sql.NullTime{}, sql.NullTime{Time: now.Add(-10 * time.Minute), Valid: true}, 4)
@@ -204,6 +205,7 @@ func TestClaimInformationSeedsSQLiteLifecycleEligibility(t *testing.T) {
 	})
 
 	assertInformationSeedUnclaimed(t, &handler, disabledID, "new", "", 0)
+	assertInformationSeedUnclaimed(t, &handler, disabledPendingID, "pending", "", 0)
 	assertInformationSeedUnclaimed(t, &handler, freshProcessingID, "processing", "previous-engine", 2)
 	assertInformationSeedUnclaimed(t, &handler, freshErrorID, "error", "", 4)
 }
@@ -326,6 +328,16 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE (source_id, information_seed_id),
+			FOREIGN KEY(source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+			FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
+		);
+		CREATE TABLE Events (
+			event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER NOT NULL,
+			information_seed_id INTEGER,
+			event_type VARCHAR(255) NOT NULL,
+			event_data TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			FOREIGN KEY(source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
 			FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
 		);`)

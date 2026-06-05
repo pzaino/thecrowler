@@ -90,6 +90,25 @@ type SourceInformationSeedIndexRow struct {
 	LastUpdatedAt     string           `json:"last_updated_at,omitempty"`
 }
 
+// InformationSeedEventListResponse represents discovery events for one seed.
+type InformationSeedEventListResponse struct {
+	Message           string                    `json:"message"`
+	InformationSeedID uint64                    `json:"information_seed_id"`
+	Items             []InformationSeedEventRow `json:"items"`
+	Limit             int                       `json:"limit"`
+	Offset            int                       `json:"offset"`
+}
+
+// InformationSeedEventRow exposes one persisted information-seed discovery event.
+type InformationSeedEventRow struct {
+	ID        string                 `json:"event_sha256"`
+	SourceID  uint64                 `json:"source_id,omitempty"`
+	Type      string                 `json:"event_type"`
+	Severity  string                 `json:"event_severity"`
+	Timestamp string                 `json:"event_timestamp"`
+	Details   map[string]interface{} `json:"details"`
+}
+
 // InformationSeedCandidateListResponse represents candidate decision evidence for one seed.
 type InformationSeedCandidateListResponse struct {
 	Message           string                        `json:"message"`
@@ -155,6 +174,13 @@ type informationSeedAddRequest struct {
 // informationSeedIDRequest represents a request targeting one information seed.
 type informationSeedIDRequest struct {
 	InformationSeedID uint64 `json:"information_seed_id"`
+}
+
+// informationSeedEnableRequest represents an enable request that can also queue the seed.
+type informationSeedEnableRequest struct {
+	InformationSeedID uint64 `json:"information_seed_id,omitempty"`
+	Pending           bool   `json:"pending,omitempty"`
+	QueuePending      bool   `json:"queue_pending,omitempty"`
 }
 
 // StatusResponse represents the structure of the status response

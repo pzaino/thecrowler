@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -609,7 +610,11 @@ func initAPIv1() {
 		informationSeedSourcesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedSourcesHandler)))
 		informationSeedCandidatesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedCandidateDecisionsHandler)))
 		informationSeedRetryHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedRetryHandler)))
+		informationSeedRerunHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedRerunHandler)))
 		informationSeedDisableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedDisableHandler)))
+		informationSeedPathDisableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedPathDisableHandler)))
+		informationSeedEnableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedEnableHandler)))
+		informationSeedEventsHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedEventsHandler)))
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
@@ -649,6 +654,18 @@ func initAPIv1() {
 
 		http.Handle("/v1/information_seed/disable", informationSeedDisableHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/disable", []string{"POST"}, "Disable information seed endpoint (console)", true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
+
+		http.Handle("POST /v1/information_seed/{id}/rerun", informationSeedRerunHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/rerun", []string{"POST"}, "Rerun information seed endpoint (console)", true, false, 200, nil, nil, InformationSeedResponse{})
+
+		http.Handle("POST /v1/information_seed/{id}/disable", informationSeedPathDisableHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/disable", []string{"POST"}, "Disable information seed by path ID endpoint (console)", true, false, 200, nil, nil, InformationSeedResponse{})
+
+		http.Handle("POST /v1/information_seed/{id}/enable", informationSeedEnableHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/enable", []string{"POST"}, "Enable information seed endpoint (console)", true, false, 200, informationSeedEnableRequest{}, nil, InformationSeedResponse{})
+
+		http.Handle("GET /v1/information_seed/{id}/events", informationSeedEventsHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedEventListResponse{})
 
 		// Backward-compatible alias. /v1/information_seed is the canonical namespace.
 		http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)
@@ -1562,7 +1579,13 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseInformationSeedIDFromRequest(r *http.Request) (uint64, error) {
-	value := r.URL.Query().Get("information_seed_id")
+	value := strings.TrimSpace(r.PathValue("id"))
+	if value == "" {
+		value = informationSeedIDFromPath(r.URL.Path)
+	}
+	if value == "" {
+		value = r.URL.Query().Get("information_seed_id")
+	}
 	if value == "" {
 		value = r.URL.Query().Get("id")
 	}
@@ -1760,6 +1783,14 @@ func informationSeedCandidateDecisionsHandler(w http.ResponseWriter, r *http.Req
 	}
 }
 
+func informationSeedIDFromPath(path string) string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 4 && parts[0] == "v1" && parts[1] == "information_seed" {
+		return strings.TrimSpace(parts[2])
+	}
+	return ""
+}
+
 func informationSeedRetryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -1780,6 +1811,121 @@ func informationSeedDisableHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
 		return performDisableInformationSeed(query, db)
 	})
+}
+
+func informationSeedRerunHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed rerun request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
+		return performRerunInformationSeedByID(id, db)
+	})
+}
+
+func informationSeedPathDisableHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed disable request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
+		return performDisableInformationSeedByID(id, db)
+	})
+}
+
+func informationSeedEnableHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed enable request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	handleInformationSeedPathAction(w, r, func(query string, db *cdb.Handler) (interface{}, error) {
+		return performEnableInformationSeedByID(id, query, db)
+	})
+}
+
+func informationSeedEventsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed events request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+		results, err := performListInformationSeedEvents(id, r.URL.Query(), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+				status = http.StatusNotFound
+			} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
+				status = http.StatusBadRequest
+			}
+			handleErrorAndRespond(w, err, results, "Error listing information seed events: %v", status, http.StatusOK)
+			return
+		}
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+func handleInformationSeedPathAction(w http.ResponseWriter, r *http.Request, action func(string, *cdb.Handler) (interface{}, error)) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+		bodyBytes, err := io.ReadAll(r.Body)
+		defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Invalid information seed request", http.StatusBadRequest, http.StatusOK)
+			return
+		}
+		results, err := action(string(bodyBytes), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+			status := http.StatusInternalServerError
+			message := strings.ToLower(err.Error())
+			if strings.Contains(message, "no information seed found") {
+				status = http.StatusNotFound
+			} else if strings.Contains(message, "invalid json") || strings.Contains(message, "cannot be rerun") {
+				status = http.StatusBadRequest
+			}
+			handleErrorAndRespond(w, err, results, "Error updating information seed: %v", status, http.StatusOK)
+			return
+		}
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
 }
 
 func addOwnerHandler(w http.ResponseWriter, r *http.Request) {

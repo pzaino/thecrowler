@@ -311,7 +311,15 @@ List accepted and rejected candidate decisions, when available:
 curl -sS 'http://localhost:8080/v1/information_seed/candidates?information_seed_id=123&limit=100&offset=0'
 ```
 
-Queue a retry after changing providers, credentials, filters, or plugins:
+Queue a rerun after changing providers, credentials, filters, or plugins. Completed
+and errored seeds move back to `pending`; already claimable seeds wake the
+scheduler without changing status:
+
+```bash
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/123/rerun'
+```
+
+The legacy retry endpoint remains available:
 
 ```bash
 curl -sS -X POST 'http://localhost:8080/v1/information_seed/retry' \
@@ -319,12 +327,19 @@ curl -sS -X POST 'http://localhost:8080/v1/information_seed/retry' \
   -d '{"information_seed_id":123}'
 ```
 
-Disable a seed:
+Disable or enable a seed:
 
 ```bash
-curl -sS -X POST 'http://localhost:8080/v1/information_seed/disable' \
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/123/disable'
+curl -sS -X POST 'http://localhost:8080/v1/information_seed/123/enable' \
   -H 'Content-Type: application/json' \
-  -d '{"information_seed_id":123}'
+  -d '{"queue_pending":true}'
+```
+
+List information-seed discovery events:
+
+```bash
+curl -sS 'http://localhost:8080/v1/information_seed/123/events?limit=100&offset=0'
 ```
 
 ### Provenance fields
