@@ -460,26 +460,99 @@ func TestCommonCrawlIndexProviderFixtureParsesJSONLines(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	provider := &CommonCrawlIndexProvider{ProviderName: ProviderCommonCrawlIndex}
-	results, err := provider.Search(context.Background(), "example.com/*", Options{Host: server.URL, Endpoint: "/CC-MAIN-2026-18-index", Parameters: map[string]string{"filter": "status:200"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+	results, err := provider.Search(context.Background(), "example.com", Options{Host: server.URL, Endpoint: "/CC-MAIN-2026-18-index", Parameters: map[string]string{"domain_template": "*.{domain}/*", "mime_type": "text/html", "http_status": "200"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
-	if got := request.URL.Query().Get("url"); got != "example.com/*" {
+	if got := request.URL.Query().Get("url"); got != "*.example.com/*" {
 		t.Fatalf("url query = %q", got)
 	}
 	if got := request.URL.Query().Get("output"); got != "json" {
 		t.Fatalf("output query = %q", got)
 	}
-	if got := request.URL.Query().Get("filter"); got != "status:200" {
-		t.Fatalf("filter query = %q", got)
+	if got := request.URL.Query().Get("pageSize"); got != "10" {
+		t.Fatalf("pageSize query = %q", got)
+	}
+	filters := request.URL.Query()["filter"]
+	if len(filters) != 2 || filters[0] != "mime:text/html" || filters[1] != "status:200" {
+		t.Fatalf("filter query = %#v", filters)
 	}
 	if len(results) != 2 {
 		t.Fatalf("expected Common Crawl fixture results, got %#v", results)
 	}
 	assertResult(t, results, "https://example.com/", "Common Crawl capture 20260530010203", "", 1)
-	if providerName, _ := results[0].Metadata["provider"].(string); providerName != ProviderCommonCrawlIndex {
+	metadata := results[0].Metadata
+	if providerName, _ := metadata["provider"].(string); providerName != ProviderCommonCrawlIndex {
 		t.Fatalf("metadata provider = %q", providerName)
 	}
+	if metadata["index_name"] != "CC-MAIN-2026-18-index" || metadata["digest"] != "ABC123" || metadata["timestamp"] != "20260530010203" || metadata["mime_type"] != "text/html" || metadata["http_status"] != "200" || metadata["original_url_key"] != "com,example)/" {
+		t.Fatalf("missing Common Crawl metadata: %#v", metadata)
+	}
+}
+
+func TestCommonCrawlIndexProviderPaginatesConfiguredEndpointsWithinBudget(t *testing.T) {
+	var paths []string
+	var pages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		pages = append(pages, r.URL.Query().Get("page"))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		switch r.URL.Query().Get("page") {
+		case "":
+			_, _ = w.Write(mustReadFixture(t, "common_crawl_index_page1.jsonl"))
+		case "1":
+			_, _ = w.Write(mustReadFixture(t, "common_crawl_index_page2.jsonl"))
+		default:
+			_, _ = w.Write(mustReadFixture(t, "common_crawl_index_empty.jsonl"))
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &CommonCrawlIndexProvider{ProviderName: ProviderCommonCrawlIndex}
+	results, err := provider.Search(context.Background(), "https://example.com/path", Options{Host: server.URL, Parameters: map[string]string{"index_endpoints": "/CC-MAIN-2026-18-index,/CC-MAIN-2026-22-index", "url_template": "{url}*"}, Timeout: time.Second, PageSize: 2, MaxPages: 4, MaxRequests: 2})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected MaxRequests to cap Common Crawl pagination at 2 requests, got paths %#v", paths)
+	}
+	if paths[0] != "/CC-MAIN-2026-18-index" || paths[1] != "/CC-MAIN-2026-18-index" {
+		t.Fatalf("unexpected endpoint requests: %#v", paths)
+	}
+	if pages[0] != "" || pages[1] != "1" {
+		t.Fatalf("unexpected requested pages: %#v", pages)
+	}
+	if len(results) != 2 || results[0].URL != "https://example.com/one" || results[1].URL != "https://example.com/two" {
+		t.Fatalf("unexpected paginated results: %#v", results)
+	}
+	if results[1].Rank != 2 || results[1].Metadata["index_name"] != "CC-MAIN-2026-18-index" {
+		t.Fatalf("unexpected ranked metadata: %#v", results[1])
+	}
+}
+
+func TestCommonCrawlIndexProviderFixtureMalformedJSONLine(t *testing.T) {
+	provider := &CommonCrawlIndexProvider{ProviderName: ProviderCommonCrawlIndex}
+	_, err := provider.Search(context.Background(), "example.com", fixtureOptions(t, "common_crawl_index_malformed.jsonl", http.StatusOK, nil))
+	if err == nil || !strings.Contains(err.Error(), "malformed common_crawl_index response") {
+		t.Fatalf("expected malformed Common Crawl error, got %v", err)
+	}
+}
+
+func TestCommonCrawlIndexProviderFixtureNoResults(t *testing.T) {
+	provider := &CommonCrawlIndexProvider{ProviderName: ProviderCommonCrawlIndex}
+	results, err := provider.Search(context.Background(), "example.com", fixtureOptions(t, "common_crawl_index_empty.jsonl", http.StatusOK, nil))
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected no Common Crawl results, got %#v", results)
+	}
+}
+
+func TestCommonCrawlIndexProviderFixtureHTTPError(t *testing.T) {
+	provider := &CommonCrawlIndexProvider{ProviderName: ProviderCommonCrawlIndex}
+	_, err := provider.Search(context.Background(), "example.com", fixtureOptions(t, "common_crawl_index_error.json", http.StatusTooManyRequests, nil))
+	assertRedactedError(t, err, "provider common_crawl_index returned status 429")
 }
 
 func TestBraveProviderFixtureResponses(t *testing.T) {
