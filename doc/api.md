@@ -87,6 +87,9 @@ All information seed responses include the seed identity and state fields:
   `discovered_source_count`, the number of active `SourceInformationSeedIndex`
   relationships currently linking discovered sources to each seed. The count is
   calculated by the database in the list query.
+  Candidate decision audit rows are intentionally not exposed through the public
+  API in this release; they are available to internal database callers through
+  seed-scoped pagination helpers.
 * [POST] `/v1/information_seed/retry`: Queues an information seed for another
   discovery attempt by setting its status to `pending` and clearing the current
   error state. The JSON body is `{"information_seed_id": <id>}`.

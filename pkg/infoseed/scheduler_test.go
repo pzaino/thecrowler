@@ -104,7 +104,24 @@ func createSchedulerInformationSeedSchema(t *testing.T, handler *cdb.Handler) {
 			attempts INTEGER DEFAULT 0 NOT NULL,
 			config TEXT
 		);
-		CREATE TABLE Sources (
+		CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+			information_seed_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			information_seed_id INTEGER NOT NULL,
+			normalized_url VARCHAR(2048) NOT NULL,
+			host VARCHAR(255),
+			provider VARCHAR(255),
+			query TEXT,
+			rank INTEGER DEFAULT 0 NOT NULL,
+			score REAL DEFAULT 0 NOT NULL,
+			decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+			rejection_reason TEXT DEFAULT '' NOT NULL,
+			metadata TEXT,
+			run_attempt INTEGER DEFAULT 0 NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt)
+		);
+		CREATE TABLE IF NOT EXISTS Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name VARCHAR(255),
 			usr_id INTEGER DEFAULT 0 NOT NULL,
@@ -116,7 +133,7 @@ func createSchedulerInformationSeedSchema(t *testing.T, handler *cdb.Handler) {
 			flags INTEGER DEFAULT 0 NOT NULL,
 			config TEXT
 		);
-		CREATE TABLE SourceInformationSeedIndex (
+		CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
 			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id INTEGER NOT NULL,
 			information_seed_id INTEGER NOT NULL,
@@ -130,7 +147,7 @@ func createSchedulerInformationSeedSchema(t *testing.T, handler *cdb.Handler) {
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE (source_id, information_seed_id)
 		);
-		CREATE TABLE Events (
+		CREATE TABLE IF NOT EXISTS Events (
 			event_sha256 TEXT PRIMARY KEY,
 			source_id INTEGER,
 			event_type TEXT,

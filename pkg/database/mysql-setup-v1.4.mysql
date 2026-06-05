@@ -57,6 +57,31 @@ CALL add_informationseed_column_if_missing('attempts', 'attempts INT DEFAULT 0 N
 
 DROP PROCEDURE add_informationseed_column_if_missing;
 
+-- InformationSeedCandidate stores durable audit evidence for every accepted or
+-- rejected candidate decision. Rejected rows are intentionally persisted here
+-- instead of Sources so rejected candidates never enter the crawl frontier.
+CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+    information_seed_candidate_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    information_seed_id BIGINT NOT NULL,
+    normalized_url VARCHAR(2048) NOT NULL,
+    host VARCHAR(255),
+    provider VARCHAR(255) DEFAULT '' NOT NULL,
+    query VARCHAR(1024) DEFAULT '' NOT NULL,
+    rank INT DEFAULT 0 NOT NULL,
+    score DOUBLE DEFAULT 0 NOT NULL,
+    decision_status VARCHAR(32) NOT NULL,
+    rejection_reason TEXT,
+    metadata JSON,
+    run_attempt INT DEFAULT 0 NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_informationseedcandidate_decision CHECK (decision_status IN ('accepted', 'rejected')),
+    UNIQUE KEY uq_informationseedcandidate_decision (information_seed_id, normalized_url(768), provider, query(191), rank, run_attempt),
+    KEY idx_informationseedcandidate_seed (information_seed_id, run_attempt, last_updated_at),
+    KEY idx_informationseedcandidate_decision (decision_status),
+    FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
+);
+
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGINT AUTO_INCREMENT PRIMARY KEY,

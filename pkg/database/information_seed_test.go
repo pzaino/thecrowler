@@ -89,6 +89,48 @@ func TestInformationSeedCRUDAndLinksSQLite(t *testing.T) {
 	}
 }
 
+func TestInformationSeedCandidateDecisionsSQLite(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	seedID, err := CreateInformationSeed(&handler, &InformationSeed{InformationSeed: "candidate audit seed"})
+	if err != nil {
+		t.Fatalf("create information seed: %v", err)
+	}
+	metadata := json.RawMessage(`{"provider":"unit"}`)
+	decisions := []InformationSeedCandidate{
+		{InformationSeedID: seedID, NormalizedURL: "https://accepted.example/", Host: "accepted.example", Provider: "unit", Query: "seed", Rank: 1, Score: 0.9, DecisionStatus: InformationSeedCandidateDecisionAccepted, Metadata: &metadata, RunAttempt: 1},
+		{InformationSeedID: seedID, NormalizedURL: "https://rejected.example/", Host: "rejected.example", Provider: "unit", Query: "seed", Rank: 2, Score: 0.1, DecisionStatus: InformationSeedCandidateDecisionRejected, RejectionReason: "built_in_filters:minimum_score", RunAttempt: 1},
+	}
+	if err = UpsertInformationSeedCandidateDecisions(&handler, decisions); err != nil {
+		t.Fatalf("upsert candidate decisions: %v", err)
+	}
+	decisions[0].Score = 0.95
+	if err = UpsertInformationSeedCandidateDecisions(&handler, decisions[:1]); err != nil {
+		t.Fatalf("upsert accepted candidate decision: %v", err)
+	}
+
+	listed, err := ListInformationSeedCandidateDecisions(&handler, seedID, InformationSeedCandidateFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list candidate decisions: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("expected two candidate decisions, got %#v", listed)
+	}
+	byURL := map[string]InformationSeedCandidate{}
+	for _, row := range listed {
+		byURL[row.NormalizedURL] = row
+	}
+	if byURL["https://accepted.example/"].DecisionStatus != InformationSeedCandidateDecisionAccepted || byURL["https://accepted.example/"].RejectionReason != "" || byURL["https://accepted.example/"].Score != 0.95 {
+		t.Fatalf("unexpected accepted decision: %#v", byURL["https://accepted.example/"])
+	}
+	if byURL["https://rejected.example/"].DecisionStatus != InformationSeedCandidateDecisionRejected || byURL["https://rejected.example/"].RejectionReason != "built_in_filters:minimum_score" {
+		t.Fatalf("unexpected rejected decision: %#v", byURL["https://rejected.example/"])
+	}
+}
+
 func TestClaimInformationSeedsSQLiteFiltersByPriority(t *testing.T) {
 	db := openSQLiteMemoryDB(t)
 	defer db.Close()
@@ -241,6 +283,23 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 			disabled BOOLEAN DEFAULT FALSE,
 			attempts INTEGER DEFAULT 0 NOT NULL,
 			config TEXT
+		);
+		CREATE TABLE InformationSeedCandidate (
+			information_seed_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			information_seed_id INTEGER NOT NULL,
+			normalized_url VARCHAR(2048) NOT NULL,
+			host VARCHAR(255),
+			provider VARCHAR(255),
+			query TEXT,
+			rank INTEGER DEFAULT 0 NOT NULL,
+			score REAL DEFAULT 0 NOT NULL,
+			decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+			rejection_reason TEXT DEFAULT '' NOT NULL,
+			metadata TEXT,
+			run_attempt INTEGER DEFAULT 0 NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt)
 		);
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,

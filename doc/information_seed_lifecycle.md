@@ -227,7 +227,7 @@ whether any accepted source links remain after validation.
 | All providers succeed and accepted sources are created or already exist, with `SourceInformationSeedIndex` links present. | `completed` | `last_processed_at` reflects the claim/run. Clear stale `last_error` if appropriate; do not update `last_error_at`. |
 | One or more providers fail, but at least one candidate from another provider is accepted and linked. | `completed` | Treat provider failures as non-blocking partial failures. Record details in discovery metadata or logs rather than `last_error`, unless policy requires surfacing the warning. |
 | Providers return zero results. | `completed` | This is a successful no-result run. Do not set `last_error`/`last_error_at`. |
-| Providers return candidates, but all candidates are rejected by plugins. | `completed` | This is a successful filtered run. Do not set `last_error`/`last_error_at`; rejection reasons should be recorded in logs or per-candidate metadata when available. |
+| Providers return candidates, but all candidates are rejected by plugins. | `completed` | This is a successful filtered run. Do not set `last_error`/`last_error_at`; persist per-candidate rejection evidence in `InformationSeedCandidate`. |
 | Every provider fails before producing usable candidates. | `error` | Set `last_error` to the provider failure summary and set `last_error_at` to the finalization time. |
 | A provider error prevents the worker from completing the discovery lifecycle, even if the provider set is not exhausted. | `error` | Set `last_error` and `last_error_at`. Retry is controlled by the `error` retry delay. |
 | Plugin validation or plugin timeout rejects only some candidates and at least one accepted candidate is linked. | `completed` | Treat as partial validation failure. Keep the run completed and record validation details outside the lifecycle error fields. |
@@ -321,6 +321,11 @@ claim recovery, process crashes, and retry of `error` rows.
   `Sources.config`, because the same source may be discovered by multiple seeds.
   Reruns may merge or fill missing relationship metadata without clearing fields
   that were supplied by previous runs.
+- Candidate decision evidence belongs on `InformationSeedCandidate`. The runner
+  persists both accepted and rejected decisions with the seed ID, normalized URL,
+  host, provider, query, rank, score, decision status, rejection reason,
+  provider/plugin metadata, and run attempt. Rejected candidates must not create
+  `Sources` rows; only accepted candidates proceed to source creation/linking.
 - A rerun that discovers only existing sources and repairs missing links should
   still finish as `completed`.
 - A rerun that has no new candidates and no missing links to repair should also

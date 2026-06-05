@@ -145,6 +145,31 @@ ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0 NOT NULL;
+
+-- InformationSeedCandidate stores durable audit evidence for every accepted or
+-- rejected candidate decision. Rejected rows are intentionally persisted here
+-- instead of Sources so rejected candidates never enter the crawl frontier.
+CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+    information_seed_candidate_id BIGSERIAL PRIMARY KEY,
+    information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
+    normalized_url VARCHAR(2048) NOT NULL,
+    host VARCHAR(255),
+    provider VARCHAR(255),
+    query TEXT,
+    rank INTEGER DEFAULT 0 NOT NULL,
+    score DOUBLE PRECISION DEFAULT 0 NOT NULL,
+    decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+    rejection_reason TEXT DEFAULT '' NOT NULL,
+    metadata JSONB,
+    run_attempt INTEGER DEFAULT 0 NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed
+ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision
+ON InformationSeedCandidate(decision_status);
 ----------------------------------------------------------------
 
 

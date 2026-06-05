@@ -128,7 +128,7 @@ func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
 	var tableName string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'InformationSeed'").Scan(&tableName)
 	if err == sql.ErrNoRows {
-		return ensureSQLiteSourceInformationSeedProvenance(db)
+		return ensureSQLiteInformationSeedCandidateSchema(db)
 	}
 	if err != nil {
 		return err
@@ -144,7 +144,7 @@ func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
 		}
 	}
 
-	return ensureSQLiteSourceInformationSeedProvenance(db)
+	return ensureSQLiteInformationSeedCandidateSchema(db)
 }
 
 func applySQLiteColumnMigrations(db *sql.DB, table string, migrations []sqliteColumnMigration) error {
@@ -164,6 +164,39 @@ func applySQLiteColumnMigrations(db *sql.DB, table string, migrations []sqliteCo
 	}
 
 	return nil
+}
+
+func ensureSQLiteInformationSeedCandidateSchema(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+			information_seed_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			information_seed_id INTEGER NOT NULL,
+			normalized_url VARCHAR(2048) NOT NULL,
+			host VARCHAR(255),
+			provider VARCHAR(255),
+			query TEXT,
+			rank INTEGER DEFAULT 0 NOT NULL,
+			score REAL DEFAULT 0 NOT NULL,
+			decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+			rejection_reason TEXT DEFAULT '' NOT NULL,
+			metadata TEXT,
+			run_attempt INTEGER DEFAULT 0 NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt),
+			FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
+		);`); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision ON InformationSeedCandidate(decision_status)",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return ensureSQLiteSourceInformationSeedProvenance(db)
 }
 
 func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {

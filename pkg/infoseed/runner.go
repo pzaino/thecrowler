@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"strings"
 	"sync"
 	"text/template"
@@ -82,6 +83,13 @@ const (
 	informationSeedDiscoveryFailed    = "information_seed.discovery_failed"
 )
 
+type candidateDecisionEvidence struct {
+	Candidate Candidate
+	Status    string
+	Reason    string
+	Stage     string
+}
+
 type seedDiscoveryStats struct {
 	ProviderCounts     map[string]int
 	ProviderMetrics    map[string]map[string]int
@@ -144,9 +152,11 @@ func (stats *seedDiscoveryStats) addRejectedMap(stage string, rejected map[strin
 	}
 }
 
-func (stats *seedDiscoveryStats) addProcessorRejections(rejected map[string]map[string]int) {
-	for stage, reasons := range rejected {
-		stats.addRejectedMap(stage, reasons)
+func (stats *seedDiscoveryStats) addRejectedDecisions(decisions []candidateDecisionEvidence) {
+	for _, decision := range decisions {
+		if decision.Status == cdb.InformationSeedCandidateDecisionRejected {
+			stats.addRejectedAtStage(decision.Stage, decision.Reason, 1)
+		}
 	}
 }
 
@@ -349,18 +359,18 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 
 	trackingParams := append(defaultTrackingParams(), runCfg.TrackingParams...)
-	normalization := NormalizeCandidatesWithRejections(candidates, CandidateOptions{TrackingParams: trackingParams, DeduplicateHost: runCfg.DeduplicateHost})
-	stats.addRejectedMap(CandidateRejectionStageNormalization, normalization.Rejected)
+	normalizedCandidates, normalizationDecisions := normalizeCandidatesWithDecisionEvidence(candidates, CandidateOptions{TrackingParams: trackingParams, DeduplicateHost: runCfg.DeduplicateHost})
+	stats.addRejectedDecisions(normalizationDecisions)
 	limit := r.Config.MaxCandidatesPerSeed
 	if runCfg.MaxCandidates > 0 && (limit <= 0 || runCfg.MaxCandidates < limit) {
 		limit = runCfg.MaxCandidates
 	}
-	filterResult := ApplyBuiltInCandidateFilters(normalization.Candidates, CandidateFilters{AllowedDomains: runCfg.AllowedDomains, DeniedDomains: runCfg.DeniedDomains, RequiredSchemes: runCfg.RequiredURLSchemes, MinScore: runCfg.MinScore, MaxCandidatesPerHost: runCfg.MaxCandidatesPerHost, MaxCandidatesPerDomain: runCfg.MaxCandidatesPerDomain, MaxCandidates: limit})
-	stats.addRejectedMap(CandidateRejectionStageBuiltInFilters, filterResult.Rejected)
-	candidates = filterResult.Candidates
+	filteredCandidates, filterDecisions := applyBuiltInCandidateFiltersWithDecisionEvidence(normalizedCandidates, CandidateFilters{AllowedDomains: runCfg.AllowedDomains, DeniedDomains: runCfg.DeniedDomains, RequiredSchemes: runCfg.RequiredURLSchemes, MinScore: runCfg.MinScore, MaxCandidatesPerHost: runCfg.MaxCandidatesPerHost, MaxCandidatesPerDomain: runCfg.MaxCandidatesPerDomain, MaxCandidates: limit})
+	stats.addRejectedDecisions(filterDecisions)
+	candidates = filteredCandidates
 
-	candidates, processorRejections, err := r.applyProcessorsWithRejections(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins)
-	stats.addProcessorRejections(processorRejections)
+	candidates, processorDecisions, err := r.applyProcessorsWithDecisionEvidence(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins)
+	stats.addRejectedDecisions(processorDecisions)
 	if err != nil {
 		stats.addError(err)
 	}
@@ -375,6 +385,17 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
 		return result, err
+	}
+
+	acceptedDecisions := acceptedCandidateDecisions(candidates)
+	allDecisions := append(append([]candidateDecisionEvidence{}, normalizationDecisions...), filterDecisions...)
+	allDecisions = append(allDecisions, processorDecisions...)
+	allDecisions = append(allDecisions, acceptedDecisions...)
+	if auditErr := r.persistCandidateDecisionEvidence(seed, allDecisions); auditErr != nil {
+		stats.addError(auditErr)
+		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", auditErr.Error())
+		return result, auditErr
 	}
 
 	linked, persistErr := r.persistCandidates(ctx, seed, runCfg, candidates, stats)
@@ -493,6 +514,110 @@ func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, r
 	return candidates, nil
 }
 
+func normalizeCandidatesWithDecisionEvidence(candidates []Candidate, options CandidateOptions) ([]Candidate, []candidateDecisionEvidence) {
+	seenURL := map[string]struct{}{}
+	seenHost := map[string]struct{}{}
+	normalized := make([]Candidate, 0, len(candidates))
+	decisions := []candidateDecisionEvidence{}
+	for _, candidate := range candidates {
+		normalizedURL, host, ok := NormalizeURL(candidate.URL, options.TrackingParams)
+		if !ok {
+			candidate.URL = strings.TrimSpace(candidate.URL)
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageNormalization, CandidateRejectionInvalidURL))
+			continue
+		}
+		candidate.URL = normalizedURL
+		candidate.Host = host
+		if _, exists := seenURL[normalizedURL]; exists {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageNormalization, CandidateRejectionDuplicateURL))
+			continue
+		}
+		if options.DeduplicateHost {
+			if _, exists := seenHost[host]; exists {
+				decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageNormalization, CandidateRejectionDuplicateHost))
+				continue
+			}
+			seenHost[host] = struct{}{}
+		}
+		seenURL[normalizedURL] = struct{}{}
+		normalized = append(normalized, candidate)
+	}
+	return normalized, decisions
+}
+
+func applyBuiltInCandidateFiltersWithDecisionEvidence(candidates []Candidate, filters CandidateFilters) ([]Candidate, []candidateDecisionEvidence) {
+	allowedDomains := domainSet(filters.AllowedDomains)
+	deniedDomains := domainSet(filters.DeniedDomains)
+	requiredSchemes := schemeSet(filters.RequiredSchemes)
+	perHost := map[string]int{}
+	perDomain := map[string]int{}
+	filtered := make([]Candidate, 0, len(candidates))
+	decisions := []candidateDecisionEvidence{}
+	for _, candidate := range candidates {
+		u, err := url.Parse(candidate.URL)
+		if (err != nil) || (u.Scheme == "") || (u.Host == "") {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionInvalidURL))
+			continue
+		}
+		scheme := strings.ToLower(u.Scheme)
+		host := strings.ToLower(strings.TrimSpace(candidate.Host))
+		if host == "" {
+			host = strings.ToLower(u.Hostname())
+			candidate.Host = host
+		}
+		domain := registrableDomain(host)
+		if len(requiredSchemes) > 0 {
+			if _, ok := requiredSchemes[scheme]; !ok {
+				decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionRequiredScheme))
+				continue
+			}
+		}
+		if (len(allowedDomains) > 0) && !matchesDomainSet(host, allowedDomains) && !matchesDomainSet(domain, allowedDomains) {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionAllowedDomain))
+			continue
+		}
+		if matchesDomainSet(host, deniedDomains) || matchesDomainSet(domain, deniedDomains) {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionDeniedDomain))
+			continue
+		}
+		if (filters.MinScore != nil) && (candidate.Score < *filters.MinScore) {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionMinimumScore))
+			continue
+		}
+		if (filters.MaxCandidatesPerHost > 0) && (perHost[host] >= filters.MaxCandidatesPerHost) {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionMaxCandidatesPerHost))
+			continue
+		}
+		if (filters.MaxCandidatesPerDomain > 0) && (perDomain[domain] >= filters.MaxCandidatesPerDomain) {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionMaxCandidatesPerDomain))
+			continue
+		}
+		if (filters.MaxCandidates > 0) && (len(filtered) >= filters.MaxCandidates) {
+			decisions = append(decisions, rejectedCandidateDecision(candidate, CandidateRejectionStageBuiltInFilters, CandidateRejectionCandidateLimit))
+			continue
+		}
+		perHost[host]++
+		perDomain[domain]++
+		filtered = append(filtered, candidate)
+	}
+	return filtered, decisions
+}
+
+func rejectedCandidateDecision(candidate Candidate, stage, reason string) candidateDecisionEvidence {
+	if strings.TrimSpace(candidate.Reason) == "" {
+		candidate.Reason = reason
+	}
+	return candidateDecisionEvidence{Candidate: candidate, Status: cdb.InformationSeedCandidateDecisionRejected, Stage: stage, Reason: reason}
+}
+
+func acceptedCandidateDecisions(candidates []Candidate) []candidateDecisionEvidence {
+	decisions := make([]candidateDecisionEvidence, 0, len(candidates))
+	for _, candidate := range candidates {
+		decisions = append(decisions, candidateDecisionEvidence{Candidate: candidate, Status: cdb.InformationSeedCandidateDecisionAccepted})
+	}
+	return decisions
+}
+
 func (r *Runner) providerNames(runCfg SeedRunConfig) []string {
 	configured := runCfg.Providers
 	if len(configured) == 0 {
@@ -595,17 +720,32 @@ func redactInformationSeedError(message string) string {
 }
 
 func (r *Runner) applyProcessors(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, error) {
-	processed, _, err := r.applyProcessorsWithRejections(ctx, seed, runCfg, candidates, enabledNames)
+	processed, _, err := r.applyProcessorsWithDecisionEvidence(ctx, seed, runCfg, candidates, enabledNames)
 	return processed, err
 }
 
 func (r *Runner) applyProcessorsWithRejections(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, map[string]map[string]int, error) {
+	processed, decisions, err := r.applyProcessorsWithDecisionEvidence(ctx, seed, runCfg, candidates, enabledNames)
+	rejected := map[string]map[string]int{}
+	for _, decision := range decisions {
+		if decision.Status != cdb.InformationSeedCandidateDecisionRejected {
+			continue
+		}
+		if rejected[decision.Stage] == nil {
+			rejected[decision.Stage] = map[string]int{}
+		}
+		rejected[decision.Stage][decision.Reason]++
+	}
+	return processed, rejected, err
+}
+
+func (r *Runner) applyProcessorsWithDecisionEvidence(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, []candidateDecisionEvidence, error) {
 	processors := selectProcessors(r.Processors, enabledNames)
 	if len(processors) == 0 {
-		return candidates, map[string]map[string]int{}, nil
+		return candidates, nil, nil
 	}
 	processed := make([]Candidate, 0, len(candidates))
-	rejected := map[string]map[string]int{}
+	decisions := []candidateDecisionEvidence{}
 	var errs []string
 	for _, candidate := range candidates {
 		keep := true
@@ -616,13 +756,13 @@ func (r *Runner) applyProcessorsWithRejections(ctx context.Context, seed cdb.Inf
 			current, keep, err = processor.ProcessCandidate(ctx, input)
 			if err != nil {
 				stage, reason := classifyCandidateProcessorError(err)
-				addProcessorRejection(rejected, stage, reason)
+				decisions = append(decisions, rejectedCandidateDecision(current, stage, reason))
 				errs = append(errs, err.Error())
 				keep = false
 				break
 			}
 			if !keep {
-				addProcessorRejection(rejected, CandidateRejectionStageUserPlugins, CandidateRejectionCandidateProcessor)
+				decisions = append(decisions, rejectedCandidateDecision(current, CandidateRejectionStageUserPlugins, CandidateRejectionCandidateProcessor))
 				break
 			}
 		}
@@ -631,16 +771,9 @@ func (r *Runner) applyProcessorsWithRejections(ctx context.Context, seed cdb.Inf
 		}
 	}
 	if len(errs) > 0 {
-		return processed, rejected, fmt.Errorf("candidate processor errors: %s", strings.Join(errs, "; "))
+		return processed, decisions, fmt.Errorf("candidate processor errors: %s", strings.Join(errs, "; "))
 	}
-	return processed, rejected, nil
-}
-
-func addProcessorRejection(rejected map[string]map[string]int, stage, reason string) {
-	if rejected[stage] == nil {
-		rejected[stage] = map[string]int{}
-	}
-	rejected[stage][reason]++
+	return processed, decisions, nil
 }
 
 func classifyCandidateProcessorError(err error) (string, string) {
@@ -693,6 +826,48 @@ func selectProcessors(processors []CandidateProcessor, enabledNames []string) []
 		selected = append(selected, processor)
 	}
 	return selected
+}
+
+func (r *Runner) persistCandidateDecisionEvidence(seed cdb.InformationSeed, decisions []candidateDecisionEvidence) error {
+	if len(decisions) == 0 {
+		return nil
+	}
+	rows := make([]cdb.InformationSeedCandidate, 0, len(decisions))
+	for _, decision := range decisions {
+		candidate := decision.Candidate
+		metadata := candidateMetadata(candidate)
+		rows = append(rows, cdb.InformationSeedCandidate{
+			InformationSeedID: seed.ID,
+			NormalizedURL:     auditCandidateURL(candidate),
+			Host:              candidate.Host,
+			Provider:          candidate.Provider,
+			Query:             candidate.Query,
+			Rank:              candidate.Rank,
+			Score:             candidate.Score,
+			DecisionStatus:    decision.Status,
+			RejectionReason:   auditRejectionReason(decision.Stage, decision.Reason),
+			Metadata:          metadata,
+			RunAttempt:        seed.Attempts,
+		})
+	}
+	return cdb.UpsertInformationSeedCandidateDecisions(r.DB, rows)
+}
+
+func auditCandidateURL(candidate Candidate) string {
+	if strings.TrimSpace(candidate.URL) != "" {
+		return candidate.URL
+	}
+	return "unknown"
+}
+
+func auditRejectionReason(stage, reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return ""
+	}
+	if strings.TrimSpace(stage) == "" {
+		return reason
+	}
+	return stage + ":" + reason
 }
 
 func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, stats *seedDiscoveryStats) (int, error) {
@@ -774,16 +949,22 @@ func renderSourceName(tmplText string, seed cdb.InformationSeed, candidate Candi
 	return strings.TrimSpace(buf.String()), nil
 }
 
+func candidateMetadata(candidate Candidate) *json.RawMessage {
+	if len(candidate.Metadata) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(candidate.Metadata)
+	if err != nil {
+		return nil
+	}
+	msg := json.RawMessage(data)
+	return &msg
+}
+
 func discoveryMetadata(candidate Candidate) cdb.InformationSeedDiscoveryMetadata {
 	provider, query, reason := candidate.Provider, candidate.Query, candidate.Reason
 	rank, score := candidate.Rank, candidate.Score
-	var raw *json.RawMessage
-	if len(candidate.Metadata) > 0 {
-		if data, err := json.Marshal(candidate.Metadata); err == nil {
-			msg := json.RawMessage(data)
-			raw = &msg
-		}
-	}
+	raw := candidateMetadata(candidate)
 	return cdb.InformationSeedDiscoveryMetadata{DiscoveryProvider: &provider, DiscoveryQuery: &query, DiscoveryRank: &rank, CandidateScore: &score, CandidateReason: &reason, DiscoveryMetadata: raw}
 }
 

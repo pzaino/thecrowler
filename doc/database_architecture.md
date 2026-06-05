@@ -64,6 +64,22 @@ the richer metadata link helper, which upserts only the matching
 unchanged. This keeps provenance for other seeds separate even when the same
 source URL is discovered by multiple seeds.
 
+`InformationSeedCandidate` stores the durable decision evidence for every
+candidate considered by an information-seed run, including accepted and rejected
+candidates. This is a deliberate product decision: rejected candidates are
+persisted for auditability, debugging, and provider/plugin policy review, but
+they are not promoted into `Sources` and therefore never enter the crawl
+frontier. Accepted rows in `InformationSeedCandidate` record the per-run
+decision evidence, while `SourceInformationSeedIndex` remains the accepted-source
+provenance table for the actual source/seed relationship.
+
+`InformationSeedCandidate` rows include the seed ID, normalized URL, host,
+provider, query, rank, score, `accepted`/`rejected` decision status, rejection
+reason, provider/plugin metadata, run attempt number, and timestamps. Listing is
+provided by database helpers with seed-scoped pagination; no public API endpoint
+is exposed yet, so console/API seed listing continues to report accepted source
+counts only.
+
 Here below is a diagram of the database architecture:
 
 ```mermaid
@@ -84,6 +100,23 @@ erDiagram
         BOOLEAN disabled
         INTEGER attempts
         JSONB config
+    }
+
+    InformationSeedCandidate {
+        BIGSERIAL information_seed_candidate_id PK
+        BIGINT information_seed_id FK "REFERENCES InformationSeed(information_seed_id)"
+        VARCHAR normalized_url
+        VARCHAR host
+        VARCHAR provider
+        TEXT query
+        INTEGER rank
+        FLOAT score
+        VARCHAR decision_status
+        TEXT rejection_reason
+        JSONB metadata
+        INTEGER run_attempt
+        TIMESTAMP created_at
+        TIMESTAMP last_updated_at
     }
 
     Sources {
@@ -283,6 +316,7 @@ erDiagram
     Categories ||--|{ Categories : "parent_id"
     InformationSeed ||--o{ Categories : "category_id"
     InformationSeed ||--o{ Sources : "usr_id"
+    InformationSeedCandidate ||--|{ InformationSeed : "information_seed_id"
     Sources ||--o{ Categories : "category_id"
     Sources ||--o{ Owners : "usr_id"
     Owners ||--o{ Sources : "usr_id"
