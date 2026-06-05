@@ -509,3 +509,33 @@ func (c *sequenceClient) Do(req *http.Request) (*http.Response, error) {
 	}
 	return resp, nil
 }
+
+func TestJSONProviderFakeInformationSeedCandidatesFixture(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("q"); got != "deterministic seed" {
+			t.Fatalf("q = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustReadFixture(t, "infoseed_e2e_candidates.json"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &JSONProvider{ProviderName: "fake_http"}
+	results, err := provider.Search(context.Background(), "deterministic seed", Options{Host: server.URL, Endpoint: "/search", Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected 5 deterministic candidates, got %#v", results)
+	}
+	cases := []string{"accepted", "rejected", "duplicate", "existing_source", "source_overrides"}
+	for idx, wantCase := range cases {
+		metadata, _ := results[idx].Metadata["metadata"].(map[string]interface{})
+		if gotCase, _ := metadata["fixture_case"].(string); gotCase != wantCase {
+			t.Fatalf("result %d fixture_case = %q, want %q", idx, gotCase, wantCase)
+		}
+		if results[idx].Rank != idx+1 {
+			t.Fatalf("result %d rank = %d, want %d", idx, results[idx].Rank, idx+1)
+		}
+	}
+}
