@@ -102,6 +102,8 @@ func NewProvider(name, provider string) Provider {
 		return &BraveProvider{ProviderName: stableName}
 	case ProviderBing:
 		return &BingProvider{ProviderName: stableName}
+	case ProviderBrowserSearch:
+		return &BrowserSearchProvider{ProviderName: stableName}
 	default:
 		return &JSONProvider{ProviderName: stableName}
 	}
@@ -114,6 +116,8 @@ func normalizeProviderName(values ...string) string {
 			return ProviderBrave
 		case "bing", "bing_search", "bing_web", "bing_web_search", "bing_web_search_api", "microsoft_bing":
 			return ProviderBing
+		case "browser", "browser_search", "html_search", "browser_html_search":
+			return ProviderBrowserSearch
 		case "", "json", "http_json", "generic_json":
 			continue
 		}

@@ -122,6 +122,8 @@ func TestNewProviderSelectsNativeAdaptersAndPreservesGenericJSON(t *testing.T) {
 		{name: "brave_search", wantProvider: "*searchproviders.BraveProvider"},
 		{name: "custom", provider: "brave", wantProvider: "*searchproviders.BraveProvider"},
 		{name: "bing_web_search", wantProvider: "*searchproviders.BingProvider"},
+		{name: "browser_search", wantProvider: "*searchproviders.BrowserSearchProvider"},
+		{name: "custom_browser", provider: "browser", wantProvider: "*searchproviders.BrowserSearchProvider"},
 		{name: "custom_json", provider: "http_json", wantProvider: "*searchproviders.JSONProvider"},
 		{name: "legacy_adapter", provider: "unknown", wantProvider: "*searchproviders.JSONProvider"},
 	}
@@ -130,6 +132,93 @@ func TestNewProviderSelectsNativeAdaptersAndPreservesGenericJSON(t *testing.T) {
 		if got := strings.TrimPrefix(typeName(provider), "github.com/pzaino/thecrowler/pkg/infoseed/searchproviders."); got != tc.wantProvider {
 			t.Fatalf("NewProvider(%q, %q) = %s, want %s", tc.name, tc.provider, got, tc.wantProvider)
 		}
+	}
+}
+
+func TestBrowserSearchProviderFixturePagesUseSelectorsAndCaps(t *testing.T) {
+	var requests []*http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Clone(r.Context()))
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("browser_search must not forward credential header, got %q", got)
+		}
+		if got := r.URL.Query().Get("api_key"); got != "" {
+			t.Fatalf("browser_search must not forward credential query parameter, got %q", got)
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		switch r.URL.Path {
+		case "/search":
+			if got := r.URL.Query().Get("q"); got != "seed query" {
+				t.Fatalf("q = %q", got)
+			}
+			_, _ = w.Write(mustReadFixture(t, "browser_search_page1.html"))
+		case "/page2.html":
+			_, _ = w.Write(mustReadFixture(t, "browser_search_page2.html"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &BrowserSearchProvider{ProviderName: ProviderBrowserSearch}
+	results, err := provider.Search(context.Background(), "seed query", Options{
+		Host:        server.URL,
+		Endpoint:    "/search",
+		APIKey:      "SECRET_PROVIDER_KEY",
+		APIToken:    "SECRET_PROVIDER_TOKEN",
+		Headers:     map[string]string{"Authorization": "Bearer SECRET_PROVIDER_TOKEN", "X-Fixture": "ok"},
+		Parameters:  browserSearchFixtureParameters(),
+		Timeout:     30 * time.Second,
+		PageSize:    99,
+		MaxPages:    99,
+		MaxRequests: 99,
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(requests) != browserSearchMaxPages {
+		t.Fatalf("expected browser_search strict MaxPages cap to make %d requests, got %d", browserSearchMaxPages, len(requests))
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected fixture results from two local pages, got %#v", results)
+	}
+	assertResult(t, results, "https://example.com/alpha", "Alpha Result", "Alpha snippet from a local fixture.", 1)
+	if results[2].URL != "https://example.com/gamma" || results[2].Rank != 3 {
+		t.Fatalf("unexpected third result: %#v", results[2])
+	}
+	if providerName, _ := results[0].Metadata["provider"].(string); providerName != ProviderBrowserSearch {
+		t.Fatalf("metadata provider = %q", providerName)
+	}
+}
+
+func TestBrowserSearchProviderConsentFixtureDoesNotLeakSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(mustReadFixture(t, "browser_search_consent.html"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &BrowserSearchProvider{ProviderName: ProviderBrowserSearch}
+	_, err := provider.Search(context.Background(), "seed", Options{
+		Host:       server.URL,
+		APIKey:     "SECRET_PROVIDER_KEY",
+		Token:      "SECRET_PROVIDER_TOKEN",
+		Parameters: browserSearchFixtureParameters(),
+		Timeout:    time.Second,
+	})
+	assertRedactedError(t, err, "browser search consent page detected")
+}
+
+func browserSearchFixtureParameters() map[string]string {
+	return map[string]string{
+		"result_container_selector": ".result",
+		"url_selector":              ".result-url",
+		"title_selector":            ".result-title",
+		"snippet_selector":          ".result-snippet",
+		"next_page_selector":        "a[rel='next']",
+		"consent_page_selector":     "#consent-wall",
+		"api_key":                   "SHOULD_NOT_LEAK",
+		"debug_screenshots":         "true",
 	}
 }
 

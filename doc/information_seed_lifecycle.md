@@ -132,8 +132,14 @@ phase order on every run:
 `InformationSeed.config` is seed-specific JSON. It selects from providers that
 are already present in the global `information_seed.providers` map and allowed
 by `information_seed.provider_allow_list`; it does not define provider
-credentials. All fields are optional, but this example shows the complete
-production contract for the current runner:
+credentials. API-based providers (for example Brave Search, Bing Web Search, or a
+custom `http_json` gateway) are the recommended production path. The
+`browser_search` HTML adapter is disabled unless it is explicitly configured and
+allow-listed; use it only for local fixtures or after reviewing the target site's
+robots.txt, terms of service, consent flow, and rate-limit expectations. Its CSS
+selectors are site-specific, credentials are stripped rather than sent, and strict
+page/request/timeout/debug-output caps apply. All fields are optional, but this
+example shows the complete production contract for the current runner:
 
 ```json
 {

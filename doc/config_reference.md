@@ -51,7 +51,7 @@
   - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
   - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
   - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
-  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values. The explicit opt-in `browser_search` provider reads its CSS selectors from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`.
   - **`provider_allow_list`** *(array of strings)*: Explicit provider allow-list. Entries are trimmed, lower-cased, and de-duplicated; configured providers are ignored unless their normalized key is present in the allow-list, so an empty allow-list prevents provider execution.
   - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
     - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
@@ -72,6 +72,9 @@
       - public_json
       - brave_search
       - bing_web_search
+      # Add browser_search only after explicit policy review; otherwise the
+      # configured browser_search block below remains disabled.
+      # - browser_search
     providers:
       # Generic JSON adapter support is preserved for custom search gateways.
       public_json:
@@ -121,6 +124,33 @@
         timeout: 30
         rate_limit: 1/s
         max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # Explicit opt-in browser_search HTML adapter. Prefer Brave, Bing, or a
+      # custom http_json API gateway for production. Enable this only after a
+      # site-specific robots.txt, terms-of-service, consent, and rate-limit
+      # review. It is intended for controlled fixtures or policy-approved pages,
+      # not for bypassing search-engine access rules. Credentials are ignored by
+      # this adapter, sensitive headers/parameters are stripped, screenshots and
+      # debug output stay disabled, and runtime caps are stricter than generic
+      # providers (defaults: max_pages=1, max_requests=1, timeout=5s; hard caps:
+      # max_pages=2, max_requests=3, timeout=10s, page_size=20).
+      browser_search:
+        provider: browser_search
+        host: https://search.example.invalid
+        endpoint: /search
+        parameters:
+          result_container_selector: article.result
+          url_selector: a.result-url
+          title_selector: h2.result-title
+          snippet_selector: p.result-snippet
+          next_page_selector: a[rel='next']
+          consent_page_selector: '#consent-wall'
+          safe_search: strict
+        timeout: 5
+        rate_limit: 1s
+        max_requests: 1
         page_size: 10
         max_pages: 1
     plugin_limits:
