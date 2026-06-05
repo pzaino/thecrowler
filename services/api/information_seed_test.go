@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"golang.org/x/time/rate"
 
 	_ "github.com/mattn/go-sqlite3"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -44,6 +47,125 @@ func (h *informationSeedAPITestHandler) QueryContext(ctx context.Context, query 
 func (h *informationSeedAPITestHandler) CheckConnection(cfg.Config) error { return nil }
 func (h *informationSeedAPITestHandler) NewListener() cdb.Listener        { return nil }
 
+func TestInformationSeedAddHandlerValidRequest(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	body := []byte(`{"information_seed":"api add seed","category_id":4,"user_id":9,"priority":"high","config":{"providers":["public_json"],"max_candidates":3}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/information_seed/add", bytes.NewReader(body))
+	informationSeedAddHandler(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode add response: %v", err)
+	}
+	if resp.Item.ID == 0 || resp.Item.InformationSeed != "api add seed" || resp.Item.UsrID != 9 || resp.Item.Status != "new" || resp.Item.DiscoveredSourceCount != 0 {
+		t.Fatalf("unexpected add response: %#v", resp)
+	}
+	if resp.Item.Config == nil || !json.Valid(*resp.Item.Config) {
+		t.Fatalf("expected valid config in add response: %#v", resp.Item.Config)
+	}
+}
+
+func TestInformationSeedAddHandlerInvalidRequests(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "missing seed", body: `{"config":{}}`},
+		{name: "non object config", body: `{"information_seed":"bad config","config":"not an object"}`},
+		{name: "provider credential", body: `{"information_seed":"bad credential","config":{"providers":[{"provider":"brave","api_key":"secret"}]}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/information_seed/add", bytes.NewReader([]byte(tt.body)))
+			informationSeedAddHandler(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestInformationSeedStatusHandlerLookup(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "status api", "pending", "normal", 5, 6, false)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/status?information_seed_id="+itoa(seedID), nil)
+	informationSeedStatusHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.Item.ID != seedID || resp.Item.Status != "pending" || resp.Item.InformationSeed != "status api" {
+		t.Fatalf("unexpected status response: %#v", resp)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/information_seed/status?information_seed_id=9999", nil)
+	informationSeedStatusHandler(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing seed, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInformationSeedHyphenatedListAlias(t *testing.T) {
+	oldMux := http.DefaultServeMux
+	oldLimiter := limiter
+	oldConfig := config
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	http.DefaultServeMux = http.NewServeMux()
+	limiter = rate.NewLimiter(rate.Inf, 0)
+	config = cfg.Config{}
+	config.API.DisableDefault = true
+	config.API.EnableConsole = true
+	config.API.EnableAPIDocs = false
+	config.API.Plugins.Enabled = false
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+	t.Cleanup(func() {
+		cleanup()
+		http.DefaultServeMux = oldMux
+		limiter = oldLimiter
+		config = oldConfig
+	})
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "alias api", "new", "", 0, 0, false)
+	initAPIv1()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information-seed/list", nil)
+	http.DefaultServeMux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp InformationSeedListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode alias response: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != seedID {
+		t.Fatalf("unexpected alias response: %#v", resp)
+	}
+}
+
 func TestInformationSeedListHandlerFiltersAndPagination(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
@@ -53,6 +175,10 @@ func TestInformationSeedListHandlerFiltersAndPagination(t *testing.T) {
 	seedOne := createInformationSeedAPITestSeed(t, &handler, "first", "pending", "high", 2, 20, false)
 	createInformationSeedAPITestSeed(t, &handler, "second", "pending", "high", 2, 20, true)
 	createInformationSeedAPITestSeed(t, &handler, "third", "new", "low", 3, 30, false)
+	sourceID := insertInformationSeedAPITestSource(t, handler.(*informationSeedAPITestHandler).db, "https://list-count.example", "list count")
+	if err := cdb.LinkSourceToInformationSeed(&handler, sourceID, seedOne); err != nil {
+		t.Fatalf("link list source: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/list?status=pending&priority=high&disabled=false&category=2&user=20&limit=1&offset=0", nil)
@@ -66,6 +192,9 @@ func TestInformationSeedListHandlerFiltersAndPagination(t *testing.T) {
 	}
 	if resp.Limit != 1 || resp.Offset != 0 || len(resp.Items) != 1 || resp.Items[0].ID != seedOne {
 		t.Fatalf("unexpected filtered page for seed %d: %#v", seedOne, resp)
+	}
+	if resp.Items[0].Status != "pending" || resp.Items[0].Priority != "high" || resp.Items[0].HasError || resp.Items[0].Attempts != 0 || resp.Items[0].DiscoveredSourceCount != 1 {
+		t.Fatalf("expected lifecycle fields and discovered source count, got: %#v", resp.Items[0])
 	}
 }
 

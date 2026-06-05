@@ -45,8 +45,16 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 	var params informationSeedAddRequest
 	if qType == getQuery {
 		params.InformationSeed = strings.TrimSpace(query)
-	} else if err := json.Unmarshal([]byte(query), &params); err != nil {
-		return InformationSeedResponse{Message: "Invalid information seed request"}, fmt.Errorf("invalid JSON: %w", err)
+	} else {
+		if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
+			return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
+		}
+		if err := json.Unmarshal([]byte(query), &params); err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed request"}, fmt.Errorf("invalid JSON: %w", err)
+		}
+		if err := validateInformationSeedConfig(params.Config); err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed config"}, err
+		}
 	}
 
 	params.InformationSeed = strings.TrimSpace(params.InformationSeed)
@@ -79,6 +87,64 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 		return InformationSeedResponse{Message: "Failed to load added information seed"}, err
 	}
 	return InformationSeedResponse{Message: "Information seed added successfully", Item: row}, nil
+}
+
+func validateInformationSeedConfig(config *json.RawMessage) error {
+	if config == nil {
+		return nil
+	}
+	if len(*config) == 0 || !json.Valid(*config) {
+		return fmt.Errorf("information seed config must be valid JSON")
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal(*config, &object); err != nil {
+		return fmt.Errorf("information seed config must be a JSON object: %w", err)
+	}
+	if object == nil {
+		return fmt.Errorf("information seed config must be a JSON object")
+	}
+	return nil
+}
+
+func rejectInformationSeedRequestCredentials(raw []byte) error {
+	var decoded interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil
+	}
+	if key, ok := containsCredentialKey(decoded); ok {
+		return fmt.Errorf("provider credential field %q must be configured globally, not in request bodies", key)
+	}
+	return nil
+}
+
+func containsCredentialKey(value interface{}) (string, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, nested := range typed {
+			if isInformationSeedCredentialKey(key) {
+				return key, true
+			}
+			if nestedKey, ok := containsCredentialKey(nested); ok {
+				return nestedKey, true
+			}
+		}
+	case []interface{}:
+		for _, nested := range typed {
+			if nestedKey, ok := containsCredentialKey(nested); ok {
+				return nestedKey, true
+			}
+		}
+	}
+	return "", false
+}
+
+func isInformationSeedCredentialKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "api_key", "api_id", "api_secret", "api_token", "token", "secret", "username", "password", "bearer_token", "access_token", "refresh_token", "client_secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func performGetInformationSeedStatus(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {

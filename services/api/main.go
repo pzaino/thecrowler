@@ -1585,9 +1585,42 @@ func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusCreated)
 		return
 	}
-	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performAddInformationSeed(query, qType, db)
-	})
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		query, err := extractQueryOrBody(r)
+		defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
+		if err != nil {
+			totalErrors.Add(1)
+			handleErrorAndRespond(w, err, nil, "Invalid information seed add request", http.StatusBadRequest, http.StatusCreated)
+			return
+		}
+
+		results, err := performAddInformationSeed(query, postQuery, &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+			handleErrorAndRespond(w, err, results, "Error adding information seed: %v", informationSeedAddErrorStatus(err), http.StatusCreated)
+			return
+		}
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusCreated)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+func informationSeedAddErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "invalid json") || strings.Contains(message, "config") || strings.Contains(message, "credential") || strings.Contains(message, "information_seed is required") || strings.Contains(message, "information seed text is required") {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 func informationSeedStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -1607,10 +1640,15 @@ func informationSeedStatusHandler(w http.ResponseWriter, r *http.Request) {
 		results, err := performGetInformationSeedStatus(id, &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
+			status := http.StatusInternalServerError
+			if strings.Contains(strings.ToLower(err.Error()), "no information seed found") {
+				status = http.StatusNotFound
+			}
+			handleErrorAndRespond(w, err, results, "Error getting information seed status: %v", status, http.StatusOK)
+			return
 		}
-		handleErrorAndRespond(w, err, results, "Error getting information seed status: %v", http.StatusInternalServerError, http.StatusOK)
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 	case <-time.After(5 * time.Second):
 		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
 		totalErrors.Add(1)
