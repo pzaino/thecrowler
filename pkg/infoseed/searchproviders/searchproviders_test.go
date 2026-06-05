@@ -237,17 +237,28 @@ func TestRSSFeedProviderFixtureParsesRSSAndAtom(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
-		results, err := provider.Search(context.Background(), "alpha", Options{Host: server.URL, Parameters: map[string]string{"utm_source": "fixture"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+		results, err := provider.Search(context.Background(), "Research Analyst", Options{Host: server.URL, Parameters: map[string]string{"utm_source": "fixture"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
 		if err != nil {
 			t.Fatalf("Search returned error: %v", err)
 		}
 		if len(results) != 1 {
 			t.Fatalf("expected one filtered RSS result, got %#v", results)
 		}
-		assertResult(t, results, "https://example.com/research/alpha", "Alpha public research update", "Alpha snippet from an RSS fixture.", 1)
-		if providerName, _ := results[0].Metadata["provider"].(string); providerName != ProviderRSSFeed {
+		assertResult(t, results, server.URL+"/research/alpha", "Alpha public research update", "Alpha snippet from an RSS fixture.", 1)
+		metadata := results[0].Metadata
+		if providerName, _ := metadata["provider"].(string); providerName != ProviderRSSFeed {
 			t.Fatalf("metadata provider = %q", providerName)
 		}
+		if feedURL, _ := metadata["feed_url"].(string); feedURL != server.URL+"?utm_source=fixture" {
+			t.Fatalf("metadata feed_url = %q", feedURL)
+		}
+		if itemID, _ := metadata["item_id"].(string); itemID != "rss-alpha-guid" {
+			t.Fatalf("metadata item_id = %q", itemID)
+		}
+		if published, _ := metadata["published_timestamp"].(string); published != "2026-06-05T00:00:00Z" {
+			t.Fatalf("metadata published_timestamp = %q", published)
+		}
+		assertMatchedFields(t, metadata, "authors")
 	})
 
 	t.Run("atom", func(t *testing.T) {
@@ -258,12 +269,185 @@ func TestRSSFeedProviderFixtureParsesRSSAndAtom(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
-		results, err := provider.Search(context.Background(), "beta", Options{Host: server.URL, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+		results, err := provider.Search(context.Background(), "atom-threat", Options{Host: server.URL, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
 		if err != nil {
 			t.Fatalf("Search returned error: %v", err)
 		}
-		assertResult(t, results, "https://example.com/research/beta", "Beta public research note", "Beta snippet from an Atom fixture.", 1)
+		assertResult(t, results, server.URL+"/research/beta", "Beta public research note", "Beta snippet from an Atom fixture.", 1)
+		metadata := results[0].Metadata
+		if itemID, _ := metadata["item_id"].(string); itemID != "tag:example.com,2026:beta" {
+			t.Fatalf("metadata item_id = %q", itemID)
+		}
+		if published, _ := metadata["published_timestamp"].(string); published != "2026-06-05T00:00:00Z" {
+			t.Fatalf("metadata published_timestamp = %q", published)
+		}
+		assertMatchedFields(t, metadata, "categories")
 	})
+}
+
+func TestRSSFeedProviderMatchesConfiguredItemFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write(mustReadFixture(t, "rss_feed.xml"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+	tests := []struct {
+		name      string
+		query     string
+		wantField string
+	}{
+		{name: "title", query: "Alpha public", wantField: "title"},
+		{name: "link", query: "research/alpha", wantField: "link"},
+		{name: "content", query: "Long Alpha content", wantField: "content"},
+		{name: "categories", query: "threat-intel", wantField: "categories"},
+		{name: "authors", query: "Research Analyst", wantField: "authors"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results, err := provider.Search(context.Background(), tc.query, Options{Host: server.URL, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 1})
+			if err != nil {
+				t.Fatalf("Search returned error: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("expected one result for %q, got %#v", tc.query, results)
+			}
+			assertMatchedFields(t, results[0].Metadata, tc.wantField)
+		})
+	}
+}
+
+func TestRSSFeedProviderSupportsConfiguredFeedURLs(t *testing.T) {
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		w.Header().Set("Content-Type", "application/rss+xml")
+		switch r.URL.Path {
+		case "/first.xml":
+			_, _ = w.Write(mustReadFixture(t, "rss_empty.xml"))
+		case "/second.xml":
+			_, _ = w.Write(mustReadFixture(t, "rss_feed.xml"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+	results, err := provider.Search(context.Background(), "alpha", Options{Parameters: map[string]string{"feed_urls": server.URL + "/first.xml,\n" + server.URL + "/second.xml"}, Timeout: time.Second, PageSize: 10, MaxPages: 1, MaxRequests: 2})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(requested) != 2 {
+		t.Fatalf("expected two configured feed URL requests, got %v", requested)
+	}
+	assertResult(t, results, server.URL+"/research/alpha", "Alpha public research update", "Alpha snippet from an RSS fixture.", 1)
+	if feedURL, _ := results[0].Metadata["feed_url"].(string); feedURL != server.URL+"/second.xml" {
+		t.Fatalf("metadata feed_url = %q", feedURL)
+	}
+}
+
+func TestRSSFeedProviderFixtureHandlesMalformedAndEmptyFeeds(t *testing.T) {
+	t.Run("malformed", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write(mustReadFixture(t, "rss_malformed.xml"))
+		}))
+		t.Cleanup(server.Close)
+
+		provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+		_, err := provider.Search(context.Background(), "broken", Options{Host: server.URL, Timeout: time.Second, MaxRequests: 1})
+		if err == nil || !strings.Contains(err.Error(), "malformed rss_feed response") {
+			t.Fatalf("expected malformed feed error, got %v", err)
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/rss+xml")
+			_, _ = w.Write(mustReadFixture(t, "rss_empty.xml"))
+		}))
+		t.Cleanup(server.Close)
+
+		provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+		results, err := provider.Search(context.Background(), "anything", Options{Host: server.URL, Timeout: time.Second, MaxRequests: 1})
+		if err != nil {
+			t.Fatalf("Search returned error: %v", err)
+		}
+		if len(results) != 0 {
+			t.Fatalf("expected no empty-feed results, got %#v", results)
+		}
+	})
+}
+
+func TestRSSFeedProviderRateLimitsConfiguredFeeds(t *testing.T) {
+	originalNow := nowFunc
+	originalSleep := sleepContextFunc
+	t.Cleanup(func() {
+		nowFunc = originalNow
+		sleepContextFunc = originalSleep
+		rateLimitersMu.Lock()
+		delete(rateLimiters, ProviderRSSFeed+"\x00"+"25ms")
+		rateLimitersMu.Unlock()
+	})
+
+	current := time.Unix(0, 0)
+	nowFunc = func() time.Time { return current }
+	var sleeps []time.Duration
+	sleepContextFunc = func(ctx context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		current = current.Add(d)
+		return nil
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write(mustReadFixture(t, "rss_empty.xml"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+	_, err := provider.Search(context.Background(), "anything", Options{Parameters: map[string]string{"feed_urls": server.URL + "/one.xml," + server.URL + "/two.xml"}, Timeout: time.Second, RateLimit: "25ms", MaxRequests: 2})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two feed requests, got %d", requests)
+	}
+	if len(sleeps) != 1 || sleeps[0] != 25*time.Millisecond {
+		t.Fatalf("expected one 25ms rate-limit sleep, got %v", sleeps)
+	}
+}
+
+func TestRSSFeedProviderReturnsHTTPRateLimitErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"slow down"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+	_, err := provider.Search(context.Background(), "anything", Options{Host: server.URL, Timeout: time.Second, MaxRequests: 1})
+	if err == nil || !strings.Contains(err.Error(), "returned status 429") {
+		t.Fatalf("expected HTTP rate limit error, got %v", err)
+	}
+}
+
+func assertMatchedFields(t *testing.T, metadata map[string]interface{}, want string) {
+	t.Helper()
+	fields, ok := metadata["matched_fields"].([]string)
+	if !ok {
+		t.Fatalf("matched_fields has type %T", metadata["matched_fields"])
+	}
+	for _, field := range fields {
+		if field == want {
+			return
+		}
+	}
+	t.Fatalf("matched_fields = %v, want %q", fields, want)
 }
 
 func TestCommonCrawlIndexProviderFixtureParsesJSONLines(t *testing.T) {

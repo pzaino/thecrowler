@@ -3,9 +3,16 @@
   <title>Example Atom Feed</title>
   <entry>
     <title>Beta public research note</title>
-    <link href="https://example.com/research/beta" rel="alternate" />
+    <link href="/research/beta" rel="alternate" />
     <summary>Beta snippet from an Atom fixture.</summary>
-    <updated>2026-06-05T00:00:00Z</updated>
+    <content>Long Beta content from an Atom fixture.</content>
+    <published>2026-06-05T00:00:00Z</published>
+    <updated>2026-06-05T01:00:00Z</updated>
     <id>tag:example.com,2026:beta</id>
+    <category term="atom-threat" label="Atom Threat" />
+    <author>
+      <name>Atom Analyst</name>
+      <email>atom@example.com</email>
+    </author>
   </entry>
 </feed>
