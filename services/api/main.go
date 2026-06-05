@@ -595,6 +595,17 @@ func initAPIv1() {
 
 		http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
 		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, ScrapedDataResponse{})
+
+		registerSearchFunctionRoute("/v1/search/correlated_sources", searchCorrelatedSourcesByDomainHandler, "Typed PostgreSQL correlated-source search endpoint")
+		registerSearchFunctionRoute("/v1/search/pages", searchPagesFunctionHandler, "Typed PostgreSQL page search endpoint")
+		registerSearchFunctionRoute("/v1/search/scraped_data", searchScrapedDataFunctionHandler, "Typed PostgreSQL scraped-data search endpoint")
+		registerSearchFunctionRoute("/v1/search/scraped_data_field", searchScrapedDataFieldFunctionHandler, "Typed PostgreSQL scraped-data field search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts", searchArtifactsFunctionHandler, "Typed PostgreSQL artifact search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts_field", searchArtifactsFieldFunctionHandler, "Typed PostgreSQL artifact field search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts_fields", searchArtifactsFieldsFunctionHandler, "Typed PostgreSQL artifact multi-field search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts_attribute", searchArtifactsByAttributeFunctionHandler, "Typed PostgreSQL artifact attribute search endpoint")
+		registerSearchFunctionRoute("/v1/search/objects_attribute", searchObjectsByAttributeFunctionHandler, "Typed PostgreSQL object attribute search endpoint")
+		registerSearchFunctionRoute("/v1/search/objects_attributes", searchObjectsByAttributesFunctionHandler, "Typed PostgreSQL object multi-attribute search endpoint")
 	}
 
 	if config.API.EnableConsole {
