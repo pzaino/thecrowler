@@ -373,6 +373,16 @@ there is no crawling activity and it's passed 1 hours from the previous
 maintenance activity, The CROWler will clean up the database and optimize the
 indexes.
 
+## Support this project!
+
+The CROWler now counts thousands of git clones and downloads every week, and it's growing fast. 
+It's great to see how many people are using it already, and I'm really happy about that. If you want to support the project, you can do it by:
+
+- Clicking the support button on the GitHub page
+- Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
+
+Thank you for your support and remember that free software rely on the support of the community to thrive and grow, so if you like the project, please consider supporting it!
+
 ## License
 
 The CROWler is licensed under the Apache 2.0 License. For more information, see
