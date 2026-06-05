@@ -870,11 +870,15 @@ return `accepted`, `score`, and `reason`, with optional `source_overrides`,
 candidate URL, category, user ownership, or seed linkage.
 
 The Information Seed runner enforces the configured plugin timeout, maximum JSON
-output size, output schema validation, and safe override validation. Empty plugin
-chains pass candidates through unchanged. Valid `accepted: false` output rejects
-only that candidate. Malformed output, timeout, oversize output, or unsafe
-overrides reject that candidate and are reported as processor errors; if no
-candidates remain, the seed is marked failed. See
+output size, output schema validation, and safe override validation before it
+applies either the plugin accept/reject decision or any source overrides. Empty
+plugin chains pass candidates through unchanged. `candidate_plugins` is both an
+ordered execution list and an allow-list: omitted means all registered candidate
+processors run in registration order; present means only matching named
+processors run, in the list order, with duplicate or unknown names ignored. Valid
+`accepted: false` output rejects only that candidate. Malformed output, timeout,
+oversize output, or unsafe overrides reject that candidate and are reported as
+processor errors; if no candidates remain, the seed is marked failed. See
 [`doc/plugins.md`](plugins.md#information-seed-candidate-plugins) and
 [`schemas/crowler-infoseed-candidate-plugin-schema.json`](../schemas/crowler-infoseed-candidate-plugin-schema.json)
 for the full contract.

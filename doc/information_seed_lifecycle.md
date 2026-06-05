@@ -114,17 +114,23 @@ phase order on every run:
    claiming engine, increments `attempts`, and stamps `last_processed_at`.
 5. The runner parses and validates `InformationSeed.config` into the per-run
    contract shown below.
-6. Built-in phases render queries, select configured providers, fan out bounded
-   provider requests, normalize URLs, remove duplicate URLs or hosts according
-   to seed options, enforce candidate limits, persist accepted candidates as
-   `Sources`, link them through `SourceInformationSeedIndex`, and emit discovery
-   events.
-7. Custom candidate plugin phases run only after built-in provider discovery and
-   URL normalization/de-duplication. Plugins may reject candidates or apply the
-   documented safe source overrides, but they do not replace the built-in source
-   persistence, source/seed linking, lifecycle finalization, or event emission
-   phases.
-7. The runner writes `completed`, `error`, or `disabled` as the terminal status
+6. Candidate processing always uses this canonical order: URL normalization and
+   URL/host de-duplication, built-in filters, user candidate plugins, source
+   override validation, then persistence/linking. Built-in filters enforce
+   allowed domains, denied domains, required URL schemes, minimum score, maximum
+   candidates per host/domain, and the seed/global candidate limit before any
+   user plugin can run.
+7. Custom candidate plugin phases run only after built-in provider discovery,
+   URL normalization/de-duplication, and built-in filters. `candidate_plugins`
+   is both the ordered execution list and the allow-list: when omitted, all
+   registered candidate processors run in registration order; when present, only
+   matching named processors run, in the seed-provided order, with duplicate or
+   unknown names ignored. Plugins may reject candidates or apply the documented
+   safe source overrides, but plugin output and source overrides are validated
+   before any decision or override is applied. Plugins do not replace built-in
+   source persistence, source/seed linking, lifecycle finalization, or event
+   emission phases.
+8. The runner writes `completed`, `error`, or `disabled` as the terminal status
    for the current attempt according to the final-status table.
 
 ## `InformationSeed.config` example
@@ -152,6 +158,12 @@ example shows the complete production contract for the current runner:
   "tracking_params": ["utm_source", "utm_medium", "utm_campaign"],
   "deduplicate_host": true,
   "max_candidates": 25,
+  "allowed_domains": ["example.invalid"],
+  "denied_domains": ["ads.example.invalid"],
+  "required_url_schemes": ["https"],
+  "min_score": 0.2,
+  "max_candidates_per_host": 3,
+  "max_candidates_per_domain": 10,
   "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
   "source_priority": "normal",
   "restricted": 1,
@@ -183,13 +195,26 @@ Configuration behavior:
   and source lookup.
 - `deduplicate_host` keeps at most one normalized candidate per host; otherwise
   duplicate filtering is by normalized URL.
-- `max_candidates` is capped by `information_seed.max_candidates_per_seed`.
+- `max_candidates` is capped by `information_seed.max_candidates_per_seed` and is
+  enforced during the built-in filter phase.
+- `allowed_domains` keeps only candidates whose host is the listed domain or a
+  subdomain. `denied_domains` rejects listed domains/subdomains after the allow
+  check and before scoring or cardinality limits.
+- `required_url_schemes` rejects candidates whose normalized URL scheme is not in
+  the list. Normalization already limits candidates to HTTP(S), so this is most
+  often used to require `https`.
+- `min_score` rejects candidates below the configured score.
+- `max_candidates_per_host` and `max_candidates_per_domain` keep the first N
+  candidates in deterministic candidate order for each host or registrable
+  domain.
 - `source_name_template`, `source_priority`, `restricted`, `flags`, and
   `source_config` provide defaults for accepted candidates. Candidate plugins may
   override only the safe subset documented in the plugin contract.
-- `candidate_plugins` is a seed-level selection list. When omitted, all
-  registered information-seed candidate processors are eligible; when present,
-  only named processors matching the list are selected.
+- `candidate_plugins` is both a seed-level ordered execution list and an
+  allow-list. When omitted, all registered information-seed candidate processors
+  are eligible in registration order. When present, only named processors
+  matching the list are selected, they run in the list order, and duplicate or
+  unknown names are ignored.
 
 ## Final status behavior
 
@@ -257,9 +282,14 @@ schema per event:
   "candidates_accepted": 8,
   "candidates_rejected": 4,
   "candidate_rejection_counts": {
-    "normalization_or_deduplication": 2,
+    "duplicate_url": 2,
     "candidate_limit": 1,
     "candidate_processor": 1
+  },
+  "candidate_rejection_stages": {
+    "normalization": { "duplicate_url": 2 },
+    "built_in_filters": { "candidate_limit": 1 },
+    "user_candidate_plugins": { "candidate_processor": 1 }
   },
   "sources_created": 8,
   "sources_linked": 8,
@@ -267,9 +297,12 @@ schema per event:
 }
 ```
 
-`error_summaries` contains concise messages only; provider, plugin, or database
-errors should be summarized rather than storing unbounded logs or secrets in
-`Events.details`.
+`candidate_rejection_stages` groups the same stable reason constants by the
+phase that rejected them, including `normalization`, `built_in_filters`,
+`user_candidate_plugins`, and `source_override_validation` when those phases
+reject at least one candidate. `error_summaries` contains concise messages only;
+provider, plugin, or database errors should be summarized rather than storing
+unbounded logs or secrets in `Events.details`.
 
 ## Idempotency and reruns
 

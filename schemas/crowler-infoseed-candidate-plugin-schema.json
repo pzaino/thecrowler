@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-infoseed-candidate-plugin-schema.json",
   "title": "CROWler Information Seed Candidate Plugin Payloads",
-  "description": "Input and output contracts for plugins handling information_seed_candidate candidates.",
+  "description": "Input and output contracts for plugins handling information_seed_candidate candidates. Candidate plugins execute after normalization/de-duplication and built-in filters. Seed candidate_plugins is both an ordered execution list and an allow-list.",
   "type": "object",
   "properties": {
     "input": { "$ref": "#/definitions/input" },
@@ -66,6 +66,7 @@
     },
     "source_overrides": {
       "type": "object",
+      "description": "Safe source override subset. URL, category_id, usr_id, and seed linkage are intentionally not accepted.",
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "priority": { "type": "string" },
@@ -88,6 +89,7 @@
     },
     "output": {
       "type": "object",
+      "description": "Strict plugin output. The runner validates this object, including source_overrides, before applying accept/reject decisions or overrides.",
       "required": ["accepted", "score", "reason"],
       "properties": {
         "accepted": { "type": "boolean" },

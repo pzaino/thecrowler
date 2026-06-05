@@ -43,18 +43,24 @@ type Runner struct {
 
 // SeedRunConfig is read from InformationSeed.config. All fields are optional.
 type SeedRunConfig struct {
-	Queries            []string        `json:"queries" yaml:"queries"`
-	QueryTemplates     []string        `json:"query_templates" yaml:"query_templates"`
-	Providers          []string        `json:"providers" yaml:"providers"`
-	TrackingParams     []string        `json:"tracking_params" yaml:"tracking_params"`
-	DeduplicateHost    bool            `json:"deduplicate_host" yaml:"deduplicate_host"`
-	MaxCandidates      int             `json:"max_candidates" yaml:"max_candidates"`
-	SourceNameTemplate string          `json:"source_name_template" yaml:"source_name_template"`
-	SourcePriority     string          `json:"source_priority" yaml:"source_priority"`
-	Restricted         uint            `json:"restricted" yaml:"restricted"`
-	Flags              uint            `json:"flags" yaml:"flags"`
-	CandidatePlugins   []string        `json:"candidate_plugins" yaml:"candidate_plugins"`
-	SourceConfig       json.RawMessage `json:"source_config" yaml:"source_config"`
+	Queries                []string        `json:"queries" yaml:"queries"`
+	QueryTemplates         []string        `json:"query_templates" yaml:"query_templates"`
+	Providers              []string        `json:"providers" yaml:"providers"`
+	TrackingParams         []string        `json:"tracking_params" yaml:"tracking_params"`
+	DeduplicateHost        bool            `json:"deduplicate_host" yaml:"deduplicate_host"`
+	MaxCandidates          int             `json:"max_candidates" yaml:"max_candidates"`
+	AllowedDomains         []string        `json:"allowed_domains" yaml:"allowed_domains"`
+	DeniedDomains          []string        `json:"denied_domains" yaml:"denied_domains"`
+	RequiredURLSchemes     []string        `json:"required_url_schemes" yaml:"required_url_schemes"`
+	MinScore               *float64        `json:"min_score" yaml:"min_score"`
+	MaxCandidatesPerHost   int             `json:"max_candidates_per_host" yaml:"max_candidates_per_host"`
+	MaxCandidatesPerDomain int             `json:"max_candidates_per_domain" yaml:"max_candidates_per_domain"`
+	SourceNameTemplate     string          `json:"source_name_template" yaml:"source_name_template"`
+	SourcePriority         string          `json:"source_priority" yaml:"source_priority"`
+	Restricted             uint            `json:"restricted" yaml:"restricted"`
+	Flags                  uint            `json:"flags" yaml:"flags"`
+	CandidatePlugins       []string        `json:"candidate_plugins" yaml:"candidate_plugins"`
+	SourceConfig           json.RawMessage `json:"source_config" yaml:"source_config"`
 }
 
 // Result summarizes one seed processing run.
@@ -85,11 +91,12 @@ type seedDiscoveryStats struct {
 	SourcesCreated     int
 	SourcesLinked      int
 	RejectionCounts    map[string]int
+	RejectionStages    map[string]map[string]int
 	ErrorSummaries     []string
 }
 
 func newSeedDiscoveryStats() *seedDiscoveryStats {
-	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}}
+	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}, RejectionStages: map[string]map[string]int{}}
 }
 
 func (stats *seedDiscoveryStats) addProviderMetric(provider, metric string, count int) {
@@ -108,8 +115,16 @@ func (stats *seedDiscoveryStats) addProviderMetric(provider, metric string, coun
 }
 
 func (stats *seedDiscoveryStats) addRejected(reason string, count int) {
+	stats.addRejectedAtStage(CandidateRejectionStageBuiltInFilters, reason, count)
+}
+
+func (stats *seedDiscoveryStats) addRejectedAtStage(stage, reason string, count int) {
 	if stats == nil || count <= 0 {
 		return
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		stage = "unspecified"
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -117,6 +132,22 @@ func (stats *seedDiscoveryStats) addRejected(reason string, count int) {
 	}
 	stats.CandidatesRejected += count
 	stats.RejectionCounts[reason] += count
+	if stats.RejectionStages[stage] == nil {
+		stats.RejectionStages[stage] = map[string]int{}
+	}
+	stats.RejectionStages[stage][reason] += count
+}
+
+func (stats *seedDiscoveryStats) addRejectedMap(stage string, rejected map[string]int) {
+	for reason, count := range rejected {
+		stats.addRejectedAtStage(stage, reason, count)
+	}
+}
+
+func (stats *seedDiscoveryStats) addProcessorRejections(rejected map[string]map[string]int) {
+	for stage, reasons := range rejected {
+		stats.addRejectedMap(stage, reasons)
+	}
 }
 
 func (stats *seedDiscoveryStats) addError(err error) {
@@ -226,6 +257,7 @@ func informationSeedEventPayload(seed cdb.InformationSeed, sourceID uint64, stat
 		"sources_linked":             0,
 		"error_summaries":            []string{},
 		"candidate_rejection_counts": map[string]int{},
+		"candidate_rejection_stages": map[string]map[string]int{},
 	}
 	if stats == nil {
 		return payload
@@ -239,6 +271,7 @@ func informationSeedEventPayload(seed cdb.InformationSeed, sourceID uint64, stat
 	payload["sources_linked"] = stats.SourcesLinked
 	payload["error_summaries"] = stats.ErrorSummaries
 	payload["candidate_rejection_counts"] = stats.RejectionCounts
+	payload["candidate_rejection_stages"] = stats.RejectionStages
 	return payload
 }
 
@@ -316,21 +349,18 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 
 	trackingParams := append(defaultTrackingParams(), runCfg.TrackingParams...)
-	normalized := NormalizeCandidates(candidates, CandidateOptions{TrackingParams: trackingParams, DeduplicateHost: runCfg.DeduplicateHost})
-	stats.addRejected("normalization_or_deduplication", len(candidates)-len(normalized))
+	normalization := NormalizeCandidatesWithRejections(candidates, CandidateOptions{TrackingParams: trackingParams, DeduplicateHost: runCfg.DeduplicateHost})
+	stats.addRejectedMap(CandidateRejectionStageNormalization, normalization.Rejected)
 	limit := r.Config.MaxCandidatesPerSeed
-	if runCfg.MaxCandidates > 0 && runCfg.MaxCandidates < limit {
+	if runCfg.MaxCandidates > 0 && (limit <= 0 || runCfg.MaxCandidates < limit) {
 		limit = runCfg.MaxCandidates
 	}
-	if limit > 0 && len(normalized) > limit {
-		stats.addRejected("candidate_limit", len(normalized)-limit)
-		normalized = normalized[:limit]
-	}
-	candidates = normalized
+	filterResult := ApplyBuiltInCandidateFilters(normalization.Candidates, CandidateFilters{AllowedDomains: runCfg.AllowedDomains, DeniedDomains: runCfg.DeniedDomains, RequiredSchemes: runCfg.RequiredURLSchemes, MinScore: runCfg.MinScore, MaxCandidatesPerHost: runCfg.MaxCandidatesPerHost, MaxCandidatesPerDomain: runCfg.MaxCandidatesPerDomain, MaxCandidates: limit})
+	stats.addRejectedMap(CandidateRejectionStageBuiltInFilters, filterResult.Rejected)
+	candidates = filterResult.Candidates
 
-	beforeProcessors := len(candidates)
-	candidates, err = r.applyProcessors(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins)
-	stats.addRejected("candidate_processor", beforeProcessors-len(candidates))
+	candidates, processorRejections, err := r.applyProcessorsWithRejections(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins)
+	stats.addProcessorRejections(processorRejections)
 	if err != nil {
 		stats.addError(err)
 	}
@@ -565,11 +595,17 @@ func redactInformationSeedError(message string) string {
 }
 
 func (r *Runner) applyProcessors(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, error) {
+	processed, _, err := r.applyProcessorsWithRejections(ctx, seed, runCfg, candidates, enabledNames)
+	return processed, err
+}
+
+func (r *Runner) applyProcessorsWithRejections(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, map[string]map[string]int, error) {
 	processors := selectProcessors(r.Processors, enabledNames)
 	if len(processors) == 0 {
-		return candidates, nil
+		return candidates, map[string]map[string]int{}, nil
 	}
 	processed := make([]Candidate, 0, len(candidates))
+	rejected := map[string]map[string]int{}
 	var errs []string
 	for _, candidate := range candidates {
 		keep := true
@@ -579,11 +615,14 @@ func (r *Runner) applyProcessors(ctx context.Context, seed cdb.InformationSeed, 
 			input := candidatePluginInput(seed, runCfg, current)
 			current, keep, err = processor.ProcessCandidate(ctx, input)
 			if err != nil {
+				stage, reason := classifyCandidateProcessorError(err)
+				addProcessorRejection(rejected, stage, reason)
 				errs = append(errs, err.Error())
 				keep = false
 				break
 			}
 			if !keep {
+				addProcessorRejection(rejected, CandidateRejectionStageUserPlugins, CandidateRejectionCandidateProcessor)
 				break
 			}
 		}
@@ -592,31 +631,66 @@ func (r *Runner) applyProcessors(ctx context.Context, seed cdb.InformationSeed, 
 		}
 	}
 	if len(errs) > 0 {
-		return processed, fmt.Errorf("candidate processor errors: %s", strings.Join(errs, "; "))
+		return processed, rejected, fmt.Errorf("candidate processor errors: %s", strings.Join(errs, "; "))
 	}
-	return processed, nil
+	return processed, rejected, nil
 }
 
+func addProcessorRejection(rejected map[string]map[string]int, stage, reason string) {
+	if rejected[stage] == nil {
+		rejected[stage] = map[string]int{}
+	}
+	rejected[stage][reason]++
+}
+
+func classifyCandidateProcessorError(err error) (string, string) {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "unsafe source_overrides"):
+		return CandidateRejectionStageSourceOverrideValidation, CandidateRejectionSourceOverrideInvalid
+	case strings.Contains(message, "malformed output"):
+		return CandidateRejectionStageUserPlugins, CandidateRejectionPluginOutputInvalid
+	default:
+		return CandidateRejectionStageUserPlugins, CandidateRejectionCandidateProcessor
+	}
+}
+
+// selectProcessors treats candidate_plugins as both an allow-list and the
+// canonical ordered execution list. Omitted candidate_plugins runs registered
+// processors in registration order. Present candidate_plugins runs only named
+// registered processors, in the seed-provided order, ignoring duplicate or
+// unknown names.
 func selectProcessors(processors []CandidateProcessor, enabledNames []string) []CandidateProcessor {
 	if len(enabledNames) == 0 {
 		return processors
 	}
-	enabled := map[string]struct{}{}
-	for _, name := range enabledNames {
-		name = strings.ToLower(strings.TrimSpace(name))
-		if name != "" {
-			enabled[name] = struct{}{}
-		}
-	}
-	selected := make([]CandidateProcessor, 0, len(processors))
+	byName := map[string]CandidateProcessor{}
 	for _, processor := range processors {
 		named, ok := processor.(NamedCandidateProcessor)
 		if !ok {
 			continue
 		}
-		if _, enabled := enabled[strings.ToLower(strings.TrimSpace(named.ProcessorName()))]; enabled {
-			selected = append(selected, processor)
+		name := strings.ToLower(strings.TrimSpace(named.ProcessorName()))
+		if name != "" {
+			byName[name] = processor
 		}
+	}
+	selected := make([]CandidateProcessor, 0, len(enabledNames))
+	seen := map[string]struct{}{}
+	for _, name := range enabledNames {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		processor, ok := byName[name]
+		if !ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		selected = append(selected, processor)
 	}
 	return selected
 }
@@ -750,6 +824,11 @@ type candidatePluginOutput struct {
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
+type candidatePluginDecision struct {
+	candidatePluginOutput
+	SourceOverrideValues SourceOverrides
+}
+
 // JSPluginProcessor adapts an engine plugin into a candidate processor. The
 // plugin receives seed, candidate, provider/query/rank metadata, and proposed
 // source defaults under params.seed, params.candidate, params.metadata, and
@@ -796,10 +875,11 @@ func (p JSPluginProcessor) ProcessCandidate(ctx context.Context, input Candidate
 		return candidate, false, fmt.Errorf("candidate plugin %q output exceeded %d bytes", p.Plugin.Name, p.MaxOutputSizeBytes)
 	}
 
-	output, err := validateCandidatePluginOutput(encoded)
+	decision, err := validateCandidatePluginDecision(encoded)
 	if err != nil {
 		return candidate, false, fmt.Errorf("candidate plugin %q malformed output: %w", p.Plugin.Name, err)
 	}
+	output := decision.candidatePluginOutput
 	if !*output.Accepted {
 		candidate.Score = *output.Score
 		candidate.Reason = *output.Reason
@@ -820,11 +900,7 @@ func (p JSPluginProcessor) ProcessCandidate(ctx context.Context, input Candidate
 		}
 	}
 	if len(output.SourceOverrides) > 0 {
-		overrides, err := validateSourceOverrides(output.SourceOverrides)
-		if err != nil {
-			return candidate, false, fmt.Errorf("candidate plugin %q unsafe source_overrides: %w", p.Plugin.Name, err)
-		}
-		candidate.SourceOverrides = overrides
+		candidate.SourceOverrides = decision.SourceOverrideValues
 	}
 	return candidate, true, nil
 }
@@ -860,27 +936,40 @@ func candidatePluginInput(seed cdb.InformationSeed, runCfg SeedRunConfig, candid
 }
 
 func validateCandidatePluginOutput(data []byte) (candidatePluginOutput, error) {
+	decision, err := validateCandidatePluginDecision(data)
+	return decision.candidatePluginOutput, err
+}
+
+func validateCandidatePluginDecision(data []byte) (candidatePluginDecision, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var output candidatePluginOutput
 	if err := dec.Decode(&output); err != nil {
-		return output, err
+		return candidatePluginDecision{}, err
 	}
 	if output.Accepted == nil {
-		return output, fmt.Errorf("accepted is required")
+		return candidatePluginDecision{}, fmt.Errorf("accepted is required")
 	}
 	if output.Score == nil || math.IsNaN(*output.Score) || math.IsInf(*output.Score, 0) {
-		return output, fmt.Errorf("score must be a finite number")
+		return candidatePluginDecision{}, fmt.Errorf("score must be a finite number")
 	}
 	if output.Reason == nil || strings.TrimSpace(*output.Reason) == "" {
-		return output, fmt.Errorf("reason is required")
+		return candidatePluginDecision{}, fmt.Errorf("reason is required")
 	}
 	for _, tag := range output.Tags {
 		if strings.TrimSpace(tag) == "" {
-			return output, fmt.Errorf("tags must be non-empty strings")
+			return candidatePluginDecision{}, fmt.Errorf("tags must be non-empty strings")
 		}
 	}
-	return output, nil
+	decision := candidatePluginDecision{candidatePluginOutput: output}
+	if len(output.SourceOverrides) > 0 {
+		overrides, err := validateSourceOverrides(output.SourceOverrides)
+		if err != nil {
+			return candidatePluginDecision{}, fmt.Errorf("unsafe source_overrides: %w", err)
+		}
+		decision.SourceOverrideValues = overrides
+	}
+	return decision, nil
 }
 
 func validateSourceOverrides(raw map[string]interface{}) (SourceOverrides, error) {
