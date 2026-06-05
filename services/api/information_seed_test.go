@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/time/rate"
@@ -467,4 +468,48 @@ func insertInformationSeedAPITestSource(t *testing.T, db *sql.DB, sourceURL, nam
 
 func itoa(value uint64) string {
 	return strconv.FormatUint(value, 10)
+}
+
+func TestInformationSeedDiagnosticsHandlerRedactsSecrets(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+
+	seedID := createInformationSeedAPITestSeed(t, &handler, "diagnostics api", "completed", "", 0, 0, false)
+	db := handler.(*informationSeedAPITestHandler).db
+	details := `{
+		"information_seed_id":` + itoa(seedID) + `,
+		"run_id":"information-seed-` + itoa(seedID) + `-attempt-1",
+		"run_attempt":1,
+		"provider_metrics":{"brave":{"requests":2,"errors":1}},
+		"candidate_rejection_stages":{"user_plugins":{"candidate_processor":1}},
+		"provider_failures":[{"provider":"brave","summary":"url https://example.invalid/?api_key=SHOULD_NOT_LEAK token=SECRET_TOKEN"}],
+		"plugin_failures":[{"plugin":"policy","summary":"password=SECRET_PASSWORD"}],
+		"error_summaries":["client_secret=SHOULD_NOT_LEAK"]
+	}`
+	if _, err := db.Exec(`INSERT INTO Events (event_sha256, source_id, event_type, event_severity, event_timestamp, details) VALUES (?, ?, ?, ?, ?, ?)`, "evt-diagnostics", nil, "information_seed.discovery_completed", cdb.EventSeverityWarning, "2026-01-02T00:00:00Z", details); err != nil {
+		t.Fatalf("insert diagnostics event: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/"+itoa(seedID)+"/diagnostics", nil)
+	informationSeedDiagnosticsHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected diagnostics 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "SHOULD_NOT_LEAK") || strings.Contains(body, "SECRET_TOKEN") || strings.Contains(body, "SECRET_PASSWORD") {
+		t.Fatalf("diagnostics leaked secret: %s", body)
+	}
+	var resp InformationSeedDiagnosticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode diagnostics response: %v", err)
+	}
+	if resp.ProviderRequests["brave"] != 2 || resp.RejectionStages["user_plugins"]["candidate_processor"] != 1 {
+		t.Fatalf("unexpected diagnostics aggregates: %#v", resp)
+	}
+	if len(resp.ProviderFailures) != 1 || len(resp.PluginFailures) != 1 || len(resp.ErrorSummaries) != 1 {
+		t.Fatalf("expected redacted failures and errors: %#v", resp)
+	}
 }

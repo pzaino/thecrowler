@@ -114,23 +114,26 @@ type candidateDecisionEvidence struct {
 }
 
 type seedDiscoveryStats struct {
-	ProviderCounts     map[string]int
-	ProviderMetrics    map[string]map[string]int
-	CandidatesFound    int
-	CandidatesAccepted int
-	CandidatesRejected int
-	SourcesCreated     int
-	SourcesLinked      int
-	RejectionCounts    map[string]int
-	RejectionStages    map[string]map[string]int
-	ErrorSummaries     []string
-	SourceIDsCreated   []uint64
-	SourceIDsLinked    []uint64
-	PluginMetadata     []map[string]interface{}
+	ProviderCounts       map[string]int
+	ProviderMetrics      map[string]map[string]int
+	CandidatesFound      int
+	CandidatesAccepted   int
+	CandidatesRejected   int
+	SourcesCreated       int
+	SourcesLinked        int
+	RejectionCounts      map[string]int
+	RejectionStages      map[string]map[string]int
+	ErrorSummaries       []string
+	SourceIDsCreated     []uint64
+	SourceIDsLinked      []uint64
+	PluginMetadata       []map[string]interface{}
+	ProviderFailures     []providerFailure
+	PluginFailures       map[string]int
+	PluginFailureDetails []pluginFailure
 }
 
 func newSeedDiscoveryStats() *seedDiscoveryStats {
-	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}, RejectionStages: map[string]map[string]int{}}
+	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}, RejectionStages: map[string]map[string]int{}, PluginFailures: map[string]int{}}
 }
 
 func (stats *seedDiscoveryStats) addProviderMetric(provider, metric string, count int) {
@@ -210,9 +213,43 @@ func (stats *seedDiscoveryStats) addError(err error) {
 	stats.ErrorSummaries = append(stats.ErrorSummaries, trimEventString(redactInformationSeedError(err.Error()), 512))
 	if failures, ok := err.(interface{ ProviderFailures() []providerFailure }); ok {
 		for _, failure := range failures.ProviderFailures() {
-			stats.addProviderMetric(failure.Provider, "errors", 1)
+			stats.addProviderFailure(failure.Provider, failure.Summary)
 		}
 	}
+}
+
+func (stats *seedDiscoveryStats) addProviderFailure(provider, summary string) {
+	if stats == nil {
+		return
+	}
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		provider = "unknown"
+	}
+	summary = trimEventString(redactInformationSeedError(summary), 512)
+	stats.addProviderMetric(provider, "errors", 1)
+	stats.ProviderFailures = append(stats.ProviderFailures, providerFailure{Provider: provider, Summary: summary})
+}
+
+type pluginFailure struct {
+	Plugin  string
+	Summary string
+}
+
+func (stats *seedDiscoveryStats) addPluginFailure(plugin, summary string) {
+	if stats == nil {
+		return
+	}
+	plugin = strings.TrimSpace(plugin)
+	if plugin == "" {
+		plugin = "unknown"
+	}
+	summary = trimEventString(redactInformationSeedError(summary), 512)
+	if stats.PluginFailures == nil {
+		stats.PluginFailures = map[string]int{}
+	}
+	stats.PluginFailures[plugin]++
+	stats.PluginFailureDetails = append(stats.PluginFailureDetails, pluginFailure{Plugin: plugin, Summary: summary})
 }
 
 type providerFailure struct {
@@ -372,6 +409,7 @@ func maxInt(a, b int) int {
 // RunSeed processes one already-claimed information seed and writes its final lifecycle status.
 func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result, error) {
 	result := Result{SeedID: seed.ID}
+	runStarted := time.Now()
 	if r == nil || r.DB == nil {
 		return result, fmt.Errorf("information seed runner is not configured")
 	}
@@ -380,11 +418,12 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 
 	stats := newSeedDiscoveryStats()
+	defer func() { recordInformationSeedRunMetrics(stats, time.Since(runStarted)) }()
 	runCfg, err := parseSeedRunConfig(seed)
 	if err != nil {
 		stats.addError(err)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
 		return result, err
 	}
 	processingTimeout := ParseDurationOrDefault(r.Config.ProcessingTimeout, 30*time.Minute)
@@ -397,12 +436,12 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if err != nil {
 		stats.addError(err)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
 		return result, err
 	}
 	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryStarted, cdb.EventSeverityInfo, stats)
 
-	candidates, err := r.queryProviders(ctx, seed, runCfg, queries)
+	candidates, err := r.queryProvidersWithStats(ctx, seed, runCfg, queries, stats)
 	for _, candidate := range candidates {
 		stats.ProviderCounts[candidate.Provider]++
 		stats.addProviderMetric(candidate.Provider, "candidates", 1)
@@ -420,7 +459,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 	if err != nil && len(candidates) == 0 {
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
 		return result, err
 	}
 
@@ -435,7 +474,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	stats.addRejectedDecisions(filterDecisions)
 	candidates = filteredCandidates
 
-	candidates, processorDecisions, err := r.applyProcessorsWithDecisionEvidence(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins)
+	candidates, processorDecisions, err := r.applyProcessorsWithDecisionEvidenceAndStats(ctx, seed, runCfg, candidates, runCfg.CandidatePlugins, stats)
 	stats.addRejectedDecisions(processorDecisions)
 	if err != nil {
 		stats.addError(err)
@@ -450,7 +489,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 	if err != nil && len(candidates) == 0 {
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", err.Error())
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
 		return result, err
 	}
 
@@ -461,7 +500,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if auditErr := r.persistCandidateDecisionEvidence(seed, allDecisions); auditErr != nil {
 		stats.addError(auditErr)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", auditErr.Error())
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(auditErr.Error()))
 		return result, auditErr
 	}
 
@@ -471,7 +510,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if persistErr != nil {
 		stats.addError(persistErr)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", persistErr.Error())
+		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(persistErr.Error()))
 		return result, persistErr
 	}
 	if err := cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "completed", ""); err != nil {
@@ -546,6 +585,10 @@ func renderQueries(seed cdb.InformationSeed, runCfg SeedRunConfig, maxQueries in
 }
 
 func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, queries []string) ([]Candidate, error) {
+	return r.queryProvidersWithStats(ctx, seed, runCfg, queries, nil)
+}
+
+func (r *Runner) queryProvidersWithStats(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, queries []string, stats *seedDiscoveryStats) ([]Candidate, error) {
 	providerNames := r.providerNames(runCfg)
 	if len(providerNames) == 0 || len(queries) == 0 {
 		return nil, nil
@@ -577,6 +620,9 @@ func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, r
 				results, err := provider.Search(ctx, query, providerOptionsWithMaxRequests(providerName, providerCfg, maxRequests))
 				mu.Lock()
 				defer mu.Unlock()
+				if stats != nil {
+					stats.addProviderMetric(providerName, "requests", 1)
+				}
 				if err != nil {
 					summary := fmt.Sprintf("%s: %s", providerName, redactInformationSeedError(err.Error()))
 					failures = append(failures, providerFailure{Provider: providerName, Summary: summary})
@@ -831,6 +877,10 @@ func (r *Runner) applyProcessorsWithRejections(ctx context.Context, seed cdb.Inf
 }
 
 func (r *Runner) applyProcessorsWithDecisionEvidence(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string) ([]Candidate, []candidateDecisionEvidence, error) {
+	return r.applyProcessorsWithDecisionEvidenceAndStats(ctx, seed, runCfg, candidates, enabledNames, nil)
+}
+
+func (r *Runner) applyProcessorsWithDecisionEvidenceAndStats(ctx context.Context, seed cdb.InformationSeed, runCfg SeedRunConfig, candidates []Candidate, enabledNames []string, stats *seedDiscoveryStats) ([]Candidate, []candidateDecisionEvidence, error) {
 	processors := selectProcessors(r.Processors, enabledNames)
 	if len(processors) == 0 {
 		return candidates, nil, nil
@@ -848,7 +898,11 @@ func (r *Runner) applyProcessorsWithDecisionEvidence(ctx context.Context, seed c
 			if err != nil {
 				stage, reason := classifyCandidateProcessorError(err)
 				decisions = append(decisions, rejectedCandidateDecision(current, stage, reason))
-				errs = append(errs, err.Error())
+				redactedErr := redactInformationSeedError(err.Error())
+				errs = append(errs, redactedErr)
+				if stats != nil {
+					stats.addPluginFailure(candidateProcessorMetricName(processor), redactedErr)
+				}
 				keep = false
 				break
 			}
@@ -865,6 +919,15 @@ func (r *Runner) applyProcessorsWithDecisionEvidence(ctx context.Context, seed c
 		return processed, decisions, fmt.Errorf("candidate processor errors: %s", strings.Join(errs, "; "))
 	}
 	return processed, decisions, nil
+}
+
+func candidateProcessorMetricName(processor CandidateProcessor) string {
+	if named, ok := processor.(NamedCandidateProcessor); ok {
+		if name := strings.TrimSpace(named.ProcessorName()); name != "" {
+			return name
+		}
+	}
+	return "unknown"
 }
 
 func classifyCandidateProcessorError(err error) (string, string) {

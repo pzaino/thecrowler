@@ -63,6 +63,7 @@ func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {
 		"/v1/information_seed/candidates",
 		"/v1/information_seed/retry",
 		"/v1/information_seed/disable",
+		//"/v1/information_seed/{id}/diagnostics", // this test requires extra logic to handle {id}
 		"/v1/information-seed/list",
 		"/v1/owner/add",
 		"/v1/owner/update",

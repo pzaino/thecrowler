@@ -89,14 +89,14 @@ func (s Scheduler) listenForDatabaseWakeups(ctx context.Context) {
 	defer func() { _ = listener.Close() }()
 	if err := listener.Connect(cfg.Config{}, 10*time.Second, 90*time.Second, func(_ cdb.ListenerEventType, err error) {
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlWarn, "information seed listener error: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlWarn, "information seed listener error: %v", redactInformationSeedError(err.Error()))
 		}
 	}); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlWarn, "information seed listener connect failed; polling remains active: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "information seed listener connect failed; polling remains active: %v", redactInformationSeedError(err.Error()))
 		return
 	}
 	if err := listener.Listen(cdb.InformationSeedCreatedChannel); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlWarn, "information seed LISTEN failed; polling remains active: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlWarn, "information seed LISTEN failed; polling remains active: %v", redactInformationSeedError(err.Error()))
 		return
 	}
 	for {
@@ -132,12 +132,13 @@ func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, re
 	}
 	seeds, err := cdb.ClaimInformationSeeds(s.DB, limit, "", s.Engine, processingTimeout, retryAfter)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "claiming information seeds: %v", err)
+		cmn.DebugMsg(cmn.DbgLvlError, "claiming information seeds: %v", redactInformationSeedError(err.Error()))
 		return
 	}
 	if len(seeds) == 0 {
 		return
 	}
+	recordInformationSeedSeedsClaimed(s.Engine, len(seeds))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, limit)
 	for _, seed := range seeds {
@@ -154,7 +155,7 @@ func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, re
 				return
 			}
 			if _, err := s.Runner.RunSeed(ctx, seed); err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "processing information seed %d: %v", seed.ID, err)
+				cmn.DebugMsg(cmn.DbgLvlError, "processing information seed %d: %v", seed.ID, redactInformationSeedError(err.Error()))
 			}
 		}(seed)
 	}

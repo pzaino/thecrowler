@@ -109,6 +109,20 @@ type InformationSeedEventRow struct {
 	Details   map[string]interface{} `json:"details"`
 }
 
+// InformationSeedDiagnosticsResponse exposes the latest redacted run diagnostics for one seed.
+type InformationSeedDiagnosticsResponse struct {
+	Message              string                    `json:"message"`
+	InformationSeedID    uint64                    `json:"information_seed_id"`
+	RunID                string                    `json:"run_id,omitempty"`
+	RunAttempt           int                       `json:"run_attempt"`
+	ProviderRequests     map[string]int            `json:"provider_requests"`
+	RejectionStages      map[string]map[string]int `json:"rejection_stages"`
+	ProviderFailures     []map[string]interface{}  `json:"provider_failures"`
+	PluginFailures       []map[string]interface{}  `json:"plugin_failures"`
+	ErrorSummaries       []string                  `json:"error_summaries"`
+	LatestEventTimestamp string                    `json:"latest_event_timestamp,omitempty"`
+}
+
 // InformationSeedCandidateListResponse represents candidate decision evidence for one seed.
 type InformationSeedCandidateListResponse struct {
 	Message           string                        `json:"message"`

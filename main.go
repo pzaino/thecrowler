@@ -1473,6 +1473,7 @@ func main() {
 	// Start the information seed scheduler when configured. It wakes on
 	// InformationSeed creation notifications, keeps polling as recovery, and
 	// reclaims stale processing seeds through ClaimInformationSeeds.
+	infoseed.SetMetricsEnabled(config.Prometheus.Enabled)
 	seedRunner := infoseed.NewRunner(&db, config.InformationSeed)
 	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
 		for _, seedPlugin := range seedPlugins {

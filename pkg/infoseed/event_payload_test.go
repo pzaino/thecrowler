@@ -41,6 +41,8 @@ func TestInformationSeedEventPayloadStableShape(t *testing.T) {
 	assertPayloadKey(t, payload, "source_ids_created")
 	assertPayloadKey(t, payload, "source_ids_linked")
 	assertPayloadKey(t, payload, "error_summaries")
+	assertPayloadKey(t, payload, "provider_failures")
+	assertPayloadKey(t, payload, "plugin_failures")
 
 	if payload["run_id"] != "information-seed-7-attempt-2" || payload["run_attempt"] != 2 {
 		t.Fatalf("unexpected run correlation fields: %#v", payload)
@@ -123,6 +125,18 @@ func TestInformationSeedEventPayloadRedactsPluginMetadata(t *testing.T) {
 	assertNoSecret(t, encoded)
 	if !strings.Contains(encoded, `"api_token":"REDACTED"`) || !strings.Contains(encoded, `"nested_secret":"REDACTED"`) {
 		t.Fatalf("expected redacted plugin metadata, got %s", encoded)
+	}
+}
+
+func TestInformationSeedEventPayloadRedactsProviderAndPluginFailures(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.addProviderFailure("bad", "api_key=SHOULD_NOT_LEAK")
+	stats.addPluginFailure("policy", "password=SECRET_PASSWORD")
+	payload := informationSeedEventPayload(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, 0, stats)
+	encoded := mustJSON(t, payload)
+	assertNoSecret(t, encoded)
+	if !strings.Contains(encoded, `"provider_failures"`) || !strings.Contains(encoded, `"plugin_failures"`) {
+		t.Fatalf("expected provider and plugin failures in diagnostics, got %s", encoded)
 	}
 }
 

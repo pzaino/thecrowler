@@ -46,6 +46,8 @@ func buildInformationSeedEventPayload(seed cdb.InformationSeed, stats *seedDisco
 		"candidate_rejection_counts": map[string]int{},
 		"candidate_rejection_stages": map[string]map[string]int{},
 		"plugin_metadata":            []map[string]interface{}{},
+		"provider_failures":          []map[string]interface{}{},
+		"plugin_failures":            []map[string]interface{}{},
 	}
 	if stats == nil {
 		return payload
@@ -79,7 +81,39 @@ func buildInformationSeedEventPayload(seed cdb.InformationSeed, stats *seedDisco
 	payload["candidate_rejection_counts"] = rejections
 	payload["candidate_rejection_stages"] = stages
 	payload["plugin_metadata"] = pluginMetadata
+	payload["provider_failures"] = informationSeedProviderFailuresPayload(stats.ProviderFailures)
+	payload["plugin_failures"] = informationSeedPluginFailuresPayload(stats.PluginFailureDetails)
 	return payload
+}
+
+func informationSeedProviderFailuresPayload(failures []providerFailure) []map[string]interface{} {
+	items := make([]map[string]interface{}, 0, len(failures))
+	for _, failure := range failures {
+		provider := strings.TrimSpace(failure.Provider)
+		if provider == "" {
+			provider = "unknown"
+		}
+		items = append(items, map[string]interface{}{
+			"provider": provider,
+			"summary":  trimEventString(redactInformationSeedError(failure.Summary), 512),
+		})
+	}
+	return items
+}
+
+func informationSeedPluginFailuresPayload(failures []pluginFailure) []map[string]interface{} {
+	items := make([]map[string]interface{}, 0, len(failures))
+	for _, failure := range failures {
+		plugin := strings.TrimSpace(failure.Plugin)
+		if plugin == "" {
+			plugin = "unknown"
+		}
+		items = append(items, map[string]interface{}{
+			"plugin":  plugin,
+			"summary": trimEventString(redactInformationSeedError(failure.Summary), 512),
+		})
+	}
+	return items
 }
 
 func informationSeedAgentPayload(identity AgentIdentity) map[string]interface{} {
@@ -180,6 +214,18 @@ func redactStringMap(values map[string]string) map[string]string {
 		}
 	}
 	return safe
+}
+
+// RedactDiagnosticValue removes credentials, tokens, keys, and sensitive error fragments
+// from values before they are logged or returned by APIs.
+func RedactDiagnosticValue(value interface{}) interface{} {
+	return redactInformationSeedDiagnosticValue(value)
+}
+
+// RedactDiagnosticString removes credentials, tokens, keys, and sensitive URL
+// query parameters from diagnostic strings.
+func RedactDiagnosticString(value string) string {
+	return redactInformationSeedError(value)
 }
 
 func redactInformationSeedDiagnosticValue(value interface{}) interface{} {

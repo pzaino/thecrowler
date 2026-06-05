@@ -13,6 +13,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
@@ -52,10 +53,11 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// Log the error and prepare an error response
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
+		redactedErr := infoseeddiag.RedactDiagnosticString(err.Error())
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, redactedErr)
 		response = cmn.StdAPIError{
 			ErrCode: errCode,
-			Err:     err.Error(),
+			Err:     redactedErr,
 			Message: errMsg,
 		}
 		w.WriteHeader(errCode) // Send the error code

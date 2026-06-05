@@ -27,6 +27,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
 )
 
 const (
@@ -209,6 +210,131 @@ func performListInformationSeedCandidateDecisions(seedID uint64, values url.Valu
 		items = append(items, informationSeedCandidateRowFromDB(candidate))
 	}
 	return InformationSeedCandidateListResponse{Message: "Information seed candidate decisions", InformationSeedID: seedID, Items: items, Limit: pagination.Limit, Offset: pagination.Offset}, nil
+}
+
+func performGetInformationSeedDiagnostics(seedID uint64, db *cdb.Handler) (InformationSeedDiagnosticsResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedDiagnosticsResponse{Message: "Information seed not found", InformationSeedID: seedID, ProviderRequests: map[string]int{}, RejectionStages: map[string]map[string]int{}}, err
+	}
+	events, err := cdb.ListInformationSeedEvents(db, seedID, cdb.InformationSeedEventFilter{Limit: 25})
+	if err != nil {
+		return InformationSeedDiagnosticsResponse{Message: "Failed to load information seed diagnostics", InformationSeedID: seedID, ProviderRequests: map[string]int{}, RejectionStages: map[string]map[string]int{}}, err
+	}
+	resp := InformationSeedDiagnosticsResponse{
+		Message:           "Information seed diagnostics",
+		InformationSeedID: seedID,
+		ProviderRequests:  map[string]int{},
+		RejectionStages:   map[string]map[string]int{},
+		ProviderFailures:  []map[string]interface{}{},
+		PluginFailures:    []map[string]interface{}{},
+		ErrorSummaries:    []string{},
+	}
+	for _, event := range events {
+		details := redactedInformationSeedDetails(event.Details)
+		if resp.LatestEventTimestamp == "" {
+			resp.LatestEventTimestamp = event.Timestamp
+		}
+		if resp.RunID == "" {
+			resp.RunID, _ = details["run_id"].(string)
+		}
+		if resp.RunAttempt == 0 {
+			resp.RunAttempt = intFromDiagnostic(details["run_attempt"])
+		}
+		mergeProviderRequests(resp.ProviderRequests, details["provider_metrics"])
+		if len(resp.RejectionStages) == 0 {
+			resp.RejectionStages = diagnosticNestedIntMap(details["candidate_rejection_stages"])
+		}
+		resp.ProviderFailures = append(resp.ProviderFailures, diagnosticMapSlice(details["provider_failures"])...)
+		resp.PluginFailures = append(resp.PluginFailures, diagnosticMapSlice(details["plugin_failures"])...)
+		resp.ErrorSummaries = append(resp.ErrorSummaries, diagnosticStringSlice(details["error_summaries"])...)
+	}
+	return resp, nil
+}
+
+func redactedInformationSeedDetails(details map[string]interface{}) map[string]interface{} {
+	redacted, ok := infoseeddiag.RedactDiagnosticValue(details).(map[string]interface{})
+	if !ok || redacted == nil {
+		return map[string]interface{}{}
+	}
+	return redacted
+}
+
+func mergeProviderRequests(dst map[string]int, raw interface{}) {
+	metrics := diagnosticNestedIntMap(raw)
+	for provider, providerMetrics := range metrics {
+		if requests := providerMetrics["requests"]; requests > dst[provider] {
+			dst[provider] = requests
+		}
+	}
+}
+
+func diagnosticNestedIntMap(raw interface{}) map[string]map[string]int {
+	result := map[string]map[string]int{}
+	outer, ok := raw.(map[string]interface{})
+	if !ok {
+		return result
+	}
+	for key, value := range outer {
+		inner := map[string]int{}
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			for innerKey, innerValue := range typed {
+				inner[innerKey] = intFromDiagnostic(innerValue)
+			}
+		case map[string]int:
+			for innerKey, innerValue := range typed {
+				inner[innerKey] = innerValue
+			}
+		}
+		if len(inner) > 0 {
+			result[key] = inner
+		}
+	}
+	return result
+}
+
+func diagnosticMapSlice(raw interface{}) []map[string]interface{} {
+	items := []map[string]interface{}{}
+	slice, ok := raw.([]interface{})
+	if !ok {
+		return items
+	}
+	for _, item := range slice {
+		if mapped, ok := item.(map[string]interface{}); ok {
+			items = append(items, redactedInformationSeedDetails(mapped))
+		}
+	}
+	return items
+}
+
+func diagnosticStringSlice(raw interface{}) []string {
+	items := []string{}
+	slice, ok := raw.([]interface{})
+	if !ok {
+		return items
+	}
+	for _, item := range slice {
+		if value, ok := item.(string); ok {
+			items = append(items, infoseeddiag.RedactDiagnosticString(value))
+		}
+	}
+	return items
+}
+
+func intFromDiagnostic(raw interface{}) int {
+	switch typed := raw.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		value, _ := typed.Int64()
+		return int(value)
+	default:
+		return 0
+	}
 }
 
 func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
@@ -399,7 +525,7 @@ func informationSeedRowByID(db *cdb.Handler, id uint64) (InformationSeedRow, err
 }
 
 func informationSeedRowFromDB(seed cdb.InformationSeed, discoveredSourceCount uint64) InformationSeedRow {
-	lastError := nullStringString(seed.LastError)
+	lastError := infoseeddiag.RedactDiagnosticString(nullStringString(seed.LastError))
 	return InformationSeedRow{
 		ID:                    seed.ID,
 		CreatedAt:             nullTimeString(seed.CreatedAt),
@@ -416,7 +542,7 @@ func informationSeedRowFromDB(seed cdb.InformationSeed, discoveredSourceCount ui
 		LastErrorAt:           nullTimeString(seed.LastErrorAt),
 		Disabled:              seed.Disabled,
 		Attempts:              seed.Attempts,
-		Config:                seed.Config,
+		Config:                redactRawMessage(seed.Config),
 		DiscoveredSourceCount: discoveredSourceCount,
 	}
 }
@@ -431,7 +557,7 @@ func informationSeedLinkedSourceRowFromDB(linked cdb.InformationSeedLinkedSource
 		URL:                        linked.Source.URL,
 		Restricted:                 linked.Source.Restricted,
 		Flags:                      linked.Source.Flags,
-		Config:                     linked.Source.Config,
+		Config:                     redactRawMessage(linked.Source.Config),
 		Disabled:                   linked.Source.Disabled,
 		SourceInformationSeedIndex: sourceInformationSeedIndexRowFromDB(linked.Index),
 	}
@@ -462,7 +588,7 @@ func sourceInformationSeedIndexRowFromDB(index cdb.SourceInformationSeedIndex) S
 		DiscoveryRank:     rank,
 		CandidateScore:    score,
 		CandidateReason:   nullStringString(index.CandidateReason),
-		DiscoveryMetadata: metadata,
+		DiscoveryMetadata: redactRawMessage(metadata),
 		CreatedAt:         nullTimeString(index.CreatedAt),
 		LastUpdatedAt:     nullTimeString(index.LastUpdatedAt),
 	}
@@ -475,7 +601,7 @@ func informationSeedEventRowFromDB(event cdb.Event) InformationSeedEventRow {
 		Type:      event.Type,
 		Severity:  event.Severity,
 		Timestamp: event.Timestamp,
-		Details:   event.Details,
+		Details:   redactedInformationSeedDetails(event.Details),
 	}
 }
 
@@ -491,11 +617,28 @@ func informationSeedCandidateRowFromDB(candidate cdb.InformationSeedCandidate) I
 		Score:             candidate.Score,
 		DecisionStatus:    candidate.DecisionStatus,
 		RejectionReason:   candidate.RejectionReason,
-		Metadata:          candidate.Metadata,
+		Metadata:          redactRawMessage(candidate.Metadata),
 		RunAttempt:        candidate.RunAttempt,
 		CreatedAt:         nullTimeString(candidate.CreatedAt),
 		LastUpdatedAt:     nullTimeString(candidate.LastUpdatedAt),
 	}
+}
+
+func redactRawMessage(raw *json.RawMessage) *json.RawMessage {
+	if raw == nil || len(*raw) == 0 {
+		return raw
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(*raw, &decoded); err != nil {
+		return raw
+	}
+	redacted := infoseeddiag.RedactDiagnosticValue(decoded)
+	encoded, err := json.Marshal(redacted)
+	if err != nil {
+		return raw
+	}
+	msg := json.RawMessage(encoded)
+	return &msg
 }
 
 func nullTimeString(value sql.NullTime) string {

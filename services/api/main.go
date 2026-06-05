@@ -678,6 +678,9 @@ func initAPIv1() {
 		http.Handle("GET /v1/information_seed/{id}/events", informationSeedEventsHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedEventListResponse{})
 
+		http.Handle("GET /v1/information_seed/{id}/diagnostics", withPublicMiddlewares(http.HandlerFunc(informationSeedDiagnosticsHandler)))
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedDiagnosticsResponse{})
+
 		// Backward-compatible alias. /v1/information_seed is the canonical namespace.
 		http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "Deprecated alias for /v1/information_seed/list", true, false, 200, nil, nil, InformationSeedListResponse{})
@@ -909,6 +912,18 @@ func CIDRFilterMiddleware(next http.Handler) http.Handler {
 
 		http.Error(w, "Forbidden", http.StatusForbidden)
 	})
+}
+
+func withMiddlewares(h http.Handler) http.Handler {
+	return RecoverMiddleware(
+		CIDRFilterMiddleware(
+			SecurityHeadersMiddleware(
+				KeepAliveHeadersMiddleware(
+					RateLimitMiddleware(h),
+				),
+			),
+		),
+	)
 }
 
 func withPublicMiddlewares(h http.HandlerFunc) http.Handler {
@@ -1896,6 +1911,39 @@ func informationSeedEventsHandler(w http.ResponseWriter, r *http.Request) {
 				status = http.StatusBadRequest
 			}
 			handleErrorAndRespond(w, err, results, "Error listing information seed events: %v", status, http.StatusOK)
+			return
+		}
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+func informationSeedDiagnosticsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed diagnostics request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+		results, err := performGetInformationSeedDiagnostics(id, &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+				status = http.StatusNotFound
+			}
+			handleErrorAndRespond(w, err, results, "Error getting information seed diagnostics: %v", status, http.StatusOK)
 			return
 		}
 		totalSuccess.Add(1)
