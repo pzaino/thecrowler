@@ -49,6 +49,14 @@ func TestEnsureSQLiteInformationSeedSchemaMigratesLegacyTablePreservingRows(t *t
 		"idx_informationseed_last_processed_at",
 		"idx_informationseed_last_error_at",
 		"idx_informationseed_processing_stale",
+		"idx_informationseed_claim_queue",
+		"idx_informationseed_engine_status",
+		"idx_informationseedcandidate_seed",
+		"idx_informationseedcandidate_decision",
+		"idx_informationseedcandidate_seed_decision",
+		"idx_informationseedcandidate_host",
+		"idx_informationseedcandidate_provider",
+		"idx_informationseedcandidate_normalized_url",
 	})
 
 	var (
@@ -110,6 +118,55 @@ func TestEnsureSQLiteInformationSeedSchemaIsIdempotent(t *testing.T) {
 	}
 	if rowCount != 1 {
 		t.Fatalf("expected one preserved seed row, got %d", rowCount)
+	}
+}
+
+func TestEnsureSQLiteSourceInformationSeedProvenanceMigratesLegacyTable(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+
+	_, err := db.Exec(`
+		CREATE TABLE SourceInformationSeedIndex (
+			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER NOT NULL,
+			information_seed_id INTEGER NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (source_id, information_seed_id)
+		);
+		INSERT INTO SourceInformationSeedIndex (source_id, information_seed_id) VALUES (9, 3);
+	`)
+	if err != nil {
+		t.Fatalf("create legacy SourceInformationSeedIndex table: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err = ensureSQLiteSourceInformationSeedProvenance(db); err != nil {
+			t.Fatalf("source/seed provenance migration run %d failed: %v", i+1, err)
+		}
+	}
+
+	assertSQLiteColumns(t, db, "SourceInformationSeedIndex", []string{
+		"discovery_provider",
+		"discovery_query",
+		"discovery_rank",
+		"candidate_score",
+		"candidate_reason",
+		"discovery_metadata",
+	})
+	assertSQLiteIndexes(t, db, []string{
+		"idx_sourceinformationseedindex_information_seed_id",
+		"idx_sourceinformationseedindex_source_id",
+		"idx_sourceinformationseedindex_seed_source",
+		"idx_sourceinformationseedindex_provider_rank",
+	})
+
+	var sourceID, seedID int
+	if err = db.QueryRow("SELECT source_id, information_seed_id FROM SourceInformationSeedIndex WHERE source_information_seed_id = 1").Scan(&sourceID, &seedID); err != nil {
+		t.Fatalf("read migrated source/seed link row: %v", err)
+	}
+	if sourceID != 9 || seedID != 3 {
+		t.Fatalf("legacy source/seed link row was not preserved: source=%d seed=%d", sourceID, seedID)
 	}
 }
 

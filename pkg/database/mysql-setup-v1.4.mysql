@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
     UNIQUE KEY uq_informationseedcandidate_decision (information_seed_id, normalized_url(768), provider, query(191), rank, run_attempt),
     KEY idx_informationseedcandidate_seed (information_seed_id, run_attempt, last_updated_at),
     KEY idx_informationseedcandidate_decision (decision_status),
+    KEY idx_informationseedcandidate_seed_decision (information_seed_id, decision_status, run_attempt),
+    KEY idx_informationseedcandidate_host (host),
+    KEY idx_informationseedcandidate_provider (provider),
+    KEY idx_informationseedcandidate_normalized_url (normalized_url(768)),
     FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
 );
 
@@ -427,8 +431,65 @@ CALL add_informationseed_index_if_missing('idx_informationseed_disabled', 'CREAT
 CALL add_informationseed_index_if_missing('idx_informationseed_last_processed_at', 'CREATE INDEX idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)');
 CALL add_informationseed_index_if_missing('idx_informationseed_last_error_at', 'CREATE INDEX idx_informationseed_last_error_at ON InformationSeed(last_error_at)');
 CALL add_informationseed_index_if_missing('idx_informationseed_processing_stale', 'CREATE INDEX idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)');
+CALL add_informationseed_index_if_missing('idx_informationseed_claim_queue', 'CREATE INDEX idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id)');
+CALL add_informationseed_index_if_missing('idx_informationseed_engine_status', 'CREATE INDEX idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at)');
 
 DROP PROCEDURE add_informationseed_index_if_missing;
+
+-- Guarded InformationSeedCandidate lookup indexes for upgraded databases where
+-- the table may already exist without the current read-path indexes.
+DELIMITER //
+CREATE PROCEDURE add_informationseedcandidate_index_if_missing(IN p_index_name VARCHAR(64), IN p_index_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'InformationSeedCandidate'
+          AND INDEX_NAME = p_index_name
+    ) THEN
+        SET @add_informationseedcandidate_index_sql = p_index_ddl;
+        PREPARE add_informationseedcandidate_index_stmt FROM @add_informationseedcandidate_index_sql;
+        EXECUTE add_informationseedcandidate_index_stmt;
+        DEALLOCATE PREPARE add_informationseedcandidate_index_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_informationseedcandidate_index_if_missing('idx_informationseedcandidate_seed', 'CREATE INDEX idx_informationseedcandidate_seed ON InformationSeedCandidate(information_seed_id, run_attempt, last_updated_at)');
+CALL add_informationseedcandidate_index_if_missing('idx_informationseedcandidate_decision', 'CREATE INDEX idx_informationseedcandidate_decision ON InformationSeedCandidate(decision_status)');
+CALL add_informationseedcandidate_index_if_missing('idx_informationseedcandidate_seed_decision', 'CREATE INDEX idx_informationseedcandidate_seed_decision ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt)');
+CALL add_informationseedcandidate_index_if_missing('idx_informationseedcandidate_host', 'CREATE INDEX idx_informationseedcandidate_host ON InformationSeedCandidate(host)');
+CALL add_informationseedcandidate_index_if_missing('idx_informationseedcandidate_provider', 'CREATE INDEX idx_informationseedcandidate_provider ON InformationSeedCandidate(provider)');
+CALL add_informationseedcandidate_index_if_missing('idx_informationseedcandidate_normalized_url', 'CREATE INDEX idx_informationseedcandidate_normalized_url ON InformationSeedCandidate(normalized_url(768))');
+
+DROP PROCEDURE add_informationseedcandidate_index_if_missing;
+
+-- Guarded SourceInformationSeedIndex inspection indexes.
+DELIMITER //
+CREATE PROCEDURE add_sourceinformationseed_index_if_missing(IN p_index_name VARCHAR(64), IN p_index_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'SourceInformationSeedIndex'
+          AND INDEX_NAME = p_index_name
+    ) THEN
+        SET @add_sourceinformationseed_index_sql = p_index_ddl;
+        PREPARE add_sourceinformationseed_index_stmt FROM @add_sourceinformationseed_index_sql;
+        EXECUTE add_sourceinformationseed_index_stmt;
+        DEALLOCATE PREPARE add_sourceinformationseed_index_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_sourceinformationseed_index_if_missing('idx_sourceinformationseedindex_information_seed_id', 'CREATE INDEX idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id)');
+CALL add_sourceinformationseed_index_if_missing('idx_sourceinformationseedindex_source_id', 'CREATE INDEX idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id)');
+CALL add_sourceinformationseed_index_if_missing('idx_sourceinformationseedindex_seed_source', 'CREATE INDEX idx_sourceinformationseedindex_seed_source ON SourceInformationSeedIndex(information_seed_id, source_id)');
+CALL add_sourceinformationseed_index_if_missing('idx_sourceinformationseedindex_provider_rank', 'CREATE INDEX idx_sourceinformationseedindex_provider_rank ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank)');
+
+DROP PROCEDURE add_sourceinformationseed_index_if_missing;
 
 -- Creates an index for the WebObjects table on the object_id column
 CREATE INDEX IF NOT EXISTS idx_webobjects_object_id ON WebObjects (object_id);

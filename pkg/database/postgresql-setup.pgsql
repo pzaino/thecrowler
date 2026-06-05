@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.7'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.8'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.7', 'CROWler DB schema version 1.7');
+        VALUES ('1.8', 'CROWler DB schema version 1.8');
     END IF;
 END
 $$;
@@ -170,6 +170,14 @@ CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed
 ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision
 ON InformationSeedCandidate(decision_status);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed_decision
+ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt DESC);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_host
+ON InformationSeedCandidate(host);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_provider
+ON InformationSeedCandidate(provider);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_normalized_url
+ON InformationSeedCandidate(normalized_url);
 ----------------------------------------------------------------
 
 
@@ -981,6 +989,10 @@ CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(
 CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale
     ON InformationSeed(status, disabled, last_processed_at)
     WHERE status = 'processing' AND disabled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue
+    ON InformationSeed(disabled, status, priority, created_at, information_seed_id);
+CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status
+    ON InformationSeed(engine, status, last_processed_at);
 
 
 -- Indexes for the Sources table -----------------------------------------------
@@ -1142,6 +1154,11 @@ BEGIN
     END IF;
 END
 $$;
+
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_seed_source
+ON SourceInformationSeedIndex(information_seed_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_provider_rank
+ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank);
 
 -- Indexes for SourceCategoryIndex table ---------------------------------------
 DO $$

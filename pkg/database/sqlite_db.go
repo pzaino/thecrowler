@@ -122,6 +122,8 @@ var sqliteInformationSeedLifecycleIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)",
 	"CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at)",
 	"CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at)",
 }
 
 func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
@@ -191,6 +193,10 @@ func ensureSQLiteInformationSeedCandidateSchema(db *sql.DB) error {
 	for _, statement := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision ON InformationSeedCandidate(decision_status)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed_decision ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_host ON InformationSeedCandidate(host)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_provider ON InformationSeedCandidate(provider)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_normalized_url ON InformationSeedCandidate(normalized_url)",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			return err
@@ -218,7 +224,22 @@ func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {
 		{column: "discovery_metadata", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_metadata TEXT"},
 	}
 
-	return applySQLiteColumnMigrations(db, "SourceInformationSeedIndex", migrations)
+	if err = applySQLiteColumnMigrations(db, "SourceInformationSeedIndex", migrations); err != nil {
+		return err
+	}
+
+	for _, statement := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id)",
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id)",
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_seed_source ON SourceInformationSeedIndex(information_seed_id, source_id)",
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_provider_rank ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank)",
+	} {
+		if _, err = db.Exec(statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func sqliteColumns(db *sql.DB, table string) (map[string]bool, error) {

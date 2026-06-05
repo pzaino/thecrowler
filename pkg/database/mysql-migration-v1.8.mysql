@@ -1,0 +1,101 @@
+-- MySQL upgrade migration for Information Seed schema v1.8.
+-- Safe to run on existing MySQL/MariaDB databases.
+
+CREATE TABLE IF NOT EXISTS DBSchemaVersion (
+    schema_version_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    version VARCHAR(32) NOT NULL UNIQUE,
+    description TEXT,
+    is_current BOOLEAN DEFAULT TRUE NOT NULL
+);
+
+INSERT INTO DBSchemaVersion (version, description, is_current)
+SELECT '1.8', 'Information Seed lifecycle, candidate audit, provenance, and lookup indexes', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM DBSchemaVersion WHERE version = '1.8');
+UPDATE DBSchemaVersion SET is_current = (version = '1.8') WHERE version IN ('1.7', '1.8');
+
+DELIMITER //
+CREATE PROCEDURE add_informationseed_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'InformationSeed' AND COLUMN_NAME = p_column_name) THEN
+        SET @ddl = CONCAT('ALTER TABLE InformationSeed ADD COLUMN ', p_column_ddl);
+        PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    END IF;
+END//
+DELIMITER ;
+CALL add_informationseed_column_if_missing('status', 'status VARCHAR(50) DEFAULT \'new\' NOT NULL');
+CALL add_informationseed_column_if_missing('priority', 'priority VARCHAR(64) DEFAULT \'\' NOT NULL');
+CALL add_informationseed_column_if_missing('engine', 'engine VARCHAR(256) DEFAULT \'\' NOT NULL');
+CALL add_informationseed_column_if_missing('last_processed_at', 'last_processed_at TIMESTAMP NULL');
+CALL add_informationseed_column_if_missing('last_error', 'last_error TEXT');
+CALL add_informationseed_column_if_missing('last_error_at', 'last_error_at TIMESTAMP NULL');
+CALL add_informationseed_column_if_missing('disabled', 'disabled BOOLEAN DEFAULT FALSE');
+CALL add_informationseed_column_if_missing('attempts', 'attempts INT DEFAULT 0 NOT NULL');
+DROP PROCEDURE add_informationseed_column_if_missing;
+
+CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+    information_seed_candidate_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    information_seed_id BIGINT NOT NULL,
+    normalized_url VARCHAR(2048) NOT NULL,
+    host VARCHAR(255),
+    provider VARCHAR(255) DEFAULT '' NOT NULL,
+    query VARCHAR(1024) DEFAULT '' NOT NULL,
+    rank INT DEFAULT 0 NOT NULL,
+    score DOUBLE DEFAULT 0 NOT NULL,
+    decision_status VARCHAR(32) NOT NULL,
+    rejection_reason TEXT,
+    metadata JSON,
+    run_attempt INT DEFAULT 0 NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_informationseedcandidate_decision CHECK (decision_status IN ('accepted', 'rejected')),
+    UNIQUE KEY uq_informationseedcandidate_decision (information_seed_id, normalized_url(768), provider, query(191), rank, run_attempt),
+    FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
+);
+
+DELIMITER //
+CREATE PROCEDURE add_sourceinformationseed_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'SourceInformationSeedIndex' AND COLUMN_NAME = p_column_name) THEN
+        SET @ddl = CONCAT('ALTER TABLE SourceInformationSeedIndex ADD COLUMN ', p_column_ddl);
+        PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    END IF;
+END//
+DELIMITER ;
+CALL add_sourceinformationseed_column_if_missing('discovery_provider', 'discovery_provider VARCHAR(255)');
+CALL add_sourceinformationseed_column_if_missing('discovery_query', 'discovery_query TEXT');
+CALL add_sourceinformationseed_column_if_missing('discovery_rank', 'discovery_rank INT');
+CALL add_sourceinformationseed_column_if_missing('candidate_score', 'candidate_score DOUBLE');
+CALL add_sourceinformationseed_column_if_missing('candidate_reason', 'candidate_reason TEXT');
+CALL add_sourceinformationseed_column_if_missing('discovery_metadata', 'discovery_metadata JSON');
+DROP PROCEDURE add_sourceinformationseed_column_if_missing;
+
+DELIMITER //
+CREATE PROCEDURE add_index_if_missing(IN p_table_name VARCHAR(64), IN p_index_name VARCHAR(64), IN p_index_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = p_table_name AND INDEX_NAME = p_index_name) THEN
+        SET @ddl = p_index_ddl;
+        PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    END IF;
+END//
+DELIMITER ;
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_status', 'CREATE INDEX idx_informationseed_status ON InformationSeed(status)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_priority', 'CREATE INDEX idx_informationseed_priority ON InformationSeed(priority)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_disabled', 'CREATE INDEX idx_informationseed_disabled ON InformationSeed(disabled)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_last_processed_at', 'CREATE INDEX idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_last_error_at', 'CREATE INDEX idx_informationseed_last_error_at ON InformationSeed(last_error_at)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_processing_stale', 'CREATE INDEX idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_claim_queue', 'CREATE INDEX idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id)');
+CALL add_index_if_missing('InformationSeed', 'idx_informationseed_engine_status', 'CREATE INDEX idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at)');
+CALL add_index_if_missing('InformationSeedCandidate', 'idx_informationseedcandidate_seed', 'CREATE INDEX idx_informationseedcandidate_seed ON InformationSeedCandidate(information_seed_id, run_attempt, last_updated_at)');
+CALL add_index_if_missing('InformationSeedCandidate', 'idx_informationseedcandidate_decision', 'CREATE INDEX idx_informationseedcandidate_decision ON InformationSeedCandidate(decision_status)');
+CALL add_index_if_missing('InformationSeedCandidate', 'idx_informationseedcandidate_seed_decision', 'CREATE INDEX idx_informationseedcandidate_seed_decision ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt)');
+CALL add_index_if_missing('InformationSeedCandidate', 'idx_informationseedcandidate_host', 'CREATE INDEX idx_informationseedcandidate_host ON InformationSeedCandidate(host)');
+CALL add_index_if_missing('InformationSeedCandidate', 'idx_informationseedcandidate_provider', 'CREATE INDEX idx_informationseedcandidate_provider ON InformationSeedCandidate(provider)');
+CALL add_index_if_missing('InformationSeedCandidate', 'idx_informationseedcandidate_normalized_url', 'CREATE INDEX idx_informationseedcandidate_normalized_url ON InformationSeedCandidate(normalized_url(768))');
+CALL add_index_if_missing('SourceInformationSeedIndex', 'idx_sourceinformationseedindex_information_seed_id', 'CREATE INDEX idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id)');
+CALL add_index_if_missing('SourceInformationSeedIndex', 'idx_sourceinformationseedindex_source_id', 'CREATE INDEX idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id)');
+CALL add_index_if_missing('SourceInformationSeedIndex', 'idx_sourceinformationseedindex_seed_source', 'CREATE INDEX idx_sourceinformationseedindex_seed_source ON SourceInformationSeedIndex(information_seed_id, source_id)');
+CALL add_index_if_missing('SourceInformationSeedIndex', 'idx_sourceinformationseedindex_provider_rank', 'CREATE INDEX idx_sourceinformationseedindex_provider_rank ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank)');
+DROP PROCEDURE add_index_if_missing;

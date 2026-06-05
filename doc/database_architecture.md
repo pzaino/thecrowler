@@ -1,8 +1,40 @@
 # TheCROWler DB architecture
 
-The CROWler uses a PostgreSQL database to store the data it collects. However
-it's internal data API is designed to be database agnostic, so it could be
-easily adapted to use other databases in the future.
+The CROWler uses PostgreSQL as its primary production database, and the database
+package also carries setup/migration coverage for MySQL/MariaDB and SQLite so
+Information Seed schema changes can be validated consistently across supported
+DBMS backends.
+
+
+## InformationSeed schema migration coverage
+
+Information Seed schema changes are represented in both fresh-install setup SQL
+and upgrade migration SQL for every supported DBMS:
+
+- PostgreSQL: `pkg/database/postgresql-setup.pgsql` and
+  `pkg/database/postgresql-migration-v1.8.pgsql`.
+- MySQL/MariaDB: `pkg/database/mysql-setup-v1.4.mysql` and
+  `pkg/database/mysql-migration-v1.8.mysql`.
+- SQLite: `pkg/database/sqlite-setup-v1.4.sqlite3`,
+  `pkg/database/sqlite-migration-v1.8.sqlite3`, and the guarded runtime
+  migrations in `pkg/database/sqlite_db.go` for SQLite versions that cannot run
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+
+The v1.8 Information Seed inventory includes lifecycle fields on
+`InformationSeed` (`status`, `priority`, `engine`, `last_processed_at`,
+`last_error`, `last_error_at`, `disabled`, and `attempts`), durable candidate
+decision audit rows in `InformationSeedCandidate`, and per-source/seed discovery
+provenance columns on `SourceInformationSeedIndex`.
+
+Read-path indexes are maintained for common seed claiming/listing filters,
+candidate audit lookups, and source/seed-link inspection. In particular,
+`idx_informationseed_claim_queue` supports enabled/status/priority claim scans,
+`idx_informationseed_engine_status` supports claimed-row follow-up lookups,
+`idx_informationseedcandidate_seed_decision` and candidate host/provider/URL
+indexes support candidate audit inspection, and
+`idx_sourceinformationseedindex_seed_source` plus
+`idx_sourceinformationseedindex_provider_rank` support accepted-source link
+inspection by seed and provider rank.
 
 
 ## InformationSeed claiming semantics
