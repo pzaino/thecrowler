@@ -78,6 +78,7 @@ const (
 
 type seedDiscoveryStats struct {
 	ProviderCounts     map[string]int
+	ProviderMetrics    map[string]map[string]int
 	CandidatesFound    int
 	CandidatesAccepted int
 	CandidatesRejected int
@@ -88,7 +89,22 @@ type seedDiscoveryStats struct {
 }
 
 func newSeedDiscoveryStats() *seedDiscoveryStats {
-	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, RejectionCounts: map[string]int{}}
+	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}}
+}
+
+func (stats *seedDiscoveryStats) addProviderMetric(provider, metric string, count int) {
+	if stats == nil || count <= 0 {
+		return
+	}
+	provider = strings.TrimSpace(provider)
+	metric = strings.TrimSpace(metric)
+	if provider == "" || metric == "" {
+		return
+	}
+	if stats.ProviderMetrics[provider] == nil {
+		stats.ProviderMetrics[provider] = map[string]int{}
+	}
+	stats.ProviderMetrics[provider][metric] += count
 }
 
 func (stats *seedDiscoveryStats) addRejected(reason string, count int) {
@@ -107,7 +123,34 @@ func (stats *seedDiscoveryStats) addError(err error) {
 	if stats == nil || err == nil {
 		return
 	}
-	stats.ErrorSummaries = append(stats.ErrorSummaries, trimEventString(err.Error(), 512))
+	stats.ErrorSummaries = append(stats.ErrorSummaries, trimEventString(redactInformationSeedError(err.Error()), 512))
+	if failures, ok := err.(interface{ ProviderFailures() []providerFailure }); ok {
+		for _, failure := range failures.ProviderFailures() {
+			stats.addProviderMetric(failure.Provider, "errors", 1)
+		}
+	}
+}
+
+type providerFailure struct {
+	Provider string
+	Summary  string
+}
+
+type providerQueryError struct {
+	SeedID   uint64
+	Failures []providerFailure
+}
+
+func (e providerQueryError) Error() string {
+	summaries := make([]string, 0, len(e.Failures))
+	for _, failure := range e.Failures {
+		summaries = append(summaries, failure.Summary)
+	}
+	return fmt.Sprintf("information seed %d provider errors: %s", e.SeedID, strings.Join(summaries, "; "))
+}
+
+func (e providerQueryError) ProviderFailures() []providerFailure {
+	return append([]providerFailure(nil), e.Failures...)
 }
 
 // NewRunner constructs a runner with providers from configuration.
@@ -175,6 +218,7 @@ func informationSeedEventPayload(seed cdb.InformationSeed, sourceID uint64, stat
 		"information_seed":           seed.InformationSeed,
 		"source_id":                  sourceID,
 		"provider_counts":            map[string]int{},
+		"provider_metrics":           map[string]map[string]int{},
 		"candidates_found":           0,
 		"candidates_accepted":        0,
 		"candidates_rejected":        0,
@@ -187,6 +231,7 @@ func informationSeedEventPayload(seed cdb.InformationSeed, sourceID uint64, stat
 		return payload
 	}
 	payload["provider_counts"] = stats.ProviderCounts
+	payload["provider_metrics"] = stats.ProviderMetrics
 	payload["candidates_found"] = stats.CandidatesFound
 	payload["candidates_accepted"] = stats.CandidatesAccepted
 	payload["candidates_rejected"] = stats.CandidatesRejected
@@ -251,12 +296,18 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	candidates, err := r.queryProviders(ctx, seed, runCfg, queries)
 	for _, candidate := range candidates {
 		stats.ProviderCounts[candidate.Provider]++
+		stats.addProviderMetric(candidate.Provider, "candidates", 1)
 	}
 	stats.CandidatesFound = len(candidates)
 	result.CandidatesFound = stats.CandidatesFound
 	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedCandidateFound, cdb.EventSeverityInfo, stats)
+	partialProviderErr := error(nil)
 	if err != nil {
 		stats.addError(err)
+		if len(candidates) > 0 {
+			partialProviderErr = err
+			err = nil
+		}
 	}
 	if err != nil && len(candidates) == 0 {
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
@@ -310,8 +361,12 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		return result, err
 	}
-	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryCompleted, cdb.EventSeverityInfo, stats)
-	return result, err
+	severity := cdb.EventSeverityInfo
+	if partialProviderErr != nil {
+		severity = cdb.EventSeverityWarning
+	}
+	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryCompleted, severity, stats)
+	return result, nil
 }
 
 func parseSeedRunConfig(seed cdb.InformationSeed) (SeedRunConfig, error) {
@@ -371,14 +426,15 @@ func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, r
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var candidates []Candidate
-	var errs []string
+	var failures []providerFailure
 	for _, providerName := range providerNames {
 		provider := r.Providers[providerName]
 		providerCfg := r.Config.Providers[providerName]
 		providerQueries := cappedProviderQueries(queries, r.Config.MaxQueriesPerSeed, providerCfg)
+		perQueryMaxRequests := perQueryRequestLimit(providerCfg, len(providerQueries))
 		for _, query := range providerQueries {
 			wg.Add(1)
-			go func(providerName string, provider searchproviders.Provider, providerCfg cfg.InformationSeedProviderConfig, query string) {
+			go func(providerName string, provider searchproviders.Provider, providerCfg cfg.InformationSeedProviderConfig, query string, maxRequests int) {
 				defer wg.Done()
 				select {
 				case sem <- struct{}{}:
@@ -386,22 +442,23 @@ func (r *Runner) queryProviders(ctx context.Context, seed cdb.InformationSeed, r
 				case <-ctx.Done():
 					return
 				}
-				results, err := provider.Search(ctx, query, providerOptions(providerName, providerCfg))
+				results, err := provider.Search(ctx, query, providerOptionsWithMaxRequests(providerName, providerCfg, maxRequests))
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: %s", providerName, redactInformationSeedError(err.Error())))
+					summary := fmt.Sprintf("%s: %s", providerName, redactInformationSeedError(err.Error()))
+					failures = append(failures, providerFailure{Provider: providerName, Summary: summary})
 					return
 				}
 				for _, searchResult := range results {
 					candidates = append(candidates, Candidate{URL: searchResult.URL, Title: searchResult.Title, Provider: providerName, Query: query, Rank: searchResult.Rank, Score: searchResult.Score, Metadata: searchResult.Metadata})
 				}
-			}(providerName, provider, providerCfg, query)
+			}(providerName, provider, providerCfg, query, perQueryMaxRequests)
 		}
 	}
 	wg.Wait()
-	if len(errs) > 0 {
-		return candidates, fmt.Errorf("information seed %d provider errors: %s", seed.ID, strings.Join(errs, "; "))
+	if len(failures) > 0 {
+		return candidates, providerQueryError{SeedID: seed.ID, Failures: failures}
 	}
 	return candidates, nil
 }
@@ -458,7 +515,22 @@ func cappedProviderQueries(queries []string, globalMaxQueries int, providerCfg c
 }
 
 func providerOptions(name string, providerCfg cfg.InformationSeedProviderConfig) searchproviders.Options {
-	return searchproviders.Options{Name: name, Provider: providerCfg.Provider, Host: providerCfg.Host, Endpoint: providerCfg.Endpoint, APIKeyLabel: providerCfg.APIKeyLabel, APIKey: providerCfg.APIKey, APIToken: providerCfg.APIToken, Token: providerCfg.Token, Timeout: time.Duration(providerCfg.Timeout) * time.Second, MaxRequests: providerCfg.MaxRequests, Parameters: copyProviderMap(providerCfg.Parameters), Headers: copyProviderMap(providerCfg.Headers), PageSize: providerCfg.PageSize, MaxPages: providerCfg.MaxPages}
+	return providerOptionsWithMaxRequests(name, providerCfg, providerCfg.MaxRequests)
+}
+
+func providerOptionsWithMaxRequests(name string, providerCfg cfg.InformationSeedProviderConfig, maxRequests int) searchproviders.Options {
+	return searchproviders.Options{Name: name, Provider: providerCfg.Provider, Host: providerCfg.Host, Endpoint: providerCfg.Endpoint, APIKeyLabel: providerCfg.APIKeyLabel, APIKey: providerCfg.APIKey, APIToken: providerCfg.APIToken, Token: providerCfg.Token, Timeout: time.Duration(providerCfg.Timeout) * time.Second, RateLimit: providerCfg.RateLimit, MaxRequests: maxRequests, Parameters: copyProviderMap(providerCfg.Parameters), Headers: copyProviderMap(providerCfg.Headers), PageSize: providerCfg.PageSize, MaxPages: providerCfg.MaxPages}
+}
+
+func perQueryRequestLimit(providerCfg cfg.InformationSeedProviderConfig, queryCount int) int {
+	if queryCount < 1 || providerCfg.MaxRequests < 1 {
+		return providerCfg.MaxRequests
+	}
+	limit := providerCfg.MaxRequests / queryCount
+	if limit < 1 {
+		limit = 1
+	}
+	return limit
 }
 
 func copyProviderMap(values map[string]string) map[string]string {

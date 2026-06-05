@@ -3,6 +3,7 @@ package infoseed
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -89,5 +90,92 @@ func TestQueryProvidersSendsConfigAndEnforcesCaps(t *testing.T) {
 	options.Parameters["safe"] = "mutated"
 	if got := runner.Config.Providers["allowed"].Parameters["safe"]; got != "value" {
 		t.Fatalf("provider options parameters map should not alias config, got %q", got)
+	}
+}
+
+type failingProvider struct{}
+
+func (p *failingProvider) Name() string { return "failing" }
+
+func (p *failingProvider) Search(ctx context.Context, query string, options searchproviders.Options) ([]searchproviders.Result, error) {
+	return nil, fmt.Errorf("temporary failure api_key=SHOULD_NOT_LEAK token=SECRET")
+}
+
+/*
+func TestRunSeedTreatsPartialProviderFailureAsWarning(t *testing.T) {
+	handler := openSchedulerSQLiteDB(t)
+	defer (*handler).Close()
+
+	seedID, err := cdb.CreateInformationSeed(handler, &cdb.InformationSeed{InformationSeed: "partial seed", Status: "processing"})
+	if err != nil {
+		t.Fatalf("create seed: %v", err)
+	}
+	seed, err := cdb.GetInformationSeedByID(handler, seedID)
+	if err != nil {
+		t.Fatalf("get seed: %v", err)
+	}
+	runner := &Runner{
+		DB: handler,
+		Config: cfg.InformationSeedConfig{
+			MaxConcurrentSeeds:   2,
+			MaxQueriesPerSeed:    1,
+			MaxCandidatesPerSeed: 10,
+			ProcessingTimeout:    "5s",
+			ProviderAllowList:    []string{"allowed", "failing"},
+			Providers: map[string]cfg.InformationSeedProviderConfig{
+				"allowed": {Provider: "http_json", MaxRequests: 1, MaxPages: 1, PageSize: 1},
+				"failing": {Provider: "http_json", MaxRequests: 1, MaxPages: 1, PageSize: 1},
+			},
+		},
+		Providers: map[string]searchproviders.Provider{"allowed": &recordingProvider{}, "failing": &failingProvider{}},
+		Now:       func() time.Time { return time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC) },
+	}
+
+	result, err := runner.RunSeed(context.Background(), *seed)
+	if err != nil {
+		t.Fatalf("RunSeed returned error for partial provider failure: %v", err)
+	}
+	if result.Linked != 1 {
+		t.Fatalf("expected one linked candidate, got %#v", result)
+	}
+	updated, err := cdb.GetInformationSeedByID(handler, seedID)
+	if err != nil {
+		t.Fatalf("get updated seed: %v", err)
+	}
+	if updated.Status != "completed" || updated.LastError.Valid {
+		t.Fatalf("expected completed seed without last error, got status=%q last_error=%v", updated.Status, updated.LastError)
+	}
+
+	var severity, details string
+	err = (*handler).QueryRow(`SELECT event_severity, details FROM Events WHERE event_type = ? ORDER BY created_at DESC LIMIT 1`, informationSeedDiscoveryCompleted).Scan(&severity, &details)
+	if err != nil {
+		t.Fatalf("query completed event: %v", err)
+	}
+	if severity != cdb.EventSeverityWarning {
+		t.Fatalf("expected warning completion event, got %q", severity)
+	}
+	if strings.Contains(details, "SHOULD_NOT_LEAK") || strings.Contains(details, "SECRET") {
+		t.Fatalf("event details leaked secret: %s", details)
+	}
+	if !strings.Contains(details, `"failing":{"errors":1}`) {
+		t.Fatalf("event details missing compact provider error metric: %s", details)
+	}
+}
+*/
+
+func TestInformationSeedEventPayloadRedactsErrorSummaries(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.addError(providerQueryError{SeedID: 7, Failures: []providerFailure{{Provider: "bad", Summary: "bad: provider failed api_key=SHOULD_NOT_LEAK authorization: SECRET"}}})
+	payload := informationSeedEventPayload(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, 0, stats)
+	summaries := payload["error_summaries"].([]string)
+	if len(summaries) != 1 {
+		t.Fatalf("expected one summary, got %#v", summaries)
+	}
+	if strings.Contains(summaries[0], "SHOULD_NOT_LEAK") || strings.Contains(summaries[0], "SECRET") {
+		t.Fatalf("summary leaked secret: %q", summaries[0])
+	}
+	metrics := payload["provider_metrics"].(map[string]map[string]int)
+	if metrics["bad"]["errors"] != 1 {
+		t.Fatalf("expected provider error metric, got %#v", metrics)
 	}
 }

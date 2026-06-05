@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -322,4 +323,100 @@ func assertRedactedError(t *testing.T, err error, want string) {
 
 func typeName(value interface{}) string {
 	return fmt.Sprintf("%T", value)
+}
+
+func TestProviderRetriesRetryableStatusesWithRetryAfterAndBudget(t *testing.T) {
+	oldSleep := sleepContextFunc
+	oldNow := nowFunc
+	oldLimiters := rateLimiters
+	defer func() {
+		sleepContextFunc = oldSleep
+		nowFunc = oldNow
+		rateLimitersMu.Lock()
+		rateLimiters = oldLimiters
+		rateLimitersMu.Unlock()
+	}()
+	current := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	var sleeps []time.Duration
+	nowFunc = func() time.Time { return current }
+	sleepContextFunc = func(ctx context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		current = current.Add(d)
+		return nil
+	}
+	rateLimitersMu.Lock()
+	rateLimiters = map[string]*providerLimiter{}
+	rateLimitersMu.Unlock()
+
+	client := &sequenceClient{statuses: []int{http.StatusTooManyRequests, http.StatusServiceUnavailable, http.StatusOK}, retryAfter: []string{"1", ""}}
+	provider := &JSONProvider{ProviderName: "retry_provider", Client: client}
+	results, err := provider.Search(context.Background(), "seed", Options{Host: "https://example.invalid/search", Timeout: 10 * time.Second, MaxRequests: 3, RateLimit: "2", PageSize: 1})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 1 || results[0].URL != "https://example.com/final" {
+		t.Fatalf("unexpected results: %#v", results)
+	}
+	if client.calls != 3 {
+		t.Fatalf("expected 3 HTTP attempts, got %d", client.calls)
+	}
+	if len(sleeps) < 3 || sleeps[0] != time.Second || sleeps[1] != 400*time.Millisecond || sleeps[2] != 100*time.Millisecond {
+		t.Fatalf("unexpected backoff/limiter sleeps: %#v", sleeps)
+	}
+}
+
+func TestProviderRetryBudgetStopsBeforeSuccess(t *testing.T) {
+	client := &sequenceClient{statuses: []int{http.StatusInternalServerError, http.StatusOK}}
+	provider := &JSONProvider{ProviderName: "budget_provider", Client: client}
+	_, err := provider.Search(context.Background(), "seed", Options{Host: "https://example.invalid/search", Timeout: time.Second, MaxRequests: 1, PageSize: 1})
+	if err == nil || !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("expected first retryable status to be final due to MaxRequests budget, got %v", err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected 1 HTTP attempt, got %d", client.calls)
+	}
+}
+
+func TestParseRateLimitSemantics(t *testing.T) {
+	tests := []struct {
+		value        string
+		wantInterval time.Duration
+		wantBurst    int
+	}{
+		{value: "", wantInterval: 0, wantBurst: 0},
+		{value: "0", wantInterval: 0, wantBurst: 0},
+		{value: "2", wantInterval: 500 * time.Millisecond, wantBurst: 1},
+		{value: "4,3", wantInterval: 250 * time.Millisecond, wantBurst: 3},
+		{value: "200ms", wantInterval: 200 * time.Millisecond, wantBurst: 1},
+	}
+	for _, tc := range tests {
+		got := ParseRateLimit(tc.value)
+		if got.Interval != tc.wantInterval || got.Burst != tc.wantBurst {
+			t.Fatalf("ParseRateLimit(%q) = %#v", tc.value, got)
+		}
+	}
+}
+
+type sequenceClient struct {
+	statuses   []int
+	retryAfter []string
+	calls      int
+}
+
+func (c *sequenceClient) Do(req *http.Request) (*http.Response, error) {
+	status := http.StatusOK
+	idx := c.calls
+	if idx < len(c.statuses) {
+		status = c.statuses[idx]
+	}
+	c.calls++
+	body := `{"results":[{"url":"https://example.com/final"}]}`
+	if status != http.StatusOK {
+		body = `{"error":"temporary api_key=SHOULD_NOT_LEAK"}`
+	}
+	resp := &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
+	if idx < len(c.retryAfter) && c.retryAfter[idx] != "" {
+		resp.Header.Set("Retry-After", c.retryAfter[idx])
+	}
+	return resp, nil
 }

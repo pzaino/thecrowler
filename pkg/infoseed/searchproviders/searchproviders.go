@@ -21,9 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,6 +39,11 @@ const (
 	braveDefaultEndpoint = "/res/v1/web/search"
 	bingDefaultHost      = "https://api.bing.microsoft.com"
 	bingDefaultEndpoint  = "/v7.0/search"
+
+	defaultRetryAttempts = 3
+	defaultBackoffBase   = 200 * time.Millisecond
+	defaultBackoffMax    = 2 * time.Second
+	maxRetryAfterDelay   = 30 * time.Second
 )
 
 // Provider is implemented by information-seed search providers.
@@ -55,6 +63,9 @@ type Options struct {
 	APIToken    string
 	Token       string
 	Timeout     time.Duration
+	// RateLimit optionally throttles provider HTTP requests. See ParseRateLimit
+	// for accepted units and defaults.
+	RateLimit   string
 	MaxRequests int
 	Parameters  map[string]string
 	Headers     map[string]string
@@ -130,9 +141,10 @@ func (p *JSONProvider) Name() string {
 // options.Parameters overrides the parameter set.
 func (p *JSONProvider) Search(ctx context.Context, query string, options Options) ([]Result, error) {
 	options = boundedOptions(options)
+	budget := newRequestBudget(options.MaxRequests)
 	results := make([]Result, 0, options.PageSize)
 	for page := 1; page <= options.MaxPages; page++ {
-		body, err := p.searchPage(ctx, query, options, page)
+		body, err := p.searchPage(ctx, query, options, page, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +160,7 @@ func (p *JSONProvider) Search(ctx context.Context, query string, options Options
 	return trimResults(results, options.PageSize*options.MaxPages), nil
 }
 
-func (p *JSONProvider) searchPage(ctx context.Context, query string, options Options, page int) ([]byte, error) {
+func (p *JSONProvider) searchPage(ctx context.Context, query string, options Options, page int, budget *requestBudget) ([]byte, error) {
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
@@ -176,7 +188,7 @@ func (p *JSONProvider) searchPage(ctx context.Context, query string, options Opt
 		req.Header.Set("Authorization", "Bearer "+options.Token)
 	}
 
-	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
+	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout, options.RateLimit, budget)
 }
 
 // BraveProvider implements the Brave Search API web-search adapter.
@@ -194,9 +206,10 @@ func (p *BraveProvider) Name() string {
 
 func (p *BraveProvider) Search(ctx context.Context, query string, options Options) ([]Result, error) {
 	options = withDefaults(boundedOptions(options), braveDefaultHost, braveDefaultEndpoint)
+	budget := newRequestBudget(options.MaxRequests)
 	results := make([]Result, 0, options.PageSize)
 	for page := 1; page <= options.MaxPages; page++ {
-		body, err := p.searchPage(ctx, query, options, page)
+		body, err := p.searchPage(ctx, query, options, page, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +225,7 @@ func (p *BraveProvider) Search(ctx context.Context, query string, options Option
 	return trimResults(results, options.PageSize*options.MaxPages), nil
 }
 
-func (p *BraveProvider) searchPage(ctx context.Context, query string, options Options, page int) ([]byte, error) {
+func (p *BraveProvider) searchPage(ctx context.Context, query string, options Options, page int, budget *requestBudget) ([]byte, error) {
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
@@ -237,7 +250,7 @@ func (p *BraveProvider) searchPage(ctx context.Context, query string, options Op
 		req.Header.Set("X-Subscription-Token", options.Token)
 	}
 	applyHeaders(req.Header, options.Headers)
-	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
+	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout, options.RateLimit, budget)
 }
 
 // BingProvider implements the Bing Web Search API adapter.
@@ -255,9 +268,10 @@ func (p *BingProvider) Name() string {
 
 func (p *BingProvider) Search(ctx context.Context, query string, options Options) ([]Result, error) {
 	options = withDefaults(boundedOptions(options), bingDefaultHost, bingDefaultEndpoint)
+	budget := newRequestBudget(options.MaxRequests)
 	results := make([]Result, 0, options.PageSize)
 	for page := 1; page <= options.MaxPages; page++ {
-		body, err := p.searchPage(ctx, query, options, page)
+		body, err := p.searchPage(ctx, query, options, page, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -273,7 +287,7 @@ func (p *BingProvider) Search(ctx context.Context, query string, options Options
 	return trimResults(results, options.PageSize*options.MaxPages), nil
 }
 
-func (p *BingProvider) searchPage(ctx context.Context, query string, options Options, page int) ([]byte, error) {
+func (p *BingProvider) searchPage(ctx context.Context, query string, options Options, page int, budget *requestBudget) ([]byte, error) {
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
@@ -298,7 +312,7 @@ func (p *BingProvider) searchPage(ctx context.Context, query string, options Opt
 		req.Header.Set("Ocp-Apim-Subscription-Key", options.Token)
 	}
 	applyHeaders(req.Header, options.Headers)
-	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout)
+	return doJSONRequest(ctx, p.Name(), p.Client, req, options.Timeout, options.RateLimit, budget)
 }
 
 func boundedOptions(options Options) Options {
@@ -375,7 +389,154 @@ func withDefaults(options Options, host, endpoint string) Options {
 	return options
 }
 
-func doJSONRequest(ctx context.Context, providerName string, client HTTPClient, req *http.Request, timeout time.Duration) ([]byte, error) {
+var (
+	rateLimitersMu sync.Mutex
+	rateLimiters   = map[string]*providerLimiter{}
+
+	nowFunc          = time.Now
+	sleepContextFunc = func(ctx context.Context, d time.Duration) error {
+		if d <= 0 {
+			return nil
+		}
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+)
+
+type requestBudget struct {
+	remaining int
+}
+
+func newRequestBudget(maxRequests int) *requestBudget {
+	return &requestBudget{remaining: maxRequests}
+}
+
+func (b *requestBudget) consume() bool {
+	if b == nil || b.remaining <= 0 {
+		return true
+	}
+	b.remaining--
+	return true
+}
+
+func (b *requestBudget) canRetry() bool {
+	return b == nil || b.remaining > 0
+}
+
+type rateLimitSpec struct {
+	Interval time.Duration
+	Burst    int
+}
+
+// ParseRateLimit parses information-seed provider rate limits.
+//
+// Supported forms are:
+//   - "" or "0": disabled; this is the default and adds no provider-side delay.
+//   - "N": N requests per second with a burst of 1 request; N may be fractional.
+//   - "N,B": N requests per second with burst B; B is a positive integer.
+//   - a Go duration such as "200ms" or "1s": one request per duration with burst 1.
+//
+// Requests-per-second values are unitless and always mean requests/second. Invalid
+// or non-positive values disable the limiter rather than failing provider search.
+func ParseRateLimit(value string) rateLimitSpec {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0" {
+		return rateLimitSpec{}
+	}
+	if d, err := time.ParseDuration(value); err == nil {
+		if d > 0 {
+			return rateLimitSpec{Interval: d, Burst: 1}
+		}
+		return rateLimitSpec{}
+	}
+	parts := strings.Split(value, ",")
+	rate, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil || rate <= 0 || math.IsInf(rate, 0) || math.IsNaN(rate) {
+		return rateLimitSpec{}
+	}
+	burst := 1
+	if len(parts) > 1 {
+		parsedBurst, burstErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if burstErr == nil && parsedBurst > 0 {
+			burst = parsedBurst
+		}
+	}
+	return rateLimitSpec{Interval: time.Duration(float64(time.Second) / rate), Burst: burst}
+}
+
+type providerLimiter struct {
+	mu        sync.Mutex
+	interval  time.Duration
+	burst     int
+	available int
+	last      time.Time
+	next      time.Time
+}
+
+func limiterFor(providerName, rateLimit string) *providerLimiter {
+	spec := ParseRateLimit(rateLimit)
+	if spec.Interval <= 0 {
+		return nil
+	}
+	key := providerName + "\x00" + strings.TrimSpace(rateLimit)
+	rateLimitersMu.Lock()
+	defer rateLimitersMu.Unlock()
+	if limiter := rateLimiters[key]; limiter != nil {
+		return limiter
+	}
+	limiter := &providerLimiter{interval: spec.Interval, burst: spec.Burst, available: spec.Burst}
+	rateLimiters[key] = limiter
+	return limiter
+}
+
+func (l *providerLimiter) wait(ctx context.Context) error {
+	if l == nil || l.interval <= 0 {
+		return nil
+	}
+	for {
+		l.mu.Lock()
+		now := nowFunc()
+		if l.last.IsZero() {
+			l.last = now
+		}
+		if l.burst > 1 && !now.Before(l.last) {
+			gained := int(now.Sub(l.last) / l.interval)
+			if gained > 0 {
+				l.available += gained
+				if l.available > l.burst {
+					l.available = l.burst
+				}
+				l.last = l.last.Add(time.Duration(gained) * l.interval)
+			}
+		}
+		if l.burst > 1 && l.available > 0 {
+			l.available--
+			l.mu.Unlock()
+			return nil
+		}
+		if l.next.IsZero() || now.After(l.next) {
+			l.next = now
+		}
+		wait := l.next.Sub(now)
+		if wait <= 0 {
+			l.next = now.Add(l.interval)
+			l.mu.Unlock()
+			return nil
+		}
+		l.mu.Unlock()
+		if err := sleepContextFunc(ctx, wait); err != nil {
+			return err
+		}
+	}
+}
+
+func doJSONRequest(ctx context.Context, providerName string, client HTTPClient, req *http.Request, timeout time.Duration, rateLimit string, budget *requestBudget) ([]byte, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -385,19 +546,100 @@ func doJSONRequest(ctx context.Context, providerName string, client HTTPClient, 
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, safeProviderError(providerName, err)
+	limiter := limiterFor(providerName, rateLimit)
+	attempts := defaultRetryAttempts
+	if budget != nil && budget.remaining > 0 && budget.remaining < attempts {
+		attempts = budget.remaining
 	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if readErr != nil {
-		return nil, safeProviderError(providerName, readErr)
+	if attempts < 1 {
+		attempts = 1
 	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, providerStatusError(providerName, resp.StatusCode, body)
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := limiter.wait(ctx); err != nil {
+			return nil, safeProviderError(providerName, err)
+		}
+		budget.consume()
+		resp, err := client.Do(req.Clone(ctx))
+		if err != nil {
+			lastErr = safeProviderError(providerName, err)
+			if attempt >= attempts || !budget.canRetry() || ctx.Err() != nil {
+				return nil, lastErr
+			}
+			if err := sleepContextFunc(ctx, retryBackoff(attempt, 0)); err != nil {
+				return nil, safeProviderError(providerName, err)
+			}
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, safeProviderError(providerName, readErr)
+		}
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			return body, nil
+		}
+		statusErr := providerStatusError(providerName, resp.StatusCode, body)
+		lastErr = statusErr
+		if !retryableStatus(resp.StatusCode) || attempt >= attempts || !budget.canRetry() || ctx.Err() != nil {
+			return nil, statusErr
+		}
+		if err := sleepContextFunc(ctx, retryBackoff(attempt, retryAfterDelay(resp.Header.Get("Retry-After")))); err != nil {
+			return nil, safeProviderError(providerName, err)
+		}
 	}
-	return body, nil
+	return nil, lastErr
+}
+
+func retryableStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func retryBackoff(attempt int, retryAfter time.Duration) time.Duration {
+	backoff := defaultBackoffBase
+	if attempt > 1 {
+		backoff = backoff << (attempt - 1)
+	}
+	if backoff > defaultBackoffMax {
+		backoff = defaultBackoffMax
+	}
+	if retryAfter > backoff {
+		return retryAfter
+	}
+	return backoff
+}
+
+func retryAfterDelay(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseFloat(value, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		d := time.Duration(seconds * float64(time.Second))
+		if d > maxRetryAfterDelay {
+			return maxRetryAfterDelay
+		}
+		return d
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		d := when.Sub(nowFunc())
+		if d <= 0 {
+			return 0
+		}
+		if d > maxRetryAfterDelay {
+			return maxRetryAfterDelay
+		}
+		return d
+	}
+	return 0
 }
 
 func buildEndpoint(options Options) (*url.URL, error) {
