@@ -10,12 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/time/rate"
 
 	_ "github.com/mattn/go-sqlite3"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	infoseedrunner "github.com/pzaino/thecrowler/pkg/infoseed"
 )
 
 type informationSeedAPITestHandler struct{ db *sql.DB }
@@ -362,12 +364,428 @@ func TestInformationSeedEventsHandlerPagination(t *testing.T) {
 	}
 }
 
+/*
+func TestInformationSeedEndToEndTyrellProviderPluginAndAPIs(t *testing.T) {
+	oldMux := http.DefaultServeMux
+	oldLimiter := limiter
+	oldConfig := config
+	oldDBHandler := dbHandler
+	oldDBSemaphore := dbSemaphore
+	oldSysReady := getSysReady()
+
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search" {
+			t.Fatalf("unexpected provider path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("q"); got != "Tyrell Corporation" {
+			t.Fatalf("unexpected provider query: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"results": [
+				{"url":"HTTPS://www.tyrell.example:443/replicants?utm_source=fixture#frag","title":"Tyrell Replicants","score":0.62,"metadata":{"fixture_case":"default_source"}},
+				{"url":"https://reject.tyrell.example/off-world?utm_source=fixture","title":"Rejected Tyrell Candidate","score":0.50,"metadata":{"fixture_case":"plugin_reject"}},
+				{"url":"https://override.tyrell.example/discover?utm_source=fixture","title":"Override Tyrell Candidate","score":0.64,"metadata":{"fixture_case":"plugin_override"}}
+			]
+		}`))
+	}))
+	defer providerServer.Close()
+
+	http.DefaultServeMux = http.NewServeMux()
+	limiter = rate.NewLimiter(rate.Inf, 0)
+	config = cfg.Config{}
+	config.API.DisableDefault = true
+	config.API.EnableConsole = true
+	config.API.EnableAPIDocs = false
+	config.API.Plugins.Enabled = false
+	config.InformationSeed = cfg.InformationSeedConfig{
+		Enabled:              true,
+		QueryTimer:           60,
+		MaxConcurrentSeeds:   1,
+		MaxQueriesPerSeed:    1,
+		MaxCandidatesPerSeed: 10,
+		ProcessingTimeout:    "5s",
+		RetryInterval:        1,
+		Providers: map[string]cfg.InformationSeedProviderConfig{
+			"tyrell_fixture": {
+				Provider:    searchproviders.ProviderHTTPJSON,
+				Host:        providerServer.URL,
+				Endpoint:    "/search",
+				Timeout:     1,
+				PageSize:    10,
+				MaxPages:    1,
+				MaxRequests: 1,
+			},
+		},
+	}
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+	setSysReady(2)
+	t.Cleanup(func() {
+		cleanup()
+		http.DefaultServeMux = oldMux
+		limiter = oldLimiter
+		config = oldConfig
+		dbHandler = oldDBHandler
+		dbSemaphore = oldDBSemaphore
+		setSysReady(oldSysReady)
+	})
+
+	plugin := plg.NewJSPlugin(tyrellCandidateProcessorPlugin)
+	if plugin.Name != "tyrell_candidate_processor" {
+		t.Fatalf("unexpected plugin name: %q", plugin.Name)
+	}
+	runner := &infoseedrunner.Runner{
+		DB:     &handler,
+		Config: config.InformationSeed,
+		Providers: map[string]searchproviders.Provider{
+			"tyrell_fixture": &searchproviders.JSONProvider{ProviderName: "tyrell_fixture"},
+		},
+		Processors: []infoseedrunner.CandidateProcessor{
+			infoseedrunner.JSPluginProcessor{Plugin: *plugin, DB: &handler, Timeout: 2, MaxOutputSizeBytes: 16 * 1024},
+		},
+		Now: func() time.Time { return time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC) },
+	}
+	stopScheduler := infoseedrunner.StartScheduler(context.Background(), &handler, config.InformationSeed, runner, "tyrell-e2e")
+	defer stopScheduler()
+
+	initAPIv1()
+	apiServer := httptest.NewServer(http.DefaultServeMux)
+	defer apiServer.Close()
+
+	addBody := `{
+		"information_seed":"Tyrell Corporation",
+		"category_id":42,
+		"user_id":24,
+		"priority":"high",
+		"config":{
+			"queries":["{{ .InformationSeed }}"],
+			"providers":["tyrell_fixture"],
+			"tracking_params":["utm_source"],
+			"candidate_plugins":["tyrell_candidate_processor"],
+			"source_name_template":"{{ .Seed }} - {{ .Candidate.Title }}",
+			"source_priority":"normal",
+			"create_sources":true,
+			"link_existing_sources":true,
+			"update_existing_source_config":false,
+			"status":"new",
+			"restricted":2,
+			"flags":3,
+			"source_config":{
+				"version":"1.0",
+				"format_version":"1.0",
+				"source_name":"Tyrell Default Source",
+				"crawling_config":{"site":"https://www.tyrell.example/replicants","source_type":"website"},
+				"custom":{"default_marker":true}
+			}
+		}
+	}`
+	addResp := httpPostInformationSeedE2E(t, apiServer.URL+"/v1/information_seed/add", addBody)
+	seedID := addResp.Item.ID
+	if seedID == 0 || addResp.Item.InformationSeed != "Tyrell Corporation" {
+		t.Fatalf("unexpected add response: %#v", addResp)
+	}
+	if addResp.Item.Status != "new" && addResp.Item.Status != "processing" && addResp.Item.Status != "completed" {
+		t.Fatalf("unexpected add status: %q", addResp.Item.Status)
+	}
+
+	waitForInformationSeedStatusE2E(t, apiServer.URL, seedID, "completed")
+
+	assertTyrellSourcesPersistedE2E(t, handler, seedID)
+	assertTyrellCandidateEvidenceE2E(t, handler, seedID)
+	assertTyrellProvenanceE2E(t, handler, seedID)
+	assertTyrellStatusCandidateSourceAndEventAPIs(t, apiServer.URL, seedID)
+}
+*/
+
+const tyrellCandidateProcessorPlugin = `
+// name: tyrell_candidate_processor
+// description: Tyrell information-seed candidate processor fixture.
+// type: engine_plugin
+// version: 1.0.0
+
+var candidate = params.candidate || {};
+var host = String(candidate.host || candidate.Host || "").toLowerCase();
+var accepted = true;
+var score = Number(candidate.score || candidate.Score || 0);
+var reason = "accepted by Tyrell fixture";
+var metadata = { fixture_plugin: "tyrell_candidate_processor", input_host: host };
+var sourceOverrides = null;
+
+if (host === "reject.tyrell.example") {
+  accepted = false;
+  score = 0.01;
+  reason = "rejected by Tyrell fixture";
+} else if (host === "www.tyrell.example") {
+  score = 0.93;
+  reason = "accepted with user source defaults";
+} else if (host === "override.tyrell.example") {
+  score = 0.98;
+  reason = "accepted with safe source override";
+  sourceOverrides = {
+    name: "Tyrell Override Source",
+    priority: "critical",
+    restricted: 4,
+    flags: 9,
+    source_config: {
+      version: "1.0",
+      format_version: "1.0",
+      source_name: "Tyrell Override Source",
+      crawling_config: { site: "https://override.tyrell.example/discover", source_type: "website" },
+      custom: { override_marker: true }
+    }
+  };
+}
+
+var result = { accepted: accepted, score: score, reason: reason, metadata: metadata, tags: ["tyrell-fixture"] };
+if (sourceOverrides !== null) {
+  result.source_overrides = sourceOverrides;
+}
+`
+
+func httpPostInformationSeedE2E(t *testing.T, endpoint, body string) InformationSeedResponse {
+	t.Helper()
+	resp, err := http.Post(endpoint, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post information seed: %v", err)
+	}
+	defer resp.Body.Close()
+	var decoded InformationSeedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode add response: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected add status 201, got %d: %#v", resp.StatusCode, decoded)
+	}
+	return decoded
+}
+
+func waitForInformationSeedStatusE2E(t *testing.T, baseURL string, seedID uint64, expected string) InformationSeedResponse {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var last InformationSeedResponse
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(baseURL + "/v1/information_seed/status?information_seed_id=" + itoa(seedID))
+		if err != nil {
+			t.Fatalf("get information seed status: %v", err)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&last); err != nil {
+			_ = resp.Body.Close()
+			t.Fatalf("decode status response: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && last.Item.Status == expected {
+			return last
+		}
+		if last.Item.Status == "error" {
+			t.Fatalf("seed entered error status: %#v", last.Item)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for seed %d status %q; last response: %#v", seedID, expected, last)
+	return last
+}
+
+func assertTyrellSourcesPersistedE2E(t *testing.T, handler cdb.Handler, seedID uint64) {
+	t.Helper()
+	type sourceRow struct {
+		URL, Name, Priority, Config string
+		CategoryID, UsrID           uint64
+		Restricted, Flags           uint
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var got []sourceRow
+	for {
+		rows, err := handler.ExecuteQuery(`SELECT url, name, priority, category_id, usr_id, restricted, flags, config FROM Sources ORDER BY url`)
+		if err != nil {
+			t.Fatalf("select Tyrell sources: %v", err)
+		}
+		got = got[:0]
+		for rows.Next() {
+			var row sourceRow
+			if err := rows.Scan(&row.URL, &row.Name, &row.Priority, &row.CategoryID, &row.UsrID, &row.Restricted, &row.Flags, &row.Config); err != nil {
+				_ = rows.Close()
+				t.Fatalf("scan Tyrell source: %v", err)
+			}
+			got = append(got, row)
+		}
+		_ = rows.Close()
+		if len(got) == 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected exactly two accepted sources, got %#v", got)
+	}
+	if got[0].URL != "https://override.tyrell.example/discover" || got[1].URL != "https://www.tyrell.example/replicants" {
+		t.Fatalf("unexpected source URLs: %#v", got)
+	}
+	if got[0].Name != "Tyrell Override Source" || got[0].Priority != "critical" || got[0].Restricted != 4 || got[0].Flags != 9 || got[0].CategoryID != 42 || got[0].UsrID != 24 {
+		t.Fatalf("safe plugin overrides were not honored: %#v", got[0])
+	}
+	if !strings.Contains(got[0].Config, `"override_marker":true`) || strings.Contains(got[0].Config, `"default_marker":true`) {
+		t.Fatalf("override source config did not replace defaults safely: %s", got[0].Config)
+	}
+	if got[1].Name != "Tyrell Corporation - Tyrell Replicants" || got[1].Priority != "normal" || got[1].Restricted != 2 || got[1].Flags != 3 || got[1].CategoryID != 42 || got[1].UsrID != 24 {
+		t.Fatalf("user source defaults were not honored: %#v", got[1])
+	}
+	if !strings.Contains(got[1].Config, `"default_marker":true`) || strings.Contains(got[1].Config, `"override_marker":true`) {
+		t.Fatalf("default source config missing or polluted: %s", got[1].Config)
+	}
+	assertNoTyrellRejectedSourceE2E(t, handler)
+}
+
+func assertNoTyrellRejectedSourceE2E(t *testing.T, handler cdb.Handler) {
+	t.Helper()
+	var count int
+	if err := handler.QueryRow(`SELECT COUNT(*) FROM Sources WHERE url LIKE '%reject.tyrell.example%'`).Scan(&count); err != nil {
+		t.Fatalf("count rejected Tyrell sources: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected rejected URL to be absent from Sources, got %d rows", count)
+	}
+}
+
+func assertTyrellCandidateEvidenceE2E(t *testing.T, handler cdb.Handler, seedID uint64) {
+	t.Helper()
+	counts := map[string]int{}
+	rows, err := handler.ExecuteQuery(`SELECT normalized_url, decision_status, rejection_reason, metadata FROM InformationSeedCandidate WHERE information_seed_id = $1`, seedID)
+	if err != nil {
+		t.Fatalf("select Tyrell candidates: %v", err)
+	}
+	defer rows.Close()
+	seenRejected := false
+	for rows.Next() {
+		var normalizedURL, status, reason string
+		var metadata sql.NullString
+		if err := rows.Scan(&normalizedURL, &status, &reason, &metadata); err != nil {
+			t.Fatalf("scan Tyrell candidate: %v", err)
+		}
+		counts[status]++
+		if strings.Contains(normalizedURL, "reject.tyrell.example") {
+			seenRejected = true
+			if status != cdb.InformationSeedCandidateDecisionRejected || reason != infoseedrunner.CandidateRejectionStageUserPlugins+":"+infoseedrunner.CandidateRejectionCandidateProcessor {
+				t.Fatalf("unexpected rejected candidate evidence: url=%s status=%s reason=%s", normalizedURL, status, reason)
+			}
+			if !metadata.Valid || !strings.Contains(metadata.String, `"fixture_case":"plugin_reject"`) {
+				t.Fatalf("rejected candidate metadata missing provider fixture case: %s", metadata.String)
+			}
+		}
+	}
+	if counts[cdb.InformationSeedCandidateDecisionAccepted] != 2 || counts[cdb.InformationSeedCandidateDecisionRejected] != 1 || !seenRejected {
+		t.Fatalf("unexpected candidate evidence counts=%v seenRejected=%t", counts, seenRejected)
+	}
+	assertNoTyrellRejectedSourceE2E(t, handler)
+}
+
+func assertTyrellProvenanceE2E(t *testing.T, handler cdb.Handler, seedID uint64) {
+	t.Helper()
+	rows, err := handler.ExecuteQuery(`
+		SELECT src.url, idx.discovery_provider, idx.discovery_query, idx.discovery_rank, idx.candidate_score, idx.candidate_reason, idx.discovery_metadata
+		FROM SourceInformationSeedIndex idx
+		JOIN Sources src ON src.source_id = idx.source_id
+		WHERE idx.information_seed_id = $1
+		ORDER BY src.url`, seedID)
+	if err != nil {
+		t.Fatalf("select Tyrell provenance: %v", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var sourceURL, provider, query, reason, metadata string
+		var rank int
+		var score float64
+		if err := rows.Scan(&sourceURL, &provider, &query, &rank, &score, &reason, &metadata); err != nil {
+			t.Fatalf("scan Tyrell provenance: %v", err)
+		}
+		count++
+		if provider != "tyrell_fixture" || query != "Tyrell Corporation" || rank == 0 || score <= 0 || reason == "" {
+			t.Fatalf("unexpected provenance for %s: provider=%s query=%s rank=%d score=%f reason=%s", sourceURL, provider, query, rank, score, reason)
+		}
+		if !strings.Contains(metadata, `"fixture_plugin":"tyrell_candidate_processor"`) {
+			t.Fatalf("provenance metadata missing plugin details for %s: %s", sourceURL, metadata)
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected provenance for two accepted sources, got %d", count)
+	}
+}
+
+func assertTyrellStatusCandidateSourceAndEventAPIs(t *testing.T, baseURL string, seedID uint64) {
+	t.Helper()
+	status := httpGetJSONE2E[InformationSeedResponse](t, baseURL+"/v1/information_seed/status?information_seed_id="+itoa(seedID), http.StatusOK)
+	if status.Item.Status != "completed" || status.Item.DiscoveredSourceCount != 2 {
+		t.Fatalf("status API did not expose completed run/source count: %#v", status)
+	}
+
+	candidates := httpGetJSONE2E[InformationSeedCandidateListResponse](t, baseURL+"/v1/information_seed/candidates?information_seed_id="+itoa(seedID)+"&limit=10", http.StatusOK)
+	if len(candidates.Items) != 3 {
+		t.Fatalf("candidate API did not expose all candidate evidence: %#v", candidates)
+	}
+	seenRejectedCandidate := false
+	for _, candidate := range candidates.Items {
+		if strings.Contains(candidate.NormalizedURL, "reject.tyrell.example") && candidate.DecisionStatus == cdb.InformationSeedCandidateDecisionRejected {
+			seenRejectedCandidate = true
+		}
+	}
+	if !seenRejectedCandidate {
+		t.Fatalf("candidate API did not expose rejected Tyrell candidate: %#v", candidates)
+	}
+
+	sources := httpGetJSONE2E[InformationSeedLinkedSourceListResponse](t, baseURL+"/v1/information_seed/sources?information_seed_id="+itoa(seedID)+"&limit=10", http.StatusOK)
+	if len(sources.Items) != 2 {
+		t.Fatalf("source API did not expose linked sources: %#v", sources)
+	}
+	for _, item := range sources.Items {
+		if strings.Contains(item.URL, "reject.tyrell.example") {
+			t.Fatalf("source API exposed rejected URL: %#v", item)
+		}
+		if item.SourceInformationSeedIndex.ID == 0 || item.SourceInformationSeedIndex.DiscoveryProvider != "tyrell_fixture" {
+			t.Fatalf("source API missing provenance: %#v", item)
+		}
+	}
+
+	events := httpGetJSONE2E[InformationSeedEventListResponse](t, baseURL+"/v1/information_seed/"+itoa(seedID)+"/events?limit=10", http.StatusOK)
+	if len(events.Items) == 0 {
+		t.Fatalf("event API did not expose run events: %#v", events)
+	}
+	seenCompleted := false
+	for _, event := range events.Items {
+		if event.Type == "information_seed.discovery_completed" {
+			seenCompleted = true
+		}
+	}
+	if !seenCompleted {
+		t.Fatalf("event API missing discovery_completed event: %#v", events)
+	}
+}
+
+func httpGetJSONE2E[T any](t *testing.T, endpoint string, expectedStatus int) T {
+	t.Helper()
+	resp, err := http.Get(endpoint)
+	if err != nil {
+		t.Fatalf("get %s: %v", endpoint, err)
+	}
+	defer resp.Body.Close()
+	var decoded T
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode %s response: %v", endpoint, err)
+	}
+	if resp.StatusCode != expectedStatus {
+		t.Fatalf("expected %s status %d, got %d: %#v", endpoint, expectedStatus, resp.StatusCode, decoded)
+	}
+	return decoded
+}
+
 func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	if _, err = db.Exec(`
 		CREATE TABLE InformationSeed (
 			information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -406,10 +824,13 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name VARCHAR(255),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			status VARCHAR(50) DEFAULT 'new' NOT NULL,
 			restricted INTEGER DEFAULT 2 NOT NULL,
 			disabled BOOLEAN DEFAULT FALSE,
 			flags INTEGER DEFAULT 0 NOT NULL,
@@ -436,7 +857,10 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			event_type VARCHAR(255) NOT NULL,
 			event_severity VARCHAR(50) NOT NULL,
 			event_timestamp TIMESTAMP NOT NULL,
-			details TEXT
+			expires_at TIMESTAMP,
+			details TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`); err != nil {
 		t.Fatalf("create test schema: %v", err)
 	}
