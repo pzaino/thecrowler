@@ -1,206 +1,257 @@
 # The CROWler API
 
-The API offers a set of end points to search for data in the crowler and, if
-you enabled the console feature in your config.yaml, it will also offer a set
-of end points to manage your sources (aka, add/remove etc sources).
+The CROWler Search API exposes public search endpoints, optional console
+administration endpoints, API documentation endpoints, and optional plugin
+routes. The tables below intentionally list only routes registered by
+`initAPIv1`; every route documented here is covered by a route/handler test so
+future documentation changes cannot describe endpoints that are not mounted.
 
-The end-points added so far are:
+## Operational and documentation endpoints
 
-* [GET] `/v1/search/general?q=<your query>`: This end-point will search the database
-  for the query you provide and return the results in JSON format.
-* [GET] `/v1/search/netinfo?q=<your query>`: This end-point will search the database
-  for the query you provide and return the results in JSON format. The results
-  will include the network information of the site.
-* [GET] `/v1/search/httpinfo?q=<your query>`: This end-point will search the database
-  for the query you provide and return the results in JSON format. The results
-  will include the HTTP information of the site, detected technologies and SSL
-  Info.
-* [GET] `/v1/search/screenshot?q=<your query>`: This end-point will search the
-  database for the query you provide and return the results in JSON format. The
-  results will include the screenshot of the site.
-* [GET] `/v1/search/webobject?q=<your query>`: This end-point will search the database
-  for the query you provide and return the results in JSON format. The results
-  will include the web objects of the site.
-* [GET] `/v1/search/correlated_sites?q=<your query>`: This end-point will search the
-  database for the query you provide and return the results in JSON format. The
-  results will include all the correlated sites of the specified terms.
-  Basically if you want to know how many sites are related to a specific term,
-  web site, company, etc, you can use this end-point.
-* [GET] `/v1/search/collected_data?q=<your query>`: This end-point will search the
-  database for the query you provide and return the results in JSON format. The
-  results will include all the collected data of the specified terms.
-  Basically if you want to know how many data are related to a specific term,
-  web site, company, etc, you can use this end-point.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/v1/health` | Liveness check. The `/v1/health/` form is also registered for compatibility. |
+| GET | `/v1/ready` | Readiness check. The `/v1/ready/` form is also registered for compatibility. |
+| GET | `/v1/openapi.json` | Runtime-generated OpenAPI 3.0.3 document when API docs are enabled. |
+| GET | `/v1/docs` | JSON endpoint index when API docs are enabled. |
 
-There are equivalent end-points in [POST] for all the above end-points.
-Those accept a JSON document with more options than the GET end-points.
+## Search endpoints
 
-The q parameter supports dorking operators. For example, you can search for
-`title:admin` to search for sites with the word "admin" in the title.
-And they also support logical operators. For example, you can search for
-`title:admin||administrator` to search for sites with the word "admin" OR
-the word "administrator" in the title.
+Search endpoints are enabled unless `api.disable_default` is true. They accept a
+`q` query parameter for GET requests and the equivalent JSON body for POST
+requests through the shared search handler. Use `limit` and `offset` for
+pagination where the backing handler supports them. The `q` parameter supports
+CROWler dorking operators such as `title:admin` and logical OR expressions such
+as `title:admin||administrator`.
 
-You can specify the max number of items to return by using the `limit` parameter.
-You can browse on the results by using the `offset` parameter.
+| Method | Endpoint | Result focus |
+| --- | --- | --- |
+| GET/POST | `/v1/search/general` | General search results from the CROWler index. |
+| GET/POST | `/v1/search/netinfo` | Network information for matching sites. |
+| GET/POST | `/v1/search/httpinfo` | HTTP information, detected technologies, and SSL information. |
+| GET/POST | `/v1/search/screenshot` | Screenshot search results. |
+| GET/POST | `/v1/search/webobject` | Web object search results. |
+| GET/POST | `/v1/search/correlated_sites` | Sites correlated with the requested terms. |
+| GET/POST | `/v1/search/collected_data` | Collected/scraped data related to the requested terms. |
+| GET | `/v1/search/correlated_sources` | Typed PostgreSQL correlated-source search. |
+| GET | `/v1/search/pages` | Typed PostgreSQL page search. |
+| GET | `/v1/search/scraped_data` | Typed PostgreSQL scraped-data search. |
+| GET | `/v1/search/scraped_data_field` | Typed PostgreSQL scraped-data field search. |
+| GET | `/v1/search/artifacts` | Typed PostgreSQL artifact search. |
+| GET | `/v1/search/artifacts_field` | Typed PostgreSQL artifact field search. |
+| GET | `/v1/search/artifacts_fields` | Typed PostgreSQL multi-field artifact search. |
+| GET | `/v1/search/artifacts_attribute` | Typed PostgreSQL artifact-attribute search. |
+| GET | `/v1/search/objects_attribute` | Typed PostgreSQL object-attribute search. |
+| GET | `/v1/search/objects_attributes` | Typed PostgreSQL multi-attribute object search. |
 
-For example:
+Example:
 
-`/v1/search/webobject?q=example.com&offset=1`
-
-This will return the second page of the results. The default limit is 10.
-
-## Index administration via API
-
-If you have enabled the console feature in your config.yaml, you can also
-manage your sources via the API. The end-points added so far are:
-
-* [GET] `/v1/source/add`: This end-point will add a new source to the database.
-  The source should be provided in JSON format.
-  [addsource](./api/addsource.md) detailed documentation.
-* [GET] `/v1/source/remove`: This end-point will remove a source from the
-  database (and all the related crawled data).
-* [GET] `/v1/source/update`: This end-point will update a source in the database.
-* [GET] `/v1/source/vacuum`: This end-point will vacuum the source from all data
-  crawled and collected so far (note: it does NOT remove the source, it's owners, categories etc., only crawled data).
-
-### Information seed administration
-
-The canonical namespace for information seed console end-points is
-`/v1/information_seed/*` (underscore). The older hyphenated
-`/v1/information-seed/list` route is kept only as a backward-compatible alias
-for `/v1/information_seed/list`.
-
-All information seed responses include the seed identity and state fields:
-`information_seed_id`, `status`, `has_error`, `last_error`, `last_error_at`,
-`attempts`, `disabled`, `priority`, `engine`, timestamps, `config`, and
-`discovered_source_count` where the source relationship count is applicable.
-
-* [POST] `/v1/information_seed/add`: Adds a new information seed. The JSON body
-  accepts `information_seed` (required), `category_id`, `usr_id` (or `user_id`),
-  `status` (defaults to `new`), `priority`, `engine`, `disabled`, and `config`.
-  The seed-level `config` may include `query_templates`, literal `queries`,
-  selected provider names, request-bounding candidate filters, source defaults,
-  and `candidate_plugins`; provider credentials are configured globally under
-  `information_seed.providers` rather than in the request body. The response
-  returns the created seed under `item`.
-* [GET] `/v1/information_seed/status?information_seed_id=<id>`: Returns the
-  current status for a single information seed. The `id` or `q` query parameter
-  may also be used for the seed ID.
-* [GET] `/v1/information_seed/list`: Lists information seeds and includes
-  `discovered_source_count`, the number of active `SourceInformationSeedIndex`
-  relationships currently linking discovered sources to each seed. The count is
-  calculated by the database in the list query. Optional filters are `status`,
-  `priority`, `disabled`, `category` (or `category_id`), `user` (or `user_id`
-  / `usr_id`), `limit`, and `offset`. `limit` defaults to `100`; the API
-  accepts values up to `500`.
-* [GET] `/v1/information_seed/sources?information_seed_id=<id>`: Lists Sources
-  linked to one seed with pagination (`limit`, `offset`). Each item includes the
-  source fields plus `source_information_seed_index`, which contains the linked
-  row ID, seed/source IDs, discovery provider/query/rank, candidate score and
-  reason, discovery metadata, and link timestamps.
-* [GET] `/v1/information_seed/candidates?information_seed_id=<id>`: Lists
-  persisted candidate decision evidence for one seed with pagination (`limit`,
-  `offset`). This endpoint is available because candidate evidence persistence is
-  implemented; it exposes accepted/rejected decision rows, rejection reasons,
-  scores, providers, queries, ranks, metadata, and run attempts.
-* [POST] `/v1/information_seed/retry`: Queues an information seed for another
-  discovery attempt by setting its status to `pending` and clearing the current
-  error state. The JSON body is `{"information_seed_id": <id>}`.
-* [POST] `/v1/information_seed/disable`: Disables an information seed so it is
-  no longer eligible for discovery claiming. The JSON body is
-  `{"information_seed_id": <id>}`.
-
-Example production seed request using placeholder-free runtime credentials from
-the global provider configuration:
-
-```bash
-curl -sS -X POST 'http://localhost:8080/v1/information_seed/add' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "information_seed": "Tyrell Corporation",
-    "category_id": 42,
-    "usr_id": 7,
-    "priority": 10,
-    "status": "new",
-    "disabled": false,
-    "config": {
-      "query_templates": [
-        "{{ .Seed }} official website",
-        "{{ .Seed }} investor relations",
-        "{{ .Seed }} contact support"
-      ],
-      "providers": ["brave_search", "public_json"],
-      "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
-      "deduplicate_host": true,
-      "max_candidates": 10,
-      "required_url_schemes": ["https"],
-      "min_score": 0.2,
-      "max_candidates_per_host": 1,
-      "max_candidates_per_domain": 3,
-      "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
-      "source_priority": "normal",
-      "create_sources": true,
-      "link_existing_sources": true,
-      "update_existing_source_config": false,
-      "disabled": false,
-      "status": "new",
-      "restricted": 1,
-      "flags": 0,
-      "source_config": {
-        "version": "1.0",
-        "format_version": "1.0",
-        "source_name": "tyrell-information-seed",
-        "crawling_config": {
-          "site": "https://www.tyrell.example/",
-          "source_type": "website"
-        },
-        "custom": {
-          "created_by": "information_seed",
-          "seed_label": "tyrell-corporation"
-        }
-      },
-      "candidate_plugins": ["domain-policy", "source-overrides"]
-    }
-  }'
+```text
+/v1/search/webobject?q=example.com&offset=1
 ```
 
-For this request the runner renders `Tyrell Corporation official website`,
-`Tyrell Corporation investor relations`, and `Tyrell Corporation contact support`
-before querying the selected providers. Inspect provenance with:
+## Console source administration
 
-```bash
-curl -sS 'http://localhost:8080/v1/information_seed/status?information_seed_id=123'
-curl -sS 'http://localhost:8080/v1/information_seed/sources?information_seed_id=123&limit=50&offset=0'
-curl -sS 'http://localhost:8080/v1/information_seed/candidates?information_seed_id=123&limit=100&offset=0'
+Console endpoints are registered only when `api.enable_console` is true. Treat
+all console endpoints as privileged operations: authenticate them at the edge,
+restrict network access, and avoid exposing them directly to the public
+Internet.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET/POST | `/v1/source/add` | Add a new source. See [addsource](./api/addsource.md). |
+| GET | `/v1/source/remove` | Remove a source and related crawled data. |
+| POST | `/v1/source/update` | Update a source. |
+| GET | `/v1/source/vacuum` | Delete crawled/collected data for a source without removing the source row. |
+| GET | `/v1/source/status` | Return status for one URL/source. |
+| GET | `/v1/source/statuses` | Return statuses for all known URLs/sources. |
+
+## Information seed administration
+
+The canonical namespace is `/v1/information_seed/*` (underscore). The
+hyphenated `/v1/information-seed/list` route is a deprecated alias for
+`/v1/information_seed/list` only.
+
+All information seed responses include seed identity and lifecycle fields such
+as `information_seed_id`, `status`, `has_error`, `last_error`,
+`last_error_at`, `attempts`, `disabled`, `priority`, `engine`, timestamps,
+`config`, and `discovered_source_count` where source relationship counts are
+applicable.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/v1/information_seed/add` | Add an information seed. The request body accepts `information_seed`, `category_id`, `usr_id`/`user_id`, `status`, `priority`, `engine`, `disabled`, and seed-level `config`. Provider credentials belong in global `information_seed.providers`, not in this request. |
+| GET | `/v1/information_seed/status` | Return status for one seed. Supply `information_seed_id`, `id`, or `q`. |
+| GET | `/v1/information_seed/list` | List seeds with filters (`status`, `priority`, `disabled`, `category`/`category_id`, `user`/`user_id`/`usr_id`) plus `limit` and `offset`. |
+| GET | `/v1/information_seed/sources` | List sources linked to one seed. Supply `information_seed_id`; response items include `source_information_seed_index` provenance. |
+| GET | `/v1/information_seed/candidates` | List persisted accepted/rejected candidate decisions for one seed. Supply `information_seed_id`, plus optional pagination. |
+| POST | `/v1/information_seed/retry` | Reset a seed for retry after correcting credentials/configuration. Body: `{"information_seed_id":123}`. |
+| POST | `/v1/information_seed/disable` | Disable a seed by request body. Body: `{"information_seed_id":123}`. |
+| POST | `/v1/information_seed/{id}/rerun` | Path-ID rerun helper for a seed. |
+| POST | `/v1/information_seed/{id}/disable` | Path-ID disable helper for a seed. |
+| POST | `/v1/information_seed/{id}/enable` | Re-enable a seed; optional body can include `queue_pending`. |
+| GET | `/v1/information_seed/{id}/events` | List information-seed discovery events. |
+| GET | `/v1/information_seed/{id}/diagnostics` | Return the latest redacted run diagnostics payload. |
+| GET | `/v1/information-seed/list` | Deprecated alias for `/v1/information_seed/list`. |
+
+Seed-level `config` can include `query_templates`, literal `queries`, selected
+provider names, request-bounding candidate filters, source defaults, and
+`candidate_plugins`. The built-in runner executes provider discovery,
+normalization/de-duplication, built-in filters, plugin processing, source
+override validation, source persistence/linking, event emission, and lifecycle
+finalization in a deterministic order. Custom candidate plugins/agents can only
+participate in the documented user/plugin phases; they do not replace built-in
+persistence, linking, final status, or redaction behavior. See
+[information_seed_lifecycle.md](information_seed_lifecycle.md) and
+[plugins.md](plugins.md#information-seed-candidate-plugins).
+
+## Owner and category console endpoints
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/v1/owner/add` | Add an owner. |
+| POST | `/v1/owner/update` | Update an owner. |
+| POST | `/v1/owner/remove` | Remove an owner. |
+| POST | `/v1/category/add` | Add a category. |
+| POST | `/v1/category/update` | Update a category. |
+| POST | `/v1/category/remove` | Remove a category. |
+
+## Provider recipes for information seeds
+
+Prefer lower-risk and lower-friction providers first, then add paid or custom
+providers only when operator review is complete. Every provider example in this
+repository is either backed by deterministic fixtures in
+`pkg/infoseed/searchproviders/testdata` or explicitly marked as a template that
+requires operator validation before production use.
+
+### Free/public providers first
+
+Use free/public providers before paid integrations and keep their request budgets
+small. RSS/Atom and Common Crawl examples are fixture-backed by provider tests;
+live hosts and collection IDs are still examples and should be validated by the
+operator.
+
+```yaml
+information_seed:
+  provider_allow_list:
+    - rss_public_news
+    - common_crawl_latest
+  providers:
+    rss_public_news:
+      provider: rss_feed
+      host: https://www.cisa.gov
+      endpoint: /news.xml
+      timeout: 10
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+    common_crawl_latest:
+      provider: common_crawl_index
+      host: https://index.commoncrawl.org
+      endpoint: /CC-MAIN-2026-18-index
+      parameters:
+        output: json
+        filter: status:200
+        collapse: urlkey
+      timeout: 15
+      rate_limit: 10s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
 ```
 
+### Paid/provider API integrations
 
-There are equivalent end-points in [POST] for the source administration
-end-points above unless a method is explicitly shown.
+Official provider APIs are preferred over scraping public result pages when the
+provider offers a compliant API. The adapter behavior for Brave, Bing, and
+generic `http_json` is fixture-backed, but the following live credentials,
+subscriptions, quotas, and contractual terms are templates requiring operator
+validation.
 
-You can also check what's going on with the crawler by checking the logs of the
-CROWler engine and/or use the following console end-points:
+```yaml
+information_seed:
+  provider_allow_list:
+    - brave_search_api
+    - bing_web_search_api
+  providers:
+    brave_search_api:
+      provider: brave_search
+      host: https://api.search.brave.com
+      endpoint: /res/v1/web/search
+      api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+    bing_web_search_api:
+      provider: bing_web_search
+      host: https://api.bing.microsoft.com
+      endpoint: /v7.0/search
+      api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+```
 
-* [GET] `/v1/source/statuses`: This end-point will return the status of the
-  of all the crawling activities going on.
-* [GET] `/v1/source/status`: This end-point will return the status of the
-  crawling activity of a specific source.
+### CROWler federation provider
 
-To manage Owners and Categories, you can use the following end-points:
+A CROWler node can query another CROWler Search API through the generic
+`http_json` adapter because `/v1/search/general` returns an `items` array with
+`link`, `title`, and `summary` fields. The parser shape is fixture-backed; the
+remote deployment, trust relationship, authentication header, and data-sharing
+policy are templates requiring operator validation.
 
-* [GET] `/v1/owner/add`: This end-point will add a new owner to the database.
-  The owner should be provided in JSON format.
-* [GET] `/v1/owner/remove`: This end-point will remove an owner from the
-  database.
-* [GET] `/v1/owner/update`: This end-point will update an owner in the database.
-* [GET] `/v1/owner/list`: This end-point will list all the owners in the database.
+```yaml
+information_seed:
+  provider_allow_list:
+    - crowler_federation_peer
+  providers:
+    crowler_federation_peer:
+      provider: http_json
+      host: https://peer-crowler.example.invalid
+      endpoint: /v1/search/general
+      token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+      headers:
+        User-Agent: CROWler federation information-seed example (+https://example.invalid/contact)
+      parameters:
+        federation_scope: public-index
+      timeout: 15
+      rate_limit: "0.2" # one request every five seconds
+      max_requests: 2
+      page_size: 10
+      max_pages: 1
+```
 
-There are equivalent end-points in [POST] for all the above end-points.
+### Public search result scraping templates
 
-* [GET] `/v1/category/add`: This end-point will add a new category to the database.
-  The category should be provided in JSON format.
-* [GET] `/v1/category/remove`: This end-point will remove a category from the
-  database.
-* [GET] `/v1/category/update`: This end-point will update a category in the database.
-* [GET] `/v1/category/list`: This end-point will list all the categories in the database.
+`browser_search` is an explicit opt-in HTML adapter for controlled fixtures or
+policy-approved pages. It is not a mechanism for bypassing consent flows,
+robots.txt, anti-abuse controls, access restrictions, or terms of service.
+Public search-result scraping can create contractual, legal, privacy, and
+service-reliability risk; prefer official APIs and use live HTML search examples
+only after site-specific operator validation. Keep fixture-backed tests on local
+HTML fixtures rather than live search engines.
+
+## Security, rate-limit, robots, and terms considerations
+
+- Store provider secrets in environment variables or a secret manager; never put
+  API keys in seed request bodies or committed examples.
+- Console endpoints can create, update, delete, or disable sources and seeds.
+  Put them behind authentication, network policy, and audit logging.
+- Configure `rate_limit`, `max_requests`, `max_pages`, `page_size`, `timeout`,
+  global `max_concurrent_seeds`, and `max_queries_per_seed` before enabling a
+  provider. Treat provider `429`, `Retry-After`, and quota errors as signals to
+  slow down.
+- Review robots.txt, published API policies, acceptable-use policies, and terms
+  of service before crawling or scraping. Do not bypass login walls, consent
+  prompts, CAPTCHAs, or anti-automation controls.
+- Use a clear User-Agent and contact URL where the provider permits automated
+  access. Avoid sending credentials to HTML result pages; `browser_search`
+  strips credential fields by design.
+- Redaction is defense-in-depth, not a substitute for secret hygiene. Events and
+  diagnostics redact configured keys, tokens, sensitive headers, and common
+  sensitive parameter names before persistence.

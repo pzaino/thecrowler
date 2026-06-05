@@ -11,15 +11,26 @@
       "{{ .Seed }} investor relations",
       "{{ .Seed }} contact support"
     ],
-    "providers": ["brave_search", "public_json"],
-    "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
+    "providers": [
+      "rss_public_news",
+      "common_crawl_latest",
+      "public_json_adapter"
+    ],
+    "tracking_params": [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "fbclid"
+    ],
     "deduplicate_host": true,
     "max_candidates": 10,
-    "required_url_schemes": ["https"],
+    "required_url_schemes": [
+      "https"
+    ],
     "min_score": 0.2,
     "max_candidates_per_host": 1,
     "max_candidates_per_domain": 3,
-    "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
+    "source_name_template": "{{ .Seed }} \u2014 {{ .Candidate.Title }}",
     "source_priority": "normal",
     "create_sources": true,
     "link_existing_sources": true,
@@ -41,6 +52,9 @@
         "seed_label": "tyrell-corporation"
       }
     },
-    "candidate_plugins": ["domain-policy", "source-overrides"]
+    "candidate_plugins": [
+      "domain-policy",
+      "source-overrides"
+    ]
   }
 }

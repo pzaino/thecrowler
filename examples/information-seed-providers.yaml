@@ -22,6 +22,8 @@ information_seed:
     # - bing_web_search_api
     # - google_cse_api
     # - shodan_api
+    # CROWler federation peer; template requiring operator validation.
+    # - crowler_federation_peer
 
   providers:
     # --- Free/public providers -------------------------------------------------
@@ -50,6 +52,7 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    # Fixture-backed adapter shape; live host is a template requiring operator validation.
     public_json_adapter:
       provider: http_json
       host: https://search-adapter.example.invalid
@@ -64,6 +67,7 @@ information_seed:
     # from the allow-list above until policy review confirms automated access is
     # permitted, robots/terms/consent expectations are satisfied, and the rate
     # limits below are appropriate for the deployment.
+    # Template requiring operator validation; do not enable from this example alone.
     duckduckgo_html_search:
       provider: browser_search
       host: https://duckduckgo.com
@@ -85,6 +89,7 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    # Template requiring operator validation; do not enable from this example alone.
     bing_html_search:
       provider: browser_search
       host: https://www.bing.com
@@ -107,6 +112,7 @@ information_seed:
       max_pages: 1
 
     # --- Paid/API-key or commercial integrations ------------------------------
+    # Fixture-backed adapter shape; live API subscription is a template requiring operator validation.
     brave_search_api:
       provider: brave_search
       host: https://api.search.brave.com
@@ -118,6 +124,7 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    # Fixture-backed adapter shape; live API subscription is a template requiring operator validation.
     bing_web_search_api:
       provider: bing_web_search
       host: https://api.bing.microsoft.com
@@ -129,6 +136,7 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    # Generic HTTP JSON template requiring operator validation.
     google_cse_api:
       provider: http_json
       host: https://www.googleapis.com
@@ -144,6 +152,7 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    # Generic HTTP JSON template requiring operator validation.
     shodan_api:
       provider: http_json
       host: https://api.shodan.io
@@ -153,6 +162,25 @@ information_seed:
       timeout: 30
       rate_limit: "1"
       max_requests: 3
+      page_size: 10
+      max_pages: 1
+
+    # CROWler federation peer. The generic http_json parser shape is
+    # fixture-backed against CROWler-style SearchResult JSON, but this live peer,
+    # trust boundary, token, data-sharing scope, and retention policy are a
+    # template requiring operator validation before enabling.
+    crowler_federation_peer:
+      provider: http_json
+      host: https://peer-crowler.example.invalid
+      endpoint: /v1/search/general
+      token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+      headers:
+        User-Agent: CROWler federation information-seed example (+https://example.invalid/contact)
+      parameters:
+        federation_scope: public-index
+      timeout: 15
+      rate_limit: "0.2"
+      max_requests: 2
       page_size: 10
       max_pages: 1
 

@@ -307,6 +307,24 @@ candidates and returns the processor error for observability. The payload
 contract is also captured in
 [`schemas/crowler-infoseed-candidate-plugin-schema.json`](../schemas/crowler-infoseed-candidate-plugin-schema.json).
 
+
+### Built-in phases versus custom plugin/agent phases
+
+Information Seed plugins are intentionally scoped to user/plugin phases. The
+platform-owned phases are provider discovery, URL normalization,
+URL/host/domain de-duplication, built-in allow/deny/scheme/score/cardinality
+filters, source configuration validation, source persistence/linking, lifecycle
+finalization, and event/diagnostic redaction. Candidate plugins run after the
+built-in filters and before persistence; they may reject a candidate, adjust the
+final score/reason, and provide only the documented safe source overrides.
+
+Do not use plugins or agents to bypass provider policy, robots.txt, consent
+flows, or terms-of-service restrictions. A plugin can enforce stricter local
+policy (for example, reject hosts outside an approved domain or lower scores for
+untrusted providers), but it cannot make a disallowed provider compliant. Keep
+plugin output small, deterministic, and free of secrets because selected
+metadata may be persisted in candidate evidence and redacted run diagnostics.
+
 ## Best Practices
 
 - **Modularity:**

@@ -52,7 +52,7 @@
   - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
   - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
   - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
-  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values, list free/public provider blocks before paid/API-key integrations, and label commercial providers clearly. The `rss_feed` provider reads RSS/Atom documents, `common_crawl_index` reads Common Crawl CDX index JSON/JSONL responses, and the explicit opt-in `browser_search` provider reads its CSS selectors from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`. Scraping public search result pages requires site-specific review of robots.txt, terms, consent flows, and anti-abuse policies; prefer official APIs, avoid bypassing controls, keep tests on fixtures rather than live search engines, and configure explicit conservative limits such as `rate_limit: 30s`, `max_requests: 1`, `max_pages: 1`, and short `timeout` values.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values, list free/public provider blocks before paid/API-key integrations, and label commercial providers clearly. The `rss_feed` provider reads RSS/Atom documents, `common_crawl_index` reads Common Crawl CDX index JSON/JSONL responses, `http_json` can front custom gateways or trusted CROWler federation peers, and the explicit opt-in `browser_search` provider reads its CSS selectors from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`. Scraping public search result pages requires site-specific review of robots.txt, terms, consent flows, and anti-abuse policies; prefer official APIs, avoid bypassing controls, keep tests on fixtures rather than live search engines, and configure explicit conservative limits such as `rate_limit: 30s`, `max_requests: 1`, `max_pages: 1`, and short `timeout` values.
   - **`provider_allow_list`** *(array of strings)*: Explicit provider allow-list. Entries are trimmed, lower-cased, and de-duplicated; configured providers are ignored unless their normalized key is present in the allow-list, so an empty allow-list prevents provider execution.
   - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
     - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
@@ -76,6 +76,8 @@
       # Paid/API-key providers; enable only with valid subscriptions.
       # - brave_search
       # - bing_web_search
+      # CROWler federation peers are templates requiring operator validation.
+      # - crowler_federation_peer
       # Add browser_search only after explicit policy review; otherwise the
       # configured browser_search block below remains disabled.
       # - browser_search
@@ -107,6 +109,7 @@
         max_pages: 1
 
       # Generic JSON adapter support is preserved for custom search gateways.
+      # Fixture-backed adapter shape; live host is a template requiring operator validation.
       public_json:
         provider: http_json
         host: https://search-adapter.example.invalid
@@ -128,7 +131,7 @@
       # Paid/API-key Brave Search API adapter. The adapter sends q=<query> and
       # X-Subscription-Token: <api_key>. Host and endpoint are optional when
       # using the public Brave API defaults shown here.
-      # Paid/API-key provider.
+      # Paid/API-key provider; template requiring operator validation.
       brave_search:
         provider: brave_search
         host: https://api.search.brave.com
@@ -145,7 +148,7 @@
       # Paid/API-key Bing Web Search API adapter. The adapter sends q=<query> and
       # Ocp-Apim-Subscription-Key: <api_key>. Host and endpoint are optional
       # when using the public Bing Web Search API defaults shown here.
-      # Paid/API-key provider.
+      # Paid/API-key provider; template requiring operator validation.
       bing_web_search:
         provider: bing_web_search
         host: https://api.bing.microsoft.com
@@ -156,6 +159,25 @@
         timeout: 30
         rate_limit: "1"
         max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # CROWler federation provider. The generic http_json parser shape is
+      # fixture-backed against CROWler SearchResult JSON, but the peer trust
+      # boundary, authentication token, data-sharing scope, and retention policy
+      # are templates requiring operator validation before enabling.
+      crowler_federation_peer:
+        provider: http_json
+        host: https://peer-crowler.example.invalid
+        endpoint: /v1/search/general
+        token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+        headers:
+          User-Agent: CROWler federation information-seed example (+https://example.invalid/contact)
+        parameters:
+          federation_scope: public-index
+        timeout: 15
+        rate_limit: "0.2"
+        max_requests: 2
         page_size: 10
         max_pages: 1
 
@@ -222,6 +244,8 @@
       # Paid/API-key providers; enable only with valid subscriptions.
       # - brave_search
       # - bing_web_search
+      # CROWler federation peers are templates requiring operator validation.
+      # - crowler_federation_peer
       # browser_search requires an explicit site policy review before enabling.
       # - approved_fixture_search
     providers:
@@ -260,7 +284,7 @@
         page_size: 10
         max_pages: 1
 
-      # Paid/API-key provider.
+      # Paid/API-key provider; template requiring operator validation.
       brave_search:
         provider: brave_search
         host: https://api.search.brave.com
@@ -272,7 +296,7 @@
         page_size: 10
         max_pages: 1
 
-      # Paid/API-key provider.
+      # Paid/API-key provider; template requiring operator validation.
       bing_web_search:
         provider: bing_web_search
         host: https://api.bing.microsoft.com
@@ -281,6 +305,17 @@
         timeout: 30
         rate_limit: "1"
         max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      crowler_federation_peer:
+        provider: http_json
+        host: https://peer-crowler.example.invalid
+        endpoint: /v1/search/general
+        token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+        timeout: 15
+        rate_limit: "0.2"
+        max_requests: 2
         page_size: 10
         max_pages: 1
 

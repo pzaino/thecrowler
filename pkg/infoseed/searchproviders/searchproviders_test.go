@@ -656,6 +656,25 @@ func TestBingProviderFixtureResponses(t *testing.T) {
 	})
 }
 
+func TestGenericJSONProviderParsesCrowlerFederationFixture(t *testing.T) {
+	provider := &JSONProvider{ProviderName: "crowler_federation_peer"}
+	results, err := provider.Search(context.Background(), "Tyrell Corporation", fixtureOptions(t, "crowler_federation_success.json", http.StatusOK, func(r *http.Request) {
+		if got := r.URL.Query().Get("q"); got != "Tyrell Corporation" {
+			t.Fatalf("q = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer SECRET_PROVIDER_KEY" {
+			t.Fatalf("missing federation bearer token")
+		}
+	}))
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	assertResult(t, results, "https://www.tyrell.example/federated", "Tyrell Federation Result", "Federated result snippet from a peer CROWler.", 1)
+	if docType := results[0].Metadata["type"]; docType != "text/html" {
+		t.Fatalf("expected CROWler federation metadata to preserve result fields: %#v", results[0].Metadata)
+	}
+}
+
 func TestGenericJSONProviderFixtureResponses(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		provider := &JSONProvider{ProviderName: "public_json"}

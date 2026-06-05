@@ -149,6 +149,10 @@ configuration so seed runs prefer lower-friction sources. API-based providers
 (for example Brave Search, Bing Web Search, Google CSE, Shodan, or a custom
 `http_json` gateway with credentials) must be clearly labelled as paid,
 commercial, or API-key integrations in shared examples and deployment runbooks.
+CROWler federation providers use the same `http_json` adapter against a trusted
+peer CROWler Search API and must be labelled as templates requiring operator
+validation of trust boundaries, authentication, retention, and data-sharing
+policy.
 
 The `browser_search` HTML adapter is disabled unless it is explicitly configured
 and allow-listed. Use it only for local fixtures or after reviewing the target
@@ -288,6 +292,8 @@ information_seed:
     - public_json
     # Paid/API-key provider; enable only with a valid subscription.
     # - brave_search_api
+    # CROWler federation peer; template requiring operator validation.
+    # - crowler_federation_peer
   providers:
     rss_public_news:
       provider: rss_feed
@@ -334,10 +340,44 @@ information_seed:
       max_requests: 3
       page_size: 10
       max_pages: 1
+    # CROWler federation peer. The generic http_json parser shape is
+    # fixture-backed against CROWler SearchResult JSON, but this live peer,
+    # token, trust boundary, and data-sharing scope are templates requiring
+    # operator validation before enabling.
+    crowler_federation_peer:
+      provider: http_json
+      host: https://peer-crowler.example.invalid
+      endpoint: /v1/search/general
+      token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+      headers:
+        User-Agent: CROWler federation information-seed example (+https://example.invalid/contact)
+      parameters:
+        federation_scope: public-index
+      timeout: 15
+      rate_limit: "0.2"
+      max_requests: 2
+      page_size: 10
+      max_pages: 1
   plugin_limits:
     timeout: 30
     max_output_size_bytes: 1048576
 ```
+
+### Provider recipe review checklist
+
+Before moving a provider from example to production, record whether the example
+is fixture-backed or a template requiring operator validation:
+
+- `rss_feed`, `common_crawl_index`, `brave_search`, `bing_web_search`,
+  `browser_search`, and generic `http_json` parser behavior are covered by
+  deterministic provider fixtures under `pkg/infoseed/searchproviders/testdata`.
+- Live paid/API integrations still require subscription, quota, and
+  contractual-term validation by the operator.
+- Public HTML result-page examples are templates only. Review robots.txt,
+  terms of service, consent flows, anti-abuse controls, jurisdictional privacy
+  requirements, User-Agent expectations, and rate limits before allow-listing.
+- CROWler federation examples are templates only unless the peer API, token,
+  data classification, retention period, and onward-sharing policy are approved.
 
 ### API request body
 
