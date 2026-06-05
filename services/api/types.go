@@ -47,6 +47,74 @@ type InformationSeedResponse struct {
 type InformationSeedListResponse struct {
 	Message string               `json:"message"`
 	Items   []InformationSeedRow `json:"items"`
+	Limit   int                  `json:"limit"`
+	Offset  int                  `json:"offset"`
+}
+
+// InformationSeedLinkedSourceListResponse represents linked sources for one seed.
+type InformationSeedLinkedSourceListResponse struct {
+	Message           string                           `json:"message"`
+	InformationSeedID uint64                           `json:"information_seed_id"`
+	Items             []InformationSeedLinkedSourceRow `json:"items"`
+	Limit             int                              `json:"limit"`
+	Offset            int                              `json:"offset"`
+}
+
+// InformationSeedLinkedSourceRow represents one Source linked to an information seed.
+type InformationSeedLinkedSourceRow struct {
+	SourceID                   uint64                        `json:"source_id"`
+	Priority                   string                        `json:"priority"`
+	CategoryID                 uint64                        `json:"category_id"`
+	Name                       string                        `json:"name"`
+	UsrID                      uint64                        `json:"usr_id"`
+	URL                        string                        `json:"url"`
+	Restricted                 uint                          `json:"restricted"`
+	Flags                      uint                          `json:"flags"`
+	Config                     *json.RawMessage              `json:"config,omitempty"`
+	Disabled                   bool                          `json:"disabled"`
+	SourceInformationSeedIndex SourceInformationSeedIndexRow `json:"source_information_seed_index"`
+}
+
+// SourceInformationSeedIndexRow exposes source/seed discovery provenance.
+type SourceInformationSeedIndexRow struct {
+	ID                uint64           `json:"source_information_seed_id"`
+	SourceID          uint64           `json:"source_id"`
+	InformationSeedID uint64           `json:"information_seed_id"`
+	DiscoveryProvider string           `json:"discovery_provider,omitempty"`
+	DiscoveryQuery    string           `json:"discovery_query,omitempty"`
+	DiscoveryRank     *int             `json:"discovery_rank,omitempty"`
+	CandidateScore    *float64         `json:"candidate_score,omitempty"`
+	CandidateReason   string           `json:"candidate_reason,omitempty"`
+	DiscoveryMetadata *json.RawMessage `json:"discovery_metadata,omitempty"`
+	CreatedAt         string           `json:"created_at,omitempty"`
+	LastUpdatedAt     string           `json:"last_updated_at,omitempty"`
+}
+
+// InformationSeedCandidateListResponse represents candidate decision evidence for one seed.
+type InformationSeedCandidateListResponse struct {
+	Message           string                        `json:"message"`
+	InformationSeedID uint64                        `json:"information_seed_id"`
+	Items             []InformationSeedCandidateRow `json:"items"`
+	Limit             int                           `json:"limit"`
+	Offset            int                           `json:"offset"`
+}
+
+// InformationSeedCandidateRow exposes persisted candidate decision evidence.
+type InformationSeedCandidateRow struct {
+	ID                uint64           `json:"information_seed_candidate_id"`
+	InformationSeedID uint64           `json:"information_seed_id"`
+	NormalizedURL     string           `json:"normalized_url"`
+	Host              string           `json:"host,omitempty"`
+	Provider          string           `json:"provider,omitempty"`
+	Query             string           `json:"query,omitempty"`
+	Rank              int              `json:"rank"`
+	Score             float64          `json:"score"`
+	DecisionStatus    string           `json:"decision_status"`
+	RejectionReason   string           `json:"rejection_reason,omitempty"`
+	Metadata          *json.RawMessage `json:"metadata,omitempty"`
+	RunAttempt        int              `json:"run_attempt"`
+	CreatedAt         string           `json:"created_at,omitempty"`
+	LastUpdatedAt     string           `json:"last_updated_at,omitempty"`
 }
 
 // InformationSeedRow represents one information seed and aggregate stats

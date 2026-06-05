@@ -274,3 +274,94 @@ func scanInformationSeedSourceRows(rows *sql.Rows) ([]Source, error) {
 	}
 	return sources, rows.Err()
 }
+
+// ListSourcesForInformationSeed returns linked sources with per-link discovery
+// provenance in stable source-ID order and with optional pagination.
+func ListSourcesForInformationSeed(db *Handler, seedID uint64, filter InformationSeedLinkedSourceFilter) ([]InformationSeedLinkedSource, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+	if seedID == 0 {
+		return nil, fmt.Errorf("information seed ID must be provided")
+	}
+	if filter.Limit < 0 || filter.Offset < 0 {
+		return nil, fmt.Errorf("limit and offset must be non-negative")
+	}
+
+	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilter(db)
+	if err != nil {
+		return nil, err
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return nil, fmt.Errorf("unsupported database type for source/information-seed lookup: %s", (*db).DBMS())
+	}
+	placeholders := newInformationSeedPlaceholders(dbms)
+	query := fmt.Sprintf(`
+		SELECT source.source_id, source.priority, source.category_id, source.name,
+			source.usr_id, source.url, source.restricted, source.flags, source.config,
+			source.disabled,
+			link.source_information_seed_id, link.source_id, link.information_seed_id,
+			link.discovery_provider, link.discovery_query, link.discovery_rank,
+			link.candidate_score, link.candidate_reason, link.discovery_metadata,
+			link.created_at, link.last_updated_at
+		FROM Sources AS source
+		INNER JOIN SourceInformationSeedIndex AS link
+			ON link.source_id = source.source_id%s
+		WHERE link.information_seed_id = %s
+		ORDER BY source.source_id ASC`, joinDeletedFilter, placeholders.Next())
+	args := []interface{}{seedID}
+	if filter.Limit > 0 {
+		query += " LIMIT " + placeholders.Next()
+		args = append(args, filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query += " OFFSET " + placeholders.Next()
+		args = append(args, filter.Offset)
+	}
+	rows, err := (*db).ExecuteQuery(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sources for information seed %d: %w", seedID, err)
+	}
+	return scanInformationSeedLinkedSourceRows(rows)
+}
+
+func scanInformationSeedLinkedSourceRows(rows *sql.Rows) ([]InformationSeedLinkedSource, error) {
+	defer rows.Close()
+	linked := []InformationSeedLinkedSource{}
+	for rows.Next() {
+		var item InformationSeedLinkedSource
+		var config sql.NullString
+		if err := rows.Scan(
+			&item.Source.ID,
+			&item.Source.Priority,
+			&item.Source.CategoryID,
+			&item.Source.Name,
+			&item.Source.UsrID,
+			&item.Source.URL,
+			&item.Source.Restricted,
+			&item.Source.Flags,
+			&config,
+			&item.Source.Disabled,
+			&item.Index.ID,
+			&item.Index.SourceID,
+			&item.Index.InformationSeedID,
+			&item.Index.DiscoveryProvider,
+			&item.Index.DiscoveryQuery,
+			&item.Index.DiscoveryRank,
+			&item.Index.CandidateScore,
+			&item.Index.CandidateReason,
+			&item.Index.DiscoveryMetadata,
+			&item.Index.CreatedAt,
+			&item.Index.LastUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if config.Valid {
+			raw := json.RawMessage(config.String)
+			item.Source.Config = &raw
+		}
+		linked = append(linked, item)
+	}
+	return linked, rows.Err()
+}

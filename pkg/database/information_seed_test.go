@@ -548,3 +548,101 @@ func assertInformationSeedWakeup(t *testing.T, wakeups <-chan struct{}, expected
 		}
 	}
 }
+
+func TestListInformationSeedsSQLiteFiltersAndPaginationBoundaries(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+
+	ids := []uint64{}
+	seedData := []InformationSeed{
+		{InformationSeed: "alpha", Status: "new", Priority: "low", CategoryID: 1, UsrID: 10},
+		{InformationSeed: "beta", Status: "pending", Priority: "high", CategoryID: 2, UsrID: 20},
+		{InformationSeed: "gamma", Status: "pending", Priority: "high", CategoryID: 2, UsrID: 20, Disabled: true},
+		{InformationSeed: "delta", Status: "completed", Priority: "medium", CategoryID: 3, UsrID: 30},
+	}
+	for i, seed := range seedData {
+		id, err := CreateInformationSeed(&handler, &seed)
+		if err != nil {
+			t.Fatalf("create list seed %d: %v", i, err)
+		}
+		ids = append(ids, id)
+	}
+
+	disabled := true
+	category := uint64(2)
+	user := uint64(20)
+	matches, err := ListInformationSeeds(&handler, InformationSeedFilter{Status: "pending", Priority: "high", Disabled: &disabled, CategoryID: &category, UserID: &user, Limit: 10})
+	if err != nil {
+		t.Fatalf("list filtered information seeds: %v", err)
+	}
+	assertInformationSeedIDs(t, matches, []uint64{ids[2]})
+
+	page, err := ListInformationSeeds(&handler, InformationSeedFilter{Limit: 2, Offset: 1})
+	if err != nil {
+		t.Fatalf("list paginated information seeds: %v", err)
+	}
+	assertInformationSeedIDs(t, page, []uint64{ids[1], ids[2]})
+
+	emptyPage, err := ListInformationSeeds(&handler, InformationSeedFilter{Limit: 2, Offset: 99})
+	if err != nil {
+		t.Fatalf("list out-of-range page: %v", err)
+	}
+	if len(emptyPage) != 0 {
+		t.Fatalf("expected empty out-of-range page, got %#v", emptyPage)
+	}
+	if _, err = ListInformationSeeds(&handler, InformationSeedFilter{Limit: -1}); err == nil {
+		t.Fatal("expected negative limit to fail")
+	}
+	if _, err = ListInformationSeedsWithStats(&handler, InformationSeedFilter{Offset: -1}); err == nil {
+		t.Fatal("expected negative offset to fail")
+	}
+}
+
+func TestListSourcesForInformationSeedSQLitePaginationAndMetadata(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	seedID, err := CreateInformationSeed(&handler, &InformationSeed{InformationSeed: "linked source list"})
+	if err != nil {
+		t.Fatalf("create information seed: %v", err)
+	}
+	sourceOne := insertInformationSeedTestSource(t, db, "https://linked-one.example", "linked one")
+	sourceTwo := insertInformationSeedTestSource(t, db, "https://linked-two.example", "linked two")
+	provider := "unit-provider"
+	query := "unit query"
+	rank := 7
+	score := 0.66
+	reason := "accepted"
+	metadata := json.RawMessage(`{"note":"kept"}`)
+	if err = LinkSourceToInformationSeedWithDiscoveryMetadata(&handler, sourceOne, seedID, InformationSeedDiscoveryMetadata{DiscoveryProvider: &provider, DiscoveryQuery: &query, DiscoveryRank: &rank, CandidateScore: &score, CandidateReason: &reason, DiscoveryMetadata: &metadata}); err != nil {
+		t.Fatalf("link first source with metadata: %v", err)
+	}
+	if err = LinkSourceToInformationSeed(&handler, sourceTwo, seedID); err != nil {
+		t.Fatalf("link second source: %v", err)
+	}
+
+	page, err := ListSourcesForInformationSeed(&handler, seedID, InformationSeedLinkedSourceFilter{Limit: 1, Offset: 0})
+	if err != nil {
+		t.Fatalf("list linked sources page: %v", err)
+	}
+	if len(page) != 1 || page[0].Source.ID != sourceOne {
+		t.Fatalf("unexpected linked source page: %#v", page)
+	}
+	if !page[0].Index.DiscoveryProvider.Valid || page[0].Index.DiscoveryProvider.String != provider || !page[0].Index.DiscoveryRank.Valid || int(page[0].Index.DiscoveryRank.Int64) != rank || !page[0].Index.DiscoveryMetadata.Valid {
+		t.Fatalf("expected discovery metadata on linked source: %#v", page[0].Index)
+	}
+
+	page, err = ListSourcesForInformationSeed(&handler, seedID, InformationSeedLinkedSourceFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("list linked sources second page: %v", err)
+	}
+	if len(page) != 1 || page[0].Source.ID != sourceTwo {
+		t.Fatalf("unexpected linked source second page: %#v", page)
+	}
+	if _, err = ListSourcesForInformationSeed(&handler, seedID, InformationSeedLinkedSourceFilter{Offset: -1}); err == nil {
+		t.Fatal("expected negative linked-source offset to fail")
+	}
+}

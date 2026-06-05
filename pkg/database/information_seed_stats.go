@@ -68,6 +68,9 @@ func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]Informat
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY created_at ASC, information_seed_id ASC"
+	if filter.Limit < 0 || filter.Offset < 0 {
+		return nil, fmt.Errorf("limit and offset must be non-negative")
+	}
 	if filter.Limit > 0 {
 		query += " LIMIT " + placeholders.Next()
 		args = append(args, filter.Limit)
@@ -84,18 +87,61 @@ func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]Informat
 	return scanInformationSeedRows(rows)
 }
 
-// ListInformationSeedsWithStats returns every information seed with the number
-// of sources currently linked to it. The count is computed in the database with
-// a single LEFT JOIN aggregate so callers do not have to fetch sources one seed
-// at a time.
-func ListInformationSeedsWithStats(db *Handler) ([]InformationSeedWithStats, error) {
+// ListInformationSeedsWithStats returns information seeds matching the supplied
+// filter with the number of sources currently linked to each seed. The count is
+// computed in the database with a single LEFT JOIN aggregate so callers do not
+// have to fetch sources one seed at a time.
+func ListInformationSeedsWithStats(db *Handler, filters ...InformationSeedFilter) ([]InformationSeedWithStats, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
+	}
+
+	filter := InformationSeedFilter{}
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+	if filter.Limit < 0 || filter.Offset < 0 {
+		return nil, fmt.Errorf("limit and offset must be non-negative")
 	}
 
 	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilter(db)
 	if err != nil {
 		return nil, err
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return nil, fmt.Errorf("unsupported database type for information seed listing with stats: %s", (*db).DBMS())
+	}
+	placeholders := newInformationSeedPlaceholders(dbms)
+	conditions := []string{}
+	args := []interface{}{}
+	if filter.ID != 0 {
+		conditions = append(conditions, "seed.information_seed_id = "+placeholders.Next())
+		args = append(args, filter.ID)
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		conditions = append(conditions, "seed.status = "+placeholders.Next())
+		args = append(args, strings.TrimSpace(filter.Status))
+	}
+	if strings.TrimSpace(filter.Priority) != "" {
+		conditions = append(conditions, "seed.priority = "+placeholders.Next())
+		args = append(args, strings.TrimSpace(filter.Priority))
+	}
+	if filter.Disabled != nil {
+		conditions = append(conditions, "seed.disabled = "+placeholders.Next())
+		args = append(args, *filter.Disabled)
+	}
+	if filter.CategoryID != nil {
+		conditions = append(conditions, "seed.category_id = "+placeholders.Next())
+		args = append(args, *filter.CategoryID)
+	}
+	userID := filter.UsrID
+	if userID == nil {
+		userID = filter.UserID
+	}
+	if userID != nil {
+		conditions = append(conditions, "seed.usr_id = "+placeholders.Next())
+		args = append(args, *userID)
 	}
 
 	query := fmt.Sprintf(`
@@ -105,14 +151,26 @@ func ListInformationSeedsWithStats(db *Handler) ([]InformationSeedWithStats, err
 			seed.attempts, seed.config, COUNT(link.source_id) AS discovered_source_count
 		FROM InformationSeed AS seed
 		LEFT JOIN SourceInformationSeedIndex AS link
-			ON link.information_seed_id = seed.information_seed_id%s
+			ON link.information_seed_id = seed.information_seed_id%s`, joinDeletedFilter)
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += `
 		GROUP BY seed.information_seed_id, seed.created_at, seed.last_updated_at, seed.category_id,
 			seed.usr_id, seed.information_seed, seed.status, seed.priority, seed.engine,
 			seed.last_processed_at, seed.last_error, seed.last_error_at, seed.disabled,
 			seed.attempts, seed.config
-		ORDER BY seed.created_at ASC, seed.information_seed_id ASC`, joinDeletedFilter)
+		ORDER BY seed.created_at ASC, seed.information_seed_id ASC`
+	if filter.Limit > 0 {
+		query += " LIMIT " + placeholders.Next()
+		args = append(args, filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query += " OFFSET " + placeholders.Next()
+		args = append(args, filter.Offset)
+	}
 
-	rows, err := (*db).ExecuteQuery(query)
+	rows, err := (*db).ExecuteQuery(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list information seeds with stats: %w", err)
 	}

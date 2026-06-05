@@ -82,6 +82,36 @@ type InformationSeedWithStats struct {
 	DiscoveredSourceCount uint64
 }
 
+// SourceInformationSeedIndex represents per-relationship discovery provenance
+// stored for the source/information-seed pair.
+type SourceInformationSeedIndex struct {
+	ID                uint64
+	SourceID          uint64
+	InformationSeedID uint64
+	DiscoveryProvider sql.NullString
+	DiscoveryQuery    sql.NullString
+	DiscoveryRank     sql.NullInt64
+	CandidateScore    sql.NullFloat64
+	CandidateReason   sql.NullString
+	DiscoveryMetadata sql.NullString
+	CreatedAt         sql.NullTime
+	LastUpdatedAt     sql.NullTime
+}
+
+// InformationSeedLinkedSource combines a linked Source with the
+// SourceInformationSeedIndex row that explains how that seed discovered it.
+type InformationSeedLinkedSource struct {
+	Source Source
+	Index  SourceInformationSeedIndex
+}
+
+// InformationSeedLinkedSourceFilter describes pagination for linked-source
+// lookups.
+type InformationSeedLinkedSourceFilter struct {
+	Limit  int
+	Offset int
+}
+
 func sourceInformationSeedDeletedAtJoinFilter(db *Handler) (string, error) {
 	exists, err := tableColumnExists(db, "SourceInformationSeedIndex", "deleted_at")
 	if err != nil {

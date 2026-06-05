@@ -606,6 +606,8 @@ func initAPIv1() {
 		informationSeedAddHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedAddHandler)))
 		informationSeedStatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedStatusHandler)))
 		informationSeedListHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedListHandler)))
+		informationSeedSourcesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedSourcesHandler)))
+		informationSeedCandidatesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedCandidateDecisionsHandler)))
 		informationSeedRetryHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedRetryHandler)))
 		informationSeedDisableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedDisableHandler)))
 
@@ -634,7 +636,13 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/information_seed/status", []string{"GET"}, "Information seed status endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedResponse{})
 
 		http.Handle("/v1/information_seed/list", informationSeedListHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with discovered source counts (console)", true, false, 200, nil, nil, InformationSeedListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with filters, pagination, and discovered source counts (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedListResponse{})
+
+		http.Handle("/v1/information_seed/sources", informationSeedSourcesHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/sources", []string{"GET"}, "List sources linked to an information seed with discovery provenance (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedLinkedSourceListResponse{})
+
+		http.Handle("/v1/information_seed/candidates", informationSeedCandidatesHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/candidates", []string{"GET"}, "List information seed candidate decision evidence (console)", true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedCandidateListResponse{})
 
 		http.Handle("/v1/information_seed/retry", informationSeedRetryHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/retry", []string{"POST"}, "Retry information seed endpoint (console)", true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
@@ -1623,17 +1631,92 @@ func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 
-		results, err := performListInformationSeeds(getQTypeFromName(r.Method), &dbHandler)
+		results, err := performListInformationSeeds(r.URL.Query(), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") || strings.Contains(err.Error(), "boolean") || strings.Contains(err.Error(), "integer") {
+				status = http.StatusBadRequest
+			}
+			handleErrorAndRespond(w, err, results, "Error listing information seeds: %v", status, successCode)
+			return
 		}
-		handleErrorAndRespond(w, err, results, "Error listing information seeds: %v", http.StatusInternalServerError, successCode)
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
 		}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+func informationSeedSourcesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed sources request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+		results, err := performListInformationSeedSources(id, r.URL.Query(), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+				status = http.StatusNotFound
+			} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
+				status = http.StatusBadRequest
+			}
+			handleErrorAndRespond(w, err, results, "Error listing information seed sources: %v", status, http.StatusOK)
+			return
+		}
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+func informationSeedCandidateDecisionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	id, err := parseInformationSeedIDFromRequest(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed candidate request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+		results, err := performListInformationSeedCandidateDecisions(id, r.URL.Query(), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+				status = http.StatusNotFound
+			} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
+				status = http.StatusBadRequest
+			}
+			handleErrorAndRespond(w, err, results, "Error listing information seed candidate decisions: %v", status, http.StatusOK)
+			return
+		}
+		totalSuccess.Add(1)
+		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+	case <-time.After(5 * time.Second):
+		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
 		totalErrors.Add(1)
 		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
 	}

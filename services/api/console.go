@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -88,8 +89,12 @@ func performGetInformationSeedStatus(id uint64, db *cdb.Handler) (InformationSee
 	return InformationSeedResponse{Message: "Information seed status", Item: row}, nil
 }
 
-func performListInformationSeeds(_ int, db *cdb.Handler) (InformationSeedListResponse, error) {
-	seeds, err := cdb.ListInformationSeedsWithStats(db)
+func performListInformationSeeds(values url.Values, db *cdb.Handler) (InformationSeedListResponse, error) {
+	filter, err := informationSeedFilterFromValues(values)
+	if err != nil {
+		return InformationSeedListResponse{Message: "Invalid information seed filters"}, err
+	}
+	seeds, err := cdb.ListInformationSeedsWithStats(db, filter)
 	if err != nil {
 		return InformationSeedListResponse{Message: "Failed to list information seeds"}, err
 	}
@@ -99,7 +104,45 @@ func performListInformationSeeds(_ int, db *cdb.Handler) (InformationSeedListRes
 		items = append(items, informationSeedRowFromDB(seed.InformationSeed, seed.DiscoveredSourceCount))
 	}
 
-	return InformationSeedListResponse{Message: infoAllInformationSeeds, Items: items}, nil
+	return InformationSeedListResponse{Message: infoAllInformationSeeds, Items: items, Limit: filter.Limit, Offset: filter.Offset}, nil
+}
+
+func performListInformationSeedSources(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedLinkedSourceListResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedLinkedSourceListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
+	}
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return InformationSeedLinkedSourceListResponse{Message: "Invalid linked source filters", InformationSeedID: seedID}, err
+	}
+	linked, err := cdb.ListSourcesForInformationSeed(db, seedID, cdb.InformationSeedLinkedSourceFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	if err != nil {
+		return InformationSeedLinkedSourceListResponse{Message: "Failed to list linked information seed sources", InformationSeedID: seedID}, err
+	}
+	items := make([]InformationSeedLinkedSourceRow, 0, len(linked))
+	for _, source := range linked {
+		items = append(items, informationSeedLinkedSourceRowFromDB(source))
+	}
+	return InformationSeedLinkedSourceListResponse{Message: "Information seed linked sources", InformationSeedID: seedID, Items: items, Limit: pagination.Limit, Offset: pagination.Offset}, nil
+}
+
+func performListInformationSeedCandidateDecisions(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedCandidateListResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedCandidateListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
+	}
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return InformationSeedCandidateListResponse{Message: "Invalid candidate decision filters", InformationSeedID: seedID}, err
+	}
+	candidates, err := cdb.ListInformationSeedCandidateDecisions(db, seedID, cdb.InformationSeedCandidateFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	if err != nil {
+		return InformationSeedCandidateListResponse{Message: "Failed to list information seed candidate decisions", InformationSeedID: seedID}, err
+	}
+	items := make([]InformationSeedCandidateRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		items = append(items, informationSeedCandidateRowFromDB(candidate))
+	}
+	return InformationSeedCandidateListResponse{Message: "Information seed candidate decisions", InformationSeedID: seedID, Items: items, Limit: pagination.Limit, Offset: pagination.Offset}, nil
 }
 
 func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
@@ -132,6 +175,87 @@ func performDisableInformationSeed(query string, db *cdb.Handler) (InformationSe
 	return InformationSeedResponse{Message: "Information seed disabled", Item: row}, nil
 }
 
+type informationSeedPagination struct {
+	Limit  int
+	Offset int
+}
+
+func informationSeedFilterFromValues(values url.Values) (cdb.InformationSeedFilter, error) {
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return cdb.InformationSeedFilter{}, err
+	}
+	filter := cdb.InformationSeedFilter{Limit: pagination.Limit, Offset: pagination.Offset}
+	filter.Status = strings.TrimSpace(values.Get("status"))
+	filter.Priority = strings.TrimSpace(values.Get("priority"))
+	if values.Has("disabled") {
+		disabled, err := strconv.ParseBool(values.Get("disabled"))
+		if err != nil {
+			return cdb.InformationSeedFilter{}, fmt.Errorf("disabled must be a boolean")
+		}
+		filter.Disabled = &disabled
+	}
+	if values.Has("category") || values.Has("category_id") {
+		value := values.Get("category_id")
+		if value == "" {
+			value = values.Get("category")
+		}
+		id, err := parseNonNegativeUint(value, "category")
+		if err != nil {
+			return cdb.InformationSeedFilter{}, err
+		}
+		filter.CategoryID = &id
+	}
+	if values.Has("user") || values.Has("user_id") || values.Has("usr_id") {
+		value := values.Get("usr_id")
+		if value == "" {
+			value = values.Get("user_id")
+		}
+		if value == "" {
+			value = values.Get("user")
+		}
+		id, err := parseNonNegativeUint(value, "user")
+		if err != nil {
+			return cdb.InformationSeedFilter{}, err
+		}
+		filter.UsrID = &id
+	}
+	return filter, nil
+}
+
+func informationSeedPaginationFromValues(values url.Values) (informationSeedPagination, error) {
+	const defaultLimit = 100
+	const maxLimit = 500
+	limit := defaultLimit
+	if values.Has("limit") {
+		parsed, err := strconv.Atoi(values.Get("limit"))
+		if err != nil || parsed < 0 {
+			return informationSeedPagination{}, fmt.Errorf("limit must be a non-negative integer")
+		}
+		if parsed > maxLimit {
+			return informationSeedPagination{}, fmt.Errorf("limit must be less than or equal to %d", maxLimit)
+		}
+		limit = parsed
+	}
+	offset := 0
+	if values.Has("offset") {
+		parsed, err := strconv.Atoi(values.Get("offset"))
+		if err != nil || parsed < 0 {
+			return informationSeedPagination{}, fmt.Errorf("offset must be a non-negative integer")
+		}
+		offset = parsed
+	}
+	return informationSeedPagination{Limit: limit, Offset: offset}, nil
+}
+
+func parseNonNegativeUint(value, name string) (uint64, error) {
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return parsed, nil
+}
+
 func parseInformationSeedIDFromJSON(query string) (uint64, error) {
 	var req informationSeedIDRequest
 	if err := json.Unmarshal([]byte(query), &req); err != nil {
@@ -144,15 +268,14 @@ func parseInformationSeedIDFromJSON(query string) (uint64, error) {
 }
 
 func informationSeedRowByID(db *cdb.Handler, id uint64) (InformationSeedRow, error) {
-	seed, err := cdb.GetInformationSeedByID(db, id)
+	seeds, err := cdb.ListInformationSeedsWithStats(db, cdb.InformationSeedFilter{ID: id, Limit: 1})
 	if err != nil {
 		return InformationSeedRow{}, err
 	}
-	sources, err := cdb.GetSourcesForInformationSeed(db, id)
-	if err != nil {
-		return InformationSeedRow{}, err
+	if len(seeds) == 0 {
+		return InformationSeedRow{}, fmt.Errorf("no information seed found with ID %d", id)
 	}
-	return informationSeedRowFromDB(*seed, uint64(len(sources))), nil
+	return informationSeedRowFromDB(seeds[0].InformationSeed, seeds[0].DiscoveredSourceCount), nil
 }
 
 func informationSeedRowFromDB(seed cdb.InformationSeed, discoveredSourceCount uint64) InformationSeedRow {
@@ -175,6 +298,72 @@ func informationSeedRowFromDB(seed cdb.InformationSeed, discoveredSourceCount ui
 		Attempts:              seed.Attempts,
 		Config:                seed.Config,
 		DiscoveredSourceCount: discoveredSourceCount,
+	}
+}
+
+func informationSeedLinkedSourceRowFromDB(linked cdb.InformationSeedLinkedSource) InformationSeedLinkedSourceRow {
+	return InformationSeedLinkedSourceRow{
+		SourceID:                   linked.Source.ID,
+		Priority:                   linked.Source.Priority,
+		CategoryID:                 linked.Source.CategoryID,
+		Name:                       linked.Source.Name,
+		UsrID:                      linked.Source.UsrID,
+		URL:                        linked.Source.URL,
+		Restricted:                 linked.Source.Restricted,
+		Flags:                      linked.Source.Flags,
+		Config:                     linked.Source.Config,
+		Disabled:                   linked.Source.Disabled,
+		SourceInformationSeedIndex: sourceInformationSeedIndexRowFromDB(linked.Index),
+	}
+}
+
+func sourceInformationSeedIndexRowFromDB(index cdb.SourceInformationSeedIndex) SourceInformationSeedIndexRow {
+	var rank *int
+	if index.DiscoveryRank.Valid {
+		value := int(index.DiscoveryRank.Int64)
+		rank = &value
+	}
+	var score *float64
+	if index.CandidateScore.Valid {
+		value := index.CandidateScore.Float64
+		score = &value
+	}
+	var metadata *json.RawMessage
+	if index.DiscoveryMetadata.Valid {
+		raw := json.RawMessage(index.DiscoveryMetadata.String)
+		metadata = &raw
+	}
+	return SourceInformationSeedIndexRow{
+		ID:                index.ID,
+		SourceID:          index.SourceID,
+		InformationSeedID: index.InformationSeedID,
+		DiscoveryProvider: nullStringString(index.DiscoveryProvider),
+		DiscoveryQuery:    nullStringString(index.DiscoveryQuery),
+		DiscoveryRank:     rank,
+		CandidateScore:    score,
+		CandidateReason:   nullStringString(index.CandidateReason),
+		DiscoveryMetadata: metadata,
+		CreatedAt:         nullTimeString(index.CreatedAt),
+		LastUpdatedAt:     nullTimeString(index.LastUpdatedAt),
+	}
+}
+
+func informationSeedCandidateRowFromDB(candidate cdb.InformationSeedCandidate) InformationSeedCandidateRow {
+	return InformationSeedCandidateRow{
+		ID:                candidate.ID,
+		InformationSeedID: candidate.InformationSeedID,
+		NormalizedURL:     candidate.NormalizedURL,
+		Host:              candidate.Host,
+		Provider:          candidate.Provider,
+		Query:             candidate.Query,
+		Rank:              candidate.Rank,
+		Score:             candidate.Score,
+		DecisionStatus:    candidate.DecisionStatus,
+		RejectionReason:   candidate.RejectionReason,
+		Metadata:          candidate.Metadata,
+		RunAttempt:        candidate.RunAttempt,
+		CreatedAt:         nullTimeString(candidate.CreatedAt),
+		LastUpdatedAt:     nullTimeString(candidate.LastUpdatedAt),
 	}
 }
 

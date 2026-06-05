@@ -83,13 +83,23 @@ All information seed responses include the seed identity and state fields:
 * [GET] `/v1/information_seed/status?information_seed_id=<id>`: Returns the
   current status for a single information seed. The `id` or `q` query parameter
   may also be used for the seed ID.
-* [GET] `/v1/information_seed/list`: Lists all information seeds and includes
+* [GET] `/v1/information_seed/list`: Lists information seeds and includes
   `discovered_source_count`, the number of active `SourceInformationSeedIndex`
   relationships currently linking discovered sources to each seed. The count is
-  calculated by the database in the list query.
-  Candidate decision audit rows are intentionally not exposed through the public
-  API in this release; they are available to internal database callers through
-  seed-scoped pagination helpers.
+  calculated by the database in the list query. Optional filters are `status`,
+  `priority`, `disabled`, `category` (or `category_id`), `user` (or `user_id`
+  / `usr_id`), `limit`, and `offset`. `limit` defaults to `100`; the API
+  accepts values up to `500`.
+* [GET] `/v1/information_seed/sources?information_seed_id=<id>`: Lists Sources
+  linked to one seed with pagination (`limit`, `offset`). Each item includes the
+  source fields plus `source_information_seed_index`, which contains the linked
+  row ID, seed/source IDs, discovery provider/query/rank, candidate score and
+  reason, discovery metadata, and link timestamps.
+* [GET] `/v1/information_seed/candidates?information_seed_id=<id>`: Lists
+  persisted candidate decision evidence for one seed with pagination (`limit`,
+  `offset`). This endpoint is available because candidate evidence persistence is
+  implemented; it exposes accepted/rejected decision rows, rejection reasons,
+  scores, providers, queries, ranks, metadata, and run attempts.
 * [POST] `/v1/information_seed/retry`: Queues an information seed for another
   discovery attempt by setting its status to `pending` and clearing the current
   error state. The JSON body is `{"information_seed_id": <id>}`.

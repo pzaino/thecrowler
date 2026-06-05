@@ -76,9 +76,9 @@ provenance table for the actual source/seed relationship.
 `InformationSeedCandidate` rows include the seed ID, normalized URL, host,
 provider, query, rank, score, `accepted`/`rejected` decision status, rejection
 reason, provider/plugin metadata, run attempt number, and timestamps. Listing is
-provided by database helpers with seed-scoped pagination; no public API endpoint
-is exposed yet, so console/API seed listing continues to report accepted source
-counts only.
+provided by database helpers with seed-scoped pagination and by the
+`/v1/information_seed/candidates` API endpoint. Console/API seed listing still
+reports accepted source counts separately from candidate audit rows.
 
 Here below is a diagram of the database architecture:
 
