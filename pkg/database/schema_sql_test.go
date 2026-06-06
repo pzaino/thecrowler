@@ -36,8 +36,8 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 
 	files := []string{
 		"postgresql-setup.pgsql",
-		"mysql-setup-v1.4.mysql",
-		"sqlite-setup-v1.4.sqlite3",
+		"mysql-setup.mysql",
+		"sqlite-setup.sqlite3",
 		"postgresql-migration-v1.8.pgsql",
 		"mysql-migration-v1.8.mysql",
 		"sqlite-migration-v1.8.sqlite3",
@@ -121,8 +121,8 @@ func TestTimeSeriesSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 
 	files := []string{
 		"postgresql-setup.pgsql",
-		"mysql-setup-v1.4.mysql",
-		"sqlite-setup-v1.4.sqlite3",
+		"mysql-setup.mysql",
+		"sqlite-setup.sqlite3",
 		"postgresql-migration-v1.9.pgsql",
 		"mysql-migration-v1.9.mysql",
 		"sqlite-migration-v1.9.sqlite3",
