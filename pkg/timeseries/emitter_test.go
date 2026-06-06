@@ -289,3 +289,105 @@ func TestMetaTagInvalidTimestampFollowsFailurePolicy(t *testing.T) {
 		t.Fatal("invalid timestamp emitted an observation")
 	}
 }
+
+func TestHTTPInfoArtifactSelectorsPresenceValueAndCertificateDays(t *testing.T) {
+	observed := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	metrics := []cdb.TimeSeriesMetric{
+		{ID: 101, Key: "server_present", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueBoolean, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"response_headers.server","operation":"presence"}`), Enabled: true},
+		{ID: 102, Key: "server_value", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"response_headers.Server","transform":"first"}`), Enabled: true},
+		{ID: 103, Key: "cert_days", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueDecimal, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"ssl_info.cert_expiration","derive":"days_until"}`), Enabled: true},
+		{ID: 104, Key: "cert_expiration", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueTimestamp, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"ssl_info.cert_expiration"}`), Enabled: true},
+	}
+	repo := &fakeRepository{metrics: metrics}
+	index := uint64(5)
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{scopes: []cdb.TimeSeriesScope{{IndexID: &index}}}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}, Now: func() time.Time { return observed }}
+	details := map[string]interface{}{"response_headers": map[string]interface{}{"Server": []interface{}{"nginx"}}, "ssl_info": map[string]interface{}{"cert_expiration": "2026-06-16T12:00:00Z"}}
+	if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: index, RowID: 8, ObjectType: "httpinfo", ObjectID: 8, Details: details, ObservedAt: observed}); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.observations) != 4 {
+		t.Fatalf("expected four HTTP observations, got %d: %#v", len(repo.observations), repo.observations)
+	}
+	if repo.observations[0].Value.Boolean == nil || !*repo.observations[0].Value.Boolean {
+		t.Fatalf("header presence is not boolean true: %#v", repo.observations[0].Value)
+	}
+	if repo.observations[1].Value.Text == nil || *repo.observations[1].Value.Text != "nginx" {
+		t.Fatalf("header value was not selected: %#v", repo.observations[1].Value)
+	}
+	if repo.observations[2].Value.Numeric == nil || *repo.observations[2].Value.Numeric != 10 {
+		t.Fatalf("remaining certificate days are incorrect: %#v", repo.observations[2].Value)
+	}
+	if repo.observations[3].Value.Timestamp == nil || repo.observations[3].EffectiveAt != nil {
+		t.Fatalf("certificate expiry was reinterpreted as event time: %#v", repo.observations[3])
+	}
+}
+
+func TestNetInfoArtifactScalarWildcardCollectionAndCount(t *testing.T) {
+	observed := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	metrics := []cdb.TimeSeriesMetric{
+		{ID: 111, Key: "country", SourceKind: cfg.TimeSeriesSourceNetInfo, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"ips.country.0"}`), Enabled: true},
+		{ID: 112, Key: "port_count", SourceKind: cfg.TimeSeriesSourceNetInfo, ValueType: cfg.TimeSeriesValueCount, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"service_scout.hosts[*].ports[*]"}`), Enabled: true},
+	}
+	repo := &fakeRepository{metrics: metrics}
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
+	details := map[string]interface{}{"ips": map[string]interface{}{"country": []interface{}{"US"}}, "service_scout": map[string]interface{}{"hosts": []interface{}{map[string]interface{}{"ports": []interface{}{map[string]interface{}{"port": 80}, map[string]interface{}{"port": 443}}}}}}
+	if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceNetInfo, IndexID: 4, RowID: 7, ObjectType: "netinfo", ObjectID: 7, Details: details, ObservedAt: observed}); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.observations) != 2 || repo.observations[0].Value.Text == nil || *repo.observations[0].Value.Text != "US" || repo.observations[1].Value.Integer == nil || *repo.observations[1].Value.Integer != 2 {
+		t.Fatalf("unexpected NetInfo selector observations: %#v", repo.observations)
+	}
+}
+
+func TestArtifactMetricPrefersEquivalentNormalizedObjectAttribute(t *testing.T) {
+	artifact := cdb.TimeSeriesMetric{ID: 121, Key: "artifact_server", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"response_headers.Server","transform":"first"}`), Enabled: true}
+	attribute := cdb.TimeSeriesMetric{ID: 122, Key: "normalized_server", SourceKind: cfg.TimeSeriesSourceObjectAttribute, ObjectType: cfg.TimeSeriesObjectHTTPInfo, ValueType: cfg.TimeSeriesValueString, Selector: json.RawMessage(`{"attribute_key":"server"}`), Enabled: true}
+	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{artifact, attribute}}
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
+	input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: 1, RowID: 2, ObjectType: "httpinfo", ObjectID: 2, Details: map[string]interface{}{"response_headers": map[string]interface{}{"Server": []interface{}{"nginx"}}}, NormalizedAttributes: map[string]interface{}{"server": "nginx"}, AttributePaths: map[string]string{"server": "response_headers.Server"}}
+	if err := emitter.EmitIndexedArtifact(input); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.observations) != 0 {
+		t.Fatalf("equivalent artifact metric double counted normalized attribute: %#v", repo.observations)
+	}
+}
+
+func TestWebObjectHashChangeStatesAcrossPersistedRows(t *testing.T) {
+	metric := cdb.TimeSeriesMetric{ID: 131, Key: "web_hash", SourceKind: cfg.TimeSeriesSourceWebObject, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, Selector: json.RawMessage(`{"from":"hash"}`), Enabled: true}
+	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{metric}}
+	index := uint64(3)
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{scopes: []cdb.TimeSeriesScope{{IndexID: &index}}}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
+	at := time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC)
+	inputs := []IndexedArtifactInput{
+		{SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: index, RowID: 10, ObjectType: "webobject", ObjectID: 10, Hash: "hash-a", ObservedAt: at},
+		{SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: index, RowID: 11, ObjectType: "webobject", ObjectID: 11, Hash: "hash-b", ObservedAt: at.Add(time.Hour)},
+		{SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: index, RowID: 12, ObjectType: "webobject", ObjectID: 12, Hash: "hash-b", ObservedAt: at.Add(2 * time.Hour)},
+	}
+	for _, input := range inputs {
+		if err := emitter.EmitIndexedArtifact(input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(repo.observations) != 3 || repo.observations[0].ChangeType != "new" || repo.observations[1].ChangeType != "changed" || repo.observations[2].ChangeType != "unchanged" {
+		t.Fatalf("unexpected web object hash change states: %#v", repo.observations)
+	}
+}
+
+func TestScreenshotAndFileMetadataSelectors(t *testing.T) {
+	metrics := []cdb.TimeSeriesMetric{
+		{ID: 141, Key: "screenshot_bytes", SourceKind: cfg.TimeSeriesSourceScreenshot, ValueType: cfg.TimeSeriesValueInteger, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"byte_size"}`), Enabled: true},
+		{ID: 142, Key: "file_location_hash", SourceKind: cfg.TimeSeriesSourceFile, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"location_hash"}`), Enabled: true},
+	}
+	repo := &fakeRepository{metrics: metrics}
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
+	metadata := map[string]interface{}{"byte_size": 4096, "format": "png", "width": 1280, "height": 720, "location_hash": "stable-location"}
+	for _, kind := range []cfg.TimeSeriesSourceKind{cfg.TimeSeriesSourceScreenshot, cfg.TimeSeriesSourceFile} {
+		if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: kind, IndexID: 1, RowID: 2, ObjectType: string(kind), ObjectID: 2, Details: metadata, Hash: "content-hash"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(repo.observations) != 2 || repo.observations[0].Value.Integer == nil || *repo.observations[0].Value.Integer != 4096 || repo.observations[1].Value.Text == nil || *repo.observations[1].Value.Text != "stable-location" {
+		t.Fatalf("unexpected screenshot/file metadata observations: %#v", repo.observations)
+	}
+}

@@ -51,6 +51,7 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	detect "github.com/pzaino/thecrowler/pkg/detection"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
+	tse "github.com/pzaino/thecrowler/pkg/timeseries"
 	"github.com/pzaino/thecrowler/pkg/vdi"
 
 	gohtml "golang.org/x/net/html"
@@ -229,7 +230,7 @@ func (ctx *ProcessContext) TakeScreenshot(wd vdi.WebDriver, url string, indexID 
 
 		// Update DB SearchIndex Table with the screenshot filename
 		dbx := *ctx.db
-		err = insertScreenshot(dbx, ss)
+		err = insertScreenshotWithTimeSeries(dbx, ss, ctx.GetConfig())
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "updating database with screenshot URL: %v", err)
 		}
@@ -290,6 +291,62 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 }
 
 // TakeScreenshot is responsible for taking a screenshot of the current page
+
+func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currCfg *cfg.Config) error {
+	if screenshot.IndexID == 0 {
+		return errors.New("index ID is required")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var screenshotID uint64
+	err = tx.QueryRow(`
+		WITH inserted AS (
+			INSERT INTO Screenshots (
+				index_id, screenshot_link, height, width, byte_size,
+				thumbnail_height, thumbnail_width, thumbnail_link, format
+			)
+			SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+			WHERE NOT EXISTS (SELECT 1 FROM Screenshots WHERE index_id = $1 AND screenshot_link = $2)
+			RETURNING screenshot_id
+		)
+		SELECT screenshot_id FROM inserted
+		UNION ALL
+		SELECT screenshot_id FROM Screenshots WHERE index_id = $1 AND screenshot_link = $2
+		LIMIT 1`, screenshot.IndexID, screenshot.ScreenshotLink, screenshot.Height,
+		screenshot.Width, screenshot.ByteSize, screenshot.ThumbnailHeight, screenshot.ThumbnailWidth,
+		screenshot.ThumbnailLink, screenshot.Format).Scan(&screenshotID)
+	if err != nil {
+		return err
+	}
+	if screenshot.LocationHash == "" {
+		locationHash := sha256.Sum256([]byte(screenshot.ScreenshotLink))
+		screenshot.LocationHash = hex.EncodeToString(locationHash[:])
+	}
+	metadata := map[string]interface{}{
+		"format": screenshot.Format, "byte_size": screenshot.ByteSize, "height": screenshot.Height,
+		"width": screenshot.Width, "thumbnail_height": screenshot.ThumbnailHeight,
+		"thumbnail_width": screenshot.ThumbnailWidth, "location": screenshot.ScreenshotLink,
+		"thumbnail_location": screenshot.ThumbnailLink, "content_hash": screenshot.ContentHash,
+		"location_hash": screenshot.LocationHash,
+	}
+	observedAt := time.Now().UTC()
+	for _, kind := range []cfg.TimeSeriesSourceKind{cfg.TimeSeriesSourceScreenshot, cfg.TimeSeriesSourceFile} {
+		if err = emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+			SourceKind: kind, IndexID: screenshot.IndexID, RowID: screenshotID,
+			ObjectType: string(kind), ObjectID: screenshotID, SubjectKey: screenshot.ScreenshotLink,
+			Name: filepath.Base(screenshot.ScreenshotLink), RawValue: screenshot.ScreenshotLink,
+			Value: metadata, Attributes: metadata, Details: metadata, Hash: screenshot.ContentHash,
+			ObservedAt: observedAt, SourceUpdatedAt: &observedAt,
+		}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func TakeScreenshot(wd *vdi.WebDriver, filename string, maxHeight int) (Screenshot, error) {
 	ss := Screenshot{}
 
@@ -332,6 +389,10 @@ func TakeScreenshot(wd *vdi.WebDriver, filename string, maxHeight int) (Screensh
 	ss.Width = windowWidth
 	ss.Height = totalHeight
 	ss.ByteSize = len(screenshot)
+	contentHash := sha256.Sum256(screenshot)
+	ss.ContentHash = hex.EncodeToString(contentHash[:])
+	locationHash := sha256.Sum256([]byte(location))
+	ss.LocationHash = hex.EncodeToString(locationHash[:])
 
 	return ss, nil
 }

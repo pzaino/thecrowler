@@ -303,6 +303,8 @@ type Screenshot struct {
 	ThumbnailWidth  int    `json:"thumbnail_width"`
 	ThumbnailLink   string `json:"thumbnail_link"`
 	Format          string `json:"format"`
+	ContentHash     string `json:"content_hash,omitempty"`
+	LocationHash    string `json:"location_hash,omitempty"`
 }
 
 // ScraperRuleEngine extends RuleEngine from the ruleset package

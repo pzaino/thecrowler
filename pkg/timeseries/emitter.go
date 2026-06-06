@@ -591,30 +591,107 @@ func parseTimestamp(value interface{}) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("parse timestamp %q", text)
 }
 func lookupPath(root interface{}, path string) (interface{}, bool) {
-	current := root
-	for _, part := range strings.Split(strings.TrimPrefix(strings.TrimPrefix(path, "$"), "."), ".") {
-		if part == "" {
-			continue
+	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(path, "$"), "."), ".")
+	return lookupPathParts(root, parts)
+}
+
+func lookupPathParts(current interface{}, parts []string) (interface{}, bool) {
+	if len(parts) == 0 {
+		return current, true
+	}
+	part := parts[0]
+	if part == "" {
+		return lookupPathParts(current, parts[1:])
+	}
+	key, wildcard, index, hasIndex := parseSelectorPathPart(part)
+	if key != "" {
+		typed, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
 		}
+		current, ok = mapValueFold(typed, key)
+		if !ok {
+			return nil, false
+		}
+	}
+	if wildcard {
+		values, ok := current.([]interface{})
+		if !ok {
+			return nil, false
+		}
+		selected := make([]interface{}, 0, len(values))
+		for _, value := range values {
+			resolved, matched := lookupPathParts(value, parts[1:])
+			if !matched {
+				continue
+			}
+			if nested, isSlice := resolved.([]interface{}); isSlice {
+				selected = append(selected, nested...)
+			} else {
+				selected = append(selected, resolved)
+			}
+		}
+		return selected, true
+	}
+	if hasIndex {
+		values, ok := current.([]interface{})
+		if !ok || index < 0 || index >= len(values) {
+			return nil, false
+		}
+		current = values[index]
+	} else if key == "" {
 		switch typed := current.(type) {
 		case map[string]interface{}:
-			var ok bool
-			current, ok = typed[part]
+			value, ok := mapValueFold(typed, part)
 			if !ok {
 				return nil, false
 			}
+			current = value
 		case []interface{}:
-			index, err := strconv.Atoi(part)
-			if err != nil || index < 0 || index >= len(typed) {
+			parsed, err := strconv.Atoi(part)
+			if err != nil || parsed < 0 || parsed >= len(typed) {
 				return nil, false
 			}
-			current = typed[index]
+			current = typed[parsed]
 		default:
 			return nil, false
 		}
 	}
-	return current, true
+	return lookupPathParts(current, parts[1:])
 }
+
+func parseSelectorPathPart(part string) (key string, wildcard bool, index int, hasIndex bool) {
+	if part == "[*]" || part == "*" {
+		return "", true, 0, false
+	}
+	open := strings.Index(part, "[")
+	if open < 0 || !strings.HasSuffix(part, "]") {
+		return "", false, 0, false
+	}
+	key = part[:open]
+	inside := part[open+1 : len(part)-1]
+	if inside == "*" {
+		return key, true, 0, false
+	}
+	parsed, err := strconv.Atoi(inside)
+	if err != nil {
+		return key, false, 0, false
+	}
+	return key, false, parsed, true
+}
+
+func mapValueFold(values map[string]interface{}, key string) (interface{}, bool) {
+	if value, ok := values[key]; ok {
+		return value, true
+	}
+	for candidate, value := range values {
+		if strings.EqualFold(candidate, key) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
 func applyTransformations(value interface{}, transformations []string) (interface{}, error) {
 	result := value
 	for _, transformation := range transformations {
@@ -635,6 +712,19 @@ func applyTransformations(value interface{}, transformations []string) (interfac
 			default:
 				result = len([]rune(fmt.Sprint(result)))
 			}
+		case "first":
+			if values, ok := result.([]interface{}); ok {
+				if len(values) == 0 {
+					return nil, nil
+				}
+				result = values[0]
+			}
+		case "sha256", "hash":
+			canonical, err := cdb.CanonicalTimeSeriesJSON(result)
+			if err != nil {
+				return nil, err
+			}
+			result = cdb.TimeSeriesSubjectHash(string(canonical))
 		case "milliseconds_to_seconds":
 			number, err := strconv.ParseFloat(fmt.Sprint(result), 64)
 			if err != nil {

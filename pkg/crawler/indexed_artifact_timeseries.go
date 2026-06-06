@@ -7,7 +7,10 @@ package crawler
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -26,10 +29,9 @@ func (r crawlerIndexedArtifactScopeResolver) ResolveIndexedArtifactScopes(input 
 		FROM SourceSearchIndex ssi
 		LEFT JOIN SourceInformationSeedIndex sisi
 		  ON sisi.source_id = ssi.source_id AND sisi.deleted_at IS NULL
-		LEFT JOIN WebObjectsIndex woi ON woi.index_id = ssi.index_id
 		LEFT JOIN EntityMemberships em
-		  ON em.object_type = 'webobject' AND em.object_id = woi.object_id
-		WHERE ssi.index_id = $1`, input.IndexID)
+		  ON em.object_type = $2 AND em.object_id = $3
+		WHERE ssi.index_id = $1`, input.IndexID, input.ObjectType, input.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve indexed-artifact source links: %w", err)
 	}
@@ -71,4 +73,62 @@ func newCrawlerIndexedArtifactEmitter(tx *sql.Tx, currCfg *cfg.Config) *tse.Emit
 		Config:         &currCfg.TimeSeries,
 		Logger:         crawlerTimeSeriesLogger{},
 	}
+}
+
+func decodeArtifactDetails(raw []byte) map[string]interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	var details map[string]interface{}
+	if err := json.Unmarshal(raw, &details); err != nil {
+		return nil
+	}
+	return details
+}
+
+func emitPersistedArtifact(tx *sql.Tx, currCfg *cfg.Config, input tse.IndexedArtifactInput) error {
+	if tx == nil || currCfg == nil || !currCfg.TimeSeries.Enabled {
+		return nil
+	}
+	if input.ObjectType != "" && input.ObjectID != 0 {
+		attributes, err := loadObjectAttributeSiblings(tx, input.ObjectID, input.ObjectType)
+		if err != nil {
+			return err
+		}
+		input.NormalizedAttributes = attributes
+		input.AttributePaths = configuredAttributePaths(currCfg, input.ObjectType)
+	}
+	return newCrawlerIndexedArtifactEmitter(tx, currCfg).EmitIndexedArtifact(input)
+}
+
+func configuredAttributePaths(currCfg *cfg.Config, objectType string) map[string]string {
+	paths := map[string]string{}
+	if currCfg == nil {
+		return paths
+	}
+	for _, definition := range attributeDefinitionsForObject(currCfg, objectType) {
+		paths[definition.Key] = definition.Path
+	}
+	return paths
+}
+
+func attributeDefinitionsForObject(currCfg *cfg.Config, objectType string) []cfg.AttributeDefinition {
+	if currCfg == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(objectType)) {
+	case "webobject":
+		return currCfg.AttributesIndexing.WebObject
+	case "httpinfo":
+		return currCfg.AttributesIndexing.HTTPInfo
+	case "netinfo":
+		return currCfg.AttributesIndexing.NetInfo
+	default:
+		return nil
+	}
+}
+
+func utcNowPointer() *time.Time {
+	value := time.Now().UTC()
+	return &value
 }

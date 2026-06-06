@@ -937,7 +937,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 
 	// Insert or update the page in WebObjects
-	objID, detailsJSON, err := insertOrUpdateWebObjects(tx, indexID, pageInfo)
+	objID, detailsJSON, objectHash, err := insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating WebObjects: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating WebObjects: %v", err)
@@ -947,13 +947,22 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
 
 	// Index object attributes for WebObjet
-	err = indexObjectAttributes(tx, objID, detailsJSON, ctx.GetConfig())
+	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig())
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
+
+	if err = emitPersistedArtifact(tx, ctx.GetConfig(), tse.IndexedArtifactInput{
+		SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: indexID, RowID: uint64(objID),
+		ObjectType: "webobject", ObjectID: uint64(objID), SubjectKey: objectHash, Hash: objectHash,
+		RawValue: string(detailsJSON), Value: objectHash, Details: decodeArtifactDetails(detailsJSON), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
+	}); err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
@@ -996,6 +1005,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 func indexObjectAttributes(
 	tx *sql.Tx,
 	objectID int64,
+	objectType string,
 	detailsJSON []byte,
 	currCfg *cfg.Config,
 ) error {
@@ -1009,7 +1019,7 @@ func indexObjectAttributes(
 		return err
 	}
 
-	attrs := currCfg.AttributesIndexing.WebObject
+	attrs := attributeDefinitionsForObject(currCfg, objectType)
 	emitter := &tse.Emitter{
 		Repository:  cdb.TransactionTimeSeriesRepository{Tx: tx, DBMS: cdb.DBPostgresStr},
 		Scopes:      crawlerObjectAttributeScopeResolver{tx: tx},
@@ -1088,6 +1098,7 @@ func indexObjectAttributes(
 			inserted, err := insertObjectAttribute(
 				tx,
 				objectID,
+				objectType,
 				attr.Key,
 				raw,
 				normalized,
@@ -1101,7 +1112,7 @@ func indexObjectAttributes(
 				continue
 			}
 			if currCfg.TimeSeries.Enabled {
-				siblings, siblingErr := loadObjectAttributeSiblings(tx, uint64(objectID), "webobject")
+				siblings, siblingErr := loadObjectAttributeSiblings(tx, uint64(objectID), objectType)
 				if siblingErr != nil {
 					if currCfg.TimeSeries.Defaults.FailurePolicy == cfg.TimeSeriesFailureFailIndexing {
 						return siblingErr
@@ -1112,7 +1123,7 @@ func indexObjectAttributes(
 					continue
 				}
 				if err = emitter.EmitObjectAttribute(tse.ObjectAttributeInput{
-					ObjectType: "webobject", ObjectID: uint64(objectID), AttributeKey: attr.Key,
+					ObjectType: objectType, ObjectID: uint64(objectID), AttributeKey: attr.Key,
 					RawValue: raw, NormalizedValue: normalized, AttributeType: attr.IndexType,
 					SelectorPath: attr.Path, Transformations: append([]string(nil), attr.Normalizers...),
 					ObjectDetails: data, SiblingAttributes: siblings, ObservedAt: time.Now().UTC(),
@@ -1141,6 +1152,7 @@ func hashString(s string) string {
 func insertObjectAttribute(
 	tx *sql.Tx,
 	objectID int64,
+	objectType string,
 	key string,
 	raw string,
 	normalized string,
@@ -1151,10 +1163,11 @@ func insertObjectAttribute(
 	result, err := tx.Exec(`
 		INSERT INTO ObjectAttributes
 			(object_id, object_type, attribute_key, attribute_value, normalized_value, value_hash, attribute_type)
-		VALUES ($1, 'webobject', $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT DO NOTHING
 	`,
 		objectID,
+		objectType,
 		key,
 		raw, // maps to attribute_value
 		normalized,
@@ -1206,7 +1219,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	if flags == 1 || flags == 0 {
 		// Insert NetInfo into the database (if available)
 		if pageInfo.NetInfo != nil {
-			err = insertNetInfo(tx, indexID, pageInfo.NetInfo)
+			err = insertNetInfo(tx, indexID, pageInfo.NetInfo, pageInfo.Config)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "inserting NetInfo: %v", err)
 				rollbackTransaction(tx)
@@ -1219,7 +1232,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	if flags == 2 || flags == 0 {
 		// Insert HTTPInfo into the database (if available)
 		if pageInfo.HTTPInfo != nil {
-			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo)
+			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo, pageInfo.Config)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "inserting HTTPInfo: %v", err)
 				rollbackTransaction(tx)
@@ -1320,7 +1333,7 @@ var nullEscape = regexp.MustCompile(`\\u0000`)
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
-func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (int64, []byte, error) {
+func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (int64, []byte, string, error) {
 	// Prepare the "Details" field for insertion
 	details := make(map[string]any)
 	details["performance"] = (*pageInfo).PerfInfo
@@ -1334,7 +1347,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 	// Create a JSON out of the details
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, "", err
 	}
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
@@ -1355,12 +1368,12 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 			}
 			scrapedItemJSON, err := json.Marshal(value)
 			if err != nil {
-				return 0, nil, err
+				return 0, nil, "", err
 			}
 			doc2 := make(map[string]interface{})
 			err = json.Unmarshal(scrapedItemJSON, &doc2)
 			if err != nil {
-				return 0, nil, err
+				return 0, nil, "", err
 			}
 
 			// Add scrapedItemJSON to ScrapedJSON document
@@ -1372,7 +1385,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 		// Convert the scraped data to JSON
 		scrapedDataJSON, err = json.Marshal(scrapedDoc1)
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, "", err
 		}
 
 		// Combine the scraped data and the details
@@ -1382,11 +1395,11 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 
 			err := json.Unmarshal(detailsJSON, &doc1)
 			if err != nil {
-				return 0, nil, err
+				return 0, nil, "", err
 			}
 			err = json.Unmarshal(scrapedDataJSON, &doc2)
 			if err != nil {
-				return 0, nil, err
+				return 0, nil, "", err
 			}
 
 			// Merges doc2 into doc1
@@ -1395,7 +1408,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 			detailsJSON, err = normalizeJSON(doc1)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "normalizing JSON: %v", err)
-				return 0, nil, err
+				return 0, nil, "", err
 			}
 		}
 		// For debugging purposes:
@@ -1404,7 +1417,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 			var processedDetails map[string]interface{}
 			err = json.Unmarshal(detailsJSON, &processedDetails)
 			if err != nil {
-				return 0, nil, err
+				return 0, nil, "", err
 			}
 			// Print the links tag
 			fmt.Printf("Processed Links: %v\n", processedDetails["links"])
@@ -1462,7 +1475,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 	FOR UPDATE;`, hash, textContent, htmlContent, detailsJSON).Scan(&objID)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting into WebObjectsIndex: %v", detailsJSON)
-		return objID, detailsJSON, err
+		return objID, detailsJSON, hash, err
 	}
 
 	// Step 2: Insert into WebObjectsIndex for the associated sourceID
@@ -1471,10 +1484,10 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 		VALUES ($1, $2)
 		ON CONFLICT (index_id, object_id) DO NOTHING`, indexID, objID)
 	if err != nil {
-		return objID, detailsJSON, err
+		return objID, detailsJSON, hash, err
 	}
 
-	return objID, detailsJSON, nil
+	return objID, detailsJSON, hash, nil
 }
 
 var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)
@@ -1520,7 +1533,7 @@ func mergeMaps(dst, src map[string]interface{}) {
 // insertNetInfo inserts network information into the database for a given index ID.
 // It takes a transaction, index ID, and a NetInfo object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo) error {
+func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *cfg.Config) error {
 	// encode the NetInfo object as JSON
 	details, err := json.Marshal(netInfo)
 	if err != nil {
@@ -1559,13 +1572,20 @@ func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo) error {
 		return err
 	}
 
-	return nil
+	if err = indexObjectAttributes(tx, netinfoID, "netinfo", details, currCfg); err != nil {
+		return err
+	}
+	return emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+		SourceKind: cfg.TimeSeriesSourceNetInfo, IndexID: indexID, RowID: uint64(netinfoID),
+		ObjectType: "netinfo", ObjectID: uint64(netinfoID), SubjectKey: hash, Hash: hash,
+		RawValue: string(details), Value: hash, Details: decodeArtifactDetails(details), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
+	})
 }
 
 // insertHTTPInfo inserts HTTP header information into the database for a given index ID.
 // It takes a transaction, index ID, and an HTTPDetails object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails) error {
+func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, currCfg *cfg.Config) error {
 	// Encode the HTTPDetails object as JSON
 	details, err := json.Marshal(httpInfo)
 	if err != nil {
@@ -1605,7 +1625,14 @@ func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails) err
 		return err
 	}
 
-	return nil
+	if err = indexObjectAttributes(tx, httpinfoID, "httpinfo", details, currCfg); err != nil {
+		return err
+	}
+	return emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+		SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: indexID, RowID: uint64(httpinfoID),
+		ObjectType: "httpinfo", ObjectID: uint64(httpinfoID), SubjectKey: hash, Hash: hash,
+		RawValue: string(details), Value: hash, Details: decodeArtifactDetails(details), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
+	})
 }
 
 func truncateUTF8(s string, maxRunes int) string {
