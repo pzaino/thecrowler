@@ -20,6 +20,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -2015,5 +2016,125 @@ func TestInformationSeedProviderMapCopyIsolation(t *testing.T) {
 	}
 	if got := original.InformationSeed.Providers["example"].Headers["Authorization"]; got != "Bearer ${INFORMATION_SEED_TOKEN}" {
 		t.Fatalf("validated headers map should be isolated from input map, got %q", got)
+	}
+}
+
+func TestTimeSeriesDefaultsAndBackwardCompatibility(t *testing.T) {
+	cfg, err := ParseConfig([]byte("crawler:\n  workers: 1\n"))
+	if err != nil {
+		t.Fatalf("configuration without timeseries must remain valid: %v", err)
+	}
+	if cfg.TimeSeries.Enabled {
+		t.Fatal("timeseries must be disabled by default")
+	}
+	if cfg.TimeSeries.Defaults.FailurePolicy != TimeSeriesFailureLogSkip {
+		t.Fatalf("expected safe failure policy %q, got %q", TimeSeriesFailureLogSkip, cfg.TimeSeries.Defaults.FailurePolicy)
+	}
+	if cfg.TimeSeries.Cardinality.MaxSeriesPerMetric < 1 || cfg.TimeSeries.Privacy.MaxValueLength < 1 {
+		t.Fatal("expected explicit bounded cardinality and privacy defaults")
+	}
+}
+
+func TestTimeSeriesYAMLAndJSONDeserializeEquivalently(t *testing.T) {
+	yamlConfig := []byte(`timeseries:
+  enabled: true
+  metrics:
+    - key: response_time
+      enabled: true
+      source_kind: object_attribute
+      object_type: httpinfo
+      selector:
+        attribute_key: response_time_ms
+      value_type: duration
+      aggregates: [count, average, p95]
+      time_basis: source_timestamp
+      timestamp_selector:
+        path: captured_at
+      dimensions:
+        - key: status
+          selector:
+            path: status_code
+`)
+	jsonConfig := []byte(`{"timeseries":{"enabled":true,"metrics":[{"key":"response_time","enabled":true,"source_kind":"object_attribute","object_type":"httpinfo","selector":{"attribute_key":"response_time_ms"},"value_type":"duration","aggregates":["count","average","p95"],"time_basis":"source_timestamp","timestamp_selector":{"path":"captured_at"},"dimensions":[{"key":"status","selector":{"path":"status_code"}}]}]}}`)
+	yamlParsed, err := ParseConfig(yamlConfig)
+	if err != nil {
+		t.Fatalf("parse YAML: %v", err)
+	}
+	jsonParsed, err := ParseConfig(jsonConfig)
+	if err != nil {
+		t.Fatalf("parse JSON: %v", err)
+	}
+	if !reflect.DeepEqual(yamlParsed.TimeSeries, jsonParsed.TimeSeries) {
+		t.Fatalf("YAML and JSON differ:\nYAML: %#v\nJSON: %#v", yamlParsed.TimeSeries, jsonParsed.TimeSeries)
+	}
+}
+
+func TestTimeSeriesValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		metric  string
+		wantErr string
+	}{
+		{"duplicate keys", `- {key: same, source_kind: keyword}
+    - {key: same, source_kind: keyword}`, "duplicate key"},
+		{"empty key", `- {key: "", source_kind: keyword}`, "key: must not be empty"},
+		{"source enum", `- {key: sample, source_kind: invalid}`, "source_kind: invalid value"},
+		{"metatag selector", `- {key: sample, source_kind: metatag}`, "selector.metatag_name"},
+		{"attribute selector", `- {key: sample, source_kind: object_attribute, object_type: webobject}`, "selector.attribute_key"},
+		{"object type required", `- {key: sample, source_kind: object_attribute, selector: {attribute_key: score}}`, "object_type: invalid value"},
+		{"object type inapplicable", `- {key: sample, source_kind: keyword, object_type: webobject}`, "object_type: only applies"},
+		{"timestamp selector", `- {key: sample, source_kind: keyword, time_basis: event_at}`, "timestamp_selector"},
+		{"aggregate compatibility", `- {key: sample, source_kind: keyword, value_type: string, aggregates: [sum]}`, "requires integer, decimal, or duration"},
+		{"failure policy", `- {key: sample, source_kind: keyword, failure_policy: fail_indexing}`, "fail_indexing is not allowed"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte("timeseries:\n  metrics:\n    " + tc.metric + "\n")
+			_, err := ParseConfig(data)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestTimeSeriesInvalidEnums(t *testing.T) {
+	tests := map[string]string{
+		"value_type":      "invalid",
+		"bucket_interval": "invalid",
+		"time_basis":      "invalid",
+		"dedupe_scope":    "invalid",
+		"failure_policy":  "invalid",
+	}
+	for field, value := range tests {
+		t.Run(field, func(t *testing.T) {
+			data := []byte(fmt.Sprintf("timeseries:\n  metrics:\n    - key: sample\n      source_kind: keyword\n      %s: %s\n", field, value))
+			_, err := ParseConfig(data)
+			if err == nil || !strings.Contains(err.Error(), "timeseries.metrics[0]."+field) {
+				t.Fatalf("expected field-specific enum error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestTimeSeriesPrivacyAndCardinalityValidation(t *testing.T) {
+	data := []byte(`timeseries:
+  cardinality:
+    max_series_per_metric: 10000001
+    overflow: invalid
+  privacy:
+    hash_only: true
+    store_value_text: true
+    max_value_length: 1048577
+    redact_patterns: ["["]
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected invalid privacy/cardinality configuration to fail")
+	}
+	for _, want := range []string{"max_series_per_metric", "overflow", "max_value_length", "hash_only", "redact_patterns[0]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q: %v", want, err)
+		}
 	}
 }

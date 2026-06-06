@@ -460,3 +460,39 @@ debug_level: 0
 ```
 
 The above configuration has been tested with the docker images we provide with this repo.
+
+## Time-series configuration
+
+Time-series metric extraction is configured with the optional top-level
+`timeseries` section. The section defaults to `enabled: false` and has no
+crawler or database side effects by itself. See the
+[configuration reference](./config_reference.md#timeseries) for all source
+kinds, enums, validation rules, privacy controls, and cardinality limits.
+
+A minimal deployment-specific metric looks like this:
+
+```yaml
+timeseries:
+  enabled: false
+  metrics:
+    - key: example_response_duration
+      enabled: true
+      source_kind: object_attribute
+      object_type: httpinfo
+      selector:
+        attribute_key: response_duration
+      value_type: duration
+      aggregates: [count, average, p95]
+      time_basis: source_timestamp
+      timestamp_selector:
+        path: captured_at
+      dimensions:
+        - key: response_class
+          selector:
+            path: status_class
+```
+
+The example remains globally disabled and is illustrative only; the default
+configuration does not seed domain-specific production metrics. If a metric
+does not specify `failure_policy`, it inherits `log_skip`. The unsafe
+`fail_indexing` policy is rejected.

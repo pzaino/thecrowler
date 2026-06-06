@@ -2990,6 +2990,550 @@
       "examples": [
         1
       ]
+    },
+    "timeseries": {
+      "title": "Time-series Metrics",
+      "description": "Declarative metric extraction configuration. Disabled by default and not coupled to a database emitter.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "defaults": {
+          "$ref": "#/definitions/timeSeriesMetricDefaults"
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "raw": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|µs|ms|s|m|h|d|w)$",
+              "default": "30d"
+            },
+            "aggregated": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|µs|ms|s|m|h|d|w)$",
+              "default": "365d"
+            }
+          }
+        },
+        "aggregation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "schedule": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|µs|ms|s|m|h|d|w)$",
+              "default": "5m"
+            },
+            "batch_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000,
+              "default": 1000
+            },
+            "max_batches": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 10
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "enum": [
+                "postgres"
+              ],
+              "default": "postgres"
+            },
+            "table_prefix": {
+              "type": "string",
+              "minLength": 1,
+              "default": "timeseries"
+            },
+            "partitioning": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "interval": {
+                  "$ref": "#/definitions/timeSeriesPartitionInterval"
+                },
+                "precreate": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 365,
+                  "default": 7
+                }
+              }
+            }
+          }
+        },
+        "cardinality": {
+          "$ref": "#/definitions/timeSeriesCardinality"
+        },
+        "privacy": {
+          "$ref": "#/definitions/timeSeriesPrivacy"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/timeSeriesMetric"
+          },
+          "default": []
+        }
+      }
+    }
+  },
+  "definitions": {
+    "timeSeriesSourceKind": {
+      "type": "string",
+      "enum": [
+        "keyword",
+        "metatag",
+        "object_attribute",
+        "webobject",
+        "httpinfo",
+        "netinfo",
+        "screenshot",
+        "file",
+        "information_seed",
+        "information_seed_candidate",
+        "source_discovery",
+        "entity_membership",
+        "object_correlation",
+        "correlation_rule",
+        "custom"
+      ]
+    },
+    "timeSeriesObjectType": {
+      "type": "string",
+      "enum": [
+        "webobject",
+        "httpinfo",
+        "netinfo"
+      ]
+    },
+    "timeSeriesValueType": {
+      "type": "string",
+      "enum": [
+        "integer",
+        "decimal",
+        "duration",
+        "boolean",
+        "string",
+        "json"
+      ],
+      "default": "integer"
+    },
+    "timeSeriesAggregate": {
+      "type": "string",
+      "enum": [
+        "count",
+        "sum",
+        "average",
+        "min",
+        "max",
+        "distinct_count",
+        "first",
+        "last",
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99"
+      ]
+    },
+    "timeSeriesBucketInterval": {
+      "type": "string",
+      "enum": [
+        "none",
+        "1m",
+        "5m",
+        "15m",
+        "1h",
+        "1d",
+        "1w"
+      ],
+      "default": "1h"
+    },
+    "timeSeriesPartitionInterval": {
+      "type": "string",
+      "enum": [
+        "1m",
+        "5m",
+        "15m",
+        "1h",
+        "1d",
+        "1w"
+      ],
+      "default": "1d"
+    },
+    "timeSeriesTimeBasis": {
+      "type": "string",
+      "enum": [
+        "observed_at",
+        "event_at",
+        "source_timestamp"
+      ],
+      "default": "observed_at"
+    },
+    "timeSeriesDedupeScope": {
+      "type": "string",
+      "enum": [
+        "none",
+        "source",
+        "object",
+        "global"
+      ],
+      "default": "none"
+    },
+    "timeSeriesFailurePolicy": {
+      "type": "string",
+      "enum": [
+        "log_skip",
+        "retry"
+      ],
+      "default": "log_skip"
+    },
+    "timeSeriesOverflow": {
+      "type": "string",
+      "enum": [
+        "drop",
+        "hash",
+        "overflow_bucket"
+      ],
+      "default": "drop"
+    },
+    "timeSeriesSelector": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true
+    },
+    "timeSeriesCardinality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_series_per_metric": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000,
+          "default": 100000
+        },
+        "max_dimensions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64,
+          "default": 10
+        },
+        "max_values_per_dimension": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 10000
+        },
+        "overflow": {
+          "$ref": "#/definitions/timeSeriesOverflow"
+        }
+      }
+    },
+    "timeSeriesPrivacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hash_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "store_value_text": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_value_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576,
+          "default": 2048
+        },
+        "redact_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "regex"
+          },
+          "default": []
+        }
+      },
+      "not": {
+        "required": [
+          "hash_only",
+          "store_value_text"
+        ],
+        "properties": {
+          "hash_only": {
+            "const": true
+          },
+          "store_value_text": {
+            "const": true
+          }
+        }
+      }
+    },
+    "timeSeriesMetricDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value_type": {
+          "$ref": "#/definitions/timeSeriesValueType"
+        },
+        "aggregates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/timeSeriesAggregate"
+          },
+          "default": [
+            "count"
+          ]
+        },
+        "bucket_interval": {
+          "$ref": "#/definitions/timeSeriesBucketInterval"
+        },
+        "time_basis": {
+          "$ref": "#/definitions/timeSeriesTimeBasis"
+        },
+        "dedupe_scope": {
+          "$ref": "#/definitions/timeSeriesDedupeScope"
+        },
+        "failure_policy": {
+          "$ref": "#/definitions/timeSeriesFailurePolicy"
+        }
+      }
+    },
+    "timeSeriesDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "selector"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selector": {
+          "$ref": "#/definitions/timeSeriesSelector"
+        }
+      }
+    },
+    "timeSeriesMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "source_kind"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "source_kind": {
+          "$ref": "#/definitions/timeSeriesSourceKind"
+        },
+        "object_type": {
+          "$ref": "#/definitions/timeSeriesObjectType"
+        },
+        "selector": {
+          "$ref": "#/definitions/timeSeriesSelector"
+        },
+        "value_type": {
+          "$ref": "#/definitions/timeSeriesValueType"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "aggregates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/timeSeriesAggregate"
+          }
+        },
+        "bucket_interval": {
+          "$ref": "#/definitions/timeSeriesBucketInterval"
+        },
+        "time_basis": {
+          "$ref": "#/definitions/timeSeriesTimeBasis"
+        },
+        "timestamp_selector": {
+          "$ref": "#/definitions/timeSeriesSelector"
+        },
+        "dedupe_scope": {
+          "$ref": "#/definitions/timeSeriesDedupeScope"
+        },
+        "failure_policy": {
+          "$ref": "#/definitions/timeSeriesFailurePolicy"
+        },
+        "dimensions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/timeSeriesDimension"
+          }
+        },
+        "cardinality": {
+          "$ref": "#/definitions/timeSeriesCardinality"
+        },
+        "privacy": {
+          "$ref": "#/definitions/timeSeriesPrivacy"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source_kind": {
+                "const": "metatag"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "selector"
+            ],
+            "properties": {
+              "selector": {
+                "required": [
+                  "metatag_name"
+                ],
+                "properties": {
+                  "metatag_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_kind": {
+                "const": "object_attribute"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "object_type",
+              "selector"
+            ],
+            "properties": {
+              "selector": {
+                "required": [
+                  "attribute_key"
+                ],
+                "properties": {
+                  "attribute_key": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "object_type"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "time_basis"
+            ],
+            "properties": {
+              "time_basis": {
+                "enum": [
+                  "event_at",
+                  "source_timestamp"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "timestamp_selector"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "value_type"
+            ],
+            "properties": {
+              "value_type": {
+                "enum": [
+                  "boolean",
+                  "string",
+                  "json"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "aggregates": {
+                "not": {
+                  "contains": {
+                    "enum": [
+                      "sum",
+                      "average",
+                      "min",
+                      "max",
+                      "p50",
+                      "p75",
+                      "p90",
+                      "p95",
+                      "p99"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "additionalProperties": false,

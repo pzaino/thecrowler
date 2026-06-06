@@ -760,6 +760,9 @@ type Config struct {
 	// Attributes indexing configuration
 	AttributesIndexing AttributeIndexingConfig `json:"attributes_indexing" yaml:"attributes_indexing"` // Configuration for attributes indexing
 
+	// Time-series metric extraction and retention configuration
+	TimeSeries TimeSeriesConfig `json:"timeseries" yaml:"timeseries"`
+
 	// API configuration
 	API API `json:"api" yaml:"api"`
 

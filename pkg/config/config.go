@@ -285,6 +285,7 @@ func NewConfig() *Config {
 				MaxOutputSizeBytes: informationSeedDefaultPluginOutputSize,
 			},
 		},
+		TimeSeries: defaultTimeSeriesConfig(),
 		API: API{
 			Host:              cmn.LoalhostStr,
 			Port:              8080,
@@ -621,6 +622,9 @@ func (c *Config) Validate() error {
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
 	c.validateInformationSeed()
+	if err := c.validateTimeSeries(); err != nil {
+		return err
+	}
 	c.validateDatabase()
 	c.validateAPI()
 	c.validateEvents()

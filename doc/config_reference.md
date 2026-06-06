@@ -456,3 +456,72 @@
     - **`refresh`** *(integer)*
 
 - **`debug_level`** *(integer)*
+
+## `timeseries`
+
+The optional top-level `timeseries` section declares metric extraction, retention,
+aggregation, storage, cardinality, and privacy policy. It is disabled by default;
+configuration alone does **not** install or invoke a database/crawler emitter.
+Configurations that omit the section continue to receive the safe defaults below.
+
+```yaml
+timeseries:
+  enabled: false
+  defaults:
+    value_type: integer          # integer|decimal|duration|boolean|string|json
+    aggregates: [count]          # count|sum|average|min|max|distinct_count|first|last|p50|p75|p90|p95|p99
+    bucket_interval: 1h          # none|1m|5m|15m|1h|1d|1w
+    time_basis: observed_at      # observed_at|event_at|source_timestamp
+    dedupe_scope: none           # none|source|object|global
+    failure_policy: log_skip     # log_skip|retry; fail_indexing is rejected
+  retention:
+    raw: 30d
+    aggregated: 365d
+  aggregation:
+    enabled: false
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+  storage:
+    backend: postgres
+    table_prefix: timeseries
+    partitioning:
+      enabled: false
+      interval: 1d
+      precreate: 7
+  cardinality:
+    max_series_per_metric: 100000
+    max_dimensions: 10
+    max_values_per_dimension: 10000
+    overflow: drop              # drop|hash|overflow_bucket
+  privacy:
+    hash_only: false
+    store_value_text: false
+    max_value_length: 2048
+    redact_patterns: []         # Go-compatible regular expressions
+  metrics: []
+```
+
+Metric `source_kind` accepts `keyword`, `metatag`, `object_attribute`,
+`webobject`, `httpinfo`, `netinfo`, `screenshot`, `file`, `information_seed`,
+`information_seed_candidate`, `source_discovery`, `entity_membership`,
+`object_correlation`, `correlation_rule`, or `custom`. A metatag selector must
+contain `metatag_name`. An `object_attribute` selector must contain
+`attribute_key` and its `object_type` must be `webobject`, `httpinfo`, or
+`netinfo`; `object_type` is rejected for other source kinds.
+
+Selectors, timestamp selectors, and dimension selectors are open JSON/YAML
+objects. This keeps extraction paths declarative rather than embedding crawler
+domain fields in the configuration model. Every dimension requires a unique,
+non-empty `key` and a non-empty `selector`.
+
+A metric may override any default. `event_at` and `source_timestamp` metrics
+must provide `timestamp_selector`. Numeric aggregates (`sum`, `average`, `min`,
+`max`, and percentiles) require `integer`, `decimal`, or `duration` values.
+Boolean and JSON values support counting/distinct counting only; strings also
+support first/last. Metric keys must be non-empty and unique.
+
+Privacy and cardinality can be overridden per metric. `hash_only: true` cannot
+be combined with `store_value_text: true`; regular expressions are compiled at
+configuration validation time. Limits are bounded to prevent unbounded series,
+dimension, or value growth.

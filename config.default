@@ -249,6 +249,47 @@ information_seed:
     max_output_size_bytes: 1048576
 
 # --------------------------
+# Time-series metric extraction (declarative; no emitter is enabled here)
+# --------------------------
+timeseries:
+  enabled: false
+  defaults:
+    value_type: integer
+    aggregates: [count]
+    bucket_interval: 1h
+    time_basis: observed_at
+    dedupe_scope: none
+    # Safe write behavior; fail_indexing is intentionally not supported.
+    failure_policy: log_skip
+  retention:
+    raw: 30d
+    aggregated: 365d
+  aggregation:
+    enabled: false
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+  storage:
+    backend: postgres
+    table_prefix: timeseries
+    partitioning:
+      enabled: false
+      interval: 1d
+      precreate: 7
+  cardinality:
+    max_series_per_metric: 100000
+    max_dimensions: 10
+    max_values_per_dimension: 10000
+    overflow: drop
+  privacy:
+    hash_only: false
+    store_value_text: false
+    max_value_length: 2048
+    redact_patterns: []
+  # Define deployment-specific metrics explicitly; no production metrics are seeded.
+  metrics: []
+
+# --------------------------
 # Attributes indexing
 # --------------------------
 attributes_indexing:
