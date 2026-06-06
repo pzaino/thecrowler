@@ -60,8 +60,45 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 		if err == nil {
 			err = ensureSQLiteEntityCorrelationSchema(handler.db)
 		}
+		if err == nil {
+			err = ensureSQLiteTimeSeriesAggregationSchema(handler.db)
+		}
 	}
 
+	return err
+}
+
+func ensureSQLiteTimeSeriesAggregationSchema(db *sql.DB) error {
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='TimeSeriesAggregates'").Scan(&name)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		columns, columnErr := sqliteColumns(db, "TimeSeriesAggregates")
+		if columnErr != nil {
+			return columnErr
+		}
+		migrations := []sqliteColumnMigration{
+			{column: "occurrence_total", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN occurrence_total NUMERIC NOT NULL DEFAULT 0"},
+			{column: "distinct_value_count", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN distinct_value_count INTEGER NOT NULL DEFAULT 0"},
+			{column: "last_value_boolean", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN last_value_boolean BOOLEAN"},
+			{column: "last_value_json", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN last_value_json TEXT"},
+			{column: "first_seen_at", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN first_seen_at TIMESTAMP"},
+			{column: "last_seen_at", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN last_seen_at TIMESTAMP"},
+		}
+		for _, migration := range migrations {
+			if !columns[migration.column] {
+				if _, err = db.Exec(migration.statement); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TimeSeriesAggregationRuns (
+		run_key VARCHAR(255) PRIMARY KEY, status VARCHAR(32) NOT NULL, checkpoint_at TIMESTAMP,
+		range_start TIMESTAMP, range_end TIMESTAMP, started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		completed_at TIMESTAMP, last_error TEXT, last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
 	return err
 }
 

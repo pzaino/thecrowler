@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     correlation_object_id_2 INTEGER,
     dimensions TEXT,
     value_count INTEGER NOT NULL DEFAULT 0,
+    occurrence_total NUMERIC NOT NULL DEFAULT 0,
+    distinct_value_count INTEGER NOT NULL DEFAULT 0,
     numeric_count INTEGER NOT NULL DEFAULT 0,
     numeric_sum NUMERIC,
     numeric_min NUMERIC,
@@ -117,6 +119,10 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     last_value_numeric NUMERIC,
     last_value_text TEXT,
     last_value_hash VARCHAR(64),
+    last_value_boolean BOOLEAN,
+    last_value_json TEXT,
+    first_seen_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
     change_count INTEGER NOT NULL DEFAULT 0,
     aggregate_hash VARCHAR(64) NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -146,3 +152,5 @@ CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_object ON TimeSeriesAggregat
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_correlation_rule ON TimeSeriesAggregates(correlation_rule_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_aggregate_hash ON TimeSeriesAggregates(aggregate_hash);
 --------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS TimeSeriesAggregationRuns (run_key VARCHAR(255) PRIMARY KEY,status VARCHAR(32) NOT NULL,checkpoint_at TIMESTAMP,range_start TIMESTAMP,range_end TIMESTAMP,started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TIMESTAMP,last_error TEXT,last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);

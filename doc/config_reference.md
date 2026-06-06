@@ -470,7 +470,7 @@ timeseries:
   defaults:
     value_type: integer          # integer|decimal|duration|count|timestamp|boolean|string|json
     aggregates: [count]          # count|sum|average|min|max|distinct_count|first|last|p50|p75|p90|p95|p99
-    bucket_interval: 1h          # none|1m|5m|15m|1h|1d|1w
+    bucket_interval: 1h          # none|1m|5m|15m|1h|1d|1w|1mo
     time_basis: observed_at      # observed_at|event_at|source_timestamp
     dedupe_scope: none           # none|source|object|global
     failure_policy: log_skip     # log_skip|log|skip|retry|fail_indexing
@@ -482,6 +482,7 @@ timeseries:
     schedule: 5m
     batch_size: 1000
     max_batches: 10
+    overlap: 15m
   storage:
     backend: postgres
     table_prefix: timeseries

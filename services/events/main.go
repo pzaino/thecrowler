@@ -268,8 +268,9 @@ func main() {
 		// Start the event listener (on a separate go routine)
 		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
-		// Start events scheduler
+		// Start events scheduler and isolated time-series maintenance.
 		cdb.StartScheduler(&dbHandler, config)
+		startTimeSeriesAggregationScheduler(&dbHandler, config.TimeSeries)
 
 		// Start heartbeat loop if enabled
 		if config.Events.HeartbeatEnabled {

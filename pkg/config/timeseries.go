@@ -86,6 +86,7 @@ const (
 	TimeSeriesBucketOneHour        TimeSeriesBucketInterval = "1h"
 	TimeSeriesBucketOneDay         TimeSeriesBucketInterval = "1d"
 	TimeSeriesBucketOneWeek        TimeSeriesBucketInterval = "1w"
+	TimeSeriesBucketOneMonth       TimeSeriesBucketInterval = "1mo"
 )
 
 // TimeSeriesTimeBasis selects which timestamp is attached to an observation.
@@ -158,6 +159,7 @@ type TimeSeriesAggregationConfig struct {
 	Schedule   string `json:"schedule" yaml:"schedule"`
 	BatchSize  int    `json:"batch_size" yaml:"batch_size"`
 	MaxBatches int    `json:"max_batches" yaml:"max_batches"`
+	Overlap    string `json:"overlap" yaml:"overlap"`
 }
 
 type TimeSeriesStorageConfig struct {
@@ -217,7 +219,7 @@ func defaultTimeSeriesConfig() TimeSeriesConfig {
 	return TimeSeriesConfig{
 		Defaults:    TimeSeriesMetricDefaults{ValueType: TimeSeriesValueInteger, Aggregates: []TimeSeriesAggregate{TimeSeriesAggregateCount}, BucketInterval: TimeSeriesBucketOneHour, TimeBasis: TimeSeriesTimeObservedAt, DedupeScope: TimeSeriesDedupeNone, FailurePolicy: TimeSeriesFailureLogSkip},
 		Retention:   TimeSeriesRetentionConfig{Raw: "30d", Aggregated: "365d"},
-		Aggregation: TimeSeriesAggregationConfig{Schedule: "5m", BatchSize: 1000, MaxBatches: 10},
+		Aggregation: TimeSeriesAggregationConfig{Schedule: "5m", BatchSize: 1000, MaxBatches: 10, Overlap: "15m"},
 		Storage:     TimeSeriesStorageConfig{Backend: "postgres", TablePrefix: "timeseries", Partitioning: TimeSeriesPartitioningConfig{Interval: TimeSeriesBucketOneDay, Precreate: 7}},
 		Cardinality: TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100000, MaxDimensions: 10, MaxValuesPerDimension: 10000, Overflow: TimeSeriesCardinalityDrop},
 		Privacy:     TimeSeriesPrivacyConfig{StoreValueText: false, MaxValueLength: 2048, RedactPatterns: []string{}},
@@ -264,6 +266,9 @@ func applyTimeSeriesDefaults(c *TimeSeriesConfig, d TimeSeriesConfig) {
 	}
 	if c.Aggregation.MaxBatches == 0 {
 		c.Aggregation.MaxBatches = d.Aggregation.MaxBatches
+	}
+	if c.Aggregation.Overlap == "" {
+		c.Aggregation.Overlap = d.Aggregation.Overlap
 	}
 	if c.Storage.Backend == "" {
 		c.Storage.Backend = d.Storage.Backend
@@ -356,6 +361,7 @@ func (c TimeSeriesConfig) Validate() error {
 	validateDuration("retention.raw", c.Retention.Raw, &errs)
 	validateDuration("retention.aggregated", c.Retention.Aggregated, &errs)
 	validateDuration("aggregation.schedule", c.Aggregation.Schedule, &errs)
+	validateDuration("aggregation.overlap", c.Aggregation.Overlap, &errs)
 	if c.Aggregation.BatchSize < 1 || c.Aggregation.BatchSize > 100000 {
 		errs = append(errs, "timeseries.aggregation.batch_size: must be between 1 and 100000")
 	}
@@ -439,8 +445,8 @@ var (
 	objectTypes           = stringSet(TimeSeriesObjectWebObject, TimeSeriesObjectHTTPInfo, TimeSeriesObjectNetInfo)
 	valueTypes            = stringSet(TimeSeriesValueInteger, TimeSeriesValueDecimal, TimeSeriesValueDuration, TimeSeriesValueBoolean, TimeSeriesValueString, TimeSeriesValueJSON, TimeSeriesValueCount, TimeSeriesValueTimestamp)
 	aggregates            = stringSet(TimeSeriesAggregateCount, TimeSeriesAggregateSum, TimeSeriesAggregateAverage, TimeSeriesAggregateMinimum, TimeSeriesAggregateMaximum, TimeSeriesAggregateDistinctCount, TimeSeriesAggregateFirst, TimeSeriesAggregateLast, TimeSeriesAggregateP50, TimeSeriesAggregateP75, TimeSeriesAggregateP90, TimeSeriesAggregateP95, TimeSeriesAggregateP99)
-	bucketIntervals       = stringSet(TimeSeriesBucketNone, TimeSeriesBucketOneMinute, TimeSeriesBucketFiveMinutes, TimeSeriesBucketFifteenMinutes, TimeSeriesBucketOneHour, TimeSeriesBucketOneDay, TimeSeriesBucketOneWeek)
-	bucketIntervalsNoNone = stringSet(TimeSeriesBucketOneMinute, TimeSeriesBucketFiveMinutes, TimeSeriesBucketFifteenMinutes, TimeSeriesBucketOneHour, TimeSeriesBucketOneDay, TimeSeriesBucketOneWeek)
+	bucketIntervals       = stringSet(TimeSeriesBucketNone, TimeSeriesBucketOneMinute, TimeSeriesBucketFiveMinutes, TimeSeriesBucketFifteenMinutes, TimeSeriesBucketOneHour, TimeSeriesBucketOneDay, TimeSeriesBucketOneWeek, TimeSeriesBucketOneMonth)
+	bucketIntervalsNoNone = stringSet(TimeSeriesBucketOneMinute, TimeSeriesBucketFiveMinutes, TimeSeriesBucketFifteenMinutes, TimeSeriesBucketOneHour, TimeSeriesBucketOneDay, TimeSeriesBucketOneWeek, TimeSeriesBucketOneMonth)
 	timeBases             = stringSet(TimeSeriesTimeObservedAt, TimeSeriesTimeEventAt, TimeSeriesTimeSourceTimestamp)
 	dedupeScopes          = stringSet(TimeSeriesDedupeNone, TimeSeriesDedupeSource, TimeSeriesDedupeObject, TimeSeriesDedupeGlobal)
 	overflowBehaviors     = stringSet(TimeSeriesCardinalityDrop, TimeSeriesCardinalityHash, TimeSeriesCardinalityOverflowBucket)

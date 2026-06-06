@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     correlation_object_id_2 BIGINT,
     dimensions JSON,
     value_count BIGINT NOT NULL DEFAULT 0,
+    occurrence_total NUMERIC NOT NULL DEFAULT 0,
+    distinct_value_count BIGINT NOT NULL DEFAULT 0,
     numeric_count BIGINT NOT NULL DEFAULT 0,
     numeric_sum DECIMAL(65, 20),
     numeric_min DECIMAL(65, 20),
@@ -139,6 +141,10 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     last_value_numeric DECIMAL(65, 20),
     last_value_text LONGTEXT,
     last_value_hash VARCHAR(64),
+    last_value_boolean BOOLEAN,
+    last_value_json JSON,
+    first_seen_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
     change_count BIGINT NOT NULL DEFAULT 0,
     aggregate_hash VARCHAR(64) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -167,3 +173,5 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     CONSTRAINT fk_timeseriesaggregates_last FOREIGN KEY (last_observation_id) REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 --------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS TimeSeriesAggregationRuns (run_key VARCHAR(255) PRIMARY KEY,status VARCHAR(32) NOT NULL,checkpoint_at TIMESTAMP NULL,range_start TIMESTAMP NULL,range_end TIMESTAMP NULL,started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TIMESTAMP NULL,last_error TEXT,last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB;

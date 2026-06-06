@@ -16,11 +16,11 @@ const timeSeriesAggregateColumns = `aggregate_id, metric_id, bucket_start, bucke
 	information_seed_id, information_seed_candidate_id, source_id, source_information_seed_id,
 	index_id, entity_id, subject_type, subject_id, object_type, object_id, correlation_rule_id,
 	correlation_object_type_1, correlation_object_id_1, correlation_object_type_2, correlation_object_id_2,
-	dimensions, value_count, numeric_count, numeric_sum, numeric_min, numeric_max, numeric_avg,
+	dimensions, value_count, occurrence_total, distinct_value_count, numeric_count, numeric_sum, numeric_min, numeric_max, numeric_avg,
 	percentile_50, percentile_75, percentile_90, percentile_95, percentile_99,
 	first_observation_id, first_observed_at, first_value_numeric, first_value_text, first_value_hash,
 	last_observation_id, last_observed_at, last_value_numeric, last_value_text, last_value_hash,
-	change_count, aggregate_hash, created_at, deleted_at, last_updated_at`
+	last_value_boolean, last_value_json, first_seen_at, last_seen_at, change_count, aggregate_hash, created_at, deleted_at, last_updated_at`
 
 // UpsertTimeSeriesAggregate inserts or replaces the computed fields of the
 // grouping identified by aggregate_hash.
@@ -49,24 +49,28 @@ func UpsertTimeSeriesAggregate(db *Handler, aggregate *TimeSeriesAggregate) (*Ti
 		return nil, err
 	}
 	a := aggregate
-	args := []interface{}{a.MetricID, a.BucketStart.UTC(), a.BucketEnd.UTC(), a.Scope.InformationSeedID, a.Scope.InformationSeedCandidateID, a.Scope.SourceID, a.Scope.SourceInformationSeedID, a.Scope.IndexID, a.Scope.EntityID, nullableString(a.Scope.SubjectType), a.Scope.SubjectID, nullableString(a.Scope.ObjectType), a.Scope.ObjectID, a.Scope.CorrelationRuleID, nullableString(a.Scope.CorrelationObjectType1), a.Scope.CorrelationObjectID1, nullableString(a.Scope.CorrelationObjectType2), a.Scope.CorrelationObjectID2, dimensions, a.ValueCount, a.NumericCount, a.NumericSum, a.NumericMin, a.NumericMax, a.NumericAverage, a.Percentile50, a.Percentile75, a.Percentile90, a.Percentile95, a.Percentile99, a.First.ObservationID, a.First.ObservedAt, a.First.ValueNumeric, a.First.ValueText, nullableString(a.First.ValueHash), a.Last.ObservationID, a.Last.ObservedAt, a.Last.ValueNumeric, a.Last.ValueText, nullableString(a.Last.ValueHash), a.ChangeCount, a.AggregateHash}
+	args := []interface{}{a.MetricID, a.BucketStart.UTC(), a.BucketEnd.UTC(), a.Scope.InformationSeedID, a.Scope.InformationSeedCandidateID, a.Scope.SourceID, a.Scope.SourceInformationSeedID, a.Scope.IndexID, a.Scope.EntityID, nullableString(a.Scope.SubjectType), a.Scope.SubjectID, nullableString(a.Scope.ObjectType), a.Scope.ObjectID, a.Scope.CorrelationRuleID, nullableString(a.Scope.CorrelationObjectType1), a.Scope.CorrelationObjectID1, nullableString(a.Scope.CorrelationObjectType2), a.Scope.CorrelationObjectID2, dimensions, a.ValueCount, a.OccurrenceTotal, a.DistinctValueCount, a.NumericCount, a.NumericSum, a.NumericMin, a.NumericMax, a.NumericAverage, a.Percentile50, a.Percentile75, a.Percentile90, a.Percentile95, a.Percentile99, a.First.ObservationID, a.First.ObservedAt, a.First.ValueNumeric, a.First.ValueText, nullableString(a.First.ValueHash), a.Last.ObservationID, a.Last.ObservedAt, a.Last.ValueNumeric, a.Last.ValueText, nullableString(a.Last.ValueHash), a.LastValueBoolean, optionalRawJSONForAggregate(a.LastValueJSON), a.FirstSeenAt, a.LastSeenAt, a.ChangeCount, a.AggregateHash}
 	p := newInformationSeedPlaceholders(dbms)
 	values := make([]string, len(args))
 	for i := range values {
 		values[i] = p.Next()
 	}
-	if dbms == DBPostgresStr && args[18] != nil {
-		values[18] += "::jsonb"
+	if dbms == DBPostgresStr {
+		for _, idx := range []int{18, 43} {
+			if args[idx] != nil {
+				values[idx] += "::jsonb"
+			}
+		}
 	}
 	query := `INSERT INTO TimeSeriesAggregates (metric_id,bucket_start,bucket_end,information_seed_id,
 		information_seed_candidate_id,source_id,source_information_seed_id,index_id,entity_id,subject_type,
 		subject_id,object_type,object_id,correlation_rule_id,correlation_object_type_1,correlation_object_id_1,
-		correlation_object_type_2,correlation_object_id_2,dimensions,value_count,numeric_count,numeric_sum,
+		correlation_object_type_2,correlation_object_id_2,dimensions,value_count,occurrence_total,distinct_value_count,numeric_count,numeric_sum,
 		numeric_min,numeric_max,numeric_avg,percentile_50,percentile_75,percentile_90,percentile_95,
 		percentile_99,first_observation_id,first_observed_at,first_value_numeric,first_value_text,
 		first_value_hash,last_observation_id,last_observed_at,last_value_numeric,last_value_text,
-		last_value_hash,change_count,aggregate_hash) VALUES (` + strings.Join(values, ",") + `)`
-	fields := []string{"metric_id", "bucket_start", "bucket_end", "information_seed_id", "information_seed_candidate_id", "source_id", "source_information_seed_id", "index_id", "entity_id", "subject_type", "subject_id", "object_type", "object_id", "correlation_rule_id", "correlation_object_type_1", "correlation_object_id_1", "correlation_object_type_2", "correlation_object_id_2", "dimensions", "value_count", "numeric_count", "numeric_sum", "numeric_min", "numeric_max", "numeric_avg", "percentile_50", "percentile_75", "percentile_90", "percentile_95", "percentile_99", "first_observation_id", "first_observed_at", "first_value_numeric", "first_value_text", "first_value_hash", "last_observation_id", "last_observed_at", "last_value_numeric", "last_value_text", "last_value_hash", "change_count"}
+		last_value_hash,last_value_boolean,last_value_json,first_seen_at,last_seen_at,change_count,aggregate_hash) VALUES (` + strings.Join(values, ",") + `)`
+	fields := []string{"metric_id", "bucket_start", "bucket_end", "information_seed_id", "information_seed_candidate_id", "source_id", "source_information_seed_id", "index_id", "entity_id", "subject_type", "subject_id", "object_type", "object_id", "correlation_rule_id", "correlation_object_type_1", "correlation_object_id_1", "correlation_object_type_2", "correlation_object_id_2", "dimensions", "value_count", "occurrence_total", "distinct_value_count", "numeric_count", "numeric_sum", "numeric_min", "numeric_max", "numeric_avg", "percentile_50", "percentile_75", "percentile_90", "percentile_95", "percentile_99", "first_observation_id", "first_observed_at", "first_value_numeric", "first_value_text", "first_value_hash", "last_observation_id", "last_observed_at", "last_value_numeric", "last_value_text", "last_value_hash", "last_value_boolean", "last_value_json", "first_seen_at", "last_seen_at", "change_count"}
 	updates := make([]string, len(fields))
 	for i, field := range fields {
 		if dbms == DBMySQLStr {
@@ -251,9 +255,11 @@ func scanTimeSeriesAggregate(scan func(...interface{}) error) (*TimeSeriesAggreg
 	a := &TimeSeriesAggregate{}
 	var ids [15]sql.NullInt64
 	var subjectType, objectType, cType1, cType2, dimensions, firstText, firstHash, lastText, lastHash sql.NullString
-	var nums [11]sql.NullFloat64
-	var firstAt, lastAt, deleted sql.NullTime
-	err := scan(&a.ID, &a.MetricID, &a.BucketStart, &a.BucketEnd, &ids[0], &ids[1], &ids[2], &ids[3], &ids[4], &ids[5], &subjectType, &ids[6], &objectType, &ids[7], &ids[8], &cType1, &ids[9], &cType2, &ids[10], &dimensions, &a.ValueCount, &a.NumericCount, &nums[0], &nums[1], &nums[2], &nums[3], &nums[4], &nums[5], &nums[6], &nums[7], &nums[8], &ids[11], &firstAt, &nums[9], &firstText, &firstHash, &ids[12], &lastAt, &nums[10], &lastText, &lastHash, &a.ChangeCount, &a.AggregateHash, &a.CreatedAt, &deleted, &a.LastUpdatedAt)
+	var nums [12]sql.NullFloat64
+	var firstAt, lastAt, firstSeenAt, lastSeenAt, deleted sql.NullTime
+	var lastBoolean sql.NullBool
+	var lastJSON sql.NullString
+	err := scan(&a.ID, &a.MetricID, &a.BucketStart, &a.BucketEnd, &ids[0], &ids[1], &ids[2], &ids[3], &ids[4], &ids[5], &subjectType, &ids[6], &objectType, &ids[7], &ids[8], &cType1, &ids[9], &cType2, &ids[10], &dimensions, &a.ValueCount, &nums[11], &a.DistinctValueCount, &a.NumericCount, &nums[0], &nums[1], &nums[2], &nums[3], &nums[4], &nums[5], &nums[6], &nums[7], &nums[8], &ids[11], &firstAt, &nums[9], &firstText, &firstHash, &ids[12], &lastAt, &nums[10], &lastText, &lastHash, &lastBoolean, &lastJSON, &firstSeenAt, &lastSeenAt, &a.ChangeCount, &a.AggregateHash, &a.CreatedAt, &deleted, &a.LastUpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +290,7 @@ func scanTimeSeriesAggregate(scan func(...interface{}) error) (*TimeSeriesAggreg
 		x := v.Float64
 		return &x
 	}
+	a.OccurrenceTotal = nums[11].Float64
 	a.NumericSum = ptr(nums[0])
 	a.NumericMin = ptr(nums[1])
 	a.NumericMax = ptr(nums[2])
@@ -301,6 +308,21 @@ func scanTimeSeriesAggregate(scan func(...interface{}) error) (*TimeSeriesAggreg
 	if lastText.Valid {
 		a.Last.ValueText = &lastText.String
 	}
+	if lastBoolean.Valid {
+		a.LastValueBoolean = &lastBoolean.Bool
+	}
+	if lastJSON.Valid {
+		a.LastValueJSON = json.RawMessage(lastJSON.String)
+	}
+	a.FirstSeenAt = nullTimePtr(firstSeenAt)
+	a.LastSeenAt = nullTimePtr(lastSeenAt)
 	a.DeletedAt = nullTimePtr(deleted)
 	return a, nil
+}
+
+func optionalRawJSONForAggregate(raw json.RawMessage) interface{} {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return string(raw)
 }

@@ -269,6 +269,7 @@ timeseries:
     schedule: 5m
     batch_size: 1000
     max_batches: 10
+    overlap: 15m
   storage:
     backend: postgres
     table_prefix: timeseries

@@ -116,30 +116,36 @@ type TimeSeriesObservation struct {
 
 // TimeSeriesAggregate stores one materialized grouping bucket.
 type TimeSeriesAggregate struct {
-	ID             uint64
-	MetricID       uint64
-	BucketStart    time.Time
-	BucketEnd      time.Time
-	Scope          TimeSeriesScope
-	Dimensions     map[string]interface{}
-	ValueCount     int64
-	NumericCount   int64
-	NumericSum     *float64
-	NumericMin     *float64
-	NumericMax     *float64
-	NumericAverage *float64
-	Percentile50   *float64
-	Percentile75   *float64
-	Percentile90   *float64
-	Percentile95   *float64
-	Percentile99   *float64
-	First          TimeSeriesAggregateEdge
-	Last           TimeSeriesAggregateEdge
-	ChangeCount    int64
-	AggregateHash  string
-	CreatedAt      time.Time
-	DeletedAt      *time.Time
-	LastUpdatedAt  time.Time
+	ID                 uint64
+	MetricID           uint64
+	BucketStart        time.Time
+	BucketEnd          time.Time
+	Scope              TimeSeriesScope
+	Dimensions         map[string]interface{}
+	ValueCount         int64
+	OccurrenceTotal    float64
+	DistinctValueCount int64
+	NumericCount       int64
+	NumericSum         *float64
+	NumericMin         *float64
+	NumericMax         *float64
+	NumericAverage     *float64
+	Percentile50       *float64
+	Percentile75       *float64
+	Percentile90       *float64
+	Percentile95       *float64
+	Percentile99       *float64
+	First              TimeSeriesAggregateEdge
+	Last               TimeSeriesAggregateEdge
+	ChangeCount        int64
+	FirstSeenAt        *time.Time
+	LastSeenAt         *time.Time
+	LastValueBoolean   *bool
+	LastValueJSON      json.RawMessage
+	AggregateHash      string
+	CreatedAt          time.Time
+	DeletedAt          *time.Time
+	LastUpdatedAt      time.Time
 }
 
 // TimeSeriesAggregateEdge records the first or last value represented by an aggregate.
