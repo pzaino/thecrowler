@@ -8,6 +8,7 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -102,6 +103,9 @@ func GetTimeSeriesAggregateByHash(db *Handler, hash string) (*TimeSeriesAggregat
 	}
 	row := (*db).QueryRow(`SELECT `+timeSeriesAggregateColumns+` FROM TimeSeriesAggregates WHERE aggregate_hash = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, hash)
 	a, err := scanTimeSeriesAggregate(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTimeSeriesAggregateNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query time-series aggregate: %w", err)
 	}
@@ -153,6 +157,9 @@ func QueryTimeSeriesAggregates(db *Handler, filter TimeSeriesQueryFilter) (TimeS
 	}
 	if filter.SubjectID != nil {
 		add("subject_id", *filter.SubjectID)
+	}
+	if filter.SubjectText != "" {
+		add("subject_text", filter.SubjectText)
 	}
 	if filter.ObjectType != "" {
 		add("object_type", filter.ObjectType)

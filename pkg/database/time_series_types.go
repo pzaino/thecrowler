@@ -21,6 +21,8 @@ var (
 	ErrTimeSeriesMetricTypeConflict = errors.New("time-series metric value type conflict")
 	// ErrTimeSeriesObservationNotFound is returned when an observation has no match.
 	ErrTimeSeriesObservationNotFound = errors.New("time-series observation not found")
+	// ErrTimeSeriesAggregateNotFound is returned when an aggregate lookup has no match.
+	ErrTimeSeriesAggregateNotFound = errors.New("time-series aggregate not found")
 	// ErrTimeSeriesValueRejected indicates that a resolved storage/cardinality
 	// policy intentionally rejected an observation before it reached SQL.
 	ErrTimeSeriesValueRejected = errors.New("time-series value rejected by policy")
@@ -187,6 +189,7 @@ type TimeSeriesQueryFilter struct {
 	EntityID                   *uint64
 	SubjectType                string
 	SubjectID                  *uint64
+	SubjectText                string
 	ObjectType                 string
 	ObjectID                   *uint64
 	CorrelationRuleID          *uint64

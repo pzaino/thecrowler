@@ -278,6 +278,9 @@ func buildTimeSeriesQueryConditions(dbms string, f TimeSeriesQueryFilter, alias 
 	if f.SubjectID != nil {
 		add("subject_id", *f.SubjectID)
 	}
+	if f.SubjectText != "" {
+		add("subject_text", f.SubjectText)
+	}
 	if f.ObjectType != "" {
 		add("object_type", f.ObjectType)
 	}

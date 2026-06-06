@@ -574,6 +574,23 @@ func initAPIv1() {
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
 	if !config.API.DisableDefault {
+		// Aggregate-first time-series query handlers. Raw observations remain on
+		// their explicit, conservatively bounded endpoint.
+		http.Handle("/v1/timeseries/metrics", withPublicMiddlewares(timeSeriesMetricsHandler))
+		cmn.RegisterAPIRoute("/v1/timeseries/metrics", []string{"GET"}, "List time-series metric definitions", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesMetricListResponse{})
+
+		http.Handle("/v1/timeseries", withPublicMiddlewares(timeSeriesAggregatesHandler))
+		cmn.RegisterAPIRoute("/v1/timeseries", []string{"GET"}, "Query aggregate time-series buckets", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesAggregateResponse{})
+
+		http.Handle("/v1/timeseries/observations", withPublicMiddlewares(timeSeriesObservationsHandler))
+		cmn.RegisterAPIRoute("/v1/timeseries/observations", []string{"GET"}, "Query bounded raw time-series observations", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesObservationListResponse{})
+
+		http.Handle("/v1/timeseries/drilldown", withPublicMiddlewares(timeSeriesDrilldownHandler))
+		cmn.RegisterAPIRoute("/v1/timeseries/drilldown", []string{"GET"}, "Drill down from an aggregate hash or complete scope to matching observations", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDrilldownResponse{})
+
+		http.Handle("/v1/timeseries/dimensions", withPublicMiddlewares(timeSeriesDimensionsHandler))
+		cmn.RegisterAPIRoute("/v1/timeseries/dimensions", []string{"GET"}, "Compare aggregate buckets grouped by a bounded metric dimension", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDimensionComparisonResponse{})
+
 		// Query handlers
 		http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
 		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET"}, "General search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, SearchResult{})

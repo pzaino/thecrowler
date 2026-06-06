@@ -649,3 +649,179 @@ const (
 	getQuery     = 1
 	jsonResponse = "application/json"
 )
+
+// TimeSeriesPaginationResponse describes deterministic offset pagination.
+type TimeSeriesPaginationResponse struct {
+	Limit   int  `json:"limit"`
+	Offset  int  `json:"offset"`
+	Count   int  `json:"count"`
+	HasMore bool `json:"has_more"`
+}
+
+// TimeSeriesMetricDefinition is the public, selector-free metric definition.
+type TimeSeriesMetricDefinition struct {
+	ID               uint64                       `json:"id"`
+	Key              string                       `json:"key"`
+	DisplayName      string                       `json:"display_name"`
+	Description      string                       `json:"description,omitempty"`
+	SourceKind       cfg.TimeSeriesSourceKind     `json:"source_kind"`
+	ValueType        cfg.TimeSeriesValueType      `json:"value_type"`
+	DefaultAggregate cfg.TimeSeriesAggregate      `json:"default_aggregate"`
+	Bucket           cfg.TimeSeriesBucketInterval `json:"bucket"`
+	TimeBasis        cfg.TimeSeriesTimeBasis      `json:"time_basis"`
+	Unit             string                       `json:"unit,omitempty"`
+	DimensionKeys    []string                     `json:"dimension_keys"`
+	Enabled          bool                         `json:"enabled"`
+}
+
+// TimeSeriesMetricListResponse is the stable metric-list envelope.
+type TimeSeriesMetricListResponse struct {
+	Items      []TimeSeriesMetricDefinition `json:"items"`
+	Pagination TimeSeriesPaginationResponse `json:"pagination"`
+}
+
+// TimeSeriesScopeResponse identifies a public aggregate or observation scope.
+type TimeSeriesScopeResponse struct {
+	InformationSeedID          *uint64 `json:"information_seed_id,omitempty"`
+	InformationSeedCandidateID *uint64 `json:"information_seed_candidate_id,omitempty"`
+	SourceID                   *uint64 `json:"source_id,omitempty"`
+	SourceInformationSeedID    *uint64 `json:"source_information_seed_id,omitempty"`
+	IndexID                    *uint64 `json:"index_id,omitempty"`
+	EntityID                   *uint64 `json:"entity_id,omitempty"`
+	SubjectType                string  `json:"subject_type,omitempty"`
+	SubjectID                  *uint64 `json:"subject_id,omitempty"`
+	ObjectType                 string  `json:"object_type,omitempty"`
+	ObjectID                   *uint64 `json:"object_id,omitempty"`
+	CorrelationRuleID          *uint64 `json:"correlation_rule_id,omitempty"`
+	CorrelationObjectType1     string  `json:"correlation_object_type_1,omitempty"`
+	CorrelationObjectID1       *uint64 `json:"correlation_object_id_1,omitempty"`
+	CorrelationObjectType2     string  `json:"correlation_object_type_2,omitempty"`
+	CorrelationObjectID2       *uint64 `json:"correlation_object_id_2,omitempty"`
+}
+
+// TimeSeriesAggregateValues retains all materialized aggregate values.
+type TimeSeriesAggregateValues struct {
+	Count           int64       `json:"count"`
+	OccurrenceTotal float64     `json:"occurrence_total"`
+	DistinctCount   int64       `json:"distinct_count"`
+	NumericCount    int64       `json:"numeric_count"`
+	Sum             *float64    `json:"sum,omitempty"`
+	Minimum         *float64    `json:"min,omitempty"`
+	Maximum         *float64    `json:"max,omitempty"`
+	Average         *float64    `json:"average,omitempty"`
+	P50             *float64    `json:"p50,omitempty"`
+	P75             *float64    `json:"p75,omitempty"`
+	P90             *float64    `json:"p90,omitempty"`
+	P95             *float64    `json:"p95,omitempty"`
+	P99             *float64    `json:"p99,omitempty"`
+	First           interface{} `json:"first,omitempty"`
+	Last            interface{} `json:"last,omitempty"`
+	ChangeCount     int64       `json:"change_count"`
+}
+
+// TimeSeriesAggregateBucket is one aggregate-first chart point.
+type TimeSeriesAggregateBucket struct {
+	AggregateHash   string                    `json:"aggregate_hash"`
+	MetricID        uint64                    `json:"metric_id"`
+	MetricKey       string                    `json:"metric_key"`
+	BucketStart     string                    `json:"bucket_start"`
+	BucketEnd       string                    `json:"bucket_end"`
+	Aggregate       cfg.TimeSeriesAggregate   `json:"aggregate"`
+	Value           interface{}               `json:"value"`
+	Values          TimeSeriesAggregateValues `json:"values"`
+	SampleCount     int64                     `json:"sample_count"`
+	OccurrenceTotal float64                   `json:"occurrence_total"`
+	Dimensions      map[string]interface{}    `json:"dimensions"`
+	Scope           TimeSeriesScopeResponse   `json:"scope"`
+}
+
+// TimeSeriesAggregateResponse is the stable aggregate query envelope.
+type TimeSeriesAggregateResponse struct {
+	Items      []TimeSeriesAggregateBucket  `json:"items"`
+	Pagination TimeSeriesPaginationResponse `json:"pagination"`
+}
+
+// TimeSeriesObservationResponse is a privacy-filtered raw observation.
+type TimeSeriesObservationResponse struct {
+	ID          uint64                  `json:"id"`
+	MetricID    uint64                  `json:"metric_id"`
+	MetricKey   string                  `json:"metric_key"`
+	ObservedAt  string                  `json:"observed_at"`
+	EffectiveAt *string                 `json:"effective_at,omitempty"`
+	CollectedAt string                  `json:"collected_at"`
+	BucketStart string                  `json:"bucket_start"`
+	BucketEnd   string                  `json:"bucket_end"`
+	Value       interface{}             `json:"value,omitempty"`
+	IsChanged   bool                    `json:"is_changed"`
+	ChangeType  string                  `json:"change_type,omitempty"`
+	Dimensions  map[string]interface{}  `json:"dimensions"`
+	Scope       TimeSeriesScopeResponse `json:"scope"`
+}
+
+// TimeSeriesObservationListResponse is the bounded raw-observation envelope.
+type TimeSeriesObservationListResponse struct {
+	Items      []TimeSeriesObservationResponse `json:"items"`
+	Pagination TimeSeriesPaginationResponse    `json:"pagination"`
+}
+
+// TimeSeriesDrilldownResponse links an aggregate scope to matching observations.
+type TimeSeriesDrilldownResponse struct {
+	AggregateHash string                          `json:"aggregate_hash,omitempty"`
+	Aggregate     *TimeSeriesAggregateBucket      `json:"aggregate,omitempty"`
+	Observations  []TimeSeriesObservationResponse `json:"observations"`
+	Pagination    TimeSeriesPaginationResponse    `json:"pagination"`
+}
+
+// TimeSeriesDimensionGroup is one bounded comparison group.
+type TimeSeriesDimensionGroup struct {
+	DimensionValue interface{}                 `json:"dimension_value"`
+	Buckets        []TimeSeriesAggregateBucket `json:"buckets"`
+}
+
+// TimeSeriesDimensionComparisonResponse groups aggregate buckets by one dimension.
+type TimeSeriesDimensionComparisonResponse struct {
+	DimensionKey string                     `json:"dimension_key"`
+	Groups       []TimeSeriesDimensionGroup `json:"groups"`
+	Cardinality  int                        `json:"cardinality"`
+	Limit        int                        `json:"limit"`
+}
+
+// TimeSeriesQuery documents composable time-series query parameters for OpenAPI.
+type TimeSeriesQuery struct {
+	MetricID                   uint64 `json:"metric_id,omitempty"`
+	MetricKey                  string `json:"metric_key,omitempty"`
+	InformationSeedID          uint64 `json:"information_seed_id,omitempty"`
+	InformationSeedCandidateID uint64 `json:"information_seed_candidate_id,omitempty"`
+	SourceID                   uint64 `json:"source_id,omitempty"`
+	SourceInformationSeedID    uint64 `json:"source_information_seed_id,omitempty"`
+	IndexID                    uint64 `json:"index_id,omitempty"`
+	EntityID                   uint64 `json:"entity_id,omitempty"`
+	SubjectType                string `json:"subject_type,omitempty"`
+	SubjectID                  uint64 `json:"subject_id,omitempty"`
+	Subject                    string `json:"subject,omitempty"`
+	ObjectType                 string `json:"object_type,omitempty"`
+	ObjectID                   uint64 `json:"object_id,omitempty"`
+	CorrelationRuleID          uint64 `json:"correlation_rule_id,omitempty"`
+	CorrelationObjectType1     string `json:"correlation_object_type_1,omitempty"`
+	CorrelationObjectID1       uint64 `json:"correlation_object_id_1,omitempty"`
+	CorrelationObjectType2     string `json:"correlation_object_type_2,omitempty"`
+	CorrelationObjectID2       uint64 `json:"correlation_object_id_2,omitempty"`
+	Dimensions                 string `json:"dimensions,omitempty"`
+	DimensionKey               string `json:"dimension_key,omitempty"`
+	AggregateHash              string `json:"aggregate_hash,omitempty"`
+	Bucket                     string `json:"bucket,omitempty"`
+	From                       string `json:"from,omitempty"`
+	To                         string `json:"to,omitempty"`
+	TimeBasis                  string `json:"time_basis,omitempty"`
+	Aggregate                  string `json:"aggregate,omitempty"`
+	Order                      string `json:"order,omitempty"`
+	Limit                      int    `json:"limit,omitempty"`
+	Offset                     int    `json:"offset,omitempty"`
+}
+
+// TimeSeriesErrorResponse documents the API's standard JSON error shape.
+type TimeSeriesErrorResponse struct {
+	ErrorCode int    `json:"error_code"`
+	Error     string `json:"error"`
+	Message   string `json:"message"`
+}

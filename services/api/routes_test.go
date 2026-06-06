@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	"golang.org/x/time/rate"
 )
@@ -36,6 +37,11 @@ func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {
 		"/v1/health/",
 		"/v1/ready",
 		"/v1/ready/",
+		"/v1/timeseries/metrics",
+		"/v1/timeseries",
+		"/v1/timeseries/observations",
+		"/v1/timeseries/drilldown",
+		"/v1/timeseries/dimensions",
 		"/v1/search/general",
 		"/v1/search/netinfo",
 		"/v1/search/httpinfo",
@@ -103,6 +109,35 @@ func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesRoutesAppearInOpenAPI(t *testing.T) {
+	oldMux := http.DefaultServeMux
+	oldLimiter := limiter
+	oldConfig := config
+	http.DefaultServeMux = http.NewServeMux()
+	limiter = rate.NewLimiter(rate.Inf, 0)
+	config = cfg.Config{}
+	config.API.DisableDefault = false
+	config.API.EnableAPIDocs = true
+	config.API.Plugins.Enabled = false
+	t.Cleanup(func() {
+		http.DefaultServeMux = oldMux
+		limiter = oldLimiter
+		config = oldConfig
+	})
+
+	initAPIv1()
+	spec := cmn.BuildOpenAPISpec(cmn.GetAPIRoutes(), cmn.OpenAPIOptions{Title: "test", Version: "v1"})
+	for _, path := range []string{"/v1/timeseries/metrics", "/v1/timeseries", "/v1/timeseries/observations", "/v1/timeseries/drilldown", "/v1/timeseries/dimensions"} {
+		operation, ok := spec.Paths[path]["get"]
+		if !ok {
+			t.Fatalf("OpenAPI specification is missing GET %s", path)
+		}
+		if operation.Responses["200"].Content["application/json"].Schema == nil {
+			t.Fatalf("OpenAPI response schema is missing for GET %s", path)
+		}
+	}
+}
+
 func TestInitAPIv1OmitsDefaultAndConsoleRoutesWhenDisabled(t *testing.T) {
 	oldMux := http.DefaultServeMux
 	oldLimiter := limiter
@@ -133,6 +168,11 @@ func TestInitAPIv1OmitsDefaultAndConsoleRoutesWhenDisabled(t *testing.T) {
 	}
 
 	unregisteredRoutes := []string{
+		"/v1/timeseries/metrics",
+		"/v1/timeseries",
+		"/v1/timeseries/observations",
+		"/v1/timeseries/drilldown",
+		"/v1/timeseries/dimensions",
 		"/v1/search/general",
 		"/v1/search/pages",
 		"/v1/search/artifacts",
