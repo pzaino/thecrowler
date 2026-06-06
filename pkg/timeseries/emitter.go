@@ -59,12 +59,13 @@ type ObjectAttributeInput struct {
 
 // Emitter evaluates configured object_attribute metrics.
 type Emitter struct {
-	Repository  Repository
-	Scopes      ScopeResolver
-	Cardinality CardinalityGuard
-	Config      *cfg.TimeSeriesConfig
-	Logger      Logger
-	Now         func() time.Time
+	Repository     Repository
+	Scopes         ScopeResolver
+	ArtifactScopes IndexedArtifactScopeResolver
+	Cardinality    CardinalityGuard
+	Config         *cfg.TimeSeriesConfig
+	Logger         Logger
+	Now            func() time.Time
 }
 
 // EmitObjectAttribute emits all matching enabled metrics. Per-metric safe failures are logged and skipped.

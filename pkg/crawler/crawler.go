@@ -957,7 +957,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
-		err = insertMetaTags(tx, indexID, pageInfo.MetaTags)
+		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting meta tags for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting meta tags: %v", err)
@@ -969,7 +969,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Insert into KeywordIndex
 	if pageInfo.Config.Crawler.CollectKeywords {
-		err = insertKeywords(tx, indexID, pageInfo)
+		err = insertKeywordsWithTimeSeries(tx, indexID, pageInfo, pageInfo.Config)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting keywords for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
@@ -1624,20 +1624,20 @@ func truncateUTF8(s string, maxRunes int) string {
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
-	for _, metatag := range metaTags {
-		var name string
-		if len(metatag.Name) > 256 {
-			name = truncateUTF8(metatag.Name, 256)
-		} else {
-			name = metatag.Name
-		}
-		var content string
-		if len(metatag.Content) > 1024 {
-			content = truncateUTF8(metatag.Content, 1024)
-		} else {
-			content = metatag.Content
-		}
+	return insertMetaTagsWithTimeSeries(tx, indexID, metaTags, nil)
+}
 
+func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config) error {
+	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	for _, metatag := range metaTags {
+		name := metatag.Name
+		if len(name) > 256 {
+			name = truncateUTF8(name, 256)
+		}
+		content := metatag.Content
+		if len(content) > 1024 {
+			content = truncateUTF8(content, 1024)
+		}
 		if !utf8.ValidString(name) {
 			name = strings.ToValidUTF8(name, "")
 		}
@@ -1646,71 +1646,63 @@ func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
 		}
 
 		var metatagID int64
-
-		// Try to find the metatag ID first
-		err := tx.QueryRow(`
-            SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2;`, name, content).Scan(&metatagID)
-
-		// If not found, insert the new metatag and get its ID
+		err := tx.QueryRow(`SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2`, name, content).Scan(&metatagID)
 		if err == sql.ErrNoRows {
 			err = tx.QueryRow(`
-                INSERT INTO MetaTags (name, content)
-                VALUES ($1, $2)
-                ON CONFLICT (name, content) DO NOTHING
-                RETURNING metatag_id;`, name, content).Scan(&metatagID)
-			if err != nil {
-				return err // Handle error appropriately
-			}
+				INSERT INTO MetaTags (name, content)
+				VALUES ($1, $2)
+				ON CONFLICT (name, content) DO UPDATE SET name = EXCLUDED.name
+				RETURNING metatag_id`, name, content).Scan(&metatagID)
+		}
+		if err != nil {
+			return err
 		}
 
+		var metatagIndexID uint64
+		err = tx.QueryRow(`
+			INSERT INTO MetaTagsIndex (index_id, metatag_id)
+			VALUES ($1, $2)
+			ON CONFLICT (index_id, metatag_id) DO UPDATE SET metatag_id = EXCLUDED.metatag_id
+			RETURNING sim_id`, indexID, metatagID).Scan(&metatagIndexID)
 		if err != nil {
-			// One valid case: DO NOTHING means RETURNING finds no row
-			// So we need to handle that gracefully
-			if err == sql.ErrNoRows {
-				// Retrieve existing ID
-				err = tx.QueryRow(`
-					SELECT metatag_id FROM MetaTags
-					WHERE name = $1 AND content = $2
-				`,
-					strings.TrimSpace(name),
-					strings.TrimSpace(content),
-				).Scan(&metatagID)
-			}
+			return err
+		}
+		if emitter != nil {
+			canonicalName := strings.ToLower(strings.TrimSpace(norm.NFC.String(name)))
+			err = emitter.EmitIndexedArtifact(tse.IndexedArtifactInput{
+				SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: indexID,
+				RowID: uint64(metatagID), LinkID: metatagIndexID,
+				SubjectKey: canonicalName, Name: name, RawValue: content, Value: content,
+				Attributes: map[string]interface{}{"name": name, "content": content},
+				ObservedAt: time.Now().UTC(),
+			})
 			if err != nil {
 				return err
 			}
-		}
-
-		// Link the metatag to the SearchIndex
-		_, err = tx.Exec(`
-            INSERT INTO MetaTagsIndex (index_id, metatag_id)
-            VALUES ($1, $2)
-            ON CONFLICT (index_id, metatag_id) DO NOTHING;`, indexID, metatagID)
-		if err != nil {
-			return err // Handle error appropriately
 		}
 	}
 	return nil
 }
 
-func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
+func canonicalKeyword(keyword string) string {
 	if len(keyword) > 256 {
-		keyword = keyword[:256]
+		keyword = truncateUTF8(keyword, 256)
 	}
 	keyword = strings.TrimSpace(keyword)
 	if !utf8.ValidString(keyword) {
 		keyword = strings.ToValidUTF8(keyword, "")
 	}
+	return strings.ToLower(norm.NFC.String(keyword))
+}
+
+func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
+	keyword = canonicalKeyword(keyword)
 	if keyword == "" {
-		return 0, fmt.Errorf("Invalid keyword")
+		return 0, fmt.Errorf("invalid keyword")
 	}
 
-	keyword = strings.ToLower(norm.NFC.String(keyword))
-
-	// Serialize per keyword
-	if _, err := tx.Exec(`
-		SELECT pg_advisory_xact_lock(hashtext($1))
-	`, keyword); err != nil {
+	// Serialize per keyword.
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, keyword); err != nil {
 		return 0, err
 	}
 
@@ -1718,83 +1710,101 @@ func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
 	err := tx.QueryRow(`
 		INSERT INTO Keywords (keyword)
 		VALUES ($1)
-		ON CONFLICT (keyword)
-		DO UPDATE SET keyword = EXCLUDED.keyword
-		RETURNING keyword_id;
-	`, keyword).Scan(&keywordID)
-
+		ON CONFLICT (keyword) DO UPDATE SET keyword = EXCLUDED.keyword
+		RETURNING keyword_id`, keyword).Scan(&keywordID)
 	if err != nil {
 		return 0, err
 	}
-
 	return keywordID, nil
 }
 
 func uniqueStrings(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
-
 	for _, s := range in {
-		// Trim only prefix/suffix whitespace
 		s = strings.TrimSpace(s)
-
-		// Ensure valid UTF-8 (otherwise normalization can behave oddly)
 		if !utf8.ValidString(s) {
 			s = strings.ToValidUTF8(s, "")
 		}
 		if s == "" {
 			continue
 		}
-
-		// Canonical Unicode normalization:
-		// makes "é" (U+00E9) and "e\u0301" equivalent.
 		s = norm.NFC.String(s)
-
-		if s == "" {
-			continue
-		}
-
 		if _, ok := seen[s]; ok {
 			continue
 		}
 		seen[s] = struct{}{}
 		out = append(out, s)
 	}
-
 	return out
 }
 
-// insertKeywords inserts keywords extracted from a web page into the database.
-// It takes a transaction `tx` and a database connection `db` as parameters.
-// The `indexID` parameter represents the ID of the index associated with the keywords.
-// The `pageInfo` parameter contains information about the web page.
-// It returns an error if there is any issue with inserting the keywords into the database.
 func insertKeywords(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
+	return insertKeywordsWithTimeSeries(tx, indexID, pageInfo, nil)
+}
+
+func insertKeywordsWithTimeSeries(tx *sql.Tx, indexID uint64, pageInfo *PageInfo, currCfg *cfg.Config) error {
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Inserting keywords for indexID: %d", indexID)
+	occurrences := make(map[string]int64, len(pageInfo.Keywords))
+	for _, keyword := range pageInfo.Keywords {
+		if normalized := canonicalKeyword(keyword); normalized != "" {
+			occurrences[normalized]++
+		}
+	}
 
-	// Filter duplicated keywords
+	// Preserve the existing normalized/sorted PageInfo behavior.
 	pageInfo.Keywords = uniqueStrings(pageInfo.Keywords)
-
-	// Sort keywords to ensure consistent insertion order
 	sort.Strings(pageInfo.Keywords)
-
-	for _, kw := range pageInfo.Keywords {
-		if kw == "" {
+	ordered := make([]string, 0, len(occurrences))
+	seen := make(map[string]struct{}, len(occurrences))
+	for _, keyword := range pageInfo.Keywords {
+		normalized := canonicalKeyword(keyword)
+		if normalized == "" {
 			continue
 		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		ordered = append(ordered, normalized)
+	}
 
-		keywordID, err := insertKeyword(tx, kw)
+	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	for _, keyword := range ordered {
+		keywordID, err := insertKeyword(tx, keyword)
 		if err != nil {
 			return err
 		}
-
-		_, err = tx.Exec(`
-			INSERT INTO KeywordIndex (keyword_id, index_id)
-			VALUES ($1, $2)
-			ON CONFLICT (keyword_id, index_id) DO NOTHING;
-		`, keywordID, indexID)
+		count := occurrences[keyword]
+		if count < 1 {
+			count = 1
+		}
+		var keywordIndexID uint64
+		var storedOccurrences sql.NullInt64
+		err = tx.QueryRow(`
+			INSERT INTO KeywordIndex (keyword_id, index_id, occurrences)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (keyword_id, index_id) DO UPDATE SET occurrences = EXCLUDED.occurrences
+			RETURNING keyword_index_id, occurrences`, keywordID, indexID, count).Scan(&keywordIndexID, &storedOccurrences)
 		if err != nil {
 			return err
+		}
+		count = 1
+		if storedOccurrences.Valid {
+			count = storedOccurrences.Int64
+		}
+		if emitter != nil {
+			err = emitter.EmitIndexedArtifact(tse.IndexedArtifactInput{
+				SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: indexID,
+				RowID: uint64(keywordID), LinkID: keywordIndexID,
+				SubjectKey: keyword, Name: keyword, RawValue: keyword, Value: count,
+				Occurrences: count,
+				Attributes:  map[string]interface{}{"keyword": keyword, "occurrences": count},
+				ObservedAt:  time.Now().UTC(),
+			})
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
