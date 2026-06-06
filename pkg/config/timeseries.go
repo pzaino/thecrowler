@@ -46,12 +46,14 @@ const (
 type TimeSeriesValueType string
 
 const (
-	TimeSeriesValueInteger  TimeSeriesValueType = "integer"
-	TimeSeriesValueDecimal  TimeSeriesValueType = "decimal"
-	TimeSeriesValueDuration TimeSeriesValueType = "duration"
-	TimeSeriesValueBoolean  TimeSeriesValueType = "boolean"
-	TimeSeriesValueString   TimeSeriesValueType = "string"
-	TimeSeriesValueJSON     TimeSeriesValueType = "json"
+	TimeSeriesValueInteger   TimeSeriesValueType = "integer"
+	TimeSeriesValueDecimal   TimeSeriesValueType = "decimal"
+	TimeSeriesValueDuration  TimeSeriesValueType = "duration"
+	TimeSeriesValueBoolean   TimeSeriesValueType = "boolean"
+	TimeSeriesValueString    TimeSeriesValueType = "string"
+	TimeSeriesValueJSON      TimeSeriesValueType = "json"
+	TimeSeriesValueCount     TimeSeriesValueType = "count"
+	TimeSeriesValueTimestamp TimeSeriesValueType = "timestamp"
 )
 
 // TimeSeriesAggregate describes an aggregation computed for a bucket.
@@ -110,6 +112,8 @@ type TimeSeriesFailurePolicy string
 
 const (
 	TimeSeriesFailureLogSkip      TimeSeriesFailurePolicy = "log_skip"
+	TimeSeriesFailureLog          TimeSeriesFailurePolicy = "log"
+	TimeSeriesFailureSkip         TimeSeriesFailurePolicy = "skip"
 	TimeSeriesFailureRetry        TimeSeriesFailurePolicy = "retry"
 	TimeSeriesFailureFailIndexing TimeSeriesFailurePolicy = "fail_indexing"
 )
@@ -433,7 +437,7 @@ func (c TimeSeriesConfig) Validate() error {
 var (
 	sourceKinds           = stringSet(TimeSeriesSourceKeyword, TimeSeriesSourceMetatag, TimeSeriesSourceObjectAttribute, TimeSeriesSourceWebObject, TimeSeriesSourceHTTPInfo, TimeSeriesSourceNetInfo, TimeSeriesSourceScreenshot, TimeSeriesSourceFile, TimeSeriesSourceInformationSeed, TimeSeriesSourceInformationSeedCandidate, TimeSeriesSourceDiscovery, TimeSeriesSourceEntityMembership, TimeSeriesSourceObjectCorrelation, TimeSeriesSourceCorrelationRule, TimeSeriesSourceCustom)
 	objectTypes           = stringSet(TimeSeriesObjectWebObject, TimeSeriesObjectHTTPInfo, TimeSeriesObjectNetInfo)
-	valueTypes            = stringSet(TimeSeriesValueInteger, TimeSeriesValueDecimal, TimeSeriesValueDuration, TimeSeriesValueBoolean, TimeSeriesValueString, TimeSeriesValueJSON)
+	valueTypes            = stringSet(TimeSeriesValueInteger, TimeSeriesValueDecimal, TimeSeriesValueDuration, TimeSeriesValueBoolean, TimeSeriesValueString, TimeSeriesValueJSON, TimeSeriesValueCount, TimeSeriesValueTimestamp)
 	aggregates            = stringSet(TimeSeriesAggregateCount, TimeSeriesAggregateSum, TimeSeriesAggregateAverage, TimeSeriesAggregateMinimum, TimeSeriesAggregateMaximum, TimeSeriesAggregateDistinctCount, TimeSeriesAggregateFirst, TimeSeriesAggregateLast, TimeSeriesAggregateP50, TimeSeriesAggregateP75, TimeSeriesAggregateP90, TimeSeriesAggregateP95, TimeSeriesAggregateP99)
 	bucketIntervals       = stringSet(TimeSeriesBucketNone, TimeSeriesBucketOneMinute, TimeSeriesBucketFiveMinutes, TimeSeriesBucketFifteenMinutes, TimeSeriesBucketOneHour, TimeSeriesBucketOneDay, TimeSeriesBucketOneWeek)
 	bucketIntervalsNoNone = stringSet(TimeSeriesBucketOneMinute, TimeSeriesBucketFiveMinutes, TimeSeriesBucketFifteenMinutes, TimeSeriesBucketOneHour, TimeSeriesBucketOneDay, TimeSeriesBucketOneWeek)
@@ -491,12 +495,8 @@ func parseTimeSeriesDuration(value string) (time.Duration, error) {
 }
 
 func validateFailure(field string, value TimeSeriesFailurePolicy, errs *[]string) {
-	if value != TimeSeriesFailureLogSkip && value != TimeSeriesFailureRetry {
-		if value == TimeSeriesFailureFailIndexing {
-			*errs = append(*errs, fmt.Sprintf("timeseries.%s: fail_indexing is not allowed; use log_skip or retry", field))
-		} else {
-			*errs = append(*errs, fmt.Sprintf("timeseries.%s: invalid value %q", field, value))
-		}
+	if value != TimeSeriesFailureLogSkip && value != TimeSeriesFailureRetry && value != TimeSeriesFailureFailIndexing && value != TimeSeriesFailureLog && value != TimeSeriesFailureSkip {
+		*errs = append(*errs, fmt.Sprintf("timeseries.%s: invalid value %q", field, value))
 	}
 }
 func validateCardinality(field string, c TimeSeriesCardinalityConfig, errs *[]string) {
@@ -527,7 +527,7 @@ func validatePrivacy(field string, p TimeSeriesPrivacyConfig, errs *[]string) {
 	}
 }
 func validateAggregates(field string, valueType TimeSeriesValueType, values []TimeSeriesAggregate, errs *[]string) {
-	numeric := valueType == TimeSeriesValueInteger || valueType == TimeSeriesValueDecimal || valueType == TimeSeriesValueDuration
+	numeric := valueType == TimeSeriesValueInteger || valueType == TimeSeriesValueDecimal || valueType == TimeSeriesValueDuration || valueType == TimeSeriesValueCount
 	seen := map[TimeSeriesAggregate]bool{}
 	for i, a := range values {
 		if !aggregates[string(a)] {

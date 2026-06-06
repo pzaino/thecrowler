@@ -100,7 +100,7 @@ func TimeSeriesDimensionHash(dimensions map[string]interface{}) (string, error) 
 func TimeSeriesValueHash(valueType cfg.TimeSeriesValueType, value TimeSeriesValue) (string, error) {
 	var representation string
 	switch valueType {
-	case cfg.TimeSeriesValueInteger:
+	case cfg.TimeSeriesValueInteger, cfg.TimeSeriesValueCount:
 		if value.Integer == nil {
 			representation = "absent"
 		} else {
@@ -134,11 +134,13 @@ func TimeSeriesValueHash(valueType cfg.TimeSeriesValueType, value TimeSeriesValu
 			}
 			representation = "present:" + string(canonical)
 		}
-	default:
+	case cfg.TimeSeriesValueTimestamp:
 		if value.Timestamp == nil {
 			return "", fmt.Errorf("unsupported time-series value type %q", valueType)
 		}
 		representation = "present:" + value.Timestamp.UTC().Format(time.RFC3339Nano)
+	default:
+		return "", fmt.Errorf("unsupported time-series value type %q", valueType)
 	}
 	return timeSeriesSHA256("value", string(valueType), representation), nil
 }
@@ -300,4 +302,16 @@ func PrepareTimeSeriesObservation(observation TimeSeriesObservation, valueType c
 		result.Observation.Value.Text = nil
 	}
 	return result, nil
+}
+
+// TimeSeriesProvenanceHash hashes canonical provenance without exposing its values.
+func TimeSeriesProvenanceHash(provenance json.RawMessage) (string, error) {
+	if len(provenance) == 0 {
+		return timeSeriesSHA256("provenance", "absent"), nil
+	}
+	canonical, err := CanonicalTimeSeriesJSON(provenance)
+	if err != nil {
+		return "", err
+	}
+	return timeSeriesSHA256("provenance", "present:"+string(canonical)), nil
 }

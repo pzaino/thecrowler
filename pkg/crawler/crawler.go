@@ -42,6 +42,7 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
+	tse "github.com/pzaino/thecrowler/pkg/timeseries"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
@@ -1009,6 +1010,13 @@ func indexObjectAttributes(
 	}
 
 	attrs := currCfg.AttributesIndexing.WebObject
+	emitter := &tse.Emitter{
+		Repository:  cdb.TransactionTimeSeriesRepository{Tx: tx, DBMS: cdb.DBPostgresStr},
+		Scopes:      crawlerObjectAttributeScopeResolver{tx: tx},
+		Cardinality: crawlerTimeSeriesCardinalityGuard{tx: tx},
+		Config:      &currCfg.TimeSeries,
+		Logger:      crawlerTimeSeriesLogger{},
+	}
 
 	// --- build lookup ---
 	attrMap := make(map[string]cfg.AttributeDefinition)
@@ -1077,7 +1085,7 @@ func indexObjectAttributes(
 
 			hash := hashString(normalized)
 
-			err := insertObjectAttribute(
+			inserted, err := insertObjectAttribute(
 				tx,
 				objectID,
 				attr.Key,
@@ -1088,6 +1096,29 @@ func indexObjectAttributes(
 			)
 			if err != nil {
 				return err
+			}
+			if !inserted {
+				continue
+			}
+			if currCfg.TimeSeries.Enabled {
+				siblings, siblingErr := loadObjectAttributeSiblings(tx, uint64(objectID), "webobject")
+				if siblingErr != nil {
+					if currCfg.TimeSeries.Defaults.FailurePolicy == cfg.TimeSeriesFailureFailIndexing {
+						return siblingErr
+					}
+					if currCfg.TimeSeries.Defaults.FailurePolicy != cfg.TimeSeriesFailureSkip {
+						crawlerTimeSeriesLogger{}.Printf("time-series load sibling attributes: %v", siblingErr)
+					}
+					continue
+				}
+				if err = emitter.EmitObjectAttribute(tse.ObjectAttributeInput{
+					ObjectType: "webobject", ObjectID: uint64(objectID), AttributeKey: attr.Key,
+					RawValue: raw, NormalizedValue: normalized, AttributeType: attr.IndexType,
+					SelectorPath: attr.Path, Transformations: append([]string(nil), attr.Normalizers...),
+					ObjectDetails: data, SiblingAttributes: siblings, ObservedAt: time.Now().UTC(),
+				}); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1115,9 +1146,9 @@ func insertObjectAttribute(
 	normalized string,
 	hash string,
 	attrType string,
-) error {
+) (bool, error) {
 
-	_, err := tx.Exec(`
+	result, err := tx.Exec(`
 		INSERT INTO ObjectAttributes
 			(object_id, object_type, attribute_key, attribute_value, normalized_value, value_hash, attribute_type)
 		VALUES ($1, 'webobject', $2, $3, $4, $5, $6)
@@ -1131,7 +1162,14 @@ func insertObjectAttribute(
 		attrType,
 	)
 
-	return err
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
 }
 
 // indexNetInfo indexes the network information of a source in the database

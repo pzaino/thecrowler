@@ -494,5 +494,5 @@ timeseries:
 
 The example remains globally disabled and is illustrative only; the default
 configuration does not seed domain-specific production metrics. If a metric
-does not specify `failure_policy`, it inherits `log_skip`. The unsafe
-`fail_indexing` policy is rejected.
+does not specify `failure_policy`, it inherits `log_skip`. `fail_indexing` propagates an emitter error through the indexing transaction; `log`,
+`skip`, and the default `log_skip` keep indexing non-fatal.

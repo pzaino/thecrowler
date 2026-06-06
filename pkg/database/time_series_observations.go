@@ -453,7 +453,7 @@ func FindPreviousTimeSeriesObservation(db *Handler, lookup TimeSeriesChangeLooku
 		CorrelationObjectID1:   lookup.Scope.CorrelationObjectID1,
 		CorrelationObjectType2: lookup.Scope.CorrelationObjectType2,
 		CorrelationObjectID2:   lookup.Scope.CorrelationObjectID2,
-		Dimensions:             lookup.Dimensions, End: &lookup.Before, TimeBasis: lookup.TimeBasis,
+		Dimensions:             lookup.Dimensions, End: &lookup.Before, TimeBasis: lookup.TimeBasis, IncludeDeleted: true,
 		Pagination: TimeSeriesPagination{Limit: 10000},
 	}
 	result, err := QueryTimeSeriesObservations(db, filter)

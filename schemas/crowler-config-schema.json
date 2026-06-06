@@ -3135,6 +3135,8 @@
         "integer",
         "decimal",
         "duration",
+        "count",
+        "timestamp",
         "boolean",
         "string",
         "json"
@@ -3207,7 +3209,10 @@
       "type": "string",
       "enum": [
         "log_skip",
-        "retry"
+        "log",
+        "skip",
+        "retry",
+        "fail_indexing"
       ],
       "default": "log_skip"
     },

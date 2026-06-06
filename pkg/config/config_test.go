@@ -2069,6 +2069,13 @@ func TestTimeSeriesYAMLAndJSONDeserializeEquivalently(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesFailIndexingPolicyAccepted(t *testing.T) {
+	data := []byte("timeseries:\n  metrics:\n    - {key: sample, source_kind: keyword, failure_policy: fail_indexing}\n")
+	if _, err := ParseConfig(data); err != nil {
+		t.Fatalf("fail_indexing should be available to production emitters: %v", err)
+	}
+}
+
 func TestTimeSeriesValidation(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2085,7 +2092,6 @@ func TestTimeSeriesValidation(t *testing.T) {
 		{"object type inapplicable", `- {key: sample, source_kind: keyword, object_type: webobject}`, "object_type: only applies"},
 		{"timestamp selector", `- {key: sample, source_kind: keyword, time_basis: event_at}`, "timestamp_selector"},
 		{"aggregate compatibility", `- {key: sample, source_kind: keyword, value_type: string, aggregates: [sum]}`, "requires integer, decimal, or duration"},
-		{"failure policy", `- {key: sample, source_kind: keyword, failure_policy: fail_indexing}`, "fail_indexing is not allowed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

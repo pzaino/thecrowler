@@ -468,12 +468,12 @@ Configurations that omit the section continue to receive the safe defaults below
 timeseries:
   enabled: false
   defaults:
-    value_type: integer          # integer|decimal|duration|boolean|string|json
+    value_type: integer          # integer|decimal|duration|count|timestamp|boolean|string|json
     aggregates: [count]          # count|sum|average|min|max|distinct_count|first|last|p50|p75|p90|p95|p99
     bucket_interval: 1h          # none|1m|5m|15m|1h|1d|1w
     time_basis: observed_at      # observed_at|event_at|source_timestamp
     dedupe_scope: none           # none|source|object|global
-    failure_policy: log_skip     # log_skip|retry; fail_indexing is rejected
+    failure_policy: log_skip     # log_skip|log|skip|retry|fail_indexing
   retention:
     raw: 30d
     aggregated: 365d
@@ -517,7 +517,7 @@ non-empty `key` and a non-empty `selector`.
 
 A metric may override any default. `event_at` and `source_timestamp` metrics
 must provide `timestamp_selector`. Numeric aggregates (`sum`, `average`, `min`,
-`max`, and percentiles) require `integer`, `decimal`, or `duration` values.
+`max`, and percentiles) require `integer`, `decimal`, `duration`, or `count` values.
 Boolean and JSON values support counting/distinct counting only; strings also
 support first/last. Metric keys must be non-empty and unique.
 

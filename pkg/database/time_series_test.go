@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -27,6 +28,25 @@ func TestTimeSeriesCanonicalHashes(t *testing.T) {
 	}
 	if absent, _ := TimeSeriesDimensionHash(nil); absent == leftHash {
 		t.Fatal("absent dimensions must have an explicit distinct hash")
+	}
+}
+
+func TestTimeSeriesExtendedValueAndProvenanceHashes(t *testing.T) {
+	count := int64(1)
+	if hash, err := TimeSeriesValueHash(cfg.TimeSeriesValueCount, TimeSeriesValue{Integer: &count}); err != nil || hash == "" {
+		t.Fatalf("count hash: %s, %v", hash, err)
+	}
+	timestamp := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	if hash, err := TimeSeriesValueHash(cfg.TimeSeriesValueTimestamp, TimeSeriesValue{Timestamp: &timestamp}); err != nil || hash == "" {
+		t.Fatalf("timestamp hash: %s, %v", hash, err)
+	}
+	left, err := TimeSeriesProvenanceHash(json.RawMessage(`{"b":2,"a":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := TimeSeriesProvenanceHash(json.RawMessage(`{"a":1,"b":2}`))
+	if err != nil || left != right {
+		t.Fatalf("provenance hash is not canonical: %s %s %v", left, right, err)
 	}
 }
 
