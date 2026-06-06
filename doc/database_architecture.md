@@ -373,3 +373,9 @@ erDiagram
     HTTPInfoIndex ||--|{ SearchIndex : "index_id"
     Screenshots ||--|{ SearchIndex : "index_id"
 ```
+
+## Entity observation backfill
+
+Entity memberships may be assigned after extractors have already emitted observations. `BackfillObservationEntities` repairs raw observations by matching `TimeSeriesObservations.object_type/object_id` to `EntityMemberships`, filling only a missing `entity_id`, preserving an existing `dimensions.confidence`, and appending membership evidence to existing provenance. The helper is bounded by batch size and batch count and returns an observation-ID checkpoint. `RunEntityObservationBackfillJob` persists that checkpoint for a named job and resets it after a complete sweep, allowing a later delayed membership to revisit older unassigned observations.
+
+The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result reports `AffectedStart` and `AffectedEnd`, the minimum and maximum `observed_at` timestamps of rows actually changed during that run. The named checkpoint also accumulates this affected range. Task 9 must use that range with its explicit reaggregation request/interface; no aggregate grouping is silently rewritten here.

@@ -273,6 +273,8 @@ CREATE TABLE IF NOT EXISTS EntityMemberships (
     object_type TEXT NOT NULL DEFAULT 'webobject',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    membership_role TEXT,
+    membership_type TEXT,
     evidence TEXT,
     CHECK (object_type IN ('webobject','netinfo','httpinfo')),
     PRIMARY KEY(entity_id, object_type, object_id)
@@ -295,7 +297,9 @@ CREATE TABLE IF NOT EXISTS ObjectCorrelations (
     object_id_1 INTEGER NOT NULL,
     object_id_2 INTEGER NOT NULL,
     rule_id INTEGER NOT NULL REFERENCES CorrelationRules(rule_id) ON DELETE CASCADE,
+    entity_id INTEGER REFERENCES Entities(entity_id) ON DELETE SET NULL,
     score REAL CHECK (score IS NULL OR (score >= 0 AND score <= 1)),
+    confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (
@@ -617,6 +621,9 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
     ON ObjectCorrelations(object_type_2, object_id_2);
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
     ON ObjectCorrelations(rule_id, score DESC);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_entity
+    ON ObjectCorrelations(entity_id);
 CREATE INDEX IF NOT EXISTS idx_metatags_content_trgm ON MetaTags(content);
 CREATE INDEX IF NOT EXISTS idx_keywords_keyword_trgm ON Keywords(keyword);
 CREATE INDEX IF NOT EXISTS idx_memory_agent
@@ -867,6 +874,15 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_hash VARCHAR(64) NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS EntityObservationBackfillCheckpoints (
+    job_name VARCHAR(255) PRIMARY KEY,
+    last_observation_id BIGINT NOT NULL DEFAULT 0,
+    affected_start TIMESTAMP,
+    affected_end TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

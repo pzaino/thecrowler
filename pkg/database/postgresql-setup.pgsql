@@ -470,6 +470,8 @@ CREATE TABLE IF NOT EXISTS EntityMemberships (
     object_type TEXT NOT NULL DEFAULT 'webobject',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    membership_role TEXT,
+    membership_type TEXT,
     evidence JSONB,
     CONSTRAINT chk_entitymembership_object_type
         CHECK (object_type IN ('webobject','netinfo','httpinfo')),
@@ -478,6 +480,9 @@ CREATE TABLE IF NOT EXISTS EntityMemberships (
 
 CREATE INDEX IF NOT EXISTS idx_entitymemberships_object
 ON EntityMemberships(object_type, object_id);
+
+ALTER TABLE EntityMemberships ADD COLUMN IF NOT EXISTS membership_role TEXT;
+ALTER TABLE EntityMemberships ADD COLUMN IF NOT EXISTS membership_type TEXT;
 
 -- CorrelationRules table stores the correlation rules that are applied to
 -- the indexed pages and the web objects to find relationships between them
@@ -514,7 +519,9 @@ CREATE TABLE IF NOT EXISTS ObjectCorrelations (
     object_id_1 BIGINT NOT NULL,
     object_id_2 BIGINT NOT NULL,
     rule_id BIGINT NOT NULL REFERENCES CorrelationRules(rule_id) ON DELETE CASCADE,
+    entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
     score NUMERIC CHECK (score IS NULL OR (score >= 0 AND score <= 1)),
+    confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_objectcorrelations_order
@@ -536,6 +543,9 @@ CREATE TABLE IF NOT EXISTS ObjectCorrelations (
     )
 );
 
+ALTER TABLE ObjectCorrelations ADD COLUMN IF NOT EXISTS entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL;
+ALTER TABLE ObjectCorrelations ADD COLUMN IF NOT EXISTS confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1));
+
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj1
     ON ObjectCorrelations(object_type_1, object_id_1);
 
@@ -544,6 +554,9 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
 
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
     ON ObjectCorrelations(rule_id, score DESC);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_entity
+    ON ObjectCorrelations(entity_id);
 
 CREATE OR REPLACE FUNCTION cleanup_artifact_data()
 RETURNS trigger AS $$
@@ -2069,6 +2082,15 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS EntityObservationBackfillCheckpoints (
+    job_name VARCHAR(255) PRIMARY KEY,
+    last_observation_id BIGINT NOT NULL DEFAULT 0,
+    affected_start TIMESTAMPTZ,
+    affected_end TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_timeseriesmetrics_enabled ON TimeSeriesMetrics(enabled, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_timeseriesmetrics_dimensions_gin ON TimeSeriesMetrics USING GIN(dimensions);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_metric_bucket ON TimeSeriesObservations(metric_id, bucket_start);
@@ -3289,6 +3311,7 @@ ALTER TABLE eventschedules OWNER TO :CROWLER_DB_USER;
 ALTER TABLE timeseriesmetrics OWNER TO :CROWLER_DB_USER;
 ALTER TABLE timeseriesobservations OWNER TO :CROWLER_DB_USER;
 ALTER TABLE timeseriesaggregates OWNER TO :CROWLER_DB_USER;
+ALTER TABLE entityobservationbackfillcheckpoints OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

@@ -57,8 +57,50 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 		if err == nil {
 			err = ensureSQLiteInformationSeedSchema(handler.db)
 		}
+		if err == nil {
+			err = ensureSQLiteEntityCorrelationSchema(handler.db)
+		}
 	}
 
+	return err
+}
+
+func ensureSQLiteEntityCorrelationSchema(db *sql.DB) error {
+	migrations := map[string][]sqliteColumnMigration{
+		"EntityMemberships": {
+			{column: "membership_role", statement: "ALTER TABLE EntityMemberships ADD COLUMN membership_role TEXT"},
+			{column: "membership_type", statement: "ALTER TABLE EntityMemberships ADD COLUMN membership_type TEXT"},
+		},
+		"ObjectCorrelations": {
+			{column: "entity_id", statement: "ALTER TABLE ObjectCorrelations ADD COLUMN entity_id INTEGER REFERENCES Entities(entity_id) ON DELETE SET NULL"},
+			{column: "confidence", statement: "ALTER TABLE ObjectCorrelations ADD COLUMN confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1))"},
+		},
+	}
+	for table, tableMigrations := range migrations {
+		var name string
+		err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		columns, err := sqliteColumns(db, table)
+		if err != nil {
+			return err
+		}
+		for _, migration := range tableMigrations {
+			if !columns[migration.column] {
+				if _, err = db.Exec(migration.statement); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS EntityObservationBackfillCheckpoints (
+		job_name VARCHAR(255) PRIMARY KEY, last_observation_id INTEGER NOT NULL DEFAULT 0,
+		affected_start TIMESTAMP, affected_end TIMESTAMP, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
 	return err
 }
 
