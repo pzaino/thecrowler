@@ -15,8 +15,13 @@
 package database
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // CreateInformationSeed inserts a new information seed and returns its database ID.
@@ -27,7 +32,6 @@ func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
 	if seed == nil {
 		return 0, fmt.Errorf("information seed is nil")
 	}
-
 	seedText := strings.TrimSpace(seed.InformationSeed)
 	if seedText == "" {
 		return 0, fmt.Errorf("information seed text is required")
@@ -36,54 +40,61 @@ func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
 	if status == "" {
 		status = "new"
 	}
-	priority := strings.TrimSpace(seed.Priority)
-	engine := strings.TrimSpace(seed.Engine)
+	priority, engine := strings.TrimSpace(seed.Priority), strings.TrimSpace(seed.Engine)
 	config, err := informationSeedConfigString(seed.Config)
 	if err != nil {
 		return 0, err
 	}
-
-	args := []interface{}{seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config}
-
-	switch normalizeInformationSeedDBMS((*db).DBMS()) {
-	case DBPostgresStr:
-		var id uint64
-		err = (*db).QueryRow(`
-			INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-			RETURNING information_seed_id`, args...).Scan(&id)
-		if err != nil {
-			return 0, fmt.Errorf("failed to create PostgreSQL information seed: %w", err)
-		}
-		return id, nil
-	case DBSQLiteStr:
-		var id uint64
-		err = (*db).QueryRow(`
-			INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			RETURNING information_seed_id`, args...).Scan(&id)
-		if err != nil {
-			return 0, fmt.Errorf("failed to create SQLite information seed: %w", err)
-		}
-		return id, nil
-	case DBMySQLStr:
-		result, err := (*db).Exec(`
-			INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, args...)
-		if err != nil {
-			return 0, fmt.Errorf("failed to create MySQL information seed: %w", err)
-		}
-		id, err := result.LastInsertId()
-		if err != nil {
-			return 0, fmt.Errorf("failed to retrieve MySQL information seed ID: %w", err)
-		}
-		if id < 0 {
-			return 0, fmt.Errorf("failed to retrieve MySQL information seed ID: negative ID %d", id)
-		}
-		return uint64(id), nil
-	default:
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
 		return 0, fmt.Errorf("unsupported database type for information seed creation: %s", (*db).DBMS())
 	}
+	tx, err := (*db).Begin()
+	if err != nil {
+		return 0, err
+	}
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+	args := []interface{}{seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config}
+	var id uint64
+	switch dbms {
+	case DBPostgresStr:
+		err = tx.QueryRow(`INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING information_seed_id`, args...).Scan(&id)
+	case DBSQLiteStr:
+		err = tx.QueryRow(`INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING information_seed_id`, args...).Scan(&id)
+	case DBMySQLStr:
+		var result sql.Result
+		result, err = tx.Exec(`INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+			VALUES (?,?,?,?,?,?,?,?)`, args...)
+		if err == nil {
+			var inserted int64
+			inserted, err = result.LastInsertId()
+			if inserted < 0 {
+				err = fmt.Errorf("negative information seed ID %d", inserted)
+			}
+			id = uint64(inserted)
+		}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to create information seed: %w", err)
+	}
+	persisted := *seed
+	persisted.ID = id
+	persisted.InformationSeed = seedText
+	persisted.Status = status
+	persisted.Priority = priority
+	persisted.Engine = engine
+	persisted.LastUpdatedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, persisted, "created", "", status); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	committed = true
+	return id, nil
 }
 
 // GetInformationSeedByID retrieves an information seed by its ID.
@@ -119,23 +130,68 @@ func SetInformationSeedDisabled(db *Handler, id uint64, disabled bool) error {
 	if id == 0 {
 		return fmt.Errorf("information seed ID must be provided")
 	}
-
 	dbms := normalizeInformationSeedDBMS((*db).DBMS())
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed disabled update: %s", (*db).DBMS())
 	}
-	p1 := informationSeedPlaceholderForDBMS(dbms, 1)
-	p2 := informationSeedPlaceholderForDBMS(dbms, 2)
-	query := fmt.Sprintf(`
-		UPDATE InformationSeed
-		SET disabled = %s
-		WHERE information_seed_id = %s`, p1, p2)
-	result, err := (*db).Exec(query, disabled, id)
+	tx, err := (*db).Begin()
 	if err != nil {
+		return err
+	}
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+	p := newInformationSeedPlaceholders(dbms)
+	var previous bool
+	if err = tx.QueryRow(`SELECT disabled FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
+		return fmt.Errorf("no information seed found with ID %d: %w", id, err)
+	}
+	p = newInformationSeedPlaceholders(dbms)
+	if _, err = tx.Exec(`UPDATE InformationSeed SET disabled = `+p.Next()+` WHERE information_seed_id = `+p.Next(), disabled, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d disabled flag: %w", id, err)
 	}
-	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
-		return fmt.Errorf("no information seed found with ID %d", id)
+	seed, err := getInformationSeedByIDTx(tx, dbms, id)
+	if err != nil {
+		return err
 	}
+	if previous != disabled {
+		if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *seed, "disabled_changed", fmt.Sprint(previous), fmt.Sprint(disabled)); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
+}
+
+func getInformationSeedByIDTx(tx *sql.Tx, dbms string, id uint64) (*InformationSeed, error) {
+	p := newInformationSeedPlaceholders(dbms)
+	row := tx.QueryRow(`SELECT `+informationSeedSelectColumns()+` FROM InformationSeed WHERE information_seed_id = `+p.Next(), id)
+	seed, err := scanInformationSeedRow(row)
+	if err != nil {
+		return nil, fmt.Errorf("lookup persisted information seed %d: %w", id, err)
+	}
+	return seed, nil
+}
+
+func emitInformationSeedLifecycleObservationsTx(tx *sql.Tx, dbms string, seed InformationSeed, event, previous, current string) error {
+	config := map[string]interface{}{}
+	if seed.Config != nil {
+		_ = json.Unmarshal(*seed.Config, &config)
+	}
+	observedAt := time.Now().UTC()
+	if seed.LastUpdatedAt.Valid {
+		observedAt = seed.LastUpdatedAt.Time.UTC()
+	}
+	fields := map[string]interface{}{"count": 1, "status": seed.Status, "priority": seed.Priority, "disabled": seed.Disabled,
+		"attempts": seed.Attempts, "category_id": seed.CategoryID, "user_id": seed.UsrID, "information_seed": seed.InformationSeed,
+		"previous": previous, "current": current, "config": config}
+	seedID := seed.ID
+	return emitInformationSeedObservationsTx(tx, dbms, informationSeedObservationEvent{SourceKind: cfg.TimeSeriesSourceInformationSeed,
+		Event: event, Identity: fmt.Sprintf("seed:%d:%s:%s:%s", seed.ID, event, previous, current), ObservedAt: observedAt,
+		Scope:  TimeSeriesScope{InformationSeedID: &seedID, SubjectType: string(cfg.TimeSeriesSourceInformationSeed), SubjectID: &seedID},
+		Fields: fields, Provenance: map[string]interface{}{"information_seed_id": seed.ID, "transition": event,
+			"previous_value": previous, "current_value": current, "status": seed.Status, "disabled": seed.Disabled,
+			"attempts": seed.Attempts, "category_id": seed.CategoryID, "user_id": seed.UsrID}})
 }

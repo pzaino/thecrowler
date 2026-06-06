@@ -9,6 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 const (
@@ -79,6 +82,13 @@ func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []Informati
 		}
 		if _, err = tx.Exec(query, args...); err != nil {
 			return fmt.Errorf("failed to upsert information seed %d candidate %q: %w", candidate.InformationSeedID, candidate.NormalizedURL, err)
+		}
+		persisted, persistErr := getInformationSeedCandidateDecisionTx(tx, dbms, candidate)
+		if persistErr != nil {
+			return persistErr
+		}
+		if err = emitInformationSeedCandidateObservationsTx(tx, dbms, *persisted); err != nil {
+			return err
 		}
 	}
 
@@ -252,4 +262,74 @@ func scanInformationSeedCandidateRows(rows *sql.Rows) ([]InformationSeedCandidat
 		candidates = append(candidates, candidate)
 	}
 	return candidates, rows.Err()
+}
+
+func getInformationSeedCandidateDecisionTx(tx *sql.Tx, dbms string, candidate InformationSeedCandidate) (*InformationSeedCandidate, error) {
+	p := newInformationSeedPlaceholders(dbms)
+	row := tx.QueryRow(`SELECT information_seed_candidate_id, information_seed_id, normalized_url,
+		host, provider, query, rank, score, decision_status, rejection_reason,
+		metadata, run_attempt, created_at, last_updated_at
+		FROM InformationSeedCandidate
+		WHERE information_seed_id = `+p.Next()+` AND normalized_url = `+p.Next()+`
+		  AND provider = `+p.Next()+` AND query = `+p.Next()+` AND rank = `+p.Next()+`
+		  AND run_attempt = `+p.Next(), candidate.InformationSeedID, strings.TrimSpace(candidate.NormalizedURL),
+		strings.TrimSpace(candidate.Provider), strings.TrimSpace(candidate.Query), candidate.Rank, candidate.RunAttempt)
+	var persisted InformationSeedCandidate
+	var metadata sql.NullString
+	if err := row.Scan(&persisted.ID, &persisted.InformationSeedID, &persisted.NormalizedURL,
+		&persisted.Host, &persisted.Provider, &persisted.Query, &persisted.Rank, &persisted.Score,
+		&persisted.DecisionStatus, &persisted.RejectionReason, &metadata, &persisted.RunAttempt,
+		&persisted.CreatedAt, &persisted.LastUpdatedAt); err != nil {
+		return nil, fmt.Errorf("lookup persisted information seed candidate: %w", err)
+	}
+	if metadata.Valid {
+		raw := json.RawMessage(metadata.String)
+		persisted.Metadata = &raw
+	}
+	return &persisted, nil
+}
+
+func emitInformationSeedCandidateObservationsTx(tx *sql.Tx, dbms string, candidate InformationSeedCandidate) error {
+	metadata := map[string]interface{}{}
+	if candidate.Metadata != nil && len(*candidate.Metadata) > 0 {
+		_ = json.Unmarshal(*candidate.Metadata, &metadata)
+	}
+	observedAt := time.Now().UTC()
+	if candidate.LastUpdatedAt.Valid {
+		observedAt = candidate.LastUpdatedAt.Time.UTC()
+	}
+	fields := map[string]interface{}{
+		"count": 1, "decision_status": candidate.DecisionStatus,
+		"accepted_count":   boolCount(candidate.DecisionStatus == InformationSeedCandidateDecisionAccepted),
+		"rejected_count":   boolCount(candidate.DecisionStatus == InformationSeedCandidateDecisionRejected),
+		"rejection_reason": candidate.RejectionReason, "reason": candidate.RejectionReason,
+		"provider": candidate.Provider, "query": candidate.Query, "rank": candidate.Rank,
+		"score": candidate.Score, "host": candidate.Host, "normalized_url": candidate.NormalizedURL,
+		"run_attempt": candidate.RunAttempt, "metadata": metadata,
+	}
+	seedID, candidateID := candidate.InformationSeedID, candidate.ID
+	return emitInformationSeedObservationsTx(tx, dbms, informationSeedObservationEvent{
+		SourceKind: cfg.TimeSeriesSourceInformationSeedCandidate,
+		Event:      "decision_" + candidate.DecisionStatus,
+		Identity:   fmt.Sprintf("candidate:%d:decision:%s", candidate.ID, candidate.DecisionStatus),
+		ObservedAt: observedAt,
+		Scope: TimeSeriesScope{InformationSeedID: &seedID, InformationSeedCandidateID: &candidateID,
+			SubjectType: string(cfg.TimeSeriesSourceInformationSeedCandidate), SubjectID: &candidateID},
+		Fields: fields,
+		Provenance: map[string]interface{}{
+			"information_seed_id": candidate.InformationSeedID, "information_seed_candidate_id": candidate.ID,
+			"candidate_row_id": candidate.ID, "provider_identifier": candidate.Provider,
+			"normalized_url": candidate.NormalizedURL, "host": candidate.Host, "query": candidate.Query,
+			"rank": candidate.Rank, "score": candidate.Score, "decision_status": candidate.DecisionStatus,
+			"rejection_reason": candidate.RejectionReason, "decision_evidence": metadata,
+			"run_attempt": candidate.RunAttempt, "transition": "decision_" + candidate.DecisionStatus,
+		},
+	})
+}
+
+func boolCount(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
 }

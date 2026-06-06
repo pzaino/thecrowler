@@ -3,8 +3,11 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -656,5 +659,111 @@ func TestListSourcesForInformationSeedSQLitePaginationAndMetadata(t *testing.T) 
 	}
 	if _, err = ListSourcesForInformationSeed(&handler, seedID, InformationSeedLinkedSourceFilter{Offset: -1}); err == nil {
 		t.Fatal("expected negative linked-source offset to fail")
+	}
+}
+
+func TestTimeSeriesInformationSeedLifecycleObservationsSQLite(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	migration, err := os.ReadFile("sqlite-migration-v1.9.sqlite3")
+	if err != nil {
+		t.Fatalf("read time-series migration: %v", err)
+	}
+	if _, err = db.Exec(string(migration)); err != nil {
+		t.Fatalf("create time-series schema: %v", err)
+	}
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	metric := func(key string, kind cfg.TimeSeriesSourceKind, valueType cfg.TimeSeriesValueType, selector, dimensions string) uint64 {
+		t.Helper()
+		stored, metricErr := UpsertTimeSeriesMetric(&handler, &TimeSeriesMetric{Key: key, DisplayName: key, SourceKind: kind,
+			ValueType: valueType, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour,
+			TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject,
+			FailurePolicy: cfg.TimeSeriesFailureFailIndexing, Selector: json.RawMessage(selector),
+			Dimensions: json.RawMessage(dimensions), Enabled: true, StoreValueText: true})
+		if metricErr != nil {
+			t.Fatalf("create metric %s: %v", key, metricErr)
+		}
+		return stored.ID
+	}
+	acceptedMetric := metric("seed.candidates.accepted", cfg.TimeSeriesSourceInformationSeedCandidate, cfg.TimeSeriesValueCount,
+		`{"decision_status":"accepted","field":"accepted_count"}`,
+		`[{"key":"provider","selector":{"field":"provider"}},{"key":"decision","selector":{"field":"decision_status"}}]`)
+	rejectedMetric := metric("seed.candidates.rejected", cfg.TimeSeriesSourceInformationSeedCandidate, cfg.TimeSeriesValueCount,
+		`{"decision_status":"rejected","field":"rejected_count"}`,
+		`[{"key":"provider","selector":{"field":"provider"}},{"key":"reason","selector":{"field":"rejection_reason"}}]`)
+	scoreMetric := metric("seed.candidates.score", cfg.TimeSeriesSourceInformationSeedCandidate, cfg.TimeSeriesValueDecimal,
+		`{"field":"score"}`, `[{"key":"provider","selector":{"field":"provider"}}]`)
+	rankMetric := metric("seed.candidates.rank", cfg.TimeSeriesSourceInformationSeedCandidate, cfg.TimeSeriesValueInteger,
+		`{"field":"rank"}`, `[]`)
+	seedStatusMetric := metric("seed.lifecycle.status", cfg.TimeSeriesSourceInformationSeed, cfg.TimeSeriesValueString,
+		`{"event":"status_changed","field":"status"}`,
+		`[{"key":"status","selector":{"field":"status"}}]`)
+	promotedMetric := metric("seed.sources.promoted", cfg.TimeSeriesSourceDiscovery, cfg.TimeSeriesValueCount,
+		`{"event":"promoted","field":"promoted_count"}`,
+		`[{"key":"provider","selector":{"field":"discovery_provider"}},{"key":"query","selector":{"field":"discovery_query"}}]`)
+
+	seedID, err := CreateInformationSeed(&handler, &InformationSeed{InformationSeed: "dashboard seed", Status: "pending"})
+	if err != nil {
+		t.Fatalf("create information seed: %v", err)
+	}
+	if err = UpdateInformationSeedStatus(&handler, seedID, "processing", ""); err != nil {
+		t.Fatalf("update seed lifecycle: %v", err)
+	}
+	seedResult, err := QueryTimeSeriesObservations(&handler, TimeSeriesQueryFilter{MetricID: &seedStatusMetric,
+		InformationSeedID: &seedID, Dimensions: map[string]interface{}{"status": "processing"}})
+	if err != nil || len(seedResult.Observations) != 1 {
+		t.Fatalf("seed lifecycle dashboard filter: %#v, %v", seedResult, err)
+	}
+	decisions := []InformationSeedCandidate{
+		{InformationSeedID: seedID, NormalizedURL: "https://accepted.example/", Provider: "search", Query: "safe query", Rank: 1, Score: .91, DecisionStatus: InformationSeedCandidateDecisionAccepted, RunAttempt: 1},
+		{InformationSeedID: seedID, NormalizedURL: "https://rejected.example/", Provider: "search", Query: "safe query", Rank: 2, Score: .2, DecisionStatus: InformationSeedCandidateDecisionRejected, RejectionReason: "minimum_score", RunAttempt: 1},
+	}
+	if err = UpsertInformationSeedCandidateDecisions(&handler, decisions); err != nil {
+		t.Fatalf("persist candidate observations: %v", err)
+	}
+	// A runner retry of identical durable decisions must not duplicate facts.
+	if err = UpsertInformationSeedCandidateDecisions(&handler, decisions); err != nil {
+		t.Fatalf("retry candidate observations: %v", err)
+	}
+
+	candidateRows, err := ListInformationSeedCandidateDecisions(&handler, seedID, InformationSeedCandidateFilter{Limit: 10})
+	if err != nil || len(candidateRows) != 2 {
+		t.Fatalf("list persisted candidates: %#v, %v", candidateRows, err)
+	}
+	acceptedID := candidateRows[0].ID
+	if candidateRows[0].DecisionStatus != InformationSeedCandidateDecisionAccepted {
+		acceptedID = candidateRows[1].ID
+	}
+	candidateResult, err := QueryTimeSeriesObservations(&handler, TimeSeriesQueryFilter{MetricID: &acceptedMetric,
+		InformationSeedID: &seedID, InformationSeedCandidateID: &acceptedID, Dimensions: map[string]interface{}{"provider": "search"}})
+	if err != nil || len(candidateResult.Observations) != 1 {
+		t.Fatalf("candidate scope dashboard filter: %#v, %v", candidateResult, err)
+	}
+	rejectedResult, err := QueryTimeSeriesObservations(&handler, TimeSeriesQueryFilter{MetricID: &rejectedMetric,
+		InformationSeedID: &seedID, Dimensions: map[string]interface{}{"reason": "minimum_score"}})
+	if err != nil || len(rejectedResult.Observations) != 1 {
+		t.Fatalf("rejection dimension filter: %#v, %v", rejectedResult, err)
+	}
+	for _, metricID := range []uint64{scoreMetric, rankMetric} {
+		result, queryErr := QueryTimeSeriesObservations(&handler, TimeSeriesQueryFilter{MetricID: &metricID, InformationSeedID: &seedID})
+		if queryErr != nil || len(result.Observations) != 2 {
+			t.Fatalf("numeric candidate metric %d: %#v, %v", metricID, result, queryErr)
+		}
+	}
+
+	sourceID := insertInformationSeedTestSource(t, db, "https://accepted.example/", "accepted")
+	provider, query, rank, score, reason := "search", "safe query", 1, .91, "promoted"
+	metadata := InformationSeedDiscoveryMetadata{DiscoveryProvider: &provider, DiscoveryQuery: &query, DiscoveryRank: &rank, CandidateScore: &score, CandidateReason: &reason}
+	if err = LinkSourceToInformationSeedWithDiscoveryMetadata(&handler, sourceID, seedID, metadata); err != nil {
+		t.Fatalf("link promoted source: %v", err)
+	}
+	if err = LinkSourceToInformationSeedWithDiscoveryMetadata(&handler, sourceID, seedID, metadata); err != nil {
+		t.Fatalf("retry promoted source: %v", err)
+	}
+	discoveryResult, err := QueryTimeSeriesObservations(&handler, TimeSeriesQueryFilter{MetricID: &promotedMetric,
+		InformationSeedID: &seedID, SourceID: &sourceID, Dimensions: map[string]interface{}{"provider": "search", "query": "safe query"}})
+	if err != nil || len(discoveryResult.Observations) != 1 {
+		t.Fatalf("source discovery scope/dashboard filter: %#v, %v", discoveryResult, err)
 	}
 }

@@ -18,6 +18,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // LinkSourcesToInformationSeed idempotently records source/information-seed
@@ -147,82 +150,121 @@ func LinkSourceToInformationSeedWithDiscoveryMetadata(db *Handler, sourceID, inf
 	if sourceID == 0 || informationSeedID == 0 {
 		return fmt.Errorf("sourceID and informationSeedID must be provided")
 	}
-
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for source/information-seed links: %s", (*db).DBMS())
+	}
 	metadataJSON, err := discoveryMetadataString(metadata.DiscoveryMetadata)
 	if err != nil {
 		return err
 	}
-
-	args := []interface{}{
-		sourceID,
-		informationSeedID,
-		nullableArg(metadata.DiscoveryProvider),
-		nullableArg(metadata.DiscoveryQuery),
-		nullableArg(metadata.DiscoveryRank),
-		nullableArg(metadata.CandidateScore),
-		nullableArg(metadata.CandidateReason),
-		nullableArg(metadataJSON),
+	tx, err := (*db).Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start source discovery transaction: %w", err)
 	}
-
-	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+	args := []interface{}{sourceID, informationSeedID, nullableArg(metadata.DiscoveryProvider), nullableArg(metadata.DiscoveryQuery), nullableArg(metadata.DiscoveryRank), nullableArg(metadata.CandidateScore), nullableArg(metadata.CandidateReason), nullableArg(metadataJSON)}
+	var query string
+	switch dbms {
 	case DBPostgresStr:
-		_, err = (*db).Exec(`
-			INSERT INTO SourceInformationSeedIndex (
-				source_id, information_seed_id, discovery_provider, discovery_query,
-				discovery_rank, candidate_score, candidate_reason, discovery_metadata
-			)
+		query = `INSERT INTO SourceInformationSeedIndex (
+			source_id, information_seed_id, discovery_provider, discovery_query,
+			discovery_rank, candidate_score, candidate_reason, discovery_metadata)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
 			ON CONFLICT (source_id, information_seed_id) DO UPDATE SET
-				discovery_provider = COALESCE(EXCLUDED.discovery_provider, SourceInformationSeedIndex.discovery_provider),
-				discovery_query = COALESCE(EXCLUDED.discovery_query, SourceInformationSeedIndex.discovery_query),
-				discovery_rank = COALESCE(EXCLUDED.discovery_rank, SourceInformationSeedIndex.discovery_rank),
-				candidate_score = COALESCE(EXCLUDED.candidate_score, SourceInformationSeedIndex.candidate_score),
-				candidate_reason = COALESCE(EXCLUDED.candidate_reason, SourceInformationSeedIndex.candidate_reason),
-				discovery_metadata = CASE
-					WHEN EXCLUDED.discovery_metadata IS NULL THEN SourceInformationSeedIndex.discovery_metadata
-					ELSE COALESCE(SourceInformationSeedIndex.discovery_metadata, '{}'::jsonb) || EXCLUDED.discovery_metadata
-				END`, args...)
+			discovery_provider = COALESCE(EXCLUDED.discovery_provider, SourceInformationSeedIndex.discovery_provider),
+			discovery_query = COALESCE(EXCLUDED.discovery_query, SourceInformationSeedIndex.discovery_query),
+			discovery_rank = COALESCE(EXCLUDED.discovery_rank, SourceInformationSeedIndex.discovery_rank),
+			candidate_score = COALESCE(EXCLUDED.candidate_score, SourceInformationSeedIndex.candidate_score),
+			candidate_reason = COALESCE(EXCLUDED.candidate_reason, SourceInformationSeedIndex.candidate_reason),
+			discovery_metadata = CASE WHEN EXCLUDED.discovery_metadata IS NULL THEN SourceInformationSeedIndex.discovery_metadata
+			ELSE COALESCE(SourceInformationSeedIndex.discovery_metadata, '{}'::jsonb) || EXCLUDED.discovery_metadata END`
 	case DBMySQLStr:
-		_, err = (*db).Exec(`
-			INSERT INTO SourceInformationSeedIndex (
-				source_id, information_seed_id, discovery_provider, discovery_query,
-				discovery_rank, candidate_score, candidate_reason, discovery_metadata
-			)
+		query = `INSERT INTO SourceInformationSeedIndex (
+			source_id, information_seed_id, discovery_provider, discovery_query,
+			discovery_rank, candidate_score, candidate_reason, discovery_metadata)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE
-				discovery_provider = COALESCE(VALUES(discovery_provider), discovery_provider),
-				discovery_query = COALESCE(VALUES(discovery_query), discovery_query),
-				discovery_rank = COALESCE(VALUES(discovery_rank), discovery_rank),
-				candidate_score = COALESCE(VALUES(candidate_score), candidate_score),
-				candidate_reason = COALESCE(VALUES(candidate_reason), candidate_reason),
-				discovery_metadata = CASE
-					WHEN VALUES(discovery_metadata) IS NULL THEN discovery_metadata
-					ELSE JSON_MERGE_PATCH(COALESCE(discovery_metadata, JSON_OBJECT()), VALUES(discovery_metadata))
-				END`, args...)
+			discovery_provider = COALESCE(VALUES(discovery_provider), discovery_provider),
+			discovery_query = COALESCE(VALUES(discovery_query), discovery_query),
+			discovery_rank = COALESCE(VALUES(discovery_rank), discovery_rank),
+			candidate_score = COALESCE(VALUES(candidate_score), candidate_score),
+			candidate_reason = COALESCE(VALUES(candidate_reason), candidate_reason),
+			discovery_metadata = CASE WHEN VALUES(discovery_metadata) IS NULL THEN discovery_metadata
+			ELSE JSON_MERGE_PATCH(COALESCE(discovery_metadata, JSON_OBJECT()), VALUES(discovery_metadata)) END`
 	case DBSQLiteStr:
-		_, err = (*db).Exec(`
-			INSERT INTO SourceInformationSeedIndex (
-				source_id, information_seed_id, discovery_provider, discovery_query,
-				discovery_rank, candidate_score, candidate_reason, discovery_metadata
-			)
+		query = `INSERT INTO SourceInformationSeedIndex (
+			source_id, information_seed_id, discovery_provider, discovery_query,
+			discovery_rank, candidate_score, candidate_reason, discovery_metadata)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, json($8))
 			ON CONFLICT (source_id, information_seed_id) DO UPDATE SET
-				discovery_provider = COALESCE(excluded.discovery_provider, SourceInformationSeedIndex.discovery_provider),
-				discovery_query = COALESCE(excluded.discovery_query, SourceInformationSeedIndex.discovery_query),
-				discovery_rank = COALESCE(excluded.discovery_rank, SourceInformationSeedIndex.discovery_rank),
-				candidate_score = COALESCE(excluded.candidate_score, SourceInformationSeedIndex.candidate_score),
-				candidate_reason = COALESCE(excluded.candidate_reason, SourceInformationSeedIndex.candidate_reason),
-				discovery_metadata = CASE
-					WHEN excluded.discovery_metadata IS NULL THEN SourceInformationSeedIndex.discovery_metadata
-					ELSE json_patch(COALESCE(SourceInformationSeedIndex.discovery_metadata, '{}'), excluded.discovery_metadata)
-				END`, args...)
-	default:
-		return fmt.Errorf("unsupported database type for source/information-seed links: %s", (*db).DBMS())
+			discovery_provider = COALESCE(excluded.discovery_provider, SourceInformationSeedIndex.discovery_provider),
+			discovery_query = COALESCE(excluded.discovery_query, SourceInformationSeedIndex.discovery_query),
+			discovery_rank = COALESCE(excluded.discovery_rank, SourceInformationSeedIndex.discovery_rank),
+			candidate_score = COALESCE(excluded.candidate_score, SourceInformationSeedIndex.candidate_score),
+			candidate_reason = COALESCE(excluded.candidate_reason, SourceInformationSeedIndex.candidate_reason),
+			discovery_metadata = CASE WHEN excluded.discovery_metadata IS NULL THEN SourceInformationSeedIndex.discovery_metadata
+			ELSE json_patch(COALESCE(SourceInformationSeedIndex.discovery_metadata, '{}'), excluded.discovery_metadata) END`
 	}
-	if err != nil {
+	if _, err = tx.Exec(query, args...); err != nil {
 		return fmt.Errorf("failed to link source %d to information seed %d with discovery metadata: %w", sourceID, informationSeedID, err)
 	}
+	link, err := getSourceInformationSeedIndexTx(tx, dbms, sourceID, informationSeedID)
+	if err != nil {
+		return err
+	}
+	if err = emitSourceDiscoveryObservationsTx(tx, dbms, *link); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit source discovery transaction: %w", err)
+	}
+	committed = true
 	return nil
+}
+
+func getSourceInformationSeedIndexTx(tx *sql.Tx, dbms string, sourceID, seedID uint64) (*SourceInformationSeedIndex, error) {
+	p := newInformationSeedPlaceholders(dbms)
+	row := tx.QueryRow(`SELECT source_information_seed_id, source_id, information_seed_id,
+		discovery_provider, discovery_query, discovery_rank, candidate_score, candidate_reason,
+		discovery_metadata, created_at, last_updated_at FROM SourceInformationSeedIndex
+		WHERE source_id = `+p.Next()+` AND information_seed_id = `+p.Next(), sourceID, seedID)
+	var link SourceInformationSeedIndex
+	if err := row.Scan(&link.ID, &link.SourceID, &link.InformationSeedID, &link.DiscoveryProvider,
+		&link.DiscoveryQuery, &link.DiscoveryRank, &link.CandidateScore, &link.CandidateReason,
+		&link.DiscoveryMetadata, &link.CreatedAt, &link.LastUpdatedAt); err != nil {
+		return nil, fmt.Errorf("lookup persisted source discovery link: %w", err)
+	}
+	return &link, nil
+}
+
+func emitSourceDiscoveryObservationsTx(tx *sql.Tx, dbms string, link SourceInformationSeedIndex) error {
+	metadata := map[string]interface{}{}
+	if link.DiscoveryMetadata.Valid {
+		_ = json.Unmarshal([]byte(link.DiscoveryMetadata.String), &metadata)
+	}
+	fields := map[string]interface{}{"count": 1, "promoted_count": 1, "provider": link.DiscoveryProvider.String,
+		"discovery_provider": link.DiscoveryProvider.String, "query": link.DiscoveryQuery.String,
+		"discovery_query": link.DiscoveryQuery.String, "rank": link.DiscoveryRank.Int64,
+		"discovery_rank": link.DiscoveryRank.Int64, "score": link.CandidateScore.Float64,
+		"candidate_score": link.CandidateScore.Float64, "reason": link.CandidateReason.String,
+		"candidate_reason": link.CandidateReason.String, "metadata": metadata}
+	observedAt := time.Now().UTC()
+	if link.LastUpdatedAt.Valid {
+		observedAt = link.LastUpdatedAt.Time.UTC()
+	}
+	seedID, sourceID, linkID := link.InformationSeedID, link.SourceID, link.ID
+	return emitInformationSeedObservationsTx(tx, dbms, informationSeedObservationEvent{
+		SourceKind: cfg.TimeSeriesSourceDiscovery, Event: "promoted", Identity: fmt.Sprintf("source-discovery:%d:promoted", link.ID), ObservedAt: observedAt,
+		Scope: TimeSeriesScope{InformationSeedID: &seedID, SourceID: &sourceID, SourceInformationSeedID: &linkID,
+			SubjectType: string(cfg.TimeSeriesSourceDiscovery), SubjectID: &linkID}, Fields: fields,
+		Provenance: map[string]interface{}{"information_seed_id": link.InformationSeedID, "source_id": link.SourceID,
+			"source_information_seed_id": link.ID, "link_row_id": link.ID, "provider_identifier": link.DiscoveryProvider.String,
+			"discovery_query": link.DiscoveryQuery.String, "discovery_rank": link.DiscoveryRank.Int64,
+			"candidate_score": link.CandidateScore.Float64, "candidate_reason": link.CandidateReason.String,
+			"discovery_metadata": metadata, "transition": "promoted"},
+	})
 }
 
 func nullableArg[T any](value *T) interface{} {

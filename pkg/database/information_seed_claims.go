@@ -33,41 +33,49 @@ func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText 
 	if status == "" {
 		return fmt.Errorf("status is required")
 	}
-
 	errText = strings.TrimSpace(errText)
-	var lastError interface{}
-	var lastErrorAt interface{}
+	var lastError, lastErrorAt interface{}
 	if errText != "" {
 		lastError = errText
 		lastErrorAt = time.Now().UTC()
 	}
-
 	dbms := normalizeInformationSeedDBMS((*db).DBMS())
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed status update: %s", (*db).DBMS())
+	}
+	tx, err := (*db).Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+	p := newInformationSeedPlaceholders(dbms)
+	var previous string
+	if err = tx.QueryRow(`SELECT status FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
+		return fmt.Errorf("no information seed found with ID %d: %w", id, err)
 	}
 	nowExpr := "CURRENT_TIMESTAMP"
 	if dbms == DBPostgresStr {
 		nowExpr = "NOW()"
 	}
-	p1 := informationSeedPlaceholderForDBMS(dbms, 1)
-	p2 := informationSeedPlaceholderForDBMS(dbms, 2)
-	p3 := informationSeedPlaceholderForDBMS(dbms, 3)
-	p4 := informationSeedPlaceholderForDBMS(dbms, 4)
-	query := fmt.Sprintf(`
-		UPDATE InformationSeed
-		SET status = %s,
-			last_error = %s,
-			last_error_at = %s,
-			last_processed_at = %s
-		WHERE information_seed_id = %s`, p1, p2, p3, nowExpr, p4)
-	result, err := (*db).Exec(query, status, lastError, lastErrorAt, id)
-	if err != nil {
+	p = newInformationSeedPlaceholders(dbms)
+	query := `UPDATE InformationSeed SET status = ` + p.Next() + `, last_error = ` + p.Next() + `, last_error_at = ` + p.Next() + `, last_processed_at = ` + nowExpr + ` WHERE information_seed_id = ` + p.Next()
+	if _, err = tx.Exec(query, status, lastError, lastErrorAt, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d status: %w", id, err)
 	}
-	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
-		return fmt.Errorf("no information seed found with ID %d", id)
+	seed, err := getInformationSeedByIDTx(tx, dbms, id)
+	if err != nil {
+		return err
 	}
+	if normalizedSelectorString(previous) != normalizedSelectorString(status) {
+		if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *seed, "status_changed", previous, status); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
