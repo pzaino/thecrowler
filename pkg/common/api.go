@@ -32,6 +32,7 @@ type APIRoute struct {
 type OpenAPISpec struct {
 	OpenAPI    string                 `json:"openapi"`
 	Info       OpenAPIInfo            `json:"info"`
+	Tags       []OpenAPITag           `json:"tags,omitempty"`
 	Servers    []OpenAPIServer        `json:"servers,omitempty"`
 	Paths      map[string]OpenAPIPath `json:"paths"`
 	Components OpenAPIComponents      `json:"components,omitempty"`
@@ -50,6 +51,12 @@ type OpenAPIContact struct {
 	Name  string `json:"name,omitempty"`
 	URL   string `json:"url,omitempty"`
 	Email string `json:"email,omitempty"`
+}
+
+// OpenAPITag represents a tag that can be used to group API operations, including its name and an optional description.
+type OpenAPITag struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // OpenAPIServer represents a server that serves the API, including its URL and an optional description.
@@ -121,6 +128,7 @@ type OpenAPIOptions struct {
 	Description string
 	ServerURL   string          // optional, e.g. "http://localhost:8080"
 	Contact     *OpenAPIContact // optional contact information for the API
+	Tags        []OpenAPITag    // optional tags to include in the specification
 }
 
 // StdAPIQuery represents a standard query structure that can be used for API endpoints
@@ -548,6 +556,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			Description: opt.Description,
 			Contact:     opt.Contact,
 		},
+		Tags:  opt.Tags,
 		Paths: make(map[string]OpenAPIPath),
 		Components: OpenAPIComponents{
 			Schemas: map[string]any{},

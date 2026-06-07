@@ -619,6 +619,10 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 			URL:   "https://github.com/pzaino/thecrowler",
 			Email: "",
 		},
+		Tags: []cmn.OpenAPITag{
+			{Name: "Health", Description: "Endpoints related to health and readiness checks."},
+			{Name: "API", Description: "Endpoints for creating, managing, and querying events."},
+		},
 	})
 
 	handleErrorAndRespond(w, nil, spec, "", http.StatusInternalServerError, http.StatusOK)

@@ -808,6 +808,16 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 			URL:   "https://github.com/pzaino/thecrowler",
 			Email: "",
 		},
+		Tags: []cmn.OpenAPITag{
+			{
+				Name:        "API",
+				Description: "Endpoints for API plugins",
+			},
+			{
+				Name:        "Console",
+				Description: "Endpoints for console features (source management, information seeds, etc.)",
+			},
+		},
 	})
 
 	handleErrorAndRespond(w, nil, spec, "", http.StatusInternalServerError, http.StatusOK)
