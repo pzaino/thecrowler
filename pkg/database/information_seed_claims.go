@@ -105,7 +105,7 @@ func ClaimInformationSeeds(db *Handler, limit int, priority string, engine strin
 
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
 	case DBPostgresStr:
-		return claimInformationSeedsPostgres(db, limit, priority, engine, now, processingBefore, retryBefore)
+		return claimInformationSeedsPostgres(db, limit, priority, engine, processingTimeout, retryAfter)
 	case DBMySQLStr:
 		return claimInformationSeedsMySQL(db, limit, priority, engine, now, processingBefore, retryBefore)
 	case DBSQLiteStr:
@@ -115,7 +115,7 @@ func ClaimInformationSeeds(db *Handler, limit int, priority string, engine strin
 	}
 }
 
-func claimInformationSeedsPostgres(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
+func claimInformationSeedsPostgres(db *Handler, limit int, priority string, engine string, processingTimeout, retryAfter time.Duration) ([]InformationSeed, error) {
 	tx, err := (*db).Begin()
 	if err != nil {
 		return nil, err
@@ -124,45 +124,28 @@ func claimInformationSeedsPostgres(db *Handler, limit int, priority string, engi
 	defer rollbackIfUncommitted(tx, &committed)
 
 	rows, err := tx.Query(`
-		WITH selected AS (
-			SELECT information_seed_id
-			FROM InformationSeed
-			WHERE COALESCE(disabled, FALSE) = FALSE
-			  AND (
-				LOWER(TRIM(status)) IN ('new', 'pending')
-				OR (LOWER(TRIM(status)) = 'processing' AND (last_processed_at IS NULL OR last_processed_at < $1))
-				OR (LOWER(TRIM(status)) = 'error' AND (last_error_at IS NULL OR last_error_at < $2))
-			  )
-			  AND ($3 = '' OR priority = $3)
-			ORDER BY created_at ASC, information_seed_id ASC
-			FOR UPDATE SKIP LOCKED
-			LIMIT $4
-		)
-		UPDATE InformationSeed AS seed
-		SET status = 'processing',
-			engine = $5,
-			last_processed_at = $6,
-			attempts = COALESCE(seed.attempts, 0) + 1
-		FROM selected
-		WHERE seed.information_seed_id = selected.information_seed_id
-		RETURNING seed.information_seed_id, seed.created_at, seed.last_updated_at, seed.category_id,
-			seed.usr_id, seed.information_seed, seed.status, seed.priority, seed.engine,
-			seed.last_processed_at, seed.last_error, seed.last_error_at, seed.disabled,
-			seed.attempts, seed.config`, processingBefore, retryBefore, priority, limit, engine, claimedAt)
+		SELECT information_seed_id, created_at, last_updated_at, category_id, usr_id,
+			information_seed, status, priority, engine, last_processed_at, last_error,
+			last_error_at, disabled, attempts, config
+		FROM update_informationseed($1, $2, $3, $4, $5)
+		ORDER BY created_at ASC, information_seed_id ASC`, limit, priority, engine,
+		postgresIntervalDuration(processingTimeout), postgresIntervalDuration(retryAfter))
 	if err != nil {
 		return nil, err
 	}
-
 	seeds, err := scanInformationSeedRows(rows)
 	if err != nil {
 		return nil, err
 	}
-
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	committed = true
 	return seeds, nil
+}
+
+func postgresIntervalDuration(duration time.Duration) string {
+	return fmt.Sprintf("%f seconds", duration.Seconds())
 }
 
 func claimInformationSeedsMySQL(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {

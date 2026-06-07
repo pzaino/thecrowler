@@ -1480,7 +1480,7 @@ func main() {
 			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout, MaxOutputSizeBytes: config.InformationSeed.PluginLimits.MaxOutputSizeBytes})
 		}
 	}
-	stopInformationSeeds := infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID())
+	stopInformationSeeds := infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID(), config.Crawler.SourcePriority)
 	defer stopInformationSeeds()
 
 	// Start the checkSources function in a goroutine

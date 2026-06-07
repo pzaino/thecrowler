@@ -89,10 +89,11 @@ worker changes final status to `error`, it must set both `last_error` and
   lifecycle-blocking error. It should include enough context to distinguish
   provider failure, plugin rejection/timeout, validation error, or persistence
   failure, but should avoid unbounded logs or secrets.
-- `priority` is a caller-defined scheduling hint. The current claim contract is
-  FIFO by `created_at` and `information_seed_id`; priority is retained for APIs,
-  operator filtering, and future scheduler policies. Workers that implement
-  priority-aware polling must preserve the same idempotency and retry rules.
+- `priority` is a caller-defined scheduling hint. Claims remain FIFO by
+  `created_at` and `information_seed_id` within the selected priority set. The
+  root `crowler-engine` forwards `crawler.source_priority` to its Information
+  Seed scheduler, so a priority-specialized replica claims only matching seeds;
+  an empty priority continues to claim every eligible seed.
 
 ## End-to-end discovery contract
 
@@ -789,8 +790,11 @@ notification, so they are discovered by the normal polling claim path:
 
 1. A worker periodically calls the claim operation with a batch limit, engine
    identifier, `processingTimeout`, and retry delay.
-2. The claim operation atomically changes eligible rows to `processing`, stamps
-   `engine`, stamps `last_processed_at`, and increments `attempts`.
+2. On PostgreSQL, the worker calls `update_informationseed`, which selects rows
+   with `FOR UPDATE SKIP LOCKED` and changes them to `processing` in one database
+   statement. The claim stamps `engine` and `last_processed_at` and increments
+   `attempts` before returning the rows. MySQL and SQLite preserve the same
+   lifecycle contract with their dialect-specific transactional claim paths.
 3. The worker processes claimed seeds and writes final `completed` or `error`
    state.
 

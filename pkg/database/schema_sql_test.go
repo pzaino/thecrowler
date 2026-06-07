@@ -61,6 +61,39 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 	}
 }
 
+func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T) {
+	t.Parallel()
+
+	files := []string{"postgresql-setup.pgsql", "postgresql-migration-v1.10.pgsql"}
+	fragments := []string{
+		"CREATE OR REPLACE FUNCTION update_informationseed(",
+		"FOR UPDATE SKIP LOCKED",
+		"UPDATE InformationSeed AS claimed_seed",
+		"SET status = 'processing'",
+		"engine = p_engineID",
+		"last_processed_at = NOW()",
+		"attempts = COALESCE(claimed_seed.attempts, 0) + 1",
+		"RETURNING claimed_seed.information_seed_id",
+	}
+
+	for _, file := range files {
+		file := file
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			content, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("read %s: %v", file, err)
+			}
+			upperContent := strings.ToUpper(string(content))
+			for _, fragment := range fragments {
+				if !strings.Contains(upperContent, strings.ToUpper(fragment)) {
+					t.Fatalf("%s missing atomic Information Seed claim fragment %q", file, fragment)
+				}
+			}
+		})
+	}
+}
+
 func TestTimeSeriesSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T) {
 	t.Parallel()
 

@@ -46,6 +46,34 @@ func TestSchedulerPollingFallbackProcessesSeedWithoutNotification(t *testing.T) 
 	assertSchedulerSeedStatus(t, handler, id, "completed", 3*time.Second)
 }
 
+func TestSchedulerClaimsOnlyConfiguredPriority(t *testing.T) {
+	handler := openSchedulerSQLiteDB(t)
+	defer (*handler).Close()
+
+	config := schedulerTestConfig(60)
+	runner := NewRunner(handler, config)
+	stop := StartScheduler(context.Background(), handler, config, runner, "priority-engine", "high")
+	defer stop()
+
+	lowID, err := cdb.CreateInformationSeedAndNotify(context.Background(), handler, &cdb.InformationSeed{InformationSeed: "low priority seed", Priority: "low"})
+	if err != nil {
+		t.Fatalf("create low-priority seed: %v", err)
+	}
+	highID, err := cdb.CreateInformationSeedAndNotify(context.Background(), handler, &cdb.InformationSeed{InformationSeed: "high priority seed", Priority: "high"})
+	if err != nil {
+		t.Fatalf("create high-priority seed: %v", err)
+	}
+
+	assertSchedulerSeedStatus(t, handler, highID, "completed", 2*time.Second)
+	lowSeed, err := cdb.GetInformationSeedByID(handler, lowID)
+	if err != nil {
+		t.Fatalf("get low-priority seed: %v", err)
+	}
+	if lowSeed.Status != "new" {
+		t.Fatalf("expected low-priority seed to remain unclaimed, got status %q", lowSeed.Status)
+	}
+}
+
 func TestSchedulerCreatedSeedEmitsConfiguredAgentIdentity(t *testing.T) {
 	handler := openSchedulerSQLiteDB(t)
 	defer (*handler).Close()

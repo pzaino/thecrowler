@@ -12,6 +12,12 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+func TestPostgresIntervalDuration(t *testing.T) {
+	if got := postgresIntervalDuration(90 * time.Second); got != "90.000000 seconds" {
+		t.Fatalf("unexpected PostgreSQL interval: %q", got)
+	}
+}
+
 func TestInformationSeedCRUDAndLinksSQLite(t *testing.T) {
 	db := openSQLiteMemoryDB(t)
 	defer db.Close()

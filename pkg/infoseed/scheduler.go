@@ -17,21 +17,27 @@ import (
 
 // Scheduler polls and processes information seeds.
 type Scheduler struct {
-	DB     *cdb.Handler
-	Runner *Runner
-	Config cfg.InformationSeedConfig
-	Engine string
+	DB       *cdb.Handler
+	Runner   *Runner
+	Config   cfg.InformationSeedConfig
+	Engine   string
+	Priority string
 }
 
-// StartScheduler starts an information-seed polling loop when enabled. The
+// StartScheduler starts an information-seed polling loop when enabled. An optional
+// priority restricts claims for engines specialized by source priority. The
 // returned cancel function stops future polling and in-flight workers observe the
 // cancellation through their context.
-func StartScheduler(parent context.Context, db *cdb.Handler, config cfg.InformationSeedConfig, runner *Runner, engine string) context.CancelFunc {
+func StartScheduler(parent context.Context, db *cdb.Handler, config cfg.InformationSeedConfig, runner *Runner, engine string, priorities ...string) context.CancelFunc {
 	ctx, cancel := context.WithCancel(parent)
 	if !config.Enabled {
 		return cancel
 	}
-	scheduler := Scheduler{DB: db, Runner: runner, Config: config, Engine: strings.TrimSpace(engine)}
+	priority := ""
+	if len(priorities) > 0 {
+		priority = strings.TrimSpace(priorities[0])
+	}
+	scheduler := Scheduler{DB: db, Runner: runner, Config: config, Engine: strings.TrimSpace(engine), Priority: priority}
 	if scheduler.Engine == "" {
 		scheduler.Engine = "infoseed"
 	}
@@ -130,7 +136,7 @@ func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, re
 		cmn.DebugMsg(cmn.DbgLvlError, "information seed scheduler is not configured")
 		return
 	}
-	seeds, err := cdb.ClaimInformationSeeds(s.DB, limit, "", s.Engine, processingTimeout, retryAfter)
+	seeds, err := cdb.ClaimInformationSeeds(s.DB, limit, s.Priority, s.Engine, processingTimeout, retryAfter)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "claiming information seeds: %v", redactInformationSeedError(err.Error()))
 		return
