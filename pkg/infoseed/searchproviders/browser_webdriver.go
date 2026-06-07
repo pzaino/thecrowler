@@ -125,7 +125,7 @@ type BrowserResultScraper interface {
 
 func (p *BrowserSearchProvider) searchWebDriver(ctx context.Context, query string, options Options, endpoint *url.URL) (results []Result, err error) {
 	if p.Sessions == nil || p.Actions == nil || p.Scraper == nil || p.Rules == nil {
-		return nil, safeProviderError(p.Name(), errors.New("webdriver dependencies are not configured"))
+		return nil, safeProviderError(p.Name(), errors.New("webdriver provider configuration requires browser sessions, actions, scraping, and read-only rule resolution dependencies"))
 	}
 
 	browser := boundedWebDriverOptions(options)

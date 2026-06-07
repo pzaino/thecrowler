@@ -274,12 +274,15 @@ func (e providerQueryError) ProviderFailures() []providerFailure {
 	return append([]providerFailure(nil), e.Failures...)
 }
 
-// NewRunner constructs a runner with providers from configuration.
-func NewRunner(db *cdb.Handler, config cfg.InformationSeedConfig) *Runner {
+// NewRunner constructs a runner with providers from configuration. The optional
+// options argument preserves the compatibility constructor used by tests and
+// HTTP-only deployments while allowing application browser dependencies to be
+// injected explicitly.
+func NewRunner(db *cdb.Handler, config cfg.InformationSeedConfig, options ...RunnerOptions) *Runner {
 	return &Runner{
 		DB:            db,
 		Config:        config,
-		Providers:     BuildProviders(config),
+		Providers:     BuildProviders(config, providerDependencies(options...)),
 		Now:           time.Now,
 		AgentIdentity: DefaultInformationSeedAgentIdentity(),
 	}
@@ -327,8 +330,9 @@ func normalizeInformationSeedAgentIdentity(identity AgentIdentity) AgentIdentity
 	return identity
 }
 
-// BuildProviders creates configured provider implementations.
-func BuildProviders(config cfg.InformationSeedConfig) map[string]searchproviders.Provider {
+// BuildProviders creates configured provider implementations. Browser
+// dependencies are optional so HTTP-only deployments remain VDI-independent.
+func BuildProviders(config cfg.InformationSeedConfig, dependencies ...BrowserDependencies) map[string]searchproviders.Provider {
 	allowed := informationSeedAllowedProviders(config.ProviderAllowList)
 	providers := make(map[string]searchproviders.Provider, len(config.Providers))
 	for name, providerCfg := range config.Providers {
@@ -342,9 +346,25 @@ func BuildProviders(config cfg.InformationSeedConfig) map[string]searchproviders
 		if _, ok := allowed[key]; !ok {
 			continue
 		}
-		providers[key] = searchproviders.NewProvider(key, providerCfg.Provider)
+		provider := searchproviders.NewProvider(key, providerCfg.Provider)
+		if browserProvider, ok := provider.(*searchproviders.BrowserSearchProvider); ok && strings.EqualFold(strings.TrimSpace(providerCfg.Transport), searchproviders.BrowserTransportWebDriver) {
+			if len(dependencies) > 0 {
+				browserProvider.Sessions = dependencies[0].Sessions
+				browserProvider.Actions = dependencies[0].Actions
+				browserProvider.Scraper = dependencies[0].Scraper
+				browserProvider.Rules = dependencies[0].Rules
+			}
+		}
+		providers[key] = provider
 	}
 	return providers
+}
+
+func providerDependencies(options ...RunnerOptions) BrowserDependencies {
+	if len(options) == 0 {
+		return BrowserDependencies{}
+	}
+	return options[0].Browser
 }
 
 func informationSeedAllowedProviders(allowList []string) map[string]struct{} {

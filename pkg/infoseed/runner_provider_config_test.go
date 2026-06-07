@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -177,5 +178,96 @@ func TestInformationSeedEventPayloadRedactsErrorSummaries(t *testing.T) {
 	metrics := payload["provider_metrics"].(map[string]map[string]int)
 	if metrics["bad"]["errors"] != 1 {
 		t.Fatalf("expected provider error metric, got %#v", metrics)
+	}
+}
+
+type stubBrowserSessions struct{}
+
+func (stubBrowserSessions) Acquire(context.Context, searchproviders.BrowserSessionRequest) (searchproviders.BrowserSession, searchproviders.BrowserSessionLease, error) {
+	return nil, nil, nil
+}
+
+type stubBrowserActions struct{}
+
+func (stubBrowserActions) Execute(context.Context, searchproviders.BrowserSession, searchproviders.BrowserActionRequest) error {
+	return nil
+}
+
+type stubBrowserScraper struct{}
+
+func (stubBrowserScraper) Scrape(context.Context, searchproviders.BrowserSession, []searchproviders.BrowserScrapingRule) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+type stubBrowserRules struct{}
+
+func (stubBrowserRules) ResolveActionRules(context.Context, []string) ([]searchproviders.BrowserActionRule, error) {
+	return nil, nil
+}
+
+func (stubBrowserRules) ResolveScrapingRules(context.Context, []string) ([]searchproviders.BrowserScrapingRule, error) {
+	return nil, nil
+}
+
+func TestBuildProvidersInjectsWebDriverDependencies(t *testing.T) {
+	dependencies := BrowserDependencies{
+		Sessions: stubBrowserSessions{},
+		Actions:  stubBrowserActions{},
+		Scraper:  stubBrowserScraper{},
+		Rules:    stubBrowserRules{},
+	}
+	providers := BuildProviders(cfg.InformationSeedConfig{
+		ProviderAllowList: []string{"browser"},
+		Providers: map[string]cfg.InformationSeedProviderConfig{
+			"browser": {Provider: "browser_search", Transport: searchproviders.BrowserTransportWebDriver},
+		},
+	}, dependencies)
+
+	provider, ok := providers["browser"].(*searchproviders.BrowserSearchProvider)
+	if !ok {
+		t.Fatalf("provider type = %T, want *searchproviders.BrowserSearchProvider", providers["browser"])
+	}
+	if provider.Sessions == nil || provider.Actions == nil || provider.Scraper == nil || provider.Rules == nil {
+		t.Fatal("expected all WebDriver dependencies to be injected")
+	}
+}
+
+func TestHTTPOnlyRunnerNeedsNoBrowserDependencies(t *testing.T) {
+	runner := NewRunner(nil, cfg.InformationSeedConfig{
+		ProviderAllowList: []string{"http"},
+		Providers: map[string]cfg.InformationSeedProviderConfig{
+			"http": {Provider: "http_json", Transport: searchproviders.BrowserTransportHTTP},
+		},
+	})
+	if runner.Providers["http"] == nil {
+		t.Fatal("expected HTTP provider to be constructed without browser dependencies")
+	}
+}
+
+func TestWebDriverProviderWithoutDependenciesReturnsConfigurationError(t *testing.T) {
+	providers := BuildProviders(cfg.InformationSeedConfig{
+		ProviderAllowList: []string{"browser"},
+		Providers: map[string]cfg.InformationSeedProviderConfig{
+			"browser": {
+				Provider:  "browser_search",
+				Transport: searchproviders.BrowserTransportWebDriver,
+				Host:      "https://search.example",
+				Timeout:   1,
+			},
+		},
+	})
+	_, err := providers["browser"].Search(context.Background(), "seed", searchproviders.Options{
+		Host:      "https://search.example",
+		Transport: searchproviders.BrowserTransportWebDriver,
+		Timeout:   time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected missing WebDriver dependencies to return an error")
+	}
+	message := err.Error()
+	for _, expected := range []string{"provider browser", "configuration", "browser sessions", "read-only rule resolution"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("error %q does not contain %q", message, expected)
+		}
 	}
 }

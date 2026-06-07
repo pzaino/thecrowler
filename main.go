@@ -1474,7 +1474,8 @@ func main() {
 	// InformationSeed creation notifications, keeps polling as recovery, and
 	// reclaims stale processing seeds through ClaimInformationSeeds.
 	infoseed.SetMetricsEnabled(config.Prometheus.Enabled)
-	seedRunner := infoseed.NewRunner(&db, config.InformationSeed)
+	seedBrowserDependencies := infoseed.NewBrowserDependencies(&vdiInstances, &config, &GRulesEngine)
+	seedRunner := infoseed.NewRunner(&db, config.InformationSeed, infoseed.RunnerOptions{Browser: seedBrowserDependencies})
 	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
 		for _, seedPlugin := range seedPlugins {
 			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout, MaxOutputSizeBytes: config.InformationSeed.PluginLimits.MaxOutputSizeBytes})

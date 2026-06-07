@@ -70,14 +70,14 @@ func (s Scheduler) Run(ctx context.Context, wakeups <-chan struct{}) {
 	ticker := time.NewTicker(queryTimer)
 	defer ticker.Stop()
 	for {
-		drainWakeups(wakeups)
-		s.runOnce(ctx, limit, processingTimeout, retryAfter)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		case <-wakeups:
 		}
+		drainWakeups(wakeups)
+		s.runOnce(ctx, limit, processingTimeout, retryAfter)
 	}
 }
 
