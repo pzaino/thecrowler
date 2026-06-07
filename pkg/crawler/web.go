@@ -158,47 +158,6 @@ func ResetSiteSession(ctx *ProcessContext) error {
 	return nil
 }
 
-func cleanUpBrowser(wd vdi.WebDriver) error {
-	if wd == nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot clean up browser.")
-		return errors.New("WebDriver is nil")
-	}
-
-	// Check if the current page is `data:`, if so skip this routine and return
-	currentURL, err := wd.CurrentURL()
-	if err == nil && strings.HasPrefix(currentURL, "data:") {
-		err = wd.DeleteAllCookies()
-		return err
-	}
-
-	// Clear everything before resetting the VDI session
-	script := `
-	window.localStorage.clear();
-	window.sessionStorage.clear();
-	if (window.indexedDB) {
-		indexedDB.databases().then(dbs => {
-			dbs.forEach(db => indexedDB.deleteDatabase(db.name));
-		});
-	}
-	if ('caches' in window) {
-		caches.keys().then(keys => {
-			keys.forEach(key => caches.delete(key));
-		});
-	}
-	`
-	_, err = wd.ExecuteScript(script, nil)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to clear storage: %v", err)
-		return err
-	}
-
-	err = wd.DeleteAllCookies()
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "failed to delete cookies: %v", err)
-	}
-	return err
-}
-
 // TakeScreenshot takes a screenshot of the current page and saves it to the filesystem
 func (ctx *ProcessContext) TakeScreenshot(wd vdi.WebDriver, url string, indexID uint64) {
 	// Take screenshot if enabled
@@ -718,79 +677,6 @@ func httpDetectContentType(b []byte) string {
 	return http.DetectContentType(b)
 }
 
-func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
-	if wd == nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot setup browser.")
-		return
-	}
-
-	if ctx.VDIReturned {
-		return
-	}
-
-	var err error
-	// Change the User Agent (if needed)
-	/*
-		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-			err = changeUserAgent(&(ctx.wd), ctx)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
-			}
-		}
-	*/
-
-	// Get about blank
-	err = wd.Get("about:blank")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to load blank page: %v", err)
-	}
-
-	// Set GPU properties
-	if ctx.config.Crawler.SetVDIGPUPatch {
-		err = vdi.GPUPatch(wd)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to set GPU: %v", err)
-		}
-	}
-
-	// Reinforce Browser Settings
-	err = vdi.ReinforceBrowserSettings(wd)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "reinforcing VDI Session settings: %v", err)
-	}
-
-	// Block URLs if any (URLs firewall)
-	err = blockCDPURLs(wd, ctx)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
-	}
-
-	if ctx.config.Crawler.ForceSFSSameOrigin {
-		// We need to ensure that sec-fetch-site is set to same-origin before we get our URL
-		srcConfig := ctx.srcCfg["crawling_config"]
-		srcConfigMap, ok := srcConfig.(map[string]interface{})
-		if !ok {
-			cmn.DebugMsg(cmn.DbgLvlError, "srcConfig is not a map[string]interface{}")
-		} else {
-			homeURLInf := srcConfigMap["site"]
-			homeURL, ok := homeURLInf.(string)
-			if !ok {
-				cmn.DebugMsg(cmn.DbgLvlError, "homeURLInf is not a string: %v", homeURLInf)
-			} else {
-				_ = wd.Get(homeURL)
-			}
-		}
-	}
-
-	// Add XHR Hook
-	if ctx.config.Crawler.CollectXHR {
-		err = enableCDPNetworkLogging(ctx.wd, getCDPDelay(ctx.config))
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "adding XHR Hook: %v", err)
-		}
-	}
-}
-
 func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 	if wd == nil || *wd == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot set referrer header.")
@@ -1196,40 +1082,6 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	_ = pageURL
 
 	return pageInfo, currentURL, htmlContent, nil
-}
-
-func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		val, err := wd.ExecuteScript("return document.readyState", nil)
-		if err == nil {
-			state := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", val)))
-			if state == "complete" {
-				return nil
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return fmt.Errorf("document.readyState never reached 'complete' within timeout")
-}
-
-func getWithTimeout(wd *vdi.WebDriver, url string, timeout time.Duration) error {
-	if wd == nil {
-		return errors.New("[critical] WebDriver is nil")
-	}
-
-	done := make(chan error, 1)
-
-	go func() {
-		done <- (*wd).Get(url)
-	}()
-
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(timeout):
-		return fmt.Errorf("[critical] wd.Get timeout after %s for URL %s", timeout, url)
-	}
 }
 
 // getURLContent is responsible for retrieving the HTML content of a page
