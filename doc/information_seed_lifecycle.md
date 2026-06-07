@@ -156,21 +156,73 @@ validation of trust boundaries, authentication, retention, and data-sharing
 policy.
 
 The `browser_search` HTML adapter is disabled unless it is explicitly configured
-and allow-listed. Use it only for local fixtures or after reviewing the target
-site's robots.txt, terms of service, consent flow, anti-abuse policy, and
-rate-limit expectations. Scraping public search result pages can create legal,
-contractual, privacy, and service-reliability risk; prefer official APIs when a
-provider offers them, identify your crawler with an appropriate User-Agent where
-allowed, do not bypass consent or access controls, do not send credentials to
-HTML search pages, and keep deterministic fixtures in tests instead of hitting
-live search engines. Always configure explicit provider limits such as
-`rate_limit`, `max_requests`, `max_pages`, `page_size`, and `timeout`; use
-conservative values such as `rate_limit: 30s`, `max_requests: 1`, and
-`max_pages: 1` for public HTML search pages until the site owner or applicable
-policy permits more. Its CSS selectors are site-specific, credentials are
-stripped rather than sent, and strict page/request/timeout/debug-output caps
-apply. All fields are optional, but this example shows the complete production
-contract for the current runner:
+and allow-listed. Its default `http` transport fetches and parses HTML without
+executing JavaScript: it can add a query parameter, extract configured CSS
+selectors, detect (but not click through) a consent page, and follow a selected
+next-page link. The explicit `webdriver` transport leases one shared VDI,
+performs the configured initial/consent/query action phases, scrapes rendered
+results, and repeats pagination actions up to the page and operation caps. Both
+transports produce candidate records for the normal built-in filtering and
+persistence phases; neither transport crawls the candidate destinations during
+discovery.
+
+WebDriver discovery shares the application VDI pool with subsequent Source
+crawling. `max_concurrent_seeds` bounds seed jobs, not leases, and every active
+provider/query can wait for one VDI matching `vdi_allow_list`. Size or partition
+VDI capacity so discovery cannot starve normal crawling, and remember that lease
+wait is inside the provider timeout. After discovery, accepted URLs become
+Sources (or links to existing Sources); their later crawler runs independently
+apply source configuration, robots policy, crawl limits, access controls, and
+VDI scheduling.
+
+Action-rule references are resolved from a read-only rules-engine snapshot in
+this order: `initial_actions`, `consent_actions`, `query_actions`, then, after
+each scrape, `pagination_actions`. `scraping_rules` are required for WebDriver.
+Initial navigation, every non-empty action phase, every scrape, pagination, and
+each HBS fallback consume the shared browser operation budget. When
+`hbs_enabled` requests the HBS/Rbee action path and that phase fails,
+`selenium_fallback` permits one Selenium retry of the whole phase. The built-in
+Information Seed action adapter does not configure a provider-specific Rbee URL,
+so HBS should remain disabled unless an HBS-capable action dependency is
+injected; with the built-in adapter, selecting HBS requires Selenium fallback to
+continue after the missing/unavailable Rbee path. Fallback is not a bypass
+mechanism.
+
+Timeouts are nested: `processing_timeout` bounds the seed run, provider `timeout`
+bounds one provider call (including VDI wait), `navigation_timeout` bounds each
+navigation, and `page_readiness_timeout` bounds session readiness. Normalization
+and runtime caps can only reduce configured values. HTTP `browser_search` has
+hard runtime caps of 10 seconds, 3 requests, 2 pages, and 20 results per page.
+WebDriver has hard runtime caps of 2 pages, 64 operations, and 40 returned
+candidates, in addition to lower global/provider/browser caps.
+
+Run diagnostics retain only bounded operation/outcome/reason counts and
+durations for lease waits, navigation, actions, scraping, pages, raw records,
+accepted candidates, URL rejections, HBS fallbacks, cleanup failures, and budget
+exhaustion. They exclude URLs, headers, page HTML, screenshots, credentials, and
+error text. This makes diagnostics safer to expose through the diagnostics API,
+but operators must still protect that endpoint and event storage with suitable
+authentication, authorization, network policy, retention, and audit controls.
+
+Use either transport only for controlled fixtures or after reviewing the target
+site's provider terms, robots directives, consent flow, anti-abuse policy,
+rate-limit expectations, privacy requirements, access controls, and applicable
+law. The operator remains responsible for those obligations during candidate
+discovery and subsequent crawling. Prefer official APIs, identify the crawler
+where permitted, do not bypass consent or technical controls, and do not send
+credentials to HTML search pages. Automated tests must be credential-free and
+must not target live public search engines.
+
+The disabled companion configuration and ruleset use only validated field names
+and the reserved `.test` namespace. They show consent, literal fixture-query
+submission, result extraction, and pagination:
+
+- [`examples/information-seed-browser-search-fixture.yaml`](../examples/information-seed-browser-search-fixture.yaml)
+- [`examples/information-seed-browser-search-fixture-ruleset.yaml`](../examples/information-seed-browser-search-fixture-ruleset.yaml)
+
+The following seed JSON selects already-configured providers; it does not define
+the transport or browser rules. All fields are optional, but this example shows
+the complete production contract for the current runner:
 
 ```json
 {

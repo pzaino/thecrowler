@@ -1,0 +1,64 @@
+---
+ruleset_name: "Information Seed browser_search fixture"
+format_version: "1.0"
+author: "TheCROWler Team"
+description: >-
+  Disabled, credential-free rules for a locally controlled browser_search
+  WebDriver fixture. Never repoint this fixture at a live public search engine.
+rule_groups:
+  - group_name: "Information Seed browser fixture flow"
+    # Disabled by default. Enable only with the companion fixture configuration
+    # in an isolated environment that controls browser-search-fixture.test.
+    is_enabled: false
+    action_rules:
+      - rule_name: "browser fixture accept consent"
+        action_type: "click"
+        selectors:
+          - selector_type: "css"
+            selector: "#accept-consent"
+
+      - rule_name: "browser fixture enter query"
+        action_type: "input_text"
+        value: "fixture browser search"
+        selectors:
+          - selector_type: "css"
+            selector: "#query"
+
+      - rule_name: "browser fixture submit query"
+        action_type: "click"
+        selectors:
+          - selector_type: "css"
+            selector: "#submit-query"
+
+      - rule_name: "browser fixture next page"
+        action_type: "click"
+        selectors:
+          - selector_type: "css"
+            selector: "#next-page"
+
+    scraping_rules:
+      - rule_name: "browser fixture extract results"
+        elements:
+          - key: "url"
+            critical: true
+            selectors:
+              - selector_type: "css"
+                selector: ".result-url"
+                extract:
+                  type: "attribute"
+                  pattern: "href"
+                extract_all_occurrences: true
+          - key: "title"
+            selectors:
+              - selector_type: "css"
+                selector: ".result-title"
+                extract:
+                  type: "text"
+                extract_all_occurrences: true
+          - key: "snippet"
+            selectors:
+              - selector_type: "css"
+                selector: ".result-snippet"
+                extract:
+                  type: "text"
+                extract_all_occurrences: true
