@@ -574,28 +574,54 @@ type PluginConfig struct {
 /////////////////////////////////////////////////
 //// ------- Information Seed Config ------- ////
 
+// InformationSeedBrowserConfig contains the bounded, non-privileged settings
+// used by an information seed provider that explicitly opts in to WebDriver.
+type InformationSeedBrowserConfig struct {
+	VDIAllowList             []string `json:"vdi_allow_list" yaml:"vdi_allow_list"`                                             // VDI names the provider may lease
+	NavigationTimeout        int      `json:"navigation_timeout" yaml:"navigation_timeout"`                                     // Navigation timeout (in seconds)
+	PageReadinessTimeout     int      `json:"page_readiness_timeout" yaml:"page_readiness_timeout"`                             // DOM readiness timeout (in seconds)
+	HBSEnabled               bool     `json:"hbs_enabled" yaml:"hbs_enabled"`                                                   // Whether human-behavior simulation is enabled
+	SeleniumFallback         bool     `json:"selenium_fallback" yaml:"selenium_fallback"`                                       // Whether Selenium actions may be used when HBS fails
+	InitialActions           []string `json:"initial_actions" yaml:"initial_actions"`                                           // Action-rule references run after initial navigation
+	ConsentActions           []string `json:"consent_actions" yaml:"consent_actions"`                                           // Action-rule references used for consent handling
+	QueryActions             []string `json:"query_actions" yaml:"query_actions"`                                               // Action-rule references used to submit a query
+	PaginationActions        []string `json:"pagination_actions" yaml:"pagination_actions"`                                     // Action-rule references used to paginate results
+	ScrapingRules            []string `json:"scraping_rules" yaml:"scraping_rules"`                                             // Scraping-rule references used to extract candidates
+	AllowedNavigationHosts   []string `json:"allowed_navigation_hosts" yaml:"allowed_navigation_hosts"`                         // Exact hosts or leading-wildcard host patterns allowed during navigation
+	MaxPages                 int      `json:"max_pages" yaml:"max_pages"`                                                       // Maximum browser result pages per seed
+	MaxRequests              int      `json:"max_requests" yaml:"max_requests"`                                                 // Maximum browser requests/actions consuming the request budget
+	MaxCandidates            int      `json:"max_candidates" yaml:"max_candidates"`                                             // Maximum candidates returned by browser extraction
+	ScreenshotOnError        bool     `json:"screenshot_on_error" yaml:"screenshot_on_error"`                                   // Whether a diagnostic screenshot may be captured on failure
+	BrowserType              int      `json:"browser_type,omitempty" yaml:"browser_type,omitempty"`                             // Reserved privileged override; seed providers may not set it
+	SetGPUPatch              bool     `json:"set_gpu_patch,omitempty" yaml:"set_gpu_patch,omitempty"`                           // Reserved privileged override; seed providers may not set it
+	SetVDIGPUPatch           bool     `json:"set_vdi_gpu_patch,omitempty" yaml:"set_vdi_gpu_patch,omitempty"`                   // Reserved privileged override; seed providers may not set it
+	ReinforceBrowserSettings bool     `json:"reinforce_browser_settings,omitempty" yaml:"reinforce_browser_settings,omitempty"` // Reserved privileged override; seed providers may not set it
+}
+
 // InformationSeedProviderConfig represents credentials and runtime settings for
 // an information seed discovery provider.
 type InformationSeedProviderConfig struct {
-	Provider    string            `json:"provider" yaml:"provider"`           // Provider identifier (for example, "google", "bing", "plugin")
-	Host        string            `json:"host" yaml:"host"`                   // Provider host or base URL
-	Endpoint    string            `json:"endpoint" yaml:"endpoint"`           // Provider endpoint path
-	APIKeyLabel string            `json:"api_key_label" yaml:"api_key_label"` // Header or query parameter name for API keys
-	APIKey      string            `json:"api_key" yaml:"api_key"`             // API key credential
-	APIID       string            `json:"api_id" yaml:"api_id"`               // API identifier credential
-	APISecret   string            `json:"api_secret" yaml:"api_secret"`       // API secret credential
-	APIToken    string            `json:"api_token" yaml:"api_token"`         // API token credential
-	Token       string            `json:"token" yaml:"token"`                 // Generic token credential
-	Secret      string            `json:"secret" yaml:"secret"`               // Generic secret credential
-	Username    string            `json:"username" yaml:"username"`           // Username credential
-	Password    string            `json:"password" yaml:"password"`           // Password credential
-	Timeout     int               `json:"timeout" yaml:"timeout"`             // Provider request timeout (in seconds)
-	RateLimit   string            `json:"rate_limit" yaml:"rate_limit"`       // Provider request rate limit expression
-	MaxRequests int               `json:"max_requests" yaml:"max_requests"`   // Maximum provider requests per seed
-	Parameters  map[string]string `json:"parameters" yaml:"parameters"`       // Additional query parameters sent to the provider
-	Headers     map[string]string `json:"headers" yaml:"headers"`             // Additional HTTP headers sent to the provider
-	PageSize    int               `json:"page_size" yaml:"page_size"`         // Maximum results requested per provider page
-	MaxPages    int               `json:"max_pages" yaml:"max_pages"`         // Maximum provider pages requested per seed
+	Provider    string                       `json:"provider" yaml:"provider"`           // Provider identifier (for example, "google", "bing", "plugin")
+	Transport   string                       `json:"transport" yaml:"transport"`         // Provider transport; WebDriver must be explicitly selected
+	Browser     InformationSeedBrowserConfig `json:"browser" yaml:"browser"`             // Bounded browser settings used only by the WebDriver transport
+	Host        string                       `json:"host" yaml:"host"`                   // Provider host or base URL
+	Endpoint    string                       `json:"endpoint" yaml:"endpoint"`           // Provider endpoint path
+	APIKeyLabel string                       `json:"api_key_label" yaml:"api_key_label"` // Header or query parameter name for API keys
+	APIKey      string                       `json:"api_key" yaml:"api_key"`             // API key credential
+	APIID       string                       `json:"api_id" yaml:"api_id"`               // API identifier credential
+	APISecret   string                       `json:"api_secret" yaml:"api_secret"`       // API secret credential
+	APIToken    string                       `json:"api_token" yaml:"api_token"`         // API token credential
+	Token       string                       `json:"token" yaml:"token"`                 // Generic token credential
+	Secret      string                       `json:"secret" yaml:"secret"`               // Generic secret credential
+	Username    string                       `json:"username" yaml:"username"`           // Username credential
+	Password    string                       `json:"password" yaml:"password"`           // Password credential
+	Timeout     int                          `json:"timeout" yaml:"timeout"`             // Provider request timeout (in seconds)
+	RateLimit   string                       `json:"rate_limit" yaml:"rate_limit"`       // Provider request rate limit expression
+	MaxRequests int                          `json:"max_requests" yaml:"max_requests"`   // Maximum provider requests per seed
+	Parameters  map[string]string            `json:"parameters" yaml:"parameters"`       // Additional query parameters sent to the provider
+	Headers     map[string]string            `json:"headers" yaml:"headers"`             // Additional HTTP headers sent to the provider
+	PageSize    int                          `json:"page_size" yaml:"page_size"`         // Maximum results requested per provider page
+	MaxPages    int                          `json:"max_pages" yaml:"max_pages"`         // Maximum provider pages requested per seed
 }
 
 // InformationSeedPluginLimitsConfig represents bounded plugin execution limits

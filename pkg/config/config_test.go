@@ -1992,12 +1992,29 @@ func TestInformationSeedProviderMapCopyIsolation(t *testing.T) {
 		"example": {
 			Parameters: map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"},
 			Headers:    map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"},
+			Browser: InformationSeedBrowserConfig{
+				VDIAllowList:           []string{"primary"},
+				InitialActions:         []string{"init"},
+				ConsentActions:         []string{"consent"},
+				QueryActions:           []string{"query"},
+				PaginationActions:      []string{"next"},
+				ScrapingRules:          []string{"extract"},
+				AllowedNavigationHosts: []string{"example.com"},
+			},
 		},
 	}
 
 	clone := DeepCopyConfig(original)
 	clone.InformationSeed.Providers["example"].Parameters["api_key"] = "changed"
 	clone.InformationSeed.Providers["example"].Headers["Authorization"] = "changed"
+	cloneProvider := clone.InformationSeed.Providers["example"]
+	cloneProvider.Browser.VDIAllowList[0] = "changed"
+	cloneProvider.Browser.InitialActions[0] = "changed"
+	cloneProvider.Browser.ConsentActions[0] = "changed"
+	cloneProvider.Browser.QueryActions[0] = "changed"
+	cloneProvider.Browser.PaginationActions[0] = "changed"
+	cloneProvider.Browser.ScrapingRules[0] = "changed"
+	cloneProvider.Browser.AllowedNavigationHosts[0] = "changed"
 
 	if got := original.InformationSeed.Providers["example"].Parameters["api_key"]; got != "${INFORMATION_SEED_API_KEY}" {
 		t.Fatalf("parameters map was aliased, got %q", got)
@@ -2005,7 +2022,15 @@ func TestInformationSeedProviderMapCopyIsolation(t *testing.T) {
 	if got := original.InformationSeed.Providers["example"].Headers["Authorization"]; got != "Bearer ${INFORMATION_SEED_TOKEN}" {
 		t.Fatalf("headers map was aliased, got %q", got)
 	}
+	originalBrowser := original.InformationSeed.Providers["example"].Browser
+	if originalBrowser.VDIAllowList[0] != "primary" || originalBrowser.InitialActions[0] != "init" || originalBrowser.ConsentActions[0] != "consent" || originalBrowser.QueryActions[0] != "query" || originalBrowser.PaginationActions[0] != "next" || originalBrowser.ScrapingRules[0] != "extract" || originalBrowser.AllowedNavigationHosts[0] != "example.com" {
+		t.Fatalf("browser config slices were aliased: %#v", originalBrowser)
+	}
 
+	// Remove the browser-only fixture before checking legacy HTTP validation isolation.
+	provider := original.InformationSeed.Providers["example"]
+	provider.Browser = InformationSeedBrowserConfig{}
+	original.InformationSeed.Providers["example"] = provider
 	sourceParams := original.InformationSeed.Providers["example"].Parameters
 	sourceHeaders := original.InformationSeed.Providers["example"].Headers
 	original.validateInformationSeed()
@@ -2142,5 +2167,219 @@ func TestTimeSeriesPrivacyAndCardinalityValidation(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("expected error to contain %q: %v", want, err)
 		}
+	}
+}
+
+func TestInformationSeedWebDriverProviderConfigYAMLAndJSON(t *testing.T) {
+	yamlConfig := []byte(`
+information_seed:
+  enabled: true
+  max_queries_per_seed: 3
+  max_candidates_per_seed: 20
+  provider_allow_list: [browser]
+  providers:
+    browser:
+      provider: browser_search
+      transport: webdriver
+      host: https://search.example.invalid
+      page_size: 30
+      max_pages: 99
+      max_requests: 99
+      browser:
+        vdi_allow_list: [Primary, primary, Secondary]
+        navigation_timeout: 999
+        page_readiness_timeout: 999
+        hbs_enabled: true
+        selenium_fallback: true
+        initial_actions: [init, " init "]
+        consent_actions: [consent]
+        query_actions: [query]
+        pagination_actions: [next]
+        scraping_rules: [extract, " extract "]
+        allowed_navigation_hosts: [Example.COM, "*.Example.COM"]
+        max_pages: 99
+        max_requests: 99
+        max_candidates: 99
+        screenshot_on_error: true
+`)
+	jsonConfig := []byte(`{
+  "information_seed": {
+    "enabled": true,
+    "max_queries_per_seed": 3,
+    "max_candidates_per_seed": 20,
+    "provider_allow_list": ["browser"],
+    "providers": {
+      "browser": {
+        "provider": "browser_search",
+        "transport": "webdriver",
+        "host": "https://search.example.invalid",
+        "page_size": 30,
+        "max_pages": 99,
+        "max_requests": 99,
+        "browser": {
+          "vdi_allow_list": ["Primary", "primary", "Secondary"],
+          "navigation_timeout": 999,
+          "page_readiness_timeout": 999,
+          "hbs_enabled": true,
+          "selenium_fallback": true,
+          "initial_actions": ["init", " init "],
+          "consent_actions": ["consent"],
+          "query_actions": ["query"],
+          "pagination_actions": ["next"],
+          "scraping_rules": ["extract", " extract "],
+          "allowed_navigation_hosts": ["Example.COM", "*.Example.COM"],
+          "max_pages": 99,
+          "max_requests": 99,
+          "max_candidates": 99,
+          "screenshot_on_error": true
+        }
+      }
+    }
+  }
+}`)
+
+	yamlParsed, err := ParseConfig(yamlConfig)
+	if err != nil {
+		t.Fatalf("parse yaml webdriver config: %v", err)
+	}
+	jsonParsed, err := ParseConfig(jsonConfig)
+	if err != nil {
+		t.Fatalf("parse json webdriver config: %v", err)
+	}
+
+	yamlProvider := yamlParsed.InformationSeed.Providers["browser"]
+	jsonProvider := jsonParsed.InformationSeed.Providers["browser"]
+	if !reflect.DeepEqual(yamlProvider, jsonProvider) {
+		t.Fatalf("YAML and JSON provider configs differ:\nYAML: %#v\nJSON: %#v", yamlProvider, jsonProvider)
+	}
+	if yamlProvider.Transport != "webdriver" {
+		t.Fatalf("expected webdriver transport, got %q", yamlProvider.Transport)
+	}
+	if yamlProvider.MaxRequests != 3 || yamlProvider.MaxPages != 3 {
+		t.Fatalf("expected provider caps clamped to global query cap, got requests=%d pages=%d", yamlProvider.MaxRequests, yamlProvider.MaxPages)
+	}
+	browser := yamlProvider.Browser
+	if browser.NavigationTimeout != informationSeedMaxBrowserNavigationTimeout || browser.PageReadinessTimeout != informationSeedMaxBrowserReadinessTimeout {
+		t.Fatalf("expected timeout caps, got %#v", browser)
+	}
+	if browser.MaxRequests != 3 || browser.MaxPages != 3 || browser.MaxCandidates != 20 {
+		t.Fatalf("expected browser caps clamped to global caps, got %#v", browser)
+	}
+	if !reflect.DeepEqual(browser.VDIAllowList, []string{"primary", "secondary"}) {
+		t.Fatalf("unexpected VDI allow list normalization: %#v", browser.VDIAllowList)
+	}
+	if !reflect.DeepEqual(browser.ScrapingRules, []string{"extract"}) || !reflect.DeepEqual(browser.AllowedNavigationHosts, []string{"example.com", "*.example.com"}) {
+		t.Fatalf("unexpected rule/host normalization: rules=%#v hosts=%#v", browser.ScrapingRules, browser.AllowedNavigationHosts)
+	}
+}
+
+func TestInformationSeedProviderTransportValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "unknown transport",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: browser
+`,
+			wantErr: "unknown transport",
+		},
+		{
+			name: "webdriver requires scraping rules",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+`,
+			wantErr: "requires at least one scraping rule",
+		},
+		{
+			name: "unsafe navigation host",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+      browser:
+        scraping_rules: [extract]
+        allowed_navigation_hosts: ["*"]
+`,
+			wantErr: "unsafe allowed navigation host pattern",
+		},
+		{
+			name: "privileged override",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+      parameters:
+        set_vdi_gpu_patch: true
+      browser:
+        scraping_rules: [extract]
+`,
+			wantErr: "privileged browser override",
+		},
+		{
+			name: "typed privileged override",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+      browser:
+        scraping_rules: [extract]
+        browser_type: 1
+`,
+			wantErr: "privileged browser overrides",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseConfig([]byte(tc.config))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestInformationSeedHTTPTransportDefaultAndWebDriverOptIn(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`
+information_seed:
+  provider_allow_list: [legacy]
+  providers:
+    legacy:
+      provider: http_json
+`))
+	if err != nil {
+		t.Fatalf("parse legacy provider: %v", err)
+	}
+	provider := cfg.InformationSeed.Providers["legacy"]
+	if provider.Transport != "http" {
+		t.Fatalf("expected default http transport, got %q", provider.Transport)
+	}
+
+	_, err = ParseConfig([]byte(`
+information_seed:
+  provider_allow_list: [implicit]
+  providers:
+    implicit:
+      browser:
+        scraping_rules: [extract]
+`))
+	if err == nil || !strings.Contains(err.Error(), "requires explicit transport") {
+		t.Fatalf("expected browser config without webdriver opt-in to fail, got %v", err)
 	}
 }

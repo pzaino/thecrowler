@@ -193,15 +193,36 @@ func redactProviderConfigs(configs map[string]cfg.InformationSeedProviderConfig)
 		providerCfg := configs[name]
 		safe[name] = map[string]interface{}{
 			"provider":     providerCfg.Provider,
+			"transport":    providerCfg.Transport,
 			"host":         redactInformationSeedURL(providerCfg.Host),
 			"max_requests": providerCfg.MaxRequests,
 			"max_pages":    providerCfg.MaxPages,
 			"page_size":    providerCfg.PageSize,
 			"parameters":   redactStringMap(providerCfg.Parameters),
 			"headers":      redactStringMap(providerCfg.Headers),
+			"browser":      redactInformationSeedBrowserConfig(providerCfg.Browser),
 		}
 	}
 	return safe
+}
+
+func redactInformationSeedBrowserConfig(browser cfg.InformationSeedBrowserConfig) map[string]interface{} {
+	return map[string]interface{}{
+		"navigation_timeout":       browser.NavigationTimeout,
+		"page_readiness_timeout":   browser.PageReadinessTimeout,
+		"hbs_enabled":              browser.HBSEnabled,
+		"selenium_fallback":        browser.SeleniumFallback,
+		"initial_actions":          append([]string(nil), browser.InitialActions...),
+		"consent_actions":          append([]string(nil), browser.ConsentActions...),
+		"query_actions":            append([]string(nil), browser.QueryActions...),
+		"pagination_actions":       append([]string(nil), browser.PaginationActions...),
+		"scraping_rules":           append([]string(nil), browser.ScrapingRules...),
+		"allowed_navigation_hosts": append([]string(nil), browser.AllowedNavigationHosts...),
+		"max_pages":                browser.MaxPages,
+		"max_requests":             browser.MaxRequests,
+		"max_candidates":           browser.MaxCandidates,
+		"screenshot_on_error":      browser.ScreenshotOnError,
+	}
 }
 
 func redactStringMap(values map[string]string) map[string]string {
@@ -291,7 +312,7 @@ func isInformationSeedSensitiveKey(key string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(key))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	switch normalized {
-	case "api-key", "apikey", "key", "token", "api-token", "subscription-key", "ocp-apim-subscription-key", "x-subscription-token", "authorization", "password", "secret", "api-secret", "client-secret", "access-token", "refresh-token", "credential", "credentials":
+	case "api-key", "apikey", "key", "token", "api-token", "subscription-key", "ocp-apim-subscription-key", "x-subscription-token", "authorization", "proxy-authorization", "cookie", "set-cookie", "password", "secret", "api-secret", "client-secret", "access-token", "refresh-token", "credential", "credentials":
 		return true
 	default:
 		return strings.Contains(normalized, "secret") || strings.Contains(normalized, "token") || strings.Contains(normalized, "password") || strings.Contains(normalized, "credential") || strings.Contains(normalized, "api-key") || strings.Contains(normalized, "authorization")

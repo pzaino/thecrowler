@@ -192,3 +192,51 @@ func TestInformationSeedEventPayloadUsesExplicitAgentIdentity(t *testing.T) {
 		t.Fatalf("expected explicit agent identity in payload, got %#v", agent)
 	}
 }
+
+func TestInformationSeedEventPayloadRedactsWebDriverProviderDiagnostics(t *testing.T) {
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, nil, informationSeedEventPayloadOptions{
+		ProviderConfigs: map[string]cfg.InformationSeedProviderConfig{
+			"browser": {
+				Provider:    "browser_search",
+				Transport:   "webdriver",
+				Host:        "https://search.example.invalid/?api_token=SHOULD_NOT_LEAK",
+				Parameters:  map[string]string{"token": "SHOULD_NOT_LEAK", "q": "safe"},
+				Headers:     map[string]string{"Authorization": "Bearer SHOULD_NOT_LEAK", "Cookie": "session=SHOULD_NOT_LEAK", "X-Trace": "trace"},
+				MaxRequests: 2,
+				MaxPages:    1,
+				PageSize:    10,
+				Browser: cfg.InformationSeedBrowserConfig{
+					NavigationTimeout:      45,
+					PageReadinessTimeout:   5,
+					HBSEnabled:             true,
+					SeleniumFallback:       true,
+					InitialActions:         []string{"init"},
+					ConsentActions:         []string{"consent"},
+					QueryActions:           []string{"query"},
+					PaginationActions:      []string{"next"},
+					ScrapingRules:          []string{"extract"},
+					AllowedNavigationHosts: []string{"example.invalid"},
+					MaxPages:               1,
+					MaxRequests:            2,
+					MaxCandidates:          10,
+					ScreenshotOnError:      true,
+				},
+			},
+		},
+	})
+	encoded := mustJSON(t, payload)
+	assertNoSecret(t, encoded)
+	providerConfigs := payload["provider_configs"].(map[string]interface{})
+	browserProvider := providerConfigs["browser"].(map[string]interface{})
+	if browserProvider["transport"] != "webdriver" {
+		t.Fatalf("expected webdriver transport diagnostic, got %#v", browserProvider["transport"])
+	}
+	browser := browserProvider["browser"].(map[string]interface{})
+	if browser["screenshot_on_error"] != true || browser["max_candidates"] != 10 {
+		t.Fatalf("unexpected browser diagnostics: %#v", browser)
+	}
+	headers := browserProvider["headers"].(map[string]string)
+	if headers["Authorization"] != informationSeedRedactedValue || headers["Cookie"] != informationSeedRedactedValue || headers["X-Trace"] != "trace" {
+		t.Fatalf("unexpected redacted headers: %#v", headers)
+	}
+}
