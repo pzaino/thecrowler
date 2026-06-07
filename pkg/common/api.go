@@ -558,6 +558,11 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 		spec.Servers = []OpenAPIServer{
 			{URL: strings.TrimRight(opt.ServerURL, "/")},
 		}
+	} else {
+		// default to localhost with no port, since we don't necessarily know the port and it can be proxied
+		spec.Servers = []OpenAPIServer{
+			{URL: "http://localhost"},
+		}
 	}
 
 	for _, r := range routes {
