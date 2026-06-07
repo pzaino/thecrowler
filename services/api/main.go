@@ -704,19 +704,19 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/information_seed/disable", []string{"POST"}, "Disable information seed endpoint (console)", tags_none, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/rerun", informationSeedRerunHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/rerun", []string{"POST"}, "Rerun information seed endpoint (console)", tags_none, true, false, 200, nil, nil, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/rerun", []string{"POST"}, "Rerun information seed endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/disable", informationSeedPathDisableHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/disable", []string{"POST"}, "Disable information seed by path ID endpoint (console)", tags_none, true, false, 200, nil, nil, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/disable", []string{"POST"}, "Disable information seed by path ID endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/enable", informationSeedEnableHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/enable", []string{"POST"}, "Enable information seed endpoint (console)", tags_none, true, false, 200, informationSeedEnableRequest{}, nil, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/enable", []string{"POST"}, "Enable information seed endpoint (console)", tags_none, true, false, 200, informationSeedEnableRequest{}, informationSeedIDGetRequest{}, InformationSeedResponse{})
 
 		http.Handle("GET /v1/information_seed/{id}/events", informationSeedEventsHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedEventListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedEventListResponse{})
 
 		http.Handle("GET /v1/information_seed/{id}/diagnostics", withPublicMiddlewares(http.HandlerFunc(informationSeedDiagnosticsHandler)))
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedDiagnosticsResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedDiagnosticsResponse{})
 
 		// Backward-compatible alias. /v1/information_seed is the canonical namespace.
 		http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)

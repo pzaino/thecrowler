@@ -190,6 +190,10 @@ type informationSeedIDRequest struct {
 	InformationSeedID uint64 `json:"information_seed_id"`
 }
 
+type informationSeedIDGetRequest struct {
+	InformationSeedID uint64 `json:"id"`
+}
+
 // informationSeedEnableRequest represents an enable request that can also queue the seed.
 type informationSeedEnableRequest struct {
 	InformationSeedID uint64 `json:"information_seed_id,omitempty"`
