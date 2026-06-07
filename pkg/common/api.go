@@ -667,9 +667,14 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					// plugin JSON schema
 					if v.Type == "object" && v.Properties != nil {
 						for name, prop := range v.Properties {
+							// Check if the property is in the path
+							typeIn := "query"
+							if strings.Contains(r.Path, "{"+name+"}") {
+								typeIn = "path"
+							}
 							op.Parameters = append(op.Parameters, OpenAPIParameter{
 								Name:   name,
-								In:     "query",
+								In:     typeIn,
 								Schema: prop,
 							})
 						}
@@ -678,9 +683,14 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				case OpenAPISchema:
 					if v.Type == "object" && v.Properties != nil {
 						for name, prop := range v.Properties {
+							// Check if the property is in the path
+							typeIn := "query"
+							if strings.Contains(r.Path, "{"+name+"}") {
+								typeIn = "path"
+							}
 							op.Parameters = append(op.Parameters, OpenAPIParameter{
 								Name:   name,
-								In:     "query",
+								In:     typeIn,
 								Schema: prop,
 							})
 						}
