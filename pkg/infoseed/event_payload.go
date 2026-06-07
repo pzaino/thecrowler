@@ -48,6 +48,8 @@ func buildInformationSeedEventPayload(seed cdb.InformationSeed, stats *seedDisco
 		"plugin_metadata":            []map[string]interface{}{},
 		"provider_failures":          []map[string]interface{}{},
 		"plugin_failures":            []map[string]interface{}{},
+		"browser_diagnostics":        map[string]map[string]map[string]int{},
+		"browser_duration_ms":        map[string]map[string]int64{},
 	}
 	if stats == nil {
 		return payload
@@ -83,6 +85,8 @@ func buildInformationSeedEventPayload(seed cdb.InformationSeed, stats *seedDisco
 	payload["plugin_metadata"] = pluginMetadata
 	payload["provider_failures"] = informationSeedProviderFailuresPayload(stats.ProviderFailures)
 	payload["plugin_failures"] = informationSeedPluginFailuresPayload(stats.PluginFailureDetails)
+	payload["browser_diagnostics"] = copyBrowserDiagnostics(stats.BrowserDiagnostics)
+	payload["browser_duration_ms"] = copyNestedInt64Map(stats.BrowserDurationsMS)
 	return payload
 }
 
@@ -351,4 +355,23 @@ func nonNegativeInt(value int) int {
 		return 0
 	}
 	return value
+}
+
+func copyBrowserDiagnostics(values map[string]map[string]map[string]int) map[string]map[string]map[string]int {
+	result := make(map[string]map[string]map[string]int, len(values))
+	for provider, operations := range values {
+		result[provider] = copyNestedIntMap(operations)
+	}
+	return result
+}
+
+func copyNestedInt64Map(values map[string]map[string]int64) map[string]map[string]int64 {
+	result := make(map[string]map[string]int64, len(values))
+	for key, entries := range values {
+		result[key] = make(map[string]int64, len(entries))
+		for entry, value := range entries {
+			result[key][entry] = value
+		}
+	}
+	return result
 }

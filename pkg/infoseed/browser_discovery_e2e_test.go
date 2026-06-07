@@ -128,7 +128,7 @@ func browserProviderConfig(fixtureBaseURL string) cfg.InformationSeedProviderCon
 		Timeout:     3,
 		PageSize:    10,
 		MaxPages:    2,
-		MaxRequests: 2,
+		MaxRequests: 10,
 		Browser: cfg.InformationSeedBrowserConfig{
 			NavigationTimeout:      2,
 			PageReadinessTimeout:   2,
@@ -138,7 +138,7 @@ func browserProviderConfig(fixtureBaseURL string) cfg.InformationSeedProviderCon
 			ScrapingRules:          []string{"fixture rendered results"},
 			AllowedNavigationHosts: []string{host.Hostname()},
 			MaxPages:               2,
-			MaxRequests:            2,
+			MaxRequests:            10,
 			MaxCandidates:          3,
 		},
 	}

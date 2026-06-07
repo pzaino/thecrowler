@@ -73,6 +73,9 @@ type Options struct {
 	MaxPages    int
 	Transport   string
 	Browser     BrowserOptions
+	// Diagnostics receives bounded count-and-duration observations only.
+	Diagnostics     *BrowserDiagnostics
+	OperationBudget *BrowserOperationBudget
 }
 
 // Result is one candidate returned by a provider.

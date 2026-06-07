@@ -3,6 +3,7 @@ package searchproviders
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ type fakeBrowserSession struct {
 	closed       int
 	navigateErr  error
 	currentErr   error
+	closeErr     error
 	waitNavigate bool
 }
 
@@ -47,7 +49,7 @@ func (s *fakeBrowserSession) Close(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed++
-	return nil
+	return s.closeErr
 }
 
 func (s *fakeBrowserSession) setCurrent(target string) {
@@ -57,15 +59,16 @@ func (s *fakeBrowserSession) setCurrent(target string) {
 }
 
 type fakeBrowserLease struct {
-	mu       sync.Mutex
-	released int
+	mu         sync.Mutex
+	released   int
+	releaseErr error
 }
 
 func (l *fakeBrowserLease) Release(context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.released++
-	return nil
+	return l.releaseErr
 }
 
 type fakeSessionProvider struct {
@@ -187,7 +190,7 @@ func webDriverOptions() Options {
 		Timeout:     time.Second,
 		PageSize:    10,
 		MaxPages:    2,
-		MaxRequests: 2,
+		MaxRequests: 10,
 		Browser: BrowserOptions{
 			InitialActions:         []string{"prepare"},
 			ConsentActions:         []string{"accept-consent"},
@@ -197,7 +200,7 @@ func webDriverOptions() Options {
 			AllowedNavigationHosts: []string{"search.invalid"},
 			DeniedHosts:            []string{"denied.invalid"},
 			MaxPages:               2,
-			MaxRequests:            2,
+			MaxRequests:            10,
 			MaxCandidates:          10,
 		},
 	}
@@ -216,7 +219,7 @@ func TestBrowserSearchProviderWebDriverMapsRenderedResultsAndRejectsUnsafeURLs(t
 	})
 	options := webDriverOptions()
 	options.Browser.MaxPages = 1
-	options.Browser.MaxRequests = 1
+	options.Browser.MaxRequests = 10
 
 	results, err := provider.Search(context.Background(), "rendered query", options)
 	if err != nil {
@@ -387,5 +390,102 @@ func assertWebDriverCleanup(t *testing.T, session *fakeBrowserSession, lease *fa
 	t.Helper()
 	if session.closed != 1 || lease.released != 1 {
 		t.Fatalf("cleanup counts: session close=%d lease release=%d", session.closed, lease.released)
+	}
+}
+
+func TestBrowserDiagnosticsBoundLabelsAndNeverStoreSensitivePayloads(t *testing.T) {
+	diagnostics := &BrowserDiagnostics{}
+	diagnostics.Observe(BrowserDiagnostic{
+		Operation: "navigation:https://user:password@example.test/?token=secret",
+		Outcome:   "Authorization: Bearer credential",
+		Reason:    "<html>secret</html>",
+		Count:     1,
+	})
+	counts, _ := diagnostics.Snapshot()
+	if got := counts[BrowserDiagnosticBudgetExhausted][BrowserOutcomeFailure+":"+BrowserReasonOperationFailure]; got != 1 {
+		t.Fatalf("unexpected bounded diagnostics: %#v", counts)
+	}
+	encoded := fmt.Sprintf("%v", counts)
+	for _, secret := range []string{"password", "credential", "<html>", "token=secret"} {
+		if strings.Contains(encoded, secret) {
+			t.Fatalf("diagnostics leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestBrowserSearchProviderWebDriverEnforcesSharedOperationBudget(t *testing.T) {
+	provider, session, lease, actions, scraper := newWebDriverFixture([]map[string]interface{}{{"url": "https://example.test/result"}})
+	options := webDriverOptions()
+	options.Browser.MaxRequests = 2
+	options.Diagnostics = &BrowserDiagnostics{}
+
+	_, err := provider.Search(context.Background(), "budget", options)
+	if err == nil || !strings.Contains(err.Error(), "operation budget exhausted") {
+		t.Fatalf("expected bounded operation error, got %v", err)
+	}
+	if len(session.navigations) != 1 || len(actions.requests) != 1 || scraper.calls != 0 {
+		t.Fatalf("budget was not shared: navigations=%d actions=%d scrapes=%d", len(session.navigations), len(actions.requests), scraper.calls)
+	}
+	if session.closed != 1 || lease.released != 1 {
+		t.Fatalf("cleanup counts: close=%d release=%d", session.closed, lease.released)
+	}
+	counts, _ := options.Diagnostics.Snapshot()
+	if counts[BrowserDiagnosticBudgetExhausted][BrowserOutcomeFailure+":"+BrowserReasonBudgetExhausted] != 1 {
+		t.Fatalf("missing budget diagnostic: %#v", counts)
+	}
+}
+
+func TestBrowserSearchProviderWebDriverRecordsBoundedDiscoveryDiagnostics(t *testing.T) {
+	provider, _, _, _, _ := newWebDriverFixture([]map[string]interface{}{
+		{"url": "https://example.test/result"},
+		{"url": "javascript:alert(1)"},
+		{"title": "missing"},
+	})
+	options := webDriverOptions()
+	options.Browser.MaxPages = 1
+	options.Diagnostics = &BrowserDiagnostics{}
+
+	results, err := provider.Search(context.Background(), "diagnostics", options)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("Search() results=%#v error=%v", results, err)
+	}
+	counts, _ := options.Diagnostics.Snapshot()
+	checks := map[string]int{
+		BrowserDiagnosticLeaseWait + "/" + BrowserOutcomeSuccess + ":" + BrowserReasonNone:           1,
+		BrowserDiagnosticNavigation + "/" + BrowserOutcomeSuccess + ":" + BrowserReasonNone:          1,
+		BrowserDiagnosticScraping + "/" + BrowserOutcomeSuccess + ":" + BrowserReasonNone:            1,
+		BrowserDiagnosticPages + "/" + BrowserOutcomeSuccess + ":" + BrowserReasonNone:               1,
+		BrowserDiagnosticRawRecords + "/" + BrowserOutcomeSuccess + ":" + BrowserReasonNone:          3,
+		BrowserDiagnosticAcceptedCandidates + "/" + BrowserOutcomeSuccess + ":" + BrowserReasonNone:  1,
+		BrowserDiagnosticURLRejections + "/" + BrowserOutcomeSkipped + ":" + BrowserReasonInvalidURL: 1,
+		BrowserDiagnosticURLRejections + "/" + BrowserOutcomeSkipped + ":" + BrowserReasonMissingURL: 1,
+	}
+	for key, want := range checks {
+		parts := strings.SplitN(key, "/", 2)
+		if got := counts[parts[0]][parts[1]]; got != want {
+			t.Errorf("diagnostic %s=%d, want %d; all=%#v", key, got, want, counts)
+		}
+	}
+}
+
+func TestBrowserSearchProviderWebDriverRecordsCleanupFailuresWithoutErrorDetails(t *testing.T) {
+	provider, session, lease, _, _ := newWebDriverFixture([]map[string]interface{}{{"url": "https://example.test/result"}})
+	session.closeErr = errors.New("close Authorization:Bearer_cleanup-secret")
+	lease.releaseErr = errors.New("release token=cleanup-secret")
+	options := webDriverOptions()
+	options.Browser.MaxPages = 1
+	options.Diagnostics = &BrowserDiagnostics{}
+
+	_, err := provider.Search(context.Background(), "cleanup", options)
+	if err == nil {
+		t.Fatal("expected cleanup failure")
+	}
+	if strings.Contains(err.Error(), "cleanup-secret") {
+		t.Fatalf("cleanup error leaked secret: %v", err)
+	}
+	counts, _ := options.Diagnostics.Snapshot()
+	if counts[BrowserDiagnosticCleanupFailures][BrowserOutcomeFailure+":"+BrowserReasonSessionClose] != 1 ||
+		counts[BrowserDiagnosticCleanupFailures][BrowserOutcomeFailure+":"+BrowserReasonLeaseRelease] != 1 {
+		t.Fatalf("missing bounded cleanup diagnostics: %#v", counts)
 	}
 }

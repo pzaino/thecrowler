@@ -240,3 +240,39 @@ func TestInformationSeedEventPayloadRedactsWebDriverProviderDiagnostics(t *testi
 		t.Fatalf("unexpected redacted headers: %#v", headers)
 	}
 }
+
+func TestInformationSeedBrowserDiagnosticsAreCountOnlyAndSecretSafe(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.BrowserDiagnostics["browser"] = map[string]map[string]int{
+		"navigation": {"success:none": 1},
+		"url_rejections": {
+			"skipped:denied_host": 2,
+		},
+	}
+	stats.BrowserDurationsMS["browser"] = map[string]int64{"lease_wait": 12, "navigation": 34}
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 8, InformationSeed: "seed"}, stats, informationSeedEventPayloadOptions{
+		ProviderConfigs: map[string]cfg.InformationSeedProviderConfig{
+			"browser": {
+				Provider:   "browser_search",
+				APIKey:     "configured-api-secret",
+				APIToken:   "configured-token-secret",
+				Token:      "configured-bearer-secret",
+				Headers:    map[string]string{"Authorization": "Bearer configured-header-secret", "X-API-Key": "configured-key-secret"},
+				Parameters: map[string]string{"password": "configured-password-secret"},
+			},
+		},
+	})
+	encoded := mustJSON(t, payload)
+	for _, forbidden := range []string{
+		"configured-api-secret", "configured-token-secret", "configured-bearer-secret",
+		"configured-header-secret", "configured-key-secret", "configured-password-secret",
+		"<html", "page_html", "screenshot_bytes", "data:image",
+	} {
+		if strings.Contains(strings.ToLower(encoded), strings.ToLower(forbidden)) {
+			t.Fatalf("event diagnostics leaked forbidden value %q: %s", forbidden, encoded)
+		}
+	}
+	if !strings.Contains(encoded, `"url_rejections":{"skipped:denied_host":2}`) {
+		t.Fatalf("event missing bounded browser diagnostics: %s", encoded)
+	}
+}

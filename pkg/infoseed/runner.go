@@ -130,10 +130,12 @@ type seedDiscoveryStats struct {
 	ProviderFailures     []providerFailure
 	PluginFailures       map[string]int
 	PluginFailureDetails []pluginFailure
+	BrowserDiagnostics   map[string]map[string]map[string]int
+	BrowserDurationsMS   map[string]map[string]int64
 }
 
 func newSeedDiscoveryStats() *seedDiscoveryStats {
-	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}, RejectionStages: map[string]map[string]int{}, PluginFailures: map[string]int{}}
+	return &seedDiscoveryStats{ProviderCounts: map[string]int{}, ProviderMetrics: map[string]map[string]int{}, RejectionCounts: map[string]int{}, RejectionStages: map[string]map[string]int{}, PluginFailures: map[string]int{}, BrowserDiagnostics: map[string]map[string]map[string]int{}, BrowserDurationsMS: map[string]map[string]int64{}}
 }
 
 func (stats *seedDiscoveryStats) addProviderMetric(provider, metric string, count int) {
@@ -149,6 +151,34 @@ func (stats *seedDiscoveryStats) addProviderMetric(provider, metric string, coun
 		stats.ProviderMetrics[provider] = map[string]int{}
 	}
 	stats.ProviderMetrics[provider][metric] += count
+}
+
+func (stats *seedDiscoveryStats) addBrowserDiagnostics(provider string, diagnostics *searchproviders.BrowserDiagnostics) {
+	if stats == nil || diagnostics == nil {
+		return
+	}
+	counts, durations := diagnostics.Snapshot()
+	if len(counts) > 0 {
+		if stats.BrowserDiagnostics[provider] == nil {
+			stats.BrowserDiagnostics[provider] = make(map[string]map[string]int)
+		}
+		for operation, observations := range counts {
+			if stats.BrowserDiagnostics[provider][operation] == nil {
+				stats.BrowserDiagnostics[provider][operation] = make(map[string]int)
+			}
+			for key, count := range observations {
+				stats.BrowserDiagnostics[provider][operation][key] += count
+			}
+		}
+	}
+	if len(durations) > 0 {
+		if stats.BrowserDurationsMS[provider] == nil {
+			stats.BrowserDurationsMS[provider] = make(map[string]int64)
+		}
+		for operation, duration := range durations {
+			stats.BrowserDurationsMS[provider][operation] += duration.Milliseconds()
+		}
+	}
 }
 
 func (stats *seedDiscoveryStats) addRejected(reason string, count int) {
@@ -622,9 +652,15 @@ func (r *Runner) queryProvidersWithStats(ctx context.Context, seed cdb.Informati
 	var mu sync.Mutex
 	var candidates []Candidate
 	var failures []providerFailure
+	providerBudgets := make(map[string]*searchproviders.BrowserOperationBudget, len(providerNames))
 	for _, providerName := range providerNames {
 		provider := r.Providers[providerName]
 		providerCfg := r.Config.Providers[providerName]
+		operationLimit := providerCfg.Browser.MaxRequests
+		if operationLimit < 1 {
+			operationLimit = providerCfg.MaxRequests
+		}
+		providerBudgets[providerName] = searchproviders.NewBrowserOperationBudget(operationLimit)
 		providerQueries := cappedProviderQueries(queries, r.Config.MaxQueriesPerSeed, providerCfg)
 		perQueryMaxRequests := perQueryRequestLimit(providerCfg, len(providerQueries))
 		for _, query := range providerQueries {
@@ -637,11 +673,15 @@ func (r *Runner) queryProvidersWithStats(ctx context.Context, seed cdb.Informati
 				case <-ctx.Done():
 					return
 				}
-				results, err := provider.Search(ctx, query, providerOptionsWithMaxRequests(providerName, providerCfg, maxRequests))
+				providerOptions := providerOptionsWithMaxRequests(providerName, providerCfg, maxRequests)
+				providerOptions.Diagnostics = &searchproviders.BrowserDiagnostics{}
+				providerOptions.OperationBudget = providerBudgets[providerName]
+				results, err := provider.Search(ctx, query, providerOptions)
 				mu.Lock()
 				defer mu.Unlock()
 				if stats != nil {
 					stats.addProviderMetric(providerName, "requests", 1)
+					stats.addBrowserDiagnostics(providerName, providerOptions.Diagnostics)
 				}
 				if err != nil {
 					summary := fmt.Sprintf("%s: %s", providerName, redactInformationSeedError(err.Error()))
@@ -835,7 +875,7 @@ func providerOptionsWithMaxRequests(name string, providerCfg cfg.InformationSeed
 			ConsentActions: append([]string(nil), browser.ConsentActions...), QueryActions: append([]string(nil), browser.QueryActions...),
 			PaginationActions: append([]string(nil), browser.PaginationActions...), ScrapingRules: append([]string(nil), browser.ScrapingRules...),
 			AllowedNavigationHosts: append([]string(nil), browser.AllowedNavigationHosts...), MaxPages: browser.MaxPages,
-			MaxRequests: min(browser.MaxRequests, maxRequests), MaxCandidates: browser.MaxCandidates,
+			MaxRequests: browser.MaxRequests, MaxCandidates: browser.MaxCandidates, ScreenshotOnError: browser.ScreenshotOnError,
 		},
 	}
 }

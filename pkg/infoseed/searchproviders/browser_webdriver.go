@@ -22,10 +22,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
+	browserWebDriverMaxOperations = 64
+
 	BrowserTransportHTTP      = "http"
 	BrowserTransportWebDriver = "webdriver"
 
@@ -56,6 +59,7 @@ type BrowserOptions struct {
 	MaxPages               int
 	MaxRequests            int
 	MaxCandidates          int
+	ScreenshotOnError      bool
 }
 
 // BrowserSessionRequest is the immutable lease request supplied to an injected
@@ -123,6 +127,31 @@ type BrowserResultScraper interface {
 	Scrape(ctx context.Context, session BrowserSession, rules []BrowserScrapingRule) ([]map[string]interface{}, error)
 }
 
+// BrowserOperationBudget is shared by every query for one configured provider.
+type BrowserOperationBudget struct {
+	mu        sync.Mutex
+	remaining int
+}
+
+func NewBrowserOperationBudget(limit int) *BrowserOperationBudget {
+	return &BrowserOperationBudget{remaining: limit}
+}
+
+func (b *BrowserOperationBudget) consume(options Options) error {
+	if b == nil {
+		observeBrowserDiagnostic(options, BrowserDiagnosticBudgetExhausted, BrowserOutcomeFailure, BrowserReasonBudgetExhausted, 1, time.Time{})
+		return errors.New("webdriver operation budget exhausted")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.remaining < 1 {
+		observeBrowserDiagnostic(options, BrowserDiagnosticBudgetExhausted, BrowserOutcomeFailure, BrowserReasonBudgetExhausted, 1, time.Time{})
+		return errors.New("webdriver operation budget exhausted")
+	}
+	b.remaining--
+	return nil
+}
+
 func (p *BrowserSearchProvider) searchWebDriver(ctx context.Context, query string, options Options, endpoint *url.URL) (results []Result, err error) {
 	if p.Sessions == nil || p.Actions == nil || p.Scraper == nil || p.Rules == nil {
 		return nil, safeProviderError(p.Name(), errors.New("webdriver provider configuration requires browser sessions, actions, scraping, and read-only rule resolution dependencies"))
@@ -136,6 +165,7 @@ func (p *BrowserSearchProvider) searchWebDriver(ctx context.Context, query strin
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
 	}
+	leaseStarted := time.Now()
 	session, lease, err := p.Sessions.Acquire(ctx, BrowserSessionRequest{
 		ProviderName: p.Name(),
 		VDIAllowList: append([]string(nil), browser.VDIAllowList...),
@@ -143,8 +173,10 @@ func (p *BrowserSearchProvider) searchWebDriver(ctx context.Context, query strin
 		ReadyTimeout: browser.PageReadinessTimeout,
 	})
 	if err != nil {
+		observeBrowserDiagnostic(options, BrowserDiagnosticLeaseWait, BrowserOutcomeFailure, BrowserReasonOperationFailure, 1, leaseStarted)
 		return nil, safeProviderError(p.Name(), err)
 	}
+	observeBrowserDiagnostic(options, BrowserDiagnosticLeaseWait, BrowserOutcomeSuccess, BrowserReasonNone, 1, leaseStarted)
 	if session == nil || lease == nil {
 		if session != nil {
 			_ = session.Close(context.WithoutCancel(ctx))
@@ -158,23 +190,33 @@ func (p *BrowserSearchProvider) searchWebDriver(ctx context.Context, query strin
 		cleanupCtx := context.WithoutCancel(ctx)
 		closeErr := session.Close(cleanupCtx)
 		releaseErr := lease.Release(cleanupCtx)
+		if closeErr != nil {
+			observeBrowserDiagnostic(options, BrowserDiagnosticCleanupFailures, BrowserOutcomeFailure, BrowserReasonSessionClose, 1, time.Time{})
+		}
+		if releaseErr != nil {
+			observeBrowserDiagnostic(options, BrowserDiagnosticCleanupFailures, BrowserOutcomeFailure, BrowserReasonLeaseRelease, 1, time.Time{})
+		}
 		if err == nil && (closeErr != nil || releaseErr != nil) {
 			err = safeProviderError(p.Name(), errors.Join(closeErr, releaseErr))
 			results = nil
 		}
 	}()
 
+	budget := options.OperationBudget
+	if budget == nil {
+		budget = NewBrowserOperationBudget(browser.MaxRequests)
+	}
 	startURL := webDriverStartURL(endpoint, query, len(actions[BrowserActionQuery]) > 0, options.Parameters)
-	if err = p.navigateWebDriver(ctx, session, startURL, browser.NavigationTimeout); err != nil {
+	if err = p.navigateWebDriver(ctx, session, startURL, browser.NavigationTimeout, budget, options); err != nil {
 		return nil, safeProviderError(p.Name(), err)
 	}
-	if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionInitial, actions[BrowserActionInitial]); err != nil {
+	if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionInitial, actions[BrowserActionInitial], budget, options); err != nil {
 		return nil, safeProviderError(p.Name(), err)
 	}
-	if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionConsent, actions[BrowserActionConsent]); err != nil {
+	if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionConsent, actions[BrowserActionConsent], budget, options); err != nil {
 		return nil, safeProviderError(p.Name(), err)
 	}
-	if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionQuery, actions[BrowserActionQuery]); err != nil {
+	if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionQuery, actions[BrowserActionQuery], budget, options); err != nil {
 		return nil, safeProviderError(p.Name(), err)
 	}
 
@@ -182,21 +224,30 @@ func (p *BrowserSearchProvider) searchWebDriver(ctx context.Context, query strin
 	visited := make(map[string]struct{})
 	markCurrentNavigation(ctx, session, visited)
 	for page := 1; page <= browser.MaxPages; page++ {
+		if budgetErr := budget.consume(options); budgetErr != nil {
+			return nil, safeProviderError(p.Name(), budgetErr)
+		}
+		scrapeStarted := time.Now()
 		records, scrapeErr := p.Scraper.Scrape(ctx, session, scrapingRules)
 		if scrapeErr != nil {
+			observeBrowserDiagnostic(options, BrowserDiagnosticScraping, BrowserOutcomeFailure, BrowserReasonOperationFailure, 1, scrapeStarted)
 			return nil, safeProviderError(p.Name(), scrapeErr)
 		}
+		observeBrowserDiagnostic(options, BrowserDiagnosticScraping, BrowserOutcomeSuccess, BrowserReasonNone, 1, scrapeStarted)
+		observeBrowserDiagnostic(options, BrowserDiagnosticPages, BrowserOutcomeSuccess, BrowserReasonNone, 1, time.Time{})
+		observeBrowserDiagnostic(options, BrowserDiagnosticRawRecords, BrowserOutcomeSuccess, BrowserReasonNone, len(records), time.Time{})
 		currentURL, currentErr := session.CurrentURL(ctx)
 		if currentErr != nil {
 			return nil, safeProviderError(p.Name(), currentErr)
 		}
-		pageResults := mapWebDriverResults(records, currentURL, p.Name(), page, seen, visited, browser)
+		pageResults := mapWebDriverResults(records, currentURL, p.Name(), page, seen, visited, browser, options)
+		observeBrowserDiagnostic(options, BrowserDiagnosticAcceptedCandidates, BrowserOutcomeSuccess, BrowserReasonNone, len(pageResults), time.Time{})
 		results = append(results, pageResults...)
-		if len(results) >= browser.MaxCandidates || page == browser.MaxPages || page >= browser.MaxRequests || len(actions[BrowserActionPagination]) == 0 {
+		if len(results) >= browser.MaxCandidates || page == browser.MaxPages || len(actions[BrowserActionPagination]) == 0 {
 			break
 		}
 		before := currentURL
-		if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionPagination, actions[BrowserActionPagination]); err != nil {
+		if err = p.runWebDriverActions(ctx, session, query, browser, BrowserActionPagination, actions[BrowserActionPagination], budget, options); err != nil {
 			return nil, safeProviderError(p.Name(), err)
 		}
 		after, currentErr := session.CurrentURL(ctx)
@@ -245,10 +296,14 @@ func (p *BrowserSearchProvider) resolveWebDriverRules(ctx context.Context, brows
 	return actions, rules, nil
 }
 
-func (p *BrowserSearchProvider) runWebDriverActions(ctx context.Context, session BrowserSession, query string, browser BrowserOptions, phase string, rules []BrowserActionRule) error {
+func (p *BrowserSearchProvider) runWebDriverActions(ctx context.Context, session BrowserSession, query string, browser BrowserOptions, phase string, rules []BrowserActionRule, budget *BrowserOperationBudget, options Options) error {
 	if len(rules) == 0 {
 		return nil
 	}
+	if err := budget.consume(options); err != nil {
+		return err
+	}
+	started := time.Now()
 	mode := BrowserActionModeSelenium
 	if browser.HBSEnabled {
 		mode = BrowserActionModeHBS
@@ -256,17 +311,28 @@ func (p *BrowserSearchProvider) runWebDriverActions(ctx context.Context, session
 	request := BrowserActionRequest{Phase: phase, Mode: mode, Query: query, Rules: append([]BrowserActionRule(nil), rules...)}
 	if err := p.Actions.Execute(ctx, session, request); err != nil {
 		if mode != BrowserActionModeHBS || !browser.SeleniumFallback {
+			observeBrowserDiagnostic(options, BrowserDiagnosticActions, BrowserOutcomeFailure, BrowserReasonOperationFailure, 1, started)
 			return fmt.Errorf("execute %s actions: %w", phase, err)
+		}
+		observeBrowserDiagnostic(options, BrowserDiagnosticHBSFallbacks, BrowserOutcomeSuccess, BrowserReasonHBSFailure, 1, time.Time{})
+		if budgetErr := budget.consume(options); budgetErr != nil {
+			return budgetErr
 		}
 		request.Mode = BrowserActionModeSelenium
 		if fallbackErr := p.Actions.Execute(ctx, session, request); fallbackErr != nil {
+			observeBrowserDiagnostic(options, BrowserDiagnosticActions, BrowserOutcomeFailure, BrowserReasonOperationFailure, 1, started)
 			return fmt.Errorf("execute %s actions: %w", phase, errors.Join(err, fallbackErr))
 		}
 	}
+	observeBrowserDiagnostic(options, BrowserDiagnosticActions, BrowserOutcomeSuccess, BrowserReasonNone, 1, started)
 	return nil
 }
 
-func (p *BrowserSearchProvider) navigateWebDriver(ctx context.Context, session BrowserSession, target string, timeout time.Duration) error {
+func (p *BrowserSearchProvider) navigateWebDriver(ctx context.Context, session BrowserSession, target string, timeout time.Duration, budget *BrowserOperationBudget, options Options) error {
+	if err := budget.consume(options); err != nil {
+		return err
+	}
+	started := time.Now()
 	navigationCtx := ctx
 	cancel := func() {}
 	if timeout > 0 {
@@ -274,8 +340,10 @@ func (p *BrowserSearchProvider) navigateWebDriver(ctx context.Context, session B
 	}
 	defer cancel()
 	if err := session.Navigate(navigationCtx, target); err != nil {
+		observeBrowserDiagnostic(options, BrowserDiagnosticNavigation, BrowserOutcomeFailure, BrowserReasonOperationFailure, 1, started)
 		return fmt.Errorf("navigate webdriver session: %w", err)
 	}
+	observeBrowserDiagnostic(options, BrowserDiagnosticNavigation, BrowserOutcomeSuccess, BrowserReasonNone, 1, started)
 	return nil
 }
 
@@ -302,8 +370,8 @@ func boundedWebDriverOptions(options Options) BrowserOptions {
 	if browser.MaxRequests < 1 {
 		browser.MaxRequests = browserSearchDefaultMaxRequests
 	}
-	if browser.MaxRequests > browserSearchMaxRequests {
-		browser.MaxRequests = browserSearchMaxRequests
+	if browser.MaxRequests > browserWebDriverMaxOperations {
+		browser.MaxRequests = browserWebDriverMaxOperations
 	}
 	if browser.MaxPages > browser.MaxRequests {
 		browser.MaxPages = browser.MaxRequests
@@ -333,16 +401,22 @@ func webDriverStartURL(endpoint *url.URL, query string, hasQueryActions bool, pa
 	return pageURL.String()
 }
 
-func mapWebDriverResults(records []map[string]interface{}, currentURL, provider string, page int, seen, visited map[string]struct{}, browser BrowserOptions) []Result {
+func mapWebDriverResults(records []map[string]interface{}, currentURL, provider string, page int, seen, visited map[string]struct{}, browser BrowserOptions, options Options) []Result {
 	base, _ := url.Parse(currentURL)
 	results := make([]Result, 0, len(records))
 	for _, record := range records {
 		rawURL, ok := extractionString(record["url"])
 		if !ok {
+			observeBrowserDiagnostic(options, BrowserDiagnosticURLRejections, BrowserOutcomeSkipped, BrowserReasonMissingURL, 1, time.Time{})
 			continue
 		}
 		normalized, ok := normalizeExtractedURL(rawURL, base)
-		if !ok || rejectedExtractedURL(normalized, currentURL, seen, visited, browser) {
+		if !ok {
+			observeBrowserDiagnostic(options, BrowserDiagnosticURLRejections, BrowserOutcomeSkipped, BrowserReasonInvalidURL, 1, time.Time{})
+			continue
+		}
+		if reason := rejectedExtractedURL(normalized, currentURL, seen, visited, browser); reason != "" {
+			observeBrowserDiagnostic(options, BrowserDiagnosticURLRejections, BrowserOutcomeSkipped, reason, 1, time.Time{})
 			continue
 		}
 		seen[normalized] = struct{}{}
@@ -395,22 +469,28 @@ func normalizeExtractedURL(raw string, base *url.URL) (string, bool) {
 	return candidate.String(), true
 }
 
-func rejectedExtractedURL(candidate, current string, seen, visited map[string]struct{}, browser BrowserOptions) bool {
+func rejectedExtractedURL(candidate, current string, seen, visited map[string]struct{}, browser BrowserOptions) string {
 	if _, ok := seen[candidate]; ok {
-		return true
+		return BrowserReasonDuplicateURL
 	}
 	comparison := normalizedComparisonURL(candidate)
 	if comparison == normalizedComparisonURL(current) {
-		return true
+		return BrowserReasonCurrentPage
 	}
 	if _, ok := visited[comparison]; ok {
-		return true
+		return BrowserReasonVisitedPage
 	}
 	u, err := url.Parse(candidate)
-	if err != nil || hostMatchesAny(u.Hostname(), browser.DeniedHosts) {
-		return true
+	if err != nil {
+		return BrowserReasonInvalidURL
 	}
-	return isSearchNavigationURL(u)
+	if hostMatchesAny(u.Hostname(), browser.DeniedHosts) {
+		return BrowserReasonDeniedHost
+	}
+	if isSearchNavigationURL(u) {
+		return BrowserReasonSearchNavigation
+	}
+	return ""
 }
 
 func isSearchNavigationURL(candidate *url.URL) bool {

@@ -48,6 +48,15 @@ var (
 		Name: "crowler_information_seed_provider_requests_total",
 		Help: "Total information seed provider requests.",
 	}, []string{"provider"})
+	informationSeedBrowserOperations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_information_seed_browser_operations_total",
+		Help: "Bounded browser discovery operation outcomes.",
+	}, []string{"provider", "operation", "outcome", "reason"})
+	informationSeedBrowserOperationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "crowler_information_seed_browser_operation_duration_seconds",
+		Help:    "Browser discovery operation duration in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"provider", "operation"})
 	informationSeedRunDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "crowler_information_seed_run_duration_seconds",
 		Help:    "Information seed run duration in seconds.",
@@ -66,6 +75,8 @@ func init() {
 		informationSeedProviderFailures,
 		informationSeedPluginFailures,
 		informationSeedProviderRequests,
+		informationSeedBrowserOperations,
+		informationSeedBrowserOperationDuration,
 		informationSeedRunDuration,
 	)
 }
@@ -126,6 +137,27 @@ func recordInformationSeedRunMetrics(stats *seedDiscoveryStats, duration time.Du
 			informationSeedProviderFailures.WithLabelValues(provider).Add(float64(count))
 		}
 	}
+	for provider, operations := range stats.BrowserDiagnostics {
+		provider = safeInformationSeedMetricLabel(provider, "unknown")
+		for operation, observations := range operations {
+			operation = safeBrowserMetricLabel(operation, "unknown")
+			for outcomeReason, count := range observations {
+				if count <= 0 {
+					continue
+				}
+				outcome, reason := splitBrowserDiagnosticKey(outcomeReason)
+				informationSeedBrowserOperations.WithLabelValues(provider, operation, outcome, reason).Add(float64(count))
+			}
+		}
+	}
+	for provider, operations := range stats.BrowserDurationsMS {
+		provider = safeInformationSeedMetricLabel(provider, "unknown")
+		for operation, milliseconds := range operations {
+			if milliseconds >= 0 {
+				informationSeedBrowserOperationDuration.WithLabelValues(provider, safeBrowserMetricLabel(operation, "unknown")).Observe(float64(milliseconds) / 1000)
+			}
+		}
+	}
 	for plugin, count := range stats.PluginFailures {
 		if count > 0 {
 			informationSeedPluginFailures.WithLabelValues(safeInformationSeedMetricLabel(plugin, "unknown")).Add(float64(count))
@@ -143,6 +175,29 @@ func safeInformationSeedMetricLabel(value, fallback string) string {
 	}
 	if _, err := strconv.ParseFloat(value, 64); err == nil {
 		return value
+	}
+	return value
+}
+
+func splitBrowserDiagnosticKey(value string) (string, string) {
+	parts := strings.SplitN(value, ":", 2)
+	outcome := safeBrowserMetricLabel(parts[0], "failure")
+	reason := "operation_failure"
+	if len(parts) == 2 {
+		reason = safeBrowserMetricLabel(parts[1], reason)
+	}
+	return outcome, reason
+}
+
+func safeBrowserMetricLabel(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || len(value) > 64 {
+		return fallback
+	}
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return fallback
+		}
 	}
 	return value
 }
