@@ -2,6 +2,7 @@
 package vdi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,9 +151,26 @@ type Service = selenium.Service
 
 // Pool is a pool of VDI instances
 type Pool struct {
-	mu   sync.Mutex
-	slot []SeleniumInstance
-	busy map[int]bool // or status flags
+	mu     sync.Mutex
+	slot   []SeleniumInstance
+	busy   map[int]bool // or status flags
+	leases map[int]*Lease
+	wakeup chan struct{}
+}
+
+// Lease represents exclusive ownership of one VDI pool slot.
+//
+// Index and VDIName identify the acquired slot. Call Release when the VDI is no
+// longer needed; repeated calls are safe.
+type Lease struct {
+	Index   int
+	VDIName string
+
+	pool        *Pool
+	index       int
+	vdiName     string
+	releaseOnce sync.Once
+	releaseErr  error
 }
 
 // Init initializes the VDI pool
@@ -162,6 +180,8 @@ func (p *Pool) Init(size int) {
 
 	//p.slot = make([]SeleniumInstance, size)
 	p.busy = make(map[int]bool, size)
+	p.leases = make(map[int]*Lease, size)
+	p.wakeup = make(chan struct{})
 	for i := 0; i < size; i++ {
 		p.busy[i] = false
 	}
@@ -188,8 +208,10 @@ func (p *Pool) Add(instance SeleniumInstance) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.ensureStateLocked()
 	p.slot = append(p.slot, instance)
 	p.busy[len(p.slot)-1] = false
+	p.signalLocked()
 	return nil
 }
 
@@ -270,114 +292,204 @@ func (p *Pool) Size() int {
 	return len(p.slot)
 }
 
-// Acquire acquires a VDI instance from the pool based on the provided allowed list of VDI names (comma-separated string).
-// If the list is empty, it will acquire any available VDI instance. If no instances are available, it will wait until one is released
-func (p *Pool) Acquire(strList string) (int, SeleniumInstance, error) {
+// AcquireContext acquires a VDI instance from the pool based on the provided
+// comma-separated list of allowed VDI names. An empty list allows any valid
+// instance. If every matching instance is busy, AcquireContext waits until the
+// context is canceled or a matching instance is released.
+func (p *Pool) AcquireContext(ctx context.Context, allowedNames string) (*Lease, SeleniumInstance, error) {
 	if p == nil {
-		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
+		return nil, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, SeleniumInstance{}, err
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-VDI-Acquire] Trying to acquire VDi: %s", strList)
+	allowedNames = strings.TrimSpace(allowedNames)
+	allowed := splitAllowedNames(allowedNames)
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-VDI-Acquire] Trying to acquire VDI: %s", allowedNames)
 
-wait_for_available_vdis:
-	p.mu.Lock()
+	for {
+		p.mu.Lock()
+		p.ensureStateLocked()
 
-	available := checkAvailable(p)
-	if available < 0 {
-		p.mu.Unlock()
-		return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, pool is corrupted")
-	}
-	if available == 0 {
-		p.mu.Unlock()
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Acquire] No available VDI instances in the pool, waiting...")
-		time.Sleep(1 * time.Second)
-		goto wait_for_available_vdis
-	}
-	defer p.mu.Unlock()
-
-	strList = strings.TrimSpace(strList)
-
-	var strIndices []string
-	if strList != "" {
-		strIndices = strings.Split(strList, ",")
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] Acquiring VDI instance from pool with allowed list: '%s', total: %d", strList, len(strIndices))
-
-		poolList := ""
-		for i := 0; i < len(p.slot); i++ {
-			pName := p.slot[i].Config.Name
-			if pName != "" {
-				if poolList != "" {
-					poolList += ","
-				}
-				poolList += pName
-			}
-		}
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Acquire] VDIs local pool list: '%s'", poolList)
-	}
-
-	for i := 0; i < len(p.slot); i++ {
-		if (p.slot[i].Config.Host == "") || (p.slot[i].Config.Port == 0) {
-			cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
-			continue
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return nil, SeleniumInstance{}, err
 		}
 
-		if !p.busy[i] {
-			if strList != "" {
-				found := false
-				for _, strIdx := range strIndices {
-					pName := p.slot[i].Config.Name
-					if strings.EqualFold(strings.TrimSpace(strIdx), strings.TrimSpace(pName)) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					continue
-				}
+		matchingInstance := false
+		for i := range p.slot {
+			instance := p.slot[i]
+			if instance.Config.Host == "" || instance.Config.Port == 0 {
+				cmn.DebugMsg(cmn.DbgLvlError, "VDI instance %d is not initialized", i)
+				continue
+			}
+			if !nameAllowed(instance.Config.Name, allowed) {
+				continue
 			}
 
+			matchingInstance = true
+			if p.busy[i] {
+				continue
+			}
+
+			lease := &Lease{
+				Index:   i,
+				VDIName: instance.Config.Name,
+				pool:    p,
+				index:   i,
+				vdiName: instance.Config.Name,
+			}
 			p.busy[i] = true
-			vdiInstance := SeleniumInstance{
-				Service: p.slot[i].Service,
-				Config:  p.slot[i].Config,
-			}
-			return i, vdiInstance, nil
+			p.leases[i] = lease
+			p.mu.Unlock()
+			return lease, instance, nil
+		}
+
+		if !matchingInstance {
+			p.mu.Unlock()
+			return nil, SeleniumInstance{}, fmt.Errorf("acquire failed, no matching VDI available out of %d slots", len(p.slot))
+		}
+
+		wakeup := p.wakeup
+		p.mu.Unlock()
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Acquire] No matching VDI instances available in the pool, waiting...")
+
+		select {
+		case <-ctx.Done():
+			return nil, SeleniumInstance{}, ctx.Err()
+		case <-wakeup:
 		}
 	}
-
-	return -1, SeleniumInstance{}, fmt.Errorf("acquire failed, no free VDI available out of %d slots", len(p.slot))
 }
 
-// Release releases a VDI instance back to the pool
+// Acquire acquires a VDI instance using a background context. It is retained
+// for compatibility with callers that release instances by index and name.
+func (p *Pool) Acquire(allowedNames string) (int, SeleniumInstance, error) {
+	lease, instance, err := p.AcquireContext(context.Background(), allowedNames)
+	if err != nil {
+		return -1, SeleniumInstance{}, err
+	}
+	return lease.Index, instance, nil
+}
+
+// Release relinquishes this lease. It is safe to call Release more than once.
+// A stale or altered lease cannot release a slot owned by another acquisition.
+func (l *Lease) Release() error {
+	if l == nil || l.pool == nil {
+		return nil
+	}
+
+	l.releaseOnce.Do(func() {
+		l.releaseErr = l.release()
+	})
+	return l.releaseErr
+}
+
+func (l *Lease) release() error {
+	p := l.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ensureStateLocked()
+
+	if l.Index != l.index || !strings.EqualFold(strings.TrimSpace(l.VDIName), strings.TrimSpace(l.vdiName)) {
+		return fmt.Errorf("release failed, lease identity was modified")
+	}
+	if l.index < 0 || l.index >= len(p.slot) {
+		return fmt.Errorf("release failed, invalid VDI index: %d", l.index)
+	}
+	if !strings.EqualFold(strings.TrimSpace(l.vdiName), strings.TrimSpace(p.slot[l.index].Config.Name)) {
+		return fmt.Errorf("release failed, VDI name %q does not match slot %d", l.vdiName, l.index)
+	}
+
+	active, ok := p.leases[l.index]
+	if !ok {
+		return nil
+	}
+	if active != l {
+		return fmt.Errorf("release failed, VDI slot %d is owned by another lease", l.index)
+	}
+
+	p.releaseLocked(l.index)
+	return nil
+}
+
+// Release releases a VDI instance acquired through the compatibility Acquire
+// method. The supplied name may be the acquired name or the original allowed
+// name list, but Release never redirects the request to another pool index.
 func (p *Pool) Release(index int, vdiName string) {
 	if p == nil {
 		return
 	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.ensureStateLocked()
 
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Received request to release VDI instance with index %d and name '%s' back to pool", index, vdiName)
+	if index < 0 || index >= len(p.slot) {
+		return
+	}
+	if strings.TrimSpace(vdiName) != "" && !nameAllowed(p.slot[index].Config.Name, splitAllowedNames(vdiName)) {
+		return
+	}
+	if _, ok := p.leases[index]; !ok {
+		return
+	}
 
-	vdiName = strings.TrimSpace(vdiName)
-	if vdiName != "" {
-		// We have a VDI name so we need to use it to verify the correct VDI is being released
-		pName := p.slot[index].Config.Name
-		if !strings.EqualFold(strings.TrimSpace(vdiName), strings.TrimSpace(pName)) {
-			// Find the right VDI by name
-			for i := 0; i < len(p.slot); i++ {
-				pName = p.slot[i].Config.Name
-				if strings.EqualFold(strings.TrimSpace(vdiName), strings.TrimSpace(pName)) {
-					index = i
-					break
-				}
-			}
+	p.releaseLocked(index)
+}
+
+func (p *Pool) ensureStateLocked() {
+	if p.busy == nil {
+		p.busy = make(map[int]bool, len(p.slot))
+	}
+	if p.leases == nil {
+		p.leases = make(map[int]*Lease, len(p.slot))
+	}
+	if p.wakeup == nil {
+		p.wakeup = make(chan struct{})
+	}
+}
+
+func (p *Pool) releaseLocked(index int) {
+	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Releasing VDI instance '%s' with index %d back to pool", p.slot[index].Config.Name, index)
+	delete(p.leases, index)
+	p.busy[index] = false
+	p.signalLocked()
+}
+
+func (p *Pool) signalLocked() {
+	close(p.wakeup)
+	p.wakeup = make(chan struct{})
+}
+
+func splitAllowedNames(allowedNames string) []string {
+	if strings.TrimSpace(allowedNames) == "" {
+		return nil
+	}
+
+	names := strings.Split(allowedNames, ",")
+	for i := range names {
+		names[i] = strings.TrimSpace(names[i])
+	}
+	return names
+}
+
+func nameAllowed(name string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	name = strings.TrimSpace(name)
+	for _, allowedName := range allowed {
+		if strings.EqualFold(allowedName, name) {
+			return true
 		}
 	}
-
-	if (index >= 0) && (index < len(p.busy)) {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Release] Releasing VDI instance '%s' with index %d back to pool", p.slot[index].Config.Name, index)
-		p.busy[index] = false
-	}
+	return false
 }
 
 // This is a special implementation for internal use-only
