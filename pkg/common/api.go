@@ -770,9 +770,9 @@ func tagsForRoute(r APIRoute) []string {
 		return []string{"plugins"}
 	}
 	if r.ConsoleOnly {
-		return []string{"console"}
+		return []string{"Console"}
 	}
-	return []string{"api"}
+	return []string{"API"}
 }
 
 func shortSummary(desc string) string {
