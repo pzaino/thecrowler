@@ -499,17 +499,20 @@ type PluginText struct {
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
+	tags_none := []string{}
+	tags_health := []string{"Health"}
+
 	// Health check
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
 	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tags_health, false, false, 200, nil, nil, nil)
 
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", tags_health, false, false, 200, nil, nil, nil)
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
@@ -523,25 +526,25 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", false, false, 201, cdb.Event{}, nil, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", tags_none, false, false, 201, cdb.Event{}, nil, EventResponse{})
 
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", tags_none, false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
 
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", tags_none, false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", tags_none, false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", tags_none, false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil, []cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", tags_none, false, false, 200, nil, nil, []cdb.Event{})
 
 	// Handle uploads
 
@@ -552,18 +555,18 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", tags_none, false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", tags_none, false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", tags_none, false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
 
 	if config.Events.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, 200, nil, nil, nil)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tags_none, false, false, 200, nil, nil, nil)
 
 		// Finally the docs endpoint
 		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
@@ -595,18 +598,33 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// If host is 0.0.0.0, leave serverURL blank (Swagger UI can still work).
+	const localhost = "http://localhost"
 	host := strings.TrimSpace(config.Events.URL)
+	port := ""
+	if (config.Events.Port != 80) && (config.Events.Port != 443) && (config.Events.Port != 0) {
+		port = fmt.Sprintf(":%d", config.Events.Port)
+	}
 	if host == "" {
 		host = strings.TrimSpace(config.Events.Host)
-		if host != "" && host != "0.0.0.0" && host != "::" {
-			port := ""
-			if (config.Events.Port != 80) && (config.Events.Port != 443) && (config.Events.Port != 0) {
-				port = fmt.Sprintf(":%d", config.Events.Port)
-			}
+		if (host != "") && (host != "0.0.0.0") && (host != "::") {
 			serverURL = fmt.Sprintf("%s://%s%s", scheme, host, port)
+		} else {
+			serverURL = localhost // Default to localhost if host is not set or is a wildcard
+			if port != "" {
+				serverURL += port
+			}
 		}
 	} else {
 		serverURL = fmt.Sprintf("%s://%s", scheme, host)
+		if port != "" {
+			serverURL += port
+		}
+	}
+	if serverURL == "" {
+		serverURL = localhost
+		if port != "" {
+			serverURL += port
+		}
 	}
 
 	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{
@@ -620,8 +638,8 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 			Email: "",
 		},
 		Tags: []cmn.OpenAPITag{
-			{Name: "Health", Description: "Endpoints related to health and readiness checks."},
 			{Name: "API", Description: "Endpoints for creating, managing, and querying events."},
+			{Name: "Health", Description: "Endpoints related to health and readiness checks."},
 		},
 	})
 

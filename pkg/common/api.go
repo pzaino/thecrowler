@@ -16,6 +16,7 @@ type APIRoute struct {
 	Path              string   `json:"path"`
 	Methods           []string `json:"methods"`
 	Description       string   `json:"description"`
+	Tag               []string `json:"tag,omitempty"`
 	RequiresQ         bool     `json:"requires_q"`
 	ConsoleOnly       bool     `json:"console_only"`
 	Plugin            bool     `json:"plugin"`
@@ -162,6 +163,7 @@ func RegisterAPIRoute(
 	path string,
 	methods []string,
 	description string,
+	tags []string,
 	consoleOnly bool,
 	plugin bool,
 	successStatus int,
@@ -180,6 +182,7 @@ func RegisterAPIRoute(
 		Path:          path,
 		Methods:       methods,
 		Description:   description,
+		Tag:           tags,
 		ConsoleOnly:   consoleOnly,
 		Plugin:        plugin,
 		SuccessStatus: successStatus,
@@ -766,8 +769,11 @@ func makeOperationID(method, path string) string {
 }
 
 func tagsForRoute(r APIRoute) []string {
+	if len(r.Tag) > 0 {
+		return r.Tag
+	}
 	if r.Plugin {
-		return []string{"plugins"}
+		return []string{"Plugins"}
 	}
 	if r.ConsoleOnly {
 		return []string{"Console"}

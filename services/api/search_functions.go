@@ -619,6 +619,7 @@ func nullTimePtr(value sql.NullTime) *time.Time {
 }
 
 func registerSearchFunctionRoute(path string, handler http.HandlerFunc, description string) {
+	tags_none := []string{}
 	http.Handle(path, withPublicMiddlewares(handler))
-	cmn.RegisterAPIRoute(path, []string{"GET"}, description, false, false, 200, nil, SearchFunctionQuery{}, SearchFunctionResponse{})
+	cmn.RegisterAPIRoute(path, []string{"GET"}, description, tags_none, false, false, 200, nil, SearchFunctionQuery{}, SearchFunctionResponse{})
 }
