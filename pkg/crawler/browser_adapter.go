@@ -48,14 +48,12 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 
 	var err error
 	// Change the User Agent (if needed)
-	/*
-		if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-			err = changeUserAgent(&(ctx.wd), ctx)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
-			}
+	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+		err = changeUserAgent(&(ctx.wd), ctx)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
 		}
-	*/
+	}
 
 	err = browser.Setup(context.Background(), wd, browser.SetupOptions{
 		InitialURL:               "about:blank",

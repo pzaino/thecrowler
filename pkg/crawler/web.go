@@ -250,8 +250,6 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 	return err
 }
 
-// TakeScreenshot is responsible for taking a screenshot of the current page
-
 func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currCfg *cfg.Config) error {
 	if screenshot.IndexID == 0 {
 		return errors.New("index ID is required")
@@ -307,6 +305,7 @@ func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currC
 	return tx.Commit()
 }
 
+// TakeScreenshot is responsible for taking a screenshot of the current page
 func TakeScreenshot(wd *vdi.WebDriver, filename string, maxHeight int) (Screenshot, error) {
 	ss := Screenshot{}
 
