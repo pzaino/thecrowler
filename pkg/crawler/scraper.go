@@ -30,7 +30,7 @@ import (
 )
 
 // ApplyRule is the compatibility entry point for callers that still use ProcessContext.
-// New shared callers should use scraper.ApplyRule with explicit runtime capabilities.
+// Deprecated: use scraper.ApplyRule with explicit runtime capabilities. Follow up by migrating characterization callers.
 func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDriver) (map[string]interface{}, error) {
 	if ctx != nil {
 		_ = vdi.Refresh(ctx)
@@ -43,6 +43,7 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 }
 
 // ApplyRulesGroup is the compatibility entry point for ProcessContext callers.
+// Deprecated: use scraper.ApplyRulesGroup. Follow up by migrating characterization callers.
 func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, webPage *vdi.WebDriver) (map[string]interface{}, error) {
 	if ctx != nil {
 		_ = vdi.Refresh(ctx)
@@ -50,7 +51,8 @@ func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, web
 	return scraper.ApplyRulesGroup(context.Background(), newScraperRuntimeAdapter(ctx, webPage), ruleGroup, webPage)
 }
 
-// ApplyPostProcessingStep is retained while crawler callers migrate to scraper.ApplyPostProcessingStep.
+// ApplyPostProcessingStep is retained for characterization callers.
+// Deprecated: use scraper.ApplyPostProcessingStep and remove after those callers migrate.
 func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
 	if data == nil {
 		return

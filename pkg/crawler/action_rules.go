@@ -26,6 +26,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
@@ -94,42 +95,6 @@ func executeActionRules(ctx *ProcessContext, actionRules []rules.ActionRule, wd 
 	}
 }
 
-func executeRule(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) {
-	if err := browseractions.ExecuteRule(context.Background(), newActionRuntime(ctx, wd), r); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
-	}
-}
-
-// executeActionRule executes a single ActionRule.
-func executeActionRule(ctx *ProcessContext, r *rules.ActionRule, wd *vdi.WebDriver) error {
-	return browseractions.ExecuteRule(context.Background(), newActionRuntime(ctx, wd), r)
-}
-
-func WaitForCondition(ctx *ProcessContext, wd *vdi.WebDriver, r rules.WaitCondition) error {
-	return browseractions.WaitForCondition(context.Background(), newActionRuntime(ctx, wd), r)
-}
-
-func checkActionConditions(ctx *ProcessContext, conditions map[string]interface{}, wd *vdi.WebDriver) bool {
-	matches, err := browseractions.ConditionsMatch(context.Background(), newActionRuntime(ctx, wd), conditions)
-	return err == nil && matches
-}
-
-func findElementBySelectorType(ctx *ProcessContext, wd *vdi.WebDriver, selectors []rules.Selector) (vdi.WebElement, rules.Selector, error) {
-	lookup := &crawlerActionLookup{ctx: ctx, wd: wd}
-	var lastErr error
-	for _, selector := range selectors {
-		element, err := lookup.FindElement(context.Background(), selector)
-		if err == nil && element != nil {
-			return element, selector, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no selectors configured")
-	}
-	return nil, rules.Selector{}, lastErr
-}
-
 func newActionRuntime(ctx *ProcessContext, wd *vdi.WebDriver) *browseractions.Runtime {
 	if wd == nil && ctx != nil {
 		wd = ctx.GetWebDriver()
@@ -174,7 +139,11 @@ type crawlerActionLookup struct {
 }
 
 func (l *crawlerActionLookup) FindElement(_ context.Context, selector rules.Selector) (vdi.WebElement, error) {
-	return FindElementByType(l.ctx, l.wd, selector)
+	result, err := crawlerExtractor(l.ctx, l.wd).FindElement(scraper.LookupRequest{Selector: selector})
+	if err != nil {
+		return nil, err
+	}
+	return result.Elements[0], nil
 }
 
 func (l *crawlerActionLookup) PluginScript(_ context.Context, name string) (string, bool, error) {
@@ -273,28 +242,28 @@ func runDefaultActionRules(wd *vdi.WebDriver, ctx *ProcessContext) {
 		if !checkActionPreConditions(r.Conditions, url) {
 			continue
 		}
-		if !checkActionConditions(ctx, r.AdditionalConditions, wd) {
+		matches, err := browseractions.ConditionsMatch(context.Background(), newActionRuntime(ctx, wd), r.AdditionalConditions)
+		if err != nil || !matches {
 			continue
 		}
-		if len(r.Rulesets) > 0 {
-			executePlannedRulesets(wd, ctx, r)
-		}
-		if len(r.RuleGroups) > 0 {
-			executePlannedRuleGroups(wd, ctx, r)
-		}
-		if len(r.Rules) > 0 {
-			executePlannedRules(wd, ctx, r)
-		}
+		executeActionPlanItem(r,
+			func() { executePlannedRulesets(wd, ctx, r) },
+			func() { executePlannedRuleGroups(wd, ctx, r) },
+			func() { executePlannedRules(wd, ctx, r) },
+		)
 	}
 }
 
-// checkActionPreConditions checks if the pre conditions are met
-// for example if the page URL is listed in the list of URLs
-// for which this rule is valid.
-
-// executeActionRulesByURL executes the action rules associated with the URL.
-func executeActionRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
-	processURLRules(wd, ctx, url)
+func executeActionPlanItem(item cfg.ExecutionPlanItem, rulesets, ruleGroups, rules func()) {
+	if len(item.Rulesets) > 0 {
+		rulesets()
+	}
+	if len(item.RuleGroups) > 0 {
+		ruleGroups()
+	}
+	if len(item.Rules) > 0 {
+		rules()
+	}
 }
 
 // checkActionPreConditions checks if the pre conditions are met
@@ -335,8 +304,8 @@ func executeActionRuleByName(ruleName string, wd *vdi.WebDriver, ctx *ProcessCon
 		return
 	}
 
-	// Execute the rule
-	if err = executeActionRule(ctx, rule, wd); err != nil {
+	// Execute the rule through the shared browser action runtime.
+	if err = browseractions.ExecuteRule(context.Background(), newActionRuntime(ctx, wd), rule); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
 	}
 }

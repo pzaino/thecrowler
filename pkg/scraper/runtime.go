@@ -122,20 +122,37 @@ type FailureReporter interface {
 	ReportFailure(context.Context, Failure)
 }
 
+// RuleHook runs at a defined point in a scraping rule lifecycle.
+type RuleHook func(context.Context, *rs.ScrapingRule) error
+
+// WaitConditionHook delegates a scraping wait condition to a browser runtime.
+type WaitConditionHook func(context.Context, rs.WaitCondition) error
+
+// ConditionsMatcher evaluates crawler-owned rule conditions.
+type ConditionsMatcher func(context.Context, map[string]interface{}) (bool, error)
+
+// ResultAugmenter adds crawler-owned extraction fields without moving selection into scraper.
+type ResultAugmenter func(context.Context, *rs.ScrapingRule, map[string]interface{}) map[string]interface{}
+
 // Runtime contains optional, narrowly-scoped capabilities used by scraper orchestration.
 // A zero Runtime is valid for pure extraction and pure post-processing steps.
 type Runtime struct {
-	ContextIDs    ContextIDProvider
-	RuleCalls     RuleCaller
-	Plugins       PluginRunner
-	Agents        AgentRunner
-	HTTP          HTTPTransformer
-	Environment   EnvironmentLookup
-	EnvSetter     EnvironmentSetter
-	EnvCleaner    EnvironmentCleaner
-	Configuration ConfigurationLookup
-	Failures      FailureReporter
-	MatchValue    ValueMatcher
+	ContextIDs      ContextIDProvider
+	RuleCalls       RuleCaller
+	Plugins         PluginRunner
+	Agents          AgentRunner
+	HTTP            HTTPTransformer
+	Environment     EnvironmentLookup
+	EnvSetter       EnvironmentSetter
+	EnvCleaner      EnvironmentCleaner
+	Configuration   ConfigurationLookup
+	Failures        FailureReporter
+	BeforeRule      RuleHook
+	BeforeApply     RuleHook
+	WaitCondition   WaitConditionHook
+	MatchConditions ConditionsMatcher
+	AugmentResult   ResultAugmenter
+	MatchValue      ValueMatcher
 }
 
 // NoopRuntime returns an explicit runtime with no side-effecting capabilities.

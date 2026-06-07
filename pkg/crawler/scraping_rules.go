@@ -21,6 +21,7 @@ package crawler
 /////////
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -29,8 +30,8 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-	"golang.org/x/net/html"
 )
 
 const (
@@ -198,8 +199,11 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		}
 		// Convert the map to JSON
 		data := cmn.ConvertMapToJSON(extractedData)
-		for _, step := range rg.PostProcessing {
-			ApplyPostProcessingStep(ctx, &step, &data)
+		for i := range rg.PostProcessing {
+			updated, stepErr := scraper.ApplyPostProcessingStep(context.Background(), newScraperRuntimeAdapter(ctx, nil), "", 0, &rg.PostProcessing[i], data)
+			if stepErr == nil {
+				data = updated
+			}
 		}
 
 		// Check if data has double "{{" and "}}" at the beginning and end
@@ -223,279 +227,9 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 	return scrapedDataDoc, err
 }
 
-// executeScrapingRule executes a single ScrapingRule
-func executeScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule,
-	wd *vdi.WebDriver) (string, error) {
-	var jsonDocument string
-
-	_ = vdi.Refresh(ctx)
-
-	// Execute Wait condition first
-	if len(r.WaitConditions) != 0 {
-		err := executeWaitConditions(ctx, r.WaitConditions, wd)
-		if err != nil {
-			return "", fmt.Errorf("executing wait conditions: %v", err)
-		}
-	}
-
-	// We need to collect errors instead of returning immediately, because we want to
-	// execute all the rules in the ruleset and return all the errors at once
-	var errList []error
-
-	// Execute the scraping rule
-	if shouldExecuteScrapingRule(ctx, r, wd) {
-		// Apply the rule
-		extractedData, err := ApplyRule(ctx, r, wd)
-		if err != nil {
-			errList = append(errList, err)
-		}
-
-		// Process the extracted data
-		processedData := processExtractedData(extractedData)
-		cleanedData := cleanJSONDocument(processedData)
-
-		jsonData, err := json.Marshal(cleanedData)
-		if err != nil {
-			errList = append(errList, fmt.Errorf("marshalling JSON: '%v', for JSON: %v", err, cleanedData))
-		}
-		if len(r.PostProcessing) != 0 {
-			runPostProcessingSteps(ctx, &r.PostProcessing, &jsonData)
-		}
-		rval := strings.TrimSpace(string(jsonData))
-		// Remove the leading and trailing {}
-		if strings.HasPrefix(rval, "{") && strings.HasSuffix(rval, "}") {
-			rval = rval[1:]
-			rval = rval[:len(rval)-1]
-		}
-		jsonDocument = string(rval)
-	}
-
-	if len(errList) > 0 {
-		// Join all errors
-		errStr := ""
-		for _, e := range errList {
-			errStr += e.Error() + "\n"
-		}
-		return jsonDocument, fmt.Errorf("executing scraping rule: %v", errStr)
-	}
-
-	// log the jsonDocument for debugging purposes
-	return jsonDocument, nil
-}
-
-func cleanJSONDocument(doc map[string]interface{}) map[string]interface{} {
-	cleaned := make(map[string]interface{})
-
-	for key, value := range doc {
-		switch v := value.(type) {
-		case map[string]interface{}:
-			// Recursively clean nested maps
-			cleaned[key] = cleanJSONDocument(v)
-
-		case []interface{}:
-			// Filter out unstructured or invalid values in arrays
-			var validArray []interface{}
-			for _, item := range v {
-				switch item := item.(type) {
-				case map[string]interface{}:
-					validArray = append(validArray, cleanJSONDocument(item))
-				case string, float64, bool, nil:
-					validArray = append(validArray, item)
-				default:
-					// Skip unsupported types
-					continue
-				}
-			}
-			cleaned[key] = validArray
-
-		case string, float64, bool, nil:
-			// Keep valid primitive types
-			cleaned[key] = v
-
-		default:
-			// Skip unsupported or unstructured types
-			continue
-		}
-	}
-
-	return cleaned
-}
-
-func executeWaitConditions(ctx *ProcessContext, conditions []rules.WaitCondition, wd *vdi.WebDriver) error {
-	for _, wc := range conditions {
-		err := WaitForCondition(ctx, wd, wc)
-		if err != nil {
-			return fmt.Errorf("executing wait condition: %v", err)
-		}
-	}
-	return nil
-}
-
-func shouldExecuteScrapingRule(ctx *ProcessContext, r *rules.ScrapingRule, wd *vdi.WebDriver) bool {
-	return len(r.Conditions) == 0 || checkScrapingConditions(ctx, r.Conditions, wd)
-}
-
-func processExtractedData(extractedData map[string]interface{}) map[string]interface{} {
-	processedData := make(map[string]interface{})
-
-	// Log extractedData for debugging purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Extracted data (at processExtractedData level): %v", extractedData)
-
-	for key, data := range extractedData {
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing key: '%v'", key)
-
-		// Skip reserved keys
-		if key == strFalse || key == strTrue {
-			cmn.DebugMsg(cmn.DbgLvlWarn, "Not allowed key in extracted content: %v", key)
-			continue
-		}
-
-		// if key is empty, then this must be an array of data so return it as is
-		if key == "" {
-			// return data as a map
-			processedData = extractedData
-			return processedData
-		}
-
-		switch v := data.(type) {
-		case string:
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing string: '%v'", v)
-			// Check if the string is valid JSON
-			if json.Valid([]byte(v)) {
-				var jsonData interface{}
-				if err := json.Unmarshal([]byte(v), &jsonData); err == nil {
-					// If the JSON is valid, store it directly
-
-					// Check if the key is already in the map
-					if _, exists := processedData[key]; exists {
-						// Append the data to the existing key
-						processedData[key] = append(processedData[key].([]interface{}), jsonData)
-					} else {
-						processedData[key] = jsonData
-					}
-					continue
-				}
-			}
-
-			// Check if the string is HTML
-			processedEntity := v
-			if StrIsHTML(v) {
-				jsonData, err := ProcessHTMLToJSON(v)
-				if err == nil {
-					processedEntity = jsonData
-				}
-			}
-			// Check if the key is already in the map
-			if _, exists := processedData[key]; exists {
-				// Append the data to the existing key
-				processedData[key] = append(processedData[key].([]string), processedEntity)
-			} else {
-				processedData[key] = processedEntity
-			}
-
-		case map[string]interface{}:
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing map: %v", v)
-			// If the data is already a map, store it directly
-			// Check if the key is already in the map
-			if _, exists := processedData[key]; exists {
-				// Append the data to the existing key
-				processedData[key] = append(processedData[key].([]map[string]interface{}), processExtractedData(v))
-			} else {
-				processedData[key] = processExtractedData(v)
-			}
-
-		case []interface{}:
-			cmn.DebugMsg(cmn.DbgLvlDebug5, "Processing array: %v", v)
-			// Process each item in the array
-			var processedArray []interface{}
-			for _, item := range v {
-				switch item := item.(type) {
-				case map[string]interface{}:
-					processedArray = append(processedArray, processExtractedData(item))
-				default:
-					processedArray = append(processedArray, item)
-					continue
-				}
-			}
-			// Check if the key is already in the map
-			if _, exists := processedData[key]; exists {
-				// Append the data to the existing key
-				processedData[key] = append(processedData[key].([]interface{}), processedArray...)
-			} else {
-				processedData[key] = processedArray
-			}
-
-		case bool:
-			// Handle boolean values and ensure they're keyed
-			// Check if the key is already in the map
-			if _, exists := processedData[key]; exists {
-				// Append the data to the existing key
-				processedData[key] = append(processedData[key].([]interface{}), v)
-			} else {
-				processedData[key] = v
-			}
-
-		case float64:
-			// Handle numeric values and ensure they're keyed
-			// Check if the key is already in the map
-			if _, exists := processedData[key]; exists {
-				// Append the data to the existing key
-				processedData[key] = append(processedData[key].([]interface{}), v)
-			} else {
-				processedData[key] = v
-			}
-
-		default:
-			// Fallback for unexpected types
-			cmn.DebugMsg(cmn.DbgLvlWarn, "Unexpected type in extracted content: %T", v)
-			// Check if the key is already in the map
-			if _, exists := processedData[key]; exists {
-				// Append the data to the existing key
-				processedData[key] = append(processedData[key].([]interface{}), v)
-			} else {
-				processedData[key] = v
-			}
-		}
-	}
-
-	// log the processed data for debugging purposes
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Processed data (at processExtractedData level): %v", processedData)
-
-	return processedData
-}
-
-// StrIsHTML checks if the given string could be HTML by trying to parse it.
-func StrIsHTML(s string) bool {
-	// Minimal check to quickly filter out definitely non-HTML content
-	if !strings.Contains(s, "<") && !strings.Contains(s, ">") {
-		return false
-	}
-
-	doc, err := html.Parse(strings.NewReader(s))
-	if err != nil {
-		return false // If parsing fails, it's likely not HTML
-	}
-
-	var hasElement bool
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data != "html" && n.Data != "head" && n.Data != "body" {
-			hasElement = true
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
-	}
-	f(doc)
-	return hasElement
-}
-
-// runPostProcessingSteps runs the post processing (post_processing) steps
-func runPostProcessingSteps(ctx *ProcessContext, pps *[]rules.PostProcessingStep, jsonData *[]byte) {
-	for _, pp := range *pps {
-		// Execute the post processing step
-		ApplyPostProcessingStep(ctx, &pp, jsonData)
-	}
+// executeScrapingRule delegates the complete rule lifecycle to the shared scraper runtime.
+func executeScrapingRule(ctx *ProcessContext, rule *rules.ScrapingRule, wd *vdi.WebDriver) (string, error) {
+	return scraper.ExecuteRule(context.Background(), newScraperRuntimeAdapter(ctx, wd), rule, wd)
 }
 
 // DefaultCrawlingConfig returns a default configuration for crawling a page
@@ -620,77 +354,4 @@ func checkScrapingConditions(ctx *ProcessContext, conditions map[string]interfac
 		}
 	}
 	return canProceed
-}
-
-func parseHTML(htmlData string) ([]map[string]interface{}, error) {
-	doc, err := html.Parse(strings.NewReader(htmlData))
-	if err != nil {
-		return nil, err
-	}
-	var items []map[string]interface{}
-	parseNode(doc, nil, &items)
-	return items, nil
-}
-
-func parseNode(n *html.Node, currentItem map[string]interface{}, items *[]map[string]interface{}) {
-	if n.Type == html.ElementNode {
-		newItem := createNewItem(n)
-		if len(newItem) > 0 {
-			if currentItem != nil {
-				addChild(currentItem, newItem)
-			} else {
-				addItem(items, newItem)
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			parseNode(c, newItem, items)
-		}
-	} else if n.Type == html.TextNode && strings.TrimSpace(n.Data) != "" {
-		if currentItem != nil && len(currentItem) == 0 {
-			currentItem["text"] = strings.TrimSpace(n.Data)
-		}
-	}
-}
-
-func createNewItem(n *html.Node) map[string]interface{} {
-	newItem := make(map[string]interface{})
-	for _, a := range n.Attr {
-		newItem[a.Key] = a.Val
-	}
-	if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
-		newItem["text"] = strings.TrimSpace(n.FirstChild.Data)
-	}
-	return newItem
-}
-
-func addChild(currentItem map[string]interface{}, newItem map[string]interface{}) {
-	if _, exists := currentItem["children"]; !exists {
-		currentItem["children"] = []map[string]interface{}{}
-	}
-	currentItem["children"] = append(currentItem["children"].([]map[string]interface{}), newItem)
-}
-
-func addItem(items *[]map[string]interface{}, newItem map[string]interface{}) {
-	*items = append(*items, newItem)
-}
-
-func toJSON(data []map[string]interface{}) (string, error) {
-	jsonData, err := json.MarshalIndent(data, "", "    ")
-	if err != nil {
-		return "", err
-	}
-	return string(jsonData), nil
-}
-
-// ProcessHTMLToJSON processes the HTML data and converts it to JSON
-func ProcessHTMLToJSON(htmlData string) (string, error) {
-	items, err := parseHTML(htmlData)
-	if err != nil {
-		return "", err
-	}
-	jsonOutput, err := toJSON(items)
-	if err != nil {
-		return "", err
-	}
-	return jsonOutput, nil
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	browseractions "github.com/pzaino/thecrowler/pkg/browser/actions"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	scraper "github.com/pzaino/thecrowler/pkg/scraper"
@@ -37,6 +38,30 @@ func newScraperRuntimeAdapter(ctx *ProcessContext, wd *vdi.WebDriver) *scraper.R
 		EnvCleaner:    adapter,
 		Configuration: adapter,
 		Failures:      adapter,
+		BeforeRule: func(context.Context, *rs.ScrapingRule) error {
+			if ctx != nil {
+				_ = vdi.Refresh(ctx)
+			}
+			return nil
+		},
+		BeforeApply: func(context.Context, *rs.ScrapingRule) error {
+			if ctx != nil {
+				_ = vdi.Refresh(ctx)
+			}
+			return nil
+		},
+		WaitCondition: func(execCtx context.Context, condition rs.WaitCondition) error {
+			return browseractions.WaitForCondition(execCtx, newActionRuntime(ctx, wd), condition)
+		},
+		MatchConditions: func(_ context.Context, conditions map[string]interface{}) (bool, error) {
+			return checkScrapingConditions(ctx, conditions, wd), nil
+		},
+		AugmentResult: func(_ context.Context, rule *rs.ScrapingRule, result map[string]interface{}) map[string]interface{} {
+			if rule != nil && rule.JsFiles {
+				result["js_files"] = extractJSFiles(wd)
+			}
+			return result
+		},
 		MatchValue: func(item interface{}, selector rs.Selector) (bool, error) {
 			return matchValue(ctx, item, selector), nil
 		},

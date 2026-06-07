@@ -94,3 +94,45 @@ func TestExternalTransformationHonorsContextCancellation(t *testing.T) {
 		t.Fatal("external transformation did not stop after cancellation")
 	}
 }
+
+func TestExecuteRuleRunsWaitActionBeforeScrape(t *testing.T) {
+	var events []string
+	driverImpl := &orderedPageSourceDriver{
+		pageSourceDriver: pageSourceDriver{source: `<html><body><h1>Ready</h1></body></html>`},
+		events:           &events,
+	}
+	var driver vdi.WebDriver = driverImpl
+	runtime := &Runtime{
+		WaitCondition: func(context.Context, rs.WaitCondition) error {
+			events = append(events, "action")
+			return nil
+		},
+	}
+	rule := &rs.ScrapingRule{
+		RuleName:       "ordered",
+		WaitConditions: []rs.WaitCondition{{ConditionType: "delay", Value: "0"}},
+		Elements:       []rs.Element{{Key: "title", Selectors: []rs.Selector{{SelectorType: "css", Selector: "h1", Extract: rs.ItemToExtract{Type: "text"}}}}},
+	}
+
+	got, err := ExecuteRule(context.Background(), runtime, rule, &driver)
+	if err != nil {
+		t.Fatalf("ExecuteRule() error = %v", err)
+	}
+	if got != `"title":"Ready"` {
+		t.Fatalf("ExecuteRule() = %q, want %q", got, `"title":"Ready"`)
+	}
+	wantEvents := []string{"action", "scrape"}
+	if !reflect.DeepEqual(events, wantEvents) {
+		t.Fatalf("execution events = %#v, want %#v", events, wantEvents)
+	}
+}
+
+type orderedPageSourceDriver struct {
+	pageSourceDriver
+	events *[]string
+}
+
+func (d *orderedPageSourceDriver) PageSource() (string, error) {
+	*d.events = append(*d.events, "scrape")
+	return d.pageSourceDriver.PageSource()
+}
