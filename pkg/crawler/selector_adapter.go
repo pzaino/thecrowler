@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-	"golang.org/x/net/html"
 )
 
 func crawlerExtractor(ctx *ProcessContext, wd *vdi.WebDriver) scraper.Extractor {
@@ -50,20 +48,3 @@ func normalizeRuleCallOutput(value interface{}) []interface{} {
 	}
 	return []interface{}{value}
 }
-
-func extractJSFiles(wd *vdi.WebDriver) []CollectedScript {
-	result, err := scraper.ExtractJavaScriptFiles(scraper.JavaScriptRequest{Driver: wd})
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error extracting scripts: %v", err)
-		return nil
-	}
-	return result.Scripts
-}
-
-// TransformTextToHTML is retained for the crawler page-processing boundary.
-// Deprecated: migrate the remaining page-processing caller to scraper.ParseHTML.
-func TransformTextToHTML(text string) (*html.Node, error) { return scraper.ParseHTML(text) }
-
-// ExtractHTMLData is retained for the crawler page-processing boundary.
-// Deprecated: migrate the remaining page-processing caller to scraper.ExtractHTMLData.
-func ExtractHTMLData(node *html.Node) HTMLNode { return scraper.ExtractHTMLData(node) }

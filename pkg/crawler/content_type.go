@@ -24,7 +24,6 @@ import (
 	"sync"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
-	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 
 	"golang.org/x/net/html"
@@ -61,9 +60,6 @@ var (
 	// loadMutex is the mutex to protect the loading of the content type detection rules.
 	loadMutex sync.Mutex
 )
-
-// HTMLNode is retained as a compatibility alias.
-type HTMLNode = scraper.HTMLNode
 
 // ContentTypeDetectionRules represents the content type detection rules for a web page.
 type ContentTypeDetectionRules map[string]struct {

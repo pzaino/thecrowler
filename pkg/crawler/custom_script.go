@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package crawler implements the crawling logic of the application.
-// It's responsible for crawling a website and extracting information from it.
 package crawler
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,62 +22,9 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
-	scraper "github.com/pzaino/thecrowler/pkg/scraper"
-	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
-// ApplyRule is the compatibility entry point for callers that still use ProcessContext.
-// Deprecated: use scraper.ApplyRule with explicit runtime capabilities. Follow up by migrating characterization callers.
-func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDriver) (map[string]interface{}, error) {
-	if ctx != nil {
-		_ = vdi.Refresh(ctx)
-	}
-	result, err := scraper.ApplyRule(context.Background(), newScraperRuntimeAdapter(ctx, webPage), rule, webPage)
-	if err == nil && rule != nil && rule.JsFiles {
-		result["js_files"] = extractJSFiles(webPage)
-	}
-	return result, err
-}
-
-// ApplyRulesGroup is the compatibility entry point for ProcessContext callers.
-// Deprecated: use scraper.ApplyRulesGroup. Follow up by migrating characterization callers.
-func ApplyRulesGroup(ctx *ProcessContext, ruleGroup *rs.RuleGroup, _ string, webPage *vdi.WebDriver) (map[string]interface{}, error) {
-	if ctx != nil {
-		_ = vdi.Refresh(ctx)
-	}
-	return scraper.ApplyRulesGroup(context.Background(), newScraperRuntimeAdapter(ctx, webPage), ruleGroup, webPage)
-}
-
-// ApplyPostProcessingStep is retained for characterization callers.
-// Deprecated: use scraper.ApplyPostProcessingStep and remove after those callers migrate.
-func ApplyPostProcessingStep(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
-	if data == nil {
-		return
-	}
-	result, err := scraper.ApplyPostProcessingStep(context.Background(), newScraperRuntimeAdapter(ctx, nil), "", 0, step, *data)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "post-processing step failed: %v", err)
-		return
-	}
-	*data = result
-}
-
-// processCustomJS executes the provided custom JavaScript code using the provided VM.
-// The JavaScript module must be written as follows:
-/*
-	// Parse the JSON string back into an object
-	var dataObj = JSON.parse(jsonDataString);
-
-	// Let's assume you want to manipulate or use the data somehow
-	function processData(data) {
-		// Example manipulation: create a greeting message
-		return "Hello, " + data.name + " from " + data.city + "!";
-	}
-
-	// Call processData with the parsed object
-	var result = processData(dataObj);
-	result; // This will be the return value of vm.Run(jsCode)
-*/
+// processCustomJS executes a configured JavaScript plugin for scraper post-processing.
 func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) error {
 	var err error
 

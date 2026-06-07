@@ -51,6 +51,7 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	detect "github.com/pzaino/thecrowler/pkg/detection"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	tse "github.com/pzaino/thecrowler/pkg/timeseries"
 	"github.com/pzaino/thecrowler/pkg/vdi"
 
@@ -2923,7 +2924,7 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 		if err != nil {
 			return body, detectedContentType
 		}
-		processedData := ExtractHTMLData(doc)
+		processedData := scraper.ExtractHTMLData(doc)
 		jsonBody, _ := json.MarshalIndent(processedData, "", "  ")
 		bodyStr = string(jsonBody)
 

@@ -16,10 +16,6 @@
 // It's responsible for crawling a website and extracting information from it.
 package crawler
 
-/////////
-// This file is used as a wrapper to the scrapper package, to avoid circular dependencies.
-/////////
-
 import (
 	"context"
 	"encoding/json"

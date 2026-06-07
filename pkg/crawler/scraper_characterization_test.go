@@ -15,12 +15,14 @@
 package crawler
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
@@ -88,7 +90,7 @@ func TestApplyRuleCharacterizesCSSXPathTextAndMultipleValues(t *testing.T) {
 		},
 	}
 
-	got, err := ApplyRule(ctx, rule, driver)
+	got, err := scraper.ApplyRule(context.Background(), newScraperRuntimeAdapter(ctx, driver), rule, driver)
 	if err != nil {
 		t.Fatalf("ApplyRule returned error: %v", err)
 	}
@@ -115,7 +117,7 @@ func TestApplyRulesGroupCharacterizesExportedGroupEntryPoint(t *testing.T) {
 		}},
 	}
 
-	got, err := ApplyRulesGroup(ctx, group, "ignored", driver)
+	got, err := scraper.ApplyRulesGroup(context.Background(), newScraperRuntimeAdapter(ctx, driver), group, driver)
 	if err != nil {
 		t.Fatalf("ApplyRulesGroup returned error: %v", err)
 	}
@@ -154,8 +156,10 @@ func TestApplyPostProcessingStepCharacterizesPluginFreeSteps(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			data := []byte(tc.in)
-			ApplyPostProcessingStep(nil, &tc.step, &data)
+			data, err := scraper.ApplyPostProcessingStep(context.Background(), newScraperRuntimeAdapter(nil, nil), "", 0, &tc.step, []byte(tc.in))
+			if err != nil {
+				t.Fatalf("ApplyPostProcessingStep returned error: %v", err)
+			}
 			if got := string(data); got != tc.want {
 				t.Fatalf("ApplyPostProcessingStep result = %q, want %q", got, tc.want)
 			}

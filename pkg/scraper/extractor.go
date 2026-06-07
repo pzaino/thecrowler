@@ -6,7 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-// Package scraper provides context-free page extraction primitives.
+// Package scraper provides page extraction and scraping-rule execution
+// without depending on feature packages.
 package scraper
 
 import (

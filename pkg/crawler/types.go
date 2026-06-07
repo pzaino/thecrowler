@@ -28,7 +28,6 @@ import (
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
-	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
@@ -133,9 +132,6 @@ type PageInfo struct {
 	CollectedSessionCookies map[string]interface{}           `json:"collected_session_cookies"`  // The session cookies collected from the web page.
 	Config                  *cfg.Config                      `json:"config"`                     // The configuration of the web page.
 }
-
-// CollectedScript is retained as a compatibility alias.
-type CollectedScript = scraper.CollectedScript
 
 // WebObjectDetails represents the details of a web object.
 type WebObjectDetails struct {

@@ -57,9 +57,15 @@ func newScraperRuntimeAdapter(ctx *ProcessContext, wd *vdi.WebDriver) *scraper.R
 			return checkScrapingConditions(ctx, conditions, wd), nil
 		},
 		AugmentResult: func(_ context.Context, rule *rs.ScrapingRule, result map[string]interface{}) map[string]interface{} {
-			if rule != nil && rule.JsFiles {
-				result["js_files"] = extractJSFiles(wd)
+			if rule == nil || !rule.JsFiles {
+				return result
 			}
+			scripts, err := scraper.ExtractJavaScriptFiles(scraper.JavaScriptRequest{Driver: wd})
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "Error extracting scripts: %v", err)
+				return result
+			}
+			result["js_files"] = scripts.Scripts
 			return result
 		},
 		MatchValue: func(item interface{}, selector rs.Selector) (bool, error) {

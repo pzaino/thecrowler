@@ -25,9 +25,8 @@ import (
 	"github.com/pzaino/thecrowler/pkg/vdi"
 )
 
-// These adapters preserve the crawler's existing call sites while delegating
-// generic browser mechanics to pkg/browser. Crawler-specific URL filtering,
-// XHR collection, and source policy stay here.
+// Crawler-specific browser setup composes the shared lifecycle mechanics with
+// URL filtering, XHR collection, and source policy.
 
 func cleanUpBrowser(wd vdi.WebDriver) error {
 	if err := browser.Cleanup(wd, browser.CleanupOptions{}); err != nil {
