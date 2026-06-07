@@ -346,3 +346,7 @@ metadata may be persisted in candidate evidence and redacted run diagnostics.
   Test your plugin in isolation with sample JSON data to ensure it behaves as expected before deploying in production.
 
 ---
+
+## Time-series integration
+
+Plugins do not receive an implicit telemetry channel. A plugin can rely on the normal emitter for a supported artifact it causes to be persisted, or application code can register and emit a `custom` metric through the shipped repository/emitter interfaces after durable persistence. Use bounded cardinality/privacy settings and stable dedupe identity. See [Time-series observations and aggregates](timeseries.md#source-kinds-and-emission-timing).

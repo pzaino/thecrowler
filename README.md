@@ -190,6 +190,15 @@ For a complete and detailed breakdown, see: **[doc/features.md](doc/features.md)
 - Docker-based deployment
 - On-prem, cloud, and hybrid environments
 
+### User-data analytics
+
+- Configurable typed time-series observations over persisted search/discovery facts
+- Materialized aggregate buckets, aggregate-first `/v1` queries, and bounded drill-down
+- Late-data reaggregation, retention, and delayed entity backfill
+- Existing search tables remain authoritative; infrastructure telemetry is not part of the time-series system and is handled separately in Prometheus/logging/admin tooling
+
+See the [time-series guide](doc/timeseries.md) and [schema-valid examples](examples/timeseries/).
+
 **Full feature list and detailed explanations:**
 [doc/features.md](doc/features.md)
 

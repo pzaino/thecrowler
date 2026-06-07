@@ -266,4 +266,4 @@ The versioned time-series API reads materialized aggregate buckets by default. I
 * `GET /v1/timeseries/drilldown` resolves an aggregate hash (preferred) or a complete aggregate scope to matching observations.
 * `GET /v1/timeseries/dimensions` compares aggregate buckets grouped by one configured dimension.
 
-See [Time-series API](api/timeseries.md) for filters, response semantics, privacy limits, and examples.
+See [Time-series observations and aggregates](timeseries.md#aggregate-first-http-api) for exact date formats, filters, response fields, pagination, privacy limits, aggregate-first queries, and drill-down examples.

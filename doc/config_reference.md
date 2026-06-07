@@ -526,3 +526,5 @@ Privacy and cardinality can be overridden per metric. `hash_only: true` cannot
 be combined with `store_value_text: true`; regular expressions are compiled at
 configuration validation time. Limits are bounded to prevent unbounded series,
 dimension, or value growth.
+
+The aggregation `overlap` duration controls how far an incremental run rewinds its durable checkpoint to include late observations. The events scheduler runs only when both top-level time-series and aggregation switches are enabled. Configuration metrics are declarative runtime input; v1 registration uses `database.UpsertTimeSeriesMetric`, and there is no public registration route or automatic YAML-to-table synchronizer. See [Time-series observations and aggregates](timeseries.md) for the complete delivered workflow and schema-valid examples.

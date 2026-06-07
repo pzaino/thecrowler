@@ -27,3 +27,9 @@ For more info on the ruleset architecture see [Ruleset Architecture](./ruleset_a
 ## Architecture diagram
 
 ![TheCROWler Microservice Architecture](./GeneralArchitecture.jpg)
+
+## Time-series analytical projection
+
+The v1 time-series subsystem observes persisted crawler/discovery facts after their durable rows and ownership links succeed. Raw observations and materialized aggregate buckets are projections: the existing search, Information Seed, entity, and correlation tables remain the source of truth. The events service may run isolated incremental aggregation, while explicit range rebuilding, retention, and delayed-entity repair use bounded database interfaces.
+
+See [Time-series observations and aggregates](timeseries.md) for the delivered emitters, scope rules, lifecycle, operational calls, privacy controls, database portability, and explicit infrastructure-telemetry exclusions.

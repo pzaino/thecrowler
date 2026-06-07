@@ -799,3 +799,9 @@ behavior because notifications only advance the next claim attempt; they do not
 change the eligibility predicates used by `ClaimInformationSeeds`. Database
 triggers may still exist for audit fields such as `last_updated_at`; those audit
 triggers do not drive seed discovery.
+
+## Time-series lifecycle observations
+
+Enabled `information_seed`, `information_seed_candidate`, and `source_discovery` metric definitions are evaluated in the same transaction as their durable lifecycle facts. Stable transition identities make retries idempotent. Candidate/provider data measures persisted discovery outcomes; it does not expose provider latency, scheduler health, queue depth, or process health.
+
+See [Time-series observations and aggregates](timeseries.md#source-kinds-and-emission-timing) for selectors, scope resolution, dedupe, privacy, and the Information Seed discovery-quality example.

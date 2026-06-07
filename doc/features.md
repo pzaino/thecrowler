@@ -364,4 +364,18 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 - **ChatGPT AI Chatbot service**: CROWler has a dedicated ChatGPT AI Chatbot service for interactive support and assistance.
   - *Benefits*: Provides users with instant access to help and guidance while using CROWler, improving the user experience.
 
+## (Features Group 22) Configurable user-data time series observations and materialized aggregate buckets
+
+- The v1 time-series feature provides:
+  - typed raw observations
+  - aggregate-first chart buckets
+  - bounded drill-down
+  - change detection
+  - dedupe
+  - late-data overlap
+  - explicit reaggregation
+  - retention
+  - delayed entity assignment for persisted crawler/discovery facts. 
+  -It supports PostgreSQL, MySQL, and SQLite storage. It intentionally excludes worker/VDI health, API latency, queues, scheduler/database health, and process telemetry.
+  
 ---

@@ -378,4 +378,10 @@ erDiagram
 
 Entity memberships may be assigned after extractors have already emitted observations. `BackfillObservationEntities` repairs raw observations by matching `TimeSeriesObservations.object_type/object_id` to `EntityMemberships`, filling only a missing `entity_id`, preserving an existing `dimensions.confidence`, and appending membership evidence to existing provenance. The helper is bounded by batch size and batch count and returns an observation-ID checkpoint. `RunEntityObservationBackfillJob` persists that checkpoint for a named job and resets it after a complete sweep, allowing a later delayed membership to revisit older unassigned observations.
 
-The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result reports `AffectedStart` and `AffectedEnd`, the minimum and maximum `observed_at` timestamps of rows actually changed during that run. The named checkpoint also accumulates this affected range. Task 9 must use that range with its explicit reaggregation request/interface; no aggregate grouping is silently rewritten here.
+The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result reports `AffectedStart` and `AffectedEnd`, the minimum and maximum `observed_at` timestamps of rows actually changed during that run. The named checkpoint also accumulates this affected range. `ReaggregateTimeSeriesBackfill` uses that affected range for explicit aggregate repair; no aggregate grouping is silently rewritten by the backfill itself.
+
+## Time-series storage
+
+`TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection on PostgreSQL, MySQL, and SQLite. Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
+
+PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. MySQL and SQLite use unpartitioned tables. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).

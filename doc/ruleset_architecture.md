@@ -101,3 +101,7 @@ Each rule type may present different types of conditions.
 
 Check this [link](./ruleset_reference.md) for a detailed reference of
 the ruleset schema.
+
+## Time-series integration
+
+Rulesets do not emit metrics merely because a time-series definition exists. A ruleset can cause an observation by persisting a supported artifact through its normal indexing path, or an integration can explicitly emit a `custom` observation after its own durable fact succeeds. Infrastructure telemetry is outside this feature. See [Time-series observations and aggregates](timeseries.md#source-kinds-and-emission-timing).

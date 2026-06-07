@@ -496,3 +496,5 @@ The example remains globally disabled and is illustrative only; the default
 configuration does not seed domain-specific production metrics. If a metric
 does not specify `failure_policy`, it inherits `log_skip`. `fail_indexing` propagates an emitter error through the indexing transaction; `log`,
 `skip`, and the default `log_skip` keep indexing non-fatal.
+
+For a complete workflow, safe examples, emitter timing, registration boundary, aggregation, reaggregation, retention, and API queries, see [Time-series observations and aggregates](timeseries.md). All files under [`examples/timeseries/`](../examples/timeseries/) are examples rather than built-in behavior.

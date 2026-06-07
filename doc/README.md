@@ -31,3 +31,7 @@ deployed in a containerized environment.
 - [Contributing](../CONTRIBUTING.md)
 - [Test Policy](./test_policy.md)
 - [License](../LICENSE.md)
+
+## Feature guides
+
+* [Time-series observations and aggregates](timeseries.md) — metric definitions, emitters, scope/dedupe/change behavior, aggregation, API queries, retention, privacy, portability, and runnable examples.
