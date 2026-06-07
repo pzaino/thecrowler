@@ -290,6 +290,10 @@ func input(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error 
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
 		return nil
 	}
+	value := rule.Value
+	if value == "" {
+		value = selector.Value
+	}
 	if runtime.Options.HBS.Enabled {
 		location, locationErr := element.Location()
 		if locationErr != nil {
@@ -300,7 +304,7 @@ func input(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error 
 			err = executeHBS(ctx, runtime, "click", nil)
 		}
 		if err == nil {
-			err = executeHBS(ctx, runtime, "type", map[string]interface{}{"Value": selector.Value})
+			err = executeHBS(ctx, runtime, "type", map[string]interface{}{"Value": value})
 		}
 		if err == nil {
 			return nil
@@ -315,7 +319,7 @@ func input(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error 
 	if err := element.Click(); err != nil {
 		return fmt.Errorf("failed to click on element: %w", err)
 	}
-	return element.SendKeys(selector.Value)
+	return element.SendKeys(value)
 }
 
 func scroll(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {

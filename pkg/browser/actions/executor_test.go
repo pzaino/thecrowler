@@ -117,3 +117,34 @@ func TestDisabledHBSUsesSeleniumWithoutRbeeConfiguration(t *testing.T) {
 		t.Fatalf("Selenium click count = %d, want 1", element.clicks)
 	}
 }
+
+type inputElement struct {
+	vdi.WebElement
+	value string
+}
+
+func (e *inputElement) Click() error { return nil }
+func (e *inputElement) SendKeys(value string) error {
+	e.value += value
+	return nil
+}
+
+func TestInputTextUsesRuleValueWithoutFilteringTheElement(t *testing.T) {
+	element := &inputElement{}
+	runtime := &Runtime{
+		WebDriver: &testDriver{},
+		Rules:     testLookup{element: element},
+	}
+	rule := &rules.ActionRule{
+		ActionType: "input_text",
+		Value:      "hermetic query",
+		Selectors:  []rules.Selector{{SelectorType: "css", Selector: "#query"}},
+	}
+
+	if err := ExecuteRule(context.Background(), runtime, rule); err != nil {
+		t.Fatalf("ExecuteRule() error = %v", err)
+	}
+	if element.value != "hermetic query" {
+		t.Fatalf("input value = %q, want %q", element.value, "hermetic query")
+	}
+}

@@ -58,3 +58,29 @@ code. Project maintainers will oversee adherence to this policy.
 
 This policy will be reviewed and updated regularly to adapt to project needs
  and technological advancements.
+
+## Hermetic information-seed browser discovery
+
+The default information-seed browser-discovery tests use an in-memory fake
+WebDriver with the production action executor and scraper. They do not require
+network access and never contact a public search engine:
+
+```bash
+go test ./pkg/infoseed/... ./pkg/browser/... ./pkg/scraper/...
+```
+
+A real Selenium/Chrome check is separately compiled with the `integration`
+build tag and must also be explicitly enabled. It serves
+`pkg/infoseed/testdata/browser_search/` fixture pages from a loopback HTTP server,
+so the browser still uses only a repository-owned fixture:
+
+```bash
+THECROWLER_E2E_WEBDRIVER=1 go test -tags=integration ./pkg/infoseed -run BrowserSearch
+```
+
+The test expects Selenium at `http://127.0.0.1:4444/wd/hub` by default. Set
+`THECROWLER_E2E_WEBDRIVER_URL` to use another WebDriver endpoint. Selenium must
+run where it can reach the loopback fixture server created by the Go test (for
+example, as a local process or with compatible host networking). When the
+environment variable is absent, or Selenium/Chrome cannot create a session,
+the optional test skips and reports the exact prerequisite that is missing.
