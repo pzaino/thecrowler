@@ -64,11 +64,13 @@ func Validate(req TransformRequest) (TransformResult, error) {
 func Clean(req TransformRequest) (TransformResult, error) {
 	data := string(req.Data)
 	for key, raw := range req.Details {
-		enabled, ok := raw.(bool)
-		if !ok {
+		if _, ok := raw.(bool); !ok {
 			return TransformResult{}, fmt.Errorf("clean option %q must be a bool", key)
 		}
-		if !enabled {
+	}
+	for _, key := range []string{"decode_html_entities", "remove_html", "remove_numbers", "remove_special_chars", "remove_newlines", "remove_whitespace", "remove_extra_whitespace"} {
+		raw, exists := req.Details[key]
+		if !exists || !raw.(bool) {
 			continue
 		}
 		switch key {
