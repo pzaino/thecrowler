@@ -21,12 +21,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
-	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"
-	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 	"golang.org/x/net/html"
@@ -89,29 +86,4 @@ func matchValue(ctx *ProcessContext, item interface{}, selector rules.Selector) 
 	// Use Regex to match the selValue against the wdfText
 	regEx := regexp.MustCompile(selValue)
 	return regEx.MatchString(wdfText)
-}
-
-// WaitForCondition waits for a condition to be met before continuing.
-func WaitForCondition(ctx *ProcessContext, wd *vdi.WebDriver, r rs.WaitCondition) error {
-	// Execute the wait condition
-	switch strings.ToLower(strings.TrimSpace(r.ConditionType)) {
-	case "element":
-		return nil
-	case "delay":
-		delay := exi.GetFloat(r.Value)
-		if delay > 0 {
-			time.Sleep(time.Duration(delay) * time.Second)
-		}
-		return nil
-	case strPluginCall:
-		plugin, exists := ctx.re.JSPlugins.GetPlugin(r.Value)
-		if !exists {
-			return fmt.Errorf("plugin not found: %s", r.Value)
-		}
-		pluginCode := plugin.String()
-		_, err := (*wd).ExecuteScript(pluginCode, nil)
-		return err
-	default:
-		return fmt.Errorf("wait condition not supported: %s", r.ConditionType)
-	}
 }
