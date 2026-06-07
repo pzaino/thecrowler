@@ -71,6 +71,8 @@ type Options struct {
 	Headers     map[string]string
 	PageSize    int
 	MaxPages    int
+	Transport   string
+	Browser     BrowserOptions
 }
 
 // Result is one candidate returned by a provider.

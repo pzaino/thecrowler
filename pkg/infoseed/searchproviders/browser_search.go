@@ -50,6 +50,10 @@ const (
 type BrowserSearchProvider struct {
 	ProviderName string
 	Client       HTTPClient
+	Sessions     BrowserSessionProvider
+	Actions      BrowserActionExecutor
+	Scraper      BrowserResultScraper
+	Rules        BrowserRuleResolver
 }
 
 // Name returns this provider's stable name.
@@ -70,6 +74,9 @@ func (p *BrowserSearchProvider) Search(ctx context.Context, query string, option
 	endpoint, err := buildEndpoint(options)
 	if err != nil {
 		return nil, safeProviderError(p.Name(), err)
+	}
+	if strings.EqualFold(strings.TrimSpace(options.Transport), BrowserTransportWebDriver) {
+		return p.searchWebDriver(ctx, query, options, endpoint)
 	}
 
 	results := make([]Result, 0, options.PageSize*options.MaxPages)

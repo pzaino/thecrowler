@@ -801,7 +801,23 @@ func providerOptions(name string, providerCfg cfg.InformationSeedProviderConfig)
 }
 
 func providerOptionsWithMaxRequests(name string, providerCfg cfg.InformationSeedProviderConfig, maxRequests int) searchproviders.Options {
-	return searchproviders.Options{Name: name, Provider: providerCfg.Provider, Host: providerCfg.Host, Endpoint: providerCfg.Endpoint, APIKeyLabel: providerCfg.APIKeyLabel, APIKey: providerCfg.APIKey, APIToken: providerCfg.APIToken, Token: providerCfg.Token, Timeout: time.Duration(providerCfg.Timeout) * time.Second, RateLimit: providerCfg.RateLimit, MaxRequests: maxRequests, Parameters: copyProviderMap(providerCfg.Parameters), Headers: copyProviderMap(providerCfg.Headers), PageSize: providerCfg.PageSize, MaxPages: providerCfg.MaxPages}
+	browser := providerCfg.Browser
+	return searchproviders.Options{
+		Name: name, Provider: providerCfg.Provider, Host: providerCfg.Host, Endpoint: providerCfg.Endpoint,
+		APIKeyLabel: providerCfg.APIKeyLabel, APIKey: providerCfg.APIKey, APIToken: providerCfg.APIToken, Token: providerCfg.Token,
+		Timeout: time.Duration(providerCfg.Timeout) * time.Second, RateLimit: providerCfg.RateLimit, MaxRequests: maxRequests,
+		Parameters: copyProviderMap(providerCfg.Parameters), Headers: copyProviderMap(providerCfg.Headers), PageSize: providerCfg.PageSize,
+		MaxPages: providerCfg.MaxPages, Transport: providerCfg.Transport,
+		Browser: searchproviders.BrowserOptions{
+			VDIAllowList: append([]string(nil), browser.VDIAllowList...), NavigationTimeout: time.Duration(browser.NavigationTimeout) * time.Second,
+			PageReadinessTimeout: time.Duration(browser.PageReadinessTimeout) * time.Second, HBSEnabled: browser.HBSEnabled,
+			SeleniumFallback: browser.SeleniumFallback, InitialActions: append([]string(nil), browser.InitialActions...),
+			ConsentActions: append([]string(nil), browser.ConsentActions...), QueryActions: append([]string(nil), browser.QueryActions...),
+			PaginationActions: append([]string(nil), browser.PaginationActions...), ScrapingRules: append([]string(nil), browser.ScrapingRules...),
+			AllowedNavigationHosts: append([]string(nil), browser.AllowedNavigationHosts...), MaxPages: browser.MaxPages,
+			MaxRequests: min(browser.MaxRequests, maxRequests), MaxCandidates: browser.MaxCandidates,
+		},
+	}
 }
 
 func perQueryRequestLimit(providerCfg cfg.InformationSeedProviderConfig, queryCount int) int {
