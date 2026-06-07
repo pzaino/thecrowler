@@ -252,6 +252,9 @@ func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
 		return nil
 	}
 
+	const inQuery = "query"
+	const inPath = "path"
+
 	out := make([]OpenAPIParameter, 0, len(props))
 	for name, v := range props {
 		prop, _ := v.(map[string]any)
@@ -269,9 +272,15 @@ func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
 			s.Type = "string"
 		}
 
+		// Check if the property is in the path
+		typeIn := inQuery
+		if strings.Contains(name, "{"+name+"}") {
+			typeIn = inPath
+		}
+
 		out = append(out, OpenAPIParameter{
 			Name:        name,
-			In:          "query",
+			In:          typeIn,
 			Required:    false,
 			Description: desc,
 			Schema:      s,
@@ -294,6 +303,9 @@ func queryParamsFromValue(v any) []OpenAPIParameter {
 	}
 
 	var params []OpenAPIParameter
+
+	const inQuery = "query"
+	const inPath = "path"
 
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -330,9 +342,17 @@ func queryParamsFromValue(v any) []OpenAPIParameter {
 			s = OpenAPISchema{Type: "string"}
 		}
 
+		// Check if the field is in the path
+		typeIn := inQuery
+		if val, ok := f.Tag.Lookup("path"); ok {
+			if strings.Contains(val, "{"+name+"}") {
+				typeIn = inPath
+			}
+		}
+
 		params = append(params, OpenAPIParameter{
 			Name:        name,
-			In:          "query",
+			In:          typeIn,
 			Required:    required,
 			Description: strings.TrimSpace(f.Tag.Get("desc")),
 			Schema:      s,
@@ -655,6 +675,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				Responses:   responses,
 			}
 
+			const inQuery = "query"
+			const inPath = "path"
+
 			// Add query parameters from QueryType for GET
 			if (method == getStr) && (r.QueryType != nil) {
 
@@ -668,9 +691,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					if v.Type == "object" && v.Properties != nil {
 						for name, prop := range v.Properties {
 							// Check if the property is in the path
-							typeIn := "query"
+							typeIn := inQuery
 							if strings.Contains(r.Path, "{"+name+"}") {
-								typeIn = "path"
+								typeIn = inPath
 							}
 							op.Parameters = append(op.Parameters, OpenAPIParameter{
 								Name:   name,
@@ -684,9 +707,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					if v.Type == "object" && v.Properties != nil {
 						for name, prop := range v.Properties {
 							// Check if the property is in the path
-							typeIn := "query"
+							typeIn := inQuery
 							if strings.Contains(r.Path, "{"+name+"}") {
-								typeIn = "path"
+								typeIn = inPath
 							}
 							op.Parameters = append(op.Parameters, OpenAPIParameter{
 								Name:   name,
