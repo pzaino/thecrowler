@@ -194,6 +194,47 @@ func TestBrowserSearchProviderFixturePagesUseSelectorsAndCaps(t *testing.T) {
 	}
 }
 
+func TestBrowserSearchProviderUsesDefaultSelectors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(mustReadFixture(t, "browser_search_page1.html"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &BrowserSearchProvider{ProviderName: ProviderBrowserSearch}
+	results, err := provider.Search(context.Background(), "defaults", Options{
+		Host:        server.URL,
+		Timeout:     time.Second,
+		PageSize:    2,
+		MaxPages:    1,
+		MaxRequests: 1,
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("default selectors returned %#v", results)
+	}
+	assertResult(t, results, "https://example.com/alpha", "Alpha Result", "Alpha snippet from a local fixture.", 1)
+}
+
+func TestBrowserSearchProviderStatusErrorDoesNotLeakSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "api_key=SHOULD_NOT_LEAK token=SECRET_PROVIDER_TOKEN")
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &BrowserSearchProvider{ProviderName: ProviderBrowserSearch}
+	_, err := provider.Search(context.Background(), "seed", Options{
+		Host:     server.URL,
+		APIKey:   "SECRET_PROVIDER_KEY",
+		APIToken: "SECRET_PROVIDER_TOKEN",
+		Timeout:  time.Second,
+	})
+	assertRedactedError(t, err, "status 500")
+}
+
 func TestBrowserSearchProviderConsentFixtureDoesNotLeakSecrets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
