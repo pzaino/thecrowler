@@ -803,6 +803,11 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 		Version:     "v1",
 		Description: "Dynamically generated OpenAPI spec from the running server route registry.",
 		ServerURL:   serverURL,
+		Contact: &cmn.OpenAPIContact{
+			Name:  "CROWler Team",
+			URL:   "https://github.com/pzaino/thecrowler",
+			Email: "",
+		},
 	})
 
 	handleErrorAndRespond(w, nil, spec, "", http.StatusInternalServerError, http.StatusOK)

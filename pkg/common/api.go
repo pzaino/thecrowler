@@ -39,9 +39,17 @@ type OpenAPISpec struct {
 
 // OpenAPIInfo represents the metadata information about the API, including its title, version, and an optional description.
 type OpenAPIInfo struct {
-	Title       string `json:"title"`
-	Version     string `json:"version"`
-	Description string `json:"description,omitempty"`
+	Title       string          `json:"title"`
+	Version     string          `json:"version"`
+	Description string          `json:"description,omitempty"`
+	Contact     *OpenAPIContact `json:"contact,omitempty"`
+}
+
+// OpenAPIContact represents the contact information for the API, including name, URL, and email.
+type OpenAPIContact struct {
+	Name  string `json:"name,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // OpenAPIServer represents a server that serves the API, including its URL and an optional description.
@@ -111,7 +119,8 @@ type OpenAPIOptions struct {
 	Title       string
 	Version     string
 	Description string
-	ServerURL   string // optional, e.g. "http://localhost:8080"
+	ServerURL   string          // optional, e.g. "http://localhost:8080"
+	Contact     *OpenAPIContact // optional contact information for the API
 }
 
 // StdAPIQuery represents a standard query structure that can be used for API endpoints
@@ -537,6 +546,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			Title:       defaultIfEmpty(opt.Title, "CROWler API"),
 			Version:     defaultIfEmpty(opt.Version, "v1"),
 			Description: opt.Description,
+			Contact:     opt.Contact,
 		},
 		Paths: make(map[string]OpenAPIPath),
 		Components: OpenAPIComponents{
