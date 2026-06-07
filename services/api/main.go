@@ -576,6 +576,9 @@ func initAPIv1() {
 	if !config.API.DisableDefault {
 		// Aggregate-first time-series query handlers. Raw observations remain on
 		// their explicit, conservatively bounded endpoint.
+
+		// Time series endpoints
+
 		http.Handle("/v1/timeseries/metrics", withPublicMiddlewares(timeSeriesMetricsHandler))
 		cmn.RegisterAPIRoute("/v1/timeseries/metrics", []string{"GET"}, "List time-series metric definitions", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesMetricListResponse{})
 
@@ -591,7 +594,8 @@ func initAPIv1() {
 		http.Handle("/v1/timeseries/dimensions", withPublicMiddlewares(timeSeriesDimensionsHandler))
 		cmn.RegisterAPIRoute("/v1/timeseries/dimensions", []string{"GET"}, "Compare aggregate buckets grouped by a bounded metric dimension", false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDimensionComparisonResponse{})
 
-		// Query handlers
+		// Search query handlers
+
 		http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
 		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET"}, "General search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, SearchResult{})
 
@@ -614,14 +618,23 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", false, false, 200, nil, cmn.StdAPIQuery{}, ScrapedDataResponse{})
 
 		registerSearchFunctionRoute("/v1/search/correlated_sources", searchCorrelatedSourcesByDomainHandler, "Typed PostgreSQL correlated-source search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/pages", searchPagesFunctionHandler, "Typed PostgreSQL page search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/scraped_data", searchScrapedDataFunctionHandler, "Typed PostgreSQL scraped-data search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/scraped_data_field", searchScrapedDataFieldFunctionHandler, "Typed PostgreSQL scraped-data field search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/artifacts", searchArtifactsFunctionHandler, "Typed PostgreSQL artifact search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/artifacts_field", searchArtifactsFieldFunctionHandler, "Typed PostgreSQL artifact field search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/artifacts_fields", searchArtifactsFieldsFunctionHandler, "Typed PostgreSQL artifact multi-field search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/artifacts_attribute", searchArtifactsByAttributeFunctionHandler, "Typed PostgreSQL artifact attribute search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/objects_attribute", searchObjectsByAttributeFunctionHandler, "Typed PostgreSQL object attribute search endpoint")
+
 		registerSearchFunctionRoute("/v1/search/objects_attributes", searchObjectsByAttributesFunctionHandler, "Typed PostgreSQL object multi-attribute search endpoint")
 	}
 
@@ -644,6 +657,8 @@ func initAPIv1() {
 		informationSeedEnableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedEnableHandler)))
 		informationSeedEventsHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedEventsHandler)))
 
+		// Source management endpoints
+
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
 
@@ -661,6 +676,8 @@ func initAPIv1() {
 
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", true, false, 200, nil, StdAPIBasicQuery{}, nil)
+
+		// Information seed endpoints
 
 		http.Handle("/v1/information_seed/add", informationSeedAddHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/add", []string{"POST"}, "Add information seed endpoint (console)", true, false, 201, informationSeedAddRequest{}, nil, InformationSeedResponse{})
@@ -703,6 +720,7 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "Deprecated alias for /v1/information_seed/list", true, false, 200, nil, nil, InformationSeedListResponse{})
 
 		// Owner endpoints
+
 		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
 		cmn.RegisterAPIRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", true, false, 201, cdb.OwnerRequest{}, nil, nil)
 
@@ -713,6 +731,7 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", true, false, 204, map[string]int64{}, nil, nil)
 
 		// Category endpoints
+
 		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
 		cmn.RegisterAPIRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", true, false, 201, cdb.CategoryRequest{}, nil, nil)
 
