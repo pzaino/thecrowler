@@ -290,7 +290,7 @@ func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
 	return out
 }
 
-func queryParamsFromValue(v any) []OpenAPIParameter {
+func queryParamsFromValue(v any, path string) []OpenAPIParameter {
 	if v == nil {
 		return nil
 	}
@@ -344,10 +344,8 @@ func queryParamsFromValue(v any) []OpenAPIParameter {
 
 		// Check if the field is in the path
 		typeIn := inQuery
-		if val, ok := f.Tag.Lookup("path"); ok {
-			if strings.Contains(val, "{"+name+"}") {
-				typeIn = inPath
-			}
+		if strings.Contains(path, "{"+name+"}") {
+			typeIn = inPath
 		}
 
 		params = append(params, OpenAPIParameter{
@@ -722,7 +720,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				default:
 					// normal struct reflection
 					if v != nil {
-						op.Parameters = append(op.Parameters, queryParamsFromValue(v)...)
+						op.Parameters = append(op.Parameters, queryParamsFromValue(v, r.Path)...)
 					}
 				}
 			}
