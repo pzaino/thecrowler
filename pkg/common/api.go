@@ -346,6 +346,8 @@ func queryParamsFromValue(v any, path string) []OpenAPIParameter {
 		typeIn := inQuery
 		if strings.Contains(path, "{"+name+"}") {
 			typeIn = inPath
+			// Path parameters must be required
+			required = true
 		}
 
 		params = append(params, OpenAPIParameter{
@@ -686,17 +688,20 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 						break
 					}
 					// plugin JSON schema
-					if v.Type == "object" && v.Properties != nil {
+					if (v.Type == "object") && (v.Properties != nil) {
 						for name, prop := range v.Properties {
 							// Check if the property is in the path
 							typeIn := inQuery
+							required := false
 							if strings.Contains(r.Path, "{"+name+"}") {
 								typeIn = inPath
+								required = true
 							}
 							op.Parameters = append(op.Parameters, OpenAPIParameter{
-								Name:   name,
-								In:     typeIn,
-								Schema: prop,
+								Name:     name,
+								In:       typeIn,
+								Schema:   prop,
+								Required: required,
 							})
 						}
 					}
@@ -706,13 +711,16 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 						for name, prop := range v.Properties {
 							// Check if the property is in the path
 							typeIn := inQuery
+							required := false
 							if strings.Contains(r.Path, "{"+name+"}") {
 								typeIn = inPath
+								required = true
 							}
 							op.Parameters = append(op.Parameters, OpenAPIParameter{
-								Name:   name,
-								In:     typeIn,
-								Schema: prop,
+								Name:     name,
+								In:       typeIn,
+								Schema:   prop,
+								Required: required,
 							})
 						}
 					}
