@@ -23,19 +23,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/PuerkitoBio/goquery"
-	"github.com/antchfx/htmlquery"
-	"github.com/evanw/esbuild/pkg/api"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-
-	"golang.org/x/net/html"
 )
 
 // ApplyRule applies the provided scraping rule to the provided web page.
@@ -202,466 +196,6 @@ func ApplyRule(ctx *ProcessContext, rule *rs.ScrapingRule, webPage *vdi.WebDrive
 
 	// Return the extracted data as a portion of the WebObject's scraped_data: {} JSON object
 	return extractedData, nil
-}
-
-// extractJSFiles extracts the JavaScript files from the current page.
-func extractJSFiles(wd *vdi.WebDriver) []CollectedScript {
-	var jsFiles []CollectedScript
-
-	const script = `
-	var scripts = document.getElementsByTagName('script');
-	var result = [];
-	for (var i = 0; i < scripts.length; i++) {
-		if (scripts[i].src) {
-			try {
-				var xhr = new XMLHttpRequest();
-				xhr.open('GET', scripts[i].src, false);  // synchronous request
-				xhr.send(null);
-				if (xhr.status === 200) {
-					result.push({type: 'external', content: xhr.responseText});
-				} else {
-					result.push({type: 'external', content: 'Error: ' + xhr.statusText});
-				}
-			} catch (e) {
-				result.push({type: 'external', content: 'Error: ' + e.message});
-			}
-		} else {
-			result.push({type: 'inline', content: scripts[i].innerHTML});
-		}
-	}
-	return result;
-	`
-
-	// Execute the JavaScript
-	res, err := (*wd).ExecuteScript(script, nil)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error executing the script: %v", err)
-	}
-
-	// Parse the result
-	scriptContents, ok := res.([]interface{})
-	if !ok {
-		cmn.DebugMsg(cmn.DbgLvlError, "Expected script content to be a slice of interfaces")
-	}
-
-	for i, script := range scriptContents {
-		scriptMap, ok := script.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Get the script content
-		scriptOrig, ok := scriptMap["content"].(string)
-		if !ok {
-			continue
-		}
-
-		// Check if the script is obfuscated
-		isObfuscated := detectObfuscation(scriptOrig)
-
-		// Deobfuscate the script content if needed
-		var scriptSource string
-		if isObfuscated {
-			scriptSource = deobfuscateScript(scriptOrig)
-		}
-
-		scriptContent := "<!---- TheCRWOler: [Extracted script number: " + fmt.Sprint(i) +
-			", of type: " + scriptMap["type"].(string) + "] //---->\n" +
-			scriptSource +
-			"\n<!---- TheCRWOler: [End of extracted script number: " + fmt.Sprint(i) + "] //---->"
-
-		// Append the script content to the list
-		newCollectedScript := CollectedScript{
-			//nolint:gosec // Disabling G115: integer overflow conversion int -> uint64 as it won't happen here
-			ID:           uint64(i),
-			ScriptType:   scriptMap["type"].(string),
-			Original:     scriptOrig,
-			Script:       scriptContent,
-			Errors:       lintScript(scriptContent),
-			IsObfuscated: isObfuscated,
-		}
-
-		jsFiles = append(jsFiles, newCollectedScript)
-
-	}
-
-	return jsFiles
-}
-
-func detectObfuscation(scriptContent string) bool {
-	// Calculate entropy
-	entropy := cmn.CalculateEntropy(scriptContent)
-
-	// Check for high entropy and common obfuscation patterns
-	if entropy > 4.0 || containsObfuscationPatterns(scriptContent) {
-		return true
-	}
-	return false
-}
-
-func containsObfuscationPatterns(scriptContent string) bool {
-	// Check for common obfuscation patterns
-	patterns := []string{
-		"eval(", "Function(", "document.write(", "String.fromCharCode(", "\\x", "\\u",
-	}
-	for _, pattern := range patterns {
-		if strings.Contains(scriptContent, pattern) {
-			return true
-		}
-	}
-	return false
-}
-
-func deobfuscateScript(scriptContent string) string {
-	// Apply various deobfuscation techniques
-
-	// Unescape Unicode sequences
-	re := regexp.MustCompile(`\\u[0-9a-fA-F]{4}`)
-	scriptContent = re.ReplaceAllStringFunc(scriptContent, func(match string) string {
-		r, _ := strconv.ParseInt(match[2:], 16, 32)
-		return string(rune(r))
-	})
-
-	// Unescape hexadecimal sequences
-	re = regexp.MustCompile(`\\x[0-9a-fA-F]{2}`)
-	scriptContent = re.ReplaceAllStringFunc(scriptContent, func(match string) string {
-		r, _ := strconv.ParseInt(match[2:], 16, 32)
-		return string(rune(r))
-	})
-
-	// TODO: I need to improve this and add further deobfuscation techniques here
-
-	return scriptContent
-}
-
-func lintScript(scriptContent string) []string {
-	var errors []string
-
-	// Use minify to parse and lint JavaScript
-	result := api.Transform(scriptContent, api.TransformOptions{
-		Loader: api.LoaderJS,
-	})
-	if len(result.Errors) > 0 {
-		for _, err := range result.Errors {
-			errors = append(errors, err.Text)
-		}
-	}
-
-	return errors
-}
-
-// extractContent extracts the content from the provided document using the provided CSS selector.
-func extractContent(ctx *ProcessContext, wd *vdi.WebDriver, selector rs.Selector, all bool) []interface{} {
-	var results []interface{}
-	var elements []vdi.WebElement
-	var err error
-	sType := strings.ToLower(strings.TrimSpace(selector.SelectorType))
-
-	// Find the elements using the provided selector directly in the VDI's browser
-	if (sType != strPluginCall) && (sType != strRegEx) && (sType != strXPath) {
-		if all {
-			elements, err = FindElementsByType(ctx, wd, selector)
-		} else {
-			element, err := FindElementByType(ctx, wd, selector)
-			if err == nil {
-				elements = append(elements, element)
-			}
-		}
-	}
-
-	// Fallback mechanism if there are no elements found, we had errors or the selector type is not supported by FindElementsByType
-	if len(elements) == 0 || err != nil ||
-		selector.SelectorType == strPluginCall || selector.SelectorType == strRegEx {
-
-		// Let's use fallback mechanism to try to extract the data
-		htmlContent, _ := (*wd).PageSource()
-		doc, err2 := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
-		if err2 != nil {
-			// Fallback failed
-			cmn.DebugMsg(cmn.DbgLvlError, "finding elements: %v, and fallback mechanism failed too: %v", err, err2)
-			return results
-		}
-
-		rval := []string{}
-		switch sType {
-		case "css":
-			rval = fallbackExtractByCSS(ctx, doc, selector, all)
-		case strXPath: // XPath is not supported by goquery, so we use htmlquery
-			rval = fallbackExtractByXPath(ctx, doc, selector, all)
-		case strRegEx:
-			rval = fallbackExtractByRegex(htmlContent, selector.Selector, all)
-		case strPluginCall:
-			req := RuleCallRequest{
-				Kind:       RuleCallKindPlugin,
-				PluginName: selector.Selector,
-				TimeoutSec: 30,
-				OnError:    "fail",
-				Caller:     "scraping.selector",
-			}
-			res := executeRuleCall(ctx, wd, req)
-			if res.Success {
-				results = normalizeRuleCallOutput(res.Value)
-			}
-		case string(RuleCallKindAgent):
-			if selector.AgentCall != nil {
-				req := normalizeFromAgentCall(selector.AgentCall, "scraping.selector")
-				res := executeRuleCall(ctx, wd, req)
-				if res.Success {
-					results = normalizeRuleCallOutput(res.Value)
-				}
-			}
-		}
-		for _, s := range rval {
-			results = append(results, s)
-		}
-
-	} else {
-		// All good, let's extract the data from the found elements
-		for i := 0; i < len(elements); i++ {
-			if selector.Extract != (rs.ItemToExtract{}) {
-				// Extract the data using the provided regex
-				for _, s := range extractDataFromElement(ctx, elements[i], selector) {
-					results = append(results, s)
-				}
-			} else {
-				// Extract the innerText from the element
-				text, _ := elements[i].Text()
-				results = append(results, text)
-			}
-		}
-	}
-
-	// Let's check results before we return it
-	if len(results) == 0 {
-		if cmn.GetDebugLevel() <= cmn.DbgLvlDebug3 {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ExtractContent] No results found for selector: '%s'", selector.Selector)
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ExtractContent] Failed to find element: '%s' %v", selector.Selector, err)
-		}
-	} else {
-		tstResults := cmn.ConvertSliceInfToString(results)
-		if cmn.GetDebugLevel() <= cmn.DbgLvlDebug3 {
-			if len(tstResults) > 128 {
-				tstResults = tstResults[:128] + "..."
-			}
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ExtractContent] Found element: '%s' %s", selector.Selector, tstResults)
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-ExtractContent] Found element: '%s' %v", selector.Selector, tstResults)
-		}
-	}
-	return results
-}
-
-func normalizeRuleCallOutput(value interface{}) []interface{} {
-	if value == nil {
-		return []interface{}{}
-	}
-	if arr, ok := value.([]interface{}); ok {
-		return arr
-	}
-	return []interface{}{value}
-}
-
-func extractDataFromElement(_ *ProcessContext, item interface{}, selector rs.Selector) []string {
-	// Check if item is a WebElement
-	tmp1, ok := item.(vdi.WebElement)
-	var tmp2 *goquery.Selection
-	if !ok {
-		tmp1 = nil
-		// Check if item is a *goquery.Selection
-		tmp2, ok = item.(*goquery.Selection)
-		if !ok {
-			return []string{}
-		}
-	}
-
-	var results []string
-	var err error
-
-	eEpType := strings.ToLower(strings.TrimSpace(selector.Extract.Type))
-
-	var data string
-	pattern := selector.Extract.Pattern
-	switch eEpType {
-	case strText1, strText2, strText3, strText4:
-		if tmp1 != nil {
-			data, err = tmp1.Text()
-		} else {
-			data = tmp2.Text()
-		}
-	case "attribute":
-		if tmp1 != nil {
-			data, err = tmp1.GetAttribute(selector.Extract.Pattern)
-		} else {
-			var exists bool
-			data, exists = tmp2.Attr(selector.Extract.Pattern)
-			if !exists {
-				data = ""
-				err = errors.New("Attribute not found")
-			}
-		}
-		pattern = ""
-	}
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Error extracting data from element: %v", err)
-		return results
-	}
-
-	if pattern != "" && pattern != ".*" {
-		// Extract the data using the provided regex
-		re := regexp.MustCompile(pattern)
-		if allMatches := re.FindAllString(data, -1); len(allMatches) > 0 {
-			results = append(results, allMatches...)
-		}
-	} else {
-		results = append(results, data)
-	}
-
-	return results
-}
-
-// extractByCSS extracts the content from the provided document using the provided CSS selector.
-func fallbackExtractByCSS(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
-	var results []string
-	var elements []*goquery.Selection
-
-	if all {
-		doc.Find(selector.Selector).Each(func(_ int, s *goquery.Selection) {
-			elements = append(elements, s)
-		})
-	} else {
-		if selection := doc.Find(selector.Selector).First(); selection.Length() > 0 {
-			elements = append(elements, selection)
-		}
-	}
-
-	// Process the matched elements
-	for _, e := range elements {
-		matchL2 := false
-		if strings.TrimSpace(selector.Attribute.Name) != "" {
-			attrValue, exists := e.Attr(strings.TrimSpace(selector.Attribute.Name))
-			if !exists {
-				continue
-			}
-
-			matchValue := strings.TrimSpace(selector.Attribute.Value)
-			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				// Use regex for matching
-				re, err := regexp.Compile(matchValue)
-				if err == nil && re.MatchString(attrValue) {
-					matchL2 = true
-				}
-			} else {
-				matchL2 = true
-			}
-		} else {
-			matchL2 = true
-		}
-
-		matchL3 := false
-		if matchL2 && strings.TrimSpace(selector.Value) != "" {
-			if matchValue(ctx, e, selector) {
-				matchL3 = true
-			}
-		} else {
-			if matchL2 {
-				matchL3 = true
-			}
-		}
-		if matchL3 {
-			results = append(results, extractDataFromElement(ctx, e, selector)...)
-			if !all {
-				break // Stop after first match if not processing all
-			}
-		}
-	}
-
-	return results
-}
-
-// fallbackExtractByXPath extracts the content from the provided document using the provided XPath selector.
-func fallbackExtractByXPath(ctx *ProcessContext, doc *goquery.Document, selector rs.Selector, all bool) []string {
-	var results []string
-	items, err := htmlquery.QueryAll(doc.Nodes[0], selector.Selector)
-	if err != nil {
-		// handle error
-		return results
-	}
-
-	// Process the matched elements
-	for _, item := range items {
-		matchL2 := false
-
-		// Check for attribute match if specified
-		if strings.TrimSpace(selector.Attribute.Name) != "" {
-			attrValue := htmlquery.SelectAttr(item, strings.TrimSpace(selector.Attribute.Name))
-			matchValue := strings.TrimSpace(selector.Attribute.Value)
-			if matchValue != "" && matchValue != "*" && matchValue != ".*" {
-				// Use regex for matching
-				re, err := regexp.Compile(matchValue)
-				if err == nil && re.MatchString(attrValue) {
-					matchL2 = true
-				}
-			} else {
-				matchL2 = true
-			}
-		} else {
-			matchL2 = true
-		}
-
-		matchL3 := false
-		// Check if the element's text or value matches the selector's value
-		if matchL2 && strings.TrimSpace(selector.Value) != "" {
-			if matchValue(ctx, item, selector) {
-				matchL3 = true
-			}
-		} else {
-			if matchL2 {
-				matchL3 = true
-			}
-		}
-
-		if matchL3 {
-			results = append(results, htmlquery.InnerText(item))
-			if !all {
-				break // Stop after first match if not processing all
-			}
-		}
-	}
-
-	return results
-}
-
-func fallbackExtractByRegex(content string, pattern string, all bool) []string {
-	re := regexp.MustCompile(pattern)
-
-	if all {
-		// Find all matches
-		matches := re.FindAllStringSubmatch(content, -1)
-		var results []string
-		for _, match := range matches {
-			if len(match) > 1 {
-				// Capture group found
-				results = append(results, match[1])
-			} else {
-				// No capture group, use the whole match
-				results = append(results, match[0])
-			}
-		}
-		return results
-	}
-
-	// Find the first match
-	if match := re.FindStringSubmatch(content); match != nil {
-		if len(match) > 1 {
-			// Return the capture group if present
-			return []string{match[1]}
-		}
-		// Otherwise, return the whole match
-		return []string{match[0]}
-	}
-
-	return []string{}
 }
 
 func extractByPlugin(ctx *ProcessContext, wd *vdi.WebDriver, selector string) []interface{} {
@@ -897,33 +431,30 @@ func ppStepPluginCall(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]
 
 // ppStepReplace applies the "replace" post-processing step to the provided data.
 func ppStepReplace(data *[]byte, step *rs.PostProcessingStep) {
-	// Replace all instances of step.Details["target"] with step.Details["replacement"] in data
-	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), step.Details["replacement"].(string)))
+	result, err := scraper.Replace(scraper.TransformRequest{Data: *data, Details: step.Details})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "replace post-processing: %v", err)
+		return
+	}
+	*data = result.Data
 }
 
-// ppStepRemove applies the "remove" post-processing step to the provided data.
 func ppStepRemove(data *[]byte, step *rs.PostProcessingStep) {
-	// Remove all instances of step.Details["target"] from data
-	*data = []byte(strings.ReplaceAll(string(*data), step.Details["target"].(string), ""))
+	result, err := scraper.Remove(scraper.TransformRequest{Data: *data, Details: step.Details})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "remove post-processing: %v", err)
+		return
+	}
+	*data = result.Data
 }
 
-// ppStepValidate applies the "validate" post-processing step to the provided data.
-// The step should contain a list of keys that must be present in the data.
-// If any of the keys is missing, an error message is logged.
 func ppStepValidate(data *[]byte, step *rs.PostProcessingStep) {
-	// check if the data is a valid JSON document
-	if !json.Valid(*data) {
-		cmn.DebugMsg(cmn.DbgLvlError, "Data is not valid JSON")
-	}
-	// Get keys from the step details and check if they are present in the data
-	for _, key := range step.Details["keys"].([]string) {
-		if !strings.Contains(string(*data), key) {
-			cmn.DebugMsg(cmn.DbgLvlError, "Key %v is missing from the data", key)
-		}
+	_, err := scraper.Validate(scraper.TransformRequest{Data: *data, Details: step.Details})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "%v", err)
 	}
 }
 
-// ppStepExternalAPI applies the "external_api" post-processing step to the provided data.
 func ppStepExternalAPI(_ctx *ProcessContext, step *rs.PostProcessingStep, data *[]byte) {
 	// Implement the API call here
 	err := processAPITransformation(step, data)
@@ -935,71 +466,17 @@ func ppStepExternalAPI(_ctx *ProcessContext, step *rs.PostProcessingStep, data *
 // ppStepClean applies the "clean" post-processing step to the provided data.
 // The step should contain a "target" key that specifies the string to be removed from the data.
 func ppStepClean(data *[]byte, step *rs.PostProcessingStep) {
-	// Clean the data based on the provided details
-	if step == nil {
+	if step == nil || len(step.Details) == 0 {
 		return
 	}
-	if len(step.Details) == 0 {
+	result, err := scraper.Clean(scraper.TransformRequest{Data: *data, Details: step.Details})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "clean post-processing: %v", err)
 		return
 	}
-	// Process all the details in the step
-	for key, value := range step.Details {
-		// Cast interface to bool
-		var useValue bool
-		if value != nil {
-			useValue = value.(bool)
-		} else {
-			useValue = false
-		}
-		switch key {
-		case "remove_html":
-			if useValue {
-				*data = []byte(stripHTML(string(*data)))
-			}
-		case "remove_whitespace":
-			if useValue {
-				*data = []byte(strings.ReplaceAll(string(*data), " ", ""))
-			}
-		case "remove_extra_whitespace":
-			if useValue {
-				*data = []byte(strings.Join(strings.Fields(string(*data)), " "))
-			}
-		case "remove_newlines":
-			if useValue {
-				*data = []byte(strings.ReplaceAll(string(*data), "\n", ""))
-			}
-		case "remove_special_chars":
-			if useValue {
-				*data = []byte(stripSpecialChars(string(*data)))
-			}
-		case "remove_numbers":
-			if useValue {
-				*data = []byte(stripNumbers(string(*data)))
-			}
-		case "decode_html_entities":
-			if useValue {
-				*data = []byte(html.UnescapeString(string(*data)))
-			}
-		}
-	}
+	*data = result.Data
 }
 
-func stripHTML(data string) string {
-	re := regexp.MustCompile(`<[^>]*>`)
-	return re.ReplaceAllString(data, "")
-}
-
-func stripSpecialChars(data string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9\s]`)
-	return re.ReplaceAllString(data, "")
-}
-
-func stripNumbers(data string) string {
-	re := regexp.MustCompile(`[0-9]`)
-	return re.ReplaceAllString(data, "")
-}
-
-// ppStepTransform applies the "transform" post-processing step to the provided data.
 func ppStepTransform(ctx *ProcessContext, data *[]byte, step *rs.PostProcessingStep) {
 	// Implement the transformation logic here
 	transformType := strings.ToLower(strings.TrimSpace(step.Details["transform_type"].(string)))

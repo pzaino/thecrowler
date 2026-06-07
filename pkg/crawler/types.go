@@ -28,6 +28,7 @@ import (
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
+	scraper "github.com/pzaino/thecrowler/pkg/scraper"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
@@ -133,15 +134,8 @@ type PageInfo struct {
 	Config                  *cfg.Config                      `json:"config"`                     // The configuration of the web page.
 }
 
-// CollectedScript represents a single collected script.
-type CollectedScript struct {
-	ID           uint64   `json:"id"`
-	ScriptType   string   `json:"script_type"`
-	Original     string   `json:"original"`
-	Script       string   `json:"script"`
-	Errors       []string `json:"errors"`
-	IsObfuscated bool     `json:"is_obfuscated"`
-}
+// CollectedScript is retained as a compatibility alias.
+type CollectedScript = scraper.CollectedScript
 
 // WebObjectDetails represents the details of a web object.
 type WebObjectDetails struct {
