@@ -153,7 +153,11 @@ type StdAPISuccess struct {
 	Message string `json:"message"`
 }
 
-const getStr = "get"
+const (
+	getStr     = "get"
+	postStr    = "post"
+	typeObject = "object"
+)
 
 var apiRegistry []APIRoute
 var apiRegistryMutex sync.Mutex
@@ -338,7 +342,7 @@ func queryParamsFromValue(v any, path string) []OpenAPIParameter {
 
 		// Query params cannot be arbitrary objects in practice.
 		// If schema is object/any, degrade to string (safe default).
-		if s.Type == "" || s.Type == "object" {
+		if (s.Type == "") || (s.Type == typeObject) {
 			s = OpenAPISchema{Type: "string"}
 		}
 
@@ -416,7 +420,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 	// Detect json.RawMessage
 	if t == rawMessageType {
 		return OpenAPISchema{
-			Type:                 "object",
+			Type:                 typeObject,
 			AdditionalProperties: &OpenAPISchema{},
 		}
 	}
@@ -471,13 +475,13 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 	case reflect.Map:
 		// OpenAPI requires map keys to be string for JSON objects. If not string, fall back.
 		if t.Key().Kind() != reflect.String {
-			return OpenAPISchema{Type: "object"}
+			return OpenAPISchema{Type: typeObject}
 		}
 
 		// map[string]interface{} => additionalProperties: {}
 		valSchema := schemaFromTypeInternal(t.Elem(), seen)
 		return OpenAPISchema{
-			Type:                 "object",
+			Type:                 typeObject,
 			AdditionalProperties: &valSchema,
 		}
 
@@ -538,7 +542,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 		}
 
 		s := OpenAPISchema{
-			Type:       "object",
+			Type:       typeObject,
 			Properties: props,
 		}
 
@@ -648,7 +652,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
-								Type:       "object",
+								Type:       typeObject,
 								Properties: schemaFromValue(StdAPIError{}).Properties,
 							},
 						},
@@ -659,7 +663,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
-								Type:       "object",
+								Type:       typeObject,
 								Properties: schemaFromValue(StdAPIError{}).Properties,
 							},
 						},
@@ -688,7 +692,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 						break
 					}
 					// plugin JSON schema
-					if (v.Type == "object") && (v.Properties != nil) {
+					if (v.Type == typeObject) && (v.Properties != nil) {
 						for name, prop := range v.Properties {
 							// Check if the property is in the path
 							typeIn := inQuery
@@ -707,7 +711,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					}
 
 				case OpenAPISchema:
-					if v.Type == "object" && v.Properties != nil {
+					if (v.Type == typeObject) && (v.Properties != nil) {
 						for name, prop := range v.Properties {
 							// Check if the property is in the path
 							typeIn := inQuery
