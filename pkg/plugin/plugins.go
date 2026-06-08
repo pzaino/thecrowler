@@ -547,12 +547,12 @@ func NewJSPlugin(script string) *JSPlugin {
 			pDesc = strings.TrimSpace(value)
 		case "type":
 			pTypeStr := strings.ToLower(strings.TrimSpace(value))
-			if pTypeStr == vdiPlugin ||
-				pTypeStr == enginePlugin ||
-				pTypeStr == apiPlugin ||
-				pTypeStr == eventPlugin ||
-				pTypeStr == libPlugin ||
-				pTypeStr == testPlugin {
+			if (pTypeStr == vdiPlugin) ||
+				(pTypeStr == enginePlugin) ||
+				(pTypeStr == apiPlugin) ||
+				(pTypeStr == eventPlugin) ||
+				(pTypeStr == libPlugin) ||
+				(pTypeStr == testPlugin) {
 				pType = pTypeStr
 			} else {
 				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
@@ -564,7 +564,7 @@ func NewJSPlugin(script string) *JSPlugin {
 			pVersion = strings.TrimSpace(value)
 		case "async":
 			asyncStr := strings.ToLower(strings.TrimSpace(value))
-			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
+			if (asyncStr == "true") || (asyncStr == "yes") || (asyncStr == "1") {
 				pAsync = true
 			}
 		case "api_endpoint":
@@ -580,13 +580,13 @@ func NewJSPlugin(script string) *JSPlugin {
 					if method == "" {
 						continue
 					}
-					if method != httpMethodGet &&
-						method != "POST" &&
-						method != "PUT" &&
-						method != "DELETE" &&
-						method != "PATCH" &&
-						method != "HEAD" &&
-						method != "OPTIONS" {
+					if (method != httpMethodGet) &&
+						(method != "POST") &&
+						(method != "PUT") &&
+						(method != "DELETE") &&
+						(method != "PATCH") &&
+						(method != "HEAD") &&
+						(method != "OPTIONS") {
 						continue
 					}
 					apiMethods = append(apiMethods, method)
