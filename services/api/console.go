@@ -864,6 +864,46 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	return results, nil
 }
 
+// SourcesStatusResponse represents the full JSON response:
+//
+//	{
+//	  "message": "All Sources status",
+//	  "items": [...]
+//	}
+type SourcesStatusResponse struct {
+	Message string         `json:"message"`
+	Items   []SourceStatus `json:"items"`
+}
+
+// SourceStatus represents one item in the "items" array.
+type SourceStatus struct {
+	SourceID      int              `json:"source_id"`
+	URL           DBString         `json:"url"`
+	Status        DBString         `json:"status"`
+	Priority      DBString         `json:"priority"`
+	Engine        DBString         `json:"engine"`
+	CreatedAt     DBString         `json:"created_at"`
+	LastUpdatedAt DBString         `json:"last_updated_at"`
+	LastCrawledAt DBString         `json:"last_crawled_at"`
+	LastError     DBString         `json:"last_error"`
+	LastErrorAt   DBString         `json:"last_error_at"`
+	Restricted    int              `json:"restricted"`
+	Disabled      bool             `json:"disabled"`
+	Flags         int              `json:"flags"`
+	Config        cdb.SourceConfig `json:"config"`
+}
+
+// DBString matches the JSON shape produced by sql.NullString-like values:
+//
+//	{
+//	  "String": "...",
+//	  "Valid": true
+//	}
+type DBString struct {
+	String string `json:"String"`
+	Valid  bool   `json:"Valid"`
+}
+
 func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 

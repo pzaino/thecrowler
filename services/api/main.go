@@ -561,19 +561,19 @@ type StdAPIBasicQuery struct {
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
-	tags_none := []string{}
-	tags_health := []string{"Health"}
+	tagsNone := []string{}
+	tagsHealth := []string{"Health"}
 
 	// Health check
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
 	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tags_health, false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
 
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", tags_health, false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
 
 	if !config.API.DisableDefault {
@@ -583,42 +583,42 @@ func initAPIv1() {
 		// Time series endpoints
 
 		http.Handle("/v1/timeseries/metrics", withPublicMiddlewares(timeSeriesMetricsHandler))
-		cmn.RegisterAPIRoute("/v1/timeseries/metrics", []string{"GET"}, "List time-series metric definitions", tags_none, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesMetricListResponse{})
+		cmn.RegisterAPIRoute("/v1/timeseries/metrics", []string{"GET"}, "List time-series metric definitions", tagsNone, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesMetricListResponse{})
 
 		http.Handle("/v1/timeseries", withPublicMiddlewares(timeSeriesAggregatesHandler))
-		cmn.RegisterAPIRoute("/v1/timeseries", []string{"GET"}, "Query aggregate time-series buckets", tags_none, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesAggregateResponse{})
+		cmn.RegisterAPIRoute("/v1/timeseries", []string{"GET"}, "Query aggregate time-series buckets", tagsNone, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesAggregateResponse{})
 
 		http.Handle("/v1/timeseries/observations", withPublicMiddlewares(timeSeriesObservationsHandler))
-		cmn.RegisterAPIRoute("/v1/timeseries/observations", []string{"GET"}, "Query bounded raw time-series observations", tags_none, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesObservationListResponse{})
+		cmn.RegisterAPIRoute("/v1/timeseries/observations", []string{"GET"}, "Query bounded raw time-series observations", tagsNone, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesObservationListResponse{})
 
 		http.Handle("/v1/timeseries/drilldown", withPublicMiddlewares(timeSeriesDrilldownHandler))
-		cmn.RegisterAPIRoute("/v1/timeseries/drilldown", []string{"GET"}, "Drill down from an aggregate hash or complete scope to matching observations", tags_none, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDrilldownResponse{})
+		cmn.RegisterAPIRoute("/v1/timeseries/drilldown", []string{"GET"}, "Drill down from an aggregate hash or complete scope to matching observations", tagsNone, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDrilldownResponse{})
 
 		http.Handle("/v1/timeseries/dimensions", withPublicMiddlewares(timeSeriesDimensionsHandler))
-		cmn.RegisterAPIRoute("/v1/timeseries/dimensions", []string{"GET"}, "Compare aggregate buckets grouped by a bounded metric dimension", tags_none, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDimensionComparisonResponse{})
+		cmn.RegisterAPIRoute("/v1/timeseries/dimensions", []string{"GET"}, "Compare aggregate buckets grouped by a bounded metric dimension", tagsNone, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesDimensionComparisonResponse{})
 
 		// Search query handlers
 
 		http.Handle("/v1/search/general", withPublicMiddlewares(searchHandler))
-		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET"}, "General search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, SearchResult{})
+		cmn.RegisterAPIRoute("/v1/search/general", []string{"GET"}, "General search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, SearchResult{})
 
 		http.Handle("/v1/search/netinfo", withPublicMiddlewares(netInfoHandler))
-		cmn.RegisterAPIRoute("/v1/search/netinfo", []string{"GET"}, "Network information search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, NetInfoResponse{})
+		cmn.RegisterAPIRoute("/v1/search/netinfo", []string{"GET"}, "Network information search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, NetInfoResponse{})
 
 		http.Handle("/v1/search/httpinfo", withPublicMiddlewares(httpInfoHandler))
-		cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET"}, "HTTP information search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, HTTPInfoResponse{})
+		cmn.RegisterAPIRoute("/v1/search/httpinfo", []string{"GET"}, "HTTP information search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, HTTPInfoResponse{})
 
 		http.Handle("/v1/search/screenshot", withPublicMiddlewares(scrImgSrchHandler))
-		cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET"}, "Screenshot search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, ScreenshotResponse{})
+		cmn.RegisterAPIRoute("/v1/search/screenshot", []string{"GET"}, "Screenshot search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, ScreenshotResponse{})
 
 		http.Handle("/v1/search/webobject", withPublicMiddlewares(webObjectHandler))
-		cmn.RegisterAPIRoute("/v1/search/webobject", []string{"GET"}, "Web object search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, WebObjectResponse{})
+		cmn.RegisterAPIRoute("/v1/search/webobject", []string{"GET"}, "Web object search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, WebObjectResponse{})
 
 		http.Handle("/v1/search/correlated_sites", withPublicMiddlewares(webCorrelatedSitesHandler))
-		cmn.RegisterAPIRoute("/v1/search/correlated_sites", []string{"GET"}, "Correlated sites search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, CorrelatedSitesResponse{})
+		cmn.RegisterAPIRoute("/v1/search/correlated_sites", []string{"GET"}, "Correlated sites search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, CorrelatedSitesResponse{})
 
 		http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
-		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, ScrapedDataResponse{})
+		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, ScrapedDataResponse{})
 
 		registerSearchFunctionRoute("/v1/search/correlated_sources", searchCorrelatedSourcesByDomainHandler, "Typed PostgreSQL correlated-source search endpoint")
 
@@ -663,86 +663,86 @@ func initAPIv1() {
 		// Source management endpoints
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", tags_none, true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", tagsNone, true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/remove", []string{"GET"}, "Remove source endpoint (console)", tags_none, true, false, 204, true, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/remove", []string{"GET"}, "Remove source endpoint (console)", tagsNone, true, false, 204, true, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/update", updateSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/update", []string{"POST"}, "Update source endpoint (console)", tags_none, true, false, 204, cdb.UpdateSourceRequest{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/source/update", []string{"POST"}, "Update source endpoint (console)", tagsNone, true, false, 204, cdb.UpdateSourceRequest{}, nil, nil)
 
 		http.Handle("/v1/source/vacuum", vacuumSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/vacuum", []string{"GET"}, "Vacuum source endpoint (console)", tags_none, true, false, 204, nil, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/vacuum", []string{"GET"}, "Vacuum source endpoint (console)", tagsNone, true, false, 204, nil, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/status", []string{"GET"}, "Single URL status endpoint (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/status", []string{"GET"}, "Single URL status endpoint (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", tagsNone, true, false, 200, nil, nil, SourcesStatusResponse{})
 
 		// Information seed endpoints
 
 		http.Handle("/v1/information_seed/add", informationSeedAddHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/add", []string{"POST"}, "Add information seed endpoint (console)", tags_none, true, false, 201, informationSeedAddRequest{}, nil, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/add", []string{"POST"}, "Add information seed endpoint (console)", tagsNone, true, false, 201, informationSeedAddRequest{}, nil, InformationSeedResponse{})
 
 		http.Handle("/v1/information_seed/status", informationSeedStatusHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/status", []string{"GET"}, "Information seed status endpoint (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/status", []string{"GET"}, "Information seed status endpoint (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedResponse{})
 
 		http.Handle("/v1/information_seed/list", informationSeedListHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with filters, pagination, and discovered source counts (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with filters, pagination, and discovered source counts (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedListResponse{})
 
 		http.Handle("/v1/information_seed/sources", informationSeedSourcesHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/sources", []string{"GET"}, "List sources linked to an information seed with discovery provenance (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedLinkedSourceListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/sources", []string{"GET"}, "List sources linked to an information seed with discovery provenance (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedLinkedSourceListResponse{})
 
 		http.Handle("/v1/information_seed/candidates", informationSeedCandidatesHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/candidates", []string{"GET"}, "List information seed candidate decision evidence (console)", tags_none, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedCandidateListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/candidates", []string{"GET"}, "List information seed candidate decision evidence (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedCandidateListResponse{})
 
 		http.Handle("/v1/information_seed/retry", informationSeedRetryHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/retry", []string{"POST"}, "Retry information seed endpoint (console)", tags_none, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/retry", []string{"POST"}, "Retry information seed endpoint (console)", tagsNone, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
 
 		http.Handle("/v1/information_seed/disable", informationSeedDisableHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/disable", []string{"POST"}, "Disable information seed endpoint (console)", tags_none, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/disable", []string{"POST"}, "Disable information seed endpoint (console)", tagsNone, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/rerun", informationSeedRerunHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/rerun", []string{"GET"}, "Rerun information seed endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/rerun", []string{"GET"}, "Rerun information seed endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/disable", informationSeedPathDisableHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/disable", []string{"GET"}, "Disable information seed by path ID endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/disable", []string{"GET"}, "Disable information seed by path ID endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/enable", informationSeedEnableHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/enable", []string{"GET"}, "Enable information seed endpoint (console)", tags_none, true, false, 200, informationSeedEnableRequest{}, informationSeedIDGetRequest{}, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/enable", []string{"GET"}, "Enable information seed endpoint (console)", tagsNone, true, false, 200, informationSeedEnableRequest{}, informationSeedIDGetRequest{}, InformationSeedResponse{})
 
 		http.Handle("GET /v1/information_seed/{id}/events", informationSeedEventsHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedEventListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedEventListResponse{})
 
 		http.Handle("GET /v1/information_seed/{id}/diagnostics", withPublicMiddlewares(http.HandlerFunc(informationSeedDiagnosticsHandler)))
-		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", tags_none, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedDiagnosticsResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedDiagnosticsResponse{})
 
 		// Backward-compatible alias. /v1/information_seed is the canonical namespace.
 		//http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)
-		//cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "Deprecated alias for /v1/information_seed/list", tags_none, true, false, 200, nil, nil, InformationSeedListResponse{})
+		//cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "Deprecated alias for /v1/information_seed/list", tagsNone, true, false, 200, nil, nil, InformationSeedListResponse{})
 
 		// Owner endpoints
 
 		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
-		cmn.RegisterAPIRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", tags_none, true, false, 201, cdb.OwnerRequest{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", tagsNone, true, false, 201, cdb.OwnerRequest{}, nil, nil)
 
 		http.Handle("/v1/owner/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateOwnerHandler))))
-		cmn.RegisterAPIRoute("/v1/owner/update", []string{"POST"}, "Update owner endpoint (console)", tags_none, true, false, 204, cdb.OwnerRequest{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/owner/update", []string{"POST"}, "Update owner endpoint (console)", tagsNone, true, false, 204, cdb.OwnerRequest{}, nil, nil)
 
 		http.Handle("/v1/owner/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeOwnerHandler))))
-		cmn.RegisterAPIRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", tags_none, true, false, 204, map[string]int64{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", tagsNone, true, false, 204, map[string]int64{}, nil, nil)
 
 		// Category endpoints
 
 		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
-		cmn.RegisterAPIRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", tags_none, true, false, 201, cdb.CategoryRequest{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", tagsNone, true, false, 201, cdb.CategoryRequest{}, nil, nil)
 
 		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
-		cmn.RegisterAPIRoute("/v1/category/update", []string{"POST"}, "Update category endpoint (console)", tags_none, true, false, 204, cdb.CategoryRequest{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/category/update", []string{"POST"}, "Update category endpoint (console)", tagsNone, true, false, 204, cdb.CategoryRequest{}, nil, nil)
 
 		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
-		cmn.RegisterAPIRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", tags_none, true, false, 204, map[string]int64{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", tagsNone, true, false, 204, map[string]int64{}, nil, nil)
 	}
 
 	// Register API plugin routes
@@ -755,7 +755,7 @@ func initAPIv1() {
 	if config.API.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withPublicMiddlewares(openapiHandler))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tags_none, false, false, 200, nil, nil, nil)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsNone, false, false, 200, nil, nil, nil)
 
 		// Finally add the docs endpoint (after plugins, to ensure it's always registered and not overridden by plugins)
 		http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(docsHandler)))
