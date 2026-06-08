@@ -675,7 +675,7 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/source/vacuum", []string{"GET"}, "Vacuum source endpoint (console)", tagsNone, true, false, 204, nil, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/status", singleURLstatusHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/status", []string{"GET"}, "Single URL status endpoint (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/status", []string{"GET"}, "Single URL status endpoint (console)", tagsNone, true, false, 200, nil, cmn.StdAPIQuery{}, nil)
 
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", tagsNone, true, false, 200, nil, nil, SourcesStatusResponse{})
