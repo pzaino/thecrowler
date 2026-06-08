@@ -499,8 +499,9 @@ type PluginText struct {
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
-	tags_none := []string{}
-	tags_health := []string{"Health"}
+	tagsNone := []string{}
+	tagsHealth := []string{"Health"}
+	tagsDocs := []string{"Documentation"}
 
 	// Health check
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
@@ -508,11 +509,11 @@ func initAPIv1() {
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tags_health, false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
 
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", tags_health, false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
@@ -526,25 +527,25 @@ func initAPIv1() {
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", tags_none, false, false, 201, cdb.Event{}, nil, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", tagsNone, false, false, 201, cdb.Event{}, nil, EventResponse{})
 
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", tags_none, false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", tagsNone, false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
 
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", tags_none, false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", tags_none, false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", tagsNone, false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", tags_none, false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", tagsNone, false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", tags_none, false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", tagsNone, false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", tags_none, false, false, 200, nil, nil, []cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", tagsNone, false, false, 200, nil, nil, []cdb.Event{})
 
 	// Handle uploads
 
@@ -555,21 +556,22 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", tags_none, false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", tagsNone, false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", tags_none, false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", tagsNone, false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", tags_none, false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", tagsNone, false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
 
 	if config.Events.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tags_none, false, false, 200, nil, nil, nil)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsDocs, false, false, 200, nil, nil, nil)
 
 		// Finally the docs endpoint
 		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
+		cmn.RegisterAPIRoute("/v1/docs", []string{"GET"}, "API documentation and available endpoints", tagsDocs, false, false, 200, nil, nil, nil)
 	}
 }
 
@@ -645,6 +647,7 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 		Tags: []cmn.OpenAPITag{
 			{Name: "API", Description: "Endpoints for creating, managing, and querying events."},
 			{Name: "Health", Description: "Endpoints related to health and readiness checks."},
+			{Name: "Documentation", Description: "Endpoints related to API documentation and specifications."},
 		},
 	})
 

@@ -563,6 +563,7 @@ type StdAPIBasicQuery struct {
 func initAPIv1() {
 	tagsNone := []string{}
 	tagsHealth := []string{"Health"}
+	tagsDocs := []string{"Documentation"}
 
 	// Health check
 	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
@@ -755,10 +756,11 @@ func initAPIv1() {
 	if config.API.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withPublicMiddlewares(openapiHandler))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsNone, false, false, 200, nil, nil, nil)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsDocs, false, false, 200, nil, nil, nil)
 
 		// Finally add the docs endpoint (after plugins, to ensure it's always registered and not overridden by plugins)
 		http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(docsHandler)))
+		cmn.RegisterAPIRoute("/v1/docs", []string{"GET"}, "API documentation endpoint", tagsDocs, false, false, 200, nil, nil, nil)
 	}
 }
 
@@ -834,19 +836,23 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 		Tags: []cmn.OpenAPITag{
 			{
 				Name:        "API",
-				Description: "Endpoints for API default API routes (search, time-series, etc.)",
+				Description: "Endpoints for API default API routes (search, time-series, etc.).",
 			},
 			{
 				Name:        "Console",
-				Description: "Endpoints for console features (source management, information seeds, etc.)",
+				Description: "Endpoints for console features (source management, information seeds, etc.).",
+			},
+			{
+				Name:        "Documentation",
+				Description: "Endpoints for API documentation and OpenAPI spec.",
 			},
 			{
 				Name:        "Health",
-				Description: "Endpoints for health and readiness checks",
+				Description: "Endpoints for health and readiness checks.",
 			},
 			{
 				Name:        "Plugins",
-				Description: "Endpoints for API plugins",
+				Description: "Endpoints for API plugins.",
 			},
 		},
 	})
