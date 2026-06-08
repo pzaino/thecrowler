@@ -44,7 +44,7 @@
   - **`collect_keywords`** *(boolean)*: This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases.
   - **`collect_metatags`** *(boolean)*: This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases.
 - **`information_seed`** *(object)*: Bounded information seed discovery configuration. The section is disabled by default and is designed to keep seed expansion constrained by explicit concurrency, query, candidate, timeout, provider allow-list, plugin timeout, and plugin output-size limits. The scheduler treats `infoseed.Runner` as the built-in Information Seed Agent (`system.infoseed.runner`), so every seed-run event includes a system-agent identity and a phase catalog that distinguishes built-in platform phases from user/plugin phases.
-  Per-seed `InformationSeed.config` may also control Source persistence with safe defaults: `create_sources: true`, `link_existing_sources: true`, `update_existing_source_config: true`, `disabled: false`, and `status: "new"`. These policy fields are documented in the [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example).
+  Per-seed `InformationSeed.config` may also control Source persistence with safe defaults: `create_sources: true`, `link_existing_sources: true`, `update_existing_source_config: true`, `disabled: false`, and `status: "new"`. Put default post-discovery crawler instructions in `InformationSeed.config.source_config`; candidate plugins can replace that complete object for one result through `source_overrides.source_config`. These policy fields are documented in the [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example).
   - **`enabled`** *(boolean)*: Enables or disables information seed discovery.
   - **`query_timer`** *(integer)*: Seconds between seed discovery cycles. Values are clamped to the safe range `1..86400`; invalid or missing values default to `300`.
   - **`max_concurrent_seeds`** *(integer)*: Maximum seed discovery jobs processed concurrently. Values are clamped to `1..32`; invalid or missing values default to `2`.
@@ -230,8 +230,9 @@
       max_output_size_bytes: 1048576
   ```
 
-  Per-seed query templates, selected provider names, source defaults, and
-  `candidate_plugins` live in `InformationSeed.config`; see
+  Per-seed query templates, selected provider names, Source persistence defaults,
+  default `source_config`, and `candidate_plugins` live in
+  `InformationSeed.config`; see
   [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example)
   for the complete seed-level contract.
   Supported production provider adapters are selected by the provider block's

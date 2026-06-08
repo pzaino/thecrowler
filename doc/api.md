@@ -68,13 +68,14 @@ Internet.
 
 ## Information seed administration
 
-The canonical namespace is `/v1/information_seed/*` (underscore). 
+The canonical namespace is `/v1/information_seed/*` (underscore).
 
 All information seed responses include seed identity and lifecycle fields such
 as `information_seed_id`, `status`, `has_error`, `last_error`,
 `last_error_at`, `attempts`, `disabled`, `priority`, `engine`, timestamps,
 `config`, and `discovered_source_count` where source relationship counts are
-applicable.
+applicable. `priority` is a JSON string because database claims match it to the
+engine's configured source-priority string.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
@@ -84,16 +85,23 @@ applicable.
 | GET | `/v1/information_seed/sources` | List sources linked to one seed. Supply `information_seed_id`; response items include `source_information_seed_index` provenance. |
 | GET | `/v1/information_seed/candidates` | List persisted accepted/rejected candidate decisions for one seed. Supply `information_seed_id`, plus optional pagination. |
 | POST | `/v1/information_seed/retry` | Reset a seed for retry after correcting credentials/configuration. Body: `{"information_seed_id":123}`. |
-| POST | `/v1/information_seed/disable` | Disable a seed by request body. Body: `{"information_seed_id":123}`. |
+| POST | `/v1/information_seed/disable` | Set the seed's `disabled` flag by request body without changing its status. Body: `{"information_seed_id":123}`. |
 | POST | `/v1/information_seed/{id}/rerun` | Path-ID rerun helper for a seed. |
-| POST | `/v1/information_seed/{id}/disable` | Path-ID disable helper for a seed. |
-| POST | `/v1/information_seed/{id}/enable` | Re-enable a seed; optional body can include `queue_pending`. |
+| POST | `/v1/information_seed/{id}/disable` | Set the path-ID seed's `disabled` flag without changing its status. |
+| POST | `/v1/information_seed/{id}/enable` | Clear the path-ID seed's `disabled` flag. An optional `{"queue_pending":true}` body also changes status to `pending`; otherwise status is preserved. |
 | GET | `/v1/information_seed/{id}/events` | List information-seed discovery events. |
 | GET | `/v1/information_seed/{id}/diagnostics` | Return the latest redacted run diagnostics payload. |
 
 Seed-level `config` can include `query_templates`, literal `queries`, selected
 provider names, request-bounding candidate filters, source defaults, and
-`candidate_plugins`. The built-in runner executes provider discovery,
+`candidate_plugins`. Put the default crawler instructions for newly created
+sources in `config.source_config`; the runner validates and stores that object in
+`Sources.config`. Because this default is copied unchanged to every accepted
+candidate, use a candidate plugin's `source_overrides.source_config` when fields
+such as `crawling_config.site` must be based on the individual candidate URL.
+A per-candidate override replaces the complete default source config for that
+candidate; it is not a partial merge. The built-in runner executes provider
+discovery,
 normalization/de-duplication, built-in filters, plugin processing, source
 override validation, source persistence/linking, event emission, and lifecycle
 finalization in a deterministic order. Custom candidate plugins/agents can only

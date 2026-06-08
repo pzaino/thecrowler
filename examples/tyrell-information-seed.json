@@ -2,7 +2,7 @@
   "information_seed": "Tyrell Corporation",
   "category_id": 42,
   "usr_id": 7,
-  "priority": 10,
+  "priority": "normal",
   "status": "new",
   "disabled": false,
   "config": {
@@ -39,22 +39,22 @@
     "status": "new",
     "restricted": 1,
     "flags": 0,
+    "candidate_plugins": [
+      "tyrell_source_config"
+    ],
     "source_config": {
       "version": "1.0",
       "format_version": "1.0",
-      "source_name": "tyrell-information-seed",
+      "source_name": "tyrell-information-seed-default",
       "crawling_config": {
         "site": "https://www.tyrell.example/",
         "source_type": "website"
       },
       "custom": {
         "created_by": "information_seed",
-        "seed_label": "tyrell-corporation"
+        "seed_label": "tyrell-corporation",
+        "default_source_config": true
       }
-    },
-    "candidate_plugins": [
-      "domain-policy",
-      "source-overrides"
-    ]
+    }
   }
 }

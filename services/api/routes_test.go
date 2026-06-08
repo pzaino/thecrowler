@@ -264,3 +264,36 @@ func documentedAPIEndpointRefs(markdown string) []documentedEndpointRef {
 	}
 	return refs
 }
+
+func TestInformationSeedPathActionsAppearAsPostInOpenAPI(t *testing.T) {
+	oldMux := http.DefaultServeMux
+	oldLimiter := limiter
+	oldConfig := config
+	http.DefaultServeMux = http.NewServeMux()
+	limiter = rate.NewLimiter(rate.Inf, 0)
+	config = cfg.Config{}
+	config.API.EnableConsole = true
+	config.API.EnableAPIDocs = true
+	config.API.Plugins.Enabled = false
+	t.Cleanup(func() {
+		http.DefaultServeMux = oldMux
+		limiter = oldLimiter
+		config = oldConfig
+	})
+
+	initAPIv1()
+	spec := cmn.BuildOpenAPISpec(cmn.GetAPIRoutes(), cmn.OpenAPIOptions{Title: "test", Version: "v1"})
+	for _, path := range []string{
+		"/v1/information_seed/{id}/rerun",
+		"/v1/information_seed/{id}/disable",
+		"/v1/information_seed/{id}/enable",
+	} {
+		operations := spec.Paths[path]
+		if _, ok := operations["post"]; !ok {
+			t.Errorf("OpenAPI specification is missing POST %s", path)
+		}
+		if _, ok := operations["get"]; ok {
+			t.Errorf("OpenAPI specification incorrectly exposes GET %s", path)
+		}
+	}
+}

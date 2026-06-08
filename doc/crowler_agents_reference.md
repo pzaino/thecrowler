@@ -867,7 +867,10 @@ Information Seed discovery as candidate policy gates. They receive `params.seed`
 return `accepted`, `score`, and `reason`, with optional `source_overrides`,
 `tags`, and `metadata`. Source overrides are intentionally limited to `name`,
 `priority`, `restricted`, `flags`, and `source_config` so plugins cannot change
-candidate URL, category, user ownership, or seed linkage.
+candidate URL, category, user ownership, or seed linkage. The seed-level default
+comes from `InformationSeed.config.source_config`; a plugin should return a
+complete replacement in `source_overrides.source_config` when the crawl config
+must use `params.candidate.url` or other candidate-specific values.
 
 The Information Seed runner enforces the configured plugin timeout, maximum JSON
 output size, output schema validation, and safe override validation before it

@@ -72,7 +72,11 @@ DBMS-specific behavior and limitations:
 execution-plan settings, crawling restrictions, and other behavior that should
 travel with the source no matter how many seeds discover it. It should not be
 used for seed-specific discovery evidence because a single source can be
-associated with many information seeds.
+associated with many information seeds. Information Seed discovery supplies this
+column from the seed default at `InformationSeed.config.source_config` or, for a
+single candidate, from the plugin result at
+`source_overrides.source_config`. The per-candidate object replaces the default
+before the normal Source configuration validator and persistence policy run.
 
 `SourceInformationSeedIndex` stores provenance that is specific to one
 `(source_id, information_seed_id)` relationship. The unique pair remains the
@@ -119,6 +123,7 @@ erDiagram
     InformationSeed {
         BIGSERIAL information_seed_id PK
         TIMESTAMP created_at
+        TIMESTAMP deleted_at
         TIMESTAMP last_updated_at
         BIGINT category_id
         BIGINT usr_id
@@ -278,6 +283,7 @@ erDiagram
         TEXT candidate_reason
         JSONB discovery_metadata
         TIMESTAMP created_at
+        TIMESTAMP deleted_at
         TIMESTAMP last_updated_at
     }
 

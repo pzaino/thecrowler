@@ -290,12 +290,39 @@ result = {
   source_overrides: trusted ? {
     name: defaults.name || candidate.title || candidate.host,
     priority: "normal",
-    restricted: 1
+    restricted: 1,
+    source_config: {
+      version: "1.0",
+      format_version: "1.0",
+      source_name: "information-seed-candidate",
+      crawling_config: {
+        site: candidate.url,
+        source_type: "website"
+      },
+      custom: {
+        configured_by: "seed_candidate_quality_gate"
+      }
+    }
   } : undefined,
   tags: trusted ? ["trusted-host"] : [],
   metadata: { provider_rank: params.metadata.rank }
 };
 ```
+
+
+There are two supported places to provide source crawler configuration:
+
+1. Put a default `SourceConfig` in the seed request at
+   `config.source_config`. Every accepted candidate inherits that object unless
+   a plugin overrides it.
+2. Put a complete candidate-specific `SourceConfig` in plugin output at
+   `source_overrides.source_config`, as shown above. Use this form when
+   `crawling_config.site`, rules, execution plans, or custom values depend on
+   `params.candidate`.
+
+The override is a full replacement, not a deep merge. Both forms are validated
+with the normal Source configuration validator before `Sources.config` is
+created or updated.
 
 Information Seed plugin execution is bounded by `information_seed.plugin_limits`:
 `timeout` enforces per-plugin runtime and `max_output_size_bytes` rejects overly

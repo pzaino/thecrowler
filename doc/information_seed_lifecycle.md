@@ -2,8 +2,10 @@
 
 This document defines the lifecycle contract for rows in `InformationSeed` and
 how discovery workers turn an information seed into linked `Sources` rows.
-Workers claim work by polling the database; there are no database triggers,
-notifications, or listeners that enqueue an inserted seed for processing.
+Workers claim durable work from the database. Application-created, immediately
+claimable seeds also wake in-process schedulers and, on PostgreSQL, emit a
+`LISTEN/NOTIFY` hint; periodic polling remains the recovery path and the only
+path for direct SQL inserts.
 
 ## Status values
 
@@ -16,12 +18,13 @@ notifications, or listeners that enqueue an inserted seed for processing.
 | `processing` | A worker has claimed the seed and is currently collecting candidates, validating them, and linking accepted sources. |
 | `completed` | Processing finished without a lifecycle-blocking error. This includes successful discovery, no-op reruns, and exhausted searches that produce no accepted links. |
 | `error` | Processing ended with a lifecycle-blocking provider or plugin/runtime error and should be retried only after the configured retry delay. |
-| `disabled` | The seed is administratively inactive. Disabled seeds are not eligible for normal polling claims. |
+| `disabled` | A legacy/manual status value excluded from claims. Current disable/enable API operations use the separate `disabled` boolean and do not normally write this status. |
 
-A row may also have the boolean `disabled` flag. A row with `disabled = true`
-must be treated as disabled even if `status` contains another value. Setting
-`status = 'disabled'` is useful for human-readable state, while `disabled = true`
-is the authoritative claim exclusion used by workers.
+The boolean `disabled` flag is independent of `status` and is the authoritative
+claim exclusion. The current disable endpoint sets only `disabled = true`, so a
+disabled row can still report `new`, `pending`, `processing`, `completed`, or
+`error`. Enabling clears the flag and preserves the status unless the caller asks
+to queue the row as `pending`.
 
 ## Allowed transitions
 
@@ -38,15 +41,7 @@ stateDiagram-v2
     processing --> processing: stale processing row reclaimed
     error --> processing: retry delay elapsed and row reclaimed
     completed --> pending: explicit rerun request
-    completed --> processing: explicit immediate rerun/claim
-    error --> pending: manual retry reset
-    new --> disabled: disable
-    pending --> disabled: disable
-    processing --> disabled: administrative stop
-    completed --> disabled: disable
-    error --> disabled: disable
-    disabled --> pending: re-enable for rerun
-    disabled --> new: re-enable as unprocessed
+    error --> pending: explicit retry/rerun request
 ```
 
 Additional rules:
@@ -56,24 +51,26 @@ Additional rules:
   older than the configured `processingTimeout`.
 - `error` is eligible only when `last_error_at` is `NULL` or older than the
   configured retry delay.
-- `completed` is terminal for automatic polling. It should move back to
-  `pending` only because of an explicit rerun request or to `processing` only by
-  an immediate manual claim/update path.
-- `disabled` is terminal for automatic polling until the row is re-enabled and
-  moved to `pending` or `new`.
+- `completed` is terminal for automatic polling. The rerun API moves it to
+  `pending`.
+- `disabled = true` excludes every status from claims. Re-enabling without
+  `queue_pending` preserves the existing status; re-enabling with
+  `queue_pending: true` writes `pending` and wakes the scheduler.
+- A literal `status = 'disabled'` is also excluded because it is not an eligible
+  claim status. Current API helpers do not transition rows to or from it.
 
 ## Timestamp semantics
 
 | Column | Set when | Meaning |
 | --- | --- | --- |
 | `last_processed_at` | On every successful claim into `processing`; optionally updated again when the worker writes the final status. | The most recent time a worker began processing this seed. It is the stale-processing clock used to reclaim abandoned `processing` rows. It should not be used as proof that discovery completed successfully. |
-| `last_error_at` | When a lifecycle-blocking provider, plugin validation, plugin timeout, or persistence error causes final status `error`. | The retry-backoff clock for `error` seeds. It should remain unchanged on successful reruns and on non-blocking partial failures that still complete. |
+| `last_error_at` | When a status update includes non-empty error text. | The retry-backoff clock for `error` seeds. A successful `completed` update and an explicit rerun to `pending` clear it together with `last_error`. |
 | `last_updated_at` | On any update to the seed row, either by DB-managed update timestamp behavior or by the application update statement. | The general audit timestamp for row mutation. It is not the claim, retry, or stale-processing clock. |
 
-When a worker changes final status to `completed`, it should clear `last_error`
-only if the previous error is no longer relevant to the current run. When a
-worker changes final status to `error`, it must set both `last_error` and
-`last_error_at`.
+`UpdateInformationSeedStatus` writes `last_processed_at` on every status update.
+It sets both error fields when given non-empty error text and clears both when
+the error text is empty. Consequently successful completion and manual rerun
+reset prior error state.
 
 ## Processing metadata fields
 
@@ -136,8 +133,9 @@ phase order on every run:
    before any decision or override is applied. Plugins do not replace built-in
    source persistence, source/seed linking, lifecycle finalization, or event
    emission phases.
-9. The runner writes `completed`, `error`, or `disabled` as the terminal status
-   for the current attempt according to the final-status table.
+9. The runner writes `completed` or `error` as the terminal status for the
+   current attempt according to the final-status table. Administrative disable
+   remains a separate boolean flag.
 
 ## `InformationSeed.config` example
 
@@ -255,14 +253,14 @@ the complete production contract for the current runner:
     "format_version": "1.0",
     "source_name": "information-seed-default",
     "crawling_config": {
-      "site": "https://example.invalid/placeholder",
+      "site": "https://example.invalid/",
       "source_type": "website"
     },
     "custom": {
       "created_by": "information_seed"
     }
   },
-  "candidate_plugins": ["domain-policy", "source-overrides"]
+  "candidate_plugins": ["candidate-source-config"]
 }
 ```
 
@@ -309,6 +307,15 @@ Configuration behavior:
 - Seed-level and plugin-provided `source_config` values are validated against the
   same source configuration requirements before they are persisted. Invalid
   configs fail the persistence phase rather than creating or updating a source.
+- Put crawler behavior for created sources under
+  `InformationSeed.config.source_config`. This is a normal `SourceConfig` object
+  and is validated before persistence. It is stored in `Sources.config`, where
+  it controls how the crawler handles that source after discovery.
+- The seed-level default is copied verbatim to every accepted candidate; the
+  runner does not template `crawling_config.site`. When configuration depends on
+  the candidate URL, return the complete candidate-specific config from an
+  Information Seed plugin under `source_overrides.source_config`. That override
+  replaces, rather than merges with, the seed-level default for that candidate.
 - `candidate_plugins` is both a seed-level ordered execution list and an
   allow-list. When omitted, all registered information-seed candidate processors
   are eligible in registration order. When present, only named processors
@@ -342,7 +349,7 @@ information_seed:
   provider_allow_list:
     - rss_public_news
     - common_crawl_latest
-    - public_json
+    - public_json_adapter
     # Paid/API-key provider; enable only with a valid subscription.
     # - brave_search_api
     # CROWler federation peer; template requiring operator validation.
@@ -370,7 +377,7 @@ information_seed:
       max_requests: 1
       page_size: 10
       max_pages: 1
-    public_json:
+    public_json_adapter:
       provider: http_json
       host: https://search-adapter.example.invalid
       endpoint: /v1/search
@@ -437,16 +444,17 @@ is fixture-backed or a template requiring operator validation:
 Submit the seed with `POST /v1/information_seed/add`. The seed-level `config`
 selects the already-configured providers, renders three queries, limits accepted
 candidates, and chooses the candidate plugins that may run. The source defaults
-are safe for accepted sources: created sources are enabled, set to `new`, use a
-restricted crawl scope, and carry a source config that can pass normal source
-configuration validation.
+are safe for accepted sources: created sources are enabled, set to `new`, use
+a restricted crawl scope, and receive crawler instructions through
+`source_config`. The companion candidate plugin replaces that default with a
+config whose `crawling_config.site` is the accepted candidate URL.
 
 ```json
 {
   "information_seed": "Tyrell Corporation",
   "category_id": 42,
   "usr_id": 7,
-  "priority": 10,
+  "priority": "normal",
   "status": "new",
   "disabled": false,
   "config": {
@@ -455,15 +463,26 @@ configuration validation.
       "{{ .Seed }} investor relations",
       "{{ .Seed }} contact support"
     ],
-    "providers": ["rss_public_news", "common_crawl_latest", "public_json"],
-    "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
+    "providers": [
+      "rss_public_news",
+      "common_crawl_latest",
+      "public_json_adapter"
+    ],
+    "tracking_params": [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "fbclid"
+    ],
     "deduplicate_host": true,
     "max_candidates": 10,
-    "required_url_schemes": ["https"],
+    "required_url_schemes": [
+      "https"
+    ],
     "min_score": 0.2,
     "max_candidates_per_host": 1,
     "max_candidates_per_domain": 3,
-    "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
+    "source_name_template": "{{ .Seed }} \u2014 {{ .Candidate.Title }}",
     "source_priority": "normal",
     "create_sources": true,
     "link_existing_sources": true,
@@ -472,20 +491,23 @@ configuration validation.
     "status": "new",
     "restricted": 1,
     "flags": 0,
+    "candidate_plugins": [
+      "tyrell_source_config"
+    ],
     "source_config": {
       "version": "1.0",
       "format_version": "1.0",
-      "source_name": "tyrell-information-seed",
+      "source_name": "tyrell-information-seed-default",
       "crawling_config": {
         "site": "https://www.tyrell.example/",
         "source_type": "website"
       },
       "custom": {
         "created_by": "information_seed",
-        "seed_label": "tyrell-corporation"
+        "seed_label": "tyrell-corporation",
+        "default_source_config": true
       }
-    },
-    "candidate_plugins": ["domain-policy", "source-overrides"]
+    }
   }
 }
 ```
@@ -504,7 +526,7 @@ Tyrell Corporation contact support
 ```
 
 The run selects providers in the seed-level order: `rss_public_news`,
-`common_crawl_latest`, then `public_json`. All names must also exist in the
+`common_crawl_latest`, then `public_json_adapter`. All names must also exist in the
 global `providers` map and in `provider_allow_list`; otherwise the runner skips
 the missing or disallowed name. With the limits above, each provider receives at
 most its configured request budget, one page per request, and ten results per
@@ -513,11 +535,12 @@ page.
 ### Candidate plugins
 
 The `candidate_plugins` list is both the ordered execution plan and the
-allow-list for registered information-seed candidate processors. In this example
-only `domain-policy` and `source-overrides` are eligible. If the processors are
-not registered in the running engine, they are ignored; if they reject
-candidates without a lifecycle-blocking runtime error, the seed can still finish
-as `completed` with rejection evidence.
+allow-list for registered information-seed candidate processors. This example
+selects `tyrell_source_config`, implemented by
+[`examples/tyrell-information-seed-candidate-plugin.js`](../examples/tyrell-information-seed-candidate-plugin.js).
+Copy that file into a configured engine-plugin path (the default local loader
+includes `./plugins/`) or add its location to `plugins.locations[].path`, then restart or
+reload the engine so the plugin is registered before the seed runs.
 
 ### Expected source configuration
 
@@ -538,22 +561,28 @@ plugin safe overrides:
   "config": {
     "version": "1.0",
     "format_version": "1.0",
-    "source_name": "tyrell-information-seed",
+    "source_name": "<candidate title>",
     "crawling_config": {
-      "site": "https://www.tyrell.example/",
+      "site": "<accepted candidate URL>",
       "source_type": "website"
     },
     "custom": {
       "created_by": "information_seed",
-      "seed_label": "tyrell-corporation"
+      "seed_label": "tyrell-corporation",
+      "discovery_host": "<accepted candidate host>"
     }
   }
 }
 ```
 
-Because `update_existing_source_config` is `false`, an already-existing source
-can be linked to the seed without having its existing `Sources.config` replaced
-by the seed default.
+`config.source_config` in the seed request is the validated fallback for any
+accepted candidate that reaches persistence without a plugin override. The
+`tyrell_source_config` plugin returns
+`source_overrides.source_config` for each accepted candidate and sets
+`crawling_config.site` to `params.candidate.url`; the runner stores that complete
+override in `Sources.config`. Because `update_existing_source_config` is `false`,
+linking an existing source preserves its stored config instead of applying
+either the seed default or the candidate override.
 
 ### Provenance inspection
 
@@ -642,13 +671,13 @@ whether any accepted source links remain after validation.
 
 | Outcome | Final status | Timestamp/error behavior |
 | --- | --- | --- |
-| All providers succeed and accepted sources are created or already exist, with `SourceInformationSeedIndex` links present. | `completed` | `last_processed_at` reflects the claim/run. Clear stale `last_error` if appropriate; do not update `last_error_at`. |
-| One or more providers fail, but at least one candidate from another provider is accepted and linked. | `completed` | Treat provider failures as non-blocking partial failures. Record details in discovery metadata or logs rather than `last_error`, unless policy requires surfacing the warning. |
-| Providers return zero results. | `completed` | This is a successful no-result run. Do not set `last_error`/`last_error_at`. |
-| Providers return candidates, but all candidates are rejected by plugins. | `completed` | This is a successful filtered run. Do not set `last_error`/`last_error_at`; persist per-candidate rejection evidence in `InformationSeedCandidate`. |
+| All providers succeed and accepted sources are created or already exist, with `SourceInformationSeedIndex` links present. | `completed` | The final status update refreshes `last_processed_at` and clears both error fields. |
+| One or more providers fail, but at least one candidate from another provider is accepted and linked. | `completed` | Treat provider failures as non-blocking partial failures. The final update clears lifecycle error fields; diagnostics/events retain the bounded warning evidence. |
+| Providers return zero results. | `completed` | This is a successful no-result run; the final update clears both error fields. |
+| Providers return candidates, but all candidates are rejected without a runtime error. | `completed` | This is a successful filtered run; clear both error fields and persist per-candidate rejection evidence in `InformationSeedCandidate`. |
 | Every provider fails before producing usable candidates. | `error` | Set `last_error` to the provider failure summary and set `last_error_at` to the finalization time. |
 | A provider error prevents the worker from completing the discovery lifecycle, even if the provider set is not exhausted. | `error` | Set `last_error` and `last_error_at`. Retry is controlled by the `error` retry delay. |
-| Plugin validation or plugin timeout rejects only some candidates and at least one accepted candidate is linked. | `completed` | Treat as partial validation failure. Keep the run completed and record validation details outside the lifecycle error fields. |
+| Plugin validation or plugin timeout rejects only some candidates and at least one accepted candidate is linked. | `completed` | Treat as a partial validation failure. The final update clears lifecycle error fields; diagnostics/events retain bounded validation details. |
 | Plugin validation or plugin timeout prevents all validation from completing, or policy requires plugin runtime errors to fail the whole run. | `error` | Set `last_error` with the plugin name/reason and set `last_error_at`. |
 | Linking or source persistence fails for otherwise accepted candidates. | `error` | Set `last_error` and `last_error_at` because accepted work could not be made durable. |
 

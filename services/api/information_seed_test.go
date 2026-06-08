@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +18,104 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	infoseedrunner "github.com/pzaino/thecrowler/pkg/infoseed"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
+
+func TestTyrellInformationSeedExampleMatchesCurrentContracts(t *testing.T) {
+	examplePath := filepath.Join("..", "..", "examples", "tyrell-information-seed.json")
+	raw, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", examplePath, err)
+	}
+
+	var request informationSeedAddRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		t.Fatalf("decode API request example: %v", err)
+	}
+	if request.InformationSeed != "Tyrell Corporation" || request.Priority != "normal" {
+		t.Fatalf("unexpected API request example: %#v", request)
+	}
+	if request.Config == nil {
+		t.Fatal("expected seed-level config in API request example")
+	}
+
+	var runConfig infoseedrunner.SeedRunConfig
+	if err := json.Unmarshal(*request.Config, &runConfig); err != nil {
+		t.Fatalf("decode runner config example: %v", err)
+	}
+	wantProviders := []string{"rss_public_news", "common_crawl_latest", "public_json_adapter"}
+	if len(runConfig.Providers) != len(wantProviders) {
+		t.Fatalf("providers = %#v, want %#v", runConfig.Providers, wantProviders)
+	}
+	for i := range wantProviders {
+		if runConfig.Providers[i] != wantProviders[i] {
+			t.Fatalf("providers = %#v, want %#v", runConfig.Providers, wantProviders)
+		}
+	}
+	if len(runConfig.SourceConfig) == 0 {
+		t.Fatal("expected a seed-level default source_config")
+	}
+	var defaultSourceConfig cfg.SourceConfig
+	if err := json.Unmarshal(runConfig.SourceConfig, &defaultSourceConfig); err != nil {
+		t.Fatalf("decode default source_config: %v", err)
+	}
+	if defaultSourceConfig.CrawlingConfig.Site != "https://www.tyrell.example/" {
+		t.Fatalf("default source_config site = %q", defaultSourceConfig.CrawlingConfig.Site)
+	}
+	if len(runConfig.CandidatePlugins) != 1 || runConfig.CandidatePlugins[0] != "tyrell_source_config" {
+		t.Fatalf("candidate_plugins = %#v", runConfig.CandidatePlugins)
+	}
+
+	pluginPath := filepath.Join("..", "..", "examples", "tyrell-information-seed-candidate-plugin.js")
+	pluginRaw, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", pluginPath, err)
+	}
+	plugin := plg.NewJSPlugin(string(pluginRaw))
+	if plugin.Name != "tyrell_source_config" || plugin.EventType != "information_seed_candidate" {
+		t.Fatalf("unexpected candidate plugin metadata: name=%q event_type=%q", plugin.Name, plugin.EventType)
+	}
+	candidateURL := "https://replicants.tyrell.example/nexus-6"
+	processed, keep, err := (infoseedrunner.JSPluginProcessor{Plugin: *plugin, Timeout: 2}).ProcessCandidate(context.Background(), infoseedrunner.CandidatePluginInput{
+		Candidate:      infoseedrunner.Candidate{URL: candidateURL, Host: "replicants.tyrell.example", Title: "Nexus-6", Score: 0.8},
+		SourceDefaults: infoseedrunner.SourceDefaults{Name: "Tyrell Corporation — Nexus-6", Priority: "normal", Restricted: 1, SourceConfig: runConfig.SourceConfig},
+	})
+	if err != nil {
+		t.Fatalf("execute candidate source-config example: %v", err)
+	}
+	if !keep || len(processed.SourceOverrides.SourceConfig) == 0 {
+		t.Fatalf("candidate plugin did not provide source_config: keep=%v overrides=%#v", keep, processed.SourceOverrides)
+	}
+	var candidateSourceConfig cfg.SourceConfig
+	if err := json.Unmarshal(processed.SourceOverrides.SourceConfig, &candidateSourceConfig); err != nil {
+		t.Fatalf("decode candidate source_config: %v", err)
+	}
+	if candidateSourceConfig.CrawlingConfig.Site != candidateURL {
+		t.Fatalf("candidate source_config site = %q, want %q", candidateSourceConfig.CrawlingConfig.Site, candidateURL)
+	}
+
+	providersPath := filepath.Join("..", "..", "examples", "information-seed-providers.yaml")
+	providersRaw, err := os.ReadFile(providersPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", providersPath, err)
+	}
+	globalConfig, err := cfg.ParseConfig(providersRaw)
+	if err != nil {
+		t.Fatalf("parse provider example: %v", err)
+	}
+	allowed := make(map[string]struct{}, len(globalConfig.InformationSeed.ProviderAllowList))
+	for _, name := range globalConfig.InformationSeed.ProviderAllowList {
+		allowed[name] = struct{}{}
+	}
+	for _, name := range wantProviders {
+		if _, ok := globalConfig.InformationSeed.Providers[name]; !ok {
+			t.Errorf("seed example selects provider %q missing from provider example", name)
+		}
+		if _, ok := allowed[name]; !ok {
+			t.Errorf("seed example selects provider %q missing from provider allow-list", name)
+		}
+	}
+}
 
 type informationSeedAPITestHandler struct{ db *sql.DB }
 

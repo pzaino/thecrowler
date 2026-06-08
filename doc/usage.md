@@ -225,7 +225,7 @@ Create `tyrell-information-seed.json` with this request body:
   "information_seed": "Tyrell Corporation",
   "category_id": 42,
   "usr_id": 7,
-  "priority": 10,
+  "priority": "normal",
   "status": "new",
   "disabled": false,
   "config": {
@@ -234,15 +234,26 @@ Create `tyrell-information-seed.json` with this request body:
       "{{ .Seed }} investor relations",
       "{{ .Seed }} contact support"
     ],
-    "providers": ["brave_search", "public_json"],
-    "tracking_params": ["utm_source", "utm_medium", "utm_campaign", "fbclid"],
+    "providers": [
+      "rss_public_news",
+      "common_crawl_latest",
+      "public_json_adapter"
+    ],
+    "tracking_params": [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "fbclid"
+    ],
     "deduplicate_host": true,
     "max_candidates": 10,
-    "required_url_schemes": ["https"],
+    "required_url_schemes": [
+      "https"
+    ],
     "min_score": 0.2,
     "max_candidates_per_host": 1,
     "max_candidates_per_domain": 3,
-    "source_name_template": "{{ .Seed }} — {{ .Candidate.Title }}",
+    "source_name_template": "{{ .Seed }} \u2014 {{ .Candidate.Title }}",
     "source_priority": "normal",
     "create_sources": true,
     "link_existing_sources": true,
@@ -251,20 +262,23 @@ Create `tyrell-information-seed.json` with this request body:
     "status": "new",
     "restricted": 1,
     "flags": 0,
+    "candidate_plugins": [
+      "tyrell_source_config"
+    ],
     "source_config": {
       "version": "1.0",
       "format_version": "1.0",
-      "source_name": "tyrell-information-seed",
+      "source_name": "tyrell-information-seed-default",
       "crawling_config": {
         "site": "https://www.tyrell.example/",
         "source_type": "website"
       },
       "custom": {
         "created_by": "information_seed",
-        "seed_label": "tyrell-corporation"
+        "seed_label": "tyrell-corporation",
+        "default_source_config": true
       }
-    },
-    "candidate_plugins": ["domain-policy", "source-overrides"]
+    }
   }
 }
 ```
@@ -277,11 +291,17 @@ Tyrell Corporation investor relations
 Tyrell Corporation contact support
 ```
 
-The selected providers are `brave_search` and `public_json`; both must be present
-in `information_seed.providers` and `provider_allow_list`. Candidate plugins are
-`domain-policy` and `source-overrides`, in that order. Accepted new sources use
-the request's source defaults, including `restricted: 1`, `status: "new"`, and
-the `source_config` object shown in the request. Because
+The selected providers are `rss_public_news`, `common_crawl_latest`, and
+`public_json_adapter`; all must be present in `information_seed.providers` and
+`provider_allow_list`. These names match
+[`examples/information-seed-providers.yaml`](../examples/information-seed-providers.yaml).
+The selected candidate plugin is `tyrell_source_config`. Install
+[`examples/tyrell-information-seed-candidate-plugin.js`](../examples/tyrell-information-seed-candidate-plugin.js)
+in a configured engine-plugin path before submitting the seed. The seed's
+`config.source_config` is the default crawler configuration written to
+`Sources.config`. The plugin returns a complete
+`source_overrides.source_config` for each candidate so
+`crawling_config.site` matches that candidate's normalized URL. Because
 `update_existing_source_config` is `false`, already-existing sources are linked
 without replacing their stored source config.
 
@@ -363,4 +383,4 @@ was reused.
 | Plugins reject all candidates | Inspect candidate rejection reasons, confirm plugin registration/order, then adjust filters or plugin policy. |
 | Source config validation failures | Validate seed-level and plugin-provided `source_config`; remove unsafe plugin overrides before retrying. |
 | Duplicate or existing sources | Existing normalized URLs are reused and linked idempotently; inspect `source_information_seed_index`. |
-| Disabled seeds | Ensure `disabled` is false and status is `new` or `pending`; use the retry endpoint after re-enabling. |
+| Disabled seeds | The disable endpoint preserves status. Re-enable with `{"queue_pending":true}` to clear the flag and queue `pending`, or re-enable without it to preserve the current status. |
