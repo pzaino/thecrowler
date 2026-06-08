@@ -555,8 +555,14 @@ func updateMetrics() {
 // API v1 Handlers and Middlewares
 //--------------------------------------------
 
+// StdAPIBasicQuery is a standard query struct for API endpoints that require a simple URL-based query parameter. It can be embedded in more specific query structs for different endpoints.
 type StdAPIBasicQuery struct {
 	URL string `json:"url" yaml:"url" desc:"a URL that express the Source you want to use in the query, for example url=https://example.com or url=example.com. If the URL is not specified, the query will be executed on all sources."`
+}
+
+// StdAPIIDQuery is a standard query struct for API endpoints that require a simple ID-based query parameter. It can be embedded in more specific query structs for different endpoints.
+type StdAPIIDQuery struct {
+	ID string `json:"id" yaml:"id" desc:"an uint64 number that express the ID of the Entity you want to use in the query, for example id=12345."`
 }
 
 // initAPIv1 initializes the API v1 handlers
@@ -687,16 +693,16 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/information_seed/add", []string{"POST"}, "Add information seed endpoint (console)", tagsNone, true, false, 201, informationSeedAddRequest{}, nil, InformationSeedResponse{})
 
 		http.Handle("/v1/information_seed/status", informationSeedStatusHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/status", []string{"GET"}, "Information seed status endpoint (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/status", []string{"GET"}, "Information seed status endpoint (console)", tagsNone, true, false, 200, nil, StdAPIIDQuery{}, InformationSeedResponse{})
 
 		http.Handle("/v1/information_seed/list", informationSeedListHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with filters, pagination, and discovered source counts (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/list", []string{"GET"}, "List information seeds with filters, pagination, and discovered source counts (console)", tagsNone, true, false, 200, nil, StdAPIIDQuery{}, InformationSeedListResponse{})
 
 		http.Handle("/v1/information_seed/sources", informationSeedSourcesHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/sources", []string{"GET"}, "List sources linked to an information seed with discovery provenance (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedLinkedSourceListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/sources", []string{"GET"}, "List sources linked to an information seed with discovery provenance (console)", tagsNone, true, false, 200, nil, StdAPIIDQuery{}, InformationSeedLinkedSourceListResponse{})
 
 		http.Handle("/v1/information_seed/candidates", informationSeedCandidatesHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/information_seed/candidates", []string{"GET"}, "List information seed candidate decision evidence (console)", tagsNone, true, false, 200, nil, StdAPIBasicQuery{}, InformationSeedCandidateListResponse{})
+		cmn.RegisterAPIRoute("/v1/information_seed/candidates", []string{"GET"}, "List information seed candidate decision evidence (console)", tagsNone, true, false, 200, nil, StdAPIIDQuery{}, InformationSeedCandidateListResponse{})
 
 		http.Handle("/v1/information_seed/retry", informationSeedRetryHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/retry", []string{"POST"}, "Retry information seed endpoint (console)", tagsNone, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
