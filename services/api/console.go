@@ -991,11 +991,18 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
 	}
+	// extract and validate Config JSON:
+	var srcConfig cdb.SourceConfig
 	if sourceConfig != nil {
-		existingData.Config = json.RawMessage(*sourceConfig)
-	} else {
-		existingData.Config = json.RawMessage("{}")
+		//existingData.Config = json.RawMessage(*sourceConfig)
+		// Transform sourceConfig into cdb.SourceConfig struct
+		if err := json.Unmarshal([]byte(*sourceConfig), &srcConfig); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field from DB: %v", err)
+		}
 	}
+	existingData.Config = srcConfig
+
+	// extract free JSON form Details:
 	if sourceDetails != nil {
 		existingData.Details = json.RawMessage(*sourceDetails)
 	} else {
@@ -1010,7 +1017,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		Restricted: coalesceInt(sqlParams.Restricted, existingData.Restricted),
 		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
 		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
-		Config:     coalesceJSON(sqlParams.Config, existingData.Config),
+		Config:     srcConfig,
 		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
 	}
 
