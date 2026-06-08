@@ -934,7 +934,7 @@ func registerAPIPluginRoutes(mux *http.ServeMux, currentRegisteredPlugins *[]str
 		cmn.RegisterAPIPluginRoute(
 			api.EndPoint,
 			api.Methods,
-			fmt.Sprintf("API plugin endpoint for plugin '%s'", plugin.Name),
+			fmt.Sprintf("API plugin endpoint '%s': %s", plugin.Name, plugin.Description),
 			true,
 			200,
 			plugin.API.OpenAPIQueryJSON,
