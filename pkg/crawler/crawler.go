@@ -1328,8 +1328,6 @@ func deleteWebObjects(tx *sql.Tx, indexID uint64) error {
 	return err
 }
 
-var nullEscape = regexp.MustCompile(`\\u0000`)
-
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
 // It takes a transaction object (tx), the index ID of the page (indexID), and the page information (pageInfo).
 // It returns an error, if any.
@@ -1345,14 +1343,14 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 	details["detected_tech"] = (*pageInfo).DetectedTech
 
 	// Create a JSON out of the details
-	detailsJSON, err := json.Marshal(details)
+	detailsJSON, err := normalizeJSON(details)
 	if err != nil {
 		return 0, nil, "", err
 	}
 	// Print the detailsJSON
 	//fmt.Println(string(detailsJSON))
 
-	detectedTechJSON, err := json.Marshal((*pageInfo).DetectedTech)
+	detectedTechJSON, err := normalizeJSON((*pageInfo).DetectedTech)
 	if err != nil {
 		detectedTechJSON = []byte{}
 	}
@@ -1366,7 +1364,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 			if value == nil {
 				continue
 			}
-			scrapedItemJSON, err := json.Marshal(value)
+			scrapedItemJSON, err := normalizeJSON(value)
 			if err != nil {
 				return 0, nil, "", err
 			}
@@ -1383,7 +1381,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 		scrapedDoc1 = map[string]interface{}{"scraped_data": scrapedDoc1}
 
 		// Convert the scraped data to JSON
-		scrapedDataJSON, err = json.Marshal(scrapedDoc1)
+		scrapedDataJSON, err = normalizeJSON(scrapedDoc1)
 		if err != nil {
 			return 0, nil, "", err
 		}
@@ -1427,10 +1425,16 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 		//fmt.Println(string(detailsJSON))
 	}
 
-	// Make sure detailsJSON is absolutely valid for JSONB objects:
-	detailsJSON = bytes.ToValidUTF8(detailsJSON, []byte{})
-	detailsJSON = removeSurrogateEscapes(detailsJSON)
-	detailsJSON = nullEscape.ReplaceAll(detailsJSON, []byte(""))
+	// Rebuild the complete document after value-level cleanup. PostgreSQL JSONB
+	// rejects U+0000 and malformed Unicode escapes even when Go can marshal them.
+	var finalDetails any
+	if err := json.Unmarshal(detailsJSON, &finalDetails); err != nil {
+		return 0, nil, "", fmt.Errorf("decoding WebObject details before insert: %w", err)
+	}
+	detailsJSON, err = normalizeJSON(finalDetails)
+	if err != nil {
+		return 0, nil, "", fmt.Errorf("normalizing WebObject details before insert: %w", err)
+	}
 
 	// Extract Scraped Data and Detected Tech from detailsJSON
 	htmlContent := bytes.ToValidUTF8([]byte((*pageInfo).HTML), []byte{})
@@ -1488,30 +1492,6 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 	}
 
 	return objID, detailsJSON, hash, nil
-}
-
-var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)
-
-func removeSurrogateEscapes(jsonBytes []byte) []byte {
-	return surrogateEscape.ReplaceAll(jsonBytes, []byte(""))
-}
-
-func normalizeJSON(v any) ([]byte, error) {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-
-	// Remove invalid UTF-8 sequences
-	raw = bytes.ToValidUTF8(raw, []byte{})
-
-	// Re-parse and re-marshal to ensure JSON validity
-	var clean interface{}
-	if err := json.Unmarshal(raw, &clean); err != nil {
-		return nil, err
-	}
-
-	return json.Marshal(clean)
 }
 
 func mergeMaps(dst, src map[string]interface{}) {

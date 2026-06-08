@@ -2934,17 +2934,16 @@ func decodeBodyContent(wd vdi.WebDriver, body string, isBase64 bool, url string)
 		}
 	}
 
-	// Attempt to parse as JSON (even without Content-Type check)
-	var jsonBody map[string]interface{}
-	if err := json.Unmarshal([]byte(bodyStr), &jsonBody); err == nil {
+	// Attempt to parse and, when possible, repair JSON even without a
+	// Content-Type header. Top-level arrays and scalar JSON values are valid too.
+	if jsonBody, ok := decodeJSONDocument(bodyStr); ok {
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "Detected JSON content type: %s", detectedContentType)
-		jsonBody = deepConvertJSONFields(jsonBody)
+		jsonBody = deepConvertJSON(jsonBody)
 		if detectedContentType != HTMLType {
 			detectedContentType = JSONType
 		}
 
-		err = KeepSessionAlive(wd)
-		if err != nil {
+		if err := KeepSessionAlive(wd); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to keep session alive: %v", err)
 		}
 		return jsonBody, detectedContentType
@@ -2991,8 +2990,7 @@ func deepConvertJSONFields(data map[string]interface{}) map[string]interface{} {
 				}
 			}
 
-			var nestedJSON interface{}
-			if err := json.Unmarshal([]byte(strVal), &nestedJSON); err == nil {
+			if nestedJSON, ok := decodeJSONDocument(strVal); ok {
 				// If parsing succeeds, store the converted JSON structure
 				data[key] = deepConvertJSON(nestedJSON)
 			}
@@ -3005,8 +3003,7 @@ func deepConvertJSONFields(data map[string]interface{}) map[string]interface{} {
 				if itemMap, ok := item.(map[string]interface{}); ok {
 					nestedArray[i] = deepConvertJSONFields(itemMap)
 				} else if itemStr, ok := item.(string); ok {
-					var arrayJSON interface{}
-					if err := json.Unmarshal([]byte(itemStr), &arrayJSON); err == nil {
+					if arrayJSON, ok := decodeJSONDocument(itemStr); ok {
 						nestedArray[i] = deepConvertJSON(arrayJSON)
 					}
 				}
