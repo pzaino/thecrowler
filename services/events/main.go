@@ -570,7 +570,7 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsDocs, false, false, 200, nil, nil, nil)
 
 		// Finally the docs endpoint
-		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
+		http.Handle("/v1/docs", withAll(http.HandlerFunc(openapiHandler)))
 		cmn.RegisterAPIRoute("/v1/docs", []string{"GET"}, "API documentation and available endpoints", tagsDocs, false, false, 200, nil, nil, nil)
 	}
 }

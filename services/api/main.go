@@ -759,7 +759,7 @@ func initAPIv1() {
 		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsDocs, false, false, 200, nil, nil, nil)
 
 		// Finally add the docs endpoint (after plugins, to ensure it's always registered and not overridden by plugins)
-		http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(docsHandler)))
+		http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(openapiHandler)))
 		cmn.RegisterAPIRoute("/v1/docs", []string{"GET"}, "API documentation endpoint", tagsDocs, false, false, 200, nil, nil, nil)
 	}
 }
