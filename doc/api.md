@@ -68,9 +68,7 @@ Internet.
 
 ## Information seed administration
 
-The canonical namespace is `/v1/information_seed/*` (underscore). The
-hyphenated `/v1/information-seed/list` route is a deprecated alias for
-`/v1/information_seed/list` only.
+The canonical namespace is `/v1/information_seed/*` (underscore). 
 
 All information seed responses include seed identity and lifecycle fields such
 as `information_seed_id`, `status`, `has_error`, `last_error`,
@@ -92,7 +90,6 @@ applicable.
 | POST | `/v1/information_seed/{id}/enable` | Re-enable a seed; optional body can include `queue_pending`. |
 | GET | `/v1/information_seed/{id}/events` | List information-seed discovery events. |
 | GET | `/v1/information_seed/{id}/diagnostics` | Return the latest redacted run diagnostics payload. |
-| GET | `/v1/information-seed/list` | Deprecated alias for `/v1/information_seed/list`. |
 
 Seed-level `config` can include `query_templates`, literal `queries`, selected
 provider names, request-bounding candidate filters, source defaults, and

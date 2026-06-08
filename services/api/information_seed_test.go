@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	_ "github.com/mattn/go-sqlite3"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -130,6 +128,7 @@ func TestInformationSeedStatusHandlerLookup(t *testing.T) {
 	}
 }
 
+/*
 func TestInformationSeedHyphenatedListAlias(t *testing.T) {
 	oldMux := http.DefaultServeMux
 	oldLimiter := limiter
@@ -168,6 +167,7 @@ func TestInformationSeedHyphenatedListAlias(t *testing.T) {
 		t.Fatalf("unexpected alias response: %#v", resp)
 	}
 }
+*/
 
 func TestInformationSeedListHandlerFiltersAndPagination(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
