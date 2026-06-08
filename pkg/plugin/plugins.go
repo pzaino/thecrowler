@@ -444,6 +444,7 @@ func getPluginName(pluginBody, file string) string {
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
+	const none = "none"
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
@@ -453,7 +454,6 @@ func NewJSPlugin(script string) *JSPlugin {
 	apiEndPoint := ""
 	apiMethods := []string{}
 	apiAuth := ""
-	const none = "none"
 	apiAuthType := none
 	apiQueryJSON := ""
 	apiRequestJSON := ""
@@ -712,16 +712,16 @@ func parseMetadataKV(line string) (string, string, bool) {
 	}
 
 	for i, r := range keyPart {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r == '_') {
 			continue
 		}
-		if i > 0 && r >= '0' && r <= '9' {
+		if (i > 0) && (r >= '0') && (r <= '9') {
 			continue
 		}
 		return "", "", false
 	}
 
-	key := strings.ToLower(keyPart)
+	key := strings.TrimSpace(strings.ToLower(keyPart))
 	if key == "" {
 		return "", "", false
 	}
