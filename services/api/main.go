@@ -804,16 +804,21 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 			}
 		}
 	} else {
-		serverURL = fmt.Sprintf("%s://%s", scheme, host)
-		if port != "" {
-			serverURL += port
+		// If config.API.URL is set, use it as the base for serverURL. If it doesn't include a scheme, prepend it.
+		if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+			host = fmt.Sprintf("%s://%s", scheme, host)
 		}
+		serverURL = host
 	}
 	if serverURL == "" {
 		serverURL = localhost // Fallback to localhost if serverURL is still empty
 		if port != "" {
 			serverURL += port
 		}
+	}
+	// Check if the serverURL got the port attached twice (e.g., if config.API.URL already included the port)
+	if strings.Count(serverURL, ":") > 2 && strings.Contains(serverURL, port) {
+		serverURL = strings.Replace(serverURL, port, "", 1)
 	}
 
 	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{
