@@ -371,10 +371,24 @@ func validateSourceConfig(config cfg.SourceConfig) error {
 // validateURL checks if a given URL is valid.
 func validateURL(site string) error {
 	parsedURL, err := url.Parse(site)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+	if err != nil || parsedURL.Scheme == "" {
 		return fmt.Errorf("invalid URL: %s", site)
 	}
-	return nil
+
+	scheme := strings.ToLower(parsedURL.Scheme)
+	if scheme == "maildir" || scheme == "mbox" {
+		if strings.HasPrefix(strings.ToLower(site), scheme+"://") &&
+			parsedURL.Host == "" && strings.HasPrefix(parsedURL.Path, "/") && parsedURL.Path != "/" {
+			return nil
+		}
+		return fmt.Errorf("invalid URL: %s", site)
+	}
+
+	if parsedURL.Host != "" {
+		return nil
+	}
+
+	return fmt.Errorf("invalid URL: %s", site)
 }
 
 // UpdateSource updates an existing source in the database by ID.

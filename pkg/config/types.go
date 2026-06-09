@@ -900,7 +900,7 @@ const SourceTypeEmail = "email"
 
 // CrawlingConfig represents the crawling configuration for a source
 type CrawlingConfig struct {
-	Site              string   `json:"site" yaml:"site" validate:"required,url"`
+	Site              string   `json:"site" yaml:"site" validate:"required,url|startswith=maildir:///|startswith=mbox:///"`
 	URLReferrer       string   `json:"url_referrer,omitempty" yaml:"url_referrer,omitempty"`               // URL referrer for the source
 	AlternativeLinks  []string `json:"alternative_links,omitempty" yaml:"alternative_links,omitempty"`     // URLs to use if no links are found
 	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
