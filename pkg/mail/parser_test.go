@@ -312,3 +312,100 @@ func parseAlternativeMessage(parts string) (ParsedMessage, error) {
 		RFC822: io.NopCloser(strings.NewReader(raw)),
 	})
 }
+
+func TestParserTraversesMultipartRelatedAndAssociatesContentIDs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		html       string
+		resources  string
+		wantIDs    []string
+		wantInline []bool
+	}{
+		{
+			name:       "matched normalized content ID",
+			html:       `<html><body><img src="CID:Image%40Example.Test"><img src="https://remote.example.test/tracker.png"></body></html>`,
+			resources:  relatedResource("image/png", "<IMAGE@example.test>", "first image"),
+			wantIDs:    []string{"image@example.test"},
+			wantInline: []bool{true},
+		},
+		{
+			name:       "unmatched content ID",
+			html:       `<html><body><img src="cid:other@example.test"></body></html>`,
+			resources:  relatedResource("image/png", "<image@example.test>", "unmatched image"),
+			wantIDs:    []string{"image@example.test"},
+			wantInline: []bool{false},
+		},
+		{
+			name:       "malformed content IDs",
+			html:       `<html><body><img src="cid:%zz"><img src="cid:bad id"></body></html>`,
+			resources:  relatedResource("image/png", "<bad id>", "malformed image"),
+			wantIDs:    []string{""},
+			wantInline: []bool{false},
+		},
+		{
+			name: "duplicate content IDs use first resource",
+			html: `<html><body><img src="cid:duplicate@example.test"></body></html>`,
+			resources: relatedResource("image/png", "<DUPLICATE@example.test>", "first duplicate") +
+				relatedResource("image/jpeg", "duplicate@example.test", "second duplicate"),
+			wantIDs:    []string{"duplicate@example.test", "duplicate@example.test"},
+			wantInline: []bool{true, false},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := parseRelatedMessage(test.html, test.resources)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if parsed.HTMLBody != test.html {
+				t.Errorf("HTMLBody = %q, want %q", parsed.HTMLBody, test.html)
+			}
+			if len(parsed.Attachments) != len(test.wantIDs) {
+				t.Fatalf("Attachments = %#v, want %d", parsed.Attachments, len(test.wantIDs))
+			}
+			for index, attachment := range parsed.Attachments {
+				attachment := attachment
+				t.Cleanup(func() { _ = attachment.Content.Close() })
+				if attachment.ContentID != test.wantIDs[index] || attachment.ID != test.wantIDs[index] {
+					t.Errorf("Attachments[%d] IDs = (%q, %q), want %q", index, attachment.ID, attachment.ContentID, test.wantIDs[index])
+				}
+				if attachment.Inline != test.wantInline[index] {
+					t.Errorf("Attachments[%d].Inline = %t, want %t", index, attachment.Inline, test.wantInline[index])
+				}
+			}
+		})
+	}
+}
+
+func relatedResource(contentType, contentID, body string) string {
+	return "--related\r\n" +
+		"Content-Type: " + contentType + "\r\n" +
+		"Content-ID: " + contentID + "\r\n" +
+		"\r\n" +
+		body + "\r\n"
+}
+
+func parseRelatedMessage(htmlBody, resources string) (ParsedMessage, error) {
+	raw := "From: sender@example.test\r\n" +
+		"To: recipient@example.test\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/related; boundary=related; start=\"<root@example.test>\"\r\n" +
+		"\r\n" +
+		resources +
+		"--related\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n" +
+		"Content-ID: <ROOT@example.test>\r\n" +
+		"\r\n" +
+		htmlBody + "\r\n" +
+		"--related--\r\n"
+
+	return NewParser().Parse(context.Background(), RawMessage{
+		RFC822: io.NopCloser(strings.NewReader(raw)),
+	})
+}
