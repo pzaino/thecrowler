@@ -49,6 +49,7 @@ func documentFromParsedMessage(sourceID string, parsed ParsedMessage) Document {
 		HTMLBody:      parsed.HTMLBody,
 		ExtractedText: textBody,
 		Attachments:   parsed.Attachments,
+		Warnings:      parsed.Warnings,
 	}
 }
 

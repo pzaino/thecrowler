@@ -90,20 +90,21 @@ type Attachment struct {
 // ParsedMessage contains decoded mail semantics without provider client
 // objects or protocol-specific state.
 type ParsedMessage struct {
-	Ref         MessageRef   `json:"ref" yaml:"ref"`
-	MessageID   string       `json:"message_id,omitempty" yaml:"message_id,omitempty"`
-	ThreadID    string       `json:"thread_id,omitempty" yaml:"thread_id,omitempty"`
-	Date        time.Time    `json:"date,omitempty" yaml:"date,omitempty"`
-	From        []Address    `json:"from,omitempty" yaml:"from,omitempty"`
-	To          []Address    `json:"to,omitempty" yaml:"to,omitempty"`
-	CC          []Address    `json:"cc,omitempty" yaml:"cc,omitempty"`
-	BCC         []Address    `json:"bcc,omitempty" yaml:"bcc,omitempty"`
-	ReplyTo     []Address    `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
-	Subject     string       `json:"subject,omitempty" yaml:"subject,omitempty"`
-	Headers     HeaderMap    `json:"headers,omitempty" yaml:"headers,omitempty"`
-	TextBody    string       `json:"text_body,omitempty" yaml:"text_body,omitempty"`
-	HTMLBody    string       `json:"html_body,omitempty" yaml:"html_body,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty" yaml:"attachments,omitempty"`
+	Ref         MessageRef      `json:"ref" yaml:"ref"`
+	MessageID   string          `json:"message_id,omitempty" yaml:"message_id,omitempty"`
+	ThreadID    string          `json:"thread_id,omitempty" yaml:"thread_id,omitempty"`
+	Date        time.Time       `json:"date,omitempty" yaml:"date,omitempty"`
+	From        []Address       `json:"from,omitempty" yaml:"from,omitempty"`
+	To          []Address       `json:"to,omitempty" yaml:"to,omitempty"`
+	CC          []Address       `json:"cc,omitempty" yaml:"cc,omitempty"`
+	BCC         []Address       `json:"bcc,omitempty" yaml:"bcc,omitempty"`
+	ReplyTo     []Address       `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	Subject     string          `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Headers     HeaderMap       `json:"headers,omitempty" yaml:"headers,omitempty"`
+	TextBody    string          `json:"text_body,omitempty" yaml:"text_body,omitempty"`
+	HTMLBody    string          `json:"html_body,omitempty" yaml:"html_body,omitempty"`
+	Attachments []Attachment    `json:"attachments,omitempty" yaml:"attachments,omitempty"`
+	Warnings    []ParserWarning `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
 
 // ChangeKind identifies a provider-neutral mailbox change.

@@ -41,14 +41,21 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 		return ParsedMessage{}, malformedParseError("could not parse RFC 5322 message", err)
 	}
 
+	textBody, htmlBody := envelope.Text, envelope.HTML
+	if alternativeText, alternativeHTML, ok := multipartAlternativeBodies(envelope.Root); ok {
+		textBody = alternativeText
+		htmlBody = alternativeHTML
+	}
+
 	parsed := ParsedMessage{
 		Ref:         message.Ref,
 		MessageID:   envelope.GetHeader("Message-ID"),
 		Subject:     envelope.GetHeader("Subject"),
 		Headers:     envelopeHeaders(envelope),
-		TextBody:    envelope.Text,
-		HTMLBody:    envelope.HTML,
+		TextBody:    textBody,
+		HTMLBody:    htmlBody,
 		Attachments: envelopeAttachments(envelope),
+		Warnings:    envelopeWarnings(envelope.Root),
 	}
 
 	if parsed.Date, err = envelope.Date(); err != nil && !errors.Is(err, mail.ErrHeaderNotPresent) {
@@ -71,6 +78,78 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 	}
 
 	return parsed, nil
+}
+
+func multipartAlternativeBodies(root *enmime.Part) (string, string, bool) {
+	alternative := firstMultipartAlternative(root)
+	if alternative == nil {
+		return "", "", false
+	}
+
+	var textBody, htmlBody string
+	var foundText, foundHTML bool
+	walkParts(alternative.FirstChild, func(part *enmime.Part) bool {
+		if part.Disposition == "attachment" {
+			return false
+		}
+		switch part.ContentType {
+		case "text/plain":
+			if !foundText {
+				textBody = string(part.Content)
+				foundText = true
+			}
+		case "text/html":
+			if !foundHTML {
+				htmlBody = string(part.Content)
+				foundHTML = true
+			}
+		}
+		return true
+	})
+
+	return textBody, htmlBody, true
+}
+
+func firstMultipartAlternative(part *enmime.Part) *enmime.Part {
+	for current := part; current != nil; current = current.NextSibling {
+		if current.Disposition == "attachment" {
+			continue
+		}
+		if current.ContentType == "multipart/alternative" {
+			return current
+		}
+		if alternative := firstMultipartAlternative(current.FirstChild); alternative != nil {
+			return alternative
+		}
+	}
+	return nil
+}
+
+func walkParts(part *enmime.Part, visit func(*enmime.Part) bool) {
+	for current := part; current != nil; current = current.NextSibling {
+		if visit(current) && current.FirstChild != nil {
+			walkParts(current.FirstChild, visit)
+		}
+	}
+}
+
+func envelopeWarnings(root *enmime.Part) []ParserWarning {
+	var warnings []ParserWarning
+	walkParts(root, func(part *enmime.Part) bool {
+		for _, problem := range part.Errors {
+			warnings = append(warnings, ParserWarning{
+				Code:    warningCode(problem.Name),
+				Message: problem.Detail,
+				PartID:  part.PartID,
+			})
+		}
+		return true
+	})
+	return warnings
+}
+
+func warningCode(name string) string {
+	return strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(name))
 }
 
 func envelopeHeaders(envelope *enmime.Envelope) HeaderMap {

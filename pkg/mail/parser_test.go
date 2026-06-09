@@ -99,3 +99,106 @@ func TestParserParsesRFC822Message(t *testing.T) {
 		t.Errorf("attachment content = %q", content)
 	}
 }
+
+func TestParserTraversesMultipartAlternativeBodies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		parts    string
+		wantText string
+		wantHTML string
+	}{
+		{
+			name:     "plain only",
+			parts:    alternativePart("text/plain; charset=utf-8", "Plain body."),
+			wantText: "Plain body.",
+		},
+		{
+			name:     "HTML only",
+			parts:    alternativePart("text/html; charset=utf-8", "<p>HTML body.</p>"),
+			wantHTML: "<p>HTML body.</p>",
+		},
+		{
+			name: "HTML before plain",
+			parts: alternativePart("text/html; charset=utf-8", "<p>HTML first.</p>") +
+				alternativePart("text/plain; charset=utf-8", "Plain second."),
+			wantText: "Plain second.",
+			wantHTML: "<p>HTML first.</p>",
+		},
+		{
+			name: "plain before HTML",
+			parts: alternativePart("text/plain; charset=utf-8", "Plain first.") +
+				alternativePart("text/html; charset=utf-8", "<p>HTML second.</p>"),
+			wantText: "Plain first.",
+			wantHTML: "<p>HTML second.</p>",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := parseAlternativeMessage(test.parts)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if parsed.TextBody != test.wantText {
+				t.Errorf("TextBody = %q, want %q", parsed.TextBody, test.wantText)
+			}
+			if parsed.HTMLBody != test.wantHTML {
+				t.Errorf("HTMLBody = %q, want %q", parsed.HTMLBody, test.wantHTML)
+			}
+		})
+	}
+}
+
+func TestParserRecoversMultipartAlternativePartWarnings(t *testing.T) {
+	t.Parallel()
+
+	parts := alternativePart("text/plain; charset=utf-8", "Readable plain body.") +
+		"--alternative\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n" +
+		"Content-Transfer-Encoding: base64\r\n" +
+		"\r\n" +
+		"PHA+T0s8L3A+%%%\r\n"
+
+	parsed, err := parseAlternativeMessage(parts)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if parsed.TextBody != "Readable plain body." {
+		t.Errorf("TextBody = %q, want recovered plain body", parsed.TextBody)
+	}
+	if parsed.HTMLBody != "<p>OK</p>" {
+		t.Errorf("HTMLBody = %q, want recovered malformed body", parsed.HTMLBody)
+	}
+	if len(parsed.Warnings) == 0 {
+		t.Fatal("Warnings is empty, want malformed-part warning")
+	}
+	if warning := parsed.Warnings[0]; warning.Code != "malformed_base64" || warning.PartID == "" {
+		t.Errorf("Warnings[0] = %#v, want malformed_base64 with part ID", warning)
+	}
+}
+
+func alternativePart(contentType, body string) string {
+	return "--alternative\r\n" +
+		"Content-Type: " + contentType + "\r\n" +
+		"\r\n" +
+		body + "\r\n"
+}
+
+func parseAlternativeMessage(parts string) (ParsedMessage, error) {
+	raw := "From: sender@example.test\r\n" +
+		"To: recipient@example.test\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=alternative\r\n" +
+		"\r\n" +
+		parts +
+		"--alternative--\r\n"
+
+	return NewParser().Parse(context.Background(), RawMessage{
+		RFC822: io.NopCloser(strings.NewReader(raw)),
+	})
+}
