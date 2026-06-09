@@ -42,6 +42,12 @@ type StateStore interface {
 	CommitCheckpoint(ctx context.Context, key MailboxKey, previousVersion string, next Checkpoint) error
 }
 
+// Parser decodes one RFC 5322 message and its MIME parts into provider-neutral
+// values. Implementations must not expose parser-library types to callers.
+type Parser interface {
+	Parse(ctx context.Context, message RawMessage) (ParsedMessage, error)
+}
+
 // Processor converts one bounded raw message into a provider-neutral document.
 type Processor interface {
 	Process(ctx context.Context, message RawMessage) (Document, error)
