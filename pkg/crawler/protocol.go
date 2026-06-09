@@ -25,15 +25,25 @@ const (
 	SourceProtocolWeb SourceProtocol = "web"
 	// SourceProtocolNetwork identifies sources that should use network information collection only.
 	SourceProtocolNetwork SourceProtocol = "network"
+	// SourceProtocolEmail identifies sources that should use email collection.
+	SourceProtocolEmail SourceProtocol = "email"
 )
 
-var allowedProtocols = strings.Split("http://,https://,ftp://,ftps://", ",")
+var (
+	allowedProtocols = strings.Split("http://,https://,ftp://,ftps://", ",")
+	emailProtocols   = strings.Split("email://,imap://,imaps://,pop3://,pop3s://,gmail://,graph-mail://,maildir://,mbox://", ",")
+)
 
 func classifySourceProtocol(rawURL string) SourceProtocol {
 	rawURL = strings.TrimSpace(rawURL)
 	for _, proto := range allowedProtocols {
 		if strings.HasPrefix(rawURL, proto) {
 			return SourceProtocolWeb
+		}
+	}
+	for _, proto := range emailProtocols {
+		if strings.HasPrefix(rawURL, proto) {
+			return SourceProtocolEmail
 		}
 	}
 	return SourceProtocolNetwork

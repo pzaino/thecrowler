@@ -310,9 +310,49 @@ func TestClassifySourceProtocol(t *testing.T) {
 			want:   SourceProtocolNetwork,
 		},
 		{
-			name:   "imap URL is network",
+			name:   "email URL is email",
+			rawURL: "email://mail.example.com",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "imap URL is email",
 			rawURL: "imap://mail.example.com",
-			want:   SourceProtocolNetwork,
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "imaps URL is email",
+			rawURL: "imaps://mail.example.com",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "pop3 URL is email",
+			rawURL: "pop3://mail.example.com",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "pop3s URL is email",
+			rawURL: "pop3s://mail.example.com",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "gmail URL is email",
+			rawURL: "gmail://user@example.com",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "graph mail URL is email",
+			rawURL: "graph-mail://tenant/mailbox",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "maildir URL is email",
+			rawURL: "maildir:///var/mail/user",
+			want:   SourceProtocolEmail,
+		},
+		{
+			name:   "mbox URL is email",
+			rawURL: "mbox:///var/mail/user.mbox",
+			want:   SourceProtocolEmail,
 		},
 		{
 			name:   "empty URL is network",
