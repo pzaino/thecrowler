@@ -1,0 +1,10 @@
+From: Sender <sender@example.test>
+To: recipient@example.test
+Date: Tue, 9 Jun 2026 18:45:00 +0000
+MIME-Version: 1.0
+Subject: UTF-8 7bit body
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello from plain text.
+Second line.

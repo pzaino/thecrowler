@@ -1,0 +1,9 @@
+From: Sender <sender@example.test>
+To: recipient@example.test
+Date: Tue, 9 Jun 2026 18:45:00 +0000
+MIME-Version: 1.0
+Subject: Windows-1252 base64 body
+Content-Type: text/plain; charset=windows-1252
+Content-Transfer-Encoding: base64
+
+UHJl5286IJNDYWbpIJYggDEwlA0K
