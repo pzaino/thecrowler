@@ -65,6 +65,7 @@ func TestDocumentPreservesNormalizedMessageData(t *testing.T) {
 			DetectedMediaType: "application/pdf",
 			Disposition:       "attachment",
 			ContentID:         "report@example.test",
+			TransferEncoding:  "base64",
 			Size:              2048,
 			SHA256:            strings.Repeat("a", 64),
 			ExtractedText:     "Quarterly report",
@@ -101,6 +102,7 @@ func TestDocumentPreservesNormalizedMessageData(t *testing.T) {
 		`"extracted_text":"Plain body with example.`,
 		`"url":"https://example.test"`,
 		`"detected_media_type":"application/pdf"`,
+		`"transfer_encoding":"base64"`,
 		`"sha256":"` + strings.Repeat("a", 64) + `"`,
 		`"values":{"Subject":["Normalized message"],"X-Repeated-Field":["first","second"]}`,
 		`"spf":"pass"`,
@@ -129,6 +131,7 @@ func TestDocumentPreservesNormalizedMessageData(t *testing.T) {
 		"extracted_text: Plain body with example.",
 		"url: https://example.test",
 		"detected_media_type: application/pdf",
+		"transfer_encoding: base64",
 		"spf: pass",
 		"code: part_truncated",
 	} {

@@ -1,8 +1,13 @@
 package mail
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -91,6 +96,10 @@ func TestParserParsesRFC822Message(t *testing.T) {
 	if attachment.Filename != "report.txt" || attachment.MediaType != "text/plain" || attachment.Size != 14 {
 		t.Errorf("attachment metadata = %#v", attachment)
 	}
+	if attachment.Disposition != "attachment" || attachment.TransferEncoding != "base64" ||
+		attachment.SHA256 != sha256Hex([]byte("report content")) {
+		t.Errorf("attachment indexing metadata = %#v", attachment)
+	}
 	content, err := io.ReadAll(attachment.Content)
 	if err != nil {
 		t.Fatalf("read attachment: %v", err)
@@ -98,6 +107,107 @@ func TestParserParsesRFC822Message(t *testing.T) {
 	if string(content) != "report content" {
 		t.Errorf("attachment content = %q", content)
 	}
+}
+
+func TestParserDiscoversMultipartMixedAttachmentsWithoutIndexingTheirContents(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseMessageFixture(t, "multipart_mixed_attachments.eml")
+	if parsed.TextBody != "Index only this message body." {
+		t.Errorf("TextBody = %q", parsed.TextBody)
+	}
+	if strings.Contains(parsed.TextBody, "attached text") || strings.Contains(parsed.TextBody, "nested secret") {
+		t.Fatalf("TextBody recursively indexed attachment content: %q", parsed.TextBody)
+	}
+	if len(parsed.Attachments) != 3 {
+		t.Fatalf("Attachments = %#v, want 3 opaque top-level attachments", parsed.Attachments)
+	}
+
+	want := []struct {
+		filename         string
+		mediaType        string
+		disposition      string
+		contentID        string
+		transferEncoding string
+		content          []byte
+	}{
+		{"report.txt", "text/plain", "attachment", "report@example.test", "base64", []byte("report content")},
+		{"data.bin", "application/octet-stream", "", "", "base64", []byte{0, 1, 2, 3, 4}},
+		{"bundle.mime", "multipart/mixed", "attachment", "bundle@example.test", "", nil},
+	}
+	for index, attachment := range parsed.Attachments {
+		attachment := attachment
+		t.Cleanup(func() { _ = attachment.Content.Close() })
+		expected := want[index]
+		if attachment.Filename != expected.filename || attachment.MediaType != expected.mediaType ||
+			attachment.Disposition != expected.disposition || attachment.ContentID != expected.contentID ||
+			attachment.TransferEncoding != expected.transferEncoding || attachment.Size != int64(len(expected.content)) ||
+			attachment.SHA256 != sha256Hex(expected.content) {
+			t.Errorf("Attachments[%d] = %#v", index, attachment)
+		}
+		content, err := io.ReadAll(attachment.Content)
+		if err != nil {
+			t.Fatalf("read Attachments[%d]: %v", index, err)
+		}
+		if !bytes.Equal(content, expected.content) {
+			t.Errorf("Attachments[%d] content = %q, want %q", index, content, expected.content)
+		}
+	}
+}
+
+func TestParserRecoversMalformedMultipartMixedAttachments(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseMessageFixture(t, "multipart_mixed_malformed_attachments.eml")
+	if parsed.TextBody != "Readable body." {
+		t.Errorf("TextBody = %q", parsed.TextBody)
+	}
+	if len(parsed.Attachments) != 2 {
+		t.Fatalf("Attachments = %#v, want 2", parsed.Attachments)
+	}
+
+	for _, attachment := range parsed.Attachments {
+		attachment := attachment
+		t.Cleanup(func() { _ = attachment.Content.Close() })
+	}
+	first := parsed.Attachments[0]
+	if first.Filename != "broken.bin" || first.ContentID != "broken@example.test" ||
+		first.TransferEncoding != "base64" || first.Size != 5 || first.SHA256 != sha256Hex([]byte("Hello")) {
+		t.Errorf("first malformed attachment metadata = %#v", first)
+	}
+	second := parsed.Attachments[1]
+	if second.Filename != "notes.txt" || second.MediaType != "text/plain" || second.Disposition != "attachment" ||
+		second.TransferEncoding != "quoted-printable" || second.Size == 0 || second.SHA256 == "" {
+		t.Errorf("second malformed attachment metadata = %#v", second)
+	}
+
+	codes := make(map[string]bool)
+	for _, warning := range parsed.Warnings {
+		codes[warning.Code] = true
+	}
+	if !codes["malformed_base64"] {
+		t.Errorf("Warnings = %#v, want malformed_base64", parsed.Warnings)
+	}
+}
+
+func parseMessageFixture(t *testing.T, name string) ParsedMessage {
+	t.Helper()
+	file, err := os.Open(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("open fixture %s: %v", name, err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+
+	parsed, err := NewParser().Parse(context.Background(), RawMessage{RFC822: file})
+	if err != nil {
+		t.Fatalf("parse fixture %s: %v", name, err)
+	}
+	return parsed
+}
+
+func sha256Hex(content []byte) string {
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:])
 }
 
 func TestParserTraversesMultipartAlternativeBodies(t *testing.T) {

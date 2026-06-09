@@ -79,6 +79,7 @@ type Attachment struct {
 	DetectedMediaType string        `json:"detected_media_type,omitempty" yaml:"detected_media_type,omitempty"`
 	Disposition       string        `json:"disposition,omitempty" yaml:"disposition,omitempty"`
 	ContentID         string        `json:"content_id,omitempty" yaml:"content_id,omitempty"`
+	TransferEncoding  string        `json:"transfer_encoding,omitempty" yaml:"transfer_encoding,omitempty"`
 	Size              int64         `json:"size,omitempty" yaml:"size,omitempty"`
 	SHA256            string        `json:"sha256,omitempty" yaml:"sha256,omitempty"`
 	Inline            bool          `json:"inline,omitempty" yaml:"inline,omitempty"`

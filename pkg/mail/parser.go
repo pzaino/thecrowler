@@ -3,6 +3,8 @@ package mail
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -41,11 +43,7 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 		return ParsedMessage{}, malformedParseError("could not parse RFC 5322 message", err)
 	}
 
-	textBody, htmlBody := envelope.Text, envelope.HTML
-	if alternativeText, alternativeHTML, ok := multipartAlternativeBodies(envelope.Root); ok {
-		textBody = alternativeText
-		htmlBody = alternativeHTML
-	}
+	textBody, htmlBody := envelopeBodies(envelope.Root)
 
 	parsed := ParsedMessage{
 		Ref:         message.Ref,
@@ -80,39 +78,41 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 	return parsed, nil
 }
 
-func multipartAlternativeBodies(root *enmime.Part) (string, string, bool) {
+func envelopeBodies(root *enmime.Part) (string, string) {
 	alternative := firstMultipartAlternative(root)
-	if alternative == nil {
-		return "", "", false
+	if alternative != nil {
+		return bodyParts(alternative.FirstChild, true)
 	}
+	return bodyParts(root, false)
+}
 
-	var textBody, htmlBody string
-	var foundText, foundHTML bool
-	walkParts(alternative.FirstChild, func(part *enmime.Part) bool {
-		if part.Disposition == "attachment" {
+func bodyParts(root *enmime.Part, firstOnly bool) (string, string) {
+	var textParts []string
+	var htmlBody string
+	walkParts(root, func(part *enmime.Part) bool {
+		if isAttachmentPart(part) {
+			// An attachment can itself be a multipart or message/rfc822 tree. Keep
+			// it as one opaque attachment instead of indexing any child bodies.
 			return false
 		}
 		switch part.ContentType {
 		case "text/plain":
-			if !foundText {
-				textBody = string(part.Content)
-				foundText = true
+			if !firstOnly || len(textParts) == 0 {
+				textParts = append(textParts, string(part.Content))
 			}
 		case "text/html":
-			if !foundHTML {
+			if htmlBody == "" {
 				htmlBody = string(part.Content)
-				foundHTML = true
 			}
 		}
 		return true
 	})
-
-	return textBody, htmlBody, true
+	return strings.Join(textParts, "\n--\n"), htmlBody
 }
 
 func firstMultipartAlternative(part *enmime.Part) *enmime.Part {
 	for current := part; current != nil; current = current.NextSibling {
-		if current.Disposition == "attachment" {
+		if isAttachmentPart(current) {
 			continue
 		}
 		if current.ContentType == "multipart/alternative" {
@@ -131,6 +131,15 @@ func walkParts(part *enmime.Part, visit func(*enmime.Part) bool) {
 			walkParts(current.FirstChild, visit)
 		}
 	}
+}
+
+func isAttachmentPart(part *enmime.Part) bool {
+	if part == nil {
+		return false
+	}
+	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
+	return disposition == "attachment" || disposition == "inline" ||
+		part.FileName != "" || part.ContentType == "application/octet-stream"
 }
 
 func envelopeWarnings(root *enmime.Part) []ParserWarning {
@@ -183,28 +192,36 @@ func envelopeAddresses(envelope *enmime.Envelope, header string) ([]Address, err
 }
 
 func envelopeAttachments(envelope *enmime.Envelope) []Attachment {
-	attachments := make([]Attachment, 0, len(envelope.Attachments)+len(envelope.Inlines))
-	for _, part := range envelope.Attachments {
-		attachments = append(attachments, attachmentFromPart(part, false))
-	}
-	for _, part := range envelope.Inlines {
-		attachments = append(attachments, attachmentFromPart(part, true))
-	}
+	var attachments []Attachment
+	walkParts(envelope.Root, func(part *enmime.Part) bool {
+		if !isAttachmentPart(part) {
+			return true
+		}
+		attachments = append(attachments, attachmentFromPart(part))
+		// Do not expose nested MIME parts inside an attached message or
+		// multipart payload as independent indexable attachments.
+		return false
+	})
 	return attachments
 }
 
-func attachmentFromPart(part *enmime.Part, inline bool) Attachment {
+func attachmentFromPart(part *enmime.Part) Attachment {
 	content := append([]byte(nil), part.Content...)
+	digest := sha256.Sum256(content)
+	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
+	transferEncoding := strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Transfer-Encoding")))
 	return Attachment{
-		ID:          part.ContentID,
-		PartID:      part.PartID,
-		Filename:    part.FileName,
-		MediaType:   part.ContentType,
-		Disposition: part.Disposition,
-		ContentID:   part.ContentID,
-		Size:        int64(len(content)),
-		Inline:      inline,
-		Content:     io.NopCloser(bytes.NewReader(content)),
+		ID:               part.ContentID,
+		PartID:           part.PartID,
+		Filename:         part.FileName,
+		MediaType:        part.ContentType,
+		Disposition:      disposition,
+		ContentID:        part.ContentID,
+		TransferEncoding: transferEncoding,
+		Size:             int64(len(content)),
+		SHA256:           hex.EncodeToString(digest[:]),
+		Inline:           disposition == "inline",
+		Content:          io.NopCloser(bytes.NewReader(content)),
 	}
 }
 

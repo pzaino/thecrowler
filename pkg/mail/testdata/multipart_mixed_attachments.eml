@@ -1,0 +1,39 @@
+From: sender@example.test
+To: recipient@example.test
+Subject: Multiple attachments
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer"
+
+--outer
+Content-Type: text/plain; charset=utf-8
+
+Index only this message body.
+--outer
+Content-Type: text/plain; name="report.txt"
+Content-Disposition: attachment; filename="report.txt"
+Content-ID: <report@example.test>
+Content-Transfer-Encoding: base64
+
+cmVwb3J0IGNvbnRlbnQ=
+--outer
+Content-Type: application/octet-stream; name="data.bin"
+Content-Transfer-Encoding: base64
+
+AAECAwQ=
+--outer
+Content-Type: multipart/mixed; boundary="attached"; name="bundle.mime"
+Content-Disposition: attachment; filename="bundle.mime"
+Content-ID: <bundle@example.test>
+
+--attached
+Content-Type: text/plain; charset=utf-8
+
+This attached text must not be indexed.
+--attached
+Content-Type: application/octet-stream; name="nested.bin"
+Content-Disposition: attachment; filename="nested.bin"
+Content-Transfer-Encoding: base64
+
+bmVzdGVkIHNlY3JldA==
+--attached--
+--outer--
