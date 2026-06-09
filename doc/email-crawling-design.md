@@ -92,6 +92,85 @@ mailbox selector, while referring to credentials through the project's secret
 or credential mechanism. The exact credential schema is outside this
 inspection.
 
+## Static HTML parsing and extraction findings
+
+Email HTML can be parsed and selected **without browser navigation, JavaScript
+execution, or network resource loading**, provided the email path uses the
+static fallback in `pkg/scraper` and does not invoke browser-oriented runtime
+capabilities.
+
+The inspected packages divide the relevant responsibilities as follows:
+
+- `pkg/browser` currently contains VDI/WebDriver acquisition, setup,
+  navigation, DOM-readiness polling, and cleanup. `Setup` navigates to an
+  initial URL (defaulting to `about:blank`), and `WithSession` optionally
+  navigates to the requested URL and executes JavaScript to check
+  `document.readyState`. These APIs are not appropriate for an email body and
+  must not be used by the email processor.
+- `scraper.Extractor.Extract` has a static fallback after browser lookup. It
+  obtains a string from `WebDriver.PageSource`, parses it with `goquery`, uses
+  `htmlquery` for XPath, and applies regex directly to the source. Parsing does
+  not dereference `src`, `href`, stylesheet, image, iframe, or other resource
+  URLs and does not execute script.
+- The fallback currently supports CSS, XPath, and regex selectors. CSS supports
+  the normal `ExtractElement` text/attribute/pattern behavior. XPath currently
+  returns node inner text; selector kinds such as ID, name, class, tag, link
+  text, and `js_path` have no static fallback and therefore must either be
+  rejected for email rules or normalized to supported CSS/XPath selectors.
+- `scraper.ParseHTML`, `ConvertHTML`, and `ExtractHTMLData` are also reusable for
+  converting a complete HTML body or an extracted HTML fragment to the stable
+  `HTMLNode` shape. This traversal is local-only; it skips active/presentation
+  elements such as scripts, styles, iframes, and images rather than loading
+  them.
+- `scraper.ApplyRule` and `ApplyRulesGroup` provide the reusable rule-level
+  integration above `Extractor`. A zero/`NoopRuntime` is valid for pure
+  extraction and local post-processing. Browser wait conditions, JavaScript
+  collection, crawler page conditions, plugin/agent selectors, and HTTP
+  post-processing are not part of the offline guarantee and must be rejected
+  or left unavailable in an email-specific rule profile.
+
+### Selected integration point
+
+The future email processor should pass each decoded MIME `text/html` body to
+`scraper.ApplyRule` (or `ApplyRulesGroup` when a configured group is selected)
+with a static page-source adapter and a deliberately capability-limited
+scraper runtime. This retains existing selector, extraction, transformation,
+and local post-processing behavior without constructing a `ProcessContext`,
+leasing VDI capacity, or calling `browser.Setup`, `WithSession`, `Navigate`,
+`WaitForDOMReady`, or `ExtractJavaScriptFiles`.
+
+`pkg/crawler/selector_adapter.go` is **not** the email integration point. Its
+`crawlerExtractor` binds value matching and plugin/agent calls to
+`ProcessContext`, `executeRuleCall`, and a WebDriver. The rule-level
+`pkg/scraper` API already supplies a transport-neutral default value matcher
+and explicit optional capabilities, so importing the crawler adapter would
+pull browser/crawler side effects back into the email path.
+
+### Required reusable `pkg/browser` helper
+
+The existing static fallback is still exposed through a
+`*vdi.WebDriver`, so a small reusable source-only adapter is required unless
+`pkg/scraper` later gains a direct `ExtractHTML(source, request)` entry point.
+Place that adapter in `pkg/browser` so the WebDriver compatibility shim remains
+owned at the browser boundary. A future helper (for example,
+`NewStaticHTMLDriver(source string)`) should:
+
+- return the supplied immutable HTML from `PageSource`;
+- return an empty element set from `FindElements`, causing CSS lookup to use
+  the parser fallback;
+- return explicit unsupported-operation errors for navigation, script
+  execution, element interaction, cookies, windows, screenshots, and every
+  other browser operation, rather than delegating to Selenium or embedding a
+  nil implementation that could panic;
+- perform no setup, URL resolution, external fetch, JavaScript execution, or
+  resource loading; and
+- be reusable by non-email callers that already have trusted HTML text and
+  want the same static scraper behavior.
+
+This helper is only an adapter for the current scraper signature. It is not a
+browser session and must never be passed to browser lifecycle or action APIs.
+No helper or email behavior is added by this design change.
+
 ## Proposed dispatch boundary
 
 Introduce a source-level dispatcher **before VDI acquisition**, rather than
