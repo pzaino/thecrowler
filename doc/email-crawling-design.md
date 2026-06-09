@@ -1,333 +1,652 @@
-# Email crawling dispatch design
+# Email crawling target architecture
 
-## Scope
+## Status and scope
 
-This document records the source-dispatch path in the current CROWler tree and
-identifies the integration points for a future email crawler. It is a design
-note only: no email transport, parsing, indexing, or dispatch behavior is
-implemented by this change.
+This document defines the target architecture for crawling mailboxes as CROWler
+sources. It covers the `pkg/mail` provider boundary, connector, fetcher, MIME
+parser, normalizer, listener, reconciler, state store, and integration with the
+crawler scheduler and indexing pipeline.
 
-## Current source path
+This is an architectural target, not a statement that these components already
+exist. The MVP should support incremental, read-only mailbox ingestion without
+allocating a browser or VDI session.
 
-The runtime path from a database row to a crawler is:
+## Design principles
 
-1. `retrieveAvailableSources` in `main.go` calls the PostgreSQL
-   `update_sources(...)` function and scans `source_id`, `url`, `restricted`,
-   `flags`, and `config` into `database.Source`. The query does not filter or
-   branch by URL scheme or `crawling_config.source_type`.
-2. `crawlSources` places each `database.Source` on `sourceChan`. A VDI-slot
-   worker receives it and calls `startCrawling`.
-3. `startCrawling` constructs `crawler.Pars`, acquires a Selenium/VDI instance,
-   and only then invokes `crawler.CrawlWebsite`.
-4. `CrawlWebsite` constructs a `ProcessContext`, combines the source config
-   with the global config, initializes timeout/session cleanup, and calls
-   `classifySourceProtocol(args.Src.URL)`.
-5. `classifySourceProtocol` in `pkg/crawler/protocol.go` recognizes only the
-   literal, case-sensitive prefixes `http://`, `https://`, `ftp://`, and
-   `ftps://` (after trimming surrounding whitespace). These map to
-   `SourceProtocolWeb`; every other value maps to `SourceProtocolNetwork`.
-6. `CrawlWebsite` sends `SourceProtocolWeb` through the Selenium-backed web
-   path. Every other source is handled by the early network-only branch, which
-   calls `GetNetInfo`, calls `IndexNetInfo`, updates the pipeline status and
-   source state, and returns before `ConnectToVDI`.
+1. **Keep mail concerns together.** Provider protocols and provider-specific
+   behavior, MIME parsing, message identity, mailbox checkpoints, and mail
+   normalization belong in `pkg/mail`. They must not be spread across
+   `pkg/crawler`, `pkg/browser`, or `pkg/scraper`.
+2. **Dispatch before browser allocation.** A source identified as email must be
+   routed to the mail crawler before `vdiPool.Acquire`. Mail crawling does not
+   use Selenium, browser navigation, or `crawler.ProcessContext`'s web-only
+   state.
+3. **Use a provider-neutral core.** IMAP and provider APIs expose different
+   cursors and event mechanisms. The pipeline should consume a common message
+   model and checkpoint contract while adapters translate provider behavior.
+4. **Reconciliation is authoritative.** Push notifications and IMAP IDLE are
+   hints to run reconciliation; they are not the durable source of truth.
+5. **Advance state only after durable output.** A message checkpoint must not
+   move past work that has not been successfully committed or deliberately
+   recorded as skipped/quarantined.
+6. **Default to passive and safe behavior.** The MVP is read-only, does not
+   fetch remote content referenced by a message, and applies explicit size,
+   count, and time limits to untrusted MIME input.
+7. **Make retries idempotent.** Re-fetching or reprocessing the same provider
+   message must converge on the same stable document identity without creating
+   duplicates.
 
-Although the network-only branch returns before connecting the supplied
-Selenium instance, the scheduler has already reserved that VDI in
-`startCrawling`. Protocol dispatch therefore occurs too late to prevent a
-non-web source from consuming a VDI slot for the duration of its run.
+## Non-goals
 
-`pkg/crawler/process.go` is not currently a dispatch layer. `ProcessContext`
-holds web/VDI state and the selected `database.Source`; its
-`LoadSourceConfiguration` method unmarshals generic source JSON and prepares
-web URL-pattern fields, but it does not select a processor.
+The following are explicitly outside the MVP:
 
-`pkg/crawler/types.go` is also transport-neutral at the handoff boundary:
-`Pars` carries the database source, status, database handle, rules engine,
-source list, VDI pool, and wait-group information used by `CrawlWebsite`. The
-status structure is oriented around the existing pipeline, network, HTTP, and
-web-crawling stages and has no email-specific stage counter.
+- **No JavaScript execution.** HTML message bodies are parsed as static,
+  untrusted content and are never loaded in a browser runtime.
+- **No remote image loading by default.** External images, stylesheets, fonts,
+  links, tracking pixels, and other remote resources referenced by HTML are not
+  dereferenced. Explicit future enrichment must be separately configured and
+  use the project's guarded fetch facilities.
+- **No mailbox mutation in the MVP.** The crawler does not mark messages read,
+  add or remove flags or labels, move messages, delete messages, create
+  folders, or send mail.
+- No SMTP delivery or outbound-mail support.
+- No calendar, contacts, tasks, or chat ingestion merely because a provider API
+  exposes them.
+- No guarantee of preserving a provider's complete presentation rendering;
+  normalization favors searchable, deterministic content.
 
-## Current result for email URLs
+## Package ownership
 
-There is no email protocol family or email worker in the inspected crawler
-code. Consequently:
+All provider and MIME logic belongs in `pkg/mail`.
 
-- `imap://...`, `imaps://...`, `pop3://...`, `pop3s://...`, and any other
-  unrecognized scheme classify as `SourceProtocolNetwork`.
-- The classifier test explicitly fixes the current behavior for
-  `imap://mail.example.com`: it expects `SourceProtocolNetwork`.
-- Such a source is not routed to mailbox retrieval. It enters the existing
-  NETInfo-only fallback after a VDI has already been acquired.
-- `smtp` should not be treated as a crawl transport. SMTP is an outbound mail
-  delivery protocol, while mailbox crawling should be based on retrieval
-  protocols such as IMAP (and POP3 only if intentionally supported).
+`pkg/mail` owns:
 
-## Database and source-configuration findings
+- provider clients and authentication adapters;
+- mailbox discovery and selection;
+- provider cursors, IMAP UID semantics, and change translation;
+- bounded message and attachment retrieval;
+- MIME decoding, multipart selection, transfer decoding, and charset handling;
+- canonical mail message, address, body, attachment, and change models;
+- mail-specific normalization, sanitization, identity, and deduplication keys;
+- listener and reconciliation orchestration;
+- mailbox state/checkpoint interfaces and implementations that encode mail
+  semantics;
+- redaction of provider errors and mail configuration values.
 
-The `Sources` storage path is mostly protocol-agnostic:
+Other packages own only their existing platform responsibilities:
 
-- `database.Source.URL` is a string and `Config` is raw JSON.
-- `CreateSource`, the policy-based upsert path, source lookup/list helpers, and
-  status helpers persist and retrieve the URL/config without protocol
-  dispatch.
-- `validateURL` accepts any parseable URL with a non-empty scheme and host, so
-  it does not itself restrict a source to HTTP(S).
-- Queue selection in `retrieveAvailableSources` does not inspect the protocol
-  or source type.
+- `pkg/crawler` classifies and dispatches sources, supplies shared lifecycle
+  dependencies, and receives mail crawl results. It must not implement IMAP,
+  provider API, or MIME rules.
+- `pkg/database` supplies general persistence primitives and migrations. It may
+  implement storage mechanics required by `pkg/mail`, but mail checkpoint
+  meaning and transitions remain defined by `pkg/mail`.
+- indexing packages persist normalized documents and attachments. They should
+  accept a transport-neutral ingestion model rather than raw provider or MIME
+  objects.
+- `pkg/browser` and browser-backed scraping are not dependencies of
+  `pkg/mail`.
 
-The typed configuration vocabulary is not yet email-ready:
-
-- `pkg/database/source_types.go` defines source types for `website`, `api`,
-  `file`, and `db`, but not `email`.
-- `pkg/config/types.go` describes the same current set in `CrawlingConfig`.
-- `schemas/crowler-source-config-schema.json` permits only `website`, `api`,
-  `file`, and `db` for `crawling_config.source_type`.
-- `database.Source.GetSourceType` defaults a missing or malformed source type
-  to `website`; `IsAPI` only special-cases `api` and `data`. Neither helper is
-  used by the current protocol dispatch in `CrawlWebsite`.
-
-Email credentials and secrets should not be embedded in `Sources.url`. A
-future email configuration should keep the URL as a non-secret endpoint and
-mailbox selector, while referring to credentials through the project's secret
-or credential mechanism. The exact credential schema is outside this
-inspection.
-
-## Static HTML parsing and extraction findings
-
-Email HTML can be parsed and selected **without browser navigation, JavaScript
-execution, or network resource loading**, provided the email path uses the
-static fallback in `pkg/scraper` and does not invoke browser-oriented runtime
-capabilities.
-
-The inspected packages divide the relevant responsibilities as follows:
-
-- `pkg/browser` currently contains VDI/WebDriver acquisition, setup,
-  navigation, DOM-readiness polling, and cleanup. `Setup` navigates to an
-  initial URL (defaulting to `about:blank`), and `WithSession` optionally
-  navigates to the requested URL and executes JavaScript to check
-  `document.readyState`. These APIs are not appropriate for an email body and
-  must not be used by the email processor.
-- `scraper.Extractor.Extract` has a static fallback after browser lookup. It
-  obtains a string from `WebDriver.PageSource`, parses it with `goquery`, uses
-  `htmlquery` for XPath, and applies regex directly to the source. Parsing does
-  not dereference `src`, `href`, stylesheet, image, iframe, or other resource
-  URLs and does not execute script.
-- The fallback currently supports CSS, XPath, and regex selectors. CSS supports
-  the normal `ExtractElement` text/attribute/pattern behavior. XPath currently
-  returns node inner text; selector kinds such as ID, name, class, tag, link
-  text, and `js_path` have no static fallback and therefore must either be
-  rejected for email rules or normalized to supported CSS/XPath selectors.
-- `scraper.ParseHTML`, `ConvertHTML`, and `ExtractHTMLData` are also reusable for
-  converting a complete HTML body or an extracted HTML fragment to the stable
-  `HTMLNode` shape. This traversal is local-only; it skips active/presentation
-  elements such as scripts, styles, iframes, and images rather than loading
-  them.
-- `scraper.ApplyRule` and `ApplyRulesGroup` provide the reusable rule-level
-  integration above `Extractor`. A zero/`NoopRuntime` is valid for pure
-  extraction and local post-processing. Browser wait conditions, JavaScript
-  collection, crawler page conditions, plugin/agent selectors, and HTTP
-  post-processing are not part of the offline guarantee and must be rejected
-  or left unavailable in an email-specific rule profile.
-
-### Selected integration point
-
-The future email processor should pass each decoded MIME `text/html` body to
-`scraper.ApplyRule` (or `ApplyRulesGroup` when a configured group is selected)
-with a static page-source adapter and a deliberately capability-limited
-scraper runtime. This retains existing selector, extraction, transformation,
-and local post-processing behavior without constructing a `ProcessContext`,
-leasing VDI capacity, or calling `browser.Setup`, `WithSession`, `Navigate`,
-`WaitForDOMReady`, or `ExtractJavaScriptFiles`.
-
-`pkg/crawler/selector_adapter.go` is **not** the email integration point. Its
-`crawlerExtractor` binds value matching and plugin/agent calls to
-`ProcessContext`, `executeRuleCall`, and a WebDriver. The rule-level
-`pkg/scraper` API already supplies a transport-neutral default value matcher
-and explicit optional capabilities, so importing the crawler adapter would
-pull browser/crawler side effects back into the email path.
-
-### Required reusable `pkg/browser` helper
-
-The existing static fallback is still exposed through a
-`*vdi.WebDriver`, so a small reusable source-only adapter is required unless
-`pkg/scraper` later gains a direct `ExtractHTML(source, request)` entry point.
-Place that adapter in `pkg/browser` so the WebDriver compatibility shim remains
-owned at the browser boundary. A future helper (for example,
-`NewStaticHTMLDriver(source string)`) should:
-
-- return the supplied immutable HTML from `PageSource`;
-- return an empty element set from `FindElements`, causing CSS lookup to use
-  the parser fallback;
-- return explicit unsupported-operation errors for navigation, script
-  execution, element interaction, cookies, windows, screenshots, and every
-  other browser operation, rather than delegating to Selenium or embedding a
-  nil implementation that could panic;
-- perform no setup, URL resolution, external fetch, JavaScript execution, or
-  resource loading; and
-- be reusable by non-email callers that already have trusted HTML text and
-  want the same static scraper behavior.
-
-This helper is only an adapter for the current scraper signature. It is not a
-browser session and must never be passed to browser lifecycle or action APIs.
-No helper or email behavior is added by this design change.
-
-## Proposed dispatch boundary
-
-Introduce a source-level dispatcher **before VDI acquisition**, rather than
-adding email handling inside the existing network fallback. Conceptually, the
-scheduler path should become:
+A target package layout is:
 
 ```text
-Sources row
-  -> source queue
-  -> classify source protocol/type
-       -> web     -> acquire VDI -> CrawlWebsite
-       -> email   -> no VDI      -> CrawlEmail
-       -> network -> no VDI      -> existing NETInfo-only processor
+pkg/mail/
+  config.go            typed source configuration and validation
+  types.go             canonical mail and change models
+  connector.go         provider-neutral connector interfaces
+  fetcher.go           bounded retrieval orchestration
+  mime.go              MIME parser interfaces and implementation
+  normalize.go         canonical document normalization
+  listener.go          change-hint listener lifecycle
+  reconciler.go        authoritative incremental/full reconciliation
+  state.go             checkpoint and lease contracts
+  identity.go          stable IDs and deduplication keys
+  errors.go            typed/retryable errors and redaction
+  providers/
+    imap/               IMAP/IMAPS adapter, UID and IDLE behavior
+    ...                 future provider API adapters
 ```
 
-The best current integration point is the boundary represented by
-`startCrawling`, because it has the complete `database.Source` and constructs
-`crawler.Pars`, but has not yet acquired a VDI. In a future implementation,
-prefer moving the decision into a crawler-package entry point (for example,
-`ProcessSource` or `DispatchSource`) and having `startCrawling` call that entry
-point. This keeps protocol policy in `pkg/crawler` instead of duplicating it in
-`main.go`, while allowing only the web branch to acquire Selenium.
+Provider subpackages are implementation details behind interfaces exported by
+`pkg/mail`. Callers should not branch on provider-specific types.
 
-Do not route email from the current `SourceProtocolNetwork` branch in
-`CrawlWebsite`. That branch has NETInfo semantics, uses web-oriented cleanup,
-and is reached after the expensive scheduler resource decision has already
-been made.
+## Source configuration
 
-## Proposed integration points
+Email sources should be explicit and typed:
 
-### 1. Protocol classification (`pkg/crawler/protocol.go`)
+```yaml
+crawling_config:
+  source_type: email
+email:
+  provider: imap
+  endpoint: imaps://mail.example.com:993
+  credential_ref: secret/mail-archive
+  mailboxes:
+    include: [INBOX, Archive]
+    exclude: [Spam, Trash]
+  mode: poll
+  limits:
+    max_message_bytes: 26214400
+    max_attachment_bytes: 10485760
+    max_attachments: 50
+```
 
-- Add an explicit `SourceProtocolEmail` family.
-- Parse the URL scheme rather than extending the current prefix list. Scheme
-  parsing avoids prefix collisions and makes case normalization explicit.
-- Initially recognize only retrieval schemes selected by product policy. A
-  conservative first set is `imap` and `imaps`; add `pop3`/`pop3s` only if the
-  email crawler supports their different mailbox and state semantics.
-- Keep SMTP schemes unsupported rather than routing them as mailbox sources.
-- Decide precedence between URL scheme and `crawling_config.source_type` in one
-  place. A recommended rule is that a recognized scheme determines the
-  transport, while `source_type: email` validates intent and permits future
-  provider-specific endpoint forms. Conflicts should fail clearly rather than
-  silently falling back to NETInfo.
+The exact serialized schema may evolve, but it must preserve these boundaries:
 
-### 2. Top-level source dispatch (`main.go` and `pkg/crawler`)
+- `source_type: email` declares intent. A recognized retrieval scheme may help
+  validation, but should not silently turn an unrelated source into email.
+- The endpoint contains no password, OAuth token, or client secret.
+- `credential_ref` resolves through the project's secret mechanism. Secret
+  material must not be persisted in source status, checkpoints, logs, events,
+  or indexed documents.
+- Mailbox inclusion/exclusion, retrieval mode, TLS requirements, timeouts, and
+  resource limits are typed fields, not provider-specific arbitrary maps where
+  avoidable.
+- TLS verification is enabled by default. Any insecure development override
+  must be explicit and must produce an operational warning.
+- SMTP URLs are invalid as crawl sources.
 
-- Dispatch before `vdiPool.Acquire`.
-- Retain the existing `Pars` handoff fields that are transport-neutral
-  (`DB`, `Src`, `Status`, rules, refresh callback, and wait group).
-- Make VDI acquisition and release exclusively owned by the web branch.
-- Give the email and network-only branches completion paths that always finish
-  the wait group and update pipeline/source state without pretending to return
-  a Selenium session.
-- Consider separating queue concurrency from VDI capacity. The current worker
-  count and lifecycle are organized around VDI slots; email work may need a
-  distinct bounded worker pool so mailbox I/O cannot starve web crawling or
-  vice versa.
+Configuration changes that alter endpoint, account, provider, or mailbox
+selection invalidate incompatible checkpoints and trigger a controlled
+reconciliation rather than reusing state blindly.
 
-### 3. Email processor boundary (new crawler package code)
+## Core data model
 
-A future `CrawlEmail`/email processor should receive the selected source and
-shared runtime dependencies, then own:
+The provider-neutral model separates provider metadata, raw content, parsed
+MIME, and normalized output.
 
-- endpoint and mailbox configuration validation;
-- credential lookup;
-- connection, TLS, and authentication;
-- incremental state (for example IMAP UID validity and last processed UID);
-- message and attachment limits;
-- MIME parsing and normalization;
-- indexing and deduplication;
-- source status, counters, errors, timeout, and completion event handling.
+```go
+type MessageRef struct {
+    Provider       string
+    AccountID      string
+    MailboxID      string
+    ProviderID     string
+    Version        string
+    InternalDate   time.Time
+    Size           int64
+}
 
-It should not require `ProcessContext` as currently shaped. That type owns a
-large amount of Selenium, page-link, cookie, HTTP, and DOM state. Extracting a
-small transport-neutral lifecycle context is preferable to populating unused
-web fields for email runs. `ProcessContext.LoadSourceConfiguration` is useful
-as evidence that source JSON is available at runtime, but email-specific
-configuration should be decoded into a typed email configuration at the email
-processor boundary.
+type RawMessage struct {
+    Ref      MessageRef
+    RFC822   io.ReadCloser
+}
 
-### 4. Source configuration and validation
+type ParsedMessage struct {
+    Ref         MessageRef
+    MessageID   string
+    ThreadID    string
+    Date        time.Time
+    From        []Address
+    To          []Address
+    CC          []Address
+    BCC         []Address
+    ReplyTo     []Address
+    Subject     string
+    Headers     HeaderMap
+    TextBody    string
+    HTMLBody    string
+    Attachments []Attachment
+}
 
-When behavior is implemented, update all representations together:
+type Change struct {
+    Kind ChangeKind // upsert, delete, or reset
+    Ref  MessageRef
+}
+```
 
-- add `email` to `pkg/database/source_types.go`;
-- add/describe `email` in `pkg/config/types.go`;
-- add `email` to `schemas/crowler-source-config-schema.json`;
-- add typed email settings rather than placing arbitrary credentials in
-  `custom`;
-- update source validation so required fields depend on the source type and
-  protocol instead of assuming web-oriented `site` semantics everywhere;
-- preserve backward compatibility: missing `source_type` should continue to
-  behave as `website` for existing records unless a recognized non-web scheme
-  gives an unambiguous transport.
+The concrete types may differ, but these distinctions are required:
 
-No database column is required merely to dispatch email: the existing URL and
-JSON config can represent it. A migration may still be needed for incremental
-mailbox checkpoints or message identity if those values should be queryable,
-transactional state rather than opaque source config.
+- `MessageRef` is cheap metadata used for listing, comparison, and retrieval.
+- `RawMessage` is a bounded stream, not an unbounded byte slice.
+- `ParsedMessage` contains decoded mail semantics but no provider client
+  objects.
+- Normalized output is transport-neutral and suitable for the existing index
+  boundary.
+- Deletion/tombstone changes are represented even if the MVP initially only
+  indexes upserts; otherwise a future reconciler cannot converge after mailbox
+  removals.
 
-### 5. Lifecycle, observability, and indexing
+A canonical document ID should be derived from source identity plus stable
+provider identity, for example:
 
-- Reuse the `Sources.status` lifecycle selected by `update_sources(...)` and
-  completed through `UpdateSourceState`; otherwise email rows could remain in
-  `processing` and be delayed or retried incorrectly.
-- Preserve `Status.PipelineRunning`, timestamps, error count, and `LastError`.
-  Add email-specific counters/stage state only if consumers require them;
-  avoid overloading `CrawlingRunning`, `HTTPInfoRunning`, or
-  `NetInfoRunning` with mailbox meanings.
-- Decide whether the existing `crawl_completed` event is transport-neutral.
-  If retained, include the source protocol/type in its details. Otherwise add
-  a separate event type without breaking existing web consumers.
-- Route normalized messages and attachments through explicit indexing APIs;
-  do not force them through page/DOM methods merely to reuse web code.
+```text
+mail:<source-id>:<account-id>:<mailbox-id>:<provider-message-id>
+```
 
-## Tests to change when implementation begins
+The RFC `Message-ID` header is useful metadata but is not sufficient as the
+primary key: it can be absent, malformed, duplicated, or shared between copies
+in different mailboxes. Content hashes may support deduplication and change
+recognition, but should not replace provider identity.
 
-The current tests document only the two-family classifier. Future behavior
-should be driven by tests at these seams:
+## Component architecture
 
-1. **Classifier tests (`pkg/crawler/crawler_test.go`)**
-   - change the existing IMAP expectation from network to email;
-   - cover IMAPS and any intentionally supported POP schemes;
-   - cover mixed-case schemes and surrounding whitespace;
-   - verify SMTP and unknown schemes are rejected or remain in the explicitly
-     chosen unsupported/network policy;
-   - retain HTTP(S)/FTP(S) and bare-host behavior.
-2. **Dispatcher tests**
-   - verify web sources acquire/release a VDI and call the web processor;
-   - verify email and network-only sources never acquire a VDI;
-   - verify every branch completes the wait group and source lifecycle on
-     success, validation failure, timeout, and panic/error boundaries.
-3. **Database/config tests (`pkg/database/source_test.go` and config/schema
-   tests)**
-   - create and retrieve an email URL/config without losing scheme or config;
-   - validate `source_type: email` consistently across Go types and JSON
-     schema;
-   - preserve the processing-row upsert protections and status-helper behavior;
-   - test redaction so credentials never appear in status, events, or logs.
-4. **Email processor tests**
-   - use a fake protocol client; do not require a live mailbox;
-   - cover incremental checkpoints, duplicate messages, UID validity changes,
-     MIME alternatives, malformed messages, attachment limits, and partial
-     failures.
+### Connector
 
-## Recommended implementation sequence
+The connector establishes a read-only provider session and exposes capabilities
+without leaking protocol details into the crawler.
 
-1. Add tests for a three-family classifier and a pre-VDI dispatcher.
-2. Refactor the current web and network-only paths behind that dispatcher
-   without changing their behavior.
-3. Extend the source-type schema and typed configuration with `email`.
-4. Add an email processor using a fakeable client interface.
-5. Add persistence for incremental mailbox state if config storage is not
-   sufficient.
-6. Add operational documentation for endpoint syntax, secrets, limits, and
-   retry behavior.
+```go
+type Connector interface {
+    Connect(ctx context.Context, cfg Config, credentials Credentials) (Session, error)
+}
 
-This ordering first fixes the routing/resource boundary, then adds email
-behavior behind a testable seam.
+type Session interface {
+    Capabilities(ctx context.Context) (Capabilities, error)
+    ListMailboxes(ctx context.Context, selector MailboxSelector) ([]Mailbox, error)
+    ListChanges(ctx context.Context, mailbox Mailbox, cursor Cursor, limit int) (ChangePage, error)
+    OpenMessage(ctx context.Context, ref MessageRef) (RawMessage, error)
+    Listen(ctx context.Context, mailboxes []Mailbox, hints chan<- Hint) error
+    Close() error
+}
+```
+
+Responsibilities:
+
+- resolve provider/account identity after authentication;
+- enforce TLS and authentication policy;
+- translate provider pagination, history tokens, IMAP UID/UIDVALIDITY, and
+  throttling into common capabilities and typed errors;
+- expose read-only operations to the rest of `pkg/mail`;
+- close connections promptly on cancellation.
+
+For IMAP, the adapter uses UID-based retrieval, never sequence numbers for
+persistent identity. A UIDVALIDITY change produces a reset signal and forces
+mailbox reconciliation. POP3 is not part of the initial target unless a stable
+identity and deletion policy are designed explicitly.
+
+### Fetcher
+
+The fetcher turns a `MessageRef` into a bounded raw message and coordinates
+provider limits, retry policy, and cancellation.
+
+Responsibilities:
+
+- enforce maximum advertised and actual message size;
+- stream RFC 5322/MIME bytes to the parser with context cancellation;
+- cap concurrent downloads per source and globally;
+- classify transient provider failures, permanent access failures, malformed
+  messages, and policy skips;
+- retry transient reads with bounded exponential backoff and provider
+  `Retry-After` guidance;
+- never dereference URLs found in message bodies or signatures;
+- close streams and release provider resources on every path.
+
+A message exceeding policy limits is recorded with a deterministic skipped or
+quarantined outcome so that reconciliation can advance without retrying it
+forever. The outcome includes safe metadata and the applied policy, not raw
+secret-bearing content.
+
+### MIME parser
+
+The MIME parser is implemented in `pkg/mail`, including charset and transfer
+encoding behavior. It consumes a bounded RFC 5322 stream and emits a
+`ParsedMessage`.
+
+Required behavior:
+
+- parse folded headers and encoded words with explicit total/header limits;
+- decode base64 and quoted-printable using streaming, size-limited readers;
+- normalize supported charsets to UTF-8 and preserve a safe indication of
+  undecodable input;
+- traverse nested multiparts with maximum depth and part-count limits;
+- handle `multipart/alternative` deterministically, retaining text and HTML
+  candidates while choosing a preferred searchable body;
+- treat `multipart/related` resources as attachments or inline parts without
+  loading external resources;
+- identify attachments from disposition, filename, content ID, and media type;
+- sanitize filenames and never write an untrusted filename as a filesystem
+  path;
+- tolerate malformed but recoverable mail and return typed errors for unsafe or
+  unrecoverable structures;
+- preserve only configured headers, with denylisting/redaction for sensitive
+  authentication and routing data where necessary.
+
+MIME type declarations and file extensions are untrusted. If attachment type
+sniffing is needed, it occurs on bounded local bytes and the detected and
+claimed types are recorded separately.
+
+HTML parsing remains static. The parser/normalizer must not instantiate a
+browser, execute scripts, process active forms, or fetch `http:`, `https:`,
+`cid:`, or other referenced resources. `cid:` references may be associated with
+already-present MIME parts, but that association does not authorize a network
+request.
+
+### Normalizer
+
+The normalizer converts `ParsedMessage` into deterministic index documents and
+attachment records. This logic is mail-specific and therefore belongs in
+`pkg/mail`, even when the resulting document type is shared with other
+crawlers.
+
+Responsibilities:
+
+- canonicalize addresses while retaining display names separately;
+- normalize dates while retaining provider internal date and original header
+  date for auditability;
+- produce stable plain text from `text/plain`, or static sanitized HTML when a
+  plain body is unavailable;
+- strip scripts, event handlers, active embeds, forms, and unsafe URL schemes
+  from any stored/rendered HTML representation;
+- retain links as metadata without visiting them;
+- identify quoted replies and signatures only as optional derived fields; do
+  not discard original searchable text by default;
+- emit message, mailbox, thread, participants, subject, headers, attachment
+  metadata, and content hashes in a consistent schema;
+- generate stable document and attachment IDs;
+- distinguish an empty message from a parse failure or policy skip.
+
+Attachments should be emitted as child records or blobs through an explicit
+index/storage interface. General text extraction from an attachment may be a
+later pipeline stage, but raw attachment bytes must never be passed through the
+web crawler merely to reuse page processing.
+
+### Listener
+
+The listener reduces ingestion latency. It is optional and never owns durable
+progress.
+
+Provider implementations may use IMAP IDLE, webhooks, or provider-specific
+change notifications. The common listener:
+
+- receives change hints and coalesces them by source/mailbox;
+- places a reconcile request on a bounded queue;
+- reconnects with bounded backoff after expected provider disconnects;
+- periodically exits/re-establishes long-lived sessions when required by the
+  protocol;
+- drops or coalesces excess duplicate hints rather than allowing unbounded
+  memory growth;
+- never writes checkpoints based only on a notification;
+- falls back to scheduled polling when listening is unsupported or unhealthy.
+
+Webhook verification, if added for a provider, is part of that provider adapter
+in `pkg/mail`; the HTTP server may live in the platform layer but must hand a
+verified, provider-neutral hint to the mail listener.
+
+### Reconciler
+
+The reconciler is the authoritative mailbox convergence loop. It runs on the
+normal source schedule, after listener hints, and periodically as a safety net.
+
+For each selected mailbox it:
+
+1. acquires a per-source/mailbox lease;
+2. loads the committed cursor and mailbox identity from the state store;
+3. lists provider changes or messages from that cursor;
+4. fetches, parses, normalizes, and commits each upsert idempotently;
+5. records tombstones/deletions when the provider can report them;
+6. commits the next cursor only after all preceding outcomes in the page are
+   durable;
+7. renews or releases the lease and emits bounded metrics/status updates;
+8. repeats until caught up or until the crawl's time/work budget is reached.
+
+A page cursor must not be committed if an earlier message in that page remains
+neither indexed nor durably classified as skipped/quarantined. Implementations
+may process messages concurrently, but cursor advancement requires an ordered
+commit barrier.
+
+The reconciler supports two modes:
+
+- **Incremental reconciliation** uses a valid provider cursor, history token,
+  or IMAP UID checkpoint.
+- **Full reconciliation** relists mailbox state when no checkpoint exists, a
+  cursor expires, UIDVALIDITY changes, mailbox selection changes, or an
+  operator requests repair. It compares stable identities and content/version
+  values to avoid reprocessing unchanged messages.
+
+Provider history gaps and reset signals are normal control flow, not silent
+success. They trigger full reconciliation and an observable reset metric/event.
+
+### State store
+
+The state store holds durable mail ingestion state independently from source
+configuration. Checkpoints must not be rewritten into source JSON because that
+mixes operator intent with worker-owned mutable state and makes atomic progress
+hard to guarantee.
+
+```go
+type StateStore interface {
+    AcquireLease(ctx context.Context, key MailboxKey, owner string, ttl time.Duration) (Lease, error)
+    LoadCheckpoint(ctx context.Context, key MailboxKey) (Checkpoint, error)
+    CommitCheckpoint(ctx context.Context, lease Lease, previous Version, next Checkpoint) error
+    RecordOutcome(ctx context.Context, lease Lease, outcome MessageOutcome) error
+    ReleaseLease(ctx context.Context, lease Lease) error
+}
+```
+
+The persistent model should include:
+
+- source, provider account, and mailbox identities;
+- provider cursor/history token or IMAP UIDVALIDITY and last committed UID;
+- checkpoint schema/config fingerprint and optimistic-lock version;
+- lease owner and expiration;
+- last successful reconciliation and listener health timestamps;
+- bounded failure/quarantine metadata needed to prevent poison-message loops;
+- optional per-message version/content hash when the provider cursor cannot
+  fully express updates and deletions.
+
+Checkpoint commits use compare-and-swap or an equivalent transaction so stale
+workers cannot overwrite newer progress. Leases prevent routine concurrent
+runs, while idempotent document writes and checkpoint versioning protect
+against lease expiry, worker crashes, and duplicate delivery.
+
+Database migrations and SQL implementations can live in `pkg/database`, but
+`pkg/mail` defines the `Checkpoint`, `MessageOutcome`, reset, and transition
+semantics. An in-memory implementation should support deterministic unit tests.
+
+## End-to-end flow
+
+```text
+source scheduler
+    |
+    v
+pre-VDI source classifier/dispatcher
+    |
+    +-- website ----------> existing VDI/browser crawler
+    |
+    +-- network ----------> existing network inspection path
+    |
+    `-- email ------------> pkg/mail Runner
+                               |
+                               +--> resolve credentials
+                               +--> Connector.Connect
+                               +--> discover/select mailboxes
+                               +--> Listener ---- hints ----+
+                               |                            |
+                               `--> Reconciler <------------+
+                                      |
+                                      +--> StateStore
+                                      +--> Fetcher
+                                      +--> MIME parser
+                                      +--> Normalizer
+                                      `--> index/blob commit
+```
+
+The runner owns one crawl invocation and shared limits. A long-lived listener
+should be managed by a mail service lifecycle rather than by holding a normal
+crawl job open indefinitely. Both scheduled runs and listener hints invoke the
+same reconciler.
+
+## Crawler integration
+
+### Classification and dispatch
+
+Add an email protocol/source family and classify using parsed, case-normalized
+schemes plus explicit source type. Initial retrieval schemes should be limited
+to those actually implemented, such as `imap` and `imaps`. Unsupported schemes
+must produce a validation error instead of falling through to NETInfo.
+
+Dispatch must occur before acquiring a VDI slot:
+
+```go
+switch ClassifySource(src) {
+case SourceProtocolWeb:
+    // Acquire VDI and run the existing web path.
+case SourceProtocolEmail:
+    // Run pkg/mail without VDI/browser dependencies.
+case SourceProtocolNetwork:
+    // Run the existing network-only path.
+default:
+    // Fail source validation explicitly.
+}
+```
+
+Email concurrency should have its own bounded worker/semaphore limits rather
+than borrowing VDI capacity. Per-provider/account limits prevent one mailbox
+from exhausting all connector sessions.
+
+### Runner boundary
+
+`pkg/crawler` should depend on a narrow mail runner interface:
+
+```go
+type MailRunner interface {
+    Reconcile(ctx context.Context, request mail.ReconcileRequest) (mail.Result, error)
+}
+```
+
+The request supplies source identity, validated mail configuration, credential
+resolver, state store, output/index sink, logger/metrics, and crawl budget. It
+must not supply a WebDriver or browser-shaped `ProcessContext`.
+
+The result reports provider-neutral counts such as discovered, fetched,
+indexed, unchanged, deleted, skipped, quarantined, retried, and failed, plus
+whether the mailbox is caught up. Detailed provider errors remain typed and
+redacted inside `pkg/mail`.
+
+### Source lifecycle
+
+The email branch must use the same transport-neutral source lifecycle as other
+crawlers:
+
+- set processing/running state when accepted;
+- enforce cancellation and maximum crawl duration;
+- update heartbeat/progress during long reconciliations;
+- mark success only when committed work and checkpoints are consistent;
+- distinguish retryable interruption from permanent configuration/auth errors;
+- always release leases, close sessions, decrement wait groups, and finalize
+  source state;
+- include `source_type: email` in completion/error event details without
+  exposing endpoints containing credentials or message content.
+
+A time-budgeted run may succeed while reporting `caught_up: false`; the next run
+continues from the committed checkpoint. A run must fail or remain retryable if
+it cannot durably record an outcome for work before the next cursor.
+
+## Reliability and failure policy
+
+Errors should be typed along these axes:
+
+- **configuration/permanent:** invalid endpoint, unsupported provider, missing
+  secret, rejected mailbox selection;
+- **authentication/authorization:** expired credentials, insufficient scopes,
+  mailbox access denied;
+- **transient provider:** disconnect, timeout, rate limit, temporary server
+  failure;
+- **message-local:** malformed MIME, unsupported charset, policy size limit;
+- **state/output:** lease loss, checkpoint conflict, database/index failure.
+
+Transient provider failures are retried within the run budget. Authentication
+and configuration failures stop the source without hot-looping. Message-local
+failures do not necessarily stop the mailbox: after bounded retries they are
+recorded as quarantined/skipped according to policy, allowing ordered progress.
+State and output failures never advance the affected checkpoint.
+
+On process crashes, already committed documents may be retried before the
+checkpoint is advanced. Stable IDs and upserts make that safe. Exact-once
+network execution is not required; effectively-once indexed results are.
+
+## Security and privacy
+
+Mail content and credentials are highly sensitive. The implementation must:
+
+- resolve credentials as late as possible and keep them out of configuration
+  snapshots, status JSON, metrics labels, traces, and errors;
+- redact provider URLs, usernames, tokens, authentication headers, and raw
+  server responses before logging;
+- avoid logging subjects, addresses, body excerpts, attachment names, or
+  message IDs by default;
+- bound message bytes, decoded bytes, headers, MIME depth, part count,
+  attachment count, and decompression/extraction work;
+- treat HTML, filenames, content types, URLs, and headers as untrusted input;
+- use read-only provider scopes where available;
+- encrypt checkpoints or provider tokens at rest when they contain sensitive
+  opaque cursor data;
+- apply retention and access control consistently to normalized mail and raw
+  attachment storage;
+- expose explicit controls for whether raw RFC 5322 bytes are retained. The
+  safe default is to retain only normalized output and required attachments.
+
+## Observability
+
+Use low-cardinality metrics keyed by provider class and outcome, not mailbox
+names, email addresses, message IDs, or source endpoints. Target metrics
+include:
+
+- reconciliation runs, duration, and caught-up status;
+- messages discovered, fetched, indexed, unchanged, deleted, skipped,
+  quarantined, and failed;
+- bytes fetched and attachment bytes accepted/rejected;
+- provider requests, retries, throttles, reconnects, and authentication errors;
+- listener connected state, reconnect count, hint count, and hint coalescing;
+- checkpoint age, commit conflicts, resets, lease contention, and mailbox lag
+  where the provider exposes a safe estimate.
+
+Structured events should carry source ID, provider class, mailbox opaque ID or
+hash, outcome, and safe error category. They should not carry message content
+or secret-bearing provider details.
+
+## Testing strategy
+
+Tests should concentrate on package boundaries and recovery behavior.
+
+### `pkg/mail` unit tests
+
+- connector contract tests with fake sessions and provider error translation;
+- IMAP UID, UIDVALIDITY reset, pagination, IDLE reconnect, and read-only
+  command behavior;
+- bounded fetches, cancellation, throttling, and partial stream failures;
+- MIME corpus tests for nested multiparts, alternatives, related parts,
+  encodings, charsets, malformed headers, MIME bombs, and unsafe filenames;
+- static HTML sanitization proving scripts and active content are removed and
+  remote resources are not fetched;
+- stable identity and normalization golden tests;
+- checkpoint compare-and-swap, lease expiry, poison-message outcomes, ordered
+  commit barriers, and reset transitions;
+- property/fuzz tests for MIME and header parsing with strict resource limits.
+
+### Crawler integration tests
+
+- email sources dispatch before VDI acquisition and never request a browser;
+- web and network dispatch behavior remains unchanged;
+- source type and scheme conflicts fail explicitly;
+- all success, timeout, cancellation, and failure paths finalize source state
+  and release resources;
+- a crash after output commit but before checkpoint commit causes an idempotent
+  upsert on retry;
+- listener hints coalesce into reconciliation and polling still catches missed
+  hints.
+
+Live-provider tests should be optional and isolated from the default suite.
+Unit and integration tests should use fake connectors and fixture messages, not
+real mailbox credentials.
+
+## Delivery sequence
+
+1. Add typed `email` source configuration and schema validation, with secret
+   references and limits.
+2. Refactor source classification/dispatch so non-web sources are selected
+   before VDI acquisition; preserve current web/network behavior with tests.
+3. Introduce `pkg/mail` core types, connector/session interfaces, in-memory
+   state store, fake provider, and runner contract.
+4. Implement bounded fetch, MIME parsing, normalization, stable IDs, and an
+   idempotent output sink using fixture-driven tests.
+5. Implement the reconciler, ordered checkpoint commits, leases, reset/full
+   reconciliation, and database-backed state.
+6. Add the first read-only provider adapter (IMAPS), then scheduled polling.
+7. Add listener/IDLE as a latency optimization after polling reconciliation is
+   proven reliable.
+8. Add metrics, redaction tests, operational documentation, and optional
+   provider-specific adapters.
+
+This order establishes safe dispatch and deterministic ingestion before adding
+long-lived notification machinery.
