@@ -10,8 +10,9 @@ type HeaderMap map[string][]string
 
 // Address is a provider-neutral email address.
 type Address struct {
-	Name    string `json:"name,omitempty" yaml:"name,omitempty"`
-	Address string `json:"address" yaml:"address"`
+	Name       string `json:"name,omitempty" yaml:"name,omitempty"`
+	Address    string `json:"address" yaml:"address"`
+	Normalized string `json:"normalized,omitempty" yaml:"normalized,omitempty"`
 }
 
 // Mailbox identifies a provider mailbox without exposing a connector-specific
@@ -71,13 +72,19 @@ type FetchOptions struct {
 // Attachment describes a decoded MIME attachment or inline part. Content is a
 // bounded stream when present, and must be closed by the consumer.
 type Attachment struct {
-	ID          string        `json:"id,omitempty" yaml:"id,omitempty"`
-	Filename    string        `json:"filename,omitempty" yaml:"filename,omitempty"`
-	MediaType   string        `json:"media_type,omitempty" yaml:"media_type,omitempty"`
-	Disposition string        `json:"disposition,omitempty" yaml:"disposition,omitempty"`
-	ContentID   string        `json:"content_id,omitempty" yaml:"content_id,omitempty"`
-	Size        int64         `json:"size,omitempty" yaml:"size,omitempty"`
-	Content     io.ReadCloser `json:"-" yaml:"-"`
+	ID                string        `json:"id,omitempty" yaml:"id,omitempty"`
+	PartID            string        `json:"part_id,omitempty" yaml:"part_id,omitempty"`
+	Filename          string        `json:"filename,omitempty" yaml:"filename,omitempty"`
+	MediaType         string        `json:"media_type,omitempty" yaml:"media_type,omitempty"`
+	DetectedMediaType string        `json:"detected_media_type,omitempty" yaml:"detected_media_type,omitempty"`
+	Disposition       string        `json:"disposition,omitempty" yaml:"disposition,omitempty"`
+	ContentID         string        `json:"content_id,omitempty" yaml:"content_id,omitempty"`
+	Size              int64         `json:"size,omitempty" yaml:"size,omitempty"`
+	SHA256            string        `json:"sha256,omitempty" yaml:"sha256,omitempty"`
+	Inline            bool          `json:"inline,omitempty" yaml:"inline,omitempty"`
+	ExtractedText     string        `json:"extracted_text,omitempty" yaml:"extracted_text,omitempty"`
+	Truncated         bool          `json:"truncated,omitempty" yaml:"truncated,omitempty"`
+	Content           io.ReadCloser `json:"-" yaml:"-"`
 }
 
 // ParsedMessage contains decoded mail semantics without provider client
