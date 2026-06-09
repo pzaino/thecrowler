@@ -156,19 +156,41 @@ The provider-neutral model separates provider metadata, raw content, parsed
 MIME, and normalized output.
 
 ```go
+type Mailbox struct {
+    ID   string
+    Name string
+}
+
 type MessageRef struct {
-    Provider       string
-    AccountID      string
-    MailboxID      string
-    ProviderID     string
-    Version        string
-    InternalDate   time.Time
-    Size           int64
+    Provider          string
+    AccountID         string
+    Mailbox           Mailbox
+    UID               uint32
+    UIDValidity       uint32
+    ProviderMessageID string
+    ProviderThreadID  string
+    Version           string
+    InternalDate      time.Time
+    Flags             []string
+    Size              int64
+    Headers           HeaderMap
 }
 
 type RawMessage struct {
-    Ref      MessageRef
-    RFC822   io.ReadCloser
+    Ref    MessageRef
+    RFC822 io.ReadCloser
+}
+
+type Cursor struct {
+    Token       string
+    UID         uint32
+    UIDValidity uint32
+}
+
+type FetchOptions struct {
+    Headers     []string
+    IncludeBody bool
+    MaxBytes    int64
 }
 
 type ParsedMessage struct {

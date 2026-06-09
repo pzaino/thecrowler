@@ -14,23 +14,58 @@ type Address struct {
 	Address string `json:"address" yaml:"address"`
 }
 
+// Mailbox identifies a provider mailbox without exposing a connector-specific
+// mailbox object. ID is the provider's stable mailbox identifier when one is
+// available; Name is the provider-visible mailbox name.
+type Mailbox struct {
+	ID   string `json:"id" yaml:"id"`
+	Name string `json:"name" yaml:"name"`
+}
+
 // MessageRef identifies a message within a provider account and mailbox.
-// It is intentionally cheap to list and pass to a message fetcher.
+// It is intentionally cheap to list and pass to a message fetcher. UID and
+// UIDValidity preserve IMAP identity semantics, while ProviderMessageID and
+// ProviderThreadID carry stable identifiers exposed by API-based providers.
 type MessageRef struct {
-	Provider     string    `json:"provider" yaml:"provider"`
-	AccountID    string    `json:"account_id" yaml:"account_id"`
-	MailboxID    string    `json:"mailbox_id" yaml:"mailbox_id"`
-	ProviderID   string    `json:"provider_id" yaml:"provider_id"`
-	Version      string    `json:"version,omitempty" yaml:"version,omitempty"`
-	InternalDate time.Time `json:"internal_date,omitempty" yaml:"internal_date,omitempty"`
-	Size         int64     `json:"size,omitempty" yaml:"size,omitempty"`
+	Provider          string    `json:"provider" yaml:"provider"`
+	AccountID         string    `json:"account_id" yaml:"account_id"`
+	Mailbox           Mailbox   `json:"mailbox" yaml:"mailbox"`
+	UID               uint32    `json:"uid,omitempty" yaml:"uid,omitempty"`
+	UIDValidity       uint32    `json:"uid_validity,omitempty" yaml:"uid_validity,omitempty"`
+	ProviderMessageID string    `json:"provider_message_id,omitempty" yaml:"provider_message_id,omitempty"`
+	ProviderThreadID  string    `json:"provider_thread_id,omitempty" yaml:"provider_thread_id,omitempty"`
+	Version           string    `json:"version,omitempty" yaml:"version,omitempty"`
+	InternalDate      time.Time `json:"internal_date,omitempty" yaml:"internal_date,omitempty"`
+	Flags             []string  `json:"flags,omitempty" yaml:"flags,omitempty"`
+	Size              int64     `json:"size,omitempty" yaml:"size,omitempty"`
+	Headers           HeaderMap `json:"headers,omitempty" yaml:"headers,omitempty"`
 }
 
 // RawMessage pairs provider metadata with a bounded RFC 5322 message stream.
-// The caller must close RFC822.
+// The caller must close RFC822. The stream is deliberately excluded from
+// serialization so raw message content is not emitted accidentally.
 type RawMessage struct {
-	Ref    MessageRef
-	RFC822 io.ReadCloser
+	Ref    MessageRef    `json:"ref" yaml:"ref"`
+	RFC822 io.ReadCloser `json:"-" yaml:"-"`
+}
+
+// Cursor records provider-neutral incremental listing progress. Token carries
+// an opaque cursor or history token for API-based providers. UID and
+// UIDValidity carry the equivalent IMAP checkpoint without an IMAP SDK type.
+type Cursor struct {
+	Token       string `json:"token,omitempty" yaml:"token,omitempty"`
+	UID         uint32 `json:"uid,omitempty" yaml:"uid,omitempty"`
+	UIDValidity uint32 `json:"uid_validity,omitempty" yaml:"uid_validity,omitempty"`
+}
+
+// FetchOptions controls which portions of a message a connector retrieves.
+// Headers names the RFC 5322 fields requested for metadata-only operations.
+// IncludeBody requests the complete RFC 5322 body, bounded by MaxBytes when it
+// is greater than zero.
+type FetchOptions struct {
+	Headers     []string `json:"headers,omitempty" yaml:"headers,omitempty"`
+	IncludeBody bool     `json:"include_body,omitempty" yaml:"include_body,omitempty"`
+	MaxBytes    int64    `json:"max_bytes,omitempty" yaml:"max_bytes,omitempty"`
 }
 
 // Attachment describes a decoded MIME attachment or inline part. Content is a
