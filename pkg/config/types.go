@@ -895,6 +895,9 @@ type SourceConfig struct {
 	MetaData       map[string]interface{} `json:"meta_data,omitempty" yaml:"meta_data,omitempty"`
 }
 
+// SourceTypeEmail identifies an email source while preserving the string-based source type API.
+const SourceTypeEmail = "email"
+
 // CrawlingConfig represents the crawling configuration for a source
 type CrawlingConfig struct {
 	Site              string   `json:"site" yaml:"site" validate:"required,url"`
@@ -902,7 +905,7 @@ type CrawlingConfig struct {
 	AlternativeLinks  []string `json:"alternative_links,omitempty" yaml:"alternative_links,omitempty"`     // URLs to use if no links are found
 	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
 	UnwantedURLs      []string `json:"unwanted_urls,omitempty" yaml:"unwanted_urls,omitempty"`             // Unwanted URLs patterns that trigger a redirect detection
-	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (web, api, file) (validate:"required,oneof=website api file db")
+	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (website, api, file, db, email)
 }
 
 // IsEmpty returns true if the CrawlingConfig is empty

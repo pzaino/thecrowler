@@ -182,3 +182,32 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 		t.Fatalf("expected two statuses, got %d", len(statuses))
 	}
 }
+
+func TestSourceGetSourceTypeSupportsEmailWithoutChangingDefaults(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   string
+		expected string
+	}{
+		{
+			name:     "email source",
+			config:   `{"crawling_config":{"source_type":" Email "}}`,
+			expected: cfg.SourceTypeEmail,
+		},
+		{
+			name:     "legacy missing source type",
+			config:   `{"crawling_config":{}}`,
+			expected: "website",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := json.RawMessage(tt.config)
+			source := Source{Config: &raw}
+			if actual := source.GetSourceType(); actual != tt.expected {
+				t.Fatalf("unexpected source type: got %q, want %q", actual, tt.expected)
+			}
+		})
+	}
+}

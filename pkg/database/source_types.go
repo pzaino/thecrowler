@@ -38,6 +38,8 @@ const (
 	SourceConfigTypeFile SourceConfigType = "file"
 	// SourceConfigTypeDB represents the string "db"
 	SourceConfigTypeDB SourceConfigType = "db"
+	// SourceConfigTypeEmail represents the string "email"
+	SourceConfigTypeEmail SourceConfigType = "email"
 )
 
 // SourceLoadValidation defines the structure for validating the loaded content of a source before processing.
