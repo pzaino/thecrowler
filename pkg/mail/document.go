@@ -2,10 +2,10 @@ package mail
 
 import "time"
 
-// HeaderSet contains the normalized headers retained for indexing and audit.
-// Values uses canonical RFC 5322 field names and preserves repeated fields in
-// their original order. Common threading and list headers are also promoted to
-// typed fields so consumers do not need to repeatedly interpret HeaderMap.
+// HeaderSet contains normalized headers retained for indexing and audit.
+// Values contains bounded, decoded UTF-8 values. Raw contains bounded values
+// before RFC 2047 decoding; unsafe controls are replaced and authentication
+// signatures are redacted. Repeated fields retain their original order.
 type HeaderSet struct {
 	MessageID    string    `json:"message_id,omitempty" yaml:"message_id,omitempty"`
 	InReplyTo    string    `json:"in_reply_to,omitempty" yaml:"in_reply_to,omitempty"`
@@ -13,6 +13,7 @@ type HeaderSet struct {
 	ListID       string    `json:"list_id,omitempty" yaml:"list_id,omitempty"`
 	OriginalDate string    `json:"original_date,omitempty" yaml:"original_date,omitempty"`
 	Values       HeaderMap `json:"values,omitempty" yaml:"values,omitempty"`
+	Raw          HeaderMap `json:"raw,omitempty" yaml:"raw,omitempty"`
 }
 
 // Link records a static link discovered in a message body. It is metadata

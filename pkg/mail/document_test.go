@@ -47,6 +47,9 @@ func TestDocumentPreservesNormalizedMessageData(t *testing.T) {
 				"Subject":          {"Normalized message"},
 				"X-Repeated-Field": {"first", "second"},
 			},
+			Raw: HeaderMap{
+				"Subject": {"=?UTF-8?Q?Normalized_message?="},
+			},
 		},
 		TextBody:      "Plain body with https://example.test.",
 		HTMLBody:      `<p>HTML body with <a href="https://example.test">example</a>.</p>`,
@@ -105,6 +108,7 @@ func TestDocumentPreservesNormalizedMessageData(t *testing.T) {
 		`"transfer_encoding":"base64"`,
 		`"sha256":"` + strings.Repeat("a", 64) + `"`,
 		`"values":{"Subject":["Normalized message"],"X-Repeated-Field":["first","second"]}`,
+		`"raw":{"Subject":["=?UTF-8?Q?Normalized_message?="]}`,
 		`"spf":"pass"`,
 		`"code":"part_truncated"`,
 		`"part_id":"2.1"`,

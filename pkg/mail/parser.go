@@ -5,12 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"io"
 	"mime"
-	"net/mail"
-	"net/textproto"
 	"net/url"
 	"regexp"
 	"strings"
@@ -48,36 +44,35 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 	}
 
 	textBody, htmlBody := envelopeBodies(envelope.Root)
+	rawHeaders, rawWarnings := boundedHeaders(map[string][]string(envelope.Root.Header), true)
+	decodedHeaders, decodedWarnings := boundedHeaders(decodedEnvelopeHeaders(envelope), true)
 
 	parsed := ParsedMessage{
 		Ref:         message.Ref,
-		MessageID:   envelope.GetHeader("Message-ID"),
-		Subject:     envelope.GetHeader("Subject"),
-		Headers:     envelopeHeaders(envelope),
+		Headers:     decodedHeaders,
+		RawHeaders:  rawHeaders,
 		TextBody:    textBody,
 		HTMLBody:    htmlBody,
 		Attachments: envelopeAttachments(envelope.Root, htmlBody),
 		Warnings:    envelopeWarnings(envelope.Root),
 	}
+	parsed.Warnings = append(parsed.Warnings, rawWarnings...)
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
+	parsed.MessageID = normalizeMessageID(parsed.Headers, "Message-ID")
+	parsed.Subject = normalizeSubject(parsed.Headers)
+	parsed.Date, _, decodedWarnings = normalizeDate(parsed.Headers)
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
 
-	if parsed.Date, err = envelope.Date(); err != nil && !errors.Is(err, mail.ErrHeaderNotPresent) {
-		return ParsedMessage{}, malformedParseError("could not parse Date header", err)
-	}
-	if parsed.From, err = envelopeAddresses(envelope, "From"); err != nil {
-		return ParsedMessage{}, err
-	}
-	if parsed.To, err = envelopeAddresses(envelope, "To"); err != nil {
-		return ParsedMessage{}, err
-	}
-	if parsed.CC, err = envelopeAddresses(envelope, "Cc"); err != nil {
-		return ParsedMessage{}, err
-	}
-	if parsed.BCC, err = envelopeAddresses(envelope, "Bcc"); err != nil {
-		return ParsedMessage{}, err
-	}
-	if parsed.ReplyTo, err = envelopeAddresses(envelope, "Reply-To"); err != nil {
-		return ParsedMessage{}, err
-	}
+	parsed.From, decodedWarnings = normalizeAddresses(parsed.Headers, "From")
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
+	parsed.To, decodedWarnings = normalizeAddresses(parsed.Headers, "To")
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
+	parsed.CC, decodedWarnings = normalizeAddresses(parsed.Headers, "Cc")
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
+	parsed.BCC, decodedWarnings = normalizeAddresses(parsed.Headers, "Bcc")
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
+	parsed.ReplyTo, decodedWarnings = normalizeAddresses(parsed.Headers, "Reply-To")
+	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
 
 	return parsed, nil
 }
@@ -191,34 +186,12 @@ func warningCode(name string) string {
 	return strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(name))
 }
 
-func envelopeHeaders(envelope *enmime.Envelope) HeaderMap {
-	headers := make(HeaderMap)
-	for _, key := range envelope.GetHeaderKeys() {
-		canonicalKey := textproto.CanonicalMIMEHeaderKey(key)
-		headers[canonicalKey] = envelope.GetHeaderValues(key)
+func decodedEnvelopeHeaders(envelope *enmime.Envelope) map[string][]string {
+	headers := make(map[string][]string)
+	for _, name := range envelope.GetHeaderKeys() {
+		headers[name] = envelope.GetHeaderValues(name)
 	}
 	return headers
-}
-
-func envelopeAddresses(envelope *enmime.Envelope, header string) ([]Address, error) {
-	if envelope.GetHeader(header) == "" {
-		return nil, nil
-	}
-
-	addresses, err := envelope.AddressList(header)
-	if err != nil {
-		return nil, malformedParseError(fmt.Sprintf("could not parse %s header", header), err)
-	}
-
-	parsed := make([]Address, 0, len(addresses))
-	for _, address := range addresses {
-		parsed = append(parsed, Address{
-			Name:       address.Name,
-			Address:    address.Address,
-			Normalized: strings.ToLower(address.Address),
-		})
-	}
-	return parsed, nil
 }
 
 func envelopeAttachments(root *enmime.Part, htmlBody string) []Attachment {

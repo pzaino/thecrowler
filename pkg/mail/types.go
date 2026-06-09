@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// HeaderMap contains decoded message headers keyed by their canonical name.
+// HeaderMap contains message header values keyed by their canonical name.
 type HeaderMap map[string][]string
 
 // Address is a provider-neutral email address.
@@ -102,6 +102,7 @@ type ParsedMessage struct {
 	ReplyTo     []Address       `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
 	Subject     string          `json:"subject,omitempty" yaml:"subject,omitempty"`
 	Headers     HeaderMap       `json:"headers,omitempty" yaml:"headers,omitempty"`
+	RawHeaders  HeaderMap       `json:"raw_headers,omitempty" yaml:"raw_headers,omitempty"`
 	TextBody    string          `json:"text_body,omitempty" yaml:"text_body,omitempty"`
 	HTMLBody    string          `json:"html_body,omitempty" yaml:"html_body,omitempty"`
 	Attachments []Attachment    `json:"attachments,omitempty" yaml:"attachments,omitempty"`

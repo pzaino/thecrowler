@@ -2,7 +2,6 @@ package mail
 
 import (
 	"context"
-	"strings"
 )
 
 // NewProcessor returns a processor that parses RFC 5322 messages and maps the
@@ -49,18 +48,28 @@ func documentFromParsedMessage(sourceID string, parsed ParsedMessage) Document {
 		HTMLBody:      parsed.HTMLBody,
 		ExtractedText: textBody,
 		Attachments:   parsed.Attachments,
+		Security:      normalizeSecurity(parsed.Headers),
 		Warnings:      parsed.Warnings,
 	}
 }
 
 func documentHeaders(parsed ParsedMessage) HeaderSet {
+	dateHeaders := parsed.RawHeaders
+	if len(dateHeaders["Date"]) == 0 {
+		dateHeaders = parsed.Headers
+	}
+	_, originalDate, _ := normalizeDate(dateHeaders)
+	if originalDate == "" {
+		originalDate = firstHeaderValue(dateHeaders, "Date")
+	}
 	return HeaderSet{
 		MessageID:    parsed.MessageID,
-		InReplyTo:    firstHeaderValue(parsed.Headers, "In-Reply-To"),
-		References:   strings.Fields(firstHeaderValue(parsed.Headers, "References")),
-		ListID:       firstHeaderValue(parsed.Headers, "List-Id"),
-		OriginalDate: firstHeaderValue(parsed.Headers, "Date"),
+		InReplyTo:    normalizeMessageID(parsed.Headers, "In-Reply-To"),
+		References:   normalizeReferences(parsed.Headers),
+		ListID:       normalizeListID(parsed.Headers),
+		OriginalDate: originalDate,
 		Values:       parsed.Headers,
+		Raw:          parsed.RawHeaders,
 	}
 }
 
