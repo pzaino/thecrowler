@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -408,4 +409,138 @@ func parseRelatedMessage(htmlBody, resources string) (ParsedMessage, error) {
 	return NewParser().Parse(context.Background(), RawMessage{
 		RFC822: io.NopCloser(strings.NewReader(raw)),
 	})
+}
+
+func TestParserRecoveryWarningCategories(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		raw          string
+		parser       Parser
+		category     WarningCategory
+		wantText     string
+		wantHTML     string
+		wantPartCode string
+	}{
+		{
+			name:         "unknown charset",
+			raw:          "Content-Type: text/plain; charset=x-unknown\r\n\r\nReadable bytes.",
+			parser:       NewParser(),
+			category:     WarningUnknownCharset,
+			wantText:     "Readable bytes.",
+			wantPartCode: "character_set_conversion",
+		},
+		{
+			name: "malformed child header",
+			raw: "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n" +
+				"--m\r\nBroken Header\r\n\r\nLost part.\r\n" +
+				"--m\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nRecovered body.\r\n--m--\r\n",
+			parser:       NewParser(),
+			category:     WarningMalformedHeader,
+			wantText:     "Recovered body.",
+			wantPartCode: "malformed_child_part",
+		},
+		{
+			name: "unsupported part",
+			raw: "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n" +
+				"--m\r\nContent-Type: text/plain\r\n\r\nReadable body.\r\n" +
+				"--m\r\nContent-Type: application/x-custom\r\n\r\nopaque\r\n--m--\r\n",
+			parser:       NewParser(),
+			category:     WarningUnsupportedPart,
+			wantText:     "Readable body.",
+			wantPartCode: "unsupported_media_type",
+		},
+		{
+			name: "oversized part",
+			raw: "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n" +
+				"--m\r\nContent-Type: text/plain\r\n\r\nThis body is too large.\r\n" +
+				"--m\r\nContent-Type: text/html\r\n\r\n<p>OK</p>\r\n--m--\r\n",
+			parser:       NewParser(WithMaxPartBytes(12)),
+			category:     WarningOversizedPart,
+			wantHTML:     "<p>OK</p>",
+			wantPartCode: "part_too_large",
+		},
+		{
+			name: "signed content",
+			raw: "MIME-Version: 1.0\r\nContent-Type: multipart/signed; boundary=s; protocol=application/pgp-signature\r\n\r\n" +
+				"--s\r\nContent-Type: text/plain\r\n\r\nSigned readable body.\r\n" +
+				"--s\r\nContent-Type: application/pgp-signature\r\n\r\nsignature\r\n--s--\r\n",
+			parser:       NewParser(),
+			category:     WarningProtectedContent,
+			wantText:     "Signed readable body.",
+			wantPartCode: "signed_content",
+		},
+		{
+			name: "encrypted content",
+			raw: "From: sender@example.test\r\nSubject: encrypted\r\nMIME-Version: 1.0\r\n" +
+				"Content-Type: application/pkcs7-mime; smime-type=enveloped-data\r\n\r\nciphertext",
+			parser:       NewParser(),
+			category:     WarningProtectedContent,
+			wantPartCode: "encrypted_content",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			parsed, err := test.parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(test.raw))})
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if parsed.TextBody != test.wantText || parsed.HTMLBody != test.wantHTML {
+				t.Errorf("bodies = (%q, %q), want (%q, %q)", parsed.TextBody, parsed.HTMLBody, test.wantText, test.wantHTML)
+			}
+			if !hasParserWarning(parsed.Warnings, test.category, test.wantPartCode) {
+				t.Errorf("Warnings = %#v, want category %q code %q", parsed.Warnings, test.category, test.wantPartCode)
+			}
+		})
+	}
+}
+
+func TestParserOmitsOversizedAttachmentContent(t *testing.T) {
+	t.Parallel()
+
+	raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n" +
+		"--m\r\nContent-Type: text/plain\r\n\r\nOK\r\n" +
+		"--m\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=large.bin\r\n\r\n0123456789\r\n--m--\r\n"
+	parsed, err := NewParser(WithMaxPartBytes(5)).Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("Attachments = %#v, want one", parsed.Attachments)
+	}
+	attachment := parsed.Attachments[0]
+	if !attachment.Truncated || attachment.Content != nil || attachment.Size != 10 || attachment.SHA256 != "" {
+		t.Errorf("oversized attachment = %#v", attachment)
+	}
+	if !hasParserWarning(parsed.Warnings, WarningOversizedPart, "part_too_large") {
+		t.Errorf("Warnings = %#v, want oversized warning", parsed.Warnings)
+	}
+}
+
+func TestParserRejectsTrulyFatalRootHeader(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewParser().Parse(context.Background(), RawMessage{
+		RFC822: io.NopCloser(strings.NewReader("Broken Header\r\n\r\nbody")),
+	})
+	if err == nil {
+		t.Fatal("Parse() error = nil, want fatal malformed input")
+	}
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorMalformed {
+		t.Fatalf("Parse() error = %#v, want ErrorMalformed", err)
+	}
+}
+
+func hasParserWarning(warnings []ParserWarning, category WarningCategory, code string) bool {
+	for _, warning := range warnings {
+		if warning.Category == category && warning.Code == code {
+			return true
+		}
+	}
+	return false
 }

@@ -39,16 +39,30 @@ type SecuritySignals struct {
 	AuthenticationResults []string `json:"authentication_results,omitempty" yaml:"authentication_results,omitempty"`
 }
 
-// ParserWarning describes a recoverable parser or normalization problem. Code
-// is stable and machine-readable; Message is a safe human-readable summary.
-// PartID, Header, and Offset locate the affected input without retaining raw
-// message content.
+// WarningCategory groups recoverable parser problems into stable classes that
+// callers can use for policy and telemetry without depending on parser-specific
+// warning codes.
+type WarningCategory string
+
+const (
+	WarningUnknownCharset   WarningCategory = "unknown_charset"
+	WarningMalformedHeader  WarningCategory = "malformed_header"
+	WarningUnsupportedPart  WarningCategory = "unsupported_part"
+	WarningOversizedPart    WarningCategory = "oversized_part"
+	WarningProtectedContent WarningCategory = "protected_content"
+)
+
+// ParserWarning describes a recoverable parser or normalization problem.
+// Category is a stable high-level class and Code is a more specific,
+// machine-readable reason. Message is a safe human-readable summary. PartID,
+// Header, and Offset locate the affected input without retaining raw content.
 type ParserWarning struct {
-	Code    string `json:"code" yaml:"code"`
-	Message string `json:"message,omitempty" yaml:"message,omitempty"`
-	PartID  string `json:"part_id,omitempty" yaml:"part_id,omitempty"`
-	Header  string `json:"header,omitempty" yaml:"header,omitempty"`
-	Offset  int64  `json:"offset,omitempty" yaml:"offset,omitempty"`
+	Category WarningCategory `json:"category,omitempty" yaml:"category,omitempty"`
+	Code     string          `json:"code" yaml:"code"`
+	Message  string          `json:"message,omitempty" yaml:"message,omitempty"`
+	PartID   string          `json:"part_id,omitempty" yaml:"part_id,omitempty"`
+	Header   string          `json:"header,omitempty" yaml:"header,omitempty"`
+	Offset   int64           `json:"offset,omitempty" yaml:"offset,omitempty"`
 }
 
 // Document is the normalized, transport-neutral representation of an email

@@ -15,16 +15,41 @@ import (
 	"golang.org/x/net/html"
 )
 
+const defaultMaxPartBytes int64 = 10 << 20
+
+// ParserOption configures bounded MIME parsing.
+type ParserOption func(*mimeParser)
+
+// WithMaxPartBytes sets the largest decoded MIME part retained in a parsed
+// message. Oversized parts are represented by metadata and a warning instead
+// of making the entire message fail. A non-positive value disables the limit.
+func WithMaxPartBytes(maxBytes int64) ParserOption {
+	return func(parser *mimeParser) { parser.maxPartBytes = maxBytes }
+}
+
 // NewParser returns the package's default RFC 5322 and MIME parser.
 //
 // The concrete implementation is intentionally private so callers depend only
 // on the provider-neutral Parser contract and ParsedMessage model.
-func NewParser() Parser {
-	return &mimeParser{parser: enmime.NewParser()}
+func NewParser(options ...ParserOption) Parser {
+	parser := &mimeParser{
+		parser: enmime.NewParser(
+			enmime.SkipMalformedParts(true),
+			enmime.SetReadPartErrorPolicy(enmime.AllowCorruptTextPartErrorPolicy),
+		),
+		maxPartBytes: defaultMaxPartBytes,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(parser)
+		}
+	}
+	return parser
 }
 
 type mimeParser struct {
-	parser *enmime.Parser
+	parser       *enmime.Parser
+	maxPartBytes int64
 }
 
 func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessage, error) {
@@ -43,7 +68,7 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 		return ParsedMessage{}, malformedParseError("could not parse RFC 5322 message", err)
 	}
 
-	textBody, htmlBody := envelopeBodies(envelope.Root)
+	textBody, htmlBody := envelopeBodies(envelope.Root, p.maxPartBytes)
 	rawHeaders, rawWarnings := boundedHeaders(map[string][]string(envelope.Root.Header), true)
 	decodedHeaders, decodedWarnings := boundedHeaders(decodedEnvelopeHeaders(envelope), true)
 
@@ -53,9 +78,10 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 		RawHeaders:  rawHeaders,
 		TextBody:    textBody,
 		HTMLBody:    htmlBody,
-		Attachments: envelopeAttachments(envelope.Root, htmlBody),
+		Attachments: envelopeAttachments(envelope.Root, htmlBody, p.maxPartBytes),
 		Warnings:    envelopeWarnings(envelope.Root),
 	}
+	parsed.Warnings = append(parsed.Warnings, semanticPartWarnings(envelope.Root, p.maxPartBytes)...)
 	parsed.Warnings = append(parsed.Warnings, rawWarnings...)
 	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
 	parsed.MessageID = normalizeMessageID(parsed.Headers, "Message-ID")
@@ -77,21 +103,24 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 	return parsed, nil
 }
 
-func envelopeBodies(root *enmime.Part) (string, string) {
+func envelopeBodies(root *enmime.Part, maxPartBytes int64) (string, string) {
 	alternative := firstMultipartAlternative(root)
 	if alternative != nil {
-		return bodyParts(alternative.FirstChild, true)
+		return bodyParts(alternative.FirstChild, true, maxPartBytes)
 	}
-	return bodyParts(root, false)
+	return bodyParts(root, false, maxPartBytes)
 }
 
-func bodyParts(root *enmime.Part, firstOnly bool) (string, string) {
+func bodyParts(root *enmime.Part, firstOnly bool, maxPartBytes int64) (string, string) {
 	var textParts []string
 	var htmlBody string
 	walkParts(root, func(part *enmime.Part) bool {
-		if isAttachmentPart(part) {
+		if isAttachmentPart(part) || isEncryptedPart(part) {
 			// An attachment can itself be a multipart or message/rfc822 tree. Keep
 			// it as one opaque attachment instead of indexing any child bodies.
+			return false
+		}
+		if partOversized(part, maxPartBytes) {
 			return false
 		}
 		switch part.ContentType {
@@ -172,14 +201,101 @@ func envelopeWarnings(root *enmime.Part) []ParserWarning {
 	walkParts(root, func(part *enmime.Part) bool {
 		for _, problem := range part.Errors {
 			warnings = append(warnings, ParserWarning{
-				Code:    warningCode(problem.Name),
-				Message: problem.Detail,
-				PartID:  part.PartID,
+				Category: warningCategory(problem),
+				Code:     warningCode(problem.Name),
+				Message:  problem.Detail,
+				PartID:   part.PartID,
 			})
 		}
 		return true
 	})
 	return warnings
+}
+
+func warningCategory(problem *enmime.Error) WarningCategory {
+	if problem == nil {
+		return ""
+	}
+	switch problem.Name {
+	case enmime.ErrorCharsetConversion, enmime.ErrorCharsetDeclaration:
+		return WarningUnknownCharset
+	case enmime.ErrorMalformedHeader:
+		return WarningMalformedHeader
+	case enmime.ErrorMalformedChildPart:
+		if strings.HasPrefix(strings.ToLower(problem.Detail), "read header:") {
+			return WarningMalformedHeader
+		}
+	}
+	return ""
+}
+
+func semanticPartWarnings(root *enmime.Part, maxPartBytes int64) []ParserWarning {
+	var warnings []ParserWarning
+	walkParts(root, func(part *enmime.Part) bool {
+		if partOversized(part, maxPartBytes) {
+			warnings = append(warnings, ParserWarning{
+				Category: WarningOversizedPart,
+				Code:     "part_too_large",
+				Message:  "decoded MIME part exceeded retention limit",
+				PartID:   part.PartID,
+			})
+		}
+		if protectedKind := protectedPartKind(part); protectedKind != "" {
+			warnings = append(warnings, ParserWarning{
+				Category: WarningProtectedContent,
+				Code:     protectedKind + "_content",
+				Message:  "cryptographically protected MIME content was not verified or decrypted",
+				PartID:   part.PartID,
+			})
+			return protectedKind != "encrypted"
+		}
+		if isUnsupportedPart(part) {
+			warnings = append(warnings, ParserWarning{
+				Category: WarningUnsupportedPart,
+				Code:     "unsupported_media_type",
+				Message:  "MIME part media type is not indexable",
+				PartID:   part.PartID,
+			})
+		}
+		return true
+	})
+	return warnings
+}
+
+func partOversized(part *enmime.Part, maxPartBytes int64) bool {
+	return part != nil && maxPartBytes > 0 && int64(len(part.Content)) > maxPartBytes
+}
+
+func protectedPartKind(part *enmime.Part) string {
+	if part == nil {
+		return ""
+	}
+	contentType := strings.ToLower(part.ContentType)
+	if contentType == "application/pkcs7-mime" || contentType == "application/x-pkcs7-mime" {
+		if strings.EqualFold(part.ContentTypeParams["smime-type"], "signed-data") {
+			return "signed"
+		}
+		return "encrypted"
+	}
+	switch contentType {
+	case "multipart/encrypted", "application/pgp-encrypted":
+		return "encrypted"
+	case "multipart/signed", "application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature":
+		return "signed"
+	default:
+		return ""
+	}
+}
+
+func isEncryptedPart(part *enmime.Part) bool {
+	return protectedPartKind(part) == "encrypted"
+}
+
+func isUnsupportedPart(part *enmime.Part) bool {
+	if part == nil || part.FirstChild != nil || isAttachmentPart(part) || protectedPartKind(part) != "" {
+		return false
+	}
+	return part.ContentType != "" && part.ContentType != "text/plain" && part.ContentType != "text/html"
 }
 
 func warningCode(name string) string {
@@ -194,7 +310,7 @@ func decodedEnvelopeHeaders(envelope *enmime.Envelope) map[string][]string {
 	return headers
 }
 
-func envelopeAttachments(root *enmime.Part, htmlBody string) []Attachment {
+func envelopeAttachments(root *enmime.Part, htmlBody string, maxPartBytes int64) []Attachment {
 	references := htmlCIDReferences(htmlBody)
 	matched := make(map[string]bool, len(references))
 	var attachments []Attachment
@@ -202,7 +318,7 @@ func envelopeAttachments(root *enmime.Part, htmlBody string) []Attachment {
 		if !isAttachmentPart(part) {
 			return true
 		}
-		attachment := attachmentFromPart(part)
+		attachment := attachmentFromPart(part, maxPartBytes)
 		if attachment.ContentID != "" && references[attachment.ContentID] && !matched[attachment.ContentID] {
 			attachment.Inline = true
 			matched[attachment.ContentID] = true
@@ -215,9 +331,16 @@ func envelopeAttachments(root *enmime.Part, htmlBody string) []Attachment {
 	return attachments
 }
 
-func attachmentFromPart(part *enmime.Part) Attachment {
-	content := append([]byte(nil), part.Content...)
-	digest := sha256.Sum256(content)
+func attachmentFromPart(part *enmime.Part, maxPartBytes int64) Attachment {
+	originalSize := int64(len(part.Content))
+	oversized := partOversized(part, maxPartBytes)
+	var content []byte
+	var digest string
+	if !oversized {
+		content = append([]byte(nil), part.Content...)
+		sum := sha256.Sum256(content)
+		digest = hex.EncodeToString(sum[:])
+	}
 	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
 	transferEncoding := strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Transfer-Encoding")))
 	contentID := normalizeContentID(part.ContentID)
@@ -229,11 +352,19 @@ func attachmentFromPart(part *enmime.Part) Attachment {
 		Disposition:      disposition,
 		ContentID:        contentID,
 		TransferEncoding: transferEncoding,
-		Size:             int64(len(content)),
-		SHA256:           hex.EncodeToString(digest[:]),
+		Size:             originalSize,
+		SHA256:           digest,
 		Inline:           disposition == "inline",
-		Content:          io.NopCloser(bytes.NewReader(content)),
+		Truncated:        oversized,
+		Content:          retainedContent(content, oversized),
 	}
+}
+
+func retainedContent(content []byte, oversized bool) io.ReadCloser {
+	if oversized {
+		return nil
+	}
+	return io.NopCloser(bytes.NewReader(content))
 }
 
 func normalizeContentID(value string) string {

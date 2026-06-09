@@ -277,5 +277,9 @@ func setSecurityResult(security *SecuritySignals, method, result string) {
 }
 
 func headerWarning(code, message, header string) ParserWarning {
-	return ParserWarning{Code: code, Message: message, Header: header}
+	category := WarningCategory("")
+	if strings.HasPrefix(code, "malformed_") {
+		category = WarningMalformedHeader
+	}
+	return ParserWarning{Category: category, Code: code, Message: message, Header: header}
 }
