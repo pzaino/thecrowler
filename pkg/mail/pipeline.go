@@ -56,6 +56,13 @@ type Pipeline struct {
 	// Sleep waits between retry attempts. Tests may inject a deterministic
 	// implementation; nil uses a context-aware timer.
 	Sleep func(context.Context, time.Duration) error
+
+	// LogHook receives structured, redacted lifecycle events. Logging is
+	// observational: a nil hook is a no-op and hook panics do not stop ingestion.
+	LogHook LogHook
+
+	// Now supplies timestamps for logging durations. Nil uses time.Now.
+	Now func() time.Time
 }
 
 // NewPipeline constructs a Pipeline from its four side-effecting dependencies.
@@ -101,7 +108,16 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	return errors.Join(runErrors...)
 }
 
-func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) error {
+func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr error) {
+	started := p.now()
+	p.emitLog(ctx, p.mailboxLogEvent(mailbox, LogStateStarted, time.Time{}, nil))
+	defer func() {
+		state := LogStateSucceeded
+		if runErr != nil {
+			state = LogStateFailed
+		}
+		p.emitLog(ctx, p.mailboxLogEvent(mailbox, state, started, runErr))
+	}()
 	key := MailboxKey{
 		SourceID:  p.SourceID,
 		Provider:  p.Provider,
@@ -255,7 +271,18 @@ func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[st
 	return messageErrors
 }
 
-func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef) error {
+func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef) (processErr error) {
+	started := p.now()
+	terminalState := LogStateSucceeded
+	var terminalErr error
+	p.emitLog(ctx, p.messageLogEvent(ref, LogStateStarted, time.Time{}, nil))
+	defer func() {
+		if processErr != nil {
+			terminalState = LogStateFailed
+			terminalErr = processErr
+		}
+		p.emitLog(ctx, p.messageLogEvent(ref, terminalState, started, terminalErr))
+	}()
 	_, decision, err := retryValue(ctx, p.RetryPolicy, p.sleep, func() (struct{}, error) {
 		options := p.FetchOptions
 		options.IncludeBody = true
@@ -278,6 +305,8 @@ func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef) error {
 		return struct{}{}, nil
 	})
 	if decision.Action == RetryActionDiscard {
+		terminalState = LogStateDiscarded
+		terminalErr = err
 		return nil
 	}
 	return err
