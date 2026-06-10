@@ -185,3 +185,52 @@ func TestProcessorNormalizesMalformedHTMLOnlyMessage(t *testing.T) {
 		t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
 	}
 }
+
+func TestProcessorOptionallyCleansEmailHTMLForExtraction(t *testing.T) {
+	t.Parallel()
+
+	htmlBody := `<html><body>
+		<h1>Current message</h1>
+		<script>document.write("script payload")</script>
+		<div class="preheader" style="opacity: 0; font-size: 0">Hidden preview copy</div>
+		<a href="https://tracker.example.test/open"><img width="1" height="1" src="https://tracker.example.test/pixel.gif"></a>
+		<div class="gmail_quote">Recognized quoted history</div>
+		<p class="preheader-content gmail_quote_summary">Legitimate visible content</p>
+		<a href="https://example.test/details">Visible link</a>
+	</body></html>`
+	parsed := ParsedMessage{HTMLBody: htmlBody}
+
+	disabled, err := documentFromParsedMessage("source-disabled", parsed, ExtractionConfig{})
+	if err != nil {
+		t.Fatalf("documentFromParsedMessage() with cleanup disabled error = %v", err)
+	}
+	enabled, err := documentFromParsedMessage("source-enabled", parsed, ExtractionConfig{CleanupHTML: true})
+	if err != nil {
+		t.Fatalf("documentFromParsedMessage() with cleanup enabled error = %v", err)
+	}
+
+	if disabled.HTMLBody != htmlBody || enabled.HTMLBody != htmlBody {
+		t.Fatalf("HTMLBody changed during cleanup:\n disabled: %q\n  enabled: %q\n     want: %q", disabled.HTMLBody, enabled.HTMLBody, htmlBody)
+	}
+	if disabled.ExtractedText != "Current message Hidden preview copy Recognized quoted history Legitimate visible content Visible link" {
+		t.Errorf("disabled ExtractedText = %q", disabled.ExtractedText)
+	}
+	if enabled.ExtractedText != "Current message Legitimate visible content Visible link" {
+		t.Errorf("enabled ExtractedText = %q", enabled.ExtractedText)
+	}
+	if strings.Contains(enabled.ExtractedText, "script payload") {
+		t.Errorf("enabled ExtractedText retained script content: %q", enabled.ExtractedText)
+	}
+
+	wantDisabledLinks := []Link{
+		{URL: "https://tracker.example.test/open", Source: "html"},
+		{URL: "https://example.test/details", Text: "Visible link", Source: "html"},
+	}
+	if !reflect.DeepEqual(disabled.Links, wantDisabledLinks) {
+		t.Errorf("disabled Links = %#v, want %#v", disabled.Links, wantDisabledLinks)
+	}
+	wantEnabledLinks := []Link{{URL: "https://example.test/details", Text: "Visible link", Source: "html"}}
+	if !reflect.DeepEqual(enabled.Links, wantEnabledLinks) {
+		t.Errorf("enabled Links = %#v, want %#v", enabled.Links, wantEnabledLinks)
+	}
+}

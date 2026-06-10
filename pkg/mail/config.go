@@ -68,12 +68,15 @@ type CrawlConfig struct {
 // ExtractionConfig controls which message content is emitted by the mail
 // normalizer. It does not authorize dereferencing remote content.
 type ExtractionConfig struct {
-	IncludeHeaders []string         `json:"include_headers,omitempty" yaml:"include_headers,omitempty"`
-	ExcludeHeaders []string         `json:"exclude_headers,omitempty" yaml:"exclude_headers,omitempty"`
-	PreferHTML     bool             `json:"prefer_html,omitempty" yaml:"prefer_html,omitempty"`
-	Links          LinkPolicy       `json:"links,omitempty" yaml:"links,omitempty"`
-	Attachments    AttachmentPolicy `json:"attachments,omitempty" yaml:"attachments,omitempty"`
-	Extensions     map[string]any   `json:"extensions,omitempty" yaml:"extensions,omitempty"`
+	IncludeHeaders []string `json:"include_headers,omitempty" yaml:"include_headers,omitempty"`
+	ExcludeHeaders []string `json:"exclude_headers,omitempty" yaml:"exclude_headers,omitempty"`
+	PreferHTML     bool     `json:"prefer_html,omitempty" yaml:"prefer_html,omitempty"`
+	// CleanupHTML removes conservative email-only artifacts from the temporary
+	// DOM used for text and link extraction while preserving HTMLBody verbatim.
+	CleanupHTML bool             `json:"cleanup_html,omitempty" yaml:"cleanup_html,omitempty"`
+	Links       LinkPolicy       `json:"links,omitempty" yaml:"links,omitempty"`
+	Attachments AttachmentPolicy `json:"attachments,omitempty" yaml:"attachments,omitempty"`
+	Extensions  map[string]any   `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 }
 
 // LinkPolicy controls link extraction from message bodies. FollowRemote is

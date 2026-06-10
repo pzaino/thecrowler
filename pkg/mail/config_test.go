@@ -30,6 +30,7 @@ func TestSourceConfigSerializesToJSONAndYAML(t *testing.T) {
 			Limits:    Limits{MaxMessageBytes: 25 << 20},
 		},
 		Extraction: ExtractionConfig{
+			CleanupHTML: true,
 			Links:       LinkPolicy{Extract: true, AllowedSchemes: []string{"https"}},
 			Attachments: AttachmentPolicy{Include: true, IncludeInline: true},
 		},
@@ -41,7 +42,7 @@ func TestSourceConfigSerializesToJSONAndYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal JSON source config: %v", err)
 	}
-	for _, field := range []string{`"connector"`, `"credential_ref"`, `"mailboxes"`, `"reconciliation"`, `"extensions"`} {
+	for _, field := range []string{`"connector"`, `"credential_ref"`, `"mailboxes"`, `"cleanup_html"`, `"reconciliation"`, `"extensions"`} {
 		if !strings.Contains(string(jsonData), field) {
 			t.Errorf("JSON source config does not contain %s: %s", field, jsonData)
 		}
@@ -51,7 +52,7 @@ func TestSourceConfigSerializesToJSONAndYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal YAML source config: %v", err)
 	}
-	for _, field := range []string{"connector:", "credential_ref:", "mailboxes:", "reconciliation:", "extensions:"} {
+	for _, field := range []string{"connector:", "credential_ref:", "mailboxes:", "cleanup_html:", "reconciliation:", "extensions:"} {
 		if !strings.Contains(string(yamlData), field) {
 			t.Errorf("YAML source config does not contain %q: %s", field, yamlData)
 		}
@@ -105,6 +106,7 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "header bytes", got: got.Crawl.Limits.MaxHeaderBytes, want: int64(1 << 20)},
 		{name: "MIME depth", got: got.Crawl.Limits.MaxMIMEDepth, want: 30},
 		{name: "MIME parts", got: got.Crawl.Limits.MaxMIMEParts, want: 1_000},
+		{name: "cleanup HTML", got: got.Extraction.CleanupHTML, want: false},
 		{name: "extract links", got: got.Extraction.Links.Extract, want: true},
 		{name: "follow remote links", got: got.Extraction.Links.FollowRemote, want: false},
 		{name: "allowed link schemes", got: got.Extraction.Links.AllowedSchemes, want: []string{"http", "https"}},

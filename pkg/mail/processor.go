@@ -9,17 +9,25 @@ import (
 
 // NewProcessor returns a processor that parses RFC 5322 messages and maps the
 // decoded result into the normalized Document model. sourceID identifies the
-// configured mail source that produced the message.
-func NewProcessor(sourceID string) Processor {
+// configured mail source that produced the message. An optional extraction
+// configuration enables conservative HTML cleanup without changing the stored
+// HTMLBody. Cleanup is disabled when no configuration is supplied.
+func NewProcessor(sourceID string, extraction ...ExtractionConfig) Processor {
+	var config ExtractionConfig
+	if len(extraction) != 0 {
+		config = extraction[0]
+	}
 	return &messageProcessor{
-		sourceID: sourceID,
-		parser:   NewParser(),
+		sourceID:   sourceID,
+		parser:     NewParser(),
+		extraction: config,
 	}
 }
 
 type messageProcessor struct {
-	sourceID string
-	parser   Parser
+	sourceID   string
+	parser     Parser
+	extraction ExtractionConfig
 }
 
 func (p *messageProcessor) Process(ctx context.Context, message RawMessage) (Document, error) {
@@ -28,14 +36,23 @@ func (p *messageProcessor) Process(ctx context.Context, message RawMessage) (Doc
 		return Document{}, err
 	}
 
-	return documentFromParsedMessage(p.sourceID, parsed)
+	return documentFromParsedMessage(p.sourceID, parsed, p.extraction)
 }
 
-func documentFromParsedMessage(sourceID string, parsed ParsedMessage) (Document, error) {
+func documentFromParsedMessage(sourceID string, parsed ParsedMessage, extraction ExtractionConfig) (Document, error) {
 	extractedText := parsed.TextBody
 	var links []Link
 	if parsed.HTMLBody != "" {
-		content, err := browser.ExtractStaticHTML(parsed.HTMLBody)
+		htmlForExtraction := parsed.HTMLBody
+		if extraction.CleanupHTML {
+			cleanedHTML, err := cleanupEmailHTML(parsed.HTMLBody)
+			if err != nil {
+				return Document{}, err
+			}
+			htmlForExtraction = cleanedHTML
+		}
+
+		content, err := browser.ExtractStaticHTML(htmlForExtraction)
 		if err != nil {
 			return Document{}, fmt.Errorf("mail: normalize HTML body: %w", err)
 		}
