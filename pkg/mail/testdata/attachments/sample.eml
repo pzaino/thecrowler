@@ -1,0 +1,8 @@
+From: sender@example.test
+To: recipient@example.test
+Subject: Attached message
+Message-ID: <attached@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+This is the attached message body.

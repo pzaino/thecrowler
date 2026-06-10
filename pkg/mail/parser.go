@@ -344,19 +344,21 @@ func attachmentFromPart(part *enmime.Part, maxPartBytes int64) Attachment {
 	disposition := strings.ToLower(strings.TrimSpace(part.Disposition))
 	transferEncoding := strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Transfer-Encoding")))
 	contentID := normalizeContentID(part.ContentID)
+	declaredMediaType, detectedMediaType := attachmentMediaTypes(part.Header.Get("Content-Type"), part.Content)
 	return Attachment{
-		ID:               contentID,
-		PartID:           part.PartID,
-		Filename:         part.FileName,
-		MediaType:        part.ContentType,
-		Disposition:      disposition,
-		ContentID:        contentID,
-		TransferEncoding: transferEncoding,
-		Size:             originalSize,
-		SHA256:           digest,
-		Inline:           disposition == "inline",
-		Truncated:        oversized,
-		Content:          retainedContent(content, oversized),
+		ID:                contentID,
+		PartID:            part.PartID,
+		Filename:          part.FileName,
+		MediaType:         declaredMediaType,
+		DetectedMediaType: detectedMediaType,
+		Disposition:       disposition,
+		ContentID:         contentID,
+		TransferEncoding:  transferEncoding,
+		Size:              originalSize,
+		SHA256:            digest,
+		Inline:            disposition == "inline",
+		Truncated:         oversized,
+		Content:           retainedContent(content, oversized),
 	}
 }
 

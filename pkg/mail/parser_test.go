@@ -94,7 +94,8 @@ func TestParserParsesRFC822Message(t *testing.T) {
 
 	attachment := parsed.Attachments[0]
 	defer attachment.Content.Close()
-	if attachment.Filename != "report.txt" || attachment.MediaType != "text/plain" || attachment.Size != 14 {
+	if attachment.Filename != "report.txt" || attachment.MediaType != "text/plain" ||
+		attachment.DetectedMediaType != "text/plain" || attachment.Size != 14 {
 		t.Errorf("attachment metadata = %#v", attachment)
 	}
 	if attachment.Disposition != "attachment" || attachment.TransferEncoding != "base64" ||
@@ -125,22 +126,24 @@ func TestParserDiscoversMultipartMixedAttachmentsWithoutIndexingTheirContents(t 
 	}
 
 	want := []struct {
-		filename         string
-		mediaType        string
-		disposition      string
-		contentID        string
-		transferEncoding string
-		content          []byte
+		filename          string
+		mediaType         string
+		detectedMediaType string
+		disposition       string
+		contentID         string
+		transferEncoding  string
+		content           []byte
 	}{
-		{"report.txt", "text/plain", "attachment", "report@example.test", "base64", []byte("report content")},
-		{"data.bin", "application/octet-stream", "", "", "base64", []byte{0, 1, 2, 3, 4}},
-		{"bundle.mime", "multipart/mixed", "attachment", "bundle@example.test", "", nil},
+		{"report.txt", "text/plain", "text/plain", "attachment", "report@example.test", "base64", []byte("report content")},
+		{"data.bin", "application/octet-stream", "application/octet-stream", "", "", "base64", []byte{0, 1, 2, 3, 4}},
+		{"bundle.mime", "multipart/mixed", "multipart/mixed", "attachment", "bundle@example.test", "", nil},
 	}
 	for index, attachment := range parsed.Attachments {
 		attachment := attachment
 		t.Cleanup(func() { _ = attachment.Content.Close() })
 		expected := want[index]
 		if attachment.Filename != expected.filename || attachment.MediaType != expected.mediaType ||
+			attachment.DetectedMediaType != expected.detectedMediaType ||
 			attachment.Disposition != expected.disposition || attachment.ContentID != expected.contentID ||
 			attachment.TransferEncoding != expected.transferEncoding || attachment.Size != int64(len(expected.content)) ||
 			attachment.SHA256 != sha256Hex(expected.content) {
