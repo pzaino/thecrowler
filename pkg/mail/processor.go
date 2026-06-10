@@ -2,7 +2,10 @@ package mail
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 
 	browser "github.com/pzaino/thecrowler/pkg/browser"
 )
@@ -52,12 +55,35 @@ type messageProcessor struct {
 }
 
 func (p *messageProcessor) Process(ctx context.Context, message RawMessage) (Document, error) {
+	if message.RFC822 == nil {
+		return Document{}, malformedParseError("message stream is nil", nil)
+	}
+
+	hash := sha256.New()
+	message.RFC822 = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.TeeReader(message.RFC822, hash),
+		Closer: message.RFC822,
+	}
 	parsed, err := p.parser.Parse(ctx, message)
 	if err != nil {
 		return Document{}, err
 	}
 
-	return documentFromParsedMessage(p.sourceID, parsed, p.extraction)
+	document, err := documentFromParsedMessage(p.sourceID, parsed, p.extraction)
+	if err != nil {
+		return Document{}, err
+	}
+	fingerprint := hex.EncodeToString(hash.Sum(nil))
+	document.ContentFingerprint = fingerprint
+	identity, err := StableMessageIdentity(p.sourceID, parsed.Ref, fingerprint)
+	if err == nil {
+		document.ID = identity.ID
+		document.IdentityStrategy = identity.Strategy
+	}
+	return document, nil
 }
 
 func documentFromParsedMessage(sourceID string, parsed ParsedMessage, extraction ExtractionConfig) (Document, error) {
