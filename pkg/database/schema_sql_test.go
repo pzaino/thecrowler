@@ -229,3 +229,68 @@ func TestTimeSeriesSchemaSQLUsesDialectAppropriateJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestEmailStateSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T) {
+	t.Parallel()
+
+	commonFragments := []string{
+		"CREATE TABLE IF NOT EXISTS EmailMailboxState",
+		"source_id",
+		"provider",
+		"account_key",
+		"mailbox_key",
+		"cursor_token",
+		"cursor_uid",
+		"cursor_uid_validity",
+		"checkpoint_schema_version",
+		"config_fingerprint",
+		"message_status",
+		"version",
+		"lease_owner",
+		"lease_expires_at",
+		"fencing_token",
+		"last_reconciled_at",
+		"listener_healthy_at",
+		"reset_reason",
+		"CREATE TABLE IF NOT EXISTS EmailMessageState",
+		"provider_message_key",
+		"document_id",
+		"provider_version",
+		"content_hash",
+		"disposition",
+		"failure_count",
+		"last_observed_at",
+		"deleted_at",
+		"quarantined_at",
+		"ON DELETE CASCADE",
+		"idx_emailmailboxstate_lease",
+		"idx_emailmessagestate_observed",
+		"idx_emailmessagestate_disposition",
+	}
+
+	files := []string{
+		"postgresql-setup.pgsql",
+		"mysql-setup.mysql",
+		"sqlite-setup.sqlite3",
+		"postgresql-migration-v1.11.pgsql",
+		"mysql-migration-v1.11.mysql",
+		"sqlite-migration-v1.11.sqlite3",
+	}
+
+	for _, file := range files {
+		file := file
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			content, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("read %s: %v", file, err)
+			}
+			upperContent := strings.ToUpper(string(content))
+			for _, fragment := range commonFragments {
+				if !strings.Contains(upperContent, strings.ToUpper(fragment)) {
+					t.Fatalf("%s missing email state schema fragment %q", file, fragment)
+				}
+			}
+		})
+	}
+}

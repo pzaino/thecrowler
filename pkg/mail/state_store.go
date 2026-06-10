@@ -60,6 +60,9 @@ func (s *MemoryStateStore) CommitCheckpoint(ctx context.Context, key MailboxKey,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := validateCheckpoint(next); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,7 +71,7 @@ func (s *MemoryStateStore) CommitCheckpoint(ctx context.Context, key MailboxKey,
 		return err
 	}
 
-	current := s.checkpoints[key]
+	current, exists := s.checkpoints[key]
 	if current.Version != previousVersion {
 		return fmt.Errorf(
 			"%w: source %q account %q mailbox %q has version %q, not %q",
@@ -79,6 +82,9 @@ func (s *MemoryStateStore) CommitCheckpoint(ctx context.Context, key MailboxKey,
 			current.Version,
 			previousVersion,
 		)
+	}
+	if err := validateCheckpointStatusTransition(current.MessageStatus, next.MessageStatus, exists); err != nil {
+		return err
 	}
 
 	if s.checkpoints == nil {

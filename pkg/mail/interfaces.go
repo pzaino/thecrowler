@@ -11,9 +11,12 @@ type ChangePage struct {
 }
 
 // MailboxKey identifies durable ingestion state without exposing a provider
-// SDK mailbox or session object.
+// SDK mailbox or session object. Provider participates in the durable key so
+// equal account and mailbox identifiers from different connectors remain
+// isolated.
 type MailboxKey struct {
 	SourceID  string  `json:"source_id" yaml:"source_id"`
+	Provider  string  `json:"provider,omitempty" yaml:"provider,omitempty"`
 	AccountID string  `json:"account_id" yaml:"account_id"`
 	Mailbox   Mailbox `json:"mailbox" yaml:"mailbox"`
 }

@@ -469,10 +469,11 @@ are database-specific):
   quarantine time, and timestamps. It stores no RFC 822 body or attachment
   bytes.
 
-This is a design decision, not a migration in this change. When implementation
-begins, schema additions must follow the existing `pkg/database` convention:
-update fresh-install setup schemas and add versioned, idempotent migration files
-for every supported database rather than editing an old migration.
+The initial checkpoint implementation and reconciliation-ledger schema live in
+`pkg/mail` and `pkg/database`. Schema additions follow the existing database
+convention: fresh-install setup schemas and versioned, idempotent migrations
+are maintained for every supported database rather than editing an old
+migration.
 
 #### Keys and constraints
 

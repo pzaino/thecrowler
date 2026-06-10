@@ -114,6 +114,68 @@ CREATE TABLE IF NOT EXISTS Sources (
     config JSON                                 -- Stores JSON document with all details about
                                                 -- the source configuration for the crawler.
 );
+--------------------------------------------------------------------------------
+-- Durable email ingestion checkpoints and bounded message reconciliation state.
+CREATE TABLE IF NOT EXISTS EmailMailboxState (
+    source_id BIGINT NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    account_key VARCHAR(191) NOT NULL,
+    mailbox_key VARCHAR(191) NOT NULL,
+    cursor_token TEXT NOT NULL,
+    cursor_uid BIGINT UNSIGNED NOT NULL DEFAULT 0 CHECK (cursor_uid <= 4294967295),
+    cursor_uid_validity BIGINT UNSIGNED NOT NULL DEFAULT 0 CHECK (cursor_uid_validity <= 4294967295),
+    checkpoint_schema_version INT UNSIGNED NOT NULL DEFAULT 1 CHECK (checkpoint_schema_version > 0),
+    config_fingerprint VARCHAR(128) NOT NULL DEFAULT '',
+    message_status VARCHAR(32),
+    content_hash VARCHAR(255) NOT NULL DEFAULT '',
+    error_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    lease_owner VARCHAR(191),
+    lease_expires_at TIMESTAMP NULL,
+    fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_reconciled_at TIMESTAMP NULL,
+    listener_healthy_at TIMESTAMP NULL,
+    reset_reason VARCHAR(255),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id, provider, account_key, mailbox_key),
+    CONSTRAINT fk_emailmailboxstate_source FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+    CONSTRAINT chk_emailmailboxstate_status CHECK (message_status IS NULL OR message_status IN ('discovered', 'fetched', 'parsed', 'normalized', 'attachments_processed', 'links_enqueued', 'completed', 'retryable_failure', 'permanent_failure')),
+    CONSTRAINT chk_emailmailboxstate_lease CHECK ((lease_owner IS NULL AND lease_expires_at IS NULL) OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+    KEY idx_emailmailboxstate_lease (lease_expires_at, lease_owner),
+    KEY idx_emailmailboxstate_active (source_id, active)
+);
+
+CREATE TABLE IF NOT EXISTS EmailMessageState (
+    source_id BIGINT NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    account_key VARCHAR(191) NOT NULL,
+    mailbox_key VARCHAR(191) NOT NULL,
+    provider_message_key VARCHAR(191) NOT NULL,
+    document_id VARCHAR(191) NOT NULL,
+    provider_version VARCHAR(255) NOT NULL DEFAULT '',
+    content_hash VARCHAR(255) NOT NULL DEFAULT '',
+    disposition VARCHAR(16) NOT NULL,
+    failure_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    last_observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    quarantined_at TIMESTAMP NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id, provider, account_key, mailbox_key, provider_message_key),
+    UNIQUE KEY uq_emailmessagestate_document_id (document_id),
+    CONSTRAINT fk_emailmessagestate_mailbox FOREIGN KEY (source_id, provider, account_key, mailbox_key)
+        REFERENCES EmailMailboxState(source_id, provider, account_key, mailbox_key) ON DELETE CASCADE,
+    CONSTRAINT chk_emailmessagestate_disposition CHECK (disposition IN ('indexed', 'deleted', 'skipped', 'quarantined')),
+    CONSTRAINT chk_emailmessagestate_deleted CHECK (disposition <> 'deleted' OR deleted_at IS NOT NULL),
+    CONSTRAINT chk_emailmessagestate_quarantined CHECK (disposition <> 'quarantined' OR quarantined_at IS NOT NULL),
+    KEY idx_emailmessagestate_observed (source_id, last_observed_at),
+    KEY idx_emailmessagestate_disposition (source_id, disposition, last_observed_at)
+);
+
 
 -- Add source discovery columns to existing Sources tables without dropping data.
 DELIMITER //

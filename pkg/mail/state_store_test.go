@@ -23,7 +23,7 @@ func TestMemoryStateStoreIsolatesMailboxState(t *testing.T) {
 	for i, key := range keys {
 		next := Checkpoint{
 			Cursor:        Cursor{Token: fmt.Sprintf("cursor-%d", i), UID: uint32(i + 10), UIDValidity: uint32(i + 100)},
-			MessageStatus: MessageStatus(fmt.Sprintf("status-%d", i)),
+			MessageStatus: MessageStatusDiscovered,
 			ContentHash:   fmt.Sprintf("hash-%d", i),
 			ErrorCount:    uint32(i),
 			LastError:     fmt.Sprintf("error-%d", i),
@@ -42,7 +42,7 @@ func TestMemoryStateStoreIsolatesMailboxState(t *testing.T) {
 		if got.Cursor.Token != fmt.Sprintf("cursor-%d", i) ||
 			got.Cursor.UID != uint32(i+10) ||
 			got.Cursor.UIDValidity != uint32(i+100) ||
-			got.MessageStatus != MessageStatus(fmt.Sprintf("status-%d", i)) ||
+			got.MessageStatus != MessageStatusDiscovered ||
 			got.ContentHash != fmt.Sprintf("hash-%d", i) ||
 			got.ErrorCount != uint32(i) ||
 			got.LastError != fmt.Sprintf("error-%d", i) {
@@ -75,7 +75,7 @@ func TestMemoryStateStoreUpdatesAndRejectsStaleVersion(t *testing.T) {
 
 	first := Checkpoint{
 		Cursor:        Cursor{Token: "page-1", UID: 41, UIDValidity: 7},
-		MessageStatus: "failed",
+		MessageStatus: MessageStatusDiscovered,
 		ContentHash:   "sha256:first",
 		ErrorCount:    1,
 		LastError:     "temporary failure",
@@ -95,7 +95,7 @@ func TestMemoryStateStoreUpdatesAndRejectsStaleVersion(t *testing.T) {
 
 	second := Checkpoint{
 		Cursor:        Cursor{Token: "page-2", UID: 42, UIDValidity: 7},
-		MessageStatus: "processed",
+		MessageStatus: MessageStatusFetched,
 		ContentHash:   "sha256:second",
 	}
 	if err := store.CommitCheckpoint(ctx, key, stored.Version, second); err != nil {
@@ -144,7 +144,7 @@ func TestMemoryStateStoreConcurrentUpdates(t *testing.T) {
 					next := current
 					next.ErrorCount++
 					next.Cursor.UID++
-					next.MessageStatus = "processed"
+					next.MessageStatus = MessageStatusDiscovered
 					if err := store.CommitCheckpoint(ctx, key, current.Version, next); err == nil {
 						break
 					} else if !errors.Is(err, ErrCheckpointConflict) {
