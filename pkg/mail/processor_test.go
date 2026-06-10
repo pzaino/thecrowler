@@ -2,9 +2,15 @@ package mail
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -71,5 +77,111 @@ func TestProcessorDecodesTextPlainBodies(t *testing.T) {
 				t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, test.wantText)
 			}
 		})
+	}
+}
+
+func TestProcessorStaticallyNormalizesHTMLBodyWithoutNetworkAccess(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+
+	htmlBody := fmt.Sprintf(`<html><body>
+		<h1>Hello</h1>
+		<script>fetch(%q); document.write("injected")</script>
+		<img src="%s/tracking.png" alt="remote image">
+		<iframe src="%s/frame.html">frame fallback</iframe>
+		<a href="%s/safe?one=1&amp;two=2" onclick="fetch('/clicked')">safe link</a>
+		<div hidden><a href="%s/hidden">hidden link</a></div>
+	</body></html>`, server.URL+"/script", server.URL, server.URL, server.URL, server.URL)
+
+	raw := strings.Join([]string{
+		"From: sender@example.test",
+		"To: recipient@example.test",
+		"Subject: Static HTML normalization",
+		"MIME-Version: 1.0",
+		"Content-Type: multipart/alternative; boundary=mail-boundary",
+		"",
+		"--mail-boundary",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"Plain fallback that should not replace HTML extraction.",
+		"--mail-boundary",
+		"Content-Type: text/html; charset=utf-8",
+		"Content-Transfer-Encoding: 8bit",
+		"",
+		htmlBody,
+		"--mail-boundary--",
+		"",
+	}, "\r\n")
+
+	document, err := NewProcessor("source-html").Process(context.Background(), RawMessage{
+		Ref:    MessageRef{Provider: "fixture", AccountID: "account-html", UID: 7},
+		RFC822: io.NopCloser(strings.NewReader(raw)),
+	})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if document.HTMLBody != htmlBody {
+		t.Errorf("HTMLBody changed during normalization:\n got: %q\nwant: %q", document.HTMLBody, htmlBody)
+	}
+	if document.ExtractedText != "Hello safe link" {
+		t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, "Hello safe link")
+	}
+	wantLinks := []Link{{
+		URL:    server.URL + "/safe?one=1&two=2",
+		Text:   "safe link",
+		Source: "html",
+	}}
+	if !reflect.DeepEqual(document.Links, wantLinks) {
+		t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("network requests during normalization = %d, want 0", got)
+	}
+}
+
+func TestProcessorNormalizesMalformedHTMLOnlyMessage(t *testing.T) {
+	t.Parallel()
+
+	htmlBody := `<main><p>HTML only <strong>message<a href="../details?view=full&amp;lang=en">Details`
+	raw := strings.Join([]string{
+		"From: sender@example.test",
+		"To: recipient@example.test",
+		"Subject: Malformed HTML normalization",
+		"MIME-Version: 1.0",
+		"Content-Type: text/html; charset=utf-8",
+		"",
+		htmlBody,
+	}, "\r\n")
+
+	document, err := NewProcessor("source-html-only").Process(context.Background(), RawMessage{
+		Ref:    MessageRef{Provider: "fixture", AccountID: "account-html", UID: 8},
+		RFC822: io.NopCloser(strings.NewReader(raw)),
+	})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if document.TextBody != "" {
+		t.Errorf("TextBody = %q, want empty", document.TextBody)
+	}
+	if document.HTMLBody != htmlBody {
+		t.Errorf("HTMLBody changed during normalization:\n got: %q\nwant: %q", document.HTMLBody, htmlBody)
+	}
+	if document.ExtractedText != "HTML only message Details" {
+		t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, "HTML only message Details")
+	}
+	wantLinks := []Link{{
+		URL:    "../details?view=full&lang=en",
+		Text:   "Details",
+		Source: "html",
+	}}
+	if !reflect.DeepEqual(document.Links, wantLinks) {
+		t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
 	}
 }

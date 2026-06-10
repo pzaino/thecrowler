@@ -2,6 +2,9 @@ package mail
 
 import (
 	"context"
+	"fmt"
+
+	browser "github.com/pzaino/thecrowler/pkg/browser"
 )
 
 // NewProcessor returns a processor that parses RFC 5322 messages and maps the
@@ -25,11 +28,28 @@ func (p *messageProcessor) Process(ctx context.Context, message RawMessage) (Doc
 		return Document{}, err
 	}
 
-	return documentFromParsedMessage(p.sourceID, parsed), nil
+	return documentFromParsedMessage(p.sourceID, parsed)
 }
 
-func documentFromParsedMessage(sourceID string, parsed ParsedMessage) Document {
-	textBody := parsed.TextBody
+func documentFromParsedMessage(sourceID string, parsed ParsedMessage) (Document, error) {
+	extractedText := parsed.TextBody
+	var links []Link
+	if parsed.HTMLBody != "" {
+		content, err := browser.ExtractStaticHTML(parsed.HTMLBody)
+		if err != nil {
+			return Document{}, fmt.Errorf("mail: normalize HTML body: %w", err)
+		}
+
+		extractedText = content.Text
+		links = make([]Link, 0, len(content.Links))
+		for _, link := range content.Links {
+			links = append(links, Link{
+				URL:    link.Href,
+				Text:   link.Text,
+				Source: "html",
+			})
+		}
+	}
 
 	return Document{
 		SourceID:      sourceID,
@@ -44,13 +64,14 @@ func documentFromParsedMessage(sourceID string, parsed ParsedMessage) Document {
 		ReplyTo:       parsed.ReplyTo,
 		Subject:       parsed.Subject,
 		Headers:       documentHeaders(parsed),
-		TextBody:      textBody,
+		TextBody:      parsed.TextBody,
 		HTMLBody:      parsed.HTMLBody,
-		ExtractedText: textBody,
+		ExtractedText: extractedText,
+		Links:         links,
 		Attachments:   parsed.Attachments,
 		Security:      normalizeSecurity(parsed.Headers),
 		Warnings:      parsed.Warnings,
-	}
+	}, nil
 }
 
 func documentHeaders(parsed ParsedMessage) HeaderSet {
