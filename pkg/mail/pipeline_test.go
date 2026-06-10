@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -70,6 +71,149 @@ func TestPipelineRunSuccess(t *testing.T) {
 	}
 	if checkpoint.Cursor.Token != "page-2" || checkpoint.ErrorCount != 0 || checkpoint.LastError != "" {
 		t.Fatalf("checkpoint = %#v, want successful page-2 checkpoint", checkpoint)
+	}
+}
+
+func TestPipelineResumesFromStoredCheckpoint(t *testing.T) {
+	mailbox := Mailbox{ID: "inbox"}
+	stored := Cursor{UIDValidity: 7, UID: 40}
+	next := Cursor{UIDValidity: 7, UID: 42}
+	connector := &pipelineFakeConnector{
+		mailboxes: []Mailbox{mailbox},
+		pages: map[Cursor]ChangePage{
+			stored: {
+				Changes: []Change{
+					{Kind: ChangeUpsert, Ref: pipelineIMAPTestRef(mailbox, 7, 41)},
+					{Kind: ChangeUpsert, Ref: pipelineIMAPTestRef(mailbox, 7, 42)},
+				},
+				Next: next,
+			},
+		},
+	}
+	store := NewMemoryStateStore()
+	key := MailboxKey{Mailbox: mailbox}
+	if err := store.CommitCheckpoint(context.Background(), key, "", Checkpoint{Cursor: stored}); err != nil {
+		t.Fatalf("seed checkpoint: %v", err)
+	}
+	pipeline := NewPipeline(connector, store, &pipelineFakeProcessor{}, &pipelineFakeEmitter{})
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := connector.listedCursors(), []Cursor{stored}; !equalCursors(got, want) {
+		t.Fatalf("ListChanges() cursors = %#v, want %#v", got, want)
+	}
+	if got, want := connector.openedIDs(), []string{"uid-41", "uid-42"}; !equalStrings(got, want) {
+		t.Fatalf("opened message IDs = %v, want %v", got, want)
+	}
+	checkpoint, err := store.LoadCheckpoint(context.Background(), key)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint() error = %v", err)
+	}
+	if checkpoint.Cursor != next {
+		t.Fatalf("checkpoint cursor = %#v, want %#v", checkpoint.Cursor, next)
+	}
+}
+
+func TestPipelineUIDValidityResetUsesBoundedResumableRescan(t *testing.T) {
+	mailbox := Mailbox{ID: "inbox"}
+	stored := Cursor{UIDValidity: 7, UID: 200}
+	resetStart := Cursor{UIDValidity: 8}
+	rescanNext := Cursor{UIDValidity: 8, UID: 2}
+	caughtUp := Cursor{UIDValidity: 8, UID: 3}
+	connector := &pipelineFakeConnector{
+		mailboxes: []Mailbox{mailbox},
+		pages: map[Cursor]ChangePage{
+			stored: {
+				// A connector can expose the new UIDVALIDITY through ordinary
+				// listed metadata even when it does not emit ChangeReset.
+				Changes: []Change{{Kind: ChangeUpsert, Ref: pipelineIMAPTestRef(mailbox, 8, 3)}},
+				Next:    caughtUp,
+			},
+			resetStart: {
+				Changes: []Change{
+					{Kind: ChangeUpsert, Ref: pipelineIMAPTestRef(mailbox, 8, 1)},
+					{Kind: ChangeUpsert, Ref: pipelineIMAPTestRef(mailbox, 8, 2)},
+				},
+				Next: rescanNext,
+				More: true,
+			},
+			rescanNext: {
+				Changes: []Change{{Kind: ChangeUpsert, Ref: pipelineIMAPTestRef(mailbox, 8, 3)}},
+				Next:    caughtUp,
+			},
+		},
+	}
+	store := NewMemoryStateStore()
+	key := MailboxKey{Mailbox: mailbox}
+	if err := store.CommitCheckpoint(context.Background(), key, "", Checkpoint{Cursor: stored}); err != nil {
+		t.Fatalf("seed checkpoint: %v", err)
+	}
+	processor := &pipelineFakeProcessor{}
+	emitter := &pipelineFakeEmitter{}
+	pipeline := NewPipeline(connector, store, processor, emitter)
+	pipeline.PageSize = 10
+	pipeline.UIDValidityRescanWindow = 2
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	if got, want := connector.listedCursors(), []Cursor{stored, resetStart}; !equalCursors(got, want) {
+		t.Fatalf("first ListChanges() cursors = %#v, want %#v", got, want)
+	}
+	if got, want := connector.listedLimits(), []int{10, 2}; !equalInts(got, want) {
+		t.Fatalf("first ListChanges() limits = %v, want %v", got, want)
+	}
+	if got, want := processor.processedIDs(), []string{"uid-1", "uid-2"}; !equalStrings(got, want) {
+		t.Fatalf("first processed message IDs = %v, want %v", got, want)
+	}
+	checkpoint, err := store.LoadCheckpoint(context.Background(), key)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint() after first run error = %v", err)
+	}
+	if checkpoint.Cursor != rescanNext {
+		t.Fatalf("checkpoint after bounded rescan = %#v, want %#v", checkpoint.Cursor, rescanNext)
+	}
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if got, want := processor.processedIDs(), []string{"uid-1", "uid-2", "uid-3"}; !equalStrings(got, want) {
+		t.Fatalf("processed message IDs after resume = %v, want %v", got, want)
+	}
+	checkpoint, err = store.LoadCheckpoint(context.Background(), key)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint() after resume error = %v", err)
+	}
+	if checkpoint.Cursor != caughtUp {
+		t.Fatalf("checkpoint after resume = %#v, want %#v", checkpoint.Cursor, caughtUp)
+	}
+}
+
+func TestPipelineEmptyMailboxCommitsProviderCursor(t *testing.T) {
+	mailbox := Mailbox{ID: "empty"}
+	current := Cursor{UIDValidity: 12}
+	connector := &pipelineFakeConnector{
+		mailboxes: []Mailbox{mailbox},
+		pages: map[Cursor]ChangePage{
+			{}: {Next: current},
+		},
+	}
+	store := NewMemoryStateStore()
+	pipeline := NewPipeline(connector, store, &pipelineFakeProcessor{}, &pipelineFakeEmitter{})
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := connector.openedIDs(); len(got) != 0 {
+		t.Fatalf("opened message IDs = %v, want none", got)
+	}
+	checkpoint, err := store.LoadCheckpoint(context.Background(), MailboxKey{Mailbox: mailbox})
+	if err != nil {
+		t.Fatalf("LoadCheckpoint() error = %v", err)
+	}
+	if checkpoint.Cursor != current {
+		t.Fatalf("checkpoint cursor = %#v, want %#v", checkpoint.Cursor, current)
 	}
 }
 
@@ -205,6 +349,8 @@ type pipelineFakeConnector struct {
 	mu          sync.Mutex
 	opened      []string
 	streams     map[string]*pipelineFakeReadCloser
+	cursors     []Cursor
+	limits      []int
 	lastLimit   int
 	lastOptions FetchOptions
 }
@@ -215,6 +361,8 @@ func (f *pipelineFakeConnector) ListMailboxes(ctx context.Context) ([]Mailbox, e
 
 func (f *pipelineFakeConnector) ListChanges(ctx context.Context, _ Mailbox, cursor Cursor, limit int) (ChangePage, error) {
 	f.mu.Lock()
+	f.cursors = append(f.cursors, cursor)
+	f.limits = append(f.limits, limit)
 	f.lastLimit = limit
 	f.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -246,6 +394,18 @@ func (f *pipelineFakeConnector) openedIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.opened...)
+}
+
+func (f *pipelineFakeConnector) listedCursors() []Cursor {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Cursor(nil), f.cursors...)
+}
+
+func (f *pipelineFakeConnector) listedLimits() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.limits...)
 }
 
 type pipelineFakeReadCloser struct {
@@ -306,6 +466,18 @@ func (f *pipelineFakeEmitter) emittedIDs() []string {
 	return append([]string(nil), f.emitted...)
 }
 
+func pipelineIMAPTestRef(mailbox Mailbox, uidValidity, uid uint32) MessageRef {
+	return MessageRef{
+		Provider:          "imap",
+		AccountID:         "account",
+		Mailbox:           mailbox,
+		UID:               uid,
+		UIDValidity:       uidValidity,
+		ProviderMessageID: fmt.Sprintf("uid-%d", uid),
+		Version:           "1",
+	}
+}
+
 func pipelineTestRef(mailbox Mailbox, id string) MessageRef {
 	return MessageRef{
 		Provider:          "fake",
@@ -314,6 +486,30 @@ func pipelineTestRef(mailbox Mailbox, id string) MessageRef {
 		ProviderMessageID: id,
 		Version:           "1",
 	}
+}
+
+func equalCursors(left, right []Cursor) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalInts(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func equalStrings(left, right []string) bool {

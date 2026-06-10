@@ -6,7 +6,10 @@ import (
 	"fmt"
 )
 
-const defaultPipelinePageSize = 100
+const (
+	defaultPipelinePageSize        = 100
+	defaultUIDValidityRescanWindow = 1000
+)
 
 // Pipeline coordinates incremental mailbox ingestion across the provider,
 // durable checkpoint, message processing, and document emission boundaries.
@@ -33,6 +36,13 @@ type Pipeline struct {
 	// PageSize controls the maximum number of changes requested per provider
 	// call. Values less than one use a conservative default.
 	PageSize int
+
+	// UIDValidityRescanWindow bounds the number of changes processed in the run
+	// that discovers an IMAP UIDVALIDITY reset. The reset checkpoint starts at
+	// UID zero so older messages are not skipped; if more work remains, the
+	// committed cursor lets a later reconciliation resume safely. Values less
+	// than one use a conservative default.
+	UIDValidityRescanWindow int
 
 	// FetchOptions controls message retrieval. IncludeBody is forced to true
 	// because Processor requires the RFC 5322 stream.
@@ -94,14 +104,56 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) error {
 
 	cursor := checkpoint.Cursor
 	seen := make(map[string]struct{})
+	rescanRemaining := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		page, err := p.Connector.ListChanges(ctx, mailbox, cursor, p.pageSize())
+		limit := p.pageSize()
+		if rescanRemaining > 0 && rescanRemaining < limit {
+			limit = rescanRemaining
+		}
+		page, err := p.Connector.ListChanges(ctx, mailbox, cursor, limit)
 		if err != nil {
 			return fmt.Errorf("list changes for mailbox %q: %w", mailboxIdentity(mailbox), err)
+		}
+
+		if resetValidity, reset := uidValidityReset(cursor, page); reset {
+			if resetValidity == 0 {
+				return &Error{
+					Kind:      ErrorCheckpointReset,
+					Operation: "reconcile mailbox",
+					Message:   fmt.Sprintf("mailbox %q reset did not provide a new UIDVALIDITY", mailboxIdentity(mailbox)),
+				}
+			}
+			if cursor.UID == 0 && cursor.UIDValidity == resetValidity {
+				return &Error{
+					Kind:      ErrorCheckpointReset,
+					Operation: "reconcile mailbox",
+					Message:   fmt.Sprintf("mailbox %q repeated UIDVALIDITY reset %d", mailboxIdentity(mailbox), resetValidity),
+				}
+			}
+
+			next := checkpoint
+			next.Cursor = Cursor{UIDValidity: resetValidity}
+			next.ErrorCount = 0
+			next.LastError = ""
+			if err := p.StateStore.CommitCheckpoint(ctx, key, checkpoint.Version, next); err != nil {
+				return fmt.Errorf("commit UIDVALIDITY reset for mailbox %q: %w", mailboxIdentity(mailbox), err)
+			}
+			checkpoint, err = p.StateStore.LoadCheckpoint(ctx, key)
+			if err != nil {
+				return fmt.Errorf("reload checkpoint for mailbox %q after UIDVALIDITY reset: %w", mailboxIdentity(mailbox), err)
+			}
+			cursor = checkpoint.Cursor
+			rescanRemaining = p.uidValidityRescanWindow()
+			clear(seen)
+			continue
+		}
+
+		if rescanRemaining > 0 && len(page.Changes) > rescanRemaining {
+			return fmt.Errorf("list changes for mailbox %q: provider returned %d changes for reset rescan limit %d", mailboxIdentity(mailbox), len(page.Changes), rescanRemaining)
 		}
 
 		messageErrors := p.processPage(ctx, page, seen)
@@ -140,7 +192,31 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) error {
 			return fmt.Errorf("list changes for mailbox %q: provider returned a non-advancing cursor", mailboxIdentity(mailbox))
 		}
 		cursor = page.Next
+		if rescanRemaining > 0 {
+			rescanRemaining -= len(page.Changes)
+			if rescanRemaining <= 0 {
+				return nil
+			}
+		}
 	}
+}
+
+func uidValidityReset(cursor Cursor, page ChangePage) (uint32, bool) {
+	for _, change := range page.Changes {
+		if change.Kind == ChangeReset {
+			if change.Ref.UIDValidity != 0 {
+				return change.Ref.UIDValidity, true
+			}
+			return page.Next.UIDValidity, true
+		}
+		if cursor.UIDValidity != 0 && change.Ref.UIDValidity != 0 && cursor.UIDValidity != change.Ref.UIDValidity {
+			return change.Ref.UIDValidity, true
+		}
+	}
+	if cursor.UIDValidity != 0 && page.Next.UIDValidity != 0 && cursor.UIDValidity != page.Next.UIDValidity {
+		return page.Next.UIDValidity, true
+	}
+	return 0, false
 }
 
 func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[string]struct{}) []error {
@@ -213,6 +289,13 @@ func (p *Pipeline) pageSize() int {
 		return p.PageSize
 	}
 	return defaultPipelinePageSize
+}
+
+func (p *Pipeline) uidValidityRescanWindow() int {
+	if p.UIDValidityRescanWindow > 0 {
+		return p.UIDValidityRescanWindow
+	}
+	return defaultUIDValidityRescanWindow
 }
 
 func pipelineChangeIdentity(ref MessageRef) string {
