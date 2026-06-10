@@ -443,6 +443,10 @@ func imapError(operation string, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	var mailErr *Error
+	if errors.As(err, &mailErr) {
+		return err
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return &Error{Kind: ErrorTimeout, Operation: operation, Message: "IMAP operation timed out", Cause: err}
@@ -604,48 +608,151 @@ func (c *goIMAPClient) FetchMessage(ctx context.Context, uid uint32, options Fet
 	err := c.run(ctx, func() error {
 		set := new(imap.SeqSet)
 		set.AddNum(uid)
+
+		preflight, err := c.fetchOne(set, []imap.FetchItem{imap.FetchUid, imap.FetchRFC822Size})
+		if err != nil {
+			return err
+		}
+		if preflight == nil || preflight.Uid != uid {
+			return errors.New("IMAP message not found")
+		}
+		metadata = convertIMAPMessage(preflight)
+		if options.MaxBytes > 0 && metadata.Size > options.MaxBytes {
+			return oversizedMessageError()
+		}
+
 		section := &imap.BodySectionName{Peek: true}
 		if !options.IncludeBody {
 			section.Specifier = imap.HeaderSpecifier
 			section.Fields = append([]string(nil), options.Headers...)
 		}
-		if options.MaxBytes > 0 {
-			max := options.MaxBytes + 1
-			if max > int64(^uint(0)>>1) {
-				max = int64(^uint(0) >> 1)
-			}
-			section.Partial = []int{0, int(max)}
+		var fetchedMetadata imapMessage
+		fetchedMetadata, body, err = c.fetchBody(ctx, set, uid, section, metadata.Size, options)
+		if err != nil {
+			return err
 		}
-		ch := make(chan *imap.Message, 1)
-		done := make(chan error, 1)
-		go func() {
-			done <- c.client.UidFetch(set, []imap.FetchItem{imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, section.FetchItem()}, ch)
-		}()
-		message, ok := <-ch
-		if !ok || message == nil {
-			if err := <-done; err != nil {
-				return err
-			}
-			return errors.New("IMAP message not found")
-		}
-		metadata = convertIMAPMessage(message)
-		literal := message.GetBody(section)
-		if literal == nil {
-			for range ch {
-			}
-			_ = <-done
-			return errors.New("IMAP server omitted requested message body")
-		}
-		var err error
-		body, err = io.ReadAll(literal)
-		for range ch {
-		}
-		if commandErr := <-done; err == nil {
-			err = commandErr
-		}
-		return err
+		metadata = fetchedMetadata
+		return nil
 	})
 	return metadata, body, err
+}
+
+func (c *goIMAPClient) fetchOne(set *imap.SeqSet, items []imap.FetchItem) (*imap.Message, error) {
+	ch := make(chan *imap.Message, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.UidFetch(set, items, ch)
+	}()
+	message, ok := <-ch
+	for range ch {
+	}
+	if err := <-done; err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return message, nil
+}
+
+func (c *goIMAPClient) fetchBody(ctx context.Context, set *imap.SeqSet, uid uint32, section *imap.BodySectionName, preflightSize int64, options FetchOptions) (imapMessage, []byte, error) {
+	items := []imap.FetchItem{
+		imap.FetchUid,
+		imap.FetchFlags,
+		imap.FetchInternalDate,
+		imap.FetchRFC822Size,
+		section.FetchItem(),
+	}
+	ch := make(chan *imap.Message, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.UidFetch(set, items, ch)
+	}()
+
+	message, ok := <-ch
+	if !ok || message == nil || message.Uid != uid {
+		if err := <-done; err != nil {
+			return imapMessage{}, nil, err
+		}
+		return imapMessage{}, nil, errors.New("IMAP message not found")
+	}
+	metadata := convertIMAPMessage(message)
+	if metadata.Size == 0 {
+		metadata.Size = preflightSize
+	}
+	literal := message.GetBody(section)
+	if literal == nil {
+		for range ch {
+		}
+		_ = <-done
+		return imapMessage{}, nil, errors.New("IMAP server omitted requested message body")
+	}
+	declaredSize := int64(0)
+	if options.IncludeBody {
+		declaredSize = metadata.Size
+	}
+	body, readErr := readIMAPLiteral(ctx, literal, declaredSize, options.MaxBytes)
+	var mailErr *Error
+	if errors.As(readErr, &mailErr) && mailErr.Kind == ErrorOversized {
+		c.abortTransfer()
+	}
+	for range ch {
+	}
+	commandErr := <-done
+	if readErr != nil {
+		return imapMessage{}, nil, readErr
+	}
+	if commandErr != nil {
+		return imapMessage{}, nil, commandErr
+	}
+	return metadata, body, nil
+}
+
+func (c *goIMAPClient) abortTransfer() {
+	c.closed = true
+	_ = c.conn.Close()
+}
+
+func readIMAPLiteral(ctx context.Context, literal io.Reader, declaredSize, maxBytes int64) ([]byte, error) {
+	if maxBytes > 0 && declaredSize > maxBytes {
+		return nil, oversizedMessageError()
+	}
+
+	reader := literal
+	if maxBytes > 0 && maxBytes < int64(^uint64(0)>>1) {
+		reader = io.LimitReader(literal, maxBytes+1)
+	}
+	var body bytes.Buffer
+	buffer := make([]byte, 32*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			_, _ = body.Write(buffer[:n])
+			if maxBytes > 0 && int64(body.Len()) > maxBytes {
+				return nil, oversizedMessageError()
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		if n == 0 {
+			return nil, io.ErrNoProgress
+		}
+	}
+	if declaredSize > 0 && int64(body.Len()) < declaredSize {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return body.Bytes(), nil
+}
+
+func oversizedMessageError() error {
+	return &Error{Kind: ErrorOversized, Operation: "fetch message", Message: "message exceeds configured byte limit"}
 }
 
 func convertIMAPMessage(message *imap.Message) imapMessage {

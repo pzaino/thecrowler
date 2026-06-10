@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -408,6 +409,7 @@ type fakeIMAPClient struct {
 	fetchUIDs       [][]uint32
 	listStarted     chan struct{}
 	blockList       bool
+	fetchMessageErr error
 	logoutCalls     int
 	closeCalls      int
 }
@@ -456,6 +458,9 @@ func (f *fakeIMAPClient) FetchMetadata(_ context.Context, uids []uint32) ([]imap
 }
 
 func (f *fakeIMAPClient) FetchMessage(_ context.Context, uid uint32, _ FetchOptions) (imapMessage, []byte, error) {
+	if f.fetchMessageErr != nil {
+		return imapMessage{}, nil, f.fetchMessageErr
+	}
 	return f.messages[uid], append([]byte(nil), f.bodies[uid]...), nil
 }
 
@@ -471,4 +476,96 @@ func (f *fakeIMAPClient) Close() error {
 	defer f.mu.Unlock()
 	f.closeCalls++
 	return nil
+}
+
+func TestIMAPConnectorOpenMessageMissing(t *testing.T) {
+	fake := &fakeIMAPClient{
+		statuses:        map[string]imapMailboxStatus{"INBOX": {UIDValidity: 9}},
+		fetchMessageErr: errors.New("IMAP message not found"),
+	}
+	connector := authenticatedTestIMAPConnector(t, testIMAPConfig(), fake)
+
+	_, err := connector.OpenMessage(context.Background(), MessageRef{
+		Mailbox: Mailbox{ID: "INBOX"}, UID: 404, UIDValidity: 9,
+	}, FetchOptions{IncludeBody: true, MaxBytes: 1024})
+	if err == nil {
+		t.Fatal("OpenMessage() error = nil, want missing-message error")
+	}
+}
+
+func TestReadIMAPLiteralSuccess(t *testing.T) {
+	const message = "From: sender@example.test\r\nSubject: complete\r\n\r\nbody"
+	data, err := readIMAPLiteral(context.Background(), strings.NewReader(message), int64(len(message)), int64(len(message)))
+	if err != nil {
+		t.Fatalf("readIMAPLiteral() error = %v", err)
+	}
+	if string(data) != message {
+		t.Fatalf("readIMAPLiteral() = %q, want complete RFC822 message", data)
+	}
+}
+
+func TestReadIMAPLiteralRejectsDeclaredOversizeBeforeRead(t *testing.T) {
+	reader := &countingReader{Reader: strings.NewReader("not read")}
+	_, err := readIMAPLiteral(context.Background(), reader, 9, 8)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorOversized {
+		t.Fatalf("readIMAPLiteral() error = %T %v, want ErrorOversized", err, err)
+	}
+	if reader.reads != 0 {
+		t.Fatalf("literal reads = %d, want zero after metadata size rejection", reader.reads)
+	}
+}
+
+func TestReadIMAPLiteralRejectsUndeclaredOversizeDuringBoundedRead(t *testing.T) {
+	reader := strings.NewReader("123456789")
+	_, err := readIMAPLiteral(context.Background(), reader, 0, 8)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorOversized {
+		t.Fatalf("readIMAPLiteral() error = %T %v, want ErrorOversized", err, err)
+	}
+	if reader.Len() != 0 {
+		t.Fatalf("unread literal bytes = %d, want bounded read of limit plus one", reader.Len())
+	}
+}
+
+func TestReadIMAPLiteralReportsShortRead(t *testing.T) {
+	_, err := readIMAPLiteral(context.Background(), strings.NewReader("short"), 10, 20)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("readIMAPLiteral() error = %v, want io.ErrUnexpectedEOF", err)
+	}
+}
+
+func TestReadIMAPLiteralHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := &cancelingReader{cancel: cancel, data: []byte("partial")}
+	_, err := readIMAPLiteral(ctx, reader, 0, 1024)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("readIMAPLiteral() error = %v, want context.Canceled", err)
+	}
+}
+
+type countingReader struct {
+	io.Reader
+	reads int
+}
+
+func (r *countingReader) Read(buffer []byte) (int, error) {
+	r.reads++
+	return r.Reader.Read(buffer)
+}
+
+type cancelingReader struct {
+	cancel context.CancelFunc
+	data   []byte
+	read   bool
+}
+
+func (r *cancelingReader) Read(buffer []byte) (int, error) {
+	if r.read {
+		return 0, io.EOF
+	}
+	r.read = true
+	n := copy(buffer, r.data)
+	r.cancel()
+	return n, nil
 }
