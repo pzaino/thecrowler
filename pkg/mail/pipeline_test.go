@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPipelineRunSuccess(t *testing.T) {
@@ -341,10 +342,104 @@ func TestPipelineIsolatesMixedMessageFailures(t *testing.T) {
 	}
 }
 
+func TestPipelineRetriesTransientConnectorFailuresWithInjectedSleep(t *testing.T) {
+	t.Parallel()
+
+	mailbox := Mailbox{ID: "inbox"}
+	ref := MessageRef{Mailbox: mailbox, ProviderMessageID: "retry-me"}
+	connector := &pipelineFakeConnector{
+		mailboxes: mailboxSlice(mailbox),
+		pages: map[Cursor]ChangePage{
+			{}: {Changes: []Change{{Kind: ChangeUpsert, Ref: ref}}, Next: Cursor{Token: "done"}},
+		},
+		openErrorSequences: map[string][]error{
+			"retry-me": {
+				&Error{Kind: ErrorTransient, Message: "temporary connector failure"},
+				&Error{Kind: ErrorTimeout, Message: "connector timeout"},
+			},
+		},
+	}
+	var delays []time.Duration
+	pipeline := NewPipeline(connector, NewMemoryStateStore(), &pipelineFakeProcessor{}, &pipelineFakeEmitter{})
+	pipeline.RetryPolicy = RetryPolicy{MaxAttempts: 4, InitialBackoff: 10 * time.Millisecond, MaxBackoff: 25 * time.Millisecond}
+	pipeline.Sleep = func(ctx context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return ctx.Err()
+	}
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := connector.openedIDs(), []string{"retry-me", "retry-me", "retry-me"}; !equalStrings(got, want) {
+		t.Fatalf("opened message IDs = %v, want %v", got, want)
+	}
+	if got, want := delays, []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}; !equalDurations(got, want) {
+		t.Fatalf("retry delays = %v, want %v", got, want)
+	}
+}
+
+func TestPipelineRetriesParserPartialAndDiscardsMalformedContent(t *testing.T) {
+	t.Parallel()
+
+	mailbox := Mailbox{ID: "inbox"}
+	partialRef := MessageRef{Mailbox: mailbox, ProviderMessageID: "partial"}
+	malformedRef := MessageRef{Mailbox: mailbox, ProviderMessageID: "malformed"}
+	connector := &pipelineFakeConnector{
+		mailboxes: mailboxSlice(mailbox),
+		pages: map[Cursor]ChangePage{
+			{}: {
+				Changes: []Change{{Kind: ChangeUpsert, Ref: partialRef}, {Kind: ChangeUpsert, Ref: malformedRef}},
+				Next:    Cursor{Token: "done"},
+			},
+		},
+	}
+	processor := &pipelineFakeProcessor{
+		failureSequences: map[string][]error{
+			"partial": {&Error{Kind: ErrorPartial, Message: "incomplete MIME tree"}},
+		},
+		failures: map[string]error{
+			"malformed": &Error{Kind: ErrorMalformed, Message: "invalid RFC 5322 content"},
+		},
+	}
+	store := NewMemoryStateStore()
+	pipeline := NewPipeline(connector, store, processor, &pipelineFakeEmitter{})
+	pipeline.RetryPolicy = RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
+	pipeline.Sleep = func(context.Context, time.Duration) error { return nil }
+
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := connector.openedIDs(), []string{"partial", "partial", "malformed"}; !equalStrings(got, want) {
+		t.Fatalf("opened message IDs = %v, want %v", got, want)
+	}
+	checkpoint, err := store.LoadCheckpoint(context.Background(), MailboxKey{Mailbox: mailbox})
+	if err != nil {
+		t.Fatalf("LoadCheckpoint() error = %v", err)
+	}
+	if got, want := checkpoint.Cursor, (Cursor{Token: "done"}); got != want {
+		t.Fatalf("checkpoint cursor = %#v, want %#v", got, want)
+	}
+}
+
+func mailboxSlice(mailbox Mailbox) []Mailbox { return []Mailbox{mailbox} }
+
+func equalDurations(left, right []time.Duration) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 type pipelineFakeConnector struct {
-	mailboxes  []Mailbox
-	pages      map[Cursor]ChangePage
-	openErrors map[string]error
+	mailboxes          []Mailbox
+	pages              map[Cursor]ChangePage
+	openErrors         map[string]error
+	openErrorSequences map[string][]error
 
 	mu          sync.Mutex
 	opened      []string
@@ -377,6 +472,10 @@ func (f *pipelineFakeConnector) OpenMessage(ctx context.Context, ref MessageRef,
 	f.opened = append(f.opened, id)
 	f.lastOptions = options
 	failure := f.openErrors[id]
+	if sequence := f.openErrorSequences[id]; len(sequence) != 0 {
+		failure = sequence[0]
+		f.openErrorSequences[id] = sequence[1:]
+	}
 	if failure == nil {
 		if f.streams == nil {
 			f.streams = make(map[string]*pipelineFakeReadCloser)
@@ -419,10 +518,11 @@ func (f *pipelineFakeReadCloser) Close() error {
 }
 
 type pipelineFakeProcessor struct {
-	mu           sync.Mutex
-	processed    []string
-	failures     map[string]error
-	afterProcess func()
+	mu               sync.Mutex
+	processed        []string
+	failures         map[string]error
+	failureSequences map[string][]error
+	afterProcess     func()
 }
 
 func (f *pipelineFakeProcessor) Process(_ context.Context, message RawMessage) (Document, error) {
@@ -430,6 +530,10 @@ func (f *pipelineFakeProcessor) Process(_ context.Context, message RawMessage) (
 	f.mu.Lock()
 	f.processed = append(f.processed, id)
 	failure := f.failures[id]
+	if sequence := f.failureSequences[id]; len(sequence) != 0 {
+		failure = sequence[0]
+		f.failureSequences[id] = sequence[1:]
+	}
 	afterProcess := f.afterProcess
 	f.mu.Unlock()
 	if afterProcess != nil {

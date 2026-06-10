@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 const (
@@ -47,6 +48,14 @@ type Pipeline struct {
 	// FetchOptions controls message retrieval. IncludeBody is forced to true
 	// because Processor requires the RFC 5322 stream.
 	FetchOptions FetchOptions
+
+	// RetryPolicy bounds retries for connector, parser, and emitter failures.
+	// Zero values use conservative defaults.
+	RetryPolicy RetryPolicy
+
+	// Sleep waits between retry attempts. Tests may inject a deterministic
+	// implementation; nil uses a context-aware timer.
+	Sleep func(context.Context, time.Duration) error
 }
 
 // NewPipeline constructs a Pipeline from its four side-effecting dependencies.
@@ -73,7 +82,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return err
 	}
 
-	mailboxes, err := p.Connector.ListMailboxes(ctx)
+	mailboxes, _, err := retryValue(ctx, p.RetryPolicy, p.sleep, func() ([]Mailbox, error) {
+		return p.Connector.ListMailboxes(ctx)
+	})
 	if err != nil {
 		return fmt.Errorf("list mailboxes: %w", err)
 	}
@@ -114,7 +125,9 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) error {
 		if rescanRemaining > 0 && rescanRemaining < limit {
 			limit = rescanRemaining
 		}
-		page, err := p.Connector.ListChanges(ctx, mailbox, cursor, limit)
+		page, _, err := retryValue(ctx, p.RetryPolicy, p.sleep, func() (ChangePage, error) {
+			return p.Connector.ListChanges(ctx, mailbox, cursor, limit)
+		})
 		if err != nil {
 			return fmt.Errorf("list changes for mailbox %q: %w", mailboxIdentity(mailbox), err)
 		}
@@ -243,25 +256,62 @@ func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[st
 }
 
 func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef) error {
-	options := p.FetchOptions
-	options.IncludeBody = true
-	raw, err := p.Connector.OpenMessage(ctx, ref, options)
-	if err != nil {
-		return fmt.Errorf("fetch mailbox message: %w", err)
-	}
-	if raw.RFC822 == nil {
-		return errors.New("fetch mailbox message: connector returned a nil message stream")
-	}
-	defer raw.RFC822.Close()
+	_, decision, err := retryValue(ctx, p.RetryPolicy, p.sleep, func() (struct{}, error) {
+		options := p.FetchOptions
+		options.IncludeBody = true
+		raw, err := p.Connector.OpenMessage(ctx, ref, options)
+		if err != nil {
+			return struct{}{}, fmt.Errorf("fetch mailbox message: %w", err)
+		}
+		if raw.RFC822 == nil {
+			return struct{}{}, errors.New("fetch mailbox message: connector returned a nil message stream")
+		}
 
-	document, err := p.Processor.Process(ctx, raw)
-	if err != nil {
-		return fmt.Errorf("process mailbox message: %w", err)
+		document, processErr := p.Processor.Process(ctx, raw)
+		_ = raw.RFC822.Close()
+		if processErr != nil {
+			return struct{}{}, fmt.Errorf("process mailbox message: %w", processErr)
+		}
+		if err := p.Emitter.Emit(ctx, document); err != nil {
+			return struct{}{}, fmt.Errorf("emit mailbox message: %w", err)
+		}
+		return struct{}{}, nil
+	})
+	if decision.Action == RetryActionDiscard {
+		return nil
 	}
-	if err := p.Emitter.Emit(ctx, document); err != nil {
-		return fmt.Errorf("emit mailbox message: %w", err)
+	return err
+}
+
+func retryValue[T any](ctx context.Context, policy RetryPolicy, sleep func(context.Context, time.Duration) error, operation func() (T, error)) (T, RetryDecision, error) {
+	var zero T
+	for attempt := 1; ; attempt++ {
+		value, err := operation()
+		if err == nil {
+			return value, RetryDecision{}, nil
+		}
+		decision := DecideRetry(err, attempt, policy)
+		if decision.Action != RetryActionRetry {
+			return zero, decision, err
+		}
+		if err := sleep(ctx, decision.Delay); err != nil {
+			return zero, RetryDecision{Action: RetryActionFail, Reason: RetryReasonCanceled}, err
+		}
 	}
-	return nil
+}
+
+func (p *Pipeline) sleep(ctx context.Context, delay time.Duration) error {
+	if p.Sleep != nil {
+		return p.Sleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (p *Pipeline) validate() error {
