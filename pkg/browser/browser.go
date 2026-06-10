@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package browser owns the context-aware lifecycle of a leased VDI browser
-// session. Crawling policy and page processing deliberately remain outside
-// this package.
+// Package browser owns the context-aware lifecycle of a leased VDI browser session.
 package browser
 
 import (

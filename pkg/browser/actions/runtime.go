@@ -18,6 +18,7 @@ import (
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
+// ErrRuntimeStopped signals that the runtime has been stopped and can no longer execute actions.
 var ErrRuntimeStopped = errors.New("browser action runtime stopped")
 
 // RbeeEndpoints centralizes the browser-visible Rbee/HBS endpoint configuration.
