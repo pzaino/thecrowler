@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -27,6 +28,13 @@ func WithMaxPartBytes(maxBytes int64) ParserOption {
 	return func(parser *mimeParser) { parser.maxPartBytes = maxBytes }
 }
 
+// WithMaxEmbeddedMessageDepth sets the number of attached RFC 5322 messages
+// that may be recursively parsed below the root message. A non-positive value
+// disables attached-message parsing.
+func WithMaxEmbeddedMessageDepth(maxDepth int) ParserOption {
+	return func(parser *mimeParser) { parser.maxEmbeddedMessageDepth = maxDepth }
+}
+
 // WithAttachmentPolicy enables early attachment filtering. Limits are applied
 // before accepted content is copied, hashed, or retained.
 func WithAttachmentPolicy(policy AttachmentPolicy, limits Limits) ParserOption {
@@ -35,6 +43,9 @@ func WithAttachmentPolicy(policy AttachmentPolicy, limits Limits) ParserOption {
 		policy.BlockedMediaTypes = append([]string(nil), policy.BlockedMediaTypes...)
 		parser.attachmentPolicy = &policy
 		parser.attachmentLimits = limits
+		if limits.MaxEmbeddedMessageDepth > 0 {
+			parser.maxEmbeddedMessageDepth = limits.MaxEmbeddedMessageDepth
+		}
 	}
 }
 
@@ -48,7 +59,8 @@ func NewParser(options ...ParserOption) Parser {
 			enmime.SkipMalformedParts(true),
 			enmime.SetReadPartErrorPolicy(enmime.AllowCorruptTextPartErrorPolicy),
 		),
-		maxPartBytes: defaultMaxPartBytes,
+		maxPartBytes:            defaultMaxPartBytes,
+		maxEmbeddedMessageDepth: defaultMaxEmbeddedMessageDepth,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -59,10 +71,11 @@ func NewParser(options ...ParserOption) Parser {
 }
 
 type mimeParser struct {
-	parser           *enmime.Parser
-	maxPartBytes     int64
-	attachmentPolicy *AttachmentPolicy
-	attachmentLimits Limits
+	parser                  *enmime.Parser
+	maxPartBytes            int64
+	attachmentPolicy        *AttachmentPolicy
+	attachmentLimits        Limits
+	maxEmbeddedMessageDepth int
 }
 
 func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessage, error) {
@@ -73,7 +86,15 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 		return ParsedMessage{}, malformedParseError("message stream is nil", nil)
 	}
 
-	envelope, err := p.parser.ReadEnvelope(contextReader{ctx: ctx, reader: message.RFC822})
+	var attachmentPolicy *attachmentPolicyEvaluator
+	if p.attachmentPolicy != nil {
+		attachmentPolicy = newAttachmentPolicyEvaluator(*p.attachmentPolicy, p.attachmentLimits)
+	}
+	return p.parseMessage(ctx, message.Ref, message.RFC822, 0, attachmentPolicy)
+}
+
+func (p *mimeParser) parseMessage(ctx context.Context, ref MessageRef, reader io.Reader, depth int, attachmentPolicy *attachmentPolicyEvaluator) (ParsedMessage, error) {
+	envelope, err := p.parser.ReadEnvelope(contextReader{ctx: ctx, reader: reader})
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return ParsedMessage{}, contextErr
@@ -85,19 +106,19 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 	rawHeaders, rawWarnings := boundedHeaders(map[string][]string(envelope.Root.Header), true)
 	decodedHeaders, decodedWarnings := boundedHeaders(decodedEnvelopeHeaders(envelope), true)
 
-	var attachmentPolicy *attachmentPolicyEvaluator
-	if p.attachmentPolicy != nil {
-		attachmentPolicy = newAttachmentPolicyEvaluator(*p.attachmentPolicy, p.attachmentLimits)
+	attachments, childMessages, attachmentWarnings := p.envelopeAttachments(ctx, ref, envelope.Root, htmlBody, depth, attachmentPolicy)
+	if err := ctx.Err(); err != nil {
+		return ParsedMessage{}, err
 	}
-	attachments, attachmentWarnings := envelopeAttachments(envelope.Root, htmlBody, p.maxPartBytes, attachmentPolicy)
 	parsed := ParsedMessage{
-		Ref:         message.Ref,
-		Headers:     decodedHeaders,
-		RawHeaders:  rawHeaders,
-		TextBody:    textBody,
-		HTMLBody:    htmlBody,
-		Attachments: attachments,
-		Warnings:    envelopeWarnings(envelope.Root),
+		Ref:           ref,
+		Headers:       decodedHeaders,
+		RawHeaders:    rawHeaders,
+		TextBody:      textBody,
+		HTMLBody:      htmlBody,
+		Attachments:   attachments,
+		ChildMessages: childMessages,
+		Warnings:      envelopeWarnings(envelope.Root),
 	}
 	parsed.Warnings = append(parsed.Warnings, attachmentWarnings...)
 	parsed.Warnings = append(parsed.Warnings, semanticPartWarnings(envelope.Root, p.maxPartBytes)...)
@@ -329,10 +350,11 @@ func decodedEnvelopeHeaders(envelope *enmime.Envelope) map[string][]string {
 	return headers
 }
 
-func envelopeAttachments(root *enmime.Part, htmlBody string, maxPartBytes int64, policy *attachmentPolicyEvaluator) ([]Attachment, []ParserWarning) {
+func (p *mimeParser) envelopeAttachments(ctx context.Context, ref MessageRef, root *enmime.Part, htmlBody string, depth int, policy *attachmentPolicyEvaluator) ([]Attachment, []ParsedMessage, []ParserWarning) {
 	references := htmlCIDReferences(htmlBody)
 	matched := make(map[string]bool, len(references))
 	var attachments []Attachment
+	var childMessages []ParsedMessage
 	var warnings []ParserWarning
 	walkParts(root, func(part *enmime.Part) bool {
 		if !isAttachmentPart(part) {
@@ -341,14 +363,14 @@ func envelopeAttachments(root *enmime.Part, htmlBody string, maxPartBytes int64,
 		contentID := normalizeContentID(part.ContentID)
 		inline := strings.EqualFold(strings.TrimSpace(part.Disposition), "inline") ||
 			(contentID != "" && references[contentID] && !matched[contentID])
+		declaredType, detectedType := attachmentMediaTypes(part.Header.Get("Content-Type"), part.Content)
 		if policy != nil {
-			declaredType, detectedType := attachmentMediaTypes(part.Header.Get("Content-Type"), part.Content)
 			if warning := policy.evaluate(part.PartID, declaredType, detectedType, int64(len(part.Content)), inline); warning != nil {
 				warnings = append(warnings, *warning)
 				return false
 			}
 		}
-		attachment := attachmentFromPart(part, maxPartBytes)
+		attachment := attachmentFromPart(part, p.maxPartBytes)
 		if inline {
 			attachment.Inline = true
 			if contentID != "" {
@@ -356,11 +378,43 @@ func envelopeAttachments(root *enmime.Part, htmlBody string, maxPartBytes int64,
 			}
 		}
 		attachments = append(attachments, attachment)
-		// Do not expose nested MIME parts inside an attached message or
-		// multipart payload as independent indexable attachments.
+
+		if policy != nil && isAttachedMessage(part.FileName, declaredType, detectedType) && !attachment.Truncated {
+			if depth >= p.maxEmbeddedMessageDepth {
+				warnings = append(warnings, ParserWarning{
+					Category: WarningAttachmentSkipped,
+					Code:     "embedded_message_depth_exceeded",
+					Message:  "attached message recursion depth limit was reached",
+					PartID:   part.PartID,
+				})
+			} else {
+				child, err := p.parseMessage(ctx, ref, bytes.NewReader(part.Content), depth+1, policy)
+				if err != nil {
+					if ctx.Err() != nil {
+						return false
+					}
+					warnings = append(warnings, ParserWarning{
+						Category: WarningAttachmentSkipped,
+						Code:     "malformed_embedded_message",
+						Message:  "attached message could not be parsed",
+						PartID:   part.PartID,
+					})
+				} else {
+					childMessages = append(childMessages, child)
+				}
+			}
+		}
+		// Do not expose nested MIME parts inside an attachment as independent
+		// attachments. Attached messages are parsed separately above.
 		return false
 	})
-	return attachments, warnings
+	return attachments, childMessages, warnings
+}
+
+func isAttachedMessage(filename, declaredType, detectedType string) bool {
+	return strings.EqualFold(declaredType, "message/rfc822") ||
+		strings.EqualFold(detectedType, "message/rfc822") ||
+		strings.EqualFold(filepath.Ext(strings.TrimSpace(filename)), ".eml")
 }
 
 func attachmentFromPart(part *enmime.Part, maxPartBytes int64) Attachment {

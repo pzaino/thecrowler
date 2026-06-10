@@ -130,6 +130,7 @@ email:
     max_attachment_bytes: 10485760
     max_total_attachment_bytes: 26214400
     max_attachments: 50
+    max_embedded_message_depth: 3
 ```
 
 The exact serialized schema may evolve, but it must preserve these boundaries:

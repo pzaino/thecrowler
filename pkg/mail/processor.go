@@ -41,6 +41,7 @@ func defaultAttachmentLimits() Limits {
 		MaxAttachmentBytes:      defaultMaxAttachmentBytes,
 		MaxTotalAttachmentBytes: defaultMaxTotalAttachmentBytes,
 		MaxAttachments:          defaultMaxAttachments,
+		MaxEmbeddedMessageDepth: defaultMaxEmbeddedMessageDepth,
 	}
 }
 
@@ -60,6 +61,15 @@ func (p *messageProcessor) Process(ctx context.Context, message RawMessage) (Doc
 }
 
 func documentFromParsedMessage(sourceID string, parsed ParsedMessage, extraction ExtractionConfig) (Document, error) {
+	childDocuments := make([]Document, 0, len(parsed.ChildMessages))
+	for _, child := range parsed.ChildMessages {
+		document, err := documentFromParsedMessage(sourceID, child, extraction)
+		if err != nil {
+			return Document{}, err
+		}
+		childDocuments = append(childDocuments, document)
+	}
+
 	extractedText := parsed.TextBody
 	var links []Link
 	if parsed.HTMLBody != "" {
@@ -90,25 +100,26 @@ func documentFromParsedMessage(sourceID string, parsed ParsedMessage, extraction
 	}
 
 	return Document{
-		SourceID:      sourceID,
-		Ref:           parsed.Ref,
-		MessageID:     parsed.MessageID,
-		ThreadID:      parsed.ThreadID,
-		Date:          parsed.Date,
-		From:          parsed.From,
-		To:            parsed.To,
-		CC:            parsed.CC,
-		BCC:           parsed.BCC,
-		ReplyTo:       parsed.ReplyTo,
-		Subject:       parsed.Subject,
-		Headers:       documentHeaders(parsed),
-		TextBody:      parsed.TextBody,
-		HTMLBody:      parsed.HTMLBody,
-		ExtractedText: extractedText,
-		Links:         links,
-		Attachments:   parsed.Attachments,
-		Security:      normalizeSecurity(parsed.Headers),
-		Warnings:      parsed.Warnings,
+		SourceID:       sourceID,
+		Ref:            parsed.Ref,
+		MessageID:      parsed.MessageID,
+		ThreadID:       parsed.ThreadID,
+		Date:           parsed.Date,
+		From:           parsed.From,
+		To:             parsed.To,
+		CC:             parsed.CC,
+		BCC:            parsed.BCC,
+		ReplyTo:        parsed.ReplyTo,
+		Subject:        parsed.Subject,
+		Headers:        documentHeaders(parsed),
+		TextBody:       parsed.TextBody,
+		HTMLBody:       parsed.HTMLBody,
+		ExtractedText:  extractedText,
+		Links:          links,
+		Attachments:    parsed.Attachments,
+		ChildDocuments: childDocuments,
+		Security:       normalizeSecurity(parsed.Headers),
+		Warnings:       parsed.Warnings,
 	}, nil
 }
 

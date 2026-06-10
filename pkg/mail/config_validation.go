@@ -15,6 +15,7 @@ const (
 	defaultMaxTotalAttachmentBytes = 25 << 20
 	defaultMaxAttachments          = 50
 	defaultMaxHeaderBytes          = 1 << 20
+	defaultMaxEmbeddedMessageDepth = 3
 	defaultMaxMIMEDepth            = 30
 	defaultMaxMIMEParts            = 1_000
 	defaultMaxLinksPerMessage      = 100
@@ -50,6 +51,7 @@ func DefaultSourceConfig() SourceConfig {
 				MaxTotalAttachmentBytes: defaultMaxTotalAttachmentBytes,
 				MaxAttachments:          defaultMaxAttachments,
 				MaxHeaderBytes:          defaultMaxHeaderBytes,
+				MaxEmbeddedMessageDepth: defaultMaxEmbeddedMessageDepth,
 				MaxMIMEDepth:            defaultMaxMIMEDepth,
 				MaxMIMEParts:            defaultMaxMIMEParts,
 			},
@@ -255,6 +257,9 @@ func validateCrawl(config CrawlConfig) error {
 	}
 	if limits.MaxHeaderBytes <= 0 || limits.MaxHeaderBytes > limits.MaxMessageBytes {
 		return fmt.Errorf("crawl.limits.max_header_bytes must be greater than zero and not exceed max_message_bytes")
+	}
+	if limits.MaxEmbeddedMessageDepth <= 0 {
+		return fmt.Errorf("crawl.limits.max_embedded_message_depth must be greater than zero")
 	}
 	if limits.MaxMIMEDepth <= 0 {
 		return fmt.Errorf("crawl.limits.max_mime_depth must be greater than zero")

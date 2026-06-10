@@ -105,6 +105,7 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "total attachment bytes", got: got.Crawl.Limits.MaxTotalAttachmentBytes, want: int64(25 << 20)},
 		{name: "attachment count", got: got.Crawl.Limits.MaxAttachments, want: 50},
 		{name: "header bytes", got: got.Crawl.Limits.MaxHeaderBytes, want: int64(1 << 20)},
+		{name: "embedded message depth", got: got.Crawl.Limits.MaxEmbeddedMessageDepth, want: 3},
 		{name: "MIME depth", got: got.Crawl.Limits.MaxMIMEDepth, want: 30},
 		{name: "MIME parts", got: got.Crawl.Limits.MaxMIMEParts, want: 1_000},
 		{name: "cleanup HTML", got: got.Extraction.CleanupHTML, want: false},
@@ -222,6 +223,7 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 			c.Crawl.Limits.MaxAttachmentBytes = c.Crawl.Limits.MaxMessageBytes + 1
 		}, wantErr: "must not exceed max_message_bytes"},
 		{name: "zero attachment count", mutate: func(c *SourceConfig) { c.Crawl.Limits.MaxAttachments = 0 }, wantErr: "max_attachments"},
+		{name: "zero embedded message depth", mutate: func(c *SourceConfig) { c.Crawl.Limits.MaxEmbeddedMessageDepth = 0 }, wantErr: "max_embedded_message_depth"},
 		{name: "header limit larger than message", mutate: func(c *SourceConfig) {
 			c.Crawl.Limits.MaxHeaderBytes = c.Crawl.Limits.MaxMessageBytes + 1
 		}, wantErr: "max_header_bytes"},

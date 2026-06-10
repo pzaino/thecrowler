@@ -236,3 +236,44 @@ func TestProcessorOptionallyCleansEmailHTMLForExtraction(t *testing.T) {
 		t.Errorf("enabled Links = %#v, want %#v", enabled.Links, wantEnabledLinks)
 	}
 }
+
+func TestProcessorEmitsParsedAttachedEmailsAsChildDocuments(t *testing.T) {
+	t.Parallel()
+
+	child := "From: child@example.test\r\nSubject: child subject\r\nContent-Type: text/plain\r\n\r\nchild body"
+	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "message/rfc822", child)
+	extraction := ExtractionConfig{Attachments: AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"message/rfc822"},
+	}}
+	limits := Limits{
+		MaxAttachmentBytes:      1 << 20,
+		MaxTotalAttachmentBytes: 2 << 20,
+		MaxAttachments:          10,
+		MaxEmbeddedMessageDepth: 2,
+	}
+
+	document, err := NewProcessorWithLimits("source-children", extraction, limits).Process(context.Background(), RawMessage{
+		RFC822: io.NopCloser(strings.NewReader(raw)),
+	})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	defer closeDocumentAttachments(t, document)
+
+	if len(document.ChildDocuments) != 1 {
+		t.Fatalf("ChildDocuments = %#v, want one", document.ChildDocuments)
+	}
+	childDocument := document.ChildDocuments[0]
+	if childDocument.SourceID != "source-children" || childDocument.Subject != "child subject" || childDocument.ExtractedText != "child body" {
+		t.Errorf("ChildDocuments[0] = %#v", childDocument)
+	}
+}
+
+func closeDocumentAttachments(t *testing.T, document Document) {
+	t.Helper()
+	closeAttachments(t, document.Attachments)
+	for _, child := range document.ChildDocuments {
+		closeDocumentAttachments(t, child)
+	}
+}

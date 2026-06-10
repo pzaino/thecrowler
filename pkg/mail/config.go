@@ -162,6 +162,7 @@ type Limits struct {
 	MaxTotalAttachmentBytes int64 `json:"max_total_attachment_bytes,omitempty" yaml:"max_total_attachment_bytes,omitempty"`
 	MaxAttachments          int   `json:"max_attachments,omitempty" yaml:"max_attachments,omitempty"`
 	MaxHeaderBytes          int64 `json:"max_header_bytes,omitempty" yaml:"max_header_bytes,omitempty"`
+	MaxEmbeddedMessageDepth int   `json:"max_embedded_message_depth,omitempty" yaml:"max_embedded_message_depth,omitempty"`
 	MaxMIMEDepth            int   `json:"max_mime_depth,omitempty" yaml:"max_mime_depth,omitempty"`
 	MaxMIMEParts            int   `json:"max_mime_parts,omitempty" yaml:"max_mime_parts,omitempty"`
 }

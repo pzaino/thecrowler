@@ -687,3 +687,179 @@ func closeAttachments(t *testing.T, attachments []Attachment) {
 		}
 	}
 }
+
+func TestParserParsesAllowedEMLAttachmentAsChildMessage(t *testing.T) {
+	t.Parallel()
+
+	child := "From: child@example.test\r\nSubject: child subject\r\nMessage-ID: <child@example.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nchild body"
+	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "application/octet-stream", child)
+	parser := recursiveAttachmentParser(3, 10)
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("Attachments = %#v, want retained .eml attachment", parsed.Attachments)
+	}
+	if len(parsed.ChildMessages) != 1 {
+		t.Fatalf("ChildMessages = %#v, want one parsed child", parsed.ChildMessages)
+	}
+	got := parsed.ChildMessages[0]
+	if got.Subject != "child subject" || got.MessageID != "<child@example.test>" || got.TextBody != "child body" {
+		t.Errorf("ChildMessages[0] = %#v", got)
+	}
+}
+
+func TestParserRecursivelyParsesMultiLevelAttachedMessages(t *testing.T) {
+	t.Parallel()
+
+	grandchild := "From: grandchild@example.test\r\nSubject: grandchild\r\nContent-Type: text/plain\r\n\r\ngrandchild body"
+	child := messageWithAttachedEmail("child", "child-boundary", "grandchild.eml", "message/rfc822", grandchild)
+	raw := messageWithAttachedEmail("parent", "parent-boundary", "child.eml", "message/rfc822", child)
+
+	parsed, err := recursiveAttachmentParser(3, 10).Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+
+	if len(parsed.ChildMessages) != 1 || len(parsed.ChildMessages[0].ChildMessages) != 1 {
+		t.Fatalf("recursive ChildMessages = %#v", parsed.ChildMessages)
+	}
+	got := parsed.ChildMessages[0].ChildMessages[0]
+	if got.Subject != "grandchild" || got.TextBody != "grandchild body" {
+		t.Errorf("grandchild = %#v", got)
+	}
+}
+
+func TestParserWarnsAndRetainsMalformedAttachedMessage(t *testing.T) {
+	t.Parallel()
+
+	raw := messageWithAttachedEmail("parent", "outer", "broken.eml", "message/rfc822", "not a valid RFC 5322 header\r\n\r\nbroken")
+	parsed, err := recursiveAttachmentParser(3, 10).Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+
+	if len(parsed.Attachments) != 1 || len(parsed.ChildMessages) != 0 {
+		t.Fatalf("parsed malformed attachment = %#v", parsed)
+	}
+	if !hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, "malformed_embedded_message") {
+		t.Errorf("Warnings = %#v, want malformed embedded-message warning", parsed.Warnings)
+	}
+}
+
+func TestParserLimitsAttachedMessageRecursionDepth(t *testing.T) {
+	t.Parallel()
+
+	grandchild := "From: grandchild@example.test\r\nSubject: grandchild\r\n\r\ngrandchild body"
+	child := messageWithAttachedEmail("child", "child-boundary", "grandchild.eml", "message/rfc822", grandchild)
+	raw := messageWithAttachedEmail("parent", "parent-boundary", "child.eml", "message/rfc822", child)
+
+	parsed, err := recursiveAttachmentParser(1, 10).Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+
+	if len(parsed.ChildMessages) != 1 {
+		t.Fatalf("ChildMessages = %#v, want first level", parsed.ChildMessages)
+	}
+	childParsed := parsed.ChildMessages[0]
+	if len(childParsed.ChildMessages) != 0 {
+		t.Fatalf("grandchildren = %#v, want depth-limited", childParsed.ChildMessages)
+	}
+	if !hasParserWarning(childParsed.Warnings, WarningAttachmentSkipped, "embedded_message_depth_exceeded") {
+		t.Errorf("child warnings = %#v, want depth warning", childParsed.Warnings)
+	}
+}
+
+func TestParserSharesAttachmentCountLimitWithChildMessages(t *testing.T) {
+	t.Parallel()
+
+	child := multipartAttachmentMessage(attachmentPart("nested.txt", "text/plain", "nested"))
+	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "message/rfc822", child)
+
+	parsed, err := recursiveAttachmentParser(3, 1).Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+
+	if len(parsed.ChildMessages) != 1 {
+		t.Fatalf("ChildMessages = %#v, want child message", parsed.ChildMessages)
+	}
+	childParsed := parsed.ChildMessages[0]
+	if len(childParsed.Attachments) != 0 {
+		t.Fatalf("child attachments = %#v, want inherited count limit", childParsed.Attachments)
+	}
+	if !hasParserWarning(childParsed.Warnings, WarningAttachmentSkipped, attachmentSkipCount) {
+		t.Errorf("child warnings = %#v, want inherited count warning", childParsed.Warnings)
+	}
+}
+
+func TestParserSharesAttachmentByteLimitWithChildMessages(t *testing.T) {
+	t.Parallel()
+
+	child := multipartAttachmentMessage(attachmentPart("nested.txt", "text/plain", "nested"))
+	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "message/rfc822", child)
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"message/rfc822", "text/plain"},
+	}, Limits{
+		MaxAttachmentBytes:      1 << 20,
+		MaxTotalAttachmentBytes: int64(len(child)),
+		MaxAttachments:          10,
+		MaxEmbeddedMessageDepth: 3,
+	}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+
+	if len(parsed.ChildMessages) != 1 {
+		t.Fatalf("ChildMessages = %#v, want child message", parsed.ChildMessages)
+	}
+	childParsed := parsed.ChildMessages[0]
+	if len(childParsed.Attachments) != 0 {
+		t.Fatalf("child attachments = %#v, want inherited aggregate-byte limit", childParsed.Attachments)
+	}
+	if !hasParserWarning(childParsed.Warnings, WarningAttachmentSkipped, attachmentSkipTotalSize) {
+		t.Errorf("child warnings = %#v, want inherited aggregate-byte warning", childParsed.Warnings)
+	}
+}
+
+func recursiveAttachmentParser(maxDepth, maxAttachments int) Parser {
+	return NewParser(WithAttachmentPolicy(AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"message/rfc822", "text/plain"},
+	}, Limits{
+		MaxAttachmentBytes:      1 << 20,
+		MaxTotalAttachmentBytes: 2 << 20,
+		MaxAttachments:          maxAttachments,
+		MaxEmbeddedMessageDepth: maxDepth,
+	}))
+}
+
+func messageWithAttachedEmail(subject, boundary, filename, mediaType, child string) string {
+	return "From: sender@example.test\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=" + boundary + "\r\n\r\n" +
+		"--" + boundary + "\r\nContent-Type: text/plain\r\n\r\n" + subject + " body\r\n" +
+		"--" + boundary + "\r\nContent-Type: " + mediaType + "; name=\"" + filename + "\"\r\n" +
+		"Content-Disposition: attachment; filename=\"" + filename + "\"\r\n\r\n" + child + "\r\n" +
+		"--" + boundary + "--\r\n"
+}
+
+func closeParsedMessageAttachments(t *testing.T, parsed ParsedMessage) {
+	t.Helper()
+	closeAttachments(t, parsed.Attachments)
+	for _, child := range parsed.ChildMessages {
+		closeParsedMessageAttachments(t, child)
+	}
+}
