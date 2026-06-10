@@ -18,11 +18,17 @@ type MailboxKey struct {
 	Mailbox   Mailbox `json:"mailbox" yaml:"mailbox"`
 }
 
-// Checkpoint is the durable progress for one mailbox. Version is an opaque
+// Checkpoint is the durable progress for one mailbox. Cursor carries the
+// provider cursor or IMAP UIDVALIDITY and last UID. The message fields record
+// the outcome of the most recently handled message. Version is an opaque
 // state-store value used to reject stale commits.
 type Checkpoint struct {
-	Cursor  Cursor `json:"cursor" yaml:"cursor"`
-	Version string `json:"version,omitempty" yaml:"version,omitempty"`
+	Cursor        Cursor `json:"cursor" yaml:"cursor"`
+	MessageStatus string `json:"message_status,omitempty" yaml:"message_status,omitempty"`
+	ContentHash   string `json:"content_hash,omitempty" yaml:"content_hash,omitempty"`
+	ErrorCount    uint32 `json:"error_count,omitempty" yaml:"error_count,omitempty"`
+	LastError     string `json:"last_error,omitempty" yaml:"last_error,omitempty"`
+	Version       string `json:"version,omitempty" yaml:"version,omitempty"`
 }
 
 // Connector exposes only the read-only mailbox operations needed by mail
