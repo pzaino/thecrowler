@@ -423,9 +423,7 @@ success. They trigger full reconciliation and an observable reset metric/event.
 ### State store
 
 The state store holds durable mail ingestion state independently from source
-configuration. Checkpoints must not be rewritten into source JSON because that
-mixes operator intent with worker-owned mutable state and makes atomic progress
-hard to guarantee.
+configuration.
 
 ```go
 type StateStore interface {
@@ -437,25 +435,170 @@ type StateStore interface {
 }
 ```
 
-The persistent model should include:
+#### Persistence decision
 
-- source, provider account, and mailbox identities;
-- provider cursor/history token or IMAP UIDVALIDITY and last committed UID;
-- checkpoint schema/config fingerprint and optimistic-lock version;
-- lease owner and expiration;
-- last successful reconciliation and listener health timestamps;
-- bounded failure/quarantine metadata needed to prevent poison-message loops;
-- optional per-message version/content hash when the provider cursor cannot
-  fully express updates and deletions.
+Use **new email-specific relational tables** for durable checkpoints, leases,
+and per-message reconciliation state. Do not store this state in the existing
+`Sources.status`, `Sources.engine`, error, or timestamp columns, and do not put
+it in `Sources.config` or `Sources.details` as a generic key-value document.
 
-Checkpoint commits use compare-and-swap or an equivalent transaction so stale
-workers cannot overwrite newer progress. Leases prevent routine concurrent
-runs, while idempotent document writes and checkpoint versioning protect
-against lease expiry, worker crashes, and duplicate delivery.
+The existing source columns remain the source-level operational summary: they
+answer whether a source is queued, processing, successful, or failed and which
+engine owns the current source run. They cannot represent multiple mailboxes,
+independent cursors, lease expiry, or compare-and-swap versions without
+serializing unrelated mailbox work through one source row. `Sources.config` is
+operator intent and must not be mutated by workers. `Sources.details` is an
+unstructured JSON object for internal source details, but `pkg/database` does
+not expose it as a generic transactional key-value store with per-key unique
+constraints, row locking, expiry, or atomic compare-and-swap. Encoding mail
+state there would make concurrent mailbox updates overwrite one another and
+would make deduplication and retention dependent on DB-specific JSON behavior.
 
-Database migrations and SQL implementations can live in `pkg/database`, but
-`pkg/mail` defines the `Checkpoint`, `MessageOutcome`, reset, and transition
-semantics. An in-memory implementation should support deterministic unit tests.
+The target schema is two logical tables (names are normative; exact SQL types
+are database-specific):
+
+- `EmailMailboxState`: one row per selected mailbox, containing its committed
+  cursor, IMAP UIDVALIDITY and committed UID where applicable, checkpoint
+  schema version, configuration fingerprint, optimistic version, lease owner,
+  lease expiration, monotonically increasing fencing token, last successful
+  reconciliation, listener health, reset reason, and timestamps.
+- `EmailMessageState`: a bounded reconciliation ledger containing provider
+  message identity, canonical document ID, provider version/content hash,
+  disposition (`indexed`, `deleted`, `skipped`, or `quarantined`), failure
+  count and bounded/redacted failure details, last observed time, deletion or
+  quarantine time, and timestamps. It stores no RFC 822 body or attachment
+  bytes.
+
+This is a design decision, not a migration in this change. When implementation
+begins, schema additions must follow the existing `pkg/database` convention:
+update fresh-install setup schemas and add versioned, idempotent migration files
+for every supported database rather than editing an old migration.
+
+#### Keys and constraints
+
+Mailbox and account identifiers in keys are provider-derived stable opaque IDs,
+or deterministic hashes of their canonical provider values when the raw values
+contain sensitive data or exceed portable index lengths. Display names are
+metadata and never keys.
+
+- `EmailMailboxState` primary key:
+  `(source_id, provider, account_key, mailbox_key)`.
+- `EmailMessageState` primary key:
+  `(source_id, provider, account_key, mailbox_key, provider_message_key)`.
+- `source_id` references `Sources(source_id)`. A source soft-delete disables
+  processing; physical deletion may cascade its email state.
+- `provider_message_key` is the provider's stable message identity. For IMAP it
+  is derived from `(UIDVALIDITY, UID)`, not a sequence number. A UIDVALIDITY
+  reset therefore creates a new identity domain rather than colliding with old
+  UIDs.
+- `document_id` is the canonical
+  `mail:<source-id>:<account-id>:<mailbox-id>:<provider-message-id>` identity
+  (or its lossless/hashed storage form) and has a unique constraint. The index
+  sink uses the same value as its idempotent upsert key.
+- The RFC `Message-ID`, thread ID, content hash, subject, and sender are not
+  unique constraints. Equal content in two mailboxes remains two provider
+  objects unless a separately specified product policy links them.
+- Checkpoint `version` and `fencing_token` are non-negative and monotonic.
+  Lease expiry, disposition, and cursor-shape checks should be constraints
+  where all database engines can express them, with equivalent validation in
+  Go elsewhere.
+
+These constraints deduplicate retries and overlapping poll/listener runs while
+preserving legitimate mailbox copies. A duplicate insert/upsert must resolve to
+the existing message row; it must not manufacture a second document identity.
+
+#### Transaction and ordering rules
+
+Lease and checkpoint correctness must depend on affected-row checks inside
+transactions, not on process-local mutexes:
+
+1. `AcquireLease` starts a transaction and conditionally inserts the mailbox
+   row or updates it only when the lease is absent, expired, or already held by
+   the same owner. A successful acquisition increments and returns the fencing
+   token. Zero affected rows means lease contention.
+2. The worker reads the checkpoint version associated with that lease and
+   performs provider I/O outside the database transaction. Transactions must
+   not remain open during network fetches, MIME parsing, or index writes.
+3. Each normalized document or deletion is durably and idempotently committed
+   to the output sink before its successful `EmailMessageState` outcome can
+   authorize checkpoint progress. If the output sink and state tables share a
+   database and transaction boundary, the output upsert, message-state upsert,
+   and checkpoint compare-and-swap should commit together. Otherwise the sink
+   commits first; a crash may replay the upsert, which is safe because
+   `document_id` is idempotent.
+4. `RecordOutcome` upserts by the message primary key while verifying the lease
+   owner, unexpired lease, and fencing token. Failure counts are incremented
+   atomically and stored error text is redacted and size-bounded.
+5. `CommitCheckpoint` uses one short transaction to verify the lease and
+   fencing token, compare the stored checkpoint `version` with `previous`,
+   persist all outcomes required for that page, and advance only through the
+   highest contiguous set of durably handled messages. The update increments
+   `version`; zero affected rows is a checkpoint conflict, never success.
+6. `ReleaseLease` clears ownership only when owner and fencing token still
+   match. Expired workers cannot clear or advance a successor's lease.
+
+A poison message is either left before the committed cursor for retry or is
+recorded with an explicit terminal `skipped`/`quarantined` policy in the same
+checkpoint transaction. Logging an error and advancing without a durable
+outcome is forbidden. Listener hints never advance state.
+
+#### Retention
+
+- `EmailMailboxState` is retained for the life of the source, including while
+  the source is disabled. Removing a mailbox from selection marks its state
+  inactive; retain it for a configurable grace period before purge so a
+  temporary configuration change does not force an avoidable full crawl.
+- Successful `EmailMessageState` rows are retained at least through the
+  provider's maximum usable history window and one complete full-
+  reconciliation interval. This preserves deletion detection and prevents a
+  stale listener hint from recreating a duplicate. Deployments may retain only
+  identity, version/hash, disposition, and timestamps after richer diagnostic
+  fields expire.
+- Tombstones are retained longer than the maximum replay/reconciliation window.
+  Quarantined rows are retained until operator resolution or an explicit
+  policy expiry. Failure details use a short configurable retention period and
+  are cleared independently from identity rows.
+- No raw message, decoded body, attachment content, credentials, or bearer
+  tokens belong in either table. Provider cursors that contain sensitive
+  opaque tokens must use the project's at-rest encryption mechanism before
+  persistence.
+- Retention cleanup runs in bounded batches, excludes rows covered by an active
+  lease, and is restartable. Cleanup must not use source-level event retention
+  as a substitute for state retention.
+
+#### Cross-database implications
+
+PostgreSQL is the currently supported database according to `pkg/database`;
+SQLite and MySQL/MariaDB schemas are also maintained and must not silently
+receive weaker correctness. The implementation should use the `database.Handler`
+transaction API and DB-specific statements behind a common state-store
+contract.
+
+- PostgreSQL may use `INSERT ... ON CONFLICT`, `UPDATE ... RETURNING`, row
+  locks, and `TIMESTAMPTZ`, but those features cannot leak into mail semantics.
+- MySQL/MariaDB uses `INSERT ... ON DUPLICATE KEY UPDATE` or conditional
+  updates and verifies affected rows. UTC timestamps and indexable key lengths
+  must be chosen explicitly; JSON equality or JSON-path indexes are not part of
+  correctness.
+- SQLite uses `ON CONFLICT` plus conditional updates. Its single-writer model
+  can serialize writes, but lease/version predicates are still required for
+  correctness and for parity with production databases. Timestamps are stored
+  and compared in one documented UTC representation.
+- Avoid partial indexes, generated JSON keys, advisory locks, and database
+  server clocks as the only expression of an invariant unless equivalent
+  implementations and tests exist for all backends. Lease expiration should be
+  evaluated using the database clock within each statement to avoid worker
+  clock skew.
+- Identifiers, uniqueness, foreign-key actions, transaction isolation, and
+  affected-row behavior require backend-specific integration tests. The same
+  tests must cover concurrent lease acquisition, stale fencing tokens,
+  checkpoint conflicts, duplicate message upserts, UIDVALIDITY reset, and
+  retention cleanup.
+
+Database migrations and SQL implementations live in `pkg/database`, but
+`pkg/mail` defines `Checkpoint`, `MessageOutcome`, reset, retention, and
+transition semantics. An in-memory implementation should support deterministic
+unit tests but is not evidence of database transaction correctness.
 
 ## End-to-end flow
 
