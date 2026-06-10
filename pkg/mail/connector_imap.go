@@ -97,6 +97,7 @@ type imapMessage struct {
 	InternalDate time.Time
 	Flags        []string
 	Size         int64
+	Envelope     *MessageEnvelope
 }
 
 type imapClientFactory func(context.Context, IMAPConnectorConfig) (imapClient, error)
@@ -269,14 +270,22 @@ func (c *IMAPConnector) ListChanges(ctx context.Context, mailbox Mailbox, cursor
 			Next:    Cursor{UIDValidity: status.UIDValidity},
 		}, nil
 	}
-	uids, err := c.client.SearchUIDs(ctx, cursor.UID+1)
+	if cursor.UID == ^uint32(0) {
+		return ChangePage{Next: Cursor{UID: cursor.UID, UIDValidity: status.UIDValidity}}, nil
+	}
+	firstUID := cursor.UID + 1
+	uids, err := c.client.SearchUIDs(ctx, firstUID)
 	if err != nil {
 		return ChangePage{}, imapError("search messages", err)
 	}
 	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	uids = validUIDs(uids, firstUID)
 	more := len(uids) > limit
 	if more {
 		uids = uids[:limit]
+	}
+	if len(uids) == 0 {
+		return ChangePage{Next: Cursor{UID: cursor.UID, UIDValidity: status.UIDValidity}}, nil
 	}
 	messages, err := c.client.FetchMetadata(ctx, uids)
 	if err != nil {
@@ -290,10 +299,11 @@ func (c *IMAPConnector) ListChanges(ctx context.Context, mailbox Mailbox, cursor
 	next := Cursor{UID: cursor.UID, UIDValidity: status.UIDValidity}
 	for _, uid := range uids {
 		message, found := byUID[uid]
-		if !found {
-			continue
+		if found {
+			changes = append(changes, Change{Kind: ChangeUpsert, Ref: c.messageRef(mailbox, status.UIDValidity, message)})
+		} else {
+			changes = append(changes, Change{Kind: ChangeDelete, Ref: c.messageRef(mailbox, status.UIDValidity, imapMessage{UID: uid})})
 		}
-		changes = append(changes, Change{Kind: ChangeUpsert, Ref: c.messageRef(mailbox, status.UIDValidity, message)})
 		next.UID = uid
 	}
 	return ChangePage{Changes: changes, Next: next, More: more}, nil
@@ -370,7 +380,35 @@ func (c *IMAPConnector) messageRef(mailbox Mailbox, uidValidity uint32, message 
 		InternalDate: message.InternalDate,
 		Flags:        append([]string(nil), message.Flags...),
 		Size:         message.Size,
+		Envelope:     cloneMessageEnvelope(message.Envelope),
 	}
+}
+
+func validUIDs(uids []uint32, first uint32) []uint32 {
+	filtered := uids[:0]
+	var previous uint32
+	for _, uid := range uids {
+		if uid < first || uid == previous {
+			continue
+		}
+		filtered = append(filtered, uid)
+		previous = uid
+	}
+	return filtered
+}
+
+func cloneMessageEnvelope(envelope *MessageEnvelope) *MessageEnvelope {
+	if envelope == nil {
+		return nil
+	}
+	cloned := *envelope
+	cloned.From = append([]Address(nil), envelope.From...)
+	cloned.Sender = append([]Address(nil), envelope.Sender...)
+	cloned.ReplyTo = append([]Address(nil), envelope.ReplyTo...)
+	cloned.To = append([]Address(nil), envelope.To...)
+	cloned.CC = append([]Address(nil), envelope.CC...)
+	cloned.BCC = append([]Address(nil), envelope.BCC...)
+	return &cloned
 }
 
 func mailboxSelected(name string, selector MailboxSelector) bool {
@@ -550,7 +588,7 @@ func (c *goIMAPClient) FetchMetadata(ctx context.Context, uids []uint32) ([]imap
 		ch := make(chan *imap.Message, len(uids))
 		done := make(chan error, 1)
 		go func() {
-			done <- c.client.UidFetch(set, []imap.FetchItem{imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size}, ch)
+			done <- c.client.UidFetch(set, []imap.FetchItem{imap.FetchUid, imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope}, ch)
 		}()
 		for message := range ch {
 			result = append(result, convertIMAPMessage(message))
@@ -616,7 +654,42 @@ func convertIMAPMessage(message *imap.Message) imapMessage {
 		InternalDate: message.InternalDate,
 		Flags:        append([]string(nil), message.Flags...),
 		Size:         int64(message.Size),
+		Envelope:     convertIMAPEnvelope(message.Envelope),
 	}
+}
+
+func convertIMAPEnvelope(envelope *imap.Envelope) *MessageEnvelope {
+	if envelope == nil {
+		return nil
+	}
+	return &MessageEnvelope{
+		Date:      envelope.Date,
+		Subject:   envelope.Subject,
+		From:      convertIMAPAddresses(envelope.From),
+		Sender:    convertIMAPAddresses(envelope.Sender),
+		ReplyTo:   convertIMAPAddresses(envelope.ReplyTo),
+		To:        convertIMAPAddresses(envelope.To),
+		CC:        convertIMAPAddresses(envelope.Cc),
+		BCC:       convertIMAPAddresses(envelope.Bcc),
+		InReplyTo: envelope.InReplyTo,
+		MessageID: envelope.MessageId,
+	}
+}
+
+func convertIMAPAddresses(addresses []*imap.Address) []Address {
+	converted := make([]Address, 0, len(addresses))
+	for _, address := range addresses {
+		if address == nil {
+			continue
+		}
+		mailbox := address.Address()
+		converted = append(converted, Address{
+			Name:       address.PersonalName,
+			Address:    mailbox,
+			Normalized: strings.ToLower(mailbox),
+		})
+	}
+	return converted
 }
 
 func (c *goIMAPClient) Logout(ctx context.Context) error {

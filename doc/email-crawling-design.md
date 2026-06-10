@@ -163,6 +163,19 @@ type Mailbox struct {
     Name string
 }
 
+type MessageEnvelope struct {
+    Date      time.Time
+    Subject   string
+    From      []Address
+    Sender    []Address
+    ReplyTo   []Address
+    To        []Address
+    CC        []Address
+    BCC       []Address
+    InReplyTo string
+    MessageID string
+}
+
 type MessageRef struct {
     Provider          string
     AccountID         string
@@ -176,6 +189,7 @@ type MessageRef struct {
     Flags             []string
     Size              int64
     Headers           HeaderMap
+    Envelope          *MessageEnvelope
 }
 
 type RawMessage struct {

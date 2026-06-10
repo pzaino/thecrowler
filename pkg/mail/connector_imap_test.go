@@ -139,6 +139,149 @@ func TestIMAPConnectorListChangesUsesUIDsAndHandlesReset(t *testing.T) {
 	}
 }
 
+func TestIMAPConnectorListChangesPagesUIDsAndCapturesMetadata(t *testing.T) {
+	internalDate := time.Date(2026, time.June, 10, 12, 30, 0, 0, time.UTC)
+	envelopeDate := time.Date(2026, time.June, 9, 8, 15, 0, 0, time.UTC)
+	fake := &fakeIMAPClient{
+		statuses: map[string]imapMailboxStatus{"INBOX": {UIDValidity: 44}},
+		uids:     []uint32{15, 12, 11, 13, 12},
+		messages: map[uint32]imapMessage{
+			11: {
+				UID: 11, InternalDate: internalDate, Flags: []string{"\\Seen", "$label"}, Size: 2048,
+				Envelope: &MessageEnvelope{
+					Date: envelopeDate, Subject: "Discovery metadata",
+					From:      []Address{{Name: "Sender", Address: "sender@example.test", Normalized: "sender@example.test"}},
+					Sender:    []Address{{Address: "agent@example.test", Normalized: "agent@example.test"}},
+					ReplyTo:   []Address{{Address: "reply@example.test", Normalized: "reply@example.test"}},
+					To:        []Address{{Address: "to@example.test", Normalized: "to@example.test"}},
+					CC:        []Address{{Address: "cc@example.test", Normalized: "cc@example.test"}},
+					BCC:       []Address{{Address: "bcc@example.test", Normalized: "bcc@example.test"}},
+					InReplyTo: "<parent@example.test>", MessageID: "<message@example.test>",
+				},
+			},
+			12: {UID: 12, Size: 1024},
+			13: {UID: 13, Size: 512},
+			15: {UID: 15, Size: 256},
+		},
+	}
+	connector := authenticatedTestIMAPConnector(t, testIMAPConfig(), fake)
+	mailbox := Mailbox{ID: "INBOX", Name: "Inbox"}
+
+	first, err := connector.ListChanges(context.Background(), mailbox, Cursor{UID: 10, UIDValidity: 44}, 2)
+	if err != nil {
+		t.Fatalf("first ListChanges() error = %v", err)
+	}
+	if got := changeUIDs(first.Changes); !reflect.DeepEqual(got, []uint32{11, 12}) {
+		t.Fatalf("first page UIDs = %v, want [11 12]", got)
+	}
+	if !first.More || first.Next != (Cursor{UID: 12, UIDValidity: 44}) {
+		t.Fatalf("first page continuation = (%#v, %v), want UID 12 and more", first.Next, first.More)
+	}
+	ref := first.Changes[0].Ref
+	if ref.InternalDate != internalDate || !reflect.DeepEqual(ref.Flags, []string{"\\Seen", "$label"}) || ref.Size != 2048 {
+		t.Fatalf("discovered message metadata = %#v", ref)
+	}
+	if !reflect.DeepEqual(ref.Envelope, fake.messages[11].Envelope) {
+		t.Fatalf("discovered envelope = %#v, want %#v", ref.Envelope, fake.messages[11].Envelope)
+	}
+
+	second, err := connector.ListChanges(context.Background(), mailbox, first.Next, 2)
+	if err != nil {
+		t.Fatalf("second ListChanges() error = %v", err)
+	}
+	if got := changeUIDs(second.Changes); !reflect.DeepEqual(got, []uint32{13, 15}) {
+		t.Fatalf("second page UIDs = %v, want [13 15]", got)
+	}
+	if second.More || second.Next != (Cursor{UID: 15, UIDValidity: 44}) {
+		t.Fatalf("second page continuation = (%#v, %v), want UID 15 and complete", second.Next, second.More)
+	}
+	if !reflect.DeepEqual(fake.searchFirsts, []uint32{11, 13}) {
+		t.Fatalf("SearchUIDs starts = %v, want [11 13]", fake.searchFirsts)
+	}
+	if !reflect.DeepEqual(fake.fetchUIDs, [][]uint32{{11, 12}, {13, 15}}) {
+		t.Fatalf("FetchMetadata UIDs = %v, want [[11 12] [13 15]]", fake.fetchUIDs)
+	}
+}
+
+func TestIMAPConnectorListChangesEmptyResult(t *testing.T) {
+	fake := &fakeIMAPClient{
+		statuses: map[string]imapMailboxStatus{"INBOX": {UIDValidity: 7}},
+	}
+	connector := authenticatedTestIMAPConnector(t, testIMAPConfig(), fake)
+
+	page, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{UID: 20, UIDValidity: 7}, 50)
+	if err != nil {
+		t.Fatalf("ListChanges() error = %v", err)
+	}
+	if len(page.Changes) != 0 || page.More || page.Next != (Cursor{UID: 20, UIDValidity: 7}) {
+		t.Fatalf("empty page = %#v", page)
+	}
+	if len(fake.fetchUIDs) != 0 {
+		t.Fatalf("FetchMetadata calls = %v, want none", fake.fetchUIDs)
+	}
+}
+
+func TestIMAPConnectorListChangesReportsDeletedUID(t *testing.T) {
+	fake := &fakeIMAPClient{
+		statuses: map[string]imapMailboxStatus{"INBOX": {UIDValidity: 31}},
+		uids:     []uint32{101, 102},
+		messages: map[uint32]imapMessage{102: {UID: 102, Size: 4096}},
+	}
+	connector := authenticatedTestIMAPConnector(t, testIMAPConfig(), fake)
+	mailbox := Mailbox{ID: "INBOX", Name: "Inbox"}
+
+	page, err := connector.ListChanges(context.Background(), mailbox, Cursor{UID: 100, UIDValidity: 31}, 10)
+	if err != nil {
+		t.Fatalf("ListChanges() error = %v", err)
+	}
+	if len(page.Changes) != 2 || page.Changes[0].Kind != ChangeDelete || page.Changes[1].Kind != ChangeUpsert {
+		t.Fatalf("changes = %#v, want delete then upsert", page.Changes)
+	}
+	deleted := page.Changes[0].Ref
+	if deleted.UID != 101 || deleted.UIDValidity != 31 || deleted.Mailbox != mailbox {
+		t.Fatalf("deleted ref = %#v, want mailbox UID tuple 31/101", deleted)
+	}
+	if page.Next != (Cursor{UID: 102, UIDValidity: 31}) {
+		t.Fatalf("next cursor = %#v, want UID 102", page.Next)
+	}
+}
+
+func TestIMAPConnectorListChangesResetsAfterUIDValidityChange(t *testing.T) {
+	fake := &fakeIMAPClient{
+		statusSequence: []imapMailboxStatus{{UIDValidity: 9}, {UIDValidity: 10}},
+		uids:           []uint32{41},
+		messages:       map[uint32]imapMessage{41: {UID: 41}},
+	}
+	connector := authenticatedTestIMAPConnector(t, testIMAPConfig(), fake)
+	mailbox := Mailbox{ID: "INBOX"}
+
+	first, err := connector.ListChanges(context.Background(), mailbox, Cursor{UID: 40, UIDValidity: 9}, 10)
+	if err != nil {
+		t.Fatalf("first ListChanges() error = %v", err)
+	}
+	reset, err := connector.ListChanges(context.Background(), mailbox, first.Next, 10)
+	if err != nil {
+		t.Fatalf("second ListChanges() error = %v", err)
+	}
+	if len(reset.Changes) != 1 || reset.Changes[0].Kind != ChangeReset {
+		t.Fatalf("reset changes = %#v, want one reset", reset.Changes)
+	}
+	if reset.Next != (Cursor{UIDValidity: 10}) || reset.More {
+		t.Fatalf("reset continuation = %#v, more %v", reset.Next, reset.More)
+	}
+	if len(fake.searchFirsts) != 1 {
+		t.Fatalf("SearchUIDs calls = %v, want no search after UIDVALIDITY change", fake.searchFirsts)
+	}
+}
+
+func changeUIDs(changes []Change) []uint32 {
+	uids := make([]uint32, len(changes))
+	for i, change := range changes {
+		uids[i] = change.Ref.UID
+	}
+	return uids
+}
+
 func TestIMAPConnectorOpenMessageAndSizeLimit(t *testing.T) {
 	fake := &fakeIMAPClient{
 		statuses: map[string]imapMailboxStatus{"INBOX": {UIDValidity: 9}},
@@ -255,11 +398,14 @@ type fakeIMAPClient struct {
 	authenticateErr error
 	mailboxes       []imapMailbox
 	statuses        map[string]imapMailboxStatus
+	statusSequence  []imapMailboxStatus
 	uids            []uint32
 	messages        map[uint32]imapMessage
 	bodies          map[uint32][]byte
 	selected        string
 	searchFirst     uint32
+	searchFirsts    []uint32
+	fetchUIDs       [][]uint32
 	listStarted     chan struct{}
 	blockList       bool
 	logoutCalls     int
@@ -284,15 +430,22 @@ func (f *fakeIMAPClient) ListMailboxes(ctx context.Context) ([]imapMailbox, erro
 
 func (f *fakeIMAPClient) SelectMailbox(_ context.Context, name string) (imapMailboxStatus, error) {
 	f.selected = name
+	if len(f.statusSequence) > 0 {
+		status := f.statusSequence[0]
+		f.statusSequence = f.statusSequence[1:]
+		return status, nil
+	}
 	return f.statuses[name], nil
 }
 
 func (f *fakeIMAPClient) SearchUIDs(_ context.Context, first uint32) ([]uint32, error) {
 	f.searchFirst = first
+	f.searchFirsts = append(f.searchFirsts, first)
 	return append([]uint32(nil), f.uids...), nil
 }
 
 func (f *fakeIMAPClient) FetchMetadata(_ context.Context, uids []uint32) ([]imapMessage, error) {
+	f.fetchUIDs = append(f.fetchUIDs, append([]uint32(nil), uids...))
 	messages := make([]imapMessage, 0, len(uids))
 	for _, uid := range uids {
 		if message, ok := f.messages[uid]; ok {

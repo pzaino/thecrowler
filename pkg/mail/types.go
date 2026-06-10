@@ -23,23 +23,39 @@ type Mailbox struct {
 	Name string `json:"name" yaml:"name"`
 }
 
+// MessageEnvelope contains the header metadata commonly available while listing
+// messages. Connectors populate only fields supplied by the provider.
+type MessageEnvelope struct {
+	Date      time.Time `json:"date,omitempty" yaml:"date,omitempty"`
+	Subject   string    `json:"subject,omitempty" yaml:"subject,omitempty"`
+	From      []Address `json:"from,omitempty" yaml:"from,omitempty"`
+	Sender    []Address `json:"sender,omitempty" yaml:"sender,omitempty"`
+	ReplyTo   []Address `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	To        []Address `json:"to,omitempty" yaml:"to,omitempty"`
+	CC        []Address `json:"cc,omitempty" yaml:"cc,omitempty"`
+	BCC       []Address `json:"bcc,omitempty" yaml:"bcc,omitempty"`
+	InReplyTo string    `json:"in_reply_to,omitempty" yaml:"in_reply_to,omitempty"`
+	MessageID string    `json:"message_id,omitempty" yaml:"message_id,omitempty"`
+}
+
 // MessageRef identifies a message within a provider account and mailbox.
 // It is intentionally cheap to list and pass to a message fetcher. UID and
 // UIDValidity preserve IMAP identity semantics, while ProviderMessageID and
 // ProviderThreadID carry stable identifiers exposed by API-based providers.
 type MessageRef struct {
-	Provider          string    `json:"provider" yaml:"provider"`
-	AccountID         string    `json:"account_id" yaml:"account_id"`
-	Mailbox           Mailbox   `json:"mailbox" yaml:"mailbox"`
-	UID               uint32    `json:"uid,omitempty" yaml:"uid,omitempty"`
-	UIDValidity       uint32    `json:"uid_validity,omitempty" yaml:"uid_validity,omitempty"`
-	ProviderMessageID string    `json:"provider_message_id,omitempty" yaml:"provider_message_id,omitempty"`
-	ProviderThreadID  string    `json:"provider_thread_id,omitempty" yaml:"provider_thread_id,omitempty"`
-	Version           string    `json:"version,omitempty" yaml:"version,omitempty"`
-	InternalDate      time.Time `json:"internal_date,omitempty" yaml:"internal_date,omitempty"`
-	Flags             []string  `json:"flags,omitempty" yaml:"flags,omitempty"`
-	Size              int64     `json:"size,omitempty" yaml:"size,omitempty"`
-	Headers           HeaderMap `json:"headers,omitempty" yaml:"headers,omitempty"`
+	Provider          string           `json:"provider" yaml:"provider"`
+	AccountID         string           `json:"account_id" yaml:"account_id"`
+	Mailbox           Mailbox          `json:"mailbox" yaml:"mailbox"`
+	UID               uint32           `json:"uid,omitempty" yaml:"uid,omitempty"`
+	UIDValidity       uint32           `json:"uid_validity,omitempty" yaml:"uid_validity,omitempty"`
+	ProviderMessageID string           `json:"provider_message_id,omitempty" yaml:"provider_message_id,omitempty"`
+	ProviderThreadID  string           `json:"provider_thread_id,omitempty" yaml:"provider_thread_id,omitempty"`
+	Version           string           `json:"version,omitempty" yaml:"version,omitempty"`
+	InternalDate      time.Time        `json:"internal_date,omitempty" yaml:"internal_date,omitempty"`
+	Flags             []string         `json:"flags,omitempty" yaml:"flags,omitempty"`
+	Size              int64            `json:"size,omitempty" yaml:"size,omitempty"`
+	Headers           HeaderMap        `json:"headers,omitempty" yaml:"headers,omitempty"`
+	Envelope          *MessageEnvelope `json:"envelope,omitempty" yaml:"envelope,omitempty"`
 }
 
 // RawMessage pairs provider metadata with a bounded RFC 5322 message stream.
