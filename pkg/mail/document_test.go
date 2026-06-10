@@ -154,6 +154,8 @@ func TestDocumentPreservesNormalizedMessageData(t *testing.T) {
 func TestNormalizedDocumentTypesHaveJSONAndYAMLTags(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(Document{}),
+		reflect.TypeOf(DocumentIdentity{}),
+		reflect.TypeOf(ChildDocumentDescriptor{}),
 		reflect.TypeOf(Address{}),
 		reflect.TypeOf(Attachment{}),
 		reflect.TypeOf(Link{}),
