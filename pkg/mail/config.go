@@ -157,10 +157,11 @@ type TLSConfig struct {
 // Limits bounds resource consumption while retrieving and parsing untrusted
 // messages.
 type Limits struct {
-	MaxMessageBytes    int64 `json:"max_message_bytes,omitempty" yaml:"max_message_bytes,omitempty"`
-	MaxAttachmentBytes int64 `json:"max_attachment_bytes,omitempty" yaml:"max_attachment_bytes,omitempty"`
-	MaxAttachments     int   `json:"max_attachments,omitempty" yaml:"max_attachments,omitempty"`
-	MaxHeaderBytes     int64 `json:"max_header_bytes,omitempty" yaml:"max_header_bytes,omitempty"`
-	MaxMIMEDepth       int   `json:"max_mime_depth,omitempty" yaml:"max_mime_depth,omitempty"`
-	MaxMIMEParts       int   `json:"max_mime_parts,omitempty" yaml:"max_mime_parts,omitempty"`
+	MaxMessageBytes         int64 `json:"max_message_bytes,omitempty" yaml:"max_message_bytes,omitempty"`
+	MaxAttachmentBytes      int64 `json:"max_attachment_bytes,omitempty" yaml:"max_attachment_bytes,omitempty"`
+	MaxTotalAttachmentBytes int64 `json:"max_total_attachment_bytes,omitempty" yaml:"max_total_attachment_bytes,omitempty"`
+	MaxAttachments          int   `json:"max_attachments,omitempty" yaml:"max_attachments,omitempty"`
+	MaxHeaderBytes          int64 `json:"max_header_bytes,omitempty" yaml:"max_header_bytes,omitempty"`
+	MaxMIMEDepth            int   `json:"max_mime_depth,omitempty" yaml:"max_mime_depth,omitempty"`
+	MaxMIMEParts            int   `json:"max_mime_parts,omitempty" yaml:"max_mime_parts,omitempty"`
 }

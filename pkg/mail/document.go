@@ -46,11 +46,12 @@ type SecuritySignals struct {
 type WarningCategory string
 
 const (
-	WarningUnknownCharset   WarningCategory = "unknown_charset"
-	WarningMalformedHeader  WarningCategory = "malformed_header"
-	WarningUnsupportedPart  WarningCategory = "unsupported_part"
-	WarningOversizedPart    WarningCategory = "oversized_part"
-	WarningProtectedContent WarningCategory = "protected_content"
+	WarningUnknownCharset    WarningCategory = "unknown_charset"
+	WarningMalformedHeader   WarningCategory = "malformed_header"
+	WarningUnsupportedPart   WarningCategory = "unsupported_part"
+	WarningOversizedPart     WarningCategory = "oversized_part"
+	WarningProtectedContent  WarningCategory = "protected_content"
+	WarningAttachmentSkipped WarningCategory = "attachment_skipped"
 )
 
 // ParserWarning describes a recoverable parser or normalization problem.

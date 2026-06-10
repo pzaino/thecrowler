@@ -27,6 +27,17 @@ func WithMaxPartBytes(maxBytes int64) ParserOption {
 	return func(parser *mimeParser) { parser.maxPartBytes = maxBytes }
 }
 
+// WithAttachmentPolicy enables early attachment filtering. Limits are applied
+// before accepted content is copied, hashed, or retained.
+func WithAttachmentPolicy(policy AttachmentPolicy, limits Limits) ParserOption {
+	return func(parser *mimeParser) {
+		policy.AllowedMediaTypes = append([]string(nil), policy.AllowedMediaTypes...)
+		policy.BlockedMediaTypes = append([]string(nil), policy.BlockedMediaTypes...)
+		parser.attachmentPolicy = &policy
+		parser.attachmentLimits = limits
+	}
+}
+
 // NewParser returns the package's default RFC 5322 and MIME parser.
 //
 // The concrete implementation is intentionally private so callers depend only
@@ -48,8 +59,10 @@ func NewParser(options ...ParserOption) Parser {
 }
 
 type mimeParser struct {
-	parser       *enmime.Parser
-	maxPartBytes int64
+	parser           *enmime.Parser
+	maxPartBytes     int64
+	attachmentPolicy *AttachmentPolicy
+	attachmentLimits Limits
 }
 
 func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessage, error) {
@@ -72,15 +85,21 @@ func (p *mimeParser) Parse(ctx context.Context, message RawMessage) (ParsedMessa
 	rawHeaders, rawWarnings := boundedHeaders(map[string][]string(envelope.Root.Header), true)
 	decodedHeaders, decodedWarnings := boundedHeaders(decodedEnvelopeHeaders(envelope), true)
 
+	var attachmentPolicy *attachmentPolicyEvaluator
+	if p.attachmentPolicy != nil {
+		attachmentPolicy = newAttachmentPolicyEvaluator(*p.attachmentPolicy, p.attachmentLimits)
+	}
+	attachments, attachmentWarnings := envelopeAttachments(envelope.Root, htmlBody, p.maxPartBytes, attachmentPolicy)
 	parsed := ParsedMessage{
 		Ref:         message.Ref,
 		Headers:     decodedHeaders,
 		RawHeaders:  rawHeaders,
 		TextBody:    textBody,
 		HTMLBody:    htmlBody,
-		Attachments: envelopeAttachments(envelope.Root, htmlBody, p.maxPartBytes),
+		Attachments: attachments,
 		Warnings:    envelopeWarnings(envelope.Root),
 	}
+	parsed.Warnings = append(parsed.Warnings, attachmentWarnings...)
 	parsed.Warnings = append(parsed.Warnings, semanticPartWarnings(envelope.Root, p.maxPartBytes)...)
 	parsed.Warnings = append(parsed.Warnings, rawWarnings...)
 	parsed.Warnings = append(parsed.Warnings, decodedWarnings...)
@@ -310,25 +329,38 @@ func decodedEnvelopeHeaders(envelope *enmime.Envelope) map[string][]string {
 	return headers
 }
 
-func envelopeAttachments(root *enmime.Part, htmlBody string, maxPartBytes int64) []Attachment {
+func envelopeAttachments(root *enmime.Part, htmlBody string, maxPartBytes int64, policy *attachmentPolicyEvaluator) ([]Attachment, []ParserWarning) {
 	references := htmlCIDReferences(htmlBody)
 	matched := make(map[string]bool, len(references))
 	var attachments []Attachment
+	var warnings []ParserWarning
 	walkParts(root, func(part *enmime.Part) bool {
 		if !isAttachmentPart(part) {
 			return true
 		}
+		contentID := normalizeContentID(part.ContentID)
+		inline := strings.EqualFold(strings.TrimSpace(part.Disposition), "inline") ||
+			(contentID != "" && references[contentID] && !matched[contentID])
+		if policy != nil {
+			declaredType, detectedType := attachmentMediaTypes(part.Header.Get("Content-Type"), part.Content)
+			if warning := policy.evaluate(part.PartID, declaredType, detectedType, int64(len(part.Content)), inline); warning != nil {
+				warnings = append(warnings, *warning)
+				return false
+			}
+		}
 		attachment := attachmentFromPart(part, maxPartBytes)
-		if attachment.ContentID != "" && references[attachment.ContentID] && !matched[attachment.ContentID] {
+		if inline {
 			attachment.Inline = true
-			matched[attachment.ContentID] = true
+			if contentID != "" {
+				matched[contentID] = true
+			}
 		}
 		attachments = append(attachments, attachment)
 		// Do not expose nested MIME parts inside an attached message or
 		// multipart payload as independent indexable attachments.
 		return false
 	})
-	return attachments
+	return attachments, warnings
 }
 
 func attachmentFromPart(part *enmime.Part, maxPartBytes int64) Attachment {

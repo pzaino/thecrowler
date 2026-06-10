@@ -102,6 +102,7 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "crawl timeout", got: got.Crawl.Timeout, want: 10 * time.Minute},
 		{name: "message bytes", got: got.Crawl.Limits.MaxMessageBytes, want: int64(25 << 20)},
 		{name: "attachment bytes", got: got.Crawl.Limits.MaxAttachmentBytes, want: int64(10 << 20)},
+		{name: "total attachment bytes", got: got.Crawl.Limits.MaxTotalAttachmentBytes, want: int64(25 << 20)},
 		{name: "attachment count", got: got.Crawl.Limits.MaxAttachments, want: 50},
 		{name: "header bytes", got: got.Crawl.Limits.MaxHeaderBytes, want: int64(1 << 20)},
 		{name: "MIME depth", got: got.Crawl.Limits.MaxMIMEDepth, want: 30},
@@ -170,6 +171,20 @@ func TestValidateSourceConfigProviders(t *testing.T) {
 	}
 }
 
+func TestValidateSourceConfigAllowsAttachmentDenylistToOverrideAllowlist(t *testing.T) {
+	config := DefaultSourceConfig()
+	config.Connector.Provider = "imap"
+	config.Connector.Endpoint = "imaps://mail.example.com:993"
+	config.Auth.CredentialRef = "secret/mail"
+	config.Extraction.Attachments.Include = true
+	config.Extraction.Attachments.AllowedMediaTypes = []string{"application/pdf"}
+	config.Extraction.Attachments.BlockedMediaTypes = []string{"APPLICATION/PDF"}
+
+	if err := ValidateSourceConfig(config); err != nil {
+		t.Fatalf("ValidateSourceConfig() error = %v, denylist overlap should be valid", err)
+	}
+}
+
 func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -213,10 +228,12 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 		{name: "inline attachment without attachments", mutate: func(c *SourceConfig) {
 			c.Extraction.Attachments.IncludeInline = true
 		}, wantErr: "requires extraction.attachments.include"},
-		{name: "attachment media type conflict", mutate: func(c *SourceConfig) {
-			c.Extraction.Attachments.AllowedMediaTypes = []string{"application/pdf"}
-			c.Extraction.Attachments.BlockedMediaTypes = []string{"APPLICATION/PDF"}
-		}, wantErr: "both allowed and blocked"},
+		{name: "zero total attachment bytes", mutate: func(c *SourceConfig) {
+			c.Crawl.Limits.MaxTotalAttachmentBytes = 0
+		}, wantErr: "max_total_attachment_bytes"},
+		{name: "attachment larger than total attachment budget", mutate: func(c *SourceConfig) {
+			c.Crawl.Limits.MaxTotalAttachmentBytes = c.Crawl.Limits.MaxAttachmentBytes - 1
+		}, wantErr: "must not exceed max_total_attachment_bytes"},
 		{name: "listen mode without listener", mutate: func(c *SourceConfig) { c.Crawl.Mode = ModeListen }, wantErr: "listener.enabled"},
 		{name: "listener in poll mode", mutate: func(c *SourceConfig) { c.Listener.Enabled = true }, wantErr: "crawl.mode"},
 		{name: "listener on local provider", mutate: func(c *SourceConfig) {

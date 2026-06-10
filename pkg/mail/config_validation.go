@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	defaultMaxMessageBytes    = 25 << 20
-	defaultMaxAttachmentBytes = 10 << 20
-	defaultMaxAttachments     = 50
-	defaultMaxHeaderBytes     = 1 << 20
-	defaultMaxMIMEDepth       = 30
-	defaultMaxMIMEParts       = 1_000
-	defaultMaxLinksPerMessage = 100
+	defaultMaxMessageBytes         = 25 << 20
+	defaultMaxAttachmentBytes      = 10 << 20
+	defaultMaxTotalAttachmentBytes = 25 << 20
+	defaultMaxAttachments          = 50
+	defaultMaxHeaderBytes          = 1 << 20
+	defaultMaxMIMEDepth            = 30
+	defaultMaxMIMEParts            = 1_000
+	defaultMaxLinksPerMessage      = 100
 )
 
 var providerSchemes = map[string]string{
@@ -44,12 +45,13 @@ func DefaultSourceConfig() SourceConfig {
 			MaxMessages: 1_000,
 			Timeout:     10 * time.Minute,
 			Limits: Limits{
-				MaxMessageBytes:    defaultMaxMessageBytes,
-				MaxAttachmentBytes: defaultMaxAttachmentBytes,
-				MaxAttachments:     defaultMaxAttachments,
-				MaxHeaderBytes:     defaultMaxHeaderBytes,
-				MaxMIMEDepth:       defaultMaxMIMEDepth,
-				MaxMIMEParts:       defaultMaxMIMEParts,
+				MaxMessageBytes:         defaultMaxMessageBytes,
+				MaxAttachmentBytes:      defaultMaxAttachmentBytes,
+				MaxTotalAttachmentBytes: defaultMaxTotalAttachmentBytes,
+				MaxAttachments:          defaultMaxAttachments,
+				MaxHeaderBytes:          defaultMaxHeaderBytes,
+				MaxMIMEDepth:            defaultMaxMIMEDepth,
+				MaxMIMEParts:            defaultMaxMIMEParts,
 			},
 		},
 		Extraction: ExtractionConfig{
@@ -242,6 +244,12 @@ func validateCrawl(config CrawlConfig) error {
 	if limits.MaxAttachmentBytes > limits.MaxMessageBytes {
 		return fmt.Errorf("crawl.limits.max_attachment_bytes must not exceed max_message_bytes")
 	}
+	if limits.MaxTotalAttachmentBytes <= 0 || limits.MaxTotalAttachmentBytes > limits.MaxMessageBytes {
+		return fmt.Errorf("crawl.limits.max_total_attachment_bytes must be greater than zero and not exceed max_message_bytes")
+	}
+	if limits.MaxAttachmentBytes > limits.MaxTotalAttachmentBytes {
+		return fmt.Errorf("crawl.limits.max_attachment_bytes must not exceed max_total_attachment_bytes")
+	}
 	if limits.MaxAttachments <= 0 {
 		return fmt.Errorf("crawl.limits.max_attachments must be greater than zero")
 	}
@@ -268,21 +276,14 @@ func validateExtraction(config ExtractionConfig) error {
 		return fmt.Errorf("attachment inline or text extraction requires extraction.attachments.include")
 	}
 
-	allowed := make(map[string]struct{}, len(config.Attachments.AllowedMediaTypes))
 	for _, mediaType := range config.Attachments.AllowedMediaTypes {
-		mediaType = strings.ToLower(strings.TrimSpace(mediaType))
-		if mediaType == "" {
+		if strings.TrimSpace(mediaType) == "" {
 			return fmt.Errorf("extraction.attachments.allowed_media_types must not contain an empty value")
 		}
-		allowed[mediaType] = struct{}{}
 	}
 	for _, mediaType := range config.Attachments.BlockedMediaTypes {
-		mediaType = strings.ToLower(strings.TrimSpace(mediaType))
-		if mediaType == "" {
+		if strings.TrimSpace(mediaType) == "" {
 			return fmt.Errorf("extraction.attachments.blocked_media_types must not contain an empty value")
-		}
-		if _, conflict := allowed[mediaType]; conflict {
-			return fmt.Errorf("attachment media type %q cannot be both allowed and blocked", mediaType)
 		}
 	}
 	return nil

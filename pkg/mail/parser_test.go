@@ -547,3 +547,143 @@ func hasParserWarning(warnings []ParserWarning, category WarningCategory, code s
 	}
 	return false
 }
+
+func TestAttachmentPolicyBoundaries(t *testing.T) {
+	message := multipartAttachmentMessage(
+		attachmentPart("one.txt", "text/plain", "12345"),
+		attachmentPart("two.txt", "text/plain", "67890"),
+		attachmentPart("three.txt", "text/plain", "x"),
+	)
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"text/plain"},
+	}, Limits{
+		MaxAttachmentBytes:      5,
+		MaxTotalAttachmentBytes: 10,
+		MaxAttachments:          2,
+	}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(message))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeAttachments(t, parsed.Attachments)
+
+	if len(parsed.Attachments) != 2 {
+		t.Fatalf("Attachments = %#v, want two attachments accepted at exact size, aggregate, and count limits", parsed.Attachments)
+	}
+	if !hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipCount) {
+		t.Errorf("Warnings = %#v, want count-limit skip warning", parsed.Warnings)
+	}
+}
+
+func TestAttachmentPolicySkipsWithoutLosingParentMessage(t *testing.T) {
+	message := "From: sender@example.test\r\nSubject: retained\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nparent body\r\n" +
+		attachmentPart("large.bin", "application/octet-stream", "123456") + "--m--\r\n"
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{Include: true}, Limits{
+		MaxAttachmentBytes:      5,
+		MaxTotalAttachmentBytes: 100,
+		MaxAttachments:          10,
+	}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(message))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if parsed.Subject != "retained" || !strings.Contains(parsed.TextBody, "parent body") {
+		t.Fatalf("parent message was lost after attachment skip: %#v", parsed)
+	}
+	if len(parsed.Attachments) != 0 {
+		t.Fatalf("Attachments = %#v, want oversized attachment skipped", parsed.Attachments)
+	}
+	if !hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipTooLarge) {
+		t.Errorf("Warnings = %#v, want structured per-attachment size warning", parsed.Warnings)
+	}
+}
+
+func TestAttachmentPolicyAggregateBoundaryAndRejectedPartsDoNotConsumeBudget(t *testing.T) {
+	message := multipartAttachmentMessage(
+		attachmentPart("too-large.txt", "text/plain", "123456"),
+		attachmentPart("first.txt", "text/plain", "12345"),
+		attachmentPart("second.txt", "text/plain", "67890"),
+		attachmentPart("over-total.txt", "text/plain", "z"),
+	)
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{Include: true}, Limits{
+		MaxAttachmentBytes:      5,
+		MaxTotalAttachmentBytes: 10,
+		MaxAttachments:          10,
+	}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(message))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeAttachments(t, parsed.Attachments)
+	if len(parsed.Attachments) != 2 {
+		t.Fatalf("Attachments = %#v, want exact aggregate boundary accepted", parsed.Attachments)
+	}
+	if !hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipTooLarge) ||
+		!hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipTotalSize) {
+		t.Errorf("Warnings = %#v, want per-item and aggregate skip warnings", parsed.Warnings)
+	}
+}
+
+func TestAttachmentPolicyDenylistPrecedence(t *testing.T) {
+	message := multipartAttachmentMessage(attachmentPart("report.pdf", "application/pdf", "%PDF-1.7"))
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"application/pdf", "application/*"},
+		BlockedMediaTypes: []string{"application/pdf"},
+	}, Limits{MaxAttachmentBytes: 100, MaxTotalAttachmentBytes: 100, MaxAttachments: 1}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(message))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Attachments) != 0 {
+		t.Fatalf("Attachments = %#v, denylist must win over allowlist", parsed.Attachments)
+	}
+	if !hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipBlocked) {
+		t.Errorf("Warnings = %#v, want denylist warning", parsed.Warnings)
+	}
+	if hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipNotAllowed) {
+		t.Errorf("Warnings = %#v, denylist reason must take precedence", parsed.Warnings)
+	}
+}
+
+func TestAttachmentPolicyAllowlistUsesDetectedType(t *testing.T) {
+	message := multipartAttachmentMessage(attachmentPart("spoofed.txt", "text/plain", "%PDF-1.7"))
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"text/plain"},
+	}, Limits{MaxAttachmentBytes: 100, MaxTotalAttachmentBytes: 100, MaxAttachments: 1}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(message))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Attachments) != 0 || !hasParserWarning(parsed.Warnings, WarningAttachmentSkipped, attachmentSkipNotAllowed) {
+		t.Fatalf("parsed = %#v, want detected PDF rejected by text allowlist", parsed)
+	}
+}
+
+func multipartAttachmentMessage(parts ...string) string {
+	return "From: sender@example.test\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\n" +
+		"Content-Type: text/plain\r\n\r\nbody\r\n" + strings.Join(parts, "") + "--m--\r\n"
+}
+
+func attachmentPart(filename, mediaType, content string) string {
+	return "--m\r\nContent-Type: " + mediaType + "\r\nContent-Disposition: attachment; filename=\"" + filename + "\"\r\n\r\n" + content + "\r\n"
+}
+
+func closeAttachments(t *testing.T, attachments []Attachment) {
+	t.Helper()
+	for _, attachment := range attachments {
+		if attachment.Content != nil {
+			if err := attachment.Content.Close(); err != nil {
+				t.Errorf("close attachment: %v", err)
+			}
+		}
+	}
+}

@@ -128,6 +128,7 @@ email:
   limits:
     max_message_bytes: 26214400
     max_attachment_bytes: 10485760
+    max_total_attachment_bytes: 26214400
     max_attachments: 50
 ```
 

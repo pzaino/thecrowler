@@ -14,13 +14,33 @@ import (
 // HTMLBody. Cleanup is disabled when no configuration is supplied.
 func NewProcessor(sourceID string, extraction ...ExtractionConfig) Processor {
 	var config ExtractionConfig
+	parser := NewParser()
 	if len(extraction) != 0 {
 		config = extraction[0]
+		parser = NewParser(WithAttachmentPolicy(config.Attachments, defaultAttachmentLimits()))
 	}
 	return &messageProcessor{
 		sourceID:   sourceID,
-		parser:     NewParser(),
+		parser:     parser,
 		extraction: config,
+	}
+}
+
+// NewProcessorWithLimits returns a processor that applies the source's
+// attachment extraction policy and resource limits during MIME traversal.
+func NewProcessorWithLimits(sourceID string, extraction ExtractionConfig, limits Limits) Processor {
+	return &messageProcessor{
+		sourceID:   sourceID,
+		parser:     NewParser(WithAttachmentPolicy(extraction.Attachments, limits)),
+		extraction: extraction,
+	}
+}
+
+func defaultAttachmentLimits() Limits {
+	return Limits{
+		MaxAttachmentBytes:      defaultMaxAttachmentBytes,
+		MaxTotalAttachmentBytes: defaultMaxTotalAttachmentBytes,
+		MaxAttachments:          defaultMaxAttachments,
 	}
 }
 
