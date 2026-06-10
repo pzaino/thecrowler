@@ -23,7 +23,7 @@ func TestMemoryStateStoreIsolatesMailboxState(t *testing.T) {
 	for i, key := range keys {
 		next := Checkpoint{
 			Cursor:        Cursor{Token: fmt.Sprintf("cursor-%d", i), UID: uint32(i + 10), UIDValidity: uint32(i + 100)},
-			MessageStatus: fmt.Sprintf("status-%d", i),
+			MessageStatus: MessageStatus(fmt.Sprintf("status-%d", i)),
 			ContentHash:   fmt.Sprintf("hash-%d", i),
 			ErrorCount:    uint32(i),
 			LastError:     fmt.Sprintf("error-%d", i),
@@ -42,7 +42,7 @@ func TestMemoryStateStoreIsolatesMailboxState(t *testing.T) {
 		if got.Cursor.Token != fmt.Sprintf("cursor-%d", i) ||
 			got.Cursor.UID != uint32(i+10) ||
 			got.Cursor.UIDValidity != uint32(i+100) ||
-			got.MessageStatus != fmt.Sprintf("status-%d", i) ||
+			got.MessageStatus != MessageStatus(fmt.Sprintf("status-%d", i)) ||
 			got.ContentHash != fmt.Sprintf("hash-%d", i) ||
 			got.ErrorCount != uint32(i) ||
 			got.LastError != fmt.Sprintf("error-%d", i) {
