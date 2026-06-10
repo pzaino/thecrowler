@@ -83,10 +83,16 @@ type ExtractionConfig struct {
 // deliberately explicit because fetching remote mail content is unsafe by
 // default.
 type LinkPolicy struct {
-	Extract        bool           `json:"extract,omitempty" yaml:"extract,omitempty"`
-	FollowRemote   bool           `json:"follow_remote,omitempty" yaml:"follow_remote,omitempty"`
-	AllowedSchemes []string       `json:"allowed_schemes,omitempty" yaml:"allowed_schemes,omitempty"`
-	Extensions     map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
+	Extract        bool     `json:"extract,omitempty" yaml:"extract,omitempty"`
+	FollowRemote   bool     `json:"follow_remote,omitempty" yaml:"follow_remote,omitempty"`
+	AllowedSchemes []string `json:"allowed_schemes,omitempty" yaml:"allowed_schemes,omitempty"`
+	// Allowlist and Denylist contain exact hosts or wildcard subdomains such as
+	// *.example.com. A denylist match always wins.
+	Allowlist           []string       `json:"allowlist,omitempty" yaml:"allowlist,omitempty"`
+	Denylist            []string       `json:"denylist,omitempty" yaml:"denylist,omitempty"`
+	MaxLinksPerMessage  int            `json:"max_links_per_message,omitempty" yaml:"max_links_per_message,omitempty"`
+	SuppressUnsubscribe bool           `json:"suppress_unsubscribe,omitempty" yaml:"suppress_unsubscribe,omitempty"`
+	Extensions          map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 }
 
 // AttachmentPolicy controls attachment emission and optional downstream text

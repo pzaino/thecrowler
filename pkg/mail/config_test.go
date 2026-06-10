@@ -110,6 +110,7 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "extract links", got: got.Extraction.Links.Extract, want: true},
 		{name: "follow remote links", got: got.Extraction.Links.FollowRemote, want: false},
 		{name: "allowed link schemes", got: got.Extraction.Links.AllowedSchemes, want: []string{"http", "https"}},
+		{name: "maximum links per message", got: got.Extraction.Links.MaxLinksPerMessage, want: 100},
 		{name: "include attachments", got: got.Extraction.Attachments.Include, want: false},
 		{name: "listener enabled", got: got.Listener.Enabled, want: false},
 		{name: "listener buffer", got: got.Listener.BufferSize, want: 128},
@@ -176,6 +177,7 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 		wantErr string
 	}{
 		{name: "unsupported provider", mutate: func(c *SourceConfig) { c.Connector.Provider = "pop3" }, wantErr: "unsupported"},
+		{name: "unbounded links", mutate: func(c *SourceConfig) { c.Extraction.Links.MaxLinksPerMessage = 0 }, wantErr: "max_links_per_message"},
 		{name: "missing endpoint", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "" }, wantErr: "endpoint is required"},
 		{name: "provider scheme mismatch", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "gmail://user@example.com" }, wantErr: "scheme"},
 		{name: "missing host", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "imaps:///INBOX" }, wantErr: "host"},

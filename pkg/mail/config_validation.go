@@ -16,6 +16,7 @@ const (
 	defaultMaxHeaderBytes     = 1 << 20
 	defaultMaxMIMEDepth       = 30
 	defaultMaxMIMEParts       = 1_000
+	defaultMaxLinksPerMessage = 100
 )
 
 var providerSchemes = map[string]string{
@@ -53,8 +54,9 @@ func DefaultSourceConfig() SourceConfig {
 		},
 		Extraction: ExtractionConfig{
 			Links: LinkPolicy{
-				Extract:        true,
-				AllowedSchemes: []string{"http", "https"},
+				Extract:            true,
+				AllowedSchemes:     []string{"http", "https"},
+				MaxLinksPerMessage: defaultMaxLinksPerMessage,
 			},
 		},
 		Listener: ListenerConfig{
@@ -258,6 +260,9 @@ func validateCrawl(config CrawlConfig) error {
 func validateExtraction(config ExtractionConfig) error {
 	if config.Links.FollowRemote && !config.Links.Extract {
 		return fmt.Errorf("extraction.links.follow_remote requires extraction.links.extract")
+	}
+	if config.Links.MaxLinksPerMessage <= 0 {
+		return fmt.Errorf("extraction.links.max_links_per_message must be greater than zero")
 	}
 	if (config.Attachments.IncludeInline || config.Attachments.ExtractText) && !config.Attachments.Include {
 		return fmt.Errorf("attachment inline or text extraction requires extraction.attachments.include")
