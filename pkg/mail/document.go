@@ -19,10 +19,11 @@ type HeaderSet struct {
 // Link records a static link discovered in a message body. It is metadata
 // only: retaining a link never authorizes the crawler to dereference it.
 type Link struct {
-	URL    string `json:"url" yaml:"url"`
-	Text   string `json:"text,omitempty" yaml:"text,omitempty"`
-	Title  string `json:"title,omitempty" yaml:"title,omitempty"`
-	Source string `json:"source,omitempty" yaml:"source,omitempty"`
+	URL            string    `json:"url" yaml:"url"`
+	Text           string    `json:"text,omitempty" yaml:"text,omitempty"`
+	Title          string    `json:"title,omitempty" yaml:"title,omitempty"`
+	Source         string    `json:"source,omitempty" yaml:"source,omitempty"`
+	Classification LinkClass `json:"classification" yaml:"classification"`
 }
 
 // SecuritySignals preserves authentication and transport observations parsed

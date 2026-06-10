@@ -133,9 +133,10 @@ func TestProcessorStaticallyNormalizesHTMLBodyWithoutNetworkAccess(t *testing.T)
 		t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, "Hello safe link")
 	}
 	wantLinks := []Link{{
-		URL:    server.URL + "/safe?one=1&two=2",
-		Text:   "safe link",
-		Source: "html",
+		URL:            server.URL + "/safe?one=1&two=2",
+		Text:           "safe link",
+		Source:         "html",
+		Classification: LinkNormal,
 	}}
 	if !reflect.DeepEqual(document.Links, wantLinks) {
 		t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
@@ -177,9 +178,10 @@ func TestProcessorNormalizesMalformedHTMLOnlyMessage(t *testing.T) {
 		t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, "HTML only message Details")
 	}
 	wantLinks := []Link{{
-		URL:    "../details?view=full&lang=en",
-		Text:   "Details",
-		Source: "html",
+		URL:            "../details?view=full&lang=en",
+		Text:           "Details",
+		Source:         "html",
+		Classification: LinkNormal,
 	}}
 	if !reflect.DeepEqual(document.Links, wantLinks) {
 		t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
@@ -223,13 +225,13 @@ func TestProcessorOptionallyCleansEmailHTMLForExtraction(t *testing.T) {
 	}
 
 	wantDisabledLinks := []Link{
-		{URL: "https://tracker.example.test/open", Source: "html"},
-		{URL: "https://example.test/details", Text: "Visible link", Source: "html"},
+		{URL: "https://tracker.example.test/open", Source: "html", Classification: LinkTracking},
+		{URL: "https://example.test/details", Text: "Visible link", Source: "html", Classification: LinkNormal},
 	}
 	if !reflect.DeepEqual(disabled.Links, wantDisabledLinks) {
 		t.Errorf("disabled Links = %#v, want %#v", disabled.Links, wantDisabledLinks)
 	}
-	wantEnabledLinks := []Link{{URL: "https://example.test/details", Text: "Visible link", Source: "html"}}
+	wantEnabledLinks := []Link{{URL: "https://example.test/details", Text: "Visible link", Source: "html", Classification: LinkNormal}}
 	if !reflect.DeepEqual(enabled.Links, wantEnabledLinks) {
 		t.Errorf("enabled Links = %#v, want %#v", enabled.Links, wantEnabledLinks)
 	}

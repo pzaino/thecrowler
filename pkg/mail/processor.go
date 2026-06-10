@@ -61,9 +61,10 @@ func documentFromParsedMessage(sourceID string, parsed ParsedMessage, extraction
 		links = make([]Link, 0, len(content.Links))
 		for _, link := range content.Links {
 			links = append(links, Link{
-				URL:    link.Href,
-				Text:   link.Text,
-				Source: "html",
+				URL:            link.Href,
+				Text:           link.Text,
+				Source:         "html",
+				Classification: ClassifyLink(link.Href),
 			})
 		}
 	}
