@@ -162,9 +162,11 @@ boundaries:
 - `source_type: email` declares intent. A recognized retrieval scheme may help
   validation, but should not silently turn an unrelated source into email.
 - The endpoint contains no password, OAuth token, or client secret.
-- `auth.credential_ref` resolves through the project's secret mechanism. Secret
-  material must not be persisted in source status, checkpoints, logs, events,
-  or indexed documents.
+- `auth.credential_ref` resolves through the process-wide `email.credentials`
+  map in `config.yaml`. Environment interpolation or the remote configuration
+  distribution system can provide the credential values; secret material must
+  not be persisted in source status, checkpoints, logs, events, or indexed
+  documents.
 - Mailbox inclusion/exclusion, retrieval mode, TLS requirements, timeouts, and
   resource limits are typed fields, not provider-specific arbitrary maps where
   avoidable.
@@ -176,6 +178,22 @@ boundaries:
 Configuration changes that alter endpoint, account, provider, or mailbox
 selection invalidate incompatible checkpoints and require a controlled
 reconciliation rather than blind state reuse.
+
+The CROWler runtime must also be enabled in the main configuration. For example:
+
+```yaml
+email:
+  enabled: true
+  credentials:
+    secret/mail-archive:
+      username: ${CROWLER_MAIL_USERNAME}
+      password: ${CROWLER_MAIL_PASSWORD}
+```
+
+The map key must match the source's `auth.credential_ref`. Gmail credentials use
+`oauth_json`; Microsoft Graph credentials use `client_id` and `client_secret`.
+Because this section is part of the root configuration it participates in local
+startup loading, remote configuration loading, and SIGHUP reloads.
 
 ### Implemented IMAP/IMAPS MVP contract
 

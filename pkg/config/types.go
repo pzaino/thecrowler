@@ -780,6 +780,9 @@ type Config struct {
 	// Crawler configuration
 	Crawler Crawler `json:"crawler" yaml:"crawler"`
 
+	// Email crawling runtime configuration
+	Email EmailConfig `json:"email" yaml:"email"`
+
 	// Information seed discovery configuration
 	InformationSeed InformationSeedConfig `json:"information_seed" yaml:"information_seed"`
 

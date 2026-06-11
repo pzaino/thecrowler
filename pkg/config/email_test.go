@@ -259,3 +259,84 @@ func TestRepresentativeEmailSourceFixture(t *testing.T) {
 		t.Fatalf("validate representative email source fixture: %v", err)
 	}
 }
+
+func TestMainConfigLoadsEmailRuntimeCredentials(t *testing.T) {
+	t.Setenv("TEST_MAIL_PASSWORD", "mail-password")
+	path := t.TempDir() + "/config.yaml"
+	if err := os.WriteFile(path, []byte(`
+email:
+  enabled: true
+  credentials:
+    secret/archive:
+      username: archive-reader
+      password: ${TEST_MAIL_PASSWORD}
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	credential := config.Email.Credentials["secret/archive"]
+	if !config.Email.Enabled || credential.Username != "archive-reader" || credential.Password != "mail-password" {
+		t.Fatalf("email runtime configuration was not loaded: %#v", config.Email)
+	}
+}
+
+func TestDeepCopyConfigCopiesEmailCredentials(t *testing.T) {
+	original := NewConfig()
+	original.Email.Enabled = true
+	original.Email.Credentials["secret/archive"] = EmailCredentialConfig{Username: "reader", Password: "secret"}
+
+	copied := DeepCopyConfig(original)
+	copied.Email.Credentials["secret/archive"] = EmailCredentialConfig{Username: "changed"}
+
+	if original.Email.Credentials["secret/archive"].Username != "reader" {
+		t.Fatal("email credential map is shared across configuration snapshots")
+	}
+}
+
+func TestEmailConfigValidationRejectsEmptyCredential(t *testing.T) {
+	config := DefaultEmailConfig()
+	config.Enabled = true
+	config.Credentials["secret/archive"] = EmailCredentialConfig{}
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "no authentication material") {
+		t.Fatalf("Validate() error = %v, want empty authentication material error", err)
+	}
+}
+
+func TestEmailConfigRedactsSecrets(t *testing.T) {
+	config := EmailConfig{Enabled: true, Credentials: map[string]EmailCredentialConfig{
+		"secret/all": {Username: "reader", Password: "password", OAuthJSON: "oauth", ClientID: "client", ClientSecret: "client-secret"},
+	}}
+	redacted := config.Redacted().Credentials["secret/all"]
+	if redacted.Password != "[REDACTED]" || redacted.OAuthJSON != "[REDACTED]" || redacted.ClientSecret != "[REDACTED]" {
+		t.Fatalf("secret fields were not redacted: %#v", redacted)
+	}
+	if redacted.Username != "reader" || redacted.ClientID != "client" {
+		t.Fatalf("non-secret identity fields changed during redaction: %#v", redacted)
+	}
+}
+
+func TestRemoteConfigLoadsEmailRuntimeCredentials(t *testing.T) {
+	t.Setenv("TEST_REMOTE_MAIL_PASSWORD", "remote-password")
+	bootstrap := Config{Remote: Remote{Host: "localhost", Path: "config.yaml", Port: "80", Timeout: 10, Type: "http", SSLMode: "disable"}}
+	fetcher := &MockFetcher{Body: `
+email:
+  enabled: true
+  credentials:
+    secret/remote:
+      username: remote-reader
+      password: ${TEST_REMOTE_MAIL_PASSWORD}
+`}
+
+	config, err := LoadRemoteConfig(bootstrap, fetcher)
+	if err != nil {
+		t.Fatalf("LoadRemoteConfig() error = %v", err)
+	}
+	credential := config.Email.Credentials["secret/remote"]
+	if credential.Username != "remote-reader" || credential.Password != "remote-password" {
+		t.Fatalf("remote email runtime configuration was not loaded: %#v", config.Email.Redacted())
+	}
+}

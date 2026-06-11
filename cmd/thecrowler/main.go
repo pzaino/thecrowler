@@ -944,18 +944,24 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 		wg.Add(1)
 	}
 
+	emailDependencies, err := newEmailPipelineDependencies(wb.Config.Email, wb.db)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "configuring email crawling runtime: %v", err)
+	}
+
 	// Prepare the go routine parameters
 	args := crowler.Pars{
-		WG:      wg,
-		DB:      wb.db,
-		Src:     source,
-		Sel:     wb.sel,
-		SelIdx:  0,
-		RE:      wb.RulesEngine,
-		Sources: wb.sources,
-		Index:   uint64(idx),                  //nolint:gosec // it's safe here.
-		Status:  &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
-		Refresh: refresh,
+		WG:                wg,
+		DB:                wb.db,
+		Src:               source,
+		Sel:               wb.sel,
+		SelIdx:            0,
+		RE:                wb.RulesEngine,
+		Sources:           wb.sources,
+		Index:             uint64(idx),                  //nolint:gosec // it's safe here.
+		Status:            &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
+		Refresh:           refresh,
+		EmailDependencies: emailDependencies,
 	}
 
 	// Start a goroutine to crawl the website

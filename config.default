@@ -41,6 +41,23 @@ database:
   max_idle_conns: 30 
 
 # --------------------------
+# Email crawling runtime
+# --------------------------
+# Source-specific provider, endpoint, mailbox, and extraction settings belong
+# in the Source email section. This system section is loaded/reloaded with the
+# rest of config.yaml and supplies credentials selected by auth.credential_ref.
+email:
+  enabled: false
+  credentials: {}
+  # Example IMAP/POP3 entry (prefer environment or secret injection):
+  # credentials:
+  #   secret/mail-archive:
+  #     username: ${CROWLER_MAIL_USERNAME}
+  #     password: ${CROWLER_MAIL_PASSWORD}
+  # Gmail entries use oauth_json; Microsoft Graph entries use client_id and
+  # client_secret. Never commit production secrets to this file.
+
+# --------------------------
 # Crawler Engine behavior
 # --------------------------
 crawler:

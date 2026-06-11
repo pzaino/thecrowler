@@ -16,9 +16,72 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
+
+// EmailConfig contains process-wide email crawler settings loaded through the
+// normal CROWler configuration path. Source-specific connector, mailbox, and
+// extraction policy remains in SourceConfig.Email; this section supplies the
+// runtime credential references needed to construct connectors.
+type EmailConfig struct {
+	Enabled     bool                             `json:"enabled" yaml:"enabled"`
+	Credentials map[string]EmailCredentialConfig `json:"credentials,omitempty" yaml:"credentials,omitempty"`
+}
+
+// EmailCredentialConfig is credential material selected by a source's
+// auth.credential_ref. Environment interpolation in config.yaml may be used so
+// deployments do not need to store literal secrets in the configuration file.
+// Only fields required by the selected provider need to be populated.
+type EmailCredentialConfig struct {
+	Username     string `json:"username,omitempty" yaml:"username,omitempty"`
+	Password     string `json:"password,omitempty" yaml:"password,omitempty"`
+	OAuthJSON    string `json:"oauth_json,omitempty" yaml:"oauth_json,omitempty"`
+	ClientID     string `json:"client_id,omitempty" yaml:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty" yaml:"client_secret,omitempty"`
+}
+
+// DefaultEmailConfig returns a disabled email runtime with no credentials.
+func DefaultEmailConfig() EmailConfig {
+	return EmailConfig{Credentials: map[string]EmailCredentialConfig{}}
+}
+
+// Redacted returns a copy safe for diagnostic logging.
+func (config EmailConfig) Redacted() EmailConfig {
+	redacted := EmailConfig{Enabled: config.Enabled, Credentials: make(map[string]EmailCredentialConfig, len(config.Credentials))}
+	for reference, credential := range config.Credentials {
+		if credential.Password != "" {
+			credential.Password = "[REDACTED]"
+		}
+		if credential.OAuthJSON != "" {
+			credential.OAuthJSON = "[REDACTED]"
+		}
+		if credential.ClientSecret != "" {
+			credential.ClientSecret = "[REDACTED]"
+		}
+		redacted.Credentials[reference] = credential
+	}
+	return redacted
+}
+
+// Validate rejects unusable credential entries when email crawling is enabled.
+func (config EmailConfig) Validate() error {
+	if !config.Enabled {
+		return nil
+	}
+	for reference, credential := range config.Credentials {
+		if strings.TrimSpace(reference) == "" {
+			return fmt.Errorf("email credential reference must not be empty")
+		}
+		if strings.TrimSpace(credential.Username) == "" && credential.Password == "" &&
+			strings.TrimSpace(credential.OAuthJSON) == "" && strings.TrimSpace(credential.ClientID) == "" && credential.ClientSecret == "" {
+			return fmt.Errorf("email credential %q contains no authentication material", reference)
+		}
+	}
+	return nil
+}
 
 // EmailSourceConfig adapts mailconfig.SourceConfig to the project source
 // configuration. Embedding keeps pkg/mail as the owner of the portable mail

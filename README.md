@@ -330,12 +330,22 @@ command:
 This will build your requested component in `./bin`
 
 ```bash
-./bin/removeSite
-./bin/addSite
 ./bin/addCategory
+./bin/addSource
 ./bin/api
+./bin/crowler-agt
+./bin/events
+./bin/exportSources
+./bin/healthCheck
+./bin/removeSource
 ./bin/thecrowler
+./bin/updateSourceStatus
 ```
+
+`thecrowler` is the main engine, the one that does the crawling, detection, etc.
+`api` is the General API server, that serves search and console API endpoints.
+`events` is the Events Manager, that manages the events and the event-driven automation and servers Events API endpoints.
+all other binaries are CLI tools that can be used to interact with the system, for example to add sources, categories, etc.
 
 Build them as you need them, or run the `autobuild.sh` (no arguments) to build
 them all.

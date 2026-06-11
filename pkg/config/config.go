@@ -205,6 +205,7 @@ func NewConfig() *Config {
 			MaxConns:     100,
 			MaxIdleConns: 75,
 		},
+		Email: DefaultEmailConfig(),
 		Crawler: Crawler{
 			QueryTimer:     5,
 			Workers:        1,
@@ -521,7 +522,9 @@ func LoadConfig(confName string) (Config, error) {
 	// Set the debug level
 	cmn.SetDebugLevel(dbgLvl)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration file loaded: %#v", config)
+	logConfig := config
+	logConfig.Email = config.Email.Redacted()
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration file loaded: %#v", logConfig)
 
 	return config, err
 }
@@ -625,6 +628,9 @@ func ParseConfig(data []byte) (*Config, error) {
 func (c *Config) Validate() error {
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
+	if err := c.Email.Validate(); err != nil {
+		return err
+	}
 	if err := c.validateInformationSeed(); err != nil {
 		return err
 	}
@@ -2782,6 +2788,13 @@ func DeepCopyConfig(src *Config) *Config {
 
 	// Deep copy Crawler (struct can be copied directly)
 	copyConfig.Crawler = src.Crawler
+
+	// Deep copy email credentials so configuration reload snapshots do not share maps.
+	copyConfig.Email = src.Email
+	copyConfig.Email.Credentials = make(map[string]EmailCredentialConfig, len(src.Email.Credentials))
+	for reference, credential := range src.Email.Credentials {
+		copyConfig.Email.Credentials[reference] = credential
+	}
 
 	// Deep copy InformationSeed maps and slices
 	copyConfig.InformationSeed = src.InformationSeed
