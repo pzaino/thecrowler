@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS EmailMailboxState (
     content_hash VARCHAR(255) NOT NULL DEFAULT '',
     error_count INTEGER NOT NULL DEFAULT 0 CHECK (error_count >= 0),
     last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    watch_last_renewed_at TIMESTAMP,
+    watch_expires_at TIMESTAMP,
+    watch_last_attempt_at TIMESTAMP,
+    watch_renewal_failure_count INTEGER NOT NULL DEFAULT 0 CHECK (watch_renewal_failure_count >= 0),
+    watch_renewal_last_error VARCHAR(2048) NOT NULL DEFAULT '',
     version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
     lease_owner VARCHAR(191),
     lease_expires_at TIMESTAMP,
@@ -57,5 +62,6 @@ CREATE TABLE IF NOT EXISTS EmailMessageState (
 
 CREATE INDEX IF NOT EXISTS idx_emailmailboxstate_lease ON EmailMailboxState(lease_expires_at, lease_owner);
 CREATE INDEX IF NOT EXISTS idx_emailmailboxstate_active ON EmailMailboxState(source_id, active);
+CREATE INDEX IF NOT EXISTS idx_emailmailboxstate_watch_expiration ON EmailMailboxState(watch_expires_at);
 CREATE INDEX IF NOT EXISTS idx_emailmessagestate_observed ON EmailMessageState(source_id, last_observed_at);
 CREATE INDEX IF NOT EXISTS idx_emailmessagestate_disposition ON EmailMessageState(source_id, disposition, last_observed_at);

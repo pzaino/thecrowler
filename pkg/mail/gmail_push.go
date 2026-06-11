@@ -192,3 +192,28 @@ func malformedGmailPush(message string, cause error) error {
 	}
 	return fmt.Errorf("%w: %s: %v", ErrMalformedGmailPushNotification, message, cause)
 }
+
+// GmailWatchRenewer adapts Gmail watch registration to the provider-neutral
+// SubscriptionRenewer boundary.
+type GmailWatchRenewer struct {
+	Connector *GmailConnector
+	TopicName string
+	LabelIDs  []string
+}
+
+// Renew registers a fresh Gmail watch and returns its provider expiration.
+func (r GmailWatchRenewer) Renew(ctx context.Context, key MailboxKey) (RenewalResult, error) {
+	if r.Connector == nil {
+		return RenewalResult{}, errors.New("mail: Gmail watch renewer requires a connector")
+	}
+	if key.Provider != "" && !strings.EqualFold(strings.TrimSpace(key.Provider), gmailProvider) {
+		return RenewalResult{}, fmt.Errorf("mail: Gmail watch renewer cannot renew provider %q", key.Provider)
+	}
+	watch, err := r.Connector.RenewWatch(ctx, r.TopicName, r.LabelIDs)
+	if err != nil {
+		return RenewalResult{}, err
+	}
+	return RenewalResult{ExpiresAt: watch.ExpiresAt}, nil
+}
+
+var _ SubscriptionRenewer = GmailWatchRenewer{}

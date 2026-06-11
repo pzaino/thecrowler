@@ -371,6 +371,23 @@ func TestGoogleGmailClientListsAndRetrievesFakeResponses(t *testing.T) {
 	}
 }
 
+func TestGmailConnectorRenewsWatchAndReturnsExpiration(t *testing.T) {
+	expiresAt := time.Date(2026, time.June, 18, 12, 0, 0, 0, time.UTC)
+	client := &fakeGmailClient{watch: GmailWatch{HistoryID: 42, ExpiresAt: expiresAt}}
+	connector := newFakeGmailConnector(t, client)
+
+	watch, err := connector.RenewWatch(context.Background(), " projects/test/topics/mail ", []string{"INBOX", "IMPORTANT"})
+	if err != nil {
+		t.Fatalf("RenewWatch() error = %v", err)
+	}
+	if watch.HistoryID != 42 || watch.ExpiresAt != expiresAt {
+		t.Fatalf("RenewWatch() = %#v", watch)
+	}
+	if client.watchUserID != gmailUserMe || client.watchTopic != "projects/test/topics/mail" || !reflect.DeepEqual(client.watchLabelIDs, []string{"INBOX", "IMPORTANT"}) {
+		t.Fatalf("watch call = user %q topic %q labels %v", client.watchUserID, client.watchTopic, client.watchLabelIDs)
+	}
+}
+
 func TestGmailConnectorRejectsInvalidCursorAndOversizedMessage(t *testing.T) {
 	client := &fakeGmailClient{rawMessages: map[string]GmailMessage{
 		"large": {ID: "large", Raw: base64.RawURLEncoding.EncodeToString([]byte("too large"))},
@@ -459,6 +476,11 @@ type fakeGmailClient struct {
 	historyPages  map[string]GmailHistoryPage
 	historyErrors map[string]error
 	rawMessages   map[string]GmailMessage
+	watch         GmailWatch
+	watchErr      error
+	watchUserID   string
+	watchTopic    string
+	watchLabelIDs []string
 	historyStarts []uint64
 	messageCalls  []fakeGmailMessageCall
 	closeCalls    int
@@ -499,6 +521,13 @@ func (f *fakeGmailClient) GetRawMessage(_ context.Context, _, messageID string) 
 		return GmailMessage{}, errors.New("missing fake message")
 	}
 	return message, nil
+}
+
+func (f *fakeGmailClient) Watch(_ context.Context, userID, topicName string, labelIDs []string) (GmailWatch, error) {
+	f.watchUserID = userID
+	f.watchTopic = topicName
+	f.watchLabelIDs = append([]string(nil), labelIDs...)
+	return f.watch, f.watchErr
 }
 
 func (f *fakeGmailClient) Close() error {

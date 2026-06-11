@@ -93,13 +93,17 @@ func TestDatabaseStateStoreCursorUpdatesAndStatusTransitions(t *testing.T) {
 		t.Fatalf("LoadCheckpoint(missing) = %#v, want zero checkpoint", missing)
 	}
 
+	renewedAt := time.Date(2026, time.June, 11, 12, 0, 0, 0, time.UTC)
 	first := Checkpoint{
 		Cursor:        Cursor{Token: "page-1", HistoryID: 18446744073709551615, UID: 40, UIDValidity: 9001},
 		MessageStatus: MessageStatusDiscovered,
 		ContentHash:   "sha256:first",
 		ErrorCount:    1,
 		LastError:     "retry scheduled",
-		Version:       "caller-version",
+		Renewal: RenewalMetadata{
+			LastRenewedAt: renewedAt, ExpiresAt: renewedAt.Add(7 * 24 * time.Hour), LastAttemptAt: renewedAt,
+		},
+		Version: "caller-version",
 	}
 	if err = store.CommitCheckpoint(ctx, key, "", first); err != nil {
 		t.Fatalf("CommitCheckpoint(first) error = %v", err)
@@ -108,7 +112,7 @@ func TestDatabaseStateStoreCursorUpdatesAndStatusTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCheckpoint(first) error = %v", err)
 	}
-	if stored.Version != "1" || stored.Cursor != first.Cursor || stored.MessageStatus != first.MessageStatus || stored.ContentHash != first.ContentHash || stored.ErrorCount != first.ErrorCount || stored.LastError != first.LastError {
+	if stored.Version != "1" || stored.Cursor != first.Cursor || stored.MessageStatus != first.MessageStatus || stored.ContentHash != first.ContentHash || stored.ErrorCount != first.ErrorCount || stored.LastError != first.LastError || stored.Renewal != first.Renewal {
 		t.Fatalf("LoadCheckpoint(first) = %#v", stored)
 	}
 

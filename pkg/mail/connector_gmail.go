@@ -75,6 +75,7 @@ type GmailClient interface {
 	ListMessages(ctx context.Context, userID, labelID, query, pageToken string, limit int) (GmailMessagePage, error)
 	ListHistory(ctx context.Context, userID, labelID string, startHistoryID uint64, pageToken string, limit int) (GmailHistoryPage, error)
 	GetRawMessage(ctx context.Context, userID, messageID string) (GmailMessage, error)
+	Watch(ctx context.Context, userID, topicName string, labelIDs []string) (GmailWatch, error)
 	Close() error
 }
 
@@ -87,6 +88,12 @@ type GmailLabel struct {
 // GmailProfile contains the mailbox history position needed for bootstrapping.
 type GmailProfile struct {
 	HistoryID uint64
+}
+
+// GmailWatch contains the provider values returned when a Gmail push watch is registered.
+type GmailWatch struct {
+	HistoryID uint64
+	ExpiresAt time.Time
 }
 
 // GmailMessage contains Gmail identity and raw-message metadata.
@@ -427,6 +434,30 @@ func (c *GmailConnector) OpenMessage(ctx context.Context, ref MessageRef, option
 	return RawMessage{Ref: c.messageRef(ref.Mailbox, message), RFC822: io.NopCloser(bytes.NewReader(data))}, nil
 }
 
+// RenewWatch registers or renews the Gmail push watch for the configured user.
+// The returned expiration is authoritative and should be persisted before the
+// next renewal is scheduled.
+func (c *GmailConnector) RenewWatch(ctx context.Context, topicName string, labelIDs []string) (GmailWatch, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.ready(ctx); err != nil {
+		return GmailWatch{}, err
+	}
+	topicName = strings.TrimSpace(topicName)
+	if topicName == "" {
+		return GmailWatch{}, errors.New("mail: Gmail watch topic name is required")
+	}
+	watch, err := c.client.Watch(ctx, c.config.UserID, topicName, append([]string(nil), labelIDs...))
+	if err != nil {
+		return GmailWatch{}, gmailError("renew Gmail watch", err)
+	}
+	if watch.ExpiresAt.IsZero() {
+		return GmailWatch{}, errors.New("mail: Gmail watch response has no expiration")
+	}
+	watch.ExpiresAt = watch.ExpiresAt.UTC()
+	return watch, nil
+}
+
 // Close releases provider HTTP resources. It is safe to call repeatedly.
 func (c *GmailConnector) Close() error {
 	c.closeOnce.Do(func() {
@@ -648,6 +679,19 @@ func (c *googleGmailClient) GetRawMessage(ctx context.Context, userID, messageID
 		return GmailMessage{}, err
 	}
 	return gmailMessageFromAPI(message), nil
+}
+
+func (c *googleGmailClient) Watch(ctx context.Context, userID, topicName string, labelIDs []string) (GmailWatch, error) {
+	request := &gmail.WatchRequest{TopicName: topicName, LabelIds: append([]string(nil), labelIDs...)}
+	response, err := c.service.Users.Watch(userID, request).Context(ctx).Do()
+	if err != nil {
+		return GmailWatch{}, err
+	}
+	watch := GmailWatch{HistoryID: response.HistoryId}
+	if response.Expiration > 0 {
+		watch.ExpiresAt = time.UnixMilli(response.Expiration).UTC()
+	}
+	return watch, nil
 }
 
 func (c *googleGmailClient) Close() error {

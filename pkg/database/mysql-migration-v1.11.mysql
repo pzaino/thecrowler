@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS EmailMailboxState (
     content_hash VARCHAR(255) NOT NULL DEFAULT '',
     error_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
     last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    watch_last_renewed_at TIMESTAMP NULL,
+    watch_expires_at TIMESTAMP NULL,
+    watch_last_attempt_at TIMESTAMP NULL,
+    watch_renewal_failure_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    watch_renewal_last_error VARCHAR(2048) NOT NULL DEFAULT '',
     version BIGINT UNSIGNED NOT NULL DEFAULT 0,
     lease_owner VARCHAR(191),
     lease_expires_at TIMESTAMP NULL,
@@ -31,7 +36,8 @@ CREATE TABLE IF NOT EXISTS EmailMailboxState (
     CONSTRAINT chk_emailmailboxstate_status CHECK (message_status IS NULL OR message_status IN ('discovered', 'fetched', 'parsed', 'normalized', 'attachments_processed', 'links_enqueued', 'completed', 'retryable_failure', 'permanent_failure')),
     CONSTRAINT chk_emailmailboxstate_lease CHECK ((lease_owner IS NULL AND lease_expires_at IS NULL) OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
     KEY idx_emailmailboxstate_lease (lease_expires_at, lease_owner),
-    KEY idx_emailmailboxstate_active (source_id, active)
+    KEY idx_emailmailboxstate_active (source_id, active),
+    KEY idx_emailmailboxstate_watch_expiration (watch_expires_at)
 );
 
 CREATE TABLE IF NOT EXISTS EmailMessageState (
