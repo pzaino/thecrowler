@@ -24,16 +24,6 @@ const (
 // trusted as a Gmail account change hint.
 var ErrMalformedGmailPushNotification = errors.New("mail: malformed Gmail push notification")
 
-// EmailChangeEvent is a provider-neutral request for incremental (delta)
-// reconciliation. Cursor is an advisory upper bound from the provider; a
-// consumer must still reconcile from its durable checkpoint and must not
-// commit Cursor solely because this event was received.
-type EmailChangeEvent struct {
-	Provider  string `json:"provider" yaml:"provider"`
-	AccountID string `json:"account_id" yaml:"account_id"`
-	Cursor    Cursor `json:"cursor" yaml:"cursor"`
-}
-
 // EmailChangeQueue accepts mailbox-account change hints for asynchronous delta
 // reconciliation. Implementations may be in-memory, database-backed, or an
 // adapter to another job system; GmailPushReceiver does not require Pub/Sub.
@@ -137,10 +127,18 @@ func DecodeGmailPushNotification(payload []byte) (EmailChangeEvent, error) {
 		return EmailChangeEvent{}, malformedGmailPush("invalid Gmail history ID", err)
 	}
 
+	mailbox := Mailbox{ID: "*", Name: "All mailboxes"}
 	return EmailChangeEvent{
-		Provider:  gmailProvider,
-		AccountID: accountID,
-		Cursor:    Cursor{HistoryID: historyID},
+		Provider:     gmailProvider,
+		AccountID:    accountID,
+		Mailbox:      mailbox,
+		Cursor:       Cursor{HistoryID: historyID},
+		SafeIdentity: SafeEmailEventIdentity(gmailProvider, accountID, mailbox),
+		ChangeType:   ChangeUpsert,
+		Metadata: EmailEventMetadata{
+			ListenerMode:   ListenerModePush,
+			ListenerStatus: ListenerStatusActive,
+		},
 	}, nil
 }
 

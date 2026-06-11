@@ -31,11 +31,7 @@ func TestDecodeGmailPushNotification(t *testing.T) {
 		t.Fatalf("DecodeGmailPushNotification() error = %v", err)
 	}
 
-	want := EmailChangeEvent{
-		Provider:  "gmail",
-		AccountID: "user.name+alerts@example.com",
-		Cursor:    Cursor{HistoryID: 9876543210},
-	}
+	want := gmailChangeEvent("user.name+alerts@example.com", 9876543210)
 	if !reflect.DeepEqual(event, want) {
 		t.Fatalf("event = %#v, want %#v", event, want)
 	}
@@ -110,9 +106,9 @@ func TestGmailPushReceiverEnqueuesNewerDeltaEvents(t *testing.T) {
 	}
 
 	want := []EmailChangeEvent{
-		{Provider: "gmail", AccountID: "user@example.com", Cursor: Cursor{HistoryID: 100}},
-		{Provider: "gmail", AccountID: "user@example.com", Cursor: Cursor{HistoryID: 101}},
-		{Provider: "gmail", AccountID: "other@example.com", Cursor: Cursor{HistoryID: 50}},
+		gmailChangeEvent("user@example.com", 100),
+		gmailChangeEvent("user@example.com", 101),
+		gmailChangeEvent("other@example.com", 50),
 	}
 	if !reflect.DeepEqual(queue.events, want) {
 		t.Fatalf("queued events = %#v, want %#v", queue.events, want)
@@ -135,6 +131,22 @@ func TestGmailPushReceiverRetriesAfterQueueFailure(t *testing.T) {
 	queue.err = nil
 	if queued, handleErr := receiver.Handle(context.Background(), payload); handleErr != nil || !queued {
 		t.Fatalf("retry Handle() = (%t, %v), want successful enqueue", queued, handleErr)
+	}
+}
+
+func gmailChangeEvent(account string, historyID uint64) EmailChangeEvent {
+	mailbox := Mailbox{ID: "*", Name: "All mailboxes"}
+	return EmailChangeEvent{
+		Provider:     "gmail",
+		AccountID:    account,
+		Mailbox:      mailbox,
+		Cursor:       Cursor{HistoryID: historyID},
+		SafeIdentity: SafeEmailEventIdentity("gmail", account, mailbox),
+		ChangeType:   ChangeUpsert,
+		Metadata: EmailEventMetadata{
+			ListenerMode:   ListenerModePush,
+			ListenerStatus: ListenerStatusActive,
+		},
 	}
 }
 
