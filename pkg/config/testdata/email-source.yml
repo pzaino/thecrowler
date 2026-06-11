@@ -1,0 +1,64 @@
+version: "1.0"
+format_version: "1.0"
+source_name: representative-email-archive
+description: Secret-safe IMAP listener fixture with bounded extraction.
+crawling_config:
+  site: imaps://mail.example.test:993
+  source_type: email
+email:
+  connector:
+    provider: imap
+    endpoint: imaps://mail.example.test:993
+    tls:
+      server_name: mail.example.test
+      insecure_skip_verify: false
+  auth:
+    method: secret_ref
+    credential_ref: secret/test/email-archive
+    identity: archive-reader@example.test
+  mailboxes:
+    include: [INBOX, Archive]
+    exclude: [Spam, Trash]
+  crawl:
+    mode: listen
+    batch_size: 50
+    max_messages: 500
+    timeout: 5m
+    limits:
+      max_message_bytes: 10485760
+      max_attachment_bytes: 2097152
+      max_total_attachment_bytes: 5242880
+      max_attachments: 10
+      max_header_bytes: 262144
+      max_embedded_message_depth: 2
+      max_mime_depth: 20
+      max_mime_parts: 250
+  extraction:
+    include_headers: [From, To, Subject, Date, Message-ID]
+    prefer_html: false
+    cleanup_html: true
+    links:
+      extract: true
+      follow_remote: false
+      allowed_schemes: [https]
+      max_links_per_message: 50
+      suppress_unsubscribe: true
+    attachments:
+      include: true
+      include_inline: false
+      extract_text: false
+      allowed_media_types: [text/plain, application/pdf]
+      blocked_media_types: [application/x-executable]
+  listener:
+    enabled: true
+    buffer_size: 64
+    coalesce_window: 1s
+    reconnect_backoff: 5s
+    max_reconnect_backoff: 1m
+    idle_reissue_interval: 25m
+  reconciliation:
+    poll_interval: 5m
+    full_sync_interval: 24h
+    page_size: 100
+    max_pages: 50
+    lease_ttl: 2m

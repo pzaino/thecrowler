@@ -29,7 +29,7 @@ func TestCrawlingConfigSiteValidationSupportsLocalEmailURIs(t *testing.T) {
 		t.Fatal("CrawlingConfig.Site field not found")
 	}
 
-	const expected = "required,url|startswith=maildir:///|startswith=mbox:///"
+	const expected = "required,url|startswith=http://|startswith=https://|startswith=ftp://|startswith=ftps://|startswith=null://|startswith=maildir:///|startswith=mbox:///"
 	if got := field.Tag.Get("validate"); got != expected {
 		t.Fatalf("unexpected Site validation: got %q, want %q", got, expected)
 	}

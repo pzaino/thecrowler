@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -200,5 +201,52 @@ func TestSourceConfigWithEmailIsNotEmpty(t *testing.T) {
 	source := SourceConfig{Email: &EmailSourceConfig{}}
 	if source.IsEmpty() {
 		t.Fatal("source with an email configuration was reported empty")
+	}
+}
+
+func TestRepresentativeEmailSourceFixture(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/email-source.yml")
+	if err != nil {
+		t.Fatalf("read representative email source fixture: %v", err)
+	}
+
+	var source SourceConfig
+	if err := yaml.Unmarshal(data, &source); err != nil {
+		t.Fatalf("parse representative email source fixture: %v", err)
+	}
+	if source.Email == nil {
+		t.Fatal("representative fixture has no email configuration")
+	}
+
+	email := source.Email
+	if source.CrawlingConfig.SourceType != SourceTypeEmail || email.Connector.Provider != "imap" {
+		t.Fatalf("fixture source type or connector is not supported: source=%q provider=%q", source.CrawlingConfig.SourceType, email.Connector.Provider)
+	}
+	if email.Auth.CredentialRef != "secret/test/email-archive" {
+		t.Fatalf("credential reference = %q, want test secret reference", email.Auth.CredentialRef)
+	}
+	if email.Crawl.Mode != mailconfig.ModeListen || !email.Listener.Enabled {
+		t.Fatalf("listener mode is not enabled: mode=%q listener=%#v", email.Crawl.Mode, email.Listener)
+	}
+
+	links := email.Extraction.Links
+	if !links.Extract || links.FollowRemote {
+		t.Fatalf("links must be extracted without remote fetching: %#v", links)
+	}
+	if email.Extraction.PreferHTML || !email.Extraction.CleanupHTML {
+		t.Fatalf("safe body extraction settings were not parsed: %#v", email.Extraction)
+	}
+	if !email.Extraction.Attachments.Include || email.Extraction.Attachments.IncludeInline || email.Extraction.Attachments.ExtractText {
+		t.Fatalf("safe attachment extraction settings were not parsed: %#v", email.Extraction.Attachments)
+	}
+
+	limits := email.Crawl.Limits
+	if limits.MaxAttachmentBytes != 2<<20 || limits.MaxTotalAttachmentBytes != 5<<20 || limits.MaxAttachments != 10 {
+		t.Fatalf("attachment limits were not parsed: %#v", limits)
+	}
+	if err := email.Validate(); err != nil {
+		t.Fatalf("validate representative email source fixture: %v", err)
 	}
 }
