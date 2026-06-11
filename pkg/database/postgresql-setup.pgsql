@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS EmailMailboxState (
     account_key VARCHAR(191) NOT NULL,
     mailbox_key VARCHAR(191) NOT NULL,
     cursor_token TEXT NOT NULL DEFAULT '',
+    cursor_history_id VARCHAR(20) NOT NULL DEFAULT '0',
     cursor_uid BIGINT NOT NULL DEFAULT 0 CHECK (cursor_uid BETWEEN 0 AND 4294967295),
     cursor_uid_validity BIGINT NOT NULL DEFAULT 0 CHECK (cursor_uid_validity BETWEEN 0 AND 4294967295),
     checkpoint_schema_version INTEGER NOT NULL DEFAULT 1 CHECK (checkpoint_schema_version > 0),

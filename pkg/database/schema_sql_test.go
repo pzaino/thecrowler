@@ -240,6 +240,7 @@ func TestEmailStateSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 		"account_key",
 		"mailbox_key",
 		"cursor_token",
+		"cursor_history_id",
 		"cursor_uid",
 		"cursor_uid_validity",
 		"checkpoint_schema_version",

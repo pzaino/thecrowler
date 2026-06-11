@@ -124,7 +124,7 @@ func TestCursorAndFetchOptionsSerializeWithoutConnectorTypes(t *testing.T) {
 		Cursor Cursor       `json:"cursor"`
 		Fetch  FetchOptions `json:"fetch"`
 	}{
-		Cursor: Cursor{Token: "opaque-history-token", UID: 42, UIDValidity: 7},
+		Cursor: Cursor{Token: "opaque-page-token", HistoryID: 18446744073709551615, UID: 42, UIDValidity: 7},
 		Fetch: FetchOptions{
 			Headers:     []string{"Message-ID", "Subject"},
 			IncludeBody: true,
@@ -137,7 +137,8 @@ func TestCursorAndFetchOptionsSerializeWithoutConnectorTypes(t *testing.T) {
 		t.Fatalf("marshal cursor and fetch options: %v", err)
 	}
 	for _, field := range []string{
-		`"token":"opaque-history-token"`,
+		`"token":"opaque-page-token"`,
+		`"history_id":18446744073709551615`,
 		`"uid":42`,
 		`"uid_validity":7`,
 		`"headers":["Message-ID","Subject"]`,

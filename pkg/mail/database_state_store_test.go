@@ -94,7 +94,7 @@ func TestDatabaseStateStoreCursorUpdatesAndStatusTransitions(t *testing.T) {
 	}
 
 	first := Checkpoint{
-		Cursor:        Cursor{Token: "history-1", UID: 40, UIDValidity: 9001},
+		Cursor:        Cursor{Token: "page-1", HistoryID: 18446744073709551615, UID: 40, UIDValidity: 9001},
 		MessageStatus: MessageStatusDiscovered,
 		ContentHash:   "sha256:first",
 		ErrorCount:    1,
@@ -113,7 +113,7 @@ func TestDatabaseStateStoreCursorUpdatesAndStatusTransitions(t *testing.T) {
 	}
 
 	second := Checkpoint{
-		Cursor:        Cursor{Token: "history-2", UID: 41, UIDValidity: 9001},
+		Cursor:        Cursor{Token: "page-2", HistoryID: 9223372036854775808, UID: 41, UIDValidity: 9001},
 		MessageStatus: MessageStatusFetched,
 		ContentHash:   "sha256:second",
 	}

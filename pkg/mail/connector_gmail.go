@@ -275,54 +275,62 @@ func (c *GmailConnector) ListChanges(ctx context.Context, mailbox Mailbox, curso
 	if err != nil {
 		return ChangePage{}, &Error{Kind: ErrorCheckpointReset, Operation: "list Gmail changes", Message: "Gmail cursor is invalid", Cause: err}
 	}
-	if state.HistoryID == 0 {
-		profile, profileErr := c.client.GetProfile(ctx, c.config.UserID)
+
+	historyID := cursor.HistoryID
+	// Read cursors written by the original Gmail implementation, which embedded
+	// the durable history ID in Token. New cursors persist it explicitly.
+	if historyID == 0 && state.LegacyHistoryID != 0 {
+		historyID = state.LegacyHistoryID
+	}
+	state.LegacyHistoryID = 0
+	if historyID == 0 && cursor.Token != "" {
+		return ChangePage{}, &Error{Kind: ErrorCheckpointReset, Operation: "list Gmail changes", Message: "Gmail cursor does not include a history ID"}
+	}
+	if historyID == 0 {
+		profile, profileErr := c.currentProfile(ctx)
 		if profileErr != nil {
-			return ChangePage{}, gmailError("get Gmail profile", profileErr)
+			return ChangePage{}, profileErr
 		}
-		if profile.HistoryID == 0 {
-			return ChangePage{}, &Error{Kind: ErrorTransient, Operation: "get Gmail profile", Message: "Gmail profile did not include a history ID"}
-		}
-		state.HistoryID = profile.HistoryID
+		historyID = profile.HistoryID
 		state.Bootstrap = true
 	}
 	if state.Bootstrap {
-		page, listErr := c.client.ListMessages(ctx, c.config.UserID, mailbox.ID, c.config.Query, state.PageToken, limit)
-		if listErr != nil {
-			return ChangePage{}, gmailError("list Gmail messages", listErr)
-		}
-		changes := make([]Change, 0, len(page.Messages))
-		for _, message := range page.Messages {
-			if message.ID != "" {
-				changes = append(changes, Change{Kind: ChangeUpsert, Ref: c.messageRef(mailbox, message)})
-			}
-		}
-		state.PageToken = page.NextPageToken
-		state.Bootstrap = page.NextPageToken != ""
-		next, encodeErr := encodeGmailCursor(state)
-		if encodeErr != nil {
-			return ChangePage{}, encodeErr
-		}
-		return ChangePage{Changes: changes, Next: Cursor{Token: next}, More: state.Bootstrap}, nil
+		return c.listBootstrapPage(ctx, mailbox, historyID, state, limit)
 	}
-	page, err := c.client.ListHistory(ctx, c.config.UserID, mailbox.ID, state.HistoryID, state.PageToken, limit)
+
+	page, err := c.client.ListHistory(ctx, c.config.UserID, mailbox.ID, historyID, state.PageToken, limit)
 	if err != nil {
+		if gmailHistoryCursorExpired(err) {
+			profile, profileErr := c.currentProfile(ctx)
+			if profileErr != nil {
+				return ChangePage{}, profileErr
+			}
+			resetState := gmailCursor{Bootstrap: true}
+			token, encodeErr := encodeGmailCursor(resetState)
+			if encodeErr != nil {
+				return ChangePage{}, encodeErr
+			}
+			return ChangePage{
+				Changes: []Change{{Kind: ChangeReset}},
+				Next:    Cursor{Token: token, HistoryID: profile.HistoryID},
+				More:    true,
+			}, nil
+		}
 		return ChangePage{}, gmailError("list Gmail history", err)
 	}
-	changes := make([]Change, 0, len(page.Changes))
-	for _, historyChange := range page.Changes {
-		if historyChange.Message.ID == "" || (historyChange.Kind != ChangeUpsert && historyChange.Kind != ChangeDelete) {
-			continue
-		}
-		changes = append(changes, Change{Kind: historyChange.Kind, Ref: c.messageRef(mailbox, historyChange.Message)})
+
+	if page.HistoryID == 0 {
+		return ChangePage{}, &Error{Kind: ErrorTransient, Operation: "list Gmail history", Message: "Gmail returned an invalid current history ID"}
 	}
+	changes := c.resolveHistoryChanges(mailbox, page.Changes)
 	if page.HistoryID > state.PendingHistoryID {
 		state.PendingHistoryID = page.HistoryID
 	}
 	state.PageToken = page.NextPageToken
+	nextHistoryID := historyID
 	if state.PageToken == "" {
-		if state.PendingHistoryID > state.HistoryID {
-			state.HistoryID = state.PendingHistoryID
+		if state.PendingHistoryID > nextHistoryID {
+			nextHistoryID = state.PendingHistoryID
 		}
 		state.PendingHistoryID = 0
 	}
@@ -330,7 +338,66 @@ func (c *GmailConnector) ListChanges(ctx context.Context, mailbox Mailbox, curso
 	if err != nil {
 		return ChangePage{}, err
 	}
-	return ChangePage{Changes: changes, Next: Cursor{Token: next}, More: page.NextPageToken != ""}, nil
+	return ChangePage{Changes: changes, Next: Cursor{Token: next, HistoryID: nextHistoryID}, More: page.NextPageToken != ""}, nil
+}
+
+func (c *GmailConnector) currentProfile(ctx context.Context) (GmailProfile, error) {
+	profile, err := c.client.GetProfile(ctx, c.config.UserID)
+	if err != nil {
+		return GmailProfile{}, gmailError("get Gmail profile", err)
+	}
+	if profile.HistoryID == 0 {
+		return GmailProfile{}, &Error{Kind: ErrorTransient, Operation: "get Gmail profile", Message: "Gmail profile did not include a valid history ID"}
+	}
+	return profile, nil
+}
+
+func (c *GmailConnector) listBootstrapPage(ctx context.Context, mailbox Mailbox, historyID uint64, state gmailCursor, limit int) (ChangePage, error) {
+	page, err := c.client.ListMessages(ctx, c.config.UserID, mailbox.ID, c.config.Query, state.PageToken, limit)
+	if err != nil {
+		return ChangePage{}, gmailError("list Gmail messages", err)
+	}
+	changes := make([]Change, 0, len(page.Messages))
+	seen := make(map[string]struct{}, len(page.Messages))
+	for _, message := range page.Messages {
+		if message.ID == "" {
+			continue
+		}
+		if _, duplicate := seen[message.ID]; duplicate {
+			continue
+		}
+		seen[message.ID] = struct{}{}
+		changes = append(changes, Change{Kind: ChangeUpsert, Ref: c.messageRef(mailbox, message)})
+	}
+	state.PageToken = page.NextPageToken
+	state.Bootstrap = page.NextPageToken != ""
+	next, encodeErr := encodeGmailCursor(state)
+	if encodeErr != nil {
+		return ChangePage{}, encodeErr
+	}
+	return ChangePage{Changes: changes, Next: Cursor{Token: next, HistoryID: historyID}, More: state.Bootstrap}, nil
+}
+
+func (c *GmailConnector) resolveHistoryChanges(mailbox Mailbox, historyChanges []GmailHistoryChange) []Change {
+	changes := make([]Change, 0, len(historyChanges))
+	positions := make(map[string]int, len(historyChanges))
+	for _, historyChange := range historyChanges {
+		messageID := historyChange.Message.ID
+		if messageID == "" || (historyChange.Kind != ChangeUpsert && historyChange.Kind != ChangeDelete) {
+			continue
+		}
+		change := Change{Kind: historyChange.Kind, Ref: c.messageRef(mailbox, historyChange.Message)}
+		if position, duplicate := positions[messageID]; duplicate {
+			// Gmail can report the same message in messagesAdded/labelsAdded (or
+			// their deletion counterparts). Preserve one reference and let the
+			// last mutation in history order determine its final kind.
+			changes[position] = change
+			continue
+		}
+		positions[messageID] = len(changes)
+		changes = append(changes, change)
+	}
+	return changes
 }
 
 // OpenMessage retrieves one complete RFC 5322 message with Gmail's raw format.
@@ -395,7 +462,7 @@ func (c *GmailConnector) messageRef(mailbox Mailbox, message GmailMessage) Messa
 }
 
 type gmailCursor struct {
-	HistoryID        uint64 `json:"history_id"`
+	LegacyHistoryID  uint64 `json:"history_id,omitempty"`
 	PendingHistoryID uint64 `json:"pending_history_id,omitempty"`
 	PageToken        string `json:"page_token,omitempty"`
 	Bootstrap        bool   `json:"bootstrap,omitempty"`
@@ -421,9 +488,6 @@ func decodeGmailCursor(token string) (gmailCursor, error) {
 	if err := json.Unmarshal(data, &cursor); err != nil {
 		return gmailCursor{}, err
 	}
-	if cursor.HistoryID == 0 {
-		return gmailCursor{}, errors.New("history ID is missing")
-	}
 	return cursor, nil
 }
 
@@ -441,6 +505,11 @@ func gmailMailboxSelected(label GmailLabel, selector MailboxSelector) bool {
 		return false
 	}
 	return len(selector.Include) == 0 || matches(selector.Include)
+}
+
+func gmailHistoryCursorExpired(err error) bool {
+	var apiErr *googleapi.Error
+	return errors.As(err, &apiErr) && apiErr.Code == http.StatusNotFound
 }
 
 func gmailError(operation string, err error) error {

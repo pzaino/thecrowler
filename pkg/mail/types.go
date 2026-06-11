@@ -67,10 +67,12 @@ type RawMessage struct {
 }
 
 // Cursor records provider-neutral incremental listing progress. Token carries
-// an opaque cursor or history token for API-based providers. UID and
-// UIDValidity carry the equivalent IMAP checkpoint without an IMAP SDK type.
+// opaque provider pagination state, HistoryID carries Gmail's durable history
+// position, and UID plus UIDValidity carry the equivalent IMAP checkpoint
+// without exposing provider SDK types.
 type Cursor struct {
 	Token       string `json:"token,omitempty" yaml:"token,omitempty"`
+	HistoryID   uint64 `json:"history_id,omitempty" yaml:"history_id,omitempty"`
 	UID         uint32 `json:"uid,omitempty" yaml:"uid,omitempty"`
 	UIDValidity uint32 `json:"uid_validity,omitempty" yaml:"uid_validity,omitempty"`
 }

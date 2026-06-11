@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/gmail/v1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -134,8 +135,8 @@ func TestGmailConnectorFakeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode final cursor: %v", err)
 	}
-	if state.HistoryID != 105 || state.PendingHistoryID != 0 || state.PageToken != "" {
-		t.Fatalf("final history cursor = %#v, want committed history 105", state)
+	if historySecond.Next.HistoryID != 105 || state.PendingHistoryID != 0 || state.PageToken != "" {
+		t.Fatalf("final history cursor = %#v with state %#v, want committed history 105", historySecond.Next, state)
 	}
 
 	raw, err := connector.OpenMessage(context.Background(), historyFirst.Changes[0].Ref, FetchOptions{IncludeBody: true, MaxBytes: 1024})
@@ -172,6 +173,90 @@ func TestGmailConnectorFakeLifecycle(t *testing.T) {
 	wantPrefix := []string{"credentials", "tokens", "client", "labels", "profile", "messages:", "messages:messages-page-2"}
 	if len(events) < len(wantPrefix) || !reflect.DeepEqual(events[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("lifecycle events = %#v, want prefix %#v", events, wantPrefix)
+	}
+}
+
+func TestGmailConnectorResolvesDuplicateHistoryChangesAndDeletions(t *testing.T) {
+	client := &fakeGmailClient{historyPages: map[string]GmailHistoryPage{
+		"": {
+			Changes: []GmailHistoryChange{
+				{Kind: ChangeUpsert, Message: GmailMessage{ID: "m1", ThreadID: "old", HistoryID: 101}},
+				{Kind: ChangeUpsert, Message: GmailMessage{ID: "m2", HistoryID: 102}},
+				{Kind: ChangeUpsert, Message: GmailMessage{ID: "m1", ThreadID: "new", HistoryID: 103}},
+				{Kind: ChangeDelete, Message: GmailMessage{ID: "m1", HistoryID: 104}},
+				{Kind: ChangeDelete, Message: GmailMessage{ID: "m2", HistoryID: 105}},
+				{Kind: ChangeDelete, Message: GmailMessage{ID: "m2", HistoryID: 105}},
+			},
+			HistoryID: 110,
+		},
+	}}
+	connector := newFakeGmailConnector(t, client)
+
+	page, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{HistoryID: 100}, 50)
+	if err != nil {
+		t.Fatalf("ListChanges() error = %v", err)
+	}
+	if page.More || page.Next.HistoryID != 110 || len(page.Changes) != 2 {
+		t.Fatalf("history page = %#v, want two resolved changes at history 110", page)
+	}
+	for i, messageID := range []string{"m1", "m2"} {
+		change := page.Changes[i]
+		if change.Kind != ChangeDelete || change.Ref.ProviderMessageID != messageID {
+			t.Fatalf("change %d = %#v, want delete for %s", i, change, messageID)
+		}
+	}
+}
+
+func TestGmailConnectorExpiredHistoryCursorFallsBackToBootstrap(t *testing.T) {
+	client := &fakeGmailClient{
+		profile: GmailProfile{HistoryID: 200},
+		historyErrors: map[string]error{
+			"": &googleapi.Error{Code: http.StatusNotFound, Message: "Requested entity was not found"},
+		},
+		messagePages: map[string]GmailMessagePage{
+			"": {Messages: []GmailMessage{{ID: "current"}}},
+		},
+	}
+	connector := newFakeGmailConnector(t, client)
+	mailbox := Mailbox{ID: "INBOX"}
+
+	reset, err := connector.ListChanges(context.Background(), mailbox, Cursor{HistoryID: 100}, 25)
+	if err != nil {
+		t.Fatalf("expired ListChanges() error = %v", err)
+	}
+	if len(reset.Changes) != 1 || reset.Changes[0].Kind != ChangeReset || !reset.More || reset.Next.HistoryID != 200 {
+		t.Fatalf("reset page = %#v", reset)
+	}
+
+	fallback, err := connector.ListChanges(context.Background(), mailbox, reset.Next, 25)
+	if err != nil {
+		t.Fatalf("fallback ListChanges() error = %v", err)
+	}
+	assertGmailChange(t, fallback, ChangeUpsert, "current", false)
+	if fallback.Next.HistoryID != 200 {
+		t.Fatalf("fallback history ID = %d, want 200", fallback.Next.HistoryID)
+	}
+}
+
+func TestGmailConnectorRejectsInvalidHistoryPageID(t *testing.T) {
+	connector := newFakeGmailConnector(t, &fakeGmailClient{historyPages: map[string]GmailHistoryPage{
+		"": {Changes: []GmailHistoryChange{{Kind: ChangeUpsert, Message: GmailMessage{ID: "m1"}}}},
+	}})
+
+	_, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{HistoryID: 100}, 10)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorTransient || !strings.Contains(err.Error(), "invalid current history ID") {
+		t.Fatalf("invalid history page error = %T %v, want transient invalid-history error", err, err)
+	}
+}
+
+func TestGmailConnectorRejectsMissingCurrentHistoryID(t *testing.T) {
+	connector := newFakeGmailConnector(t, &fakeGmailClient{profile: GmailProfile{}})
+
+	_, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{}, 10)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorTransient || !strings.Contains(err.Error(), "valid history ID") {
+		t.Fatalf("missing history ID error = %T %v, want transient invalid-history error", err, err)
 	}
 }
 
@@ -372,6 +457,7 @@ type fakeGmailClient struct {
 	profile       GmailProfile
 	messagePages  map[string]GmailMessagePage
 	historyPages  map[string]GmailHistoryPage
+	historyErrors map[string]error
 	rawMessages   map[string]GmailMessage
 	historyStarts []uint64
 	messageCalls  []fakeGmailMessageCall
@@ -400,6 +486,9 @@ func (f *fakeGmailClient) ListMessages(_ context.Context, userID, labelID, query
 func (f *fakeGmailClient) ListHistory(_ context.Context, _, _ string, startHistoryID uint64, pageToken string, _ int) (GmailHistoryPage, error) {
 	f.historyStarts = append(f.historyStarts, startHistoryID)
 	appendGmailEvent(f.events, "history:"+pageToken)
+	if err := f.historyErrors[pageToken]; err != nil {
+		return GmailHistoryPage{}, err
+	}
 	return f.historyPages[pageToken], nil
 }
 

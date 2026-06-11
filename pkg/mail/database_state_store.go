@@ -61,7 +61,7 @@ func (s *DatabaseStateStore) LoadCheckpoint(ctx context.Context, key MailboxKey)
 		return Checkpoint{}, err
 	}
 
-	query := `SELECT cursor_token, cursor_uid, cursor_uid_validity, message_status,
+	query := `SELECT cursor_token, cursor_history_id, cursor_uid, cursor_uid_validity, message_status,
 		content_hash, error_count, last_error, version
 		FROM EmailMailboxState
 		WHERE source_id = ` + mailPlaceholder(s.dbms, 1) + `
@@ -204,7 +204,7 @@ func validateCheckpointStatusTransition(current, next MessageStatus, exists bool
 }
 
 func (s *DatabaseStateStore) loadCheckpointTx(ctx context.Context, tx *sql.Tx, identity databaseMailboxIdentity) (Checkpoint, bool, error) {
-	query := `SELECT cursor_token, cursor_uid, cursor_uid_validity, message_status,
+	query := `SELECT cursor_token, cursor_history_id, cursor_uid, cursor_uid_validity, message_status,
 		content_hash, error_count, last_error, version
 		FROM EmailMailboxState
 		WHERE source_id = ` + mailPlaceholder(s.dbms, 1) + `
@@ -227,10 +227,10 @@ func (s *DatabaseStateStore) loadCheckpointTx(ctx context.Context, tx *sql.Tx, i
 
 func (s *DatabaseStateStore) insertCheckpointTx(ctx context.Context, tx *sql.Tx, identity databaseMailboxIdentity, next Checkpoint) error {
 	query := `INSERT INTO EmailMailboxState (
-		source_id, provider, account_key, mailbox_key, cursor_token,
+		source_id, provider, account_key, mailbox_key, cursor_token, cursor_history_id,
 		cursor_uid, cursor_uid_validity, message_status, content_hash,
 		error_count, last_error, version
-	) VALUES (` + mailPlaceholders(s.dbms, 12) + `)`
+	) VALUES (` + mailPlaceholders(s.dbms, 13) + `)`
 	args := checkpointArgs(identity, next, 1)
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		if isUniqueConstraintError(err) {
@@ -248,20 +248,21 @@ func (s *DatabaseStateStore) updateCheckpointTx(ctx context.Context, tx *sql.Tx,
 	}
 	query := `UPDATE EmailMailboxState SET
 		cursor_token = ` + mailPlaceholder(s.dbms, 1) + `,
-		cursor_uid = ` + mailPlaceholder(s.dbms, 2) + `,
-		cursor_uid_validity = ` + mailPlaceholder(s.dbms, 3) + `,
-		message_status = ` + mailPlaceholder(s.dbms, 4) + `,
-		content_hash = ` + mailPlaceholder(s.dbms, 5) + `,
-		error_count = ` + mailPlaceholder(s.dbms, 6) + `,
-		last_error = ` + mailPlaceholder(s.dbms, 7) + `,
+		cursor_history_id = ` + mailPlaceholder(s.dbms, 2) + `,
+		cursor_uid = ` + mailPlaceholder(s.dbms, 3) + `,
+		cursor_uid_validity = ` + mailPlaceholder(s.dbms, 4) + `,
+		message_status = ` + mailPlaceholder(s.dbms, 5) + `,
+		content_hash = ` + mailPlaceholder(s.dbms, 6) + `,
+		error_count = ` + mailPlaceholder(s.dbms, 7) + `,
+		last_error = ` + mailPlaceholder(s.dbms, 8) + `,
 		version = version + 1,
 		last_updated_at = CURRENT_TIMESTAMP
-		WHERE source_id = ` + mailPlaceholder(s.dbms, 8) + `
-		  AND provider = ` + mailPlaceholder(s.dbms, 9) + `
-		  AND account_key = ` + mailPlaceholder(s.dbms, 10) + `
-		  AND mailbox_key = ` + mailPlaceholder(s.dbms, 11) + `
-		  AND version = ` + mailPlaceholder(s.dbms, 12)
-	args := []interface{}{next.Cursor.Token, next.Cursor.UID, next.Cursor.UIDValidity, nullableStatus(next.MessageStatus), next.ContentHash, next.ErrorCount, next.LastError, identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, version}
+		WHERE source_id = ` + mailPlaceholder(s.dbms, 9) + `
+		  AND provider = ` + mailPlaceholder(s.dbms, 10) + `
+		  AND account_key = ` + mailPlaceholder(s.dbms, 11) + `
+		  AND mailbox_key = ` + mailPlaceholder(s.dbms, 12) + `
+		  AND version = ` + mailPlaceholder(s.dbms, 13)
+	args := []interface{}{next.Cursor.Token, formatHistoryID(next.Cursor.HistoryID), next.Cursor.UID, next.Cursor.UIDValidity, nullableStatus(next.MessageStatus), next.ContentHash, next.ErrorCount, next.LastError, identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, version}
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("update mail checkpoint: %w", err)
@@ -277,7 +278,11 @@ func (s *DatabaseStateStore) updateCheckpointTx(ctx context.Context, tx *sql.Tx,
 }
 
 func checkpointArgs(identity databaseMailboxIdentity, checkpoint Checkpoint, version uint64) []interface{} {
-	return []interface{}{identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, checkpoint.Cursor.Token, checkpoint.Cursor.UID, checkpoint.Cursor.UIDValidity, nullableStatus(checkpoint.MessageStatus), checkpoint.ContentHash, checkpoint.ErrorCount, checkpoint.LastError, version}
+	return []interface{}{identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, checkpoint.Cursor.Token, formatHistoryID(checkpoint.Cursor.HistoryID), checkpoint.Cursor.UID, checkpoint.Cursor.UIDValidity, nullableStatus(checkpoint.MessageStatus), checkpoint.ContentHash, checkpoint.ErrorCount, checkpoint.LastError, version}
+}
+
+func formatHistoryID(historyID uint64) string {
+	return strconv.FormatUint(historyID, 10)
 }
 
 func nullableStatus(status MessageStatus) interface{} {
@@ -291,11 +296,16 @@ func scanCheckpoint(scan func(...interface{}) error) (Checkpoint, error) {
 	var (
 		checkpoint Checkpoint
 		status     sql.NullString
+		historyID  string
 		version    uint64
 	)
-	err := scan(&checkpoint.Cursor.Token, &checkpoint.Cursor.UID, &checkpoint.Cursor.UIDValidity, &status, &checkpoint.ContentHash, &checkpoint.ErrorCount, &checkpoint.LastError, &version)
+	err := scan(&checkpoint.Cursor.Token, &historyID, &checkpoint.Cursor.UID, &checkpoint.Cursor.UIDValidity, &status, &checkpoint.ContentHash, &checkpoint.ErrorCount, &checkpoint.LastError, &version)
 	if err != nil {
 		return Checkpoint{}, err
+	}
+	checkpoint.Cursor.HistoryID, err = strconv.ParseUint(historyID, 10, 64)
+	if err != nil {
+		return Checkpoint{}, fmt.Errorf("invalid stored mail history ID %q: %w", historyID, err)
 	}
 	if status.Valid {
 		checkpoint.MessageStatus = MessageStatus(status.String)
