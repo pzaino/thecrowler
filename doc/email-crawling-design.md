@@ -332,6 +332,65 @@ is not propagated to an index deletion workflow.
   dispatch, listener lifecycle, and production output wiring remain integration
   work unless supplied by the caller.
 
+### Implemented POP3/POP3S MVP contract
+
+POP3 support is a legacy, polling-only compatibility option. It has materially
+less mailbox information than IMAP or provider APIs: the connector exposes only
+the account's single maildrop as `INBOX`, with no folder hierarchy, labels,
+archive/trash distinction, or cross-folder move semantics. Its incremental
+synchronization and deletion semantics are also weaker because they are inferred
+by comparing complete maildrop snapshots rather than obtained from a durable
+server history or mailbox-scoped UID stream. **POP3 should generally not be
+preferred over IMAP or a provider API** when either alternative is available.
+Use it only when the server offers no stronger read-only retrieval interface and
+these limitations are acceptable.
+
+The implemented connector behaves as follows:
+
+- It accepts `pop3://` and `pop3s://` source endpoints and authenticates with
+  `USER`/`PASS`. `pop3s://` uses implicit TLS. The typed `pop3://` mapping is
+  cleartext; required `STLS` exists only as a low-level connector policy and is
+  not exposed through the source URL/configuration mapping.
+- It returns exactly one mailbox, canonically identified as `INBOX`, rejects
+  other mailbox names, serializes operations on one authenticated connection,
+  and does not implement listener mode. As with IMAP, `pkg/mail` does not run a
+  timer: the surrounding scheduler must invoke each reconciliation poll.
+- Each poll obtains the current `LIST`/`UIDL` view and compares it with the
+  previous opaque cursor snapshot. Newly observed identities become `upsert`
+  changes and previously known identities missing from the new snapshot become
+  `delete` changes. A pending snapshot is stored in the cursor and paged without
+  listing again until all of its changes have been returned; the pipeline commits
+  each page only after its upserts have been processed successfully.
+- POP3 message numbers are session-local and are never treated as durable
+  identity. Before fetching a message, the connector lists the maildrop again to
+  resolve the current message number and avoid silently fetching a different
+  message after renumbering.
+- When the server supplies `UIDL`, the connector uses that opaque value as the
+  polling comparison key and fetch locator in `MessageRef.Version`. It
+  deliberately does not promote UIDL to `ProviderMessageID`, because POP3 does
+  not provide the same strong, portable identity guarantees as a provider API.
+- When `UIDL` is unavailable, polling retrieves each message within the
+  configured size limit and uses a SHA-256 hash of the complete RFC 5322 bytes,
+  plus an occurrence number in current message-number order, as comparison and
+  lookup evidence. The occurrence suffix keeps byte-identical copies distinct
+  within the polling snapshot, but changes in duplicate ordering or population
+  can still make this fallback ambiguous.
+- Final normalized document identity follows the provider-neutral identity
+  policy. Because POP3 references have neither a strong provider message ID nor
+  an IMAP `UIDVALIDITY`/UID tuple, the processor uses the complete-message
+  SHA-256 fingerprint scoped by source, account identity, and `INBOX`. The UIDL
+  remains provenance/lookup evidence rather than the document ID; consequently,
+  byte-identical POP3 messages can converge on the same document identity.
+
+Deletion reporting is observational only. A missing UIDL or fingerprint means
+that the message was absent from the latest maildrop snapshot; POP3 cannot say
+whether it was deleted, downloaded-and-removed by another client, expired by
+server retention, or moved through a provider feature outside POP3's view. The
+current processing pipeline also ignores provider-neutral `delete` changes, so
+POP3 disappearance does not delete an indexed document. This makes the
+implementation suitable for incremental ingestion of newly visible messages,
+not for maintaining an authoritative mirror or audit-grade deletion history.
+
 ## Core data model
 
 The provider-neutral model separates provider metadata, raw content, parsed
@@ -469,8 +528,9 @@ Responsibilities:
 
 For IMAP, the adapter uses UID-based retrieval, never sequence numbers for
 persistent identity. A UIDVALIDITY change produces a reset signal and forces
-mailbox reconciliation. POP3 is not part of the initial target unless a stable
-identity and deletion policy are designed explicitly.
+mailbox reconciliation. The implemented POP3 adapter is a polling-only legacy
+fallback with the weaker identity and deletion behavior documented above; new
+deployments should prefer IMAP or provider APIs.
 
 ### Fetcher
 
