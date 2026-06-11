@@ -18,7 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"testing"
+	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	mail "github.com/pzaino/thecrowler/pkg/mail"
@@ -140,6 +143,147 @@ func TestCrawlEmailRunsPipelineAndAdaptsDocuments(t *testing.T) {
 	}
 	if len(handler.result.Page.Links) != 1 || handler.result.Page.Links[0].Link != "https://example.test/report" {
 		t.Errorf("adapted links = %+v", handler.result.Page.Links)
+	}
+}
+
+func TestEmailDocumentPageMapsDeterministicArtifactMetadata(t *testing.T) {
+	messageDate := time.Date(2026, time.June, 10, 23, 45, 12, 345000000, time.FixedZone("sender", -7*60*60))
+	document := mail.Document{
+		ID:                 "mail:provider_id:account:message/42",
+		IdentityStrategy:   mail.IdentityProviderID,
+		ContentFingerprint: strings.Repeat("f", 64),
+		SourceID:           "configured-source",
+		Ref: mail.MessageRef{
+			Provider:          "gmail",
+			AccountID:         "account-1",
+			Mailbox:           mail.Mailbox{ID: "all", Name: "All Mail"},
+			UID:               42,
+			UIDValidity:       9,
+			ProviderMessageID: "provider-message-42",
+			ProviderThreadID:  "provider-thread-7",
+		},
+		MessageID:     "<message-42@example.test>",
+		ThreadID:      "thread-7",
+		Date:          messageDate,
+		From:          []mail.Address{{Address: "invalid"}, {Normalized: "Sender@Sub.Example.TEST."}},
+		Subject:       "Quarterly report",
+		TextBody:      "plain fallback",
+		ExtractedText: "normalized body",
+		HTMLBody:      "<p>normalized body</p>",
+		Links: []mail.Link{{
+			URL:            "https://example.test/report",
+			Text:           "report",
+			Title:          "Quarterly report",
+			Source:         "html",
+			Classification: mail.LinkNormal,
+		}},
+		Attachments: []mail.Attachment{{
+			ID:                "attachment-1",
+			Filename:          "report.pdf",
+			MediaType:         "application/octet-stream",
+			DetectedMediaType: "application/pdf",
+			Disposition:       "attachment",
+			Size:              2048,
+			SHA256:            strings.Repeat("a", 64),
+			Content:           io.NopCloser(strings.NewReader("must not be indexed")),
+		}},
+		Warnings: []mail.ParserWarning{{
+			Category: mail.WarningOversizedPart,
+			Code:     "part_truncated",
+			Message:  "part exceeded extraction limit",
+			PartID:   "2",
+		}},
+		Security: mail.SecuritySignals{
+			SPF:                   "pass",
+			DKIM:                  "pass",
+			DMARC:                 "pass",
+			TLS:                   true,
+			AuthenticationResults: []string{"mx.example.test; spf=pass"},
+		},
+	}
+	source := cdb.Source{ID: 42, URL: "email://account"}
+
+	first := emailDocumentPage(source, document)
+	second := emailDocumentPage(source, document)
+	firstJSON, err := json.Marshal(first.ScrapedData)
+	if err != nil {
+		t.Fatalf("marshal first mapped artifact: %v", err)
+	}
+	secondJSON, err := json.Marshal(second.ScrapedData)
+	if err != nil {
+		t.Fatalf("marshal second mapped artifact: %v", err)
+	}
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatalf("mapping is not deterministic:\nfirst:  %s\nsecond: %s", firstJSON, secondJSON)
+	}
+	if strings.Contains(string(firstJSON), "must not be indexed") {
+		t.Fatalf("mapped artifact exposed attachment content: %s", firstJSON)
+	}
+
+	artifact, ok := first.ScrapedData[0]["email"].(EmailArtifact)
+	if !ok {
+		t.Fatalf("mapped email metadata type = %T, want EmailArtifact", first.ScrapedData[0]["email"])
+	}
+	if artifact.SourceType != "email" || artifact.CanonicalURI != first.URL {
+		t.Errorf("artifact source identity = %#v", artifact)
+	}
+	if artifact.Subject != document.Subject || artifact.SenderDomain != "sub.example.test" {
+		t.Errorf("artifact message metadata = %#v", artifact)
+	}
+	if artifact.Date != "2026-06-11T06:45:12.345Z" {
+		t.Errorf("artifact date = %q", artifact.Date)
+	}
+	if artifact.ContentType != "message/rfc822" || artifact.ExtractedText != document.ExtractedText {
+		t.Errorf("artifact content mapping = %#v", artifact)
+	}
+	if len(artifact.Links) != 1 || artifact.Links[0] != document.Links[0] {
+		t.Errorf("artifact links = %#v", artifact.Links)
+	}
+	if len(artifact.Attachments) != 1 {
+		t.Fatalf("artifact attachments = %#v", artifact.Attachments)
+	}
+	attachment := artifact.Attachments[0]
+	if attachment.ParentID != document.ID || attachment.ParentURI != first.URL ||
+		attachment.ContentType != "application/pdf" || attachment.Filename != "report.pdf" ||
+		attachment.Size != 2048 || attachment.SHA256 != strings.Repeat("a", 64) {
+		t.Errorf("artifact attachment metadata = %#v", attachment)
+	}
+	if artifact.Provenance.SourceID != source.ID ||
+		artifact.Provenance.DocumentSourceID != document.SourceID ||
+		artifact.Provenance.DocumentID != document.ID ||
+		artifact.Provenance.Provider != "gmail" ||
+		artifact.Provenance.ProviderMessageID != "provider-message-42" ||
+		artifact.Provenance.IdentityStrategy != mail.IdentityProviderID {
+		t.Errorf("artifact provenance = %#v", artifact.Provenance)
+	}
+	if len(artifact.Warnings) != 1 || artifact.Warnings[0].Code != "part_truncated" {
+		t.Errorf("artifact warnings = %#v", artifact.Warnings)
+	}
+	if artifact.SecuritySignals.SPF != "pass" || artifact.SecuritySignals.DKIM != "pass" ||
+		artifact.SecuritySignals.DMARC != "pass" || !artifact.SecuritySignals.TLS {
+		t.Errorf("artifact security signals = %#v", artifact.SecuritySignals)
+	}
+}
+
+func TestEmailDocumentPageUsesTextFallbackAndEmptySenderDomain(t *testing.T) {
+	page := emailDocumentPage(cdb.Source{ID: 7, URL: "imap://account#mailbox=INBOX"}, mail.Document{
+		ID:       "message with spaces",
+		From:     []mail.Address{{Address: "not-an-email"}},
+		TextBody: "plain fallback",
+	})
+
+	if page.URL != "imap://account#mailbox=INBOX&message=message+with+spaces" {
+		t.Errorf("page canonical URI = %q", page.URL)
+	}
+	if page.BodyText != "plain fallback" {
+		t.Errorf("page body = %q", page.BodyText)
+	}
+	artifact := page.ScrapedData[0]["email"].(EmailArtifact)
+	if artifact.ExtractedText != "plain fallback" {
+		t.Errorf("artifact extracted text = %q", artifact.ExtractedText)
+	}
+	if artifact.SenderDomain != "" || artifact.Date != "" {
+		t.Errorf("artifact optional metadata = %#v", artifact)
 	}
 }
 
