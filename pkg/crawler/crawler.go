@@ -157,7 +157,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	switch classifySourceProtocol(args.Src.URL) {
 	case SourceProtocolEmail:
-		err = crawlEmail(context.Background(), args)
+		err = crawlEmailWithResultHandler(context.Background(), args, emailIndexResultHandler{processCtx: processCtx})
 		if err != nil {
 			processCtx.Status.PipelineRunning.Store(3)
 			processCtx.Status.TotalErrors.Add(1)

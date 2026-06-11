@@ -34,18 +34,20 @@ import (
 
 // Pars type to pass parameters to the goroutine
 type Pars struct {
-	WG           *sync.WaitGroup
-	DB           cdb.Handler
-	Src          cdb.Source
-	Sel          *vdi.Pool //Sel     *chan vdi.SeleniumInstance
-	SelIdx       int
-	RE           *rules.RuleEngine
-	Sources      *[]cdb.Source
-	Index        uint64
-	Status       *Status
-	Refresh      func()
-	EmailConfig  *mail.SourceConfig
-	EmailHandler EmailCrawlHandler
+	WG                 *sync.WaitGroup
+	DB                 cdb.Handler
+	Src                cdb.Source
+	Sel                *vdi.Pool //Sel     *chan vdi.SeleniumInstance
+	SelIdx             int
+	RE                 *rules.RuleEngine
+	Sources            *[]cdb.Source
+	Index              uint64
+	Status             *Status
+	Refresh            func()
+	EmailConfig        *mail.SourceConfig
+	EmailRunner        mail.SourceRunner
+	EmailDependencies  *mail.PipelineDependencies
+	EmailResultHandler EmailResultHandler
 }
 
 // Status holds the status of the crawler
