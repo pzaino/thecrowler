@@ -60,14 +60,43 @@ type GraphClientFactory interface {
 	NewGraphClient(ctx context.Context, tokens oauth2.TokenSource, baseURL string) (GraphClient, error)
 }
 
-// GraphClient is the provider-operation boundary used by GraphConnector. Its
-// API uses only mail package and standard-library types, so Graph wire or SDK
-// types remain private to the production adapter.
+// GraphClient is the provider-operation boundary used by GraphConnector. It
+// exposes a small, SDK-independent subset of folders, messages, paging, and
+// message content so connector logic can return provider-neutral mail types.
 type GraphClient interface {
-	ListMailboxes(ctx context.Context, userID string) ([]Mailbox, error)
-	ListChanges(ctx context.Context, userID string, mailbox Mailbox, cursor Cursor, limit int) (ChangePage, error)
-	OpenMessage(ctx context.Context, userID, messageID string, maxBytes int64) (io.ReadCloser, int64, error)
+	ListFolders(ctx context.Context, userID string) ([]GraphFolder, error)
+	ListMessages(ctx context.Context, userID, folderID, pageToken string, limit int) (GraphMessagePage, error)
+	GetMessage(ctx context.Context, userID, messageID string) (GraphMessage, error)
 	Close() error
+}
+
+// GraphFolder is the SDK-independent identity of one Microsoft Graph mail folder.
+type GraphFolder struct {
+	ID   string
+	Name string
+}
+
+// GraphMessage contains the provider metadata needed to build a MessageRef.
+// RawContent is preferred for RFC 5322 retrieval; Body is a fallback for
+// internal clients that expose the same content under a body field.
+type GraphMessage struct {
+	ID           string
+	ThreadID     string
+	InternalDate time.Time
+	ModifiedAt   time.Time
+	Size         int64
+	Removed      bool
+	Body         []byte
+	RawContent   []byte
+}
+
+// GraphMessagePage is one folder-filtered page. NextPageToken continues the
+// current response; DeltaCursor is the durable placeholder returned when the
+// provider has completed the current delta traversal.
+type GraphMessagePage struct {
+	Messages      []GraphMessage
+	NextPageToken string
+	DeltaCursor   string
 }
 
 // GraphDependencies contains replaceable secret, token, and provider operation
@@ -213,12 +242,13 @@ func (c *GraphConnector) ListMailboxes(ctx context.Context) ([]Mailbox, error) {
 	if err := c.ready(ctx); err != nil {
 		return nil, err
 	}
-	mailboxes, err := c.client.ListMailboxes(ctx, c.config.UserID)
+	folders, err := c.client.ListFolders(ctx, c.config.UserID)
 	if err != nil {
 		return nil, graphError("list Microsoft Graph mailboxes", err)
 	}
-	selected := make([]Mailbox, 0, len(mailboxes))
-	for _, mailbox := range mailboxes {
+	selected := make([]Mailbox, 0, len(folders))
+	for _, folder := range folders {
+		mailbox := Mailbox{ID: folder.ID, Name: folder.Name}
 		if mailbox.ID != "" && graphMailboxSelected(mailbox, c.config.Mailboxes) {
 			selected = append(selected, mailbox)
 		}
@@ -239,16 +269,26 @@ func (c *GraphConnector) ListChanges(ctx context.Context, mailbox Mailbox, curso
 	if limit <= 0 {
 		return ChangePage{}, errors.New("mail: Microsoft Graph change limit must be positive")
 	}
-	page, err := c.client.ListChanges(ctx, c.config.UserID, mailbox, cursor, limit)
+	page, err := c.client.ListMessages(ctx, c.config.UserID, mailbox.ID, cursor.Token, limit)
 	if err != nil {
-		return ChangePage{}, graphError("list Microsoft Graph changes", err)
+		return ChangePage{}, graphError("list Microsoft Graph messages", err)
 	}
-	for i := range page.Changes {
-		page.Changes[i].Ref.Provider = graphProvider
-		page.Changes[i].Ref.AccountID = c.config.AccountID
-		page.Changes[i].Ref.Mailbox = mailbox
+	changes := make([]Change, 0, len(page.Messages))
+	for _, message := range page.Messages {
+		if message.ID == "" {
+			continue
+		}
+		kind := ChangeUpsert
+		if message.Removed {
+			kind = ChangeDelete
+		}
+		changes = append(changes, Change{Kind: kind, Ref: c.messageRef(mailbox, message)})
 	}
-	return page, nil
+	next := page.DeltaCursor
+	if page.NextPageToken != "" {
+		next = page.NextPageToken
+	}
+	return ChangePage{Changes: changes, Next: Cursor{Token: next}, More: page.NextPageToken != ""}, nil
 }
 
 // OpenMessage retrieves a complete RFC 5322 MIME message from Microsoft Graph.
@@ -270,19 +310,58 @@ func (c *GraphConnector) OpenMessage(ctx context.Context, ref MessageRef, option
 	if !options.IncludeBody {
 		return RawMessage{}, &Error{Kind: ErrorUnsupported, Operation: "open Microsoft Graph message", Message: "Microsoft Graph MIME retrieval requires IncludeBody"}
 	}
-	body, size, err := c.client.OpenMessage(ctx, c.config.UserID, ref.ProviderMessageID, options.MaxBytes)
+	message, err := c.client.GetMessage(ctx, c.config.UserID, ref.ProviderMessageID)
 	if err != nil {
-		return RawMessage{}, graphError("open Microsoft Graph message", err)
+		return RawMessage{}, graphError("get Microsoft Graph message", err)
 	}
-	if body == nil {
-		return RawMessage{}, errors.New("mail: Microsoft Graph client returned a nil message body")
+	content := message.RawContent
+	if len(content) == 0 {
+		content = message.Body
 	}
-	ref.Provider = graphProvider
-	ref.AccountID = c.config.AccountID
-	if size > 0 {
-		ref.Size = size
+	if len(content) == 0 {
+		return RawMessage{}, &Error{Kind: ErrorMalformed, Operation: "get Microsoft Graph message", Message: "Microsoft Graph message did not include body or raw content"}
 	}
-	return RawMessage{Ref: ref, RFC822: body}, nil
+	if options.MaxBytes > 0 && int64(len(content)) > options.MaxBytes {
+		return RawMessage{}, &Error{Kind: ErrorOversized, Operation: "get Microsoft Graph message", Message: "message exceeds configured byte limit"}
+	}
+	normalized := ref
+	normalized.Provider = graphProvider
+	normalized.AccountID = c.config.AccountID
+	if message.ID != "" {
+		normalized.ProviderMessageID = message.ID
+	}
+	if message.ThreadID != "" {
+		normalized.ProviderThreadID = message.ThreadID
+	}
+	if !message.InternalDate.IsZero() {
+		normalized.InternalDate = message.InternalDate
+	}
+	if !message.ModifiedAt.IsZero() {
+		normalized.Version = message.ModifiedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if message.Size > 0 {
+		normalized.Size = message.Size
+	} else {
+		normalized.Size = int64(len(content))
+	}
+	return RawMessage{Ref: normalized, RFC822: io.NopCloser(bytes.NewReader(content))}, nil
+}
+
+func (c *GraphConnector) messageRef(mailbox Mailbox, message GraphMessage) MessageRef {
+	version := ""
+	if !message.ModifiedAt.IsZero() {
+		version = message.ModifiedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return MessageRef{
+		Provider:          graphProvider,
+		AccountID:         c.config.AccountID,
+		Mailbox:           mailbox,
+		ProviderMessageID: message.ID,
+		ProviderThreadID:  message.ThreadID,
+		Version:           version,
+		InternalDate:      message.InternalDate,
+		Size:              message.Size,
+	}
 }
 
 // Close releases provider HTTP resources. It is safe to call repeatedly.
@@ -405,20 +484,20 @@ type microsoftGraphHTTPClient struct {
 	closeOnce  sync.Once
 }
 
-func (c *microsoftGraphHTTPClient) ListMailboxes(ctx context.Context, userID string) ([]Mailbox, error) {
+func (c *microsoftGraphHTTPClient) ListFolders(ctx context.Context, userID string) ([]GraphFolder, error) {
 	next := c.endpoint("users", userID, "mailFolders")
 	query := next.Query()
 	query.Set("$select", "id,displayName")
 	query.Set("$top", "100")
 	next.RawQuery = query.Encode()
-	var mailboxes []Mailbox
+	var folders []GraphFolder
 	for next != nil {
 		var response graphFolderCollection
 		if err := c.getJSON(ctx, next, &response); err != nil {
 			return nil, err
 		}
 		for _, folder := range response.Value {
-			mailboxes = append(mailboxes, Mailbox{ID: folder.ID, Name: folder.DisplayName})
+			folders = append(folders, GraphFolder{ID: folder.ID, Name: folder.DisplayName})
 		}
 		var err error
 		next, err = c.followLink(response.NextLink)
@@ -426,19 +505,19 @@ func (c *microsoftGraphHTTPClient) ListMailboxes(ctx context.Context, userID str
 			return nil, err
 		}
 	}
-	return mailboxes, nil
+	return folders, nil
 }
 
-func (c *microsoftGraphHTTPClient) ListChanges(ctx context.Context, userID string, mailbox Mailbox, cursor Cursor, limit int) (ChangePage, error) {
+func (c *microsoftGraphHTTPClient) ListMessages(ctx context.Context, userID, folderID, pageToken string, limit int) (GraphMessagePage, error) {
 	var endpoint *url.URL
 	var err error
-	if cursor.Token != "" {
-		endpoint, err = c.followLink(cursor.Token)
+	if pageToken != "" {
+		endpoint, err = c.followLink(pageToken)
 		if err != nil {
-			return ChangePage{}, err
+			return GraphMessagePage{}, err
 		}
 	} else {
-		endpoint = c.endpoint("users", userID, "mailFolders", mailbox.ID, "messages", "delta")
+		endpoint = c.endpoint("users", userID, "mailFolders", folderID, "messages", "delta")
 		query := endpoint.Query()
 		query.Set("$select", "id,conversationId,receivedDateTime,lastModifiedDateTime,size")
 		query.Set("$top", strconv.Itoa(limit))
@@ -446,61 +525,39 @@ func (c *microsoftGraphHTTPClient) ListChanges(ctx context.Context, userID strin
 	}
 	var response graphMessageCollection
 	if err := c.getJSON(ctx, endpoint, &response); err != nil {
-		return ChangePage{}, err
+		return GraphMessagePage{}, err
 	}
-	changes := make([]Change, 0, len(response.Value))
+	messages := make([]GraphMessage, 0, len(response.Value))
 	for _, message := range response.Value {
-		kind := ChangeUpsert
-		if len(message.Removed) != 0 && string(message.Removed) != "null" {
-			kind = ChangeDelete
-		}
-		version := ""
-		if !message.LastModified.IsZero() {
-			version = message.LastModified.UTC().Format(time.RFC3339Nano)
-		}
-		changes = append(changes, Change{Kind: kind, Ref: MessageRef{
-			ProviderMessageID: message.ID,
-			ProviderThreadID:  message.ConversationID,
-			Version:           version,
-			InternalDate:      message.ReceivedDateTime,
-			Size:              message.Size,
-		}})
+		messages = append(messages, GraphMessage{
+			ID: message.ID, ThreadID: message.ConversationID,
+			InternalDate: message.ReceivedDateTime, ModifiedAt: message.LastModified,
+			Size: message.Size, Removed: len(message.Removed) != 0 && string(message.Removed) != "null",
+		})
 	}
-	next := response.DeltaLink
-	more := response.NextLink != ""
-	if more {
-		next = response.NextLink
-	}
-	return ChangePage{Changes: changes, Next: Cursor{Token: next}, More: more}, nil
+	return GraphMessagePage{Messages: messages, NextPageToken: response.NextLink, DeltaCursor: response.DeltaLink}, nil
 }
 
-func (c *microsoftGraphHTTPClient) OpenMessage(ctx context.Context, userID, messageID string, maxBytes int64) (io.ReadCloser, int64, error) {
+func (c *microsoftGraphHTTPClient) GetMessage(ctx context.Context, userID, messageID string) (GraphMessage, error) {
 	endpoint := c.endpoint("users", userID, "messages", messageID, "$value")
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, 0, err
+		return GraphMessage{}, err
 	}
 	request.Header.Set("Accept", "message/rfc822")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, 0, err
+		return GraphMessage{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, 0, graphResponseError(response)
+		return GraphMessage{}, graphResponseError(response)
 	}
-	reader := io.Reader(response.Body)
-	if maxBytes > 0 {
-		reader = io.LimitReader(response.Body, maxBytes+1)
-	}
-	data, err := io.ReadAll(reader)
+	data, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, 0, err
+		return GraphMessage{}, err
 	}
-	if maxBytes > 0 && int64(len(data)) > maxBytes {
-		return nil, 0, &Error{Kind: ErrorOversized, Operation: "read Microsoft Graph message", Message: "message exceeds configured byte limit"}
-	}
-	return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+	return GraphMessage{ID: messageID, Size: int64(len(data)), RawContent: data}, nil
 }
 
 func (c *microsoftGraphHTTPClient) Close() error {

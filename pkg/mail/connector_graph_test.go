@@ -20,13 +20,14 @@ func TestNewGraphConnectorAuthenticatesAndRunsLifecycle(t *testing.T) {
 	}
 	tokenSource := &fakeGraphTokenSource{token: &oauth2.Token{AccessToken: "access-token", Expiry: time.Now().Add(time.Hour)}, events: &events}
 	tokens := &fakeGraphTokenProvider{source: tokenSource, events: &events}
+	content := "Subject: Graph\r\n\r\nhello"
 	client := &fakeGraphClient{
-		mailboxes: []Mailbox{{ID: "inbox-id", Name: "Inbox"}, {ID: "archive-id", Name: "Archive"}},
-		page: ChangePage{Changes: []Change{{Kind: ChangeUpsert, Ref: MessageRef{
-			ProviderMessageID: "message-id", ProviderThreadID: "thread-id",
-		}}}, Next: Cursor{Token: "delta-token"}},
-		message: "Subject: Graph\r\n\r\nhello",
-		events:  &events,
+		folders: []GraphFolder{{ID: "inbox-id", Name: "Inbox"}, {ID: "archive-id", Name: "Archive"}},
+		pages: map[string]GraphMessagePage{"": {
+			Messages: []GraphMessage{{ID: "message-id", ThreadID: "thread-id"}}, DeltaCursor: "delta-token",
+		}},
+		messages: map[string]GraphMessage{"message-id": {ID: "message-id", ThreadID: "thread-id", RawContent: []byte(content)}},
+		events:   &events,
 	}
 	factory := &fakeGraphClientFactory{client: client, events: &events}
 
@@ -75,8 +76,11 @@ func TestNewGraphConnectorAuthenticatesAndRunsLifecycle(t *testing.T) {
 	if ref.Provider != graphProvider || ref.AccountID != "account-1" || ref.Mailbox != mailboxes[0] {
 		t.Fatalf("normalized message reference = %#v", ref)
 	}
-	if client.changeUserID != "reader@example.com" || client.changeLimit != 25 {
-		t.Fatalf("change call user = %q, limit = %d", client.changeUserID, client.changeLimit)
+	if len(client.messageCalls) != 1 || client.messageCalls[0] != (fakeGraphMessageCall{UserID: "reader@example.com", FolderID: "inbox-id", Limit: 25}) {
+		t.Fatalf("message calls = %#v", client.messageCalls)
+	}
+	if page.Next.Token != "delta-token" || page.More {
+		t.Fatalf("ListChanges() page = %#v, want terminal delta cursor", page)
 	}
 
 	raw, err := connector.OpenMessage(context.Background(), ref, FetchOptions{IncludeBody: true, MaxBytes: 1024})
@@ -90,7 +94,7 @@ func TestNewGraphConnectorAuthenticatesAndRunsLifecycle(t *testing.T) {
 	if err := raw.RFC822.Close(); err != nil {
 		t.Fatalf("close message: %v", err)
 	}
-	if string(data) != client.message || raw.Ref.Size != int64(len(client.message)) {
+	if string(data) != content || raw.Ref.Size != int64(len(content)) {
 		t.Fatalf("raw message = %q with ref %#v", data, raw.Ref)
 	}
 
@@ -107,9 +111,142 @@ func TestNewGraphConnectorAuthenticatesAndRunsLifecycle(t *testing.T) {
 		t.Fatalf("ListMailboxes() after Close error = %v, want closed error", err)
 	}
 
-	wantEvents := []string{"credentials", "token-source", "token", "client", "mailboxes", "changes", "message", "close"}
+	wantEvents := []string{"credentials", "token-source", "token", "client", "folders", "messages:", "message:message-id", "close"}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("lifecycle events = %#v, want %#v", events, wantEvents)
+	}
+}
+
+func TestGraphConnectorListsFolderFilteredMessagePages(t *testing.T) {
+	modified := time.Date(2026, time.June, 11, 10, 30, 0, 0, time.UTC)
+	client := &fakeGraphClient{pages: map[string]GraphMessagePage{
+		"": {
+			Messages: []GraphMessage{{
+				ID: "message-1", ThreadID: "thread-1", InternalDate: modified.Add(-time.Hour),
+				ModifiedAt: modified, Size: 321,
+			}},
+			NextPageToken: "page-2",
+		},
+		"page-2": {
+			Messages:    []GraphMessage{{ID: "message-2", Removed: true}, {ThreadID: "missing-id"}},
+			DeltaCursor: "delta-cursor",
+		},
+	}}
+	connector := &GraphConnector{config: GraphConnectorConfig{AccountID: "account", UserID: "user"}, client: client}
+	mailbox := Mailbox{ID: "inbox-id", Name: "Inbox"}
+
+	first, err := connector.ListChanges(context.Background(), mailbox, Cursor{}, 10)
+	if err != nil {
+		t.Fatalf("first ListChanges() error = %v", err)
+	}
+	if !first.More || first.Next.Token != "page-2" || len(first.Changes) != 1 {
+		t.Fatalf("first ListChanges() = %#v", first)
+	}
+	wantRef := MessageRef{
+		Provider: graphProvider, AccountID: "account", Mailbox: mailbox,
+		ProviderMessageID: "message-1", ProviderThreadID: "thread-1",
+		Version: modified.Format(time.RFC3339Nano), InternalDate: modified.Add(-time.Hour), Size: 321,
+	}
+	if first.Changes[0].Kind != ChangeUpsert || !reflect.DeepEqual(first.Changes[0].Ref, wantRef) {
+		t.Fatalf("first change = %#v, want ref %#v", first.Changes[0], wantRef)
+	}
+
+	second, err := connector.ListChanges(context.Background(), mailbox, first.Next, 10)
+	if err != nil {
+		t.Fatalf("second ListChanges() error = %v", err)
+	}
+	if second.More || second.Next.Token != "delta-cursor" || len(second.Changes) != 1 || second.Changes[0].Kind != ChangeDelete {
+		t.Fatalf("second ListChanges() = %#v", second)
+	}
+	wantCalls := []fakeGraphMessageCall{
+		{UserID: "user", FolderID: "inbox-id", Limit: 10},
+		{UserID: "user", FolderID: "inbox-id", PageToken: "page-2", Limit: 10},
+	}
+	if !reflect.DeepEqual(client.messageCalls, wantCalls) {
+		t.Fatalf("message calls = %#v, want %#v", client.messageCalls, wantCalls)
+	}
+}
+
+func TestGraphConnectorFiltersFolders(t *testing.T) {
+	client := &fakeGraphClient{folders: []GraphFolder{
+		{ID: "inbox", Name: "Inbox"}, {ID: "archive", Name: "Archive"},
+		{ID: "junk", Name: "Junk"}, {Name: "missing ID"},
+	}}
+	connector := &GraphConnector{config: GraphConnectorConfig{
+		UserID: "user", Mailboxes: MailboxSelector{Include: []string{"inbox", "Archive"}, Exclude: []string{"archive"}},
+	}, client: client}
+
+	mailboxes, err := connector.ListMailboxes(context.Background())
+	if err != nil {
+		t.Fatalf("ListMailboxes() error = %v", err)
+	}
+	if want := []Mailbox{{ID: "inbox", Name: "Inbox"}}; !reflect.DeepEqual(mailboxes, want) {
+		t.Fatalf("ListMailboxes() = %#v, want %#v", mailboxes, want)
+	}
+}
+
+func TestGraphConnectorRetrievesBodyOrRawContent(t *testing.T) {
+	client := &fakeGraphClient{messages: map[string]GraphMessage{
+		"body":  {ID: "body", ThreadID: "thread", Body: []byte("body content")},
+		"raw":   {ID: "raw", Body: []byte("fallback"), RawContent: []byte("raw content")},
+		"empty": {ID: "empty"},
+	}}
+	connector := &GraphConnector{config: GraphConnectorConfig{AccountID: "account", UserID: "user"}, client: client}
+
+	for _, test := range []struct{ id, want string }{{"body", "body content"}, {"raw", "raw content"}} {
+		t.Run(test.id, func(t *testing.T) {
+			raw, err := connector.OpenMessage(context.Background(), MessageRef{Mailbox: Mailbox{ID: "inbox"}, ProviderMessageID: test.id}, FetchOptions{IncludeBody: true})
+			if err != nil {
+				t.Fatalf("OpenMessage() error = %v", err)
+			}
+			defer raw.RFC822.Close()
+			content, err := io.ReadAll(raw.RFC822)
+			if err != nil {
+				t.Fatalf("read content: %v", err)
+			}
+			if string(content) != test.want || raw.Ref.Provider != graphProvider || raw.Ref.AccountID != "account" {
+				t.Fatalf("OpenMessage() = %q, %#v", content, raw.Ref)
+			}
+			if test.id == "body" && raw.Ref.ProviderThreadID != "thread" {
+				t.Fatalf("body message ref = %#v, want provider thread ID", raw.Ref)
+			}
+		})
+	}
+
+	_, err := connector.OpenMessage(context.Background(), MessageRef{ProviderMessageID: "empty"}, FetchOptions{IncludeBody: true})
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorMalformed || !strings.Contains(err.Error(), "body or raw content") {
+		t.Fatalf("missing content error = %T %v, want malformed", err, err)
+	}
+}
+
+func TestGraphConnectorPropagatesInternalClientErrors(t *testing.T) {
+	sentinel := errors.New("provider failed")
+	tests := []struct {
+		name   string
+		client *fakeGraphClient
+		call   func(*GraphConnector) error
+		wantOp string
+	}{
+		{name: "folders", client: &fakeGraphClient{folderErr: sentinel}, call: func(c *GraphConnector) error { _, err := c.ListMailboxes(context.Background()); return err }, wantOp: "list Microsoft Graph mailboxes"},
+		{name: "messages", client: &fakeGraphClient{pageErrors: map[string]error{"cursor": sentinel}}, call: func(c *GraphConnector) error {
+			_, err := c.ListChanges(context.Background(), Mailbox{ID: "inbox"}, Cursor{Token: "cursor"}, 5)
+			return err
+		}, wantOp: "list Microsoft Graph messages"},
+		{name: "content", client: &fakeGraphClient{messageErrors: map[string]error{"message": sentinel}}, call: func(c *GraphConnector) error {
+			_, err := c.OpenMessage(context.Background(), MessageRef{ProviderMessageID: "message"}, FetchOptions{IncludeBody: true})
+			return err
+		}, wantOp: "get Microsoft Graph message"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			connector := &GraphConnector{config: GraphConnectorConfig{AccountID: "account", UserID: "user"}, client: test.client}
+			err := test.call(connector)
+			var mailErr *Error
+			if !errors.As(err, &mailErr) || mailErr.Kind != ErrorTransient || mailErr.Operation != test.wantOp || !errors.Is(err, sentinel) {
+				t.Fatalf("error = %T %v, want transient operation %q", err, err, test.wantOp)
+			}
+		})
 	}
 }
 
@@ -252,34 +389,54 @@ func (f *fakeGraphClientFactory) NewGraphClient(_ context.Context, tokens oauth2
 }
 
 type fakeGraphClient struct {
-	mailboxes    []Mailbox
-	page         ChangePage
-	message      string
-	changeUserID string
-	changeLimit  int
-	closeCalls   int
-	events       *[]string
+	folders       []GraphFolder
+	pages         map[string]GraphMessagePage
+	messages      map[string]GraphMessage
+	folderErr     error
+	pageErrors    map[string]error
+	messageErrors map[string]error
+	messageCalls  []fakeGraphMessageCall
+	closeCalls    int
+	events        *[]string
 }
 
-func (f *fakeGraphClient) ListMailboxes(_ context.Context, _ string) ([]Mailbox, error) {
-	*f.events = append(*f.events, "mailboxes")
-	return append([]Mailbox(nil), f.mailboxes...), nil
+type fakeGraphMessageCall struct {
+	UserID    string
+	FolderID  string
+	PageToken string
+	Limit     int
 }
 
-func (f *fakeGraphClient) ListChanges(_ context.Context, userID string, _ Mailbox, _ Cursor, limit int) (ChangePage, error) {
-	*f.events = append(*f.events, "changes")
-	f.changeUserID = userID
-	f.changeLimit = limit
-	return f.page, nil
+func (f *fakeGraphClient) ListFolders(_ context.Context, _ string) ([]GraphFolder, error) {
+	appendGraphEvent(f.events, "folders")
+	return append([]GraphFolder(nil), f.folders...), f.folderErr
 }
 
-func (f *fakeGraphClient) OpenMessage(_ context.Context, _, _ string, _ int64) (io.ReadCloser, int64, error) {
-	*f.events = append(*f.events, "message")
-	return io.NopCloser(strings.NewReader(f.message)), int64(len(f.message)), nil
+func (f *fakeGraphClient) ListMessages(_ context.Context, userID, folderID, pageToken string, limit int) (GraphMessagePage, error) {
+	appendGraphEvent(f.events, "messages:"+pageToken)
+	f.messageCalls = append(f.messageCalls, fakeGraphMessageCall{UserID: userID, FolderID: folderID, PageToken: pageToken, Limit: limit})
+	if err := f.pageErrors[pageToken]; err != nil {
+		return GraphMessagePage{}, err
+	}
+	return f.pages[pageToken], nil
+}
+
+func (f *fakeGraphClient) GetMessage(_ context.Context, _, messageID string) (GraphMessage, error) {
+	appendGraphEvent(f.events, "message:"+messageID)
+	if err := f.messageErrors[messageID]; err != nil {
+		return GraphMessage{}, err
+	}
+	return f.messages[messageID], nil
 }
 
 func (f *fakeGraphClient) Close() error {
-	*f.events = append(*f.events, "close")
+	appendGraphEvent(f.events, "close")
 	f.closeCalls++
 	return nil
+}
+
+func appendGraphEvent(events *[]string, event string) {
+	if events != nil {
+		*events = append(*events, event)
+	}
 }
