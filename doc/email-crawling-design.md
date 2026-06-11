@@ -274,10 +274,12 @@ messages, create folders, or send mail.
 
 The implemented pipeline is a bounded reconciliation pass: when invoked, it
 lists the selected mailboxes, processes them serially, and requests ascending
-UID pages after each mailbox's checkpoint. The `poll` mode and reconciliation
-interval fields describe scheduler policy, but `pkg/mail` does not itself run a
-timer or continuously poll. The surrounding crawler/service integration must
-invoke the pipeline on the desired schedule.
+UID pages after each mailbox's checkpoint. `PollingListener` applies the
+configured reconciliation interval for connectors without push support. It
+runs the first pass immediately, waits only after a pass completes so runs do
+not overlap, and stops through context cancellation. Lifecycle owners may use
+it to invoke a `Reconciler` directly or to emit coarse hints through an
+`EventSink`; its scheduler boundary is injectable for deterministic tests.
 
 IMAP IDLE is not implemented in the MVP. The provider-neutral `Listener`
 interface and `listen` configuration are architectural placeholders; there is
