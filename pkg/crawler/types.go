@@ -25,6 +25,7 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	detect "github.com/pzaino/thecrowler/pkg/detection"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
+	mail "github.com/pzaino/thecrowler/pkg/mail"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -33,16 +34,18 @@ import (
 
 // Pars type to pass parameters to the goroutine
 type Pars struct {
-	WG      *sync.WaitGroup
-	DB      cdb.Handler
-	Src     cdb.Source
-	Sel     *vdi.Pool //Sel     *chan vdi.SeleniumInstance
-	SelIdx  int
-	RE      *rules.RuleEngine
-	Sources *[]cdb.Source
-	Index   uint64
-	Status  *Status
-	Refresh func()
+	WG           *sync.WaitGroup
+	DB           cdb.Handler
+	Src          cdb.Source
+	Sel          *vdi.Pool //Sel     *chan vdi.SeleniumInstance
+	SelIdx       int
+	RE           *rules.RuleEngine
+	Sources      *[]cdb.Source
+	Index        uint64
+	Status       *Status
+	Refresh      func()
+	EmailConfig  *mail.SourceConfig
+	EmailHandler EmailCrawlHandler
 }
 
 // Status holds the status of the crawler

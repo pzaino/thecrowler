@@ -78,7 +78,7 @@ var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is inde
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
-func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.SeleniumInstance) {
+func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.SeleniumInstance) error {
 	var (
 		closeChanOnce sync.Once
 		err           error
@@ -94,7 +94,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		args.Status.TotalErrors.Add(1)
 		args.Status.LastError = "failed to create a new ProcessContext"
 		cmn.DebugMsg(cmn.DbgLvlError, "Crawling process aborted for source: %s", args.Src.URL)
-		return
+		return errors.New("failed to create a new ProcessContext")
 	}
 
 	// We have process context, so we can proceed:
@@ -155,21 +155,35 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		})
 	}()
 
-	// If the URL has no HTTP(S) or FTP(S) protocol, do only NETInfo
-	if classifySourceProtocol(args.Src.URL) != SourceProtocolWeb {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] URL %s has no HTTP(S) or FTP(S) protocol, skipping crawling...", args.Src.URL)
-		processCtx.GetNetInfo(args.Src.URL)
-		_, err := processCtx.IndexNetInfo(1)
+	switch classifySourceProtocol(args.Src.URL) {
+	case SourceProtocolEmail:
+		err = crawlEmail(context.Background(), args)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", err)
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = err.Error()
+			cmn.DebugMsg(cmn.DbgLvlError, "crawling email source %s: %v", args.Src.URL, err)
+			return err
+		}
+		processCtx.Status.PipelineRunning.Store(2)
+		processCtx.Status.EndTime = time.Now()
+		return nil
+	case SourceProtocolNetwork:
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] URL %s has no HTTP(S) or FTP(S) protocol, collecting network information only...", args.Src.URL)
+		processCtx.GetNetInfo(args.Src.URL)
+		_, indexErr := processCtx.IndexNetInfo(1)
+		if indexErr != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", indexErr)
 			processCtx.Status.PipelineRunning.Store(3)
 		} else {
 			processCtx.Status.PipelineRunning.Store(2)
 		}
 		UpdateSourceState(args.DB, args.Src.URL, nil)
 		processCtx.Status.EndTime = time.Now()
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Finished crawling website: %s", args.Src.URL)
-		return
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Finished collecting network information for: %s", args.Src.URL)
+		return nil
+	case SourceProtocolWeb:
+		// Continue with the existing browser-backed crawl path.
 	}
 
 	// Initialize the Selenium instance
@@ -180,7 +194,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.TotalErrors.Add(1)
 		processCtx.Status.LastError = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
-		return
+		return err
 	}
 	processCtx.Status.CrawlingRunning.Store(1)
 
@@ -507,11 +521,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.LastError = "timeout during crawling"
 		UpdateSourceState(args.DB, args.Src.URL, errors.New("timeout during crawling"))
 		err = errors.New("timeout")
-		return
+		return err
 	case <-done:
 		// Crawling completed successfully
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Crawling completed for source: %s", args.Src.URL)
 	}
+	return nil
 }
 
 func parseProcessingTimeout(timeoutStr string) time.Duration {
