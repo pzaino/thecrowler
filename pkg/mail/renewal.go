@@ -10,21 +10,46 @@ import (
 
 const defaultRenewalRetryDelay = 5 * time.Minute
 
+// RenewalStatus is the deterministic lifecycle state of a provider subscription.
+type RenewalStatus string
+
+const (
+	RenewalStatusHealthy RenewalStatus = "healthy"
+	RenewalStatusDue     RenewalStatus = "due"
+	RenewalStatusExpired RenewalStatus = "expired"
+	RenewalStatusFailed  RenewalStatus = "failed"
+)
+
+// Valid reports whether status is a supported persisted renewal state.
+func (s RenewalStatus) Valid() bool {
+	switch s {
+	case RenewalStatusHealthy, RenewalStatusDue, RenewalStatusExpired, RenewalStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // RenewalMetadata is durable provider-subscription lifecycle state. Providers
 // such as Gmail use it for expiring watches, while schedulers can make renewal
 // decisions without depending on provider SDK types.
 type RenewalMetadata struct {
-	LastRenewedAt time.Time `json:"last_renewed_at,omitempty" yaml:"last_renewed_at,omitempty"`
-	ExpiresAt     time.Time `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
-	LastAttemptAt time.Time `json:"last_attempt_at,omitempty" yaml:"last_attempt_at,omitempty"`
-	FailureCount  uint32    `json:"failure_count,omitempty" yaml:"failure_count,omitempty"`
-	LastError     string    `json:"last_error,omitempty" yaml:"last_error,omitempty"`
+	SubscriptionID string        `json:"subscription_id,omitempty" yaml:"subscription_id,omitempty"`
+	ResourcePath   string        `json:"resource_path,omitempty" yaml:"resource_path,omitempty"`
+	Status         RenewalStatus `json:"status,omitempty" yaml:"status,omitempty"`
+	LastRenewedAt  time.Time     `json:"last_renewed_at,omitempty" yaml:"last_renewed_at,omitempty"`
+	ExpiresAt      time.Time     `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
+	LastAttemptAt  time.Time     `json:"last_attempt_at,omitempty" yaml:"last_attempt_at,omitempty"`
+	FailureCount   uint32        `json:"failure_count,omitempty" yaml:"failure_count,omitempty"`
+	LastError      string        `json:"last_error,omitempty" yaml:"last_error,omitempty"`
 }
 
 // RenewalResult contains the authoritative expiration returned by a provider
 // after creating or renewing a subscription.
 type RenewalResult struct {
-	ExpiresAt time.Time
+	SubscriptionID string
+	ResourcePath   string
+	ExpiresAt      time.Time
 }
 
 // SubscriptionRenewer renews an expiring provider notification subscription.
@@ -47,6 +72,7 @@ type RenewalDecision struct {
 	Attempted   bool
 	Renewed     bool
 	NextAttempt time.Time
+	Status      RenewalStatus
 	Metadata    RenewalMetadata
 }
 
@@ -62,19 +88,55 @@ type RenewalCoordinator struct {
 	Now          func() time.Time
 }
 
-// RenewalDue returns whether metadata has no expiration or is within the
-// safety margin. An expiration at now is both due and expired.
-func RenewalDue(now time.Time, metadata RenewalMetadata, safetyMargin time.Duration) (due, expired bool) {
+// RenewalStatusAt classifies metadata at a specific instant. A recorded
+// failure takes precedence so operators can distinguish a failed renewal from
+// a merely due one; expiration otherwise takes precedence over due.
+func RenewalStatusAt(now time.Time, metadata RenewalMetadata, safetyMargin time.Duration) RenewalStatus {
+	due, expired := RenewalDue(now, metadata, safetyMargin)
+	if metadata.FailureCount > 0 || metadata.Status == RenewalStatusFailed {
+		return RenewalStatusFailed
+	}
+	if expired {
+		return RenewalStatusExpired
+	}
+	if due {
+		return RenewalStatusDue
+	}
+	return RenewalStatusHealthy
+}
+
+// NextRenewalAt returns the deterministic safe scheduling boundary. When a
+// provider grants a lifetime shorter than twice the configured margin, the
+// margin is capped at half that lifetime to avoid an immediate renewal loop.
+func NextRenewalAt(metadata RenewalMetadata, safetyMargin time.Duration) time.Time {
+	if metadata.ExpiresAt.IsZero() {
+		return time.Time{}
+	}
 	if safetyMargin < 0 {
 		safetyMargin = 0
 	}
+	expiresAt := metadata.ExpiresAt.UTC()
+	lastRenewedAt := metadata.LastRenewedAt.UTC()
+	if !lastRenewedAt.IsZero() && expiresAt.After(lastRenewedAt) {
+		halfLifetime := expiresAt.Sub(lastRenewedAt) / 2
+		if safetyMargin > halfLifetime {
+			safetyMargin = halfLifetime
+		}
+	}
+	return expiresAt.Add(-safetyMargin)
+}
+
+// RenewalDue returns whether metadata has no expiration or has reached its
+// deterministic safe scheduling boundary. An expiration at now is both due
+// and expired.
+func RenewalDue(now time.Time, metadata RenewalMetadata, safetyMargin time.Duration) (due, expired bool) {
 	now = now.UTC()
 	if metadata.ExpiresAt.IsZero() {
 		return true, false
 	}
 	expiresAt := metadata.ExpiresAt.UTC()
 	expired = !expiresAt.After(now)
-	return expired || !expiresAt.After(now.Add(safetyMargin)), expired
+	return expired || !NextRenewalAt(metadata, safetyMargin).After(now), expired
 }
 
 // RenewIfDue loads the current checkpoint, renews when required, commits the
@@ -104,8 +166,9 @@ func (c RenewalCoordinator) RenewIfDue(ctx context.Context, key MailboxKey) (Ren
 	}
 	decision := RenewalDecision{Metadata: checkpoint.Renewal}
 	decision.Due, decision.Expired = RenewalDue(now, checkpoint.Renewal, c.SafetyMargin)
+	decision.Status = RenewalStatusAt(now, checkpoint.Renewal, c.SafetyMargin)
 	if !decision.Due {
-		decision.NextAttempt = checkpoint.Renewal.ExpiresAt.UTC().Add(-c.SafetyMargin)
+		decision.NextAttempt = NextRenewalAt(checkpoint.Renewal, c.SafetyMargin)
 		if err := c.schedule(ctx, key, decision.NextAttempt); err != nil {
 			return decision, err
 		}
@@ -123,17 +186,20 @@ func (c RenewalCoordinator) RenewIfDue(ctx context.Context, key MailboxKey) (Ren
 	if renewErr != nil {
 		next.Renewal.FailureCount++
 		next.Renewal.LastError = boundedRenewalError(renewErr)
-		decision.NextAttempt = now.Add(c.retryDelay())
+		next.Renewal.Status = RenewalStatusFailed
+		decision.Status = RenewalStatusFailed
+		decision.NextAttempt = safeRenewalRetryAt(now, next.Renewal.ExpiresAt, c.retryDelay())
 	} else {
+		next.Renewal.SubscriptionID = strings.TrimSpace(result.SubscriptionID)
+		next.Renewal.ResourcePath = strings.TrimSpace(result.ResourcePath)
+		next.Renewal.Status = RenewalStatusHealthy
 		next.Renewal.LastRenewedAt = now
 		next.Renewal.ExpiresAt = result.ExpiresAt.UTC()
 		next.Renewal.FailureCount = 0
 		next.Renewal.LastError = ""
 		decision.Renewed = true
-		decision.NextAttempt = next.Renewal.ExpiresAt.Add(-c.SafetyMargin)
-		if decision.NextAttempt.Before(now) {
-			decision.NextAttempt = now
-		}
+		decision.Status = RenewalStatusHealthy
+		decision.NextAttempt = NextRenewalAt(next.Renewal, c.SafetyMargin)
 	}
 
 	if err := c.Store.CommitCheckpoint(ctx, key, checkpoint.Version, next); err != nil {
@@ -147,6 +213,15 @@ func (c RenewalCoordinator) RenewIfDue(ctx context.Context, key MailboxKey) (Ren
 		return decision, fmt.Errorf("mail: renew provider subscription: %w", renewErr)
 	}
 	return decision, nil
+}
+
+func safeRenewalRetryAt(now, expiresAt time.Time, retryDelay time.Duration) time.Time {
+	retryAt := now.Add(retryDelay)
+	if expiresAt.IsZero() || !expiresAt.After(now) || retryAt.Before(expiresAt) {
+		return retryAt
+	}
+	// Keep the retry strictly before expiration while avoiding a tight loop.
+	return now.Add(expiresAt.Sub(now) / 2)
 }
 
 func (c RenewalCoordinator) retryDelay() time.Duration {

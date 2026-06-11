@@ -13,10 +13,12 @@ import (
 )
 
 const (
-	maxMailProviderLength   = 64
-	maxMailAccountKeyLength = 191
-	maxMailMailboxKeyLength = 191
-	maxMailErrorLength      = 2048
+	maxMailProviderLength       = 64
+	maxMailAccountKeyLength     = 191
+	maxMailMailboxKeyLength     = 191
+	maxMailSubscriptionIDLength = 191
+	maxMailResourcePathLength   = 2048
+	maxMailErrorLength          = 2048
 )
 
 // DatabaseStateStore persists mailbox checkpoints in EmailMailboxState using
@@ -63,8 +65,8 @@ func (s *DatabaseStateStore) LoadCheckpoint(ctx context.Context, key MailboxKey)
 	}
 
 	query := `SELECT cursor_token, cursor_history_id, cursor_uid, cursor_uid_validity, message_status,
-		content_hash, error_count, last_error, watch_last_renewed_at, watch_expires_at,
-		watch_last_attempt_at, watch_renewal_failure_count, watch_renewal_last_error, version
+		content_hash, error_count, last_error, watch_subscription_id, watch_resource_path,
+		watch_renewal_status, watch_last_renewed_at, watch_expires_at, watch_last_attempt_at, watch_renewal_failure_count, watch_renewal_last_error, version
 		FROM EmailMailboxState
 		WHERE source_id = ` + mailPlaceholder(s.dbms, 1) + `
 		  AND provider = ` + mailPlaceholder(s.dbms, 2) + `
@@ -189,6 +191,15 @@ func validateCheckpoint(checkpoint Checkpoint) error {
 	if len(checkpoint.LastError) > maxMailErrorLength {
 		return fmt.Errorf("mail checkpoint last error exceeds %d bytes", maxMailErrorLength)
 	}
+	if len(checkpoint.Renewal.SubscriptionID) > maxMailSubscriptionIDLength {
+		return fmt.Errorf("mail checkpoint subscription ID exceeds %d bytes", maxMailSubscriptionIDLength)
+	}
+	if len(checkpoint.Renewal.ResourcePath) > maxMailResourcePathLength {
+		return fmt.Errorf("mail checkpoint resource path exceeds %d bytes", maxMailResourcePathLength)
+	}
+	if checkpoint.Renewal.Status != "" && !checkpoint.Renewal.Status.Valid() {
+		return fmt.Errorf("mail checkpoint renewal status is invalid: %q", checkpoint.Renewal.Status)
+	}
 	if len(checkpoint.Renewal.LastError) > maxMailErrorLength {
 		return fmt.Errorf("mail checkpoint renewal error exceeds %d bytes", maxMailErrorLength)
 	}
@@ -210,8 +221,8 @@ func validateCheckpointStatusTransition(current, next MessageStatus, exists bool
 
 func (s *DatabaseStateStore) loadCheckpointTx(ctx context.Context, tx *sql.Tx, identity databaseMailboxIdentity) (Checkpoint, bool, error) {
 	query := `SELECT cursor_token, cursor_history_id, cursor_uid, cursor_uid_validity, message_status,
-		content_hash, error_count, last_error, watch_last_renewed_at, watch_expires_at,
-		watch_last_attempt_at, watch_renewal_failure_count, watch_renewal_last_error, version
+		content_hash, error_count, last_error, watch_subscription_id, watch_resource_path,
+		watch_renewal_status, watch_last_renewed_at, watch_expires_at, watch_last_attempt_at, watch_renewal_failure_count, watch_renewal_last_error, version
 		FROM EmailMailboxState
 		WHERE source_id = ` + mailPlaceholder(s.dbms, 1) + `
 		  AND provider = ` + mailPlaceholder(s.dbms, 2) + `
@@ -235,9 +246,10 @@ func (s *DatabaseStateStore) insertCheckpointTx(ctx context.Context, tx *sql.Tx,
 	query := `INSERT INTO EmailMailboxState (
 		source_id, provider, account_key, mailbox_key, cursor_token, cursor_history_id,
 		cursor_uid, cursor_uid_validity, message_status, content_hash,
-		error_count, last_error, watch_last_renewed_at, watch_expires_at, watch_last_attempt_at,
+		error_count, last_error, watch_subscription_id, watch_resource_path, watch_renewal_status,
+		watch_last_renewed_at, watch_expires_at, watch_last_attempt_at,
 		watch_renewal_failure_count, watch_renewal_last_error, version
-	) VALUES (` + mailPlaceholders(s.dbms, 18) + `)`
+	) VALUES (` + mailPlaceholders(s.dbms, 21) + `)`
 	args := checkpointArgs(identity, next, 1)
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		if isUniqueConstraintError(err) {
@@ -262,19 +274,22 @@ func (s *DatabaseStateStore) updateCheckpointTx(ctx context.Context, tx *sql.Tx,
 		content_hash = ` + mailPlaceholder(s.dbms, 6) + `,
 		error_count = ` + mailPlaceholder(s.dbms, 7) + `,
 		last_error = ` + mailPlaceholder(s.dbms, 8) + `,
-		watch_last_renewed_at = ` + mailPlaceholder(s.dbms, 9) + `,
-		watch_expires_at = ` + mailPlaceholder(s.dbms, 10) + `,
-		watch_last_attempt_at = ` + mailPlaceholder(s.dbms, 11) + `,
-		watch_renewal_failure_count = ` + mailPlaceholder(s.dbms, 12) + `,
-		watch_renewal_last_error = ` + mailPlaceholder(s.dbms, 13) + `,
+		watch_subscription_id = ` + mailPlaceholder(s.dbms, 9) + `,
+		watch_resource_path = ` + mailPlaceholder(s.dbms, 10) + `,
+		watch_renewal_status = ` + mailPlaceholder(s.dbms, 11) + `,
+		watch_last_renewed_at = ` + mailPlaceholder(s.dbms, 12) + `,
+		watch_expires_at = ` + mailPlaceholder(s.dbms, 13) + `,
+		watch_last_attempt_at = ` + mailPlaceholder(s.dbms, 14) + `,
+		watch_renewal_failure_count = ` + mailPlaceholder(s.dbms, 15) + `,
+		watch_renewal_last_error = ` + mailPlaceholder(s.dbms, 16) + `,
 		version = version + 1,
 		last_updated_at = CURRENT_TIMESTAMP
-		WHERE source_id = ` + mailPlaceholder(s.dbms, 14) + `
-		  AND provider = ` + mailPlaceholder(s.dbms, 15) + `
-		  AND account_key = ` + mailPlaceholder(s.dbms, 16) + `
-		  AND mailbox_key = ` + mailPlaceholder(s.dbms, 17) + `
-		  AND version = ` + mailPlaceholder(s.dbms, 18)
-	args := []interface{}{next.Cursor.Token, formatHistoryID(next.Cursor.HistoryID), next.Cursor.UID, next.Cursor.UIDValidity, nullableStatus(next.MessageStatus), next.ContentHash, next.ErrorCount, next.LastError, nullableTime(next.Renewal.LastRenewedAt), nullableTime(next.Renewal.ExpiresAt), nullableTime(next.Renewal.LastAttemptAt), next.Renewal.FailureCount, next.Renewal.LastError, identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, version}
+		WHERE source_id = ` + mailPlaceholder(s.dbms, 17) + `
+		  AND provider = ` + mailPlaceholder(s.dbms, 18) + `
+		  AND account_key = ` + mailPlaceholder(s.dbms, 19) + `
+		  AND mailbox_key = ` + mailPlaceholder(s.dbms, 20) + `
+		  AND version = ` + mailPlaceholder(s.dbms, 21)
+	args := []interface{}{next.Cursor.Token, formatHistoryID(next.Cursor.HistoryID), next.Cursor.UID, next.Cursor.UIDValidity, nullableStatus(next.MessageStatus), next.ContentHash, next.ErrorCount, next.LastError, next.Renewal.SubscriptionID, next.Renewal.ResourcePath, string(next.Renewal.Status), nullableTime(next.Renewal.LastRenewedAt), nullableTime(next.Renewal.ExpiresAt), nullableTime(next.Renewal.LastAttemptAt), next.Renewal.FailureCount, next.Renewal.LastError, identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, version}
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("update mail checkpoint: %w", err)
@@ -290,7 +305,7 @@ func (s *DatabaseStateStore) updateCheckpointTx(ctx context.Context, tx *sql.Tx,
 }
 
 func checkpointArgs(identity databaseMailboxIdentity, checkpoint Checkpoint, version uint64) []interface{} {
-	return []interface{}{identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, checkpoint.Cursor.Token, formatHistoryID(checkpoint.Cursor.HistoryID), checkpoint.Cursor.UID, checkpoint.Cursor.UIDValidity, nullableStatus(checkpoint.MessageStatus), checkpoint.ContentHash, checkpoint.ErrorCount, checkpoint.LastError, nullableTime(checkpoint.Renewal.LastRenewedAt), nullableTime(checkpoint.Renewal.ExpiresAt), nullableTime(checkpoint.Renewal.LastAttemptAt), checkpoint.Renewal.FailureCount, checkpoint.Renewal.LastError, version}
+	return []interface{}{identity.sourceID, identity.provider, identity.accountKey, identity.mailboxKey, checkpoint.Cursor.Token, formatHistoryID(checkpoint.Cursor.HistoryID), checkpoint.Cursor.UID, checkpoint.Cursor.UIDValidity, nullableStatus(checkpoint.MessageStatus), checkpoint.ContentHash, checkpoint.ErrorCount, checkpoint.LastError, checkpoint.Renewal.SubscriptionID, checkpoint.Renewal.ResourcePath, string(checkpoint.Renewal.Status), nullableTime(checkpoint.Renewal.LastRenewedAt), nullableTime(checkpoint.Renewal.ExpiresAt), nullableTime(checkpoint.Renewal.LastAttemptAt), checkpoint.Renewal.FailureCount, checkpoint.Renewal.LastError, version}
 }
 
 func formatHistoryID(historyID uint64) string {
@@ -320,8 +335,9 @@ func scanCheckpoint(scan func(...interface{}) error) (Checkpoint, error) {
 		lastRenewedAt sql.NullTime
 		expiresAt     sql.NullTime
 		lastAttemptAt sql.NullTime
+		renewalStatus sql.NullString
 	)
-	err := scan(&checkpoint.Cursor.Token, &historyID, &checkpoint.Cursor.UID, &checkpoint.Cursor.UIDValidity, &status, &checkpoint.ContentHash, &checkpoint.ErrorCount, &checkpoint.LastError, &lastRenewedAt, &expiresAt, &lastAttemptAt, &checkpoint.Renewal.FailureCount, &checkpoint.Renewal.LastError, &version)
+	err := scan(&checkpoint.Cursor.Token, &historyID, &checkpoint.Cursor.UID, &checkpoint.Cursor.UIDValidity, &status, &checkpoint.ContentHash, &checkpoint.ErrorCount, &checkpoint.LastError, &checkpoint.Renewal.SubscriptionID, &checkpoint.Renewal.ResourcePath, &renewalStatus, &lastRenewedAt, &expiresAt, &lastAttemptAt, &checkpoint.Renewal.FailureCount, &checkpoint.Renewal.LastError, &version)
 	if err != nil {
 		return Checkpoint{}, err
 	}
@@ -331,6 +347,9 @@ func scanCheckpoint(scan func(...interface{}) error) (Checkpoint, error) {
 	}
 	if status.Valid {
 		checkpoint.MessageStatus = MessageStatus(status.String)
+	}
+	if renewalStatus.Valid {
+		checkpoint.Renewal.Status = RenewalStatus(renewalStatus.String)
 	}
 	if lastRenewedAt.Valid {
 		checkpoint.Renewal.LastRenewedAt = lastRenewedAt.Time.UTC()

@@ -101,6 +101,7 @@ func TestDatabaseStateStoreCursorUpdatesAndStatusTransitions(t *testing.T) {
 		ErrorCount:    1,
 		LastError:     "retry scheduled",
 		Renewal: RenewalMetadata{
+			SubscriptionID: "subscription-1", ResourcePath: "/users/example/messages", Status: RenewalStatusHealthy,
 			LastRenewedAt: renewedAt, ExpiresAt: renewedAt.Add(7 * 24 * time.Hour), LastAttemptAt: renewedAt,
 		},
 		Version: "caller-version",

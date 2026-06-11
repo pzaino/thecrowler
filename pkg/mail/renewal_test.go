@@ -66,6 +66,39 @@ func TestRenewalDueUsesSafetyMarginAndDetectsExpiration(t *testing.T) {
 	}
 }
 
+func TestRenewalStatusAtCoversHealthyDueExpiredAndFailed(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.June, 11, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		metadata RenewalMetadata
+		want     RenewalStatus
+	}{
+		{name: "healthy", metadata: RenewalMetadata{ExpiresAt: now.Add(2 * time.Hour)}, want: RenewalStatusHealthy},
+		{name: "due", metadata: RenewalMetadata{ExpiresAt: now.Add(30 * time.Minute)}, want: RenewalStatusDue},
+		{name: "expired", metadata: RenewalMetadata{ExpiresAt: now.Add(-time.Second)}, want: RenewalStatusExpired},
+		{name: "failed", metadata: RenewalMetadata{ExpiresAt: now.Add(2 * time.Hour), FailureCount: 1, Status: RenewalStatusFailed}, want: RenewalStatusFailed},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := RenewalStatusAt(now, test.metadata, time.Hour); got != test.want {
+				t.Fatalf("RenewalStatusAt() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNextRenewalAtCapsMarginAtHalfProviderLifetime(t *testing.T) {
+	t.Parallel()
+
+	renewedAt := time.Date(2026, time.June, 11, 12, 0, 0, 0, time.UTC)
+	metadata := RenewalMetadata{LastRenewedAt: renewedAt, ExpiresAt: renewedAt.Add(30 * time.Minute)}
+	if got, want := NextRenewalAt(metadata, time.Hour), renewedAt.Add(15*time.Minute); !got.Equal(want) {
+		t.Fatalf("NextRenewalAt() = %v, want %v", got, want)
+	}
+}
+
 func TestRenewIfDueSkipsAndSchedulesSafetyBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -112,7 +145,7 @@ func TestRenewIfDueRenewsDueAndExpiredSubscriptions(t *testing.T) {
 				t.Fatalf("seed checkpoint: %v", err)
 			}
 			newExpiration := now.Add(7 * 24 * time.Hour)
-			renewer := &renewalTestRenewer{results: []RenewalResult{{ExpiresAt: newExpiration}}}
+			renewer := &renewalTestRenewer{results: []RenewalResult{{SubscriptionID: "subscription-2", ResourcePath: "projects/test/topics/mail", ExpiresAt: newExpiration}}}
 			scheduler := &renewalTestScheduler{}
 			coordinator := RenewalCoordinator{Store: store, Renewer: renewer, Scheduler: scheduler, SafetyMargin: 24 * time.Hour, Now: func() time.Time { return now }}
 
@@ -127,7 +160,7 @@ func TestRenewIfDueRenewsDueAndExpiredSubscriptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadCheckpoint() error = %v", err)
 			}
-			want := RenewalMetadata{LastRenewedAt: now, ExpiresAt: newExpiration, LastAttemptAt: now}
+			want := RenewalMetadata{SubscriptionID: "subscription-2", ResourcePath: "projects/test/topics/mail", Status: RenewalStatusHealthy, LastRenewedAt: now, ExpiresAt: newExpiration, LastAttemptAt: now}
 			if stored.Renewal != want {
 				t.Fatalf("stored renewal = %#v, want %#v", stored.Renewal, want)
 			}
@@ -152,7 +185,7 @@ func TestRenewIfDuePersistsFailureAndRetrySuccess(t *testing.T) {
 	}
 	providerErr := errors.New("temporary Gmail watch failure")
 	newExpiration := now.Add(7 * 24 * time.Hour)
-	renewer := &renewalTestRenewer{results: []RenewalResult{{}, {ExpiresAt: newExpiration}}, errors: []error{providerErr, nil}}
+	renewer := &renewalTestRenewer{results: []RenewalResult{{}, {SubscriptionID: "subscription-3", ResourcePath: "projects/test/topics/mail", ExpiresAt: newExpiration}}, errors: []error{providerErr, nil}}
 	scheduler := &renewalTestScheduler{}
 	coordinator := RenewalCoordinator{
 		Store: store, Renewer: renewer, Scheduler: scheduler,
@@ -164,7 +197,7 @@ func TestRenewIfDuePersistsFailureAndRetrySuccess(t *testing.T) {
 	if !errors.Is(err, providerErr) {
 		t.Fatalf("failed RenewIfDue() error = %v, want provider error", err)
 	}
-	if !failed.Attempted || failed.Renewed || failed.Metadata.FailureCount != 1 || failed.Metadata.LastError != providerErr.Error() {
+	if !failed.Attempted || failed.Renewed || failed.Metadata.FailureCount != 1 || failed.Metadata.LastError != providerErr.Error() || failed.Status != RenewalStatusFailed || failed.Metadata.Status != RenewalStatusFailed {
 		t.Fatalf("failed decision = %#v", failed)
 	}
 	if failed.Metadata.LastRenewedAt != oldRenewal.LastRenewedAt || failed.Metadata.ExpiresAt != oldRenewal.ExpiresAt || failed.Metadata.LastAttemptAt != now {
@@ -180,12 +213,37 @@ func TestRenewIfDuePersistsFailureAndRetrySuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry RenewIfDue() error = %v", err)
 	}
-	if !retried.Renewed || retried.Metadata.FailureCount != 0 || retried.Metadata.LastError != "" || retried.Metadata.LastRenewedAt != currentNow || retried.Metadata.ExpiresAt != newExpiration {
+	if !retried.Renewed || retried.Metadata.FailureCount != 0 || retried.Metadata.LastError != "" || retried.Metadata.LastRenewedAt != currentNow || retried.Metadata.ExpiresAt != newExpiration || retried.Status != RenewalStatusHealthy || retried.Metadata.Status != RenewalStatusHealthy || retried.Metadata.SubscriptionID != "subscription-3" || retried.Metadata.ResourcePath != "projects/test/topics/mail" {
 		t.Fatalf("retry decision = %#v", retried)
 	}
 	wantNext := newExpiration.Add(-time.Hour)
 	if !reflect.DeepEqual(scheduler.at, []time.Time{wantRetry, wantNext}) || renewer.calls != 2 {
 		t.Fatalf("retry calls = %d, scheduled = %v", renewer.calls, scheduler.at)
+	}
+}
+
+func TestRenewIfDueSchedulesFailedRetryBeforeExpiration(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.June, 11, 12, 0, 0, 0, time.UTC)
+	key := renewalTestKey()
+	store := NewMemoryStateStore()
+	expiresAt := now.Add(4 * time.Minute)
+	if err := store.CommitCheckpoint(context.Background(), key, "", Checkpoint{Renewal: RenewalMetadata{ExpiresAt: expiresAt}}); err != nil {
+		t.Fatalf("seed checkpoint: %v", err)
+	}
+	scheduler := &renewalTestScheduler{}
+	coordinator := RenewalCoordinator{
+		Store: store, Renewer: &renewalTestRenewer{errors: []error{errors.New("provider unavailable")}}, Scheduler: scheduler,
+		SafetyMargin: 5 * time.Minute, RetryDelay: 10 * time.Minute, Now: func() time.Time { return now },
+	}
+	decision, err := coordinator.RenewIfDue(context.Background(), key)
+	if err == nil {
+		t.Fatal("RenewIfDue() error = nil, want provider failure")
+	}
+	wantRetry := now.Add(2 * time.Minute)
+	if !decision.NextAttempt.Equal(wantRetry) || !decision.NextAttempt.Before(expiresAt) || !reflect.DeepEqual(scheduler.at, []time.Time{wantRetry}) {
+		t.Fatalf("failed retry = %v, scheduled = %v, want safe retry %v before %v", decision.NextAttempt, scheduler.at, wantRetry, expiresAt)
 	}
 }
 

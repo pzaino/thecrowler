@@ -211,7 +211,7 @@ func (r GmailWatchRenewer) Renew(ctx context.Context, key MailboxKey) (RenewalRe
 	if err != nil {
 		return RenewalResult{}, err
 	}
-	return RenewalResult{ExpiresAt: watch.ExpiresAt}, nil
+	return RenewalResult{ResourcePath: strings.TrimSpace(r.TopicName), ExpiresAt: watch.ExpiresAt}, nil
 }
 
 var _ SubscriptionRenewer = GmailWatchRenewer{}
