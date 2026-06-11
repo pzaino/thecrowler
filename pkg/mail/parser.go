@@ -379,7 +379,7 @@ func (p *mimeParser) envelopeAttachments(ctx context.Context, ref MessageRef, ro
 		}
 		attachments = append(attachments, attachment)
 
-		if policy != nil && isAttachedMessage(part.FileName, declaredType, detectedType) && !attachment.Truncated {
+		if policy != nil && policy.policy.ExtractText && isAttachedMessage(part.FileName, declaredType, detectedType) && !attachment.Truncated {
 			if depth >= p.maxEmbeddedMessageDepth {
 				warnings = append(warnings, ParserWarning{
 					Category: WarningAttachmentSkipped,
@@ -400,6 +400,7 @@ func (p *mimeParser) envelopeAttachments(ctx context.Context, ref MessageRef, ro
 						PartID:   part.PartID,
 					})
 				} else {
+					child.ParentAttachmentPartID = attachment.PartID
 					childMessages = append(childMessages, child)
 				}
 			}

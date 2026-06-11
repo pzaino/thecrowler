@@ -90,6 +90,34 @@ type EmailArtifact struct {
 	Provenance      EmailArtifactProvenance        `json:"provenance"`
 	Warnings        []mail.ParserWarning           `json:"warnings,omitempty"`
 	SecuritySignals mail.SecuritySignals           `json:"security_signals"`
+	Parent          *EmailArtifactRelationship     `json:"parent,omitempty"`
+}
+
+// EmailAttachmentArtifact is a metadata-only crawler artifact for one
+// policy-approved attachment. Content is deliberately excluded; ExtractedText
+// is populated only when deep attachment extraction is explicitly enabled.
+type EmailAttachmentArtifact struct {
+	SourceType    string                    `json:"source_type"`
+	CanonicalURI  string                    `json:"canonical_uri"`
+	ID            string                    `json:"id"`
+	ParentID      string                    `json:"parent_id,omitempty"`
+	ParentURI     string                    `json:"parent_uri,omitempty"`
+	PartID        string                    `json:"part_id,omitempty"`
+	Filename      string                    `json:"filename,omitempty"`
+	SHA256        string                    `json:"sha256,omitempty"`
+	ContentType   string                    `json:"content_type,omitempty"`
+	Size          int64                     `json:"size,omitempty"`
+	Disposition   string                    `json:"disposition,omitempty"`
+	Relationship  mail.DocumentRelationship `json:"relationship"`
+	ExtractedText string                    `json:"extracted_text,omitempty"`
+}
+
+// EmailArtifactRelationship records the stable parent artifact for a deeply
+// extracted attached message.
+type EmailArtifactRelationship struct {
+	ParentID     string                    `json:"parent_id"`
+	ParentURI    string                    `json:"parent_uri"`
+	Relationship mail.DocumentRelationship `json:"relationship"`
 }
 
 // EmailArtifactProvenance identifies the crawler source and provider message
@@ -127,9 +155,10 @@ type WebCrawlQueue interface {
 }
 
 type emailPolicyResultHandler struct {
-	policy mail.LinkPolicy
-	queue  WebCrawlQueue
-	next   EmailResultHandler
+	policy           mail.LinkPolicy
+	attachmentPolicy mail.AttachmentPolicy
+	queue            WebCrawlQueue
+	next             EmailResultHandler
 }
 
 func (handler emailPolicyResultHandler) HandleEmailResult(ctx context.Context, result EmailCrawlResult) error {
@@ -149,7 +178,7 @@ func (handler emailPolicyResultHandler) HandleEmailResult(ctx context.Context, r
 	}
 
 	result.Document.Links = retained
-	result.Page = emailDocumentPage(result.Source, result.Document)
+	result.Page = emailDocumentPageWithAttachmentPolicy(result.Source, result.Document, handler.attachmentPolicy)
 	if err := handler.next.HandleEmailResult(ctx, result); err != nil {
 		return err
 	}
@@ -233,9 +262,10 @@ func crawlEmailWithResultHandler(ctx context.Context, args *Pars, resultHandler 
 	}
 
 	policyHandler := emailPolicyResultHandler{
-		policy: config.Extraction.Links,
-		queue:  args.WebCrawlQueue,
-		next:   resultHandler,
+		policy:           config.Extraction.Links,
+		attachmentPolicy: config.Extraction.Attachments,
+		queue:            args.WebCrawlQueue,
+		next:             resultHandler,
 	}
 	return runner.RunSource(ctx, mail.SourceRunRequest{
 		SourceID: strconv.FormatUint(args.Src.ID, 10),
@@ -245,6 +275,10 @@ func crawlEmailWithResultHandler(ctx context.Context, args *Pars, resultHandler 
 }
 
 func emailDocumentPage(source cdb.Source, document mail.Document) PageInfo {
+	return emailDocumentPageWithAttachmentPolicy(source, document, mail.AttachmentPolicy{})
+}
+
+func emailDocumentPageWithAttachmentPolicy(source cdb.Source, document mail.Document, policy mail.AttachmentPolicy) PageInfo {
 	body := document.ExtractedText
 	if strings.TrimSpace(body) == "" {
 		body = document.TextBody
@@ -256,7 +290,8 @@ func emailDocumentPage(source cdb.Source, document mail.Document) PageInfo {
 		links[index] = LinkItem{PageURL: pageURL, Link: link.URL}
 	}
 
-	artifact := emailDocumentArtifact(source, pageURL, document, body)
+	artifacts := emailDocumentCrawlerArtifacts(source, pageURL, document, body, policy, nil)
+	emailArtifact := artifacts[0]["email"].(EmailArtifact)
 	return PageInfo{
 		URL:          pageURL,
 		sourceID:     source.ID,
@@ -264,10 +299,91 @@ func emailDocumentPage(source cdb.Source, document mail.Document) PageInfo {
 		Summary:      document.Subject,
 		BodyText:     body,
 		HTML:         document.HTMLBody,
-		DetectedType: artifact.ContentType,
-		ScrapedData:  []ScrapedItem{{"email": artifact}},
+		DetectedType: emailArtifact.ContentType,
+		ScrapedData:  artifacts,
 		Links:        links,
 	}
+}
+
+func emailDocumentCrawlerArtifacts(source cdb.Source, canonicalURI string, document mail.Document, extractedText string, policy mail.AttachmentPolicy, parent *EmailArtifactRelationship) []ScrapedItem {
+	emailArtifact := emailDocumentArtifact(source, canonicalURI, document, extractedText)
+	emailArtifact.Parent = parent
+	artifacts := []ScrapedItem{{"email": emailArtifact}}
+	descriptors := document.AttachmentDocumentDescriptors(canonicalURI)
+	usedChildren := make([]bool, len(document.ChildDocuments))
+	for index, descriptor := range descriptors {
+		attachmentURI := emailChildArtifactURL(canonicalURI, "attachment", descriptor.ID)
+		attachmentArtifact := EmailAttachmentArtifact{
+			SourceType:   "email_attachment",
+			CanonicalURI: attachmentURI,
+			ID:           descriptor.ID,
+			ParentID:     descriptor.ParentID,
+			ParentURI:    descriptor.ParentURI,
+			PartID:       descriptor.PartID,
+			Filename:     descriptor.Filename,
+			SHA256:       descriptor.SHA256,
+			ContentType:  descriptor.ContentType,
+			Size:         descriptor.Size,
+			Disposition:  descriptor.Disposition,
+			Relationship: descriptor.Relationship,
+		}
+		if policy.Include && policy.ExtractText && index < len(document.Attachments) {
+			attachmentArtifact.ExtractedText = document.Attachments[index].ExtractedText
+		}
+		artifacts = append(artifacts, ScrapedItem{"email_attachment": attachmentArtifact})
+
+		if !policy.Include || !policy.ExtractText || !emailDescriptorIsAttachedMessage(descriptor) {
+			continue
+		}
+		child, ok := emailChildDocumentForAttachment(document.ChildDocuments, usedChildren, descriptor.PartID)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(child.ID) == "" {
+			child.ID = descriptor.ID + ":message"
+		}
+		childURI := emailChildArtifactURL(attachmentURI, "embedded_message", child.ID)
+		childText := child.ExtractedText
+		if strings.TrimSpace(childText) == "" {
+			childText = child.TextBody
+		}
+		artifacts = append(artifacts, emailDocumentCrawlerArtifacts(source, childURI, child, childText, policy, &EmailArtifactRelationship{
+			ParentID:     descriptor.ID,
+			ParentURI:    attachmentURI,
+			Relationship: mail.RelationshipEmbeddedMessage,
+		})...)
+	}
+	return artifacts
+}
+
+func emailChildDocumentForAttachment(children []mail.Document, used []bool, partID string) (mail.Document, bool) {
+	for index, child := range children {
+		if !used[index] && partID != "" && child.ParentAttachmentPartID == partID {
+			used[index] = true
+			return child, true
+		}
+	}
+	for index, child := range children {
+		if !used[index] && child.ParentAttachmentPartID == "" {
+			used[index] = true
+			return child, true
+		}
+	}
+	return mail.Document{}, false
+}
+
+func emailDescriptorIsAttachedMessage(descriptor mail.ChildDocumentDescriptor) bool {
+	return strings.EqualFold(descriptor.ContentType, "message/rfc822") ||
+		strings.EqualFold(descriptor.ContentType, "application/eml") ||
+		strings.HasSuffix(strings.ToLower(strings.TrimSpace(descriptor.Filename)), ".eml")
+}
+
+func emailChildArtifactURL(parentURI, kind, id string) string {
+	separator := "#"
+	if strings.Contains(parentURI, "#") {
+		separator = "&"
+	}
+	return parentURI + separator + url.QueryEscape(kind) + "=" + url.QueryEscape(id)
 }
 
 func emailDocumentArtifact(source cdb.Source, canonicalURI string, document mail.Document, extractedText string) EmailArtifact {

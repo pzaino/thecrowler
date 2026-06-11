@@ -1,5 +1,12 @@
 package mail
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
+	"strings"
+)
+
 // DocumentIdentity identifies a parent document at the indexing or storage
 // boundary. ID carries an index-native identity when one is available, while
 // URI carries the source URI used by URI-oriented consumers. Callers may set
@@ -17,6 +24,9 @@ const (
 	// RelationshipAttachment identifies a child created from a permitted MIME
 	// attachment or inline part.
 	RelationshipAttachment DocumentRelationship = "attachment"
+	// RelationshipEmbeddedMessage identifies a normalized RFC 5322 document
+	// obtained by explicitly enabled deep extraction of an attachment.
+	RelationshipEmbeddedMessage DocumentRelationship = "embedded_message"
 )
 
 // ChildDocumentDescriptor contains the metadata needed to publish or schedule
@@ -27,6 +37,7 @@ type ChildDocumentDescriptor struct {
 	ID           string               `json:"id,omitempty" yaml:"id,omitempty"`
 	ParentID     string               `json:"parent_id,omitempty" yaml:"parent_id,omitempty"`
 	ParentURI    string               `json:"parent_uri,omitempty" yaml:"parent_uri,omitempty"`
+	PartID       string               `json:"part_id,omitempty" yaml:"part_id,omitempty"`
 	Filename     string               `json:"filename,omitempty" yaml:"filename,omitempty"`
 	SHA256       string               `json:"sha256,omitempty" yaml:"sha256,omitempty"`
 	ContentType  string               `json:"content_type,omitempty" yaml:"content_type,omitempty"`
@@ -46,11 +57,18 @@ func AttachmentDocumentDescriptors(parent DocumentIdentity, attachments []Attach
 	}
 
 	descriptors := make([]ChildDocumentDescriptor, len(attachments))
+	usedIDs := make(map[string]struct{}, len(attachments))
 	for index, attachment := range attachments {
+		id := strings.TrimSpace(attachment.ID)
+		if _, duplicate := usedIDs[id]; id == "" || duplicate {
+			id = stableAttachmentDescriptorID(parent, attachment, index)
+		}
+		usedIDs[id] = struct{}{}
 		descriptors[index] = ChildDocumentDescriptor{
-			ID:           attachment.ID,
+			ID:           id,
 			ParentID:     parent.ID,
 			ParentURI:    parent.URI,
+			PartID:       attachment.PartID,
 			Filename:     attachment.Filename,
 			SHA256:       attachment.SHA256,
 			ContentType:  attachmentContentType(attachment),
@@ -74,4 +92,26 @@ func attachmentContentType(attachment Attachment) string {
 		return attachment.DetectedMediaType
 	}
 	return attachment.MediaType
+}
+
+// stableAttachmentDescriptorID supplies a deterministic identity when MIME
+// metadata does not provide a usable unique content ID. The ordinal is part of
+// the seed so byte-identical duplicate attachments remain distinct children.
+func stableAttachmentDescriptorID(parent DocumentIdentity, attachment Attachment, ordinal int) string {
+	hash := sha256.New()
+	for _, value := range []string{
+		parent.ID,
+		parent.URI,
+		attachment.PartID,
+		attachment.Filename,
+		attachment.SHA256,
+		attachmentContentType(attachment),
+		strconv.FormatInt(attachment.Size, 10),
+		attachment.Disposition,
+		strconv.Itoa(ordinal),
+	} {
+		_, _ = hash.Write([]byte(value))
+		_, _ = hash.Write([]byte{0})
+	}
+	return "attachment:" + hex.EncodeToString(hash.Sum(nil))
 }

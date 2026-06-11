@@ -244,6 +244,7 @@ func TestProcessorEmitsParsedAttachedEmailsAsChildDocuments(t *testing.T) {
 	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "message/rfc822", child)
 	extraction := ExtractionConfig{Attachments: AttachmentPolicy{
 		Include:           true,
+		ExtractText:       true,
 		AllowedMediaTypes: []string{"message/rfc822"},
 	}}
 	limits := Limits{
@@ -265,7 +266,7 @@ func TestProcessorEmitsParsedAttachedEmailsAsChildDocuments(t *testing.T) {
 		t.Fatalf("ChildDocuments = %#v, want one", document.ChildDocuments)
 	}
 	childDocument := document.ChildDocuments[0]
-	if childDocument.SourceID != "source-children" || childDocument.Subject != "child subject" || childDocument.ExtractedText != "child body" {
+	if childDocument.SourceID != "source-children" || childDocument.ParentAttachmentPartID == "" || childDocument.Subject != "child subject" || childDocument.ExtractedText != "child body" {
 		t.Errorf("ChildDocuments[0] = %#v", childDocument)
 	}
 }

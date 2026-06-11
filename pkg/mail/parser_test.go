@@ -708,7 +708,7 @@ func TestParserParsesAllowedEMLAttachmentAsChildMessage(t *testing.T) {
 		t.Fatalf("ChildMessages = %#v, want one parsed child", parsed.ChildMessages)
 	}
 	got := parsed.ChildMessages[0]
-	if got.Subject != "child subject" || got.MessageID != "<child@example.test>" || got.TextBody != "child body" {
+	if got.ParentAttachmentPartID == "" || got.Subject != "child subject" || got.MessageID != "<child@example.test>" || got.TextBody != "child body" {
 		t.Errorf("ChildMessages[0] = %#v", got)
 	}
 }
@@ -809,6 +809,7 @@ func TestParserSharesAttachmentByteLimitWithChildMessages(t *testing.T) {
 	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "message/rfc822", child)
 	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{
 		Include:           true,
+		ExtractText:       true,
 		AllowedMediaTypes: []string{"message/rfc822", "text/plain"},
 	}, Limits{
 		MaxAttachmentBytes:      1 << 20,
@@ -838,6 +839,7 @@ func TestParserSharesAttachmentByteLimitWithChildMessages(t *testing.T) {
 func recursiveAttachmentParser(maxDepth, maxAttachments int) Parser {
 	return NewParser(WithAttachmentPolicy(AttachmentPolicy{
 		Include:           true,
+		ExtractText:       true,
 		AllowedMediaTypes: []string{"message/rfc822", "text/plain"},
 	}, Limits{
 		MaxAttachmentBytes:      1 << 20,
@@ -861,5 +863,33 @@ func closeParsedMessageAttachments(t *testing.T, parsed ParsedMessage) {
 	closeAttachments(t, parsed.Attachments)
 	for _, child := range parsed.ChildMessages {
 		closeParsedMessageAttachments(t, child)
+	}
+}
+
+func TestParserKeepsAttachedMessageOpaqueWithoutExplicitTextExtraction(t *testing.T) {
+	t.Parallel()
+
+	child := "From: child@example.test\r\nSubject: child subject\r\nContent-Type: text/plain\r\n\r\nchild body"
+	raw := messageWithAttachedEmail("parent", "outer", "child.eml", "message/rfc822", child)
+	parser := NewParser(WithAttachmentPolicy(AttachmentPolicy{
+		Include:           true,
+		AllowedMediaTypes: []string{"message/rfc822"},
+	}, Limits{
+		MaxAttachmentBytes:      1 << 20,
+		MaxTotalAttachmentBytes: 2 << 20,
+		MaxAttachments:          10,
+		MaxEmbeddedMessageDepth: 3,
+	}))
+
+	parsed, err := parser.Parse(context.Background(), RawMessage{RFC822: io.NopCloser(strings.NewReader(raw))})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer closeParsedMessageAttachments(t, parsed)
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("Attachments = %#v, want retained descriptor source", parsed.Attachments)
+	}
+	if len(parsed.ChildMessages) != 0 {
+		t.Fatalf("ChildMessages = %#v, want opaque attachment without extract_text", parsed.ChildMessages)
 	}
 }

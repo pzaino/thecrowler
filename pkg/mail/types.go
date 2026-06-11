@@ -109,21 +109,22 @@ type Attachment struct {
 // ParsedMessage contains decoded mail semantics without provider client
 // objects or protocol-specific state.
 type ParsedMessage struct {
-	Ref         MessageRef   `json:"ref" yaml:"ref"`
-	MessageID   string       `json:"message_id,omitempty" yaml:"message_id,omitempty"`
-	ThreadID    string       `json:"thread_id,omitempty" yaml:"thread_id,omitempty"`
-	Date        time.Time    `json:"date,omitempty" yaml:"date,omitempty"`
-	From        []Address    `json:"from,omitempty" yaml:"from,omitempty"`
-	To          []Address    `json:"to,omitempty" yaml:"to,omitempty"`
-	CC          []Address    `json:"cc,omitempty" yaml:"cc,omitempty"`
-	BCC         []Address    `json:"bcc,omitempty" yaml:"bcc,omitempty"`
-	ReplyTo     []Address    `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
-	Subject     string       `json:"subject,omitempty" yaml:"subject,omitempty"`
-	Headers     HeaderMap    `json:"headers,omitempty" yaml:"headers,omitempty"`
-	RawHeaders  HeaderMap    `json:"raw_headers,omitempty" yaml:"raw_headers,omitempty"`
-	TextBody    string       `json:"text_body,omitempty" yaml:"text_body,omitempty"`
-	HTMLBody    string       `json:"html_body,omitempty" yaml:"html_body,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty" yaml:"attachments,omitempty"`
+	Ref                    MessageRef   `json:"ref" yaml:"ref"`
+	ParentAttachmentPartID string       `json:"parent_attachment_part_id,omitempty" yaml:"parent_attachment_part_id,omitempty"`
+	MessageID              string       `json:"message_id,omitempty" yaml:"message_id,omitempty"`
+	ThreadID               string       `json:"thread_id,omitempty" yaml:"thread_id,omitempty"`
+	Date                   time.Time    `json:"date,omitempty" yaml:"date,omitempty"`
+	From                   []Address    `json:"from,omitempty" yaml:"from,omitempty"`
+	To                     []Address    `json:"to,omitempty" yaml:"to,omitempty"`
+	CC                     []Address    `json:"cc,omitempty" yaml:"cc,omitempty"`
+	BCC                    []Address    `json:"bcc,omitempty" yaml:"bcc,omitempty"`
+	ReplyTo                []Address    `json:"reply_to,omitempty" yaml:"reply_to,omitempty"`
+	Subject                string       `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Headers                HeaderMap    `json:"headers,omitempty" yaml:"headers,omitempty"`
+	RawHeaders             HeaderMap    `json:"raw_headers,omitempty" yaml:"raw_headers,omitempty"`
+	TextBody               string       `json:"text_body,omitempty" yaml:"text_body,omitempty"`
+	HTMLBody               string       `json:"html_body,omitempty" yaml:"html_body,omitempty"`
+	Attachments            []Attachment `json:"attachments,omitempty" yaml:"attachments,omitempty"`
 	// ChildMessages contains permitted .eml or message/rfc822 attachments
 	// parsed recursively under the same attachment budgets as this message.
 	ChildMessages []ParsedMessage `json:"child_messages,omitempty" yaml:"child_messages,omitempty"`

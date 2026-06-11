@@ -134,3 +134,38 @@ func TestAttachmentDocumentDescriptorsEmptyInput(t *testing.T) {
 		t.Fatalf("empty descriptor mapping = %#v, want nil", descriptors)
 	}
 }
+
+func TestAttachmentDocumentDescriptorsGenerateStableUniqueFallbackIDs(t *testing.T) {
+	parent := DocumentIdentity{ID: "parent", URI: "email://source#message=parent"}
+	attachments := []Attachment{
+		{PartID: "1.2", Filename: "named.txt", SHA256: "hash-a", MediaType: "text/plain", Size: 7},
+		{PartID: "1.3", Filename: "duplicate.txt", SHA256: "hash-b", MediaType: "text/plain", Size: 9, ID: "duplicate"},
+		{PartID: "1.4", Filename: "duplicate.txt", SHA256: "hash-b", MediaType: "text/plain", Size: 9, ID: "duplicate"},
+		{PartID: "1.5", SHA256: "hash-c", MediaType: "application/octet-stream", Size: 11},
+	}
+
+	first := AttachmentDocumentDescriptors(parent, attachments)
+	second := AttachmentDocumentDescriptors(parent, attachments)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("fallback IDs changed across mappings:\nfirst:  %#v\nsecond: %#v", first, second)
+	}
+	seen := make(map[string]bool, len(first))
+	for index, descriptor := range first {
+		if descriptor.ID == "" {
+			t.Fatalf("descriptor %d has an empty ID", index)
+		}
+		if seen[descriptor.ID] {
+			t.Fatalf("descriptor %d reused ID %q", index, descriptor.ID)
+		}
+		seen[descriptor.ID] = true
+	}
+	if first[0].Filename != "named.txt" || first[0].SHA256 != "hash-a" {
+		t.Errorf("named descriptor metadata = %#v", first[0])
+	}
+	if first[1].ID != "duplicate" || first[2].ID == "duplicate" {
+		t.Errorf("duplicate IDs were not disambiguated: %#v", first)
+	}
+	if first[3].Filename != "" || first[3].SHA256 != "hash-c" {
+		t.Errorf("unnamed descriptor metadata = %#v", first[3])
+	}
+}

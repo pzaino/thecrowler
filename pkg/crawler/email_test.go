@@ -464,3 +464,107 @@ func TestCrawlEmailPropagatesWebQueueFailure(t *testing.T) {
 		t.Fatalf("crawlEmail() error = %v, want %v", err, wantErr)
 	}
 }
+
+func TestEmailDocumentPageMapsAttachmentsToStableChildArtifacts(t *testing.T) {
+	document := mail.Document{
+		ID: "parent-message",
+		Attachments: []mail.Attachment{
+			{PartID: "1.2", Filename: "report final.pdf", SHA256: strings.Repeat("a", 64), DetectedMediaType: "application/pdf", Size: 2048, Disposition: "attachment", ExtractedText: "must stay skipped"},
+			{PartID: "1.3", ID: "same-content-id", Filename: "duplicate.txt", SHA256: strings.Repeat("b", 64), MediaType: "text/plain", Size: 4},
+			{PartID: "1.4", ID: "same-content-id", Filename: "duplicate.txt", SHA256: strings.Repeat("b", 64), MediaType: "text/plain", Size: 4},
+			{PartID: "1.5", SHA256: strings.Repeat("c", 64), MediaType: "application/octet-stream", Size: 8},
+		},
+	}
+	source := cdb.Source{ID: 7, URL: "imap://account#mailbox=INBOX"}
+
+	first := emailDocumentPage(source, document)
+	second := emailDocumentPage(source, document)
+	if len(first.ScrapedData) != 5 {
+		t.Fatalf("ScrapedData count = %d, want parent plus four attachments", len(first.ScrapedData))
+	}
+	if !reflect.DeepEqual(first.ScrapedData, second.ScrapedData) {
+		t.Fatalf("attachment artifact mapping changed across calls:\nfirst:  %#v\nsecond: %#v", first.ScrapedData, second.ScrapedData)
+	}
+
+	seen := make(map[string]bool)
+	for index := 1; index < len(first.ScrapedData); index++ {
+		artifact, ok := first.ScrapedData[index]["email_attachment"].(EmailAttachmentArtifact)
+		if !ok {
+			t.Fatalf("ScrapedData[%d] type = %T", index, first.ScrapedData[index]["email_attachment"])
+		}
+		if artifact.ID == "" || seen[artifact.ID] {
+			t.Fatalf("attachment artifact ID %q is empty or duplicated", artifact.ID)
+		}
+		seen[artifact.ID] = true
+		if artifact.ParentID != document.ID || artifact.ParentURI != first.URL || artifact.Relationship != mail.RelationshipAttachment {
+			t.Errorf("attachment relationship = %#v", artifact)
+		}
+		if artifact.ExtractedText != "" {
+			t.Errorf("attachment %q exposed skipped extraction text %q", artifact.ID, artifact.ExtractedText)
+		}
+	}
+
+	named := first.ScrapedData[1]["email_attachment"].(EmailAttachmentArtifact)
+	if named.Filename != "report final.pdf" || named.SHA256 != strings.Repeat("a", 64) || !strings.Contains(named.CanonicalURI, "attachment=") {
+		t.Errorf("named attachment artifact = %#v", named)
+	}
+	unnamed := first.ScrapedData[4]["email_attachment"].(EmailAttachmentArtifact)
+	if unnamed.Filename != "" || unnamed.SHA256 != strings.Repeat("c", 64) {
+		t.Errorf("unnamed attachment artifact = %#v", unnamed)
+	}
+}
+
+func TestEmailDocumentPageRequiresPolicyForNestedEMLArtifacts(t *testing.T) {
+	document := mail.Document{
+		ID: "parent-message",
+		Attachments: []mail.Attachment{{
+			PartID: "1.2", Filename: "child.eml", SHA256: strings.Repeat("d", 64), DetectedMediaType: "message/rfc822", Size: 512,
+		}},
+		ChildDocuments: []mail.Document{{
+			ParentAttachmentPartID: "1.2",
+			Subject:                "child",
+			ExtractedText:          "child body",
+			Attachments: []mail.Attachment{{
+				PartID: "1.2", Filename: "nested.txt", SHA256: strings.Repeat("e", 64), MediaType: "text/plain", Size: 6,
+			}},
+		}},
+	}
+	source := cdb.Source{ID: 7, URL: "imap://account#mailbox=INBOX"}
+
+	opaque := emailDocumentPageWithAttachmentPolicy(source, document, mail.AttachmentPolicy{Include: true})
+	if len(opaque.ScrapedData) != 2 {
+		t.Fatalf("opaque ScrapedData = %#v, want parent and EML attachment only", opaque.ScrapedData)
+	}
+
+	deep := emailDocumentPageWithAttachmentPolicy(source, document, mail.AttachmentPolicy{Include: true, ExtractText: true})
+	if len(deep.ScrapedData) != 4 {
+		t.Fatalf("deep ScrapedData = %#v, want parent, EML attachment, child message, and nested attachment", deep.ScrapedData)
+	}
+	eml := deep.ScrapedData[1]["email_attachment"].(EmailAttachmentArtifact)
+	child := deep.ScrapedData[2]["email"].(EmailArtifact)
+	if child.Parent == nil || child.Parent.ParentID != eml.ID || child.Parent.ParentURI != eml.CanonicalURI || child.Parent.Relationship != mail.RelationshipEmbeddedMessage {
+		t.Fatalf("nested EML relationship = %#v, EML artifact = %#v", child.Parent, eml)
+	}
+	nested := deep.ScrapedData[3]["email_attachment"].(EmailAttachmentArtifact)
+	if nested.ParentID != child.Provenance.DocumentID || nested.ParentURI != child.CanonicalURI || nested.Relationship != mail.RelationshipAttachment {
+		t.Errorf("nested attachment relationship = %#v, child = %#v", nested, child)
+	}
+}
+
+func TestEmailDocumentPageDoesNotCreateArtifactsForSkippedAttachments(t *testing.T) {
+	page := emailDocumentPage(cdb.Source{ID: 7, URL: "imap://account#mailbox=INBOX"}, mail.Document{
+		ID: "message-with-skipped-attachment",
+		Warnings: []mail.ParserWarning{{
+			Category: mail.WarningAttachmentSkipped,
+			Code:     "attachment_media_type_blocked",
+			PartID:   "1.2",
+		}},
+	})
+	if len(page.ScrapedData) != 1 {
+		t.Fatalf("ScrapedData = %#v, want only the parent artifact for skipped content", page.ScrapedData)
+	}
+	artifact := page.ScrapedData[0]["email"].(EmailArtifact)
+	if len(artifact.Attachments) != 0 || len(artifact.Warnings) != 1 {
+		t.Errorf("parent artifact = %#v, want warning without attachment child", artifact)
+	}
+}
