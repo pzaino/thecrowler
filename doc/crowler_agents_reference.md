@@ -52,7 +52,7 @@ A few important notes:
 
 ## 3. How agents fit into CROWler
 
-The CROWler is a web content discovery and data collection development platform. Its core features include crawling, scraping, action execution, technology detection, network information collection, file and image collection, API integration, rulesets, plugins, data storage, event-driven processing, and AI or traditional agents.
+The CROWler is a content discovery and data collection development platform. Its core features include crawling, scraping, action execution, technology detection, network information collection, file and image collection, API integration, rulesets, plugins, data storage, event-driven processing, and AI or traditional agents.
 
 Agents are the orchestration layer across those capabilities.
 
