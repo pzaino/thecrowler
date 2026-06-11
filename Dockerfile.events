@@ -33,7 +33,6 @@ COPY ./pkg ./pkg
 COPY ./services ./services
 COPY ./go.mod .
 COPY ./go.sum .
-COPY ./main.go .
 COPY ./config.yaml .
 COPY ./schemas/ ./schemas
 COPY ./plugins/ ./plugins
