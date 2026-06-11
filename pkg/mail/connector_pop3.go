@@ -166,7 +166,7 @@ func normalizePOP3Config(config POP3ConnectorConfig) POP3ConnectorConfig {
 		config.Timeout = 30 * time.Second
 	}
 	if config.MaxMessageBytes <= 0 {
-		config.MaxMessageBytes = defaultMaxMessageBytes
+		config.MaxMessageBytes = DefaultSourceConfig().Crawl.Limits.MaxMessageBytes
 	}
 	return config
 }

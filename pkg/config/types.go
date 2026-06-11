@@ -892,6 +892,7 @@ type SourceConfig struct {
 	CrawlingConfig CrawlingConfig         `json:"crawling_config" yaml:"crawling_config" validate:"required"`
 	ExecutionPlan  []ExecutionPlanItem    `json:"execution_plan,omitempty" yaml:"execution_plan,omitempty"`
 	Custom         map[string]interface{} `json:"custom,omitempty" yaml:"custom,omitempty"` // Flexible custom configuration
+	Email          *EmailSourceConfig     `json:"email,omitempty" yaml:"email,omitempty"`
 	MetaData       map[string]interface{} `json:"meta_data,omitempty" yaml:"meta_data,omitempty"`
 }
 

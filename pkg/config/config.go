@@ -1966,6 +1966,10 @@ func (sc *SourceConfig) IsEmpty() bool {
 		return false
 	}
 
+	if sc.Email != nil {
+		return false
+	}
+
 	// ExecutionPlan must be nil or empty
 	if len(sc.ExecutionPlan) != 0 {
 		if len(sc.ExecutionPlan) == 1 && !sc.ExecutionPlan[0].IsEmpty() {

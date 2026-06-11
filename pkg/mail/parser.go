@@ -60,7 +60,7 @@ func NewParser(options ...ParserOption) Parser {
 			enmime.SetReadPartErrorPolicy(enmime.AllowCorruptTextPartErrorPolicy),
 		),
 		maxPartBytes:            defaultMaxPartBytes,
-		maxEmbeddedMessageDepth: defaultMaxEmbeddedMessageDepth,
+		maxEmbeddedMessageDepth: DefaultSourceConfig().Crawl.Limits.MaxEmbeddedMessageDepth,
 	}
 	for _, option := range options {
 		if option != nil {

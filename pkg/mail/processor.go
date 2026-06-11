@@ -40,11 +40,12 @@ func NewProcessorWithLimits(sourceID string, extraction ExtractionConfig, limits
 }
 
 func defaultAttachmentLimits() Limits {
+	defaults := DefaultSourceConfig().Crawl.Limits
 	return Limits{
-		MaxAttachmentBytes:      defaultMaxAttachmentBytes,
-		MaxTotalAttachmentBytes: defaultMaxTotalAttachmentBytes,
-		MaxAttachments:          defaultMaxAttachments,
-		MaxEmbeddedMessageDepth: defaultMaxEmbeddedMessageDepth,
+		MaxAttachmentBytes:      defaults.MaxAttachmentBytes,
+		MaxTotalAttachmentBytes: defaults.MaxTotalAttachmentBytes,
+		MaxAttachments:          defaults.MaxAttachments,
+		MaxEmbeddedMessageDepth: defaults.MaxEmbeddedMessageDepth,
 	}
 }
 
