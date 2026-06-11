@@ -1,10 +1,15 @@
 package mail
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"net/textproto"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -199,6 +204,227 @@ func TestPOP3ConnectorOpenMessageResolvesRenumberedUIDLAndBoundsSize(t *testing.
 	}
 }
 
+func TestPOP3ConnectorUIDLListingDoesNotRetrieveContent(t *testing.T) {
+	fake := &fakePOP3Client{messages: []pop3Message{{Number: 1, UIDL: "server-uid", Size: 12}}}
+	connector := authenticatedTestPOP3Connector(t, testPOP3Config(), fake)
+	defer connector.Close() //nolint:errcheck
+
+	page, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{}, 10)
+	if err != nil {
+		t.Fatalf("ListChanges() error = %v", err)
+	}
+	if len(page.Changes) != 1 || page.Changes[0].Ref.Version != "server-uid" {
+		t.Fatalf("ListChanges() = %#v, want server UIDL", page)
+	}
+	if fake.retrieveCalls != 0 {
+		t.Fatalf("Retrieve() calls = %d, want 0 when UIDL is available", fake.retrieveCalls)
+	}
+}
+
+func TestPOP3ConnectorMissingUIDLUsesFingerprintsAcrossRenumberingAndDeletion(t *testing.T) {
+	fake := &fakePOP3Client{
+		messages: []pop3Message{{Number: 1, Size: 5}, {Number: 2, Size: 4}},
+		bodies:   map[int][]byte{1: []byte("alpha"), 2: []byte("beta")},
+	}
+	connector := authenticatedTestPOP3Connector(t, testPOP3Config(), fake)
+	defer connector.Close() //nolint:errcheck
+	mailbox := Mailbox{ID: "INBOX"}
+
+	first, err := connector.ListChanges(context.Background(), mailbox, Cursor{}, 10)
+	if err != nil {
+		t.Fatalf("first ListChanges() error = %v", err)
+	}
+	if len(first.Changes) != 2 {
+		t.Fatalf("first changes = %#v, want two", first.Changes)
+	}
+	alphaVersion := first.Changes[0].Ref.Version
+	betaVersion := first.Changes[1].Ref.Version
+	if !strings.HasPrefix(alphaVersion, "sha256:") || !strings.HasSuffix(alphaVersion, ":1") || !strings.HasPrefix(betaVersion, "sha256:") {
+		t.Fatalf("fallback versions = %q, %q, want SHA-256 evidence", alphaVersion, betaVersion)
+	}
+
+	fake.messages = []pop3Message{{Number: 4, Size: 5}, {Number: 7, Size: 4}}
+	fake.bodies = map[int][]byte{4: []byte("alpha"), 7: []byte("beta")}
+	renumbered, err := connector.ListChanges(context.Background(), mailbox, first.Next, 10)
+	if err != nil {
+		t.Fatalf("renumbered ListChanges() error = %v", err)
+	}
+	if len(renumbered.Changes) != 0 {
+		t.Fatalf("renumbered changes = %#v, want none", renumbered.Changes)
+	}
+
+	fake.messages = []pop3Message{{Number: 1, Size: 5}}
+	fake.bodies = map[int][]byte{1: []byte("alpha")}
+	deleted, err := connector.ListChanges(context.Background(), mailbox, renumbered.Next, 10)
+	if err != nil {
+		t.Fatalf("deletion ListChanges() error = %v", err)
+	}
+	if len(deleted.Changes) != 1 || deleted.Changes[0].Kind != ChangeDelete || deleted.Changes[0].Ref.Version != betaVersion {
+		t.Fatalf("deletion changes = %#v, want deletion of %q", deleted.Changes, betaVersion)
+	}
+}
+
+func TestPOP3ConnectorDuplicateContentKeepsDistinctOccurrences(t *testing.T) {
+	fake := &fakePOP3Client{
+		messages: []pop3Message{{Number: 1, Size: 4}, {Number: 2, Size: 4}},
+		bodies:   map[int][]byte{1: []byte("same"), 2: []byte("same")},
+	}
+	connector := authenticatedTestPOP3Connector(t, testPOP3Config(), fake)
+	defer connector.Close() //nolint:errcheck
+	mailbox := Mailbox{ID: "INBOX"}
+
+	first, err := connector.ListChanges(context.Background(), mailbox, Cursor{}, 10)
+	if err != nil {
+		t.Fatalf("ListChanges() error = %v", err)
+	}
+	if len(first.Changes) != 2 || first.Changes[0].Ref.Version == first.Changes[1].Ref.Version {
+		t.Fatalf("duplicate-content changes = %#v, want two distinct occurrences", first.Changes)
+	}
+	if !strings.HasSuffix(first.Changes[0].Ref.Version, ":1") || !strings.HasSuffix(first.Changes[1].Ref.Version, ":2") {
+		t.Fatalf("duplicate-content versions = %q and %q, want occurrence suffixes", first.Changes[0].Ref.Version, first.Changes[1].Ref.Version)
+	}
+
+	fake.messages = []pop3Message{{Number: 9, Size: 4}}
+	fake.bodies = map[int][]byte{9: []byte("same")}
+	second, err := connector.ListChanges(context.Background(), mailbox, first.Next, 10)
+	if err != nil {
+		t.Fatalf("second ListChanges() error = %v", err)
+	}
+	if len(second.Changes) != 1 || second.Changes[0].Kind != ChangeDelete || !strings.HasSuffix(second.Changes[0].Ref.Version, ":2") {
+		t.Fatalf("duplicate deletion = %#v, want deletion of second occurrence", second.Changes)
+	}
+}
+
+func TestPOP3ConnectorOpenFingerprintAfterRenumbering(t *testing.T) {
+	body := []byte("raw message")
+	version := "sha256:" + fingerprintPOP3Message(body) + ":1"
+	fake := &fakePOP3Client{
+		messages: []pop3Message{{Number: 8, Size: int64(len(body))}},
+		bodies:   map[int][]byte{8: body},
+	}
+	connector := authenticatedTestPOP3Connector(t, testPOP3Config(), fake)
+	defer connector.Close() //nolint:errcheck
+
+	raw, err := connector.OpenMessage(context.Background(), MessageRef{
+		Mailbox: Mailbox{ID: "INBOX"}, UID: 1, Version: version, Size: int64(len(body)),
+	}, FetchOptions{IncludeBody: true})
+	if err != nil {
+		t.Fatalf("OpenMessage() error = %v", err)
+	}
+	defer raw.RFC822.Close() //nolint:errcheck
+	got, err := io.ReadAll(raw.RFC822)
+	if err != nil || !reflect.DeepEqual(got, body) || fake.retrieveNumber != 8 {
+		t.Fatalf("OpenMessage() = %q, %v via RETR %d; want renumbered content", got, err, fake.retrieveNumber)
+	}
+}
+
+func TestPOP3ConnectorEnforcesConfiguredSizeAndClassifiesFetchErrors(t *testing.T) {
+	config := testPOP3Config()
+	config.MaxMessageBytes = 4
+	fake := &fakePOP3Client{
+		messages: []pop3Message{{Number: 1, UIDL: "large", Size: 5}},
+		bodies:   map[int][]byte{1: []byte("12345")},
+	}
+	connector := authenticatedTestPOP3Connector(t, config, fake)
+	defer connector.Close() //nolint:errcheck
+	ref := MessageRef{Mailbox: Mailbox{ID: "INBOX"}, Version: "large"}
+
+	_, err := connector.OpenMessage(context.Background(), ref, FetchOptions{IncludeBody: true})
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorOversized || fake.retrieveCalls != 0 {
+		t.Fatalf("advertised-size error = %T %v, retrieves %d; want preflight oversized", err, err, fake.retrieveCalls)
+	}
+
+	fake.messages[0].Size = 4
+	_, err = connector.OpenMessage(context.Background(), ref, FetchOptions{IncludeBody: true})
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorOversized || fake.retrieveMaxBytes != 4 {
+		t.Fatalf("actual-size error = %T %v, max %d; want bounded oversized", err, err, fake.retrieveMaxBytes)
+	}
+
+	fetchFailure := errors.New("server fetch failed")
+	fake.bodies[1] = []byte("1234")
+	fake.retrieveErr = map[int]error{1: fetchFailure}
+	_, err = connector.OpenMessage(context.Background(), ref, FetchOptions{IncludeBody: true})
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorTransient {
+		t.Fatalf("fetch error = %T %v, want transient POP3 error", err, err)
+	}
+}
+
+func TestPOP3ConnectorMissingUIDLListingEnforcesSizePolicy(t *testing.T) {
+	config := testPOP3Config()
+	config.MaxMessageBytes = 4
+	fake := &fakePOP3Client{messages: []pop3Message{{Number: 1, Size: 5}}}
+	connector := authenticatedTestPOP3Connector(t, config, fake)
+	defer connector.Close() //nolint:errcheck
+
+	_, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{}, 10)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorOversized || fake.retrieveCalls != 0 {
+		t.Fatalf("ListChanges() error = %T %v, retrieves %d; want preflight oversized", err, err, fake.retrieveCalls)
+	}
+}
+
+func TestPOP3ConnectorMissingUIDLListingPropagatesFetchError(t *testing.T) {
+	fake := &fakePOP3Client{
+		messages:    []pop3Message{{Number: 1, Size: 4}},
+		retrieveErr: map[int]error{1: errors.New("RETR failed")},
+	}
+	connector := authenticatedTestPOP3Connector(t, testPOP3Config(), fake)
+	defer connector.Close() //nolint:errcheck
+
+	_, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{}, 10)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorTransient || mailErr.Operation != "fetch message" {
+		t.Fatalf("ListChanges() error = %T %v, want transient fetch error", err, err)
+	}
+}
+
+func TestWirePOP3ClientListAcceptsUnsupportedUIDL(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close() //nolint:errcheck
+	defer serverConn.Close() //nolint:errcheck
+	client := newWirePOP3Client(clientConn, time.Second)
+	serverDone := make(chan error, 1)
+	go func() {
+		reader := textproto.NewReader(bufio.NewReader(serverConn))
+		writer := textproto.NewWriter(bufio.NewWriter(serverConn))
+		line, err := reader.ReadLine()
+		if err != nil || line != "LIST" {
+			serverDone <- fmt.Errorf("LIST command = %q, %v", line, err)
+			return
+		}
+		if err := writer.PrintfLine("+OK 1 messages"); err != nil {
+			serverDone <- err
+			return
+		}
+		if err := writer.PrintfLine("1 12"); err != nil {
+			serverDone <- err
+			return
+		}
+		if err := writer.PrintfLine("."); err != nil {
+			serverDone <- err
+			return
+		}
+		line, err = reader.ReadLine()
+		if err != nil || line != "UIDL" {
+			serverDone <- fmt.Errorf("UIDL command = %q, %v", line, err)
+			return
+		}
+		serverDone <- writer.PrintfLine("-ERR UIDL unsupported")
+	}()
+
+	messages, err := client.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Number != 1 || messages[0].Size != 12 || messages[0].UIDL != "" {
+		t.Fatalf("List() = %#v, want LIST metadata without UIDL", messages)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
 func TestPOP3ConnectorOperationHonorsContextCancellation(t *testing.T) {
 	started := make(chan struct{})
 	fake := &fakePOP3Client{listStarted: started, blockList: true}
@@ -261,7 +487,7 @@ func TestPOP3ConnectorConfigFromSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POP3ConnectorConfigFromSource() error = %v", err)
 	}
-	if config.Host != "mail.example.test" || config.Port != 1995 || config.TLSPolicy != POP3TLSImplicit || config.Auth != auth || config.AccountID != "account-1" {
+	if config.Host != "mail.example.test" || config.Port != 1995 || config.TLSPolicy != POP3TLSImplicit || config.Auth != auth || config.AccountID != "account-1" || config.MaxMessageBytes != source.Crawl.Limits.MaxMessageBytes {
 		t.Fatalf("POP3 config = %#v", config)
 	}
 }
@@ -286,6 +512,9 @@ type fakePOP3Client struct {
 	blockList           bool
 	listCalls           int
 	retrieveNumber      int
+	retrieveCalls       int
+	retrieveMaxBytes    int64
+	retrieveErr         map[int]error
 	quitCalls           int
 	closeCalls          int
 	quitErr             error
@@ -324,9 +553,18 @@ func (f *fakePOP3Client) List(ctx context.Context) ([]pop3Message, error) {
 	return messages, nil
 }
 
-func (f *fakePOP3Client) Retrieve(_ context.Context, number int, _ int64) ([]byte, error) {
+func (f *fakePOP3Client) Retrieve(_ context.Context, number int, maxBytes int64) ([]byte, error) {
 	f.retrieveNumber = number
-	return append([]byte(nil), f.bodies[number]...), nil
+	f.retrieveCalls++
+	f.retrieveMaxBytes = maxBytes
+	if err := f.retrieveErr[number]; err != nil {
+		return nil, err
+	}
+	data := append([]byte(nil), f.bodies[number]...)
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, &Error{Kind: ErrorOversized, Operation: "fetch message", Message: "message exceeds configured byte limit"}
+	}
+	return data, nil
 }
 
 func (f *fakePOP3Client) Quit(context.Context) error {
