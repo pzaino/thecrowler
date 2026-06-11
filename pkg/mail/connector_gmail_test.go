@@ -5,12 +5,17 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/oauth2"
+	"google.golang.org/api/gmail/v1"
+	"google.golang.org/api/option"
 )
 
 var (
@@ -67,6 +72,7 @@ func TestGmailConnectorFakeLifecycle(t *testing.T) {
 		AccountID:     "account-1",
 		CredentialRef: "secret/gmail/account-1",
 		Mailboxes:     MailboxSelector{Include: []string{"Inbox"}},
+		Query:         "  after:2026/01/01 has:attachment  ",
 	}, GmailDependencies{Credentials: credentials, Tokens: tokens, Clients: factory})
 	if err != nil {
 		t.Fatalf("NewGmailConnector() error = %v", err)
@@ -103,6 +109,13 @@ func TestGmailConnectorFakeLifecycle(t *testing.T) {
 		t.Fatalf("second ListChanges() error = %v", err)
 	}
 	assertGmailChange(t, second, ChangeUpsert, "m2", false)
+	wantMessageCalls := []fakeGmailMessageCall{
+		{UserID: gmailUserMe, LabelID: "INBOX", Query: "after:2026/01/01 has:attachment", Limit: 1},
+		{UserID: gmailUserMe, LabelID: "INBOX", Query: "after:2026/01/01 has:attachment", PageToken: "messages-page-2", Limit: 1},
+	}
+	if !reflect.DeepEqual(client.messageCalls, wantMessageCalls) {
+		t.Fatalf("message list calls = %#v, want %#v", client.messageCalls, wantMessageCalls)
+	}
 
 	historyFirst, err := connector.ListChanges(context.Background(), mailboxes[0], second.Next, 1)
 	if err != nil {
@@ -205,6 +218,74 @@ func TestNewGmailConnectorStopsAtFailedLifecycleStage(t *testing.T) {
 	}
 }
 
+func TestGoogleGmailClientListsAndRetrievesFakeResponses(t *testing.T) {
+	var requests []struct {
+		Path  string
+		Query url.Values
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, struct {
+			Path  string
+			Query url.Values
+		}{Path: r.URL.Path, Query: r.URL.Query()})
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/gmail/v1/users/me/messages":
+			_, _ = io.WriteString(w, `{"messages":[{"id":"message-1","threadId":"thread-1"}],"nextPageToken":"next-page"}`)
+		case "/gmail/v1/users/me/messages/message-1":
+			_, _ = io.WriteString(w, `{"id":"message-1","threadId":"thread-1","historyId":"42","internalDate":"1767225600000","sizeEstimate":321,"raw":"U3ViamVjdDogdGVzdA0KDQpib2R5"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	service, err := gmail.NewService(context.Background(), option.WithEndpoint(server.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("gmail.NewService() error = %v", err)
+	}
+	client := &googleGmailClient{service: service, httpClient: server.Client()}
+
+	page, err := client.ListMessages(context.Background(), gmailUserMe, "IMPORTANT", "from:alerts@example.test", "page-2", 25)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	wantPage := GmailMessagePage{
+		Messages:      []GmailMessage{{ID: "message-1", ThreadID: "thread-1"}},
+		NextPageToken: "next-page",
+	}
+	if !reflect.DeepEqual(page, wantPage) {
+		t.Fatalf("ListMessages() = %#v, want %#v", page, wantPage)
+	}
+
+	message, err := client.GetRawMessage(context.Background(), gmailUserMe, "message-1")
+	if err != nil {
+		t.Fatalf("GetRawMessage() error = %v", err)
+	}
+	if message.ID != "message-1" || message.ThreadID != "thread-1" || message.HistoryID != 42 || message.Size != 321 || message.Raw == "" {
+		t.Fatalf("GetRawMessage() = %#v", message)
+	}
+	if wantDate := time.UnixMilli(1767225600000); !message.InternalDate.Equal(wantDate) {
+		t.Fatalf("message internal date = %v, want %v", message.InternalDate, wantDate)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("requests = %#v, want two requests", requests)
+	}
+	listRequest := requests[0]
+	if listRequest.Path != "/gmail/v1/users/me/messages" ||
+		!reflect.DeepEqual(listRequest.Query["labelIds"], []string{"IMPORTANT"}) ||
+		listRequest.Query.Get("q") != "from:alerts@example.test" ||
+		listRequest.Query.Get("pageToken") != "page-2" ||
+		listRequest.Query.Get("maxResults") != "25" {
+		t.Fatalf("list request = %#v", listRequest)
+	}
+	getRequest := requests[1]
+	if getRequest.Path != "/gmail/v1/users/me/messages/message-1" || getRequest.Query.Get("format") != "raw" {
+		t.Fatalf("get request = %#v", getRequest)
+	}
+}
+
 func TestGmailConnectorRejectsInvalidCursorAndOversizedMessage(t *testing.T) {
 	client := &fakeGmailClient{rawMessages: map[string]GmailMessage{
 		"large": {ID: "large", Raw: base64.RawURLEncoding.EncodeToString([]byte("too large"))},
@@ -293,6 +374,7 @@ type fakeGmailClient struct {
 	historyPages  map[string]GmailHistoryPage
 	rawMessages   map[string]GmailMessage
 	historyStarts []uint64
+	messageCalls  []fakeGmailMessageCall
 	closeCalls    int
 	events        *[]string
 }
@@ -307,7 +389,10 @@ func (f *fakeGmailClient) GetProfile(context.Context, string) (GmailProfile, err
 	return f.profile, nil
 }
 
-func (f *fakeGmailClient) ListMessages(_ context.Context, _, _, pageToken string, _ int) (GmailMessagePage, error) {
+func (f *fakeGmailClient) ListMessages(_ context.Context, userID, labelID, query, pageToken string, limit int) (GmailMessagePage, error) {
+	f.messageCalls = append(f.messageCalls, fakeGmailMessageCall{
+		UserID: userID, LabelID: labelID, Query: query, PageToken: pageToken, Limit: limit,
+	})
 	appendGmailEvent(f.events, "messages:"+pageToken)
 	return f.messagePages[pageToken], nil
 }
@@ -331,6 +416,14 @@ func (f *fakeGmailClient) Close() error {
 	f.closeCalls++
 	appendGmailEvent(f.events, "close")
 	return nil
+}
+
+type fakeGmailMessageCall struct {
+	UserID    string
+	LabelID   string
+	Query     string
+	PageToken string
+	Limit     int
 }
 
 func appendGmailEvent(events *[]string, event string) {

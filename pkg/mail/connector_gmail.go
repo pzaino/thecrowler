@@ -31,12 +31,14 @@ const (
 
 // GmailConnectorConfig configures a read-only Gmail connector. CredentialRef
 // identifies secret material in the configured GmailCredentialSource; it must
-// not contain OAuth credentials or tokens itself.
+// not contain OAuth credentials or tokens itself. Query uses Gmail search
+// syntax to filter bootstrap message listings within each selected label.
 type GmailConnectorConfig struct {
 	AccountID     string
 	UserID        string
 	CredentialRef string
 	Mailboxes     MailboxSelector
+	Query         string
 }
 
 // GmailOAuthCredentials contains opaque OAuth credential JSON loaded from a
@@ -65,11 +67,12 @@ type GmailClientFactory interface {
 }
 
 // GmailClient is the small subset of Gmail operations needed by Connector.
-// It prevents Gmail SDK objects from leaking into connector logic or tests.
+// It prevents Gmail SDK objects from leaking into connector logic or tests and
+// keeps label, query, and page-token handling behind one internal boundary.
 type GmailClient interface {
 	ListLabels(ctx context.Context, userID string) ([]GmailLabel, error)
 	GetProfile(ctx context.Context, userID string) (GmailProfile, error)
-	ListMessages(ctx context.Context, userID, labelID, pageToken string, limit int) (GmailMessagePage, error)
+	ListMessages(ctx context.Context, userID, labelID, query, pageToken string, limit int) (GmailMessagePage, error)
 	ListHistory(ctx context.Context, userID, labelID string, startHistoryID uint64, pageToken string, limit int) (GmailHistoryPage, error)
 	GetRawMessage(ctx context.Context, userID, messageID string) (GmailMessage, error)
 	Close() error
@@ -184,6 +187,7 @@ func NewGmailConnector(ctx context.Context, config GmailConnectorConfig, depende
 	config.AccountID = strings.TrimSpace(config.AccountID)
 	config.UserID = strings.TrimSpace(config.UserID)
 	config.CredentialRef = strings.TrimSpace(config.CredentialRef)
+	config.Query = strings.TrimSpace(config.Query)
 	if config.AccountID == "" {
 		return nil, errors.New("mail: Gmail account ID is required")
 	}
@@ -283,7 +287,7 @@ func (c *GmailConnector) ListChanges(ctx context.Context, mailbox Mailbox, curso
 		state.Bootstrap = true
 	}
 	if state.Bootstrap {
-		page, listErr := c.client.ListMessages(ctx, c.config.UserID, mailbox.ID, state.PageToken, limit)
+		page, listErr := c.client.ListMessages(ctx, c.config.UserID, mailbox.ID, c.config.Query, state.PageToken, limit)
 		if listErr != nil {
 			return ChangePage{}, gmailError("list Gmail messages", listErr)
 		}
@@ -510,8 +514,11 @@ func (c *googleGmailClient) GetProfile(ctx context.Context, userID string) (Gmai
 	return GmailProfile{HistoryID: profile.HistoryId}, nil
 }
 
-func (c *googleGmailClient) ListMessages(ctx context.Context, userID, labelID, pageToken string, limit int) (GmailMessagePage, error) {
+func (c *googleGmailClient) ListMessages(ctx context.Context, userID, labelID, query, pageToken string, limit int) (GmailMessagePage, error) {
 	call := c.service.Users.Messages.List(userID).LabelIds(labelID).MaxResults(int64(limit)).Context(ctx)
+	if query != "" {
+		call = call.Q(query)
+	}
 	if pageToken != "" {
 		call = call.PageToken(pageToken)
 	}
