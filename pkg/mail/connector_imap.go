@@ -437,25 +437,7 @@ func imapMailboxName(mailbox Mailbox) string {
 }
 
 func imapError(operation string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	var mailErr *Error
-	if errors.As(err, &mailErr) {
-		return err
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return &Error{Kind: ErrorTimeout, Operation: operation, Message: "IMAP operation timed out", Cause: err}
-	}
-	kind := ErrorTransient
-	if operation == "authenticate" {
-		kind = ErrorAuthentication
-	}
-	return &Error{Kind: kind, Operation: operation, Message: "IMAP operation failed", Cause: err}
+	return translateIMAPError(operation, err)
 }
 
 // goIMAPClient adapts emersion/go-imap behind the package-local protocol
@@ -614,7 +596,7 @@ func (c *goIMAPClient) FetchMessage(ctx context.Context, uid uint32, options Fet
 			return err
 		}
 		if preflight == nil || preflight.Uid != uid {
-			return errors.New("IMAP message not found")
+			return errIMAPMessageNotFound
 		}
 		metadata = convertIMAPMessage(preflight)
 		if options.MaxBytes > 0 && metadata.Size > options.MaxBytes {

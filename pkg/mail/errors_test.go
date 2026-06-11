@@ -71,6 +71,7 @@ func TestRetryableRecognizesAllRetryClasses(t *testing.T) {
 
 	for _, err := range []error{
 		&Error{Kind: ErrorTransient},
+		&Error{Kind: ErrorNetwork},
 		&Error{Kind: ErrorTimeout},
 		&Error{Kind: ErrorRateLimit},
 		&Error{Kind: ErrorPartial},

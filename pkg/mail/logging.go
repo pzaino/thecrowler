@@ -226,7 +226,7 @@ func logErrorCategory(err error) LogErrorCategory {
 			return LogErrorRateLimit
 		case ErrorTimeout:
 			return LogErrorTimeout
-		case ErrorTransient:
+		case ErrorTransient, ErrorNetwork:
 			return LogErrorTransient
 		}
 	}

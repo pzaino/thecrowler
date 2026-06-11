@@ -3,13 +3,95 @@ package mail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	imap "github.com/emersion/go-imap"
 )
+
+func TestIMAPErrorMapping(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		operation string
+		err       error
+		want      ErrorKind
+	}{
+		{name: "authentication", operation: "authenticate", err: errors.New("credentials rejected"), want: ErrorAuthentication},
+		{name: "network", operation: "list mailboxes", err: testIMAPNetworkError{}, want: ErrorNetwork},
+		{name: "timeout", operation: "search messages", err: testIMAPTimeoutError{}, want: ErrorTimeout},
+		{name: "deadline", operation: "fetch message", err: context.DeadlineExceeded, want: ErrorTimeout},
+		{name: "missing mailbox", operation: "select mailbox", err: imapStatusError(imap.StatusRespNo, "NONEXISTENT", "mailbox secret-folder does not exist"), want: ErrorMailboxNotFound},
+		{name: "missing message", operation: "fetch message", err: errIMAPMessageNotFound, want: ErrorMessageNotFound},
+		{name: "rate limit", operation: "search messages", err: imapStatusError(imap.StatusRespNo, "LIMIT", "retry after sending token-secret"), want: ErrorRateLimit},
+		{name: "unsupported response code", operation: "search messages", err: imapStatusError(imap.StatusRespNo, "CANNOT", "server payload"), want: ErrorUnsupported},
+		{name: "bad command", operation: "fetch message", err: imapStatusError(imap.StatusRespBad, "", "unknown extension with server payload"), want: ErrorUnsupported},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := imapError(test.operation, test.err)
+			var mailErr *Error
+			if !errors.As(err, &mailErr) {
+				t.Fatalf("imapError() = %T %v, want *Error", err, err)
+			}
+			if mailErr.Kind != test.want {
+				t.Fatalf("imapError().Kind = %q, want %q", mailErr.Kind, test.want)
+			}
+			if mailErr.Cause == nil {
+				t.Fatal("imapError().Cause = nil, want safe diagnostic cause")
+			}
+		})
+	}
+}
+
+func TestIMAPErrorRedactsCredentialsAndServerPayloadFromErrorAndCause(t *testing.T) {
+	t.Parallel()
+
+	const secret = "reader:password-token-secret"
+	err := imapError("authenticate", imapStatusError(
+		imap.StatusRespNo,
+		"AUTHENTICATIONFAILED",
+		"login rejected for "+secret,
+	))
+	var mailErr *Error
+	if !errors.As(err, &mailErr) {
+		t.Fatalf("imapError() = %T %v, want *Error", err, err)
+	}
+	for name, value := range map[string]string{
+		"public error":     err.Error(),
+		"diagnostic cause": mailErr.Cause.Error(),
+		"formatted error":  fmt.Sprintf("%+v", err),
+	} {
+		if strings.Contains(value, secret) || strings.Contains(value, "login rejected") {
+			t.Fatalf("%s %q leaked credentials or server payload", name, value)
+		}
+	}
+	if !strings.Contains(mailErr.Cause.Error(), "AUTHENTICATIONFAILED") {
+		t.Fatalf("diagnostic cause = %q, want safe response code", mailErr.Cause)
+	}
+}
+
+func imapStatusError(responseType imap.StatusRespType, code imap.StatusRespCode, info string) error {
+	return &imap.ErrStatusResp{Resp: &imap.StatusResp{Type: responseType, Code: code, Info: info}}
+}
+
+type testIMAPNetworkError struct{}
+
+func (testIMAPNetworkError) Error() string   { return "network endpoint secret.example.test failed" }
+func (testIMAPNetworkError) Timeout() bool   { return false }
+func (testIMAPNetworkError) Temporary() bool { return true }
+
+type testIMAPTimeoutError struct{ testIMAPNetworkError }
+
+func (testIMAPTimeoutError) Timeout() bool { return true }
 
 func TestIMAPConnectorImplementsInterfaces(t *testing.T) {
 	var connector any = &IMAPConnector{}
@@ -488,8 +570,9 @@ func TestIMAPConnectorOpenMessageMissing(t *testing.T) {
 	_, err := connector.OpenMessage(context.Background(), MessageRef{
 		Mailbox: Mailbox{ID: "INBOX"}, UID: 404, UIDValidity: 9,
 	}, FetchOptions{IncludeBody: true, MaxBytes: 1024})
-	if err == nil {
-		t.Fatal("OpenMessage() error = nil, want missing-message error")
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorMessageNotFound {
+		t.Fatalf("OpenMessage() error = %T %v, want ErrorMessageNotFound", err, err)
 	}
 }
 

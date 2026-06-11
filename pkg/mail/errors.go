@@ -12,8 +12,11 @@ import (
 type ErrorKind string
 
 const (
-	// ErrorTransient identifies a temporary provider or network failure.
+	// ErrorTransient identifies a temporary provider failure that does not fit a
+	// more specific category.
 	ErrorTransient ErrorKind = "transient"
+	// ErrorNetwork identifies a retryable transport or connection failure.
+	ErrorNetwork ErrorKind = "network"
 	// ErrorTimeout identifies a provider operation that exceeded its deadline.
 	ErrorTimeout ErrorKind = "timeout"
 	// ErrorRateLimit identifies provider throttling. RetryAfter may carry the
@@ -26,8 +29,15 @@ const (
 	ErrorAuthentication ErrorKind = "authentication"
 	// ErrorPermission identifies a permanent authorization failure.
 	ErrorPermission ErrorKind = "permission"
-	// ErrorConfiguration identifies invalid or unsupported source settings.
+	// ErrorConfiguration identifies invalid source settings.
 	ErrorConfiguration ErrorKind = "configuration"
+	// ErrorMailboxNotFound identifies a mailbox that no longer exists.
+	ErrorMailboxNotFound ErrorKind = "mailbox_not_found"
+	// ErrorMessageNotFound identifies a message that no longer exists.
+	ErrorMessageNotFound ErrorKind = "message_not_found"
+	// ErrorUnsupported identifies an operation the provider permanently does not
+	// support.
+	ErrorUnsupported ErrorKind = "unsupported"
 	// ErrorMalformed identifies unsafe or unrecoverable message content.
 	ErrorMalformed ErrorKind = "malformed"
 	// ErrorOversized identifies a message that exceeds a configured hard limit.
@@ -195,7 +205,7 @@ func classifyRetryError(err error) (reason RetryReason, retryable, discard bool,
 	var mailErr *Error
 	if errors.As(err, &mailErr) {
 		switch mailErr.Kind {
-		case ErrorTransient:
+		case ErrorTransient, ErrorNetwork:
 			return RetryReasonTransient, true, false, mailErr.RetryAfter
 		case ErrorTimeout:
 			return RetryReasonTimeout, true, false, mailErr.RetryAfter
