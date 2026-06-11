@@ -1544,7 +1544,11 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			totalSuccess.Add(1)
 		}
-		handleErrorAndRespond(w, err, results, "Error performing addSource: %v", http.StatusInternalServerError, successCode)
+		errCode := http.StatusInternalServerError
+		if isSourceConfigValidationError(err) {
+			errCode = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error performing addSource: %v", errCode, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",
@@ -1604,7 +1608,11 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			totalSuccess.Add(1)
 		}
-		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", http.StatusInternalServerError, successCode)
+		errCode := http.StatusInternalServerError
+		if isSourceConfigValidationError(err) {
+			errCode = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", errCode, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",

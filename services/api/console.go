@@ -18,6 +18,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -29,6 +30,12 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
 )
+
+var errInvalidSourceConfig = errors.New("invalid source configuration")
+
+func isSourceConfigValidationError(err error) bool {
+	return errors.Is(err, errInvalidSourceConfig)
+}
 
 const (
 	errFailedToInitializeDBHandler = "Failed to initialize database handler"
@@ -768,21 +775,25 @@ func getDefaultConfig() cfg.SourceConfig {
 func validateAndReformatConfig(config *cfg.SourceConfig) error {
 	configJSON, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config to JSON: %w", err)
+		return fmt.Errorf("%w: failed to marshal config to JSON: %v", errInvalidSourceConfig, err)
 	}
 
 	var jsonRaw map[string]interface{}
 	if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
-		return fmt.Errorf("config field contains invalid JSON: %w", err)
+		return fmt.Errorf("%w: config field contains invalid JSON: %v", errInvalidSourceConfig, err)
 	}
 
 	configJSONChecked, err := json.Marshal(jsonRaw)
 	if err != nil {
-		return fmt.Errorf("failed to marshal Config field: %w", err)
+		return fmt.Errorf("%w: failed to marshal Config field: %v", errInvalidSourceConfig, err)
 	}
 
 	if err := json.Unmarshal(configJSONChecked, config); err != nil {
-		return fmt.Errorf("failed to unmarshal validated JSON back to Config struct: %w", err)
+		return fmt.Errorf("%w: failed to unmarshal validated JSON back to Config struct: %v", errInvalidSourceConfig, err)
+	}
+
+	if err := config.ValidateEmailSource(); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
 
 	return nil
@@ -1001,6 +1012,15 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		}
 	}
 
+	var requestedConfig *cfg.SourceConfig
+	if sqlParams.Config != nil {
+		validated := cfg.SourceConfig(*sqlParams.Config)
+		if err := validateAndReformatConfig(&validated); err != nil {
+			return ConsoleResponse{Message: "Invalid config"}, err
+		}
+		requestedConfig = &validated
+	}
+
 	// Resolve sourceID if only URL is provided
 	if sqlParams.SourceID == 0 && sqlParams.URL != "" {
 		sourceID, err := cdb.GetSourceID(cdb.SourceFilter{URL: sqlParams.URL}, db)
@@ -1049,11 +1069,8 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	}
 
 	mergedConfig := srcConfig
-	if sqlParams.Config != nil {
-		mergedConfig = cfg.SourceConfig(*sqlParams.Config)
-		if err := validateAndReformatConfig(&mergedConfig); err != nil {
-			return ConsoleResponse{Message: "Invalid config"}, err
-		}
+	if requestedConfig != nil {
+		mergedConfig = *requestedConfig
 	}
 
 	// Merge existing data with provided updates
@@ -1065,6 +1082,11 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
 		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
 		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
+	}
+
+	mergedConfigJSON, err := json.Marshal(mergedConfig)
+	if err != nil {
+		return ConsoleResponse{Message: "Invalid config"}, fmt.Errorf("%w: failed to marshal config for update: %v", errInvalidSourceConfig, err)
 	}
 
 	// Perform the update
@@ -1085,7 +1107,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		mergedData.Restricted,
 		mergedData.Disabled,
 		mergedData.Flags,
-		mergedConfig,
+		mergedConfigJSON,
 		mergedData.Details,
 		mergedData.SourceID,
 	)

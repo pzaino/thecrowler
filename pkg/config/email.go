@@ -111,6 +111,25 @@ func (config EmailSourceConfig) Validate() error {
 	return mailconfig.ValidateSourceConfig(config.SourceConfig)
 }
 
+// ValidateEmailSource verifies the email-specific portion of a source
+// configuration. Keeping the source-type relationship here lets API and other
+// callers share the same project-level rule while EmailSourceConfig.Validate
+// continues to delegate the portable settings to pkg/mail.
+func (config SourceConfig) ValidateEmailSource() error {
+	isEmailSource := strings.EqualFold(strings.TrimSpace(config.CrawlingConfig.SourceType), SourceTypeEmail)
+	if config.Email == nil {
+		if isEmailSource {
+			return fmt.Errorf("email configuration is required when crawling_config.source_type is %q", SourceTypeEmail)
+		}
+		return nil
+	}
+
+	if err := config.Email.Validate(); err != nil {
+		return fmt.Errorf("invalid email configuration: %w", err)
+	}
+	return nil
+}
+
 // UnmarshalJSON applies mail defaults before overlaying explicitly supplied
 // JSON fields.
 func (config *EmailSourceConfig) UnmarshalJSON(data []byte) error {
