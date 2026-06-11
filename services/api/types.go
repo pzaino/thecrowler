@@ -223,6 +223,28 @@ type StatusResponseRow struct {
 	Disabled      bool                 `json:"disabled"`
 	Flags         int                  `json:"flags"`
 	Config        SourceConfigResponse `json:"config,omitempty"`
+	EmailStatus   *SourceEmailStatus   `json:"email_status,omitempty"`
+}
+
+// SourceEmailStatus is a privacy-safe operational summary for an email source.
+// It excludes mailbox identifiers, cursor values, raw errors, content, and secrets.
+type SourceEmailStatus struct {
+	ListenerStatus     string                   `json:"listener_status"`
+	LastSynchronizedAt string                   `json:"last_synchronized_at,omitempty"`
+	CursorSummary      SourceEmailCursorSummary `json:"cursor_summary"`
+	ProcessedCount     uint64                   `json:"processed_count"`
+	FailedCount        uint64                   `json:"failed_count"`
+	LastErrorCategory  string                   `json:"last_error_category,omitempty"`
+}
+
+// SourceEmailCursorSummary reveals only checkpoint coverage and cursor families,
+// never provider cursor values or mailbox identities.
+type SourceEmailCursorSummary struct {
+	MailboxCount          uint64 `json:"mailbox_count"`
+	CheckpointedMailboxes uint64 `json:"checkpointed_mailboxes"`
+	HasTokenCursor        bool   `json:"has_token_cursor"`
+	HasHistoryCursor      bool   `json:"has_history_cursor"`
+	HasUIDCursor          bool   `json:"has_uid_cursor"`
 }
 
 // SourceConfigRequest is the source configuration accepted by source-management

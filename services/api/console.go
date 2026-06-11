@@ -902,6 +902,7 @@ type SourceStatus struct {
 	Disabled      bool                 `json:"disabled"`
 	Flags         int                  `json:"flags"`
 	Config        SourceConfigResponse `json:"config"`
+	EmailStatus   *SourceEmailStatus   `json:"email_status,omitempty"`
 }
 
 // DBString matches the JSON shape produced by sql.NullString-like values:
@@ -991,9 +992,34 @@ func sourceStatusRowsFromDB(rows []cdb.SourceStatusRow) []StatusResponseRow {
 			Disabled:      row.Disabled,
 			Flags:         row.Flags,
 			Config:        SourceConfigResponse(row.Config),
+			EmailStatus:   sourceEmailStatusFromDB(row.EmailStatus),
 		})
 	}
 	return statuses
+}
+
+func sourceEmailStatusFromDB(status *cdb.SourceEmailStatusRow) *SourceEmailStatus {
+	if status == nil {
+		return nil
+	}
+
+	response := &SourceEmailStatus{
+		ListenerStatus: status.ListenerStatus,
+		CursorSummary: SourceEmailCursorSummary{
+			MailboxCount:          status.MailboxCount,
+			CheckpointedMailboxes: status.CheckpointedMailboxes,
+			HasTokenCursor:        status.HasTokenCursor,
+			HasHistoryCursor:      status.HasHistoryCursor,
+			HasUIDCursor:          status.HasUIDCursor,
+		},
+		ProcessedCount:    status.ProcessedCount,
+		FailedCount:       status.FailedCount,
+		LastErrorCategory: status.LastErrorCategory,
+	}
+	if status.LastSynchronizedAt.Valid {
+		response.LastSynchronizedAt = status.LastSynchronizedAt.String
+	}
+	return response
 }
 
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {

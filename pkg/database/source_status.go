@@ -39,6 +39,23 @@ type SourceStatusRow struct {
 	Disabled      bool
 	Flags         int
 	Config        cfg.SourceConfig
+	EmailStatus   *SourceEmailStatusRow
+}
+
+// SourceEmailStatusRow is a source-level, privacy-safe summary of durable email
+// ingestion state. Cursor values, mailbox identifiers, raw errors, message
+// content, and credentials are deliberately excluded.
+type SourceEmailStatusRow struct {
+	ListenerStatus        string
+	LastSynchronizedAt    sql.NullString
+	MailboxCount          uint64
+	CheckpointedMailboxes uint64
+	HasTokenCursor        bool
+	HasHistoryCursor      bool
+	HasUIDCursor          bool
+	ProcessedCount        uint64
+	FailedCount           uint64
+	LastErrorCategory     string
 }
 
 const sourceStatusSelect = `
@@ -75,7 +92,14 @@ func GetSourceStatusByURL(db *Handler, sourceURL string) ([]SourceStatusRow, err
 	}
 	defer rows.Close() //nolint:errcheck // We can't check return value on defer
 
-	return scanSourceStatusRows(rows)
+	statuses, err := scanSourceStatusRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
 }
 
 // ListSourceStatuses retrieves all source status rows.
@@ -90,7 +114,14 @@ func ListSourceStatuses(db *Handler) ([]SourceStatusRow, error) {
 	}
 	defer rows.Close() //nolint:errcheck // We can't check return value on defer
 
-	return scanSourceStatusRows(rows)
+	statuses, err := scanSourceStatusRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
 }
 
 func sourceStatusPlaceholder(db *Handler) string {
@@ -121,4 +152,145 @@ func scanSourceStatusRows(rows *sql.Rows) ([]SourceStatusRow, error) {
 		return nil, fmt.Errorf("failed to iterate source statuses: %w", err)
 	}
 	return statuses, nil
+}
+
+const sourceEmailStatusSelect = `
+	SELECT mailbox.source_id,
+	       COUNT(*) AS mailbox_count,
+	       SUM(CASE WHEN mailbox.active = TRUE THEN 1 ELSE 0 END) AS active_mailbox_count,
+	       MAX(mailbox.last_reconciled_at) AS last_reconciled_at,
+	       MAX(mailbox.listener_healthy_at) AS listener_healthy_at,
+	       MAX(CASE WHEN COALESCE(mailbox.cursor_token, '') <> '' THEN 1 ELSE 0 END) AS has_token_cursor,
+	       MAX(CASE WHEN COALESCE(mailbox.cursor_history_id, '0') NOT IN ('', '0') THEN 1 ELSE 0 END) AS has_history_cursor,
+	       MAX(CASE WHEN COALESCE(mailbox.cursor_uid, 0) > 0 OR COALESCE(mailbox.cursor_uid_validity, 0) > 0 THEN 1 ELSE 0 END) AS has_uid_cursor,
+	       SUM(CASE WHEN COALESCE(mailbox.cursor_token, '') <> ''
+	                     OR COALESCE(mailbox.cursor_history_id, '0') NOT IN ('', '0')
+	                     OR COALESCE(mailbox.cursor_uid, 0) > 0
+	                     OR COALESCE(mailbox.cursor_uid_validity, 0) > 0 THEN 1 ELSE 0 END) AS checkpointed_mailboxes,
+	       COALESCE(messages.processed_count, 0) AS processed_count,
+	       COALESCE(messages.failed_count, 0) AS failed_count
+	FROM EmailMailboxState mailbox
+	LEFT JOIN (
+		SELECT source_id,
+		       SUM(CASE WHEN disposition IN ('indexed', 'deleted', 'skipped') THEN 1 ELSE 0 END) AS processed_count,
+		       SUM(CASE WHEN disposition = 'quarantined' THEN 1 ELSE 0 END) AS failed_count
+		FROM EmailMessageState
+		GROUP BY source_id
+	) messages ON messages.source_id = mailbox.source_id
+	GROUP BY mailbox.source_id, messages.processed_count, messages.failed_count`
+
+const sourceEmailLastErrorsSelect = `
+	SELECT source_id, message_status
+	FROM EmailMailboxState
+	WHERE COALESCE(last_error, '') <> ''
+	ORDER BY source_id, last_updated_at DESC`
+
+func attachSourceEmailStatuses(db *Handler, statuses []SourceStatusRow) error {
+	if len(statuses) == 0 {
+		return nil
+	}
+
+	bySourceID := make(map[uint64]*SourceEmailStatusRow, len(statuses))
+	rows, err := (*db).ExecuteQuery(sourceEmailStatusSelect)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve source email status: %w", err)
+	}
+	for rows.Next() {
+		var (
+			sourceID           uint64
+			status             SourceEmailStatusRow
+			activeMailboxCount uint64
+			listenerHealthyAt  sql.NullString
+			hasTokenCursor     int
+			hasHistoryCursor   int
+			hasUIDCursor       int
+		)
+		if err := rows.Scan(
+			&sourceID,
+			&status.MailboxCount,
+			&activeMailboxCount,
+			&status.LastSynchronizedAt,
+			&listenerHealthyAt,
+			&hasTokenCursor,
+			&hasHistoryCursor,
+			&hasUIDCursor,
+			&status.CheckpointedMailboxes,
+			&status.ProcessedCount,
+			&status.FailedCount,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("failed to scan source email status: %w", err)
+		}
+		status.HasTokenCursor = hasTokenCursor != 0
+		status.HasHistoryCursor = hasHistoryCursor != 0
+		status.HasUIDCursor = hasUIDCursor != 0
+		switch {
+		case activeMailboxCount == 0:
+			status.ListenerStatus = "stopped"
+		case listenerHealthyAt.Valid:
+			status.ListenerStatus = "active"
+		default:
+			status.ListenerStatus = "starting"
+		}
+		bySourceID[sourceID] = &status
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("failed to iterate source email statuses: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("failed to close source email status rows: %w", err)
+	}
+
+	if len(bySourceID) != 0 {
+		if err := attachSourceEmailErrorCategories(db, bySourceID); err != nil {
+			return err
+		}
+	}
+	for i := range statuses {
+		statuses[i].EmailStatus = bySourceID[statuses[i].SourceID]
+	}
+	return nil
+}
+
+func attachSourceEmailErrorCategories(db *Handler, statuses map[uint64]*SourceEmailStatusRow) error {
+	rows, err := (*db).ExecuteQuery(sourceEmailLastErrorsSelect)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve source email error categories: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // iteration errors are checked below
+
+	seen := make(map[uint64]struct{}, len(statuses))
+	for rows.Next() {
+		var sourceID uint64
+		var messageStatus sql.NullString
+		if err := rows.Scan(&sourceID, &messageStatus); err != nil {
+			return fmt.Errorf("failed to scan source email error category: %w", err)
+		}
+		status, wanted := statuses[sourceID]
+		if !wanted {
+			continue
+		}
+		if _, exists := seen[sourceID]; exists {
+			continue
+		}
+		status.LastErrorCategory = sourceEmailErrorCategory(messageStatus.String)
+		status.ListenerStatus = "degraded"
+		seen[sourceID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate source email error categories: %w", err)
+	}
+	return nil
+}
+
+func sourceEmailErrorCategory(messageStatus string) string {
+	switch messageStatus {
+	case "retryable_failure":
+		return "transient"
+	case "permanent_failure":
+		return "permanent"
+	default:
+		return "unknown"
+	}
 }

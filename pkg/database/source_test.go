@@ -150,6 +150,28 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 	}
 
 	_, err = db.Exec(`
+		CREATE TABLE EmailMailboxState (
+			source_id INTEGER NOT NULL,
+			cursor_token TEXT NOT NULL DEFAULT '',
+			cursor_history_id TEXT NOT NULL DEFAULT '0',
+			cursor_uid INTEGER NOT NULL DEFAULT 0,
+			cursor_uid_validity INTEGER NOT NULL DEFAULT 0,
+			message_status TEXT,
+			last_error TEXT NOT NULL DEFAULT '',
+			last_reconciled_at TEXT,
+			listener_healthy_at TEXT,
+			active BOOLEAN NOT NULL DEFAULT TRUE,
+			last_updated_at TEXT
+		);
+		CREATE TABLE EmailMessageState (
+			source_id INTEGER NOT NULL,
+			disposition TEXT NOT NULL
+		)`)
+	if err != nil {
+		t.Fatalf("create email status tables: %v", err)
+	}
+
+	_, err = db.Exec(`
 		INSERT INTO Sources
 			(url, status, priority, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config)
 		VALUES
@@ -157,6 +179,18 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 			('https://other.test', 'processing', 'low', 'engine-b', '2026-01-04T00:00:00Z', '2026-01-05T00:00:00Z', '2026-01-06T00:00:00Z', 'boom', '2026-01-07T00:00:00Z', 1, TRUE, 8, '{}')`)
 	if err != nil {
 		t.Fatalf("insert source statuses: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO EmailMailboxState
+			(source_id, cursor_token, cursor_history_id, cursor_uid, cursor_uid_validity, message_status, last_error, last_reconciled_at, listener_healthy_at, active, last_updated_at)
+		VALUES
+			(1, 'opaque-secret-cursor', '0', 0, 0, 'completed', '', '2026-01-08T00:00:00Z', '2026-01-08T00:01:00Z', TRUE, '2026-01-08T00:01:00Z'),
+			(1, '', '99', 0, 0, 'retryable_failure', 'authentication failed for mailbox@example.test', '2026-01-09T00:00:00Z', NULL, TRUE, '2026-01-09T00:01:00Z');
+		INSERT INTO EmailMessageState (source_id, disposition) VALUES
+			(1, 'indexed'), (1, 'deleted'), (1, 'skipped'), (1, 'quarantined')`)
+	if err != nil {
+		t.Fatalf("insert email statuses: %v", err)
 	}
 
 	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
@@ -173,6 +207,19 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 	if matches[0].Flags != 7 {
 		t.Fatalf("unexpected flags for matched status: %d", matches[0].Flags)
 	}
+	emailStatus := matches[0].EmailStatus
+	if emailStatus == nil {
+		t.Fatal("expected email status for source with mailbox state")
+	}
+	if emailStatus.ListenerStatus != "degraded" || !emailStatus.LastSynchronizedAt.Valid || emailStatus.LastSynchronizedAt.String != "2026-01-09T00:00:00Z" {
+		t.Fatalf("unexpected listener/synchronization status: %#v", emailStatus)
+	}
+	if emailStatus.MailboxCount != 2 || emailStatus.CheckpointedMailboxes != 2 || !emailStatus.HasTokenCursor || !emailStatus.HasHistoryCursor || emailStatus.HasUIDCursor {
+		t.Fatalf("unexpected safe cursor summary: %#v", emailStatus)
+	}
+	if emailStatus.ProcessedCount != 3 || emailStatus.FailedCount != 1 || emailStatus.LastErrorCategory != "transient" {
+		t.Fatalf("unexpected email outcome summary: %#v", emailStatus)
+	}
 
 	statuses, err := ListSourceStatuses(&handler)
 	if err != nil {
@@ -180,6 +227,11 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 	}
 	if len(statuses) != 2 {
 		t.Fatalf("expected two statuses, got %d", len(statuses))
+	}
+	for _, status := range statuses {
+		if status.SourceID == 2 && status.EmailStatus != nil {
+			t.Fatalf("expected absent email status for source without mailbox state, got %#v", status.EmailStatus)
+		}
 	}
 }
 
