@@ -22,10 +22,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	mail "github.com/pzaino/thecrowler/pkg/mail"
+	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 // ErrEmailCrawlingNotConfigured identifies email sources that cannot be
@@ -117,6 +119,74 @@ type EmailResultHandler interface {
 	HandleEmailResult(ctx context.Context, result EmailCrawlResult) error
 }
 
+// WebCrawlQueue accepts policy-approved links for the crawler's existing web
+// fetching path. Email ingestion never submits a link unless its message-scoped
+// mail policy returns LinkDecisionEnqueue.
+type WebCrawlQueue interface {
+	EnqueueWebCrawl(ctx context.Context, link LinkItem) error
+}
+
+type emailPolicyResultHandler struct {
+	policy mail.LinkPolicy
+	queue  WebCrawlQueue
+	next   EmailResultHandler
+}
+
+func (handler emailPolicyResultHandler) HandleEmailResult(ctx context.Context, result EmailCrawlResult) error {
+	evaluator := mail.NewLinkPolicyEvaluator(handler.policy)
+	retained := make([]mail.Link, 0, len(result.Document.Links))
+	approved := make([]LinkItem, 0, len(result.Document.Links))
+	pageURL := emailDocumentURL(result.Source.URL, result.Document.ID)
+
+	for _, link := range result.Document.Links {
+		switch evaluator.Evaluate(link) {
+		case mail.LinkDecisionEnqueue:
+			retained = append(retained, link)
+			approved = append(approved, LinkItem{PageURL: pageURL, Link: link.URL})
+		case mail.LinkDecisionRecordOnly:
+			retained = append(retained, link)
+		}
+	}
+
+	result.Document.Links = retained
+	result.Page = emailDocumentPage(result.Source, result.Document)
+	if err := handler.next.HandleEmailResult(ctx, result); err != nil {
+		return err
+	}
+	if handler.queue == nil {
+		return nil
+	}
+	for _, link := range approved {
+		if err := handler.queue.EnqueueWebCrawl(ctx, link); err != nil {
+			return fmt.Errorf("enqueue email link %s: %w", link.Link, err)
+		}
+	}
+	return nil
+}
+
+type bufferedWebCrawlQueue struct {
+	mu    sync.Mutex
+	links []LinkItem
+}
+
+func (queue *bufferedWebCrawlQueue) EnqueueWebCrawl(ctx context.Context, link LinkItem) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	queue.links = append(queue.links, link)
+	return nil
+}
+
+func (queue *bufferedWebCrawlQueue) drain() []LinkItem {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	links := append([]LinkItem(nil), queue.links...)
+	queue.links = nil
+	return links
+}
+
 type emailResultEmitter struct {
 	source  cdb.Source
 	handler EmailResultHandler
@@ -162,10 +232,15 @@ func crawlEmailWithResultHandler(ctx context.Context, args *Pars, resultHandler 
 		runner = mail.NewPipelineRunner(*args.EmailDependencies)
 	}
 
+	policyHandler := emailPolicyResultHandler{
+		policy: config.Extraction.Links,
+		queue:  args.WebCrawlQueue,
+		next:   resultHandler,
+	}
 	return runner.RunSource(ctx, mail.SourceRunRequest{
 		SourceID: strconv.FormatUint(args.Src.ID, 10),
 		Config:   config,
-		Emitter:  emailResultEmitter{source: args.Src, handler: resultHandler},
+		Emitter:  emailResultEmitter{source: args.Src, handler: policyHandler},
 	})
 }
 
@@ -275,6 +350,49 @@ func (handler emailIndexResultHandler) HandleEmailResult(_ context.Context, resu
 	if handler.processCtx.Status != nil {
 		handler.processCtx.Status.TotalPages.Add(1)
 		handler.processCtx.Status.TotalScraped.Add(1)
+	}
+	return nil
+}
+
+func crawlEmailWebLinks(processCtx *ProcessContext, sel vdi.SeleniumInstance, links []LinkItem) error {
+	if len(links) == 0 {
+		return nil
+	}
+	if err := processCtx.RefreshVDIConnection(sel); err != nil {
+		return fmt.Errorf("prepare web crawl queue for email links: %w", err)
+	}
+
+	workerCount := processCtx.config.Crawler.Workers
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerCount > len(links) {
+		workerCount = len(links)
+	}
+
+	jobs := make(chan LinkItem, len(links))
+	errChan := make(chan error, workerCount)
+	for workerID := 1; workerID <= workerCount; workerID++ {
+		processCtx.wg.Add(1)
+		go func(id int) {
+			defer processCtx.wg.Done()
+			if err := worker(processCtx, id, jobs); err != nil {
+				errChan <- err
+			}
+		}(workerID)
+	}
+	for _, link := range links {
+		jobs <- link
+	}
+	close(jobs)
+	processCtx.Status.TotalLinks.Add(int32(len(links))) // #nosec G115 -- link count is bounded by mail policy limits.
+	processCtx.wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return fmt.Errorf("crawl policy-approved email link: %w", err)
+		}
 	}
 	return nil
 }

@@ -48,6 +48,7 @@ type Pars struct {
 	EmailRunner        mail.SourceRunner
 	EmailDependencies  *mail.PipelineDependencies
 	EmailResultHandler EmailResultHandler
+	WebCrawlQueue      WebCrawlQueue
 }
 
 // Status holds the status of the crawler

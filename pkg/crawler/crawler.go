@@ -157,7 +157,16 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	switch classifySourceProtocol(args.Src.URL) {
 	case SourceProtocolEmail:
-		err = crawlEmailWithResultHandler(context.Background(), args, emailIndexResultHandler{processCtx: processCtx})
+		emailArgs := *args
+		var webQueue *bufferedWebCrawlQueue
+		if emailArgs.WebCrawlQueue == nil {
+			webQueue = &bufferedWebCrawlQueue{}
+			emailArgs.WebCrawlQueue = webQueue
+		}
+		err = crawlEmailWithResultHandler(context.Background(), &emailArgs, emailIndexResultHandler{processCtx: processCtx})
+		if err == nil && webQueue != nil {
+			err = crawlEmailWebLinks(processCtx, sel, webQueue.drain())
+		}
 		if err != nil {
 			processCtx.Status.PipelineRunning.Store(3)
 			processCtx.Status.TotalErrors.Add(1)
@@ -2163,7 +2172,8 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 		}
 
 		// Check if the URL should be skipped
-		skip := skipURL(processCtx, wid, urlLink)
+		policyApprovedExternal := classifySourceProtocol(url.PageURL) == SourceProtocolEmail
+		skip := skipURLWithExternalApproval(processCtx, wid, urlLink, policyApprovedExternal)
 		if skip {
 			processCtx.Status.TotalSkipped.Add(1)
 			skippedURLs = append(skippedURLs, url)
@@ -2239,6 +2249,10 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 }
 
 func skipURL(processCtx *ProcessContext, id string, url string) bool {
+	return skipURLWithExternalApproval(processCtx, id, url, false)
+}
+
+func skipURLWithExternalApproval(processCtx *ProcessContext, id string, url string, allowExternal bool) bool {
 	// Check if the URL is empty
 	url = strings.TrimSpace(url)
 	if url == "" {
@@ -2251,7 +2265,7 @@ func skipURL(processCtx *ProcessContext, id string, url string) bool {
 	}
 
 	// Check if the URL is valid (aka if it's within the allowed restricted boundaries)
-	if (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
+	if !allowExternal && (processCtx.source.Restricted != 4) && isExternalLink(processCtx.source.URL, url, processCtx.source.Restricted) {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Skipping URL '%s' due 'external' policy.\n", id, url)
 		return true
 	}

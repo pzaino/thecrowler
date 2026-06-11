@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -343,4 +344,123 @@ func testMailSourceConfig() mail.SourceConfig {
 	config.Connector.Provider = "maildir"
 	config.Connector.Endpoint = "maildir:///tmp/mail"
 	return config
+}
+
+type recordingWebCrawlQueue struct {
+	links []LinkItem
+	err   error
+}
+
+func (queue *recordingWebCrawlQueue) EnqueueWebCrawl(_ context.Context, link LinkItem) error {
+	if queue.err != nil {
+		return queue.err
+	}
+	queue.links = append(queue.links, link)
+	return nil
+}
+
+func TestCrawlEmailDefaultsAllRemoteLinksToRecordOnly(t *testing.T) {
+	config := testMailSourceConfig()
+	queue := &recordingWebCrawlQueue{}
+	handler := &recordingEmailResultHandler{}
+	runner := &fakeEmailRunner{document: mail.Document{
+		ID: "default-policy",
+		Links: []mail.Link{
+			{URL: "https://example.test/article", Classification: mail.LinkNormal},
+			{URL: "https://accounts.example.test/reset-password?token=secret", Classification: mail.LinkAuthAction},
+			{URL: "mailto:owner@example.test", Classification: mail.LinkMailto},
+		},
+	}}
+
+	err := crawlEmail(context.Background(), &Pars{
+		Src:                cdb.Source{ID: 7, URL: "maildir:///tmp/mail"},
+		EmailConfig:        &config,
+		EmailRunner:        runner,
+		EmailResultHandler: handler,
+		WebCrawlQueue:      queue,
+	})
+	if err != nil {
+		t.Fatalf("crawlEmail() error = %v", err)
+	}
+	if len(queue.links) != 0 {
+		t.Fatalf("default policy queued links = %#v, want none", queue.links)
+	}
+	if got := handler.result.Page.Links; len(got) != 2 || got[0].Link != "https://example.test/article" || got[1].Link != "https://accounts.example.test/reset-password?token=secret" {
+		t.Errorf("recorded links = %#v, want normal and authentication audit links", got)
+	}
+}
+
+func TestCrawlEmailEnqueuesOnlyExplicitPolicyApprovals(t *testing.T) {
+	config := testMailSourceConfig()
+	config.Extraction.Links.FollowRemote = true
+	config.Extraction.Links.AllowedSchemes = []string{"https"}
+	config.Extraction.Links.Allowlist = []string{"safe.example.test"}
+	config.Extraction.Links.SuppressUnsubscribe = true
+	queue := &recordingWebCrawlQueue{}
+	handler := &recordingEmailResultHandler{}
+	runner := &fakeEmailRunner{document: mail.Document{
+		ID: "policy-approved",
+		Links: []mail.Link{
+			{URL: "https://safe.example.test/article", Classification: mail.LinkNormal},
+			{URL: "https://other.example.test/article", Classification: mail.LinkNormal},
+			{URL: "http://safe.example.test/insecure", Classification: mail.LinkNormal},
+			{URL: "https://safe.example.test/unsubscribe?token=secret", Classification: mail.LinkUnsubscribe},
+			{URL: "https://safe.example.test/reset-password?token=secret", Classification: mail.LinkAuthAction},
+			{URL: "cid:inline-image", Classification: mail.LinkCID},
+			{URL: "mailto:owner@example.test", Classification: mail.LinkMailto},
+			{URL: "javascript:alert(1)", Classification: mail.LinkUnknown},
+			{URL: "https://user:secret@safe.example.test/private", Classification: mail.LinkNormal},
+		},
+	}}
+
+	err := crawlEmail(context.Background(), &Pars{
+		Src:                cdb.Source{ID: 8, URL: "imap://mail.example.test"},
+		EmailConfig:        &config,
+		EmailRunner:        runner,
+		EmailResultHandler: handler,
+		WebCrawlQueue:      queue,
+	})
+	if err != nil {
+		t.Fatalf("crawlEmail() error = %v", err)
+	}
+	want := []LinkItem{{
+		PageURL: "imap://mail.example.test#message=policy-approved",
+		Link:    "https://safe.example.test/article",
+	}}
+	if !reflect.DeepEqual(queue.links, want) {
+		t.Fatalf("queued links = %#v, want %#v", queue.links, want)
+	}
+
+	recorded := handler.result.Page.Links
+	if len(recorded) != 4 {
+		t.Fatalf("recorded links = %#v, want four retained audit links", recorded)
+	}
+	for _, suppressed := range []string{"unsubscribe", "cid:", "mailto:", "javascript:", "user:secret"} {
+		for _, link := range recorded {
+			if strings.Contains(link.Link, suppressed) {
+				t.Errorf("suppressed link %q was retained in %#v", suppressed, recorded)
+			}
+		}
+	}
+}
+
+func TestCrawlEmailPropagatesWebQueueFailure(t *testing.T) {
+	config := testMailSourceConfig()
+	config.Extraction.Links.FollowRemote = true
+	config.Extraction.Links.Allowlist = []string{"safe.example.test"}
+	wantErr := errors.New("queue unavailable")
+
+	err := crawlEmail(context.Background(), &Pars{
+		Src:         cdb.Source{ID: 9, URL: "maildir:///tmp/mail"},
+		EmailConfig: &config,
+		EmailRunner: &fakeEmailRunner{document: mail.Document{
+			ID:    "queue-error",
+			Links: []mail.Link{{URL: "https://safe.example.test/article"}},
+		}},
+		EmailResultHandler: &recordingEmailResultHandler{},
+		WebCrawlQueue:      &recordingWebCrawlQueue{err: wantErr},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("crawlEmail() error = %v, want %v", err, wantErr)
+	}
 }
