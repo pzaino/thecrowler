@@ -209,32 +209,62 @@ type StatusResponse struct {
 
 // StatusResponseRow represents the structure of the status response row
 type StatusResponseRow struct {
-	SourceID      uint64           `json:"source_id"`
-	URL           sql.NullString   `json:"url"`
-	Status        sql.NullString   `json:"status"`
-	Priority      sql.NullString   `json:"priority"`
-	Engine        sql.NullString   `json:"engine"`
-	CreatedAt     sql.NullString   `json:"created_at"`
-	LastUpdatedAt sql.NullString   `json:"last_updated_at"`
-	LastCrawledAt sql.NullString   `json:"last_crawled_at"`
-	LastError     sql.NullString   `json:"last_error"`
-	LastErrorAt   sql.NullString   `json:"last_error_at"`
-	Restricted    int              `json:"restricted"`
-	Disabled      bool             `json:"disabled"`
-	Flags         int              `json:"flags"`
-	Config        cfg.SourceConfig `json:"config,omitempty"`
+	SourceID      uint64               `json:"source_id"`
+	URL           sql.NullString       `json:"url"`
+	Status        sql.NullString       `json:"status"`
+	Priority      sql.NullString       `json:"priority"`
+	Engine        sql.NullString       `json:"engine"`
+	CreatedAt     sql.NullString       `json:"created_at"`
+	LastUpdatedAt sql.NullString       `json:"last_updated_at"`
+	LastCrawledAt sql.NullString       `json:"last_crawled_at"`
+	LastError     sql.NullString       `json:"last_error"`
+	LastErrorAt   sql.NullString       `json:"last_error_at"`
+	Restricted    int                  `json:"restricted"`
+	Disabled      bool                 `json:"disabled"`
+	Flags         int                  `json:"flags"`
+	Config        SourceConfigResponse `json:"config,omitempty"`
+}
+
+// SourceConfigRequest is the source configuration accepted by source-management
+// endpoints. The alias preserves cfg.SourceConfig's exact wire format and its
+// historical email configuration envelope support.
+type SourceConfigRequest = cfg.SourceConfig
+
+// SourceConfigResponse is the source configuration returned by
+// source-management endpoints. Its JSON shape matches cfg.SourceConfig, while
+// MarshalJSON redacts secret values contained in email configuration extensions.
+type SourceConfigResponse cfg.SourceConfig
+
+// MarshalJSON returns the existing source configuration shape with email
+// secrets replaced by a stable redaction marker.
+func (response SourceConfigResponse) MarshalJSON() ([]byte, error) {
+	return marshalRedactedSourceConfig(cfg.SourceConfig(response))
+}
+
+// updateSourceRequest represents the structure of an update source request.
+// Config is a pointer so an omitted configuration continues to preserve the
+// stored value, while an explicitly supplied email configuration can be saved.
+type updateSourceRequest struct {
+	SourceID   int64                `json:"source_id,omitempty"`
+	URL        string               `json:"url,omitempty"`
+	Status     string               `json:"status,omitempty"`
+	Restricted int                  `json:"restricted,omitempty"`
+	Disabled   bool                 `json:"disabled,omitempty"`
+	Flags      int                  `json:"flags,omitempty"`
+	Config     *SourceConfigRequest `json:"config,omitempty"`
+	Details    json.RawMessage      `json:"details,omitempty"`
 }
 
 // addSourceRequest represents the structure of the add source request
 type addSourceRequest struct {
-	URL        string           `json:"url"`
-	CategoryID uint64           `json:"category_id,omitempty"`
-	UsrID      uint64           `json:"usr_id,omitempty"`
-	Status     string           `json:"status,omitempty"`
-	Restricted int              `json:"restricted,omitempty"`
-	Disabled   bool             `json:"disabled,omitempty"`
-	Flags      int              `json:"flags,omitempty"`
-	Config     cfg.SourceConfig `json:"config,omitempty"`
+	URL        string              `json:"url"`
+	CategoryID uint64              `json:"category_id,omitempty"`
+	UsrID      uint64              `json:"usr_id,omitempty"`
+	Status     string              `json:"status,omitempty"`
+	Restricted int                 `json:"restricted,omitempty"`
+	Disabled   bool                `json:"disabled,omitempty"`
+	Flags      int                 `json:"flags,omitempty"`
+	Config     SourceConfigRequest `json:"config,omitempty"`
 }
 
 // SearchResult represents the structure of the search result

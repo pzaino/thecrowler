@@ -877,20 +877,20 @@ type SourcesStatusResponse struct {
 
 // SourceStatus represents one item in the "items" array.
 type SourceStatus struct {
-	SourceID      int              `json:"source_id"`
-	URL           DBString         `json:"url"`
-	Status        DBString         `json:"status"`
-	Priority      DBString         `json:"priority"`
-	Engine        DBString         `json:"engine"`
-	CreatedAt     DBString         `json:"created_at"`
-	LastUpdatedAt DBString         `json:"last_updated_at"`
-	LastCrawledAt DBString         `json:"last_crawled_at"`
-	LastError     DBString         `json:"last_error"`
-	LastErrorAt   DBString         `json:"last_error_at"`
-	Restricted    int              `json:"restricted"`
-	Disabled      bool             `json:"disabled"`
-	Flags         int              `json:"flags"`
-	Config        cdb.SourceConfig `json:"config"`
+	SourceID      int                  `json:"source_id"`
+	URL           DBString             `json:"url"`
+	Status        DBString             `json:"status"`
+	Priority      DBString             `json:"priority"`
+	Engine        DBString             `json:"engine"`
+	CreatedAt     DBString             `json:"created_at"`
+	LastUpdatedAt DBString             `json:"last_updated_at"`
+	LastCrawledAt DBString             `json:"last_crawled_at"`
+	LastError     DBString             `json:"last_error"`
+	LastErrorAt   DBString             `json:"last_error_at"`
+	Restricted    int                  `json:"restricted"`
+	Disabled      bool                 `json:"disabled"`
+	Flags         int                  `json:"flags"`
+	Config        SourceConfigResponse `json:"config"`
 }
 
 // DBString matches the JSON shape produced by sql.NullString-like values:
@@ -979,14 +979,14 @@ func sourceStatusRowsFromDB(rows []cdb.SourceStatusRow) []StatusResponseRow {
 			Restricted:    row.Restricted,
 			Disabled:      row.Disabled,
 			Flags:         row.Flags,
-			Config:        row.Config,
+			Config:        SourceConfigResponse(row.Config),
 		})
 	}
 	return statuses
 }
 
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var sqlParams cdb.UpdateSourceRequest
+	var sqlParams updateSourceRequest
 	var sourceConfig *string
 	var sourceDetails *string
 
@@ -1032,21 +1032,28 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
 	}
 	// extract and validate Config JSON:
-	var srcConfig cdb.SourceConfig
+	var srcConfig cfg.SourceConfig
 	if sourceConfig != nil {
 		//existingData.Config = json.RawMessage(*sourceConfig)
-		// Transform sourceConfig into cdb.SourceConfig struct
+		// Transform sourceConfig into the API source configuration struct.
 		if err := json.Unmarshal([]byte(*sourceConfig), &srcConfig); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field from DB: %v", err)
 		}
 	}
-	existingData.Config = srcConfig
 
 	// extract free JSON form Details:
 	if sourceDetails != nil {
 		existingData.Details = json.RawMessage(*sourceDetails)
 	} else {
 		existingData.Details = json.RawMessage("{}")
+	}
+
+	mergedConfig := srcConfig
+	if sqlParams.Config != nil {
+		mergedConfig = cfg.SourceConfig(*sqlParams.Config)
+		if err := validateAndReformatConfig(&mergedConfig); err != nil {
+			return ConsoleResponse{Message: "Invalid config"}, err
+		}
 	}
 
 	// Merge existing data with provided updates
@@ -1057,7 +1064,6 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		Restricted: coalesceInt(sqlParams.Restricted, existingData.Restricted),
 		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
 		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
-		Config:     srcConfig,
 		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
 	}
 
@@ -1079,7 +1085,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		mergedData.Restricted,
 		mergedData.Disabled,
 		mergedData.Flags,
-		mergedData.Config,
+		mergedConfig,
 		mergedData.Details,
 		mergedData.SourceID,
 	)

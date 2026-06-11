@@ -670,13 +670,13 @@ func initAPIv1() {
 		// Source management endpoints
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", tagsNone, true, false, 201, cdb.UpdateSourceRequest{}, StdAPIBasicQuery{}, nil)
+		cmn.RegisterAPIRoute("/v1/source/add", []string{"GET", "POST"}, "Add source endpoint (console)", tagsNone, true, false, 201, addSourceRequest{}, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/remove", removeSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/remove", []string{"GET"}, "Remove source endpoint (console)", tagsNone, true, false, 204, true, StdAPIBasicQuery{}, nil)
 
 		http.Handle("/v1/source/update", updateSourceHandlerWithMiddlewares)
-		cmn.RegisterAPIRoute("/v1/source/update", []string{"POST"}, "Update source endpoint (console)", tagsNone, true, false, 204, cdb.UpdateSourceRequest{}, nil, nil)
+		cmn.RegisterAPIRoute("/v1/source/update", []string{"POST"}, "Update source endpoint (console)", tagsNone, true, false, 204, updateSourceRequest{}, nil, nil)
 
 		http.Handle("/v1/source/vacuum", vacuumSourceHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/vacuum", []string{"GET"}, "Vacuum source endpoint (console)", tagsNone, true, false, 204, nil, StdAPIBasicQuery{}, nil)
