@@ -7,9 +7,11 @@ sources. It covers the `pkg/mail` provider boundary, connector, fetcher, MIME
 parser, normalizer, listener, reconciler, state store, and integration with the
 crawler scheduler and indexing pipeline.
 
-This is an architectural target, not a statement that these components already
-exist. The MVP should support incremental, read-only mailbox ingestion without
-allocating a browser or VDI session.
+This document primarily describes the target architecture. Parts of the MVP now
+exist in `pkg/mail`; sections labeled as an implemented contract describe current
+behavior, while the remaining sections may still describe planned integration.
+The MVP supports incremental, read-only mailbox ingestion without allocating a
+browser or VDI session when its connector and pipeline are invoked by a caller.
 
 ## Design principles
 
@@ -112,33 +114,55 @@ Provider subpackages are implementation details behind interfaces exported by
 
 ## Source configuration
 
-Email sources should be explicit and typed:
+Email sources should be explicit and typed. The implemented `pkg/mail`
+configuration currently has the following shape; callers should begin with
+`DefaultSourceConfig` and then set the source-specific values:
 
 ```yaml
 crawling_config:
   source_type: email
 email:
-  provider: imap
-  endpoint: imaps://mail.example.com:993
-  credential_ref: secret/mail-archive
+  connector:
+    provider: imap
+    endpoint: imaps://mail.example.com:993
+    timeout: 30s
+    tls:
+      server_name: mail.example.com
+      insecure_skip_verify: false
+  auth:
+    credential_ref: secret/mail-archive
+    identity: archive-account
   mailboxes:
     include: [INBOX, Archive]
     exclude: [Spam, Trash]
-  mode: poll
-  limits:
-    max_message_bytes: 26214400
-    max_attachment_bytes: 10485760
-    max_total_attachment_bytes: 26214400
-    max_attachments: 50
-    max_embedded_message_depth: 3
+  crawl:
+    mode: poll
+    batch_size: 100
+    max_messages: 1000
+    timeout: 10m
+    limits:
+      max_message_bytes: 26214400
+      max_attachment_bytes: 10485760
+      max_total_attachment_bytes: 26214400
+      max_attachments: 50
+      max_embedded_message_depth: 3
+  listener:
+    enabled: false
+  reconciliation:
+    poll_interval: 5m
+    full_sync_interval: 24h
+    page_size: 100
+    max_pages: 100
+    lease_ttl: 2m
 ```
 
-The exact serialized schema may evolve, but it must preserve these boundaries:
+The serialized integration schema may evolve, but it must preserve these
+boundaries:
 
 - `source_type: email` declares intent. A recognized retrieval scheme may help
   validation, but should not silently turn an unrelated source into email.
 - The endpoint contains no password, OAuth token, or client secret.
-- `credential_ref` resolves through the project's secret mechanism. Secret
+- `auth.credential_ref` resolves through the project's secret mechanism. Secret
   material must not be persisted in source status, checkpoints, logs, events,
   or indexed documents.
 - Mailbox inclusion/exclusion, retrieval mode, TLS requirements, timeouts, and
@@ -146,11 +170,167 @@ The exact serialized schema may evolve, but it must preserve these boundaries:
   avoidable.
 - TLS verification is enabled by default. Any insecure development override
   must be explicit and must produce an operational warning.
-- SMTP URLs are invalid as crawl sources.
+- SMTP, POP3, local `maildir`, and local `mbox` URLs are not IMAP connector
+  endpoints.
 
 Configuration changes that alter endpoint, account, provider, or mailbox
-selection invalidate incompatible checkpoints and trigger a controlled
-reconciliation rather than reusing state blindly.
+selection invalidate incompatible checkpoints and require a controlled
+reconciliation rather than blind state reuse.
+
+### Implemented IMAP/IMAPS MVP contract
+
+This subsection documents the current `pkg/mail` IMAP connector and pipeline,
+not every capability in the target architecture.
+
+#### Source URL forms and required configuration
+
+The IMAP provider accepts these endpoint forms:
+
+```text
+imaps://mail.example.com
+imaps://mail.example.com:993
+imap://mail.example.com
+imap://mail.example.com:143
+imaps://[2001:db8::10]:993
+```
+
+The scheme and host are required. The port is optional: `imaps` defaults to
+`993`, while `imap` defaults to `143`. A custom port is allowed in the range
+`1-65535`. Scheme matching is case-insensitive after parsing.
+
+The endpoint is a server address only. Do not put a username, password, mailbox
+name, URL query, or fragment in it. In particular, a URL path does **not**
+select a mailbox; configure mailbox names through `email.mailboxes`. The
+current validation rejects credentials, queries, fragments, whitespace,
+missing hosts, and invalid ports.
+
+A usable typed source configuration requires:
+
+- `connector.provider: imap`;
+- an `imap://` or `imaps://` `connector.endpoint`;
+- a positive `connector.timeout`;
+- `auth.credential_ref`, resolved by the caller before connector creation;
+- positive crawl, listener-buffer, and reconciliation limits. Using
+  `DefaultSourceConfig` supplies conservative values and selects `INBOX` by
+  default.
+
+`auth.identity` is the stable account component of mailbox state and document
+identity. If it is empty, the resolved username is used. Operators should keep
+this value stable across credential rotation and should change it when the
+configured account changes.
+
+#### TLS behavior
+
+`imaps://` means implicit TLS: the TCP connection is wrapped in TLS before any
+IMAP command or authentication exchange. TLS 1.2 is the minimum version,
+certificate and hostname verification are enabled by default, and the endpoint
+host is used for SNI/hostname verification unless `connector.tls.server_name`
+overrides it. `connector.tls.insecure_skip_verify` disables certificate
+verification and is intended only for explicitly accepted development/test
+risk.
+
+`imap://` currently means cleartext IMAP. It does **not** request STARTTLS, and
+TLS options are rejected for this URL form. The low-level connector can perform
+a required STARTTLS upgrade when constructed directly with the internal
+`starttls` policy, but the typed source URL/configuration mapping does not yet
+expose that policy. Use `imaps://` for normal deployments; credentials must not
+be sent through `imap://` on an untrusted network.
+
+#### Authentication limitations
+
+The secret resolver must provide a non-empty username and exactly one of:
+
+- a password, authenticated with IMAP `LOGIN`; or
+- a bearer token, authenticated with SASL `OAUTHBEARER`.
+
+Credentials in endpoint userinfo are forbidden. The MVP does not implement
+interactive OAuth, authorization-code/device-code flows, token acquisition or
+refresh, provider-specific SASL selection, client certificates, Kerberos/GSSAPI,
+or multiple fallback authentication mechanisms. `auth.method` does not change
+the connector's mechanism selection today; selection is based on whether the
+resolved secret contains a password or token.
+
+#### Mailbox discovery and selection
+
+The connector issues an IMAP `LIST "" "*"`, drops mailboxes marked
+`\NoSelect`, and compares configured mailbox names exactly after trimming
+surrounding whitespace. Matching is otherwise case-sensitive and uses the
+server-visible mailbox name; there is no glob, regular-expression, hierarchy,
+label, or URL-path matching in the MVP.
+
+- An empty include list selects every selectable mailbox.
+- A non-empty include list selects only exact matches.
+- Exclusions always win, including when a name also appears in the include
+  list.
+- `DefaultSourceConfig` includes only `INBOX` unless the caller changes it.
+
+Each mailbox is selected read-only, and message bodies are fetched with `PEEK`,
+so ingestion does not intentionally set `\Seen`. Connector operations and
+mailboxes are processed serially because IMAP mailbox selection is
+connection-scoped. The connector does not change flags, move or delete
+messages, create folders, or send mail.
+
+#### Polling and IDLE scope
+
+The implemented pipeline is a bounded reconciliation pass: when invoked, it
+lists the selected mailboxes, processes them serially, and requests ascending
+UID pages after each mailbox's checkpoint. The `poll` mode and reconciliation
+interval fields describe scheduler policy, but `pkg/mail` does not itself run a
+timer or continuously poll. The surrounding crawler/service integration must
+invoke the pipeline on the desired schedule.
+
+IMAP IDLE is not implemented in the MVP. The provider-neutral `Listener`
+interface and `listen` configuration are architectural placeholders; there is
+no production IMAP listener, reconnect loop, or multi-mailbox IDLE manager.
+Because one IMAP connection can select/IDLE only one mailbox at a time, future
+IDLE support must define per-mailbox connections or explicit multiplexing and
+must continue to treat notifications only as hints. Scheduled reconciliation
+remains authoritative even after IDLE is added.
+
+#### State and replay semantics
+
+State is maintained independently for each source, provider, account identity,
+and mailbox. The IMAP cursor is the mailbox's `UIDVALIDITY` plus the highest
+committed UID:
+
+- Normal reconciliation searches for UIDs greater than the committed UID,
+  sorts and de-duplicates them, and advances in ascending pages.
+- A page cursor advances only after every upsert in that page has been fetched,
+  parsed, and durably emitted (or deliberately discarded by retry policy). A
+  failed page is retried from its previous cursor, so emitters must upsert
+  idempotently by stable document ID.
+- Checkpoint commits use optimistic versions; a stale writer must fail rather
+  than overwrite newer mailbox progress.
+- A `UIDVALIDITY` change commits a reset at UID zero and starts a bounded
+  rescan. The default reset window is 1,000 messages for the run that detects
+  the reset; later runs continue from the committed UID if more remain.
+- IMAP document identity includes source, account, mailbox, `UIDVALIDITY`, and
+  UID when no stronger provider message ID exists. Moving a message or a
+  `UIDVALIDITY` reset can therefore produce a new identity.
+
+This is forward, UID-based ingestion rather than a full mailbox mirror. The MVP
+does not discover expunges or flag-only changes for UIDs at or below the
+checkpoint, does not reconcile destination deletions, and ignores provider
+`delete` changes in the processing pipeline. A UID returned by search but
+missing from metadata fetch is represented internally as a delete race, but it
+is not propagated to an index deletion workflow.
+
+#### Additional MVP limitations
+
+- The connector uses one authenticated connection and serializes all commands;
+  there is no connection pool or parallel mailbox/message fetch.
+- Mailbox discovery always uses `LIST "" "*"`; subscriptions, namespaces,
+  special-use roles, and provider labels are not interpreted.
+- There is no capability-driven feature negotiation beyond the IMAP library's
+  command handling, and no explicit COMPRESS, CONDSTORE, QRESYNC, NOTIFY, or
+  UTF8=ACCEPT support.
+- The connector buffers each fetched RFC 5322 message in memory after enforcing
+  advertised and actual size limits; it does not stream message bytes directly
+  from the socket into downstream parsing/storage.
+- The package contains the connector, MIME/normalization pipeline, and state
+  stores, but complete source-schema exposure, secret resolution, scheduler
+  dispatch, listener lifecycle, and production output wiring remain integration
+  work unless supplied by the caller.
 
 ## Core data model
 
