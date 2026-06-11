@@ -281,13 +281,15 @@ not overlap, and stops through context cancellation. Lifecycle owners may use
 it to invoke a `Reconciler` directly or to emit coarse hints through an
 `EventSink`; its scheduler boundary is injectable for deterministic tests.
 
-IMAP IDLE is not implemented in the MVP. The provider-neutral `Listener`
-interface and `listen` configuration are architectural placeholders; there is
-no production IMAP listener, reconnect loop, or multi-mailbox IDLE manager.
-Because one IMAP connection can select/IDLE only one mailbox at a time, future
-IDLE support must define per-mailbox connections or explicit multiplexing and
-must continue to treat notifications only as hints. Scheduled reconciliation
-remains authoritative even after IDLE is added.
+`IMAPIdleListener` implements the provider-neutral `Listener` contract. It
+uses the configured mailbox include order as the priority set (or all supplied
+mailboxes when the include list is empty), excludes configured omissions, and
+opens one authenticated connection per selected mailbox because IMAP selection
+and IDLE are connection-scoped. On an unsolicited mailbox update it leaves
+IDLE, submits a mailbox-scoped reconciliation hint through `EventSink`, and
+then resumes IDLE. Cancellation or a session failure stops the peer sessions
+and logs out/closes every client. Notifications remain advisory: scheduled
+reconciliation is still authoritative and owns all checkpoint progress.
 
 #### State and replay semantics
 
