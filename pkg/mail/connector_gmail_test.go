@@ -1,0 +1,340 @@
+package mail
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"io"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"golang.org/x/oauth2"
+)
+
+var (
+	_ GmailCredentialSource = (*fakeGmailCredentialSource)(nil)
+	_ GmailTokenProvider    = (*fakeGmailTokenProvider)(nil)
+	_ GmailClientFactory    = (*fakeGmailClientFactory)(nil)
+	_ GmailClient           = (*fakeGmailClient)(nil)
+)
+
+func TestGmailConnectorFakeLifecycle(t *testing.T) {
+	events := make([]string, 0, 8)
+	credentials := &fakeGmailCredentialSource{
+		credentials: GmailOAuthCredentials{JSON: []byte(`{"client_id":"test"}`)},
+		events:      &events,
+	}
+	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "fake-access-token"})
+	tokens := &fakeGmailTokenProvider{tokens: tokenSource, events: &events}
+	client := &fakeGmailClient{
+		events:  &events,
+		labels:  []GmailLabel{{ID: "TRASH", Name: "Trash"}, {ID: "INBOX", Name: "Inbox"}},
+		profile: GmailProfile{HistoryID: 100},
+		messagePages: map[string]GmailMessagePage{
+			"": {
+				Messages:      []GmailMessage{{ID: "m1", ThreadID: "t1", HistoryID: 90, Size: 12}},
+				NextPageToken: "messages-page-2",
+			},
+			"messages-page-2": {Messages: []GmailMessage{{ID: "m2", ThreadID: "t2", HistoryID: 91, Size: 13}}},
+		},
+		historyPages: map[string]GmailHistoryPage{
+			"": {
+				Changes:       []GmailHistoryChange{{Kind: ChangeUpsert, Message: GmailMessage{ID: "m3", HistoryID: 101}}},
+				HistoryID:     105,
+				NextPageToken: "history-page-2",
+			},
+			"history-page-2": {
+				Changes:   []GmailHistoryChange{{Kind: ChangeDelete, Message: GmailMessage{ID: "m1", HistoryID: 102}}},
+				HistoryID: 105,
+			},
+		},
+		rawMessages: map[string]GmailMessage{
+			"m3": {
+				ID:           "m3",
+				ThreadID:     "t3",
+				HistoryID:    105,
+				InternalDate: time.Unix(1_700_000_000, 0),
+				Size:         12,
+				Raw:          base64.RawURLEncoding.EncodeToString([]byte("Subject: hi\r\n\r\nhello")),
+			},
+		},
+	}
+	factory := &fakeGmailClientFactory{client: client, events: &events}
+
+	connector, err := NewGmailConnector(context.Background(), GmailConnectorConfig{
+		AccountID:     "account-1",
+		CredentialRef: "secret/gmail/account-1",
+		Mailboxes:     MailboxSelector{Include: []string{"Inbox"}},
+	}, GmailDependencies{Credentials: credentials, Tokens: tokens, Clients: factory})
+	if err != nil {
+		t.Fatalf("NewGmailConnector() error = %v", err)
+	}
+	if credentials.reference != "secret/gmail/account-1" {
+		t.Fatalf("credential reference = %q, want secret/gmail/account-1", credentials.reference)
+	}
+	if !reflect.DeepEqual(tokens.credentials, credentials.credentials) {
+		t.Fatalf("token credentials = %#v, want %#v", tokens.credentials, credentials.credentials)
+	}
+	if !reflect.DeepEqual(tokens.scopes, []string{gmailScope}) {
+		t.Fatalf("token scopes = %#v, want Gmail read-only scope", tokens.scopes)
+	}
+	if factory.tokens != tokenSource {
+		t.Fatal("client factory did not receive fake token source")
+	}
+
+	mailboxes, err := connector.ListMailboxes(context.Background())
+	if err != nil {
+		t.Fatalf("ListMailboxes() error = %v", err)
+	}
+	wantMailboxes := []Mailbox{{ID: "INBOX", Name: "Inbox"}}
+	if !reflect.DeepEqual(mailboxes, wantMailboxes) {
+		t.Fatalf("ListMailboxes() = %#v, want %#v", mailboxes, wantMailboxes)
+	}
+
+	first, err := connector.ListChanges(context.Background(), mailboxes[0], Cursor{}, 1)
+	if err != nil {
+		t.Fatalf("first ListChanges() error = %v", err)
+	}
+	assertGmailChange(t, first, ChangeUpsert, "m1", true)
+	second, err := connector.ListChanges(context.Background(), mailboxes[0], first.Next, 1)
+	if err != nil {
+		t.Fatalf("second ListChanges() error = %v", err)
+	}
+	assertGmailChange(t, second, ChangeUpsert, "m2", false)
+
+	historyFirst, err := connector.ListChanges(context.Background(), mailboxes[0], second.Next, 1)
+	if err != nil {
+		t.Fatalf("first history ListChanges() error = %v", err)
+	}
+	assertGmailChange(t, historyFirst, ChangeUpsert, "m3", true)
+	historySecond, err := connector.ListChanges(context.Background(), mailboxes[0], historyFirst.Next, 1)
+	if err != nil {
+		t.Fatalf("second history ListChanges() error = %v", err)
+	}
+	assertGmailChange(t, historySecond, ChangeDelete, "m1", false)
+	if !reflect.DeepEqual(client.historyStarts, []uint64{100, 100}) {
+		t.Fatalf("history start IDs = %#v, want stable start ID across pages", client.historyStarts)
+	}
+	state, err := decodeGmailCursor(historySecond.Next.Token)
+	if err != nil {
+		t.Fatalf("decode final cursor: %v", err)
+	}
+	if state.HistoryID != 105 || state.PendingHistoryID != 0 || state.PageToken != "" {
+		t.Fatalf("final history cursor = %#v, want committed history 105", state)
+	}
+
+	raw, err := connector.OpenMessage(context.Background(), historyFirst.Changes[0].Ref, FetchOptions{IncludeBody: true, MaxBytes: 1024})
+	if err != nil {
+		t.Fatalf("OpenMessage() error = %v", err)
+	}
+	data, err := io.ReadAll(raw.RFC822)
+	if err != nil {
+		t.Fatalf("read raw message: %v", err)
+	}
+	if err := raw.RFC822.Close(); err != nil {
+		t.Fatalf("close raw message: %v", err)
+	}
+	if string(data) != "Subject: hi\r\n\r\nhello" {
+		t.Fatalf("raw message = %q", data)
+	}
+	if raw.Ref.Provider != gmailProvider || raw.Ref.AccountID != "account-1" || raw.Ref.ProviderThreadID != "t3" {
+		t.Fatalf("raw message ref = %#v", raw.Ref)
+	}
+
+	if err := connector.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := connector.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if client.closeCalls != 1 {
+		t.Fatalf("client Close calls = %d, want 1", client.closeCalls)
+	}
+	if _, err := connector.ListMailboxes(context.Background()); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("ListMailboxes() after Close error = %v, want closed error", err)
+	}
+
+	wantPrefix := []string{"credentials", "tokens", "client", "labels", "profile", "messages:", "messages:messages-page-2"}
+	if len(events) < len(wantPrefix) || !reflect.DeepEqual(events[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("lifecycle events = %#v, want prefix %#v", events, wantPrefix)
+	}
+}
+
+func TestNewGmailConnectorStopsAtFailedLifecycleStage(t *testing.T) {
+	tests := []struct {
+		name        string
+		credentials *fakeGmailCredentialSource
+		tokens      *fakeGmailTokenProvider
+		factory     *fakeGmailClientFactory
+		wantKind    ErrorKind
+	}{
+		{
+			name:        "credentials",
+			credentials: &fakeGmailCredentialSource{err: errors.New("vault unavailable")},
+			tokens:      &fakeGmailTokenProvider{},
+			factory:     &fakeGmailClientFactory{},
+			wantKind:    ErrorAuthentication,
+		},
+		{
+			name:        "token",
+			credentials: &fakeGmailCredentialSource{credentials: GmailOAuthCredentials{JSON: []byte("fake")}},
+			tokens:      &fakeGmailTokenProvider{err: errors.New("grant rejected")},
+			factory:     &fakeGmailClientFactory{},
+			wantKind:    ErrorAuthentication,
+		},
+		{
+			name:        "client",
+			credentials: &fakeGmailCredentialSource{credentials: GmailOAuthCredentials{JSON: []byte("fake")}},
+			tokens:      &fakeGmailTokenProvider{tokens: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "fake"})},
+			factory:     &fakeGmailClientFactory{err: errors.New("API unavailable")},
+			wantKind:    ErrorTransient,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewGmailConnector(context.Background(), GmailConnectorConfig{
+				AccountID: "account", CredentialRef: "credential",
+			}, GmailDependencies{Credentials: test.credentials, Tokens: test.tokens, Clients: test.factory})
+			var mailErr *Error
+			if !errors.As(err, &mailErr) || mailErr.Kind != test.wantKind {
+				t.Fatalf("NewGmailConnector() error = %T %v, want kind %q", err, err, test.wantKind)
+			}
+		})
+	}
+}
+
+func TestGmailConnectorRejectsInvalidCursorAndOversizedMessage(t *testing.T) {
+	client := &fakeGmailClient{rawMessages: map[string]GmailMessage{
+		"large": {ID: "large", Raw: base64.RawURLEncoding.EncodeToString([]byte("too large"))},
+	}}
+	connector := newFakeGmailConnector(t, client)
+
+	_, err := connector.ListChanges(context.Background(), Mailbox{ID: "INBOX"}, Cursor{Token: "not-base64"}, 10)
+	var mailErr *Error
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorCheckpointReset {
+		t.Fatalf("invalid cursor error = %T %v, want checkpoint reset", err, err)
+	}
+	_, err = connector.OpenMessage(context.Background(), MessageRef{Provider: gmailProvider, ProviderMessageID: "large"}, FetchOptions{MaxBytes: 3})
+	if !errors.As(err, &mailErr) || mailErr.Kind != ErrorOversized {
+		t.Fatalf("oversized message error = %T %v, want oversized", err, err)
+	}
+}
+
+func assertGmailChange(t *testing.T, page ChangePage, kind ChangeKind, messageID string, more bool) {
+	t.Helper()
+	if len(page.Changes) != 1 || page.Changes[0].Kind != kind || page.Changes[0].Ref.ProviderMessageID != messageID || page.More != more {
+		t.Fatalf("change page = %#v, want one %s for %s and More=%v", page, kind, messageID, more)
+	}
+}
+
+func newFakeGmailConnector(t *testing.T, client GmailClient) *GmailConnector {
+	t.Helper()
+	connector, err := NewGmailConnector(context.Background(), GmailConnectorConfig{
+		AccountID: "account", CredentialRef: "credential",
+	}, GmailDependencies{
+		Credentials: &fakeGmailCredentialSource{credentials: GmailOAuthCredentials{JSON: []byte("fake")}},
+		Tokens:      &fakeGmailTokenProvider{tokens: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "fake"})},
+		Clients:     &fakeGmailClientFactory{client: client},
+	})
+	if err != nil {
+		t.Fatalf("NewGmailConnector() error = %v", err)
+	}
+	t.Cleanup(func() { _ = connector.Close() })
+	return connector
+}
+
+type fakeGmailCredentialSource struct {
+	credentials GmailOAuthCredentials
+	reference   string
+	err         error
+	events      *[]string
+}
+
+func (f *fakeGmailCredentialSource) LoadCredentials(_ context.Context, reference string) (GmailOAuthCredentials, error) {
+	f.reference = reference
+	appendGmailEvent(f.events, "credentials")
+	return f.credentials, f.err
+}
+
+type fakeGmailTokenProvider struct {
+	credentials GmailOAuthCredentials
+	scopes      []string
+	tokens      oauth2.TokenSource
+	err         error
+	events      *[]string
+}
+
+func (f *fakeGmailTokenProvider) TokenSource(_ context.Context, credentials GmailOAuthCredentials, scopes ...string) (oauth2.TokenSource, error) {
+	f.credentials = credentials
+	f.scopes = append([]string(nil), scopes...)
+	appendGmailEvent(f.events, "tokens")
+	return f.tokens, f.err
+}
+
+type fakeGmailClientFactory struct {
+	client GmailClient
+	tokens oauth2.TokenSource
+	err    error
+	events *[]string
+}
+
+func (f *fakeGmailClientFactory) NewGmailClient(_ context.Context, tokens oauth2.TokenSource) (GmailClient, error) {
+	f.tokens = tokens
+	appendGmailEvent(f.events, "client")
+	return f.client, f.err
+}
+
+type fakeGmailClient struct {
+	labels        []GmailLabel
+	profile       GmailProfile
+	messagePages  map[string]GmailMessagePage
+	historyPages  map[string]GmailHistoryPage
+	rawMessages   map[string]GmailMessage
+	historyStarts []uint64
+	closeCalls    int
+	events        *[]string
+}
+
+func (f *fakeGmailClient) ListLabels(context.Context, string) ([]GmailLabel, error) {
+	appendGmailEvent(f.events, "labels")
+	return f.labels, nil
+}
+
+func (f *fakeGmailClient) GetProfile(context.Context, string) (GmailProfile, error) {
+	appendGmailEvent(f.events, "profile")
+	return f.profile, nil
+}
+
+func (f *fakeGmailClient) ListMessages(_ context.Context, _, _, pageToken string, _ int) (GmailMessagePage, error) {
+	appendGmailEvent(f.events, "messages:"+pageToken)
+	return f.messagePages[pageToken], nil
+}
+
+func (f *fakeGmailClient) ListHistory(_ context.Context, _, _ string, startHistoryID uint64, pageToken string, _ int) (GmailHistoryPage, error) {
+	f.historyStarts = append(f.historyStarts, startHistoryID)
+	appendGmailEvent(f.events, "history:"+pageToken)
+	return f.historyPages[pageToken], nil
+}
+
+func (f *fakeGmailClient) GetRawMessage(_ context.Context, _, messageID string) (GmailMessage, error) {
+	appendGmailEvent(f.events, "raw:"+messageID)
+	message, ok := f.rawMessages[messageID]
+	if !ok {
+		return GmailMessage{}, errors.New("missing fake message")
+	}
+	return message, nil
+}
+
+func (f *fakeGmailClient) Close() error {
+	f.closeCalls++
+	appendGmailEvent(f.events, "close")
+	return nil
+}
+
+func appendGmailEvent(events *[]string, event string) {
+	if events != nil {
+		*events = append(*events, event)
+	}
+}
