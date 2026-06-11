@@ -71,6 +71,7 @@ func TestConfigTypesHaveJSONAndYAMLTags(t *testing.T) {
 		reflect.TypeOf(AttachmentPolicy{}),
 		reflect.TypeOf(ListenerConfig{}),
 		reflect.TypeOf(ReconciliationConfig{}),
+		reflect.TypeOf(SafetyConfig{}),
 	}
 
 	for _, configType := range types {
@@ -126,6 +127,10 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "max pages", got: got.Reconciliation.MaxPages, want: 100},
 		{name: "lease TTL", got: got.Reconciliation.LeaseTTL, want: 2 * time.Minute},
 		{name: "TLS verification enabled", got: got.Connector.TLS.InsecureSkipVerify, want: false},
+		{name: "remote resource loading", got: got.Safety.AllowRemoteResources, want: false},
+		{name: "JavaScript execution", got: got.Safety.AllowJavaScript, want: false},
+		{name: "mailbox mutation", got: got.Safety.AllowMailboxMutation, want: false},
+		{name: "unrestricted link following", got: got.Safety.AllowUnrestrictedLinks, want: false},
 	}
 
 	for _, check := range checks {
@@ -190,6 +195,28 @@ func TestValidateSourceConfigAllowsAttachmentDenylistToOverrideAllowlist(t *test
 	}
 }
 
+func TestValidateSourceConfigRequiresExplicitOptInForUnrestrictedLinks(t *testing.T) {
+	t.Run("allowlisted remote links", func(t *testing.T) {
+		config := validSourceConfig()
+		config.Extraction.Links.FollowRemote = true
+		config.Extraction.Links.Allowlist = []string{"links.example.com"}
+
+		if err := ValidateSourceConfig(config); err != nil {
+			t.Fatalf("ValidateSourceConfig() error = %v", err)
+		}
+	})
+
+	t.Run("explicit unrestricted opt-in", func(t *testing.T) {
+		config := validSourceConfig()
+		config.Extraction.Links.FollowRemote = true
+		config.Safety.AllowUnrestrictedLinks = true
+
+		if err := ValidateSourceConfig(config); err != nil {
+			t.Fatalf("ValidateSourceConfig() error = %v", err)
+		}
+	})
+}
+
 func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -198,6 +225,11 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 	}{
 		{name: "unsupported provider", mutate: func(c *SourceConfig) { c.Connector.Provider = "jmap" }, wantErr: "unsupported"},
 		{name: "unbounded links", mutate: func(c *SourceConfig) { c.Extraction.Links.MaxLinksPerMessage = 0 }, wantErr: "max_links_per_message"},
+		{name: "remote resources", mutate: func(c *SourceConfig) { c.Safety.AllowRemoteResources = true }, wantErr: "allow_remote_resources"},
+		{name: "JavaScript", mutate: func(c *SourceConfig) { c.Safety.AllowJavaScript = true }, wantErr: "allow_javascript"},
+		{name: "mailbox mutation", mutate: func(c *SourceConfig) { c.Safety.AllowMailboxMutation = true }, wantErr: "allow_mailbox_mutation"},
+		{name: "remote links without boundary", mutate: func(c *SourceConfig) { c.Extraction.Links.FollowRemote = true }, wantErr: "allowlist"},
+		{name: "unrestricted opt-in without following", mutate: func(c *SourceConfig) { c.Safety.AllowUnrestrictedLinks = true }, wantErr: "requires extraction.links.follow_remote"},
 		{name: "missing endpoint", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "" }, wantErr: "endpoint is required"},
 		{name: "provider scheme mismatch", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "gmail://user@example.com" }, wantErr: "scheme"},
 		{name: "missing host", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "imaps:///INBOX" }, wantErr: "host"},
@@ -223,6 +255,7 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 		{name: "invalid mode", mutate: func(c *SourceConfig) { c.Crawl.Mode = "push" }, wantErr: "crawl.mode"},
 		{name: "batch exceeds message limit", mutate: func(c *SourceConfig) { c.Crawl.MaxMessages = 99 }, wantErr: "batch_size"},
 		{name: "zero message limit", mutate: func(c *SourceConfig) { c.Crawl.Limits.MaxMessageBytes = 0 }, wantErr: "max_message_bytes"},
+		{name: "zero attachment size limit", mutate: func(c *SourceConfig) { c.Crawl.Limits.MaxAttachmentBytes = 0 }, wantErr: "max_attachment_bytes"},
 		{name: "attachment larger than message", mutate: func(c *SourceConfig) {
 			c.Crawl.Limits.MaxAttachmentBytes = c.Crawl.Limits.MaxMessageBytes + 1
 		}, wantErr: "must not exceed max_message_bytes"},

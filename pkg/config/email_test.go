@@ -71,6 +71,15 @@ email:
 			if source.Email.Crawl.BatchSize != 100 || source.Email.Reconciliation.PollInterval != 5*time.Minute {
 				t.Fatalf("mail defaults were not applied: %#v", source.Email.SourceConfig)
 			}
+			if source.Email.Safety.AllowRemoteResources || source.Email.Safety.AllowJavaScript ||
+				source.Email.Safety.AllowMailboxMutation || source.Email.Safety.AllowUnrestrictedLinks {
+				t.Fatalf("omitted safety fields did not default to false: %#v", source.Email.Safety)
+			}
+			limits := source.Email.Crawl.Limits
+			if limits.MaxMessageBytes <= 0 || limits.MaxAttachmentBytes <= 0 ||
+				limits.MaxTotalAttachmentBytes <= 0 || limits.MaxAttachments <= 0 {
+				t.Fatalf("omitted size and attachment limits were not bounded: %#v", limits)
+			}
 			if err := source.Email.Validate(); err != nil {
 				t.Fatalf("validate decoded email config: %v", err)
 			}

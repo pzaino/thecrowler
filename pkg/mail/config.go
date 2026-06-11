@@ -40,6 +40,7 @@ type LinkPolicy = mailconfig.LinkPolicy
 type AttachmentPolicy = mailconfig.AttachmentPolicy
 type ListenerConfig = mailconfig.ListenerConfig
 type ReconciliationConfig = mailconfig.ReconciliationConfig
+type SafetyConfig = mailconfig.SafetyConfig
 type Config = mailconfig.Config
 type MailboxSelector = mailconfig.MailboxSelector
 type TLSConfig = mailconfig.TLSConfig

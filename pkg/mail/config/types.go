@@ -24,7 +24,19 @@ type SourceConfig struct {
 	Extraction     ExtractionConfig     `json:"extraction,omitempty" yaml:"extraction,omitempty"`
 	Listener       ListenerConfig       `json:"listener,omitempty" yaml:"listener,omitempty"`
 	Reconciliation ReconciliationConfig `json:"reconciliation,omitempty" yaml:"reconciliation,omitempty"`
+	Safety         SafetyConfig         `json:"safety,omitempty" yaml:"safety,omitempty"`
 	Extensions     map[string]any       `json:"extensions,omitempty" yaml:"extensions,omitempty"`
+}
+
+// SafetyConfig contains explicit opt-ins for behavior that can cross the mail
+// source's trust boundary. Unsupported active-content and mutation capabilities
+// remain invalid even when requested; unrestricted remote link following must
+// be acknowledged separately from enabling remote link following itself.
+type SafetyConfig struct {
+	AllowRemoteResources   bool `json:"allow_remote_resources,omitempty" yaml:"allow_remote_resources,omitempty"`
+	AllowJavaScript        bool `json:"allow_javascript,omitempty" yaml:"allow_javascript,omitempty"`
+	AllowMailboxMutation   bool `json:"allow_mailbox_mutation,omitempty" yaml:"allow_mailbox_mutation,omitempty"`
+	AllowUnrestrictedLinks bool `json:"allow_unrestricted_links,omitempty" yaml:"allow_unrestricted_links,omitempty"`
 }
 
 // ConnectorConfig identifies the connector and its network endpoint. Endpoint

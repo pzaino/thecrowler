@@ -109,6 +109,9 @@ func ValidateSourceConfig(config SourceConfig) error {
 	if err := validateExtraction(config.Extraction); err != nil {
 		return err
 	}
+	if err := validateSafety(config.Safety, config.Extraction.Links); err != nil {
+		return err
+	}
 	if err := validateListener(config.Crawl.Mode, provider, config.Listener); err != nil {
 		return err
 	}
@@ -299,6 +302,35 @@ func validateExtraction(config ExtractionConfig) error {
 		}
 	}
 	return nil
+}
+
+func validateSafety(config SafetyConfig, links LinkPolicy) error {
+	if config.AllowRemoteResources {
+		return fmt.Errorf("safety.allow_remote_resources is not supported; message content must remain static")
+	}
+	if config.AllowJavaScript {
+		return fmt.Errorf("safety.allow_javascript is not supported; message content must not execute JavaScript")
+	}
+	if config.AllowMailboxMutation {
+		return fmt.Errorf("safety.allow_mailbox_mutation is not supported; mail sources must remain read-only")
+	}
+
+	if config.AllowUnrestrictedLinks && !links.FollowRemote {
+		return fmt.Errorf("safety.allow_unrestricted_links requires extraction.links.follow_remote")
+	}
+	if links.FollowRemote && !hasNonEmptyValue(links.Allowlist) && !config.AllowUnrestrictedLinks {
+		return fmt.Errorf("extraction.links.follow_remote requires a non-empty allowlist or safety.allow_unrestricted_links=true")
+	}
+	return nil
+}
+
+func hasNonEmptyValue(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateListener(mode Mode, provider string, config ListenerConfig) error {
