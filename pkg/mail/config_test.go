@@ -149,6 +149,8 @@ func TestValidateSourceConfigProviders(t *testing.T) {
 		endpoint    string
 		withoutAuth bool
 	}{
+		{name: "POP3", provider: "pop3", endpoint: "pop3s://mail.example.com:995"},
+		{name: "plain POP3", provider: "POP3", endpoint: "pop3://mail.example.com:110"},
 		{name: "IMAP", provider: "imap", endpoint: "imaps://mail.example.com:993"},
 		{name: "plain IMAP", provider: "IMAP", endpoint: "imap://mail.example.com:143"},
 		{name: "Gmail", provider: "gmail", endpoint: "gmail://user@example.com"},
@@ -192,7 +194,7 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 		mutate  func(*SourceConfig)
 		wantErr string
 	}{
-		{name: "unsupported provider", mutate: func(c *SourceConfig) { c.Connector.Provider = "pop3" }, wantErr: "unsupported"},
+		{name: "unsupported provider", mutate: func(c *SourceConfig) { c.Connector.Provider = "jmap" }, wantErr: "unsupported"},
 		{name: "unbounded links", mutate: func(c *SourceConfig) { c.Extraction.Links.MaxLinksPerMessage = 0 }, wantErr: "max_links_per_message"},
 		{name: "missing endpoint", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "" }, wantErr: "endpoint is required"},
 		{name: "provider scheme mismatch", mutate: func(c *SourceConfig) { c.Connector.Endpoint = "gmail://user@example.com" }, wantErr: "scheme"},
@@ -207,7 +209,7 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 			c.Connector.Provider = "gmail"
 			c.Connector.Endpoint = "gmail://user@example.com"
 			c.Connector.TLS.InsecureSkipVerify = true
-		}, wantErr: "only supported by the imap provider"},
+		}, wantErr: "only supported by network mail providers"},
 		{name: "TLS options on local provider", mutate: func(c *SourceConfig) {
 			c.Connector.Provider = "maildir"
 			c.Connector.Endpoint = "maildir:///var/mail/user"

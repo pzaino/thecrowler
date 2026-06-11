@@ -22,6 +22,7 @@ const (
 )
 
 var providerSchemes = map[string]string{
+	"pop3":       "pop3",
 	"imap":       "imap",
 	"gmail":      "gmail",
 	"graph-mail": "graph-mail",
@@ -133,6 +134,10 @@ func validateEndpoint(rawEndpoint, provider, expectedScheme string, tlsConfig TL
 		if scheme != "imap" && scheme != "imaps" {
 			return fmt.Errorf("connector.endpoint scheme must be imap or imaps for provider %q", provider)
 		}
+	} else if provider == "pop3" {
+		if scheme != "pop3" && scheme != "pop3s" {
+			return fmt.Errorf("connector.endpoint scheme must be pop3 or pop3s for provider %q", provider)
+		}
 	} else if scheme != expectedScheme {
 		return fmt.Errorf("connector.endpoint scheme must be %q for provider %q", expectedScheme, provider)
 	}
@@ -171,13 +176,13 @@ func validateEndpoint(rawEndpoint, provider, expectedScheme string, tlsConfig TL
 		return err
 	}
 
-	if provider == "imap" {
-		usesTLS := scheme == "imaps"
-		if !usesTLS && (tlsConfig.InsecureSkipVerify || strings.TrimSpace(tlsConfig.ServerName) != "") {
-			return fmt.Errorf("connector.tls options require an imaps endpoint")
+	if provider == "imap" || provider == "pop3" {
+		secureScheme := map[string]string{"imap": "imaps", "pop3": "pop3s"}[provider]
+		if scheme != secureScheme && (tlsConfig.InsecureSkipVerify || strings.TrimSpace(tlsConfig.ServerName) != "") {
+			return fmt.Errorf("connector.tls options require an %s endpoint", secureScheme)
 		}
 	} else if tlsConfig.InsecureSkipVerify || strings.TrimSpace(tlsConfig.ServerName) != "" {
-		return fmt.Errorf("connector.tls options are only supported by the imap provider")
+		return fmt.Errorf("connector.tls options are only supported by network mail providers")
 	}
 
 	return nil
@@ -310,7 +315,7 @@ func validateListener(mode Mode, provider string, config ListenerConfig) error {
 	if config.Enabled && mode != ModeListen {
 		return fmt.Errorf("crawl.mode must be %q when listener.enabled is true", ModeListen)
 	}
-	if config.Enabled && (provider == "maildir" || provider == "mbox") {
+	if config.Enabled && (provider == "pop3" || provider == "maildir" || provider == "mbox") {
 		return fmt.Errorf("listener mode is not supported by provider %q", provider)
 	}
 	return nil
