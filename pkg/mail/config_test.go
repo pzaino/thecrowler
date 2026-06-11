@@ -118,6 +118,8 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "listener buffer", got: got.Listener.BufferSize, want: 128},
 		{name: "coalesce window", got: got.Listener.CoalesceWindow, want: time.Second},
 		{name: "reconnect backoff", got: got.Listener.ReconnectBackoff, want: 5 * time.Second},
+		{name: "maximum reconnect backoff", got: got.Listener.MaxReconnectBackoff, want: time.Minute},
+		{name: "IDLE reissue interval", got: got.Listener.IdleReissueInterval, want: 25 * time.Minute},
 		{name: "poll interval", got: got.Reconciliation.PollInterval, want: 5 * time.Minute},
 		{name: "full sync interval", got: got.Reconciliation.FullSyncInterval, want: 24 * time.Hour},
 		{name: "page size", got: got.Reconciliation.PageSize, want: 100},
@@ -240,6 +242,12 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 		}, wantErr: "must not exceed max_total_attachment_bytes"},
 		{name: "listen mode without listener", mutate: func(c *SourceConfig) { c.Crawl.Mode = ModeListen }, wantErr: "listener.enabled"},
 		{name: "listener in poll mode", mutate: func(c *SourceConfig) { c.Listener.Enabled = true }, wantErr: "crawl.mode"},
+		{name: "maximum reconnect below initial", mutate: func(c *SourceConfig) {
+			c.Listener.MaxReconnectBackoff = c.Listener.ReconnectBackoff - time.Second
+		}, wantErr: "max_reconnect_backoff"},
+		{name: "zero IDLE reissue interval", mutate: func(c *SourceConfig) {
+			c.Listener.IdleReissueInterval = 0
+		}, wantErr: "idle_reissue_interval"},
 		{name: "listener on local provider", mutate: func(c *SourceConfig) {
 			c.Connector.Provider = "maildir"
 			c.Connector.Endpoint = "maildir:///var/mail/user"

@@ -65,9 +65,11 @@ func DefaultSourceConfig() SourceConfig {
 			},
 		},
 		Listener: ListenerConfig{
-			BufferSize:       128,
-			CoalesceWindow:   time.Second,
-			ReconnectBackoff: 5 * time.Second,
+			BufferSize:          128,
+			CoalesceWindow:      time.Second,
+			ReconnectBackoff:    5 * time.Second,
+			MaxReconnectBackoff: time.Minute,
+			IdleReissueInterval: 25 * time.Minute,
 		},
 		Reconciliation: ReconciliationConfig{
 			PollInterval:     5 * time.Minute,
@@ -308,6 +310,12 @@ func validateListener(mode Mode, provider string, config ListenerConfig) error {
 	}
 	if config.ReconnectBackoff <= 0 {
 		return fmt.Errorf("listener.reconnect_backoff must be greater than zero")
+	}
+	if config.MaxReconnectBackoff < config.ReconnectBackoff {
+		return fmt.Errorf("listener.max_reconnect_backoff must be at least listener.reconnect_backoff")
+	}
+	if config.IdleReissueInterval <= 0 {
+		return fmt.Errorf("listener.idle_reissue_interval must be greater than zero")
 	}
 	if mode == ModeListen && !config.Enabled {
 		return fmt.Errorf("listener.enabled must be true when crawl.mode is %q", ModeListen)

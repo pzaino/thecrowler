@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestIMAPIdleListenerStartsPriorityMailboxSessions(t *testing.T) {
@@ -119,36 +120,147 @@ func TestIMAPIdleListenerCancellationInterruptsIdle(t *testing.T) {
 	client.awaitClosed(t)
 }
 
-func TestIMAPIdleListenerShutdownsAllSessionsWhenOneFails(t *testing.T) {
+func TestIMAPIdleListenerReconnectsAfterDisconnectWithoutOverlappingSessions(t *testing.T) {
 	factory := newFakeIMAPIdleFactory()
 	config := testIMAPConfig()
-	config.Mailboxes = MailboxSelector{Include: []string{"INBOX", "Archive"}}
+	config.ReconnectBackoff = time.Millisecond
+	config.MaxReconnectBackoff = 4 * time.Millisecond
 	listener, err := newIMAPIdleListener(config, factory.newClient)
 	if err != nil {
 		t.Fatalf("newIMAPIdleListener() error = %v", err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- listener.Listen(context.Background(), []MailboxKey{
-			{Mailbox: Mailbox{ID: "INBOX"}},
-			{Mailbox: Mailbox{ID: "Archive"}},
-		}, idleEventSinkFunc(func(context.Context, MailboxKey) error { return nil }))
+		done <- listener.Listen(ctx, []MailboxKey{{Mailbox: Mailbox{ID: "INBOX"}}}, idleEventSinkFunc(func(context.Context, MailboxKey) error { return nil }))
 	}()
 
-	clients := factory.awaitClients(t, 2)
-	for _, client := range clients {
-		client.awaitIdle(t, 1)
+	first := factory.awaitClients(t, 1)[0]
+	first.awaitIdle(t, 1)
+	first.fail <- errors.New("server disconnected")
+	first.awaitClosed(t)
+
+	second := factory.awaitClients(t, 2)[1]
+	second.awaitIdle(t, 1)
+	if got := factory.maximumOpen(); got != 1 {
+		t.Fatalf("maximum simultaneously open clients = %d, want 1", got)
 	}
-	sentinel := errors.New("server disconnected")
-	clients[0].fail <- sentinel
-	if err := awaitValue(t, done, "listener failure shutdown"); !errors.Is(err, sentinel) {
-		t.Fatalf("Listen() error = %v, want sentinel", err)
+	status := listener.Status()
+	if status.Degraded || status.ActiveSessions != 1 || status.ReconnectCount != 1 || status.LastError != "" {
+		t.Fatalf("recovered status = %#v, want one healthy session after one reconnect", status)
 	}
-	for _, client := range clients {
-		client.awaitClosed(t)
+
+	cancel()
+	if err := awaitValue(t, done, "listener cancellation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Listen() error = %v, want context.Canceled", err)
 	}
-	if clients[1].stoppedCount() != 1 {
-		t.Fatalf("peer stopped IDLE sessions = %d, want 1", clients[1].stoppedCount())
+}
+
+func TestIMAPIdleListenerAuthenticationFailureIsDegradedAndCancellationInterruptsBackoff(t *testing.T) {
+	factory := newFakeIMAPIdleFactory()
+	factory.authErrors = []error{errors.New("credentials rejected")}
+	config := testIMAPConfig()
+	config.ReconnectBackoff = time.Hour
+	config.MaxReconnectBackoff = time.Hour
+	listener, err := newIMAPIdleListener(config, factory.newClient)
+	if err != nil {
+		t.Fatalf("newIMAPIdleListener() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- listener.Listen(ctx, []MailboxKey{{Mailbox: Mailbox{ID: "INBOX"}}}, idleEventSinkFunc(func(context.Context, MailboxKey) error { return nil }))
+	}()
+
+	client := factory.awaitClients(t, 1)[0]
+	client.awaitClosed(t)
+	status := awaitIMAPIdleStatus(t, listener, func(status IMAPIdleListenerStatus) bool {
+		return status.Running && status.Degraded && status.ActiveSessions == 0 && status.ReconnectCount == 1 && status.LastError != ""
+	})
+	if status.LastError == "" {
+		t.Fatalf("authentication failure status = %#v, want a categorized error", status)
+	}
+
+	cancel()
+	if err := awaitValue(t, done, "cancelled reconnect wait"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Listen() error = %v, want context.Canceled", err)
+	}
+	if got := factory.clientCount(); got != 1 {
+		t.Fatalf("created clients = %d, want 1", got)
+	}
+}
+
+func TestIMAPIdleListenerRecoversAfterAuthenticationFailure(t *testing.T) {
+	factory := newFakeIMAPIdleFactory()
+	factory.authErrors = []error{errors.New("temporary authentication failure")}
+	config := testIMAPConfig()
+	config.ReconnectBackoff = time.Millisecond
+	config.MaxReconnectBackoff = 2 * time.Millisecond
+	listener, err := newIMAPIdleListener(config, factory.newClient)
+	if err != nil {
+		t.Fatalf("newIMAPIdleListener() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- listener.Listen(ctx, []MailboxKey{{Mailbox: Mailbox{ID: "INBOX"}}}, idleEventSinkFunc(func(context.Context, MailboxKey) error { return nil }))
+	}()
+
+	factory.awaitClients(t, 1)[0].awaitClosed(t)
+	recovered := factory.awaitClients(t, 2)[1]
+	recovered.awaitIdle(t, 1)
+	status := listener.Status()
+	if status.Degraded || status.ActiveSessions != 1 || status.LastError != "" {
+		t.Fatalf("status after authentication recovery = %#v, want healthy", status)
+	}
+
+	cancel()
+	awaitValue(t, done, "listener shutdown after recovery")
+}
+
+func TestIMAPIdleListenerPeriodicallyReissuesIdle(t *testing.T) {
+	factory := newFakeIMAPIdleFactory()
+	config := testIMAPConfig()
+	config.IdleReissueInterval = 10 * time.Millisecond
+	listener, err := newIMAPIdleListener(config, factory.newClient)
+	if err != nil {
+		t.Fatalf("newIMAPIdleListener() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- listener.Listen(ctx, []MailboxKey{{Mailbox: Mailbox{ID: "INBOX"}}}, idleEventSinkFunc(func(context.Context, MailboxKey) error { return nil }))
+	}()
+
+	client := factory.awaitClients(t, 1)[0]
+	client.awaitIdle(t, 1)
+	client.awaitIdle(t, 2)
+	if client.stoppedCount() != 1 {
+		t.Fatalf("stopped IDLE sessions after timer = %d, want 1", client.stoppedCount())
+	}
+	status := listener.Status()
+	if status.Degraded || status.ActiveSessions != 1 || status.ReconnectCount != 0 {
+		t.Fatalf("status after IDLE reissue = %#v, want one healthy connection without reconnect", status)
+	}
+
+	cancel()
+	awaitValue(t, done, "listener shutdown after IDLE reissue")
+}
+
+func TestNextIMAPIdleBackoffIsBounded(t *testing.T) {
+	maximum := 8 * time.Second
+	for _, test := range []struct {
+		current time.Duration
+		want    time.Duration
+	}{
+		{current: time.Second, want: 2 * time.Second},
+		{current: 4 * time.Second, want: 8 * time.Second},
+		{current: 7 * time.Second, want: 8 * time.Second},
+		{current: 8 * time.Second, want: 8 * time.Second},
+	} {
+		if got := nextIMAPIdleBackoff(test.current, maximum); got != test.want {
+			t.Errorf("nextIMAPIdleBackoff(%s, %s) = %s, want %s", test.current, maximum, got, test.want)
+		}
 	}
 }
 
@@ -173,6 +285,21 @@ func TestIMAPIdleListenerRejectsOverlappingListenCalls(t *testing.T) {
 	awaitValue(t, done, "first listener shutdown")
 }
 
+func awaitIMAPIdleStatus(t *testing.T, listener *IMAPIdleListener, ready func(IMAPIdleListenerStatus) bool) IMAPIdleListenerStatus {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		status := listener.Status()
+		if ready(status) {
+			return status
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("listener status did not reach expected state; last status = %#v", status)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 type idleEventSinkFunc func(context.Context, MailboxKey) error
 
 func (f idleEventSinkFunc) Notify(ctx context.Context, mailbox MailboxKey) error {
@@ -180,9 +307,12 @@ func (f idleEventSinkFunc) Notify(ctx context.Context, mailbox MailboxKey) error
 }
 
 type fakeIMAPIdleFactory struct {
-	mu      sync.Mutex
-	clients []*fakeIMAPIdleClient
-	created chan *fakeIMAPIdleClient
+	mu         sync.Mutex
+	clients    []*fakeIMAPIdleClient
+	created    chan *fakeIMAPIdleClient
+	authErrors []error
+	open       int
+	maxOpen    int
 }
 
 func newFakeIMAPIdleFactory() *fakeIMAPIdleFactory {
@@ -190,13 +320,28 @@ func newFakeIMAPIdleFactory() *fakeIMAPIdleFactory {
 }
 
 func (f *fakeIMAPIdleFactory) newClient(context.Context, IMAPConnectorConfig) (imapIdleClient, error) {
+	f.mu.Lock()
+	var authErr error
+	if len(f.authErrors) != 0 {
+		authErr = f.authErrors[0]
+		f.authErrors = f.authErrors[1:]
+	}
+	f.open++
+	if f.open > f.maxOpen {
+		f.maxOpen = f.open
+	}
 	client := &fakeIMAPIdleClient{
 		selected: make(chan string, 1),
 		started:  make(chan fakeIdleSession, 8),
 		fail:     make(chan error, 1),
 		closed:   make(chan struct{}),
+		authErr:  authErr,
+		onClose: func() {
+			f.mu.Lock()
+			f.open--
+			f.mu.Unlock()
+		},
 	}
-	f.mu.Lock()
 	f.clients = append(f.clients, client)
 	f.mu.Unlock()
 	f.created <- client
@@ -217,6 +362,18 @@ func (f *fakeIMAPIdleFactory) awaitClients(t *testing.T, count int) []*fakeIMAPI
 	}
 }
 
+func (f *fakeIMAPIdleFactory) clientCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.clients)
+}
+
+func (f *fakeIMAPIdleFactory) maximumOpen() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxOpen
+}
+
 type fakeIdleSession struct {
 	call   int
 	change chan struct{}
@@ -233,13 +390,16 @@ type fakeIMAPIdleClient struct {
 	stopped     int
 	logoutCalls int
 	closeCalls  int
+	authErr     error
+	onClose     func()
 }
 
 func (f *fakeIMAPIdleClient) Authenticate(_ context.Context, auth IMAPAuth) error {
 	f.mu.Lock()
 	f.auth = auth
+	err := f.authErr
 	f.mu.Unlock()
-	return nil
+	return err
 }
 
 func (f *fakeIMAPIdleClient) SelectMailbox(_ context.Context, mailbox string) (imapMailboxStatus, error) {
@@ -283,6 +443,9 @@ func (f *fakeIMAPIdleClient) Close() error {
 	f.closeCalls++
 	if f.closeCalls == 1 {
 		close(f.closed)
+		if f.onClose != nil {
+			f.onClose()
+		}
 	}
 	f.mu.Unlock()
 	return nil

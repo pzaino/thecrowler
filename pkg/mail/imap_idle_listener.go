@@ -21,6 +21,23 @@ var (
 	ErrIMAPIdleListenerRunning = errors.New("mail: IMAP IDLE listener is already running")
 )
 
+// IMAPIdleListenerStatus is a concurrency-safe snapshot of listener health.
+// A running listener is degraded while any selected mailbox is disconnected or
+// retrying. LastError is cleared after every mailbox has recovered.
+type IMAPIdleListenerStatus struct {
+	Running          bool   `json:"running" yaml:"running"`
+	Degraded         bool   `json:"degraded" yaml:"degraded"`
+	ActiveSessions   int    `json:"active_sessions" yaml:"active_sessions"`
+	ExpectedSessions int    `json:"expected_sessions" yaml:"expected_sessions"`
+	ReconnectCount   uint64 `json:"reconnect_count" yaml:"reconnect_count"`
+	LastError        string `json:"last_error,omitempty" yaml:"last_error,omitempty"`
+}
+
+type imapIdleMailboxState struct {
+	active    bool
+	lastError string
+}
+
 // imapIdleClient is the fakeable protocol boundary used by IMAPIdleListener.
 // Each client owns exactly one selected mailbox and one IDLE session at a time.
 type imapIdleClient interface {
@@ -41,8 +58,11 @@ type IMAPIdleListener struct {
 	config  IMAPConnectorConfig
 	factory imapIdleClientFactory
 
-	mu      sync.Mutex
-	running bool
+	mu             sync.Mutex
+	running        bool
+	mailboxStates  map[string]imapIdleMailboxState
+	reconnectCount uint64
+	lastError      string
 }
 
 // NewIMAPIdleListener constructs a listener using the mailbox include order as
@@ -63,8 +83,33 @@ func newIMAPIdleListener(config IMAPConnectorConfig, factory imapIdleClientFacto
 	return &IMAPIdleListener{config: config, factory: factory}, nil
 }
 
-// Listen implements Listener. It returns when ctx is cancelled or when any
-// mailbox session fails; cancellation of one session shuts down all others.
+// Status returns a point-in-time health snapshot without exposing credentials
+// or protocol client objects.
+func (listener *IMAPIdleListener) Status() IMAPIdleListenerStatus {
+	if listener == nil {
+		return IMAPIdleListenerStatus{}
+	}
+	listener.mu.Lock()
+	defer listener.mu.Unlock()
+
+	status := IMAPIdleListenerStatus{
+		Running:          listener.running,
+		ExpectedSessions: len(listener.mailboxStates),
+		ReconnectCount:   listener.reconnectCount,
+		LastError:        listener.lastError,
+	}
+	for _, state := range listener.mailboxStates {
+		if state.active {
+			status.ActiveSessions++
+		}
+	}
+	status.Degraded = status.Running && (status.ActiveSessions < status.ExpectedSessions || status.LastError != "")
+	return status
+}
+
+// Listen implements Listener. Each mailbox reconnects independently after
+// connection, authentication, selection, or IDLE failures. A fatal sink error
+// still cancels all sessions because hints can no longer be delivered.
 func (listener *IMAPIdleListener) Listen(ctx context.Context, mailboxes []MailboxKey, sink EventSink) error {
 	if listener == nil || listener.factory == nil {
 		return fmt.Errorf("%w: listener is not initialized", ErrInvalidIMAPIdleListener)
@@ -75,12 +120,13 @@ func (listener *IMAPIdleListener) Listen(ctx context.Context, mailboxes []Mailbo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !listener.start() {
+
+	selected := priorityIMAPMailboxes(mailboxes, listener.config.Mailboxes)
+	if !listener.start(selected) {
 		return ErrIMAPIdleListenerRunning
 	}
 	defer listener.stop()
 
-	selected := priorityIMAPMailboxes(mailboxes, listener.config.Mailboxes)
 	group, groupCtx := errgroup.WithContext(ctx)
 	for _, mailbox := range selected {
 		mailbox := mailbox
@@ -97,19 +143,60 @@ func (listener *IMAPIdleListener) Listen(ctx context.Context, mailboxes []Mailbo
 }
 
 func (listener *IMAPIdleListener) listenMailbox(ctx context.Context, mailbox MailboxKey, sink EventSink) error {
+	key := imapMailboxStateKey(mailbox)
+	backoff := listener.config.ReconnectBackoff
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		client, err := listener.connectMailbox(ctx, mailbox)
+		if err == nil {
+			listener.markConnected(key)
+			err = listener.runIdleSession(ctx, client, mailbox, sink)
+			listener.markDisconnected(key, err)
+			shutdownIMAPIdleClient(ctx, client, listener.config.Timeout)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			var sinkErr *imapIdleSinkError
+			if errors.As(err, &sinkErr) {
+				return sinkErr.err
+			}
+		} else {
+			listener.markDisconnected(key, err)
+		}
+
+		listener.recordReconnect()
+		if err := waitForIMAPIdleReconnect(ctx, backoff); err != nil {
+			return err
+		}
+		backoff = nextIMAPIdleBackoff(backoff, listener.config.MaxReconnectBackoff)
+	}
+}
+
+func (listener *IMAPIdleListener) connectMailbox(ctx context.Context, mailbox MailboxKey) (imapIdleClient, error) {
 	client, err := listener.factory(ctx, listener.config)
 	if err != nil {
-		return fmt.Errorf("mail: connect IMAP IDLE mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
+		return nil, fmt.Errorf("mail: connect IMAP IDLE mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
 	}
-	defer shutdownIMAPIdleClient(client, listener.config.Timeout)
-
 	if err := client.Authenticate(ctx, listener.config.Auth); err != nil {
-		return imapError("authenticate IDLE client", err)
+		shutdownIMAPIdleClient(ctx, client, listener.config.Timeout)
+		return nil, imapError("authenticate IDLE client", err)
 	}
 	if _, err := client.SelectMailbox(ctx, imapMailboxName(mailbox.Mailbox)); err != nil {
-		return imapError("select IDLE mailbox", err)
+		shutdownIMAPIdleClient(ctx, client, listener.config.Timeout)
+		return nil, imapError("select IDLE mailbox", err)
 	}
+	return client, nil
+}
 
+type imapIdleSinkError struct{ err error }
+
+func (err *imapIdleSinkError) Error() string { return err.err.Error() }
+func (err *imapIdleSinkError) Unwrap() error { return err.err }
+
+func (listener *IMAPIdleListener) runIdleSession(ctx context.Context, client imapIdleClient, mailbox MailboxKey, sink EventSink) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -121,12 +208,15 @@ func (listener *IMAPIdleListener) listenMailbox(ctx context.Context, mailbox Mai
 			idleDone <- client.Idle(ctx, stop, changes)
 		}()
 
+		timer := time.NewTimer(listener.config.IdleReissueInterval)
 		select {
 		case <-ctx.Done():
+			stopTimer(timer)
 			close(stop)
 			<-idleDone
 			return ctx.Err()
 		case err := <-idleDone:
+			stopTimer(timer)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
@@ -134,7 +224,16 @@ func (listener *IMAPIdleListener) listenMailbox(ctx context.Context, mailbox Mai
 				err = errors.New("IDLE session ended without a change notification")
 			}
 			return fmt.Errorf("mail: IDLE mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
+		case <-timer.C:
+			close(stop)
+			if err := <-idleDone; err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				return fmt.Errorf("mail: reissue IDLE mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
+			}
 		case <-changes:
+			stopTimer(timer)
 			close(stop)
 			if err := <-idleDone; err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -146,19 +245,52 @@ func (listener *IMAPIdleListener) listenMailbox(ctx context.Context, mailbox Mai
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return ctxErr
 				}
-				return fmt.Errorf("mail: enqueue reconciliation for mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
+				return &imapIdleSinkError{err: fmt.Errorf("mail: enqueue reconciliation for mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)}
 			}
 		}
 	}
 }
 
-func (listener *IMAPIdleListener) start() bool {
+func waitForIMAPIdleReconnect(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer stopTimer(timer)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func nextIMAPIdleBackoff(current, maximum time.Duration) time.Duration {
+	if current >= maximum || current > maximum/2 {
+		return maximum
+	}
+	return current * 2
+}
+
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func (listener *IMAPIdleListener) start(mailboxes []MailboxKey) bool {
 	listener.mu.Lock()
 	defer listener.mu.Unlock()
 	if listener.running {
 		return false
 	}
 	listener.running = true
+	listener.reconnectCount = 0
+	listener.lastError = ""
+	listener.mailboxStates = make(map[string]imapIdleMailboxState, len(mailboxes))
+	for _, mailbox := range mailboxes {
+		listener.mailboxStates[imapMailboxStateKey(mailbox)] = imapIdleMailboxState{}
+	}
 	return true
 }
 
@@ -166,6 +298,56 @@ func (listener *IMAPIdleListener) stop() {
 	listener.mu.Lock()
 	listener.running = false
 	listener.mu.Unlock()
+}
+
+func (listener *IMAPIdleListener) markConnected(key string) {
+	listener.mu.Lock()
+	state := listener.mailboxStates[key]
+	state.active = true
+	state.lastError = ""
+	listener.mailboxStates[key] = state
+	listener.refreshLastErrorLocked()
+	listener.mu.Unlock()
+}
+
+func (listener *IMAPIdleListener) markDisconnected(key string, err error) {
+	listener.mu.Lock()
+	state := listener.mailboxStates[key]
+	state.active = false
+	if err != nil && !errors.Is(err, context.Canceled) {
+		state.lastError = safeIMAPIdleStatusError(err)
+	}
+	listener.mailboxStates[key] = state
+	listener.refreshLastErrorLocked()
+	listener.mu.Unlock()
+}
+
+func safeIMAPIdleStatusError(err error) string {
+	var mailErr *Error
+	if errors.As(err, &mailErr) {
+		return mailErr.Error()
+	}
+	return "mail: IMAP listener session unavailable"
+}
+
+func (listener *IMAPIdleListener) recordReconnect() {
+	listener.mu.Lock()
+	listener.reconnectCount++
+	listener.mu.Unlock()
+}
+
+func (listener *IMAPIdleListener) refreshLastErrorLocked() {
+	listener.lastError = ""
+	for _, state := range listener.mailboxStates {
+		if state.lastError != "" {
+			listener.lastError = state.lastError
+			return
+		}
+	}
+}
+
+func imapMailboxStateKey(mailbox MailboxKey) string {
+	return strings.ToLower(strings.TrimSpace(imapMailboxName(mailbox.Mailbox)))
 }
 
 func priorityIMAPMailboxes(mailboxes []MailboxKey, selector MailboxSelector) []MailboxKey {
@@ -236,11 +418,11 @@ func dialIMAPIdleClient(ctx context.Context, config IMAPConnectorConfig) (imapId
 	return idleClient, nil
 }
 
-func shutdownIMAPIdleClient(client imapIdleClient, timeout time.Duration) {
+func shutdownIMAPIdleClient(parent context.Context, client imapIdleClient, timeout time.Duration) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	_ = client.Logout(ctx)
 	_ = client.Close()

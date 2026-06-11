@@ -441,6 +441,11 @@ func TestIMAPConnectorConfigFromSource(t *testing.T) {
 		},
 		Auth:      AuthConfig{Identity: "account-1"},
 		Mailboxes: MailboxConfig{Include: []string{"INBOX"}},
+		Listener: ListenerConfig{
+			ReconnectBackoff:    2 * time.Second,
+			MaxReconnectBackoff: 30 * time.Second,
+			IdleReissueInterval: 20 * time.Minute,
+		},
 	}, IMAPAuth{Username: "reader", Password: "secret"})
 	if err != nil {
 		t.Fatalf("IMAPConnectorConfigFromSource() error = %v", err)
@@ -450,6 +455,9 @@ func TestIMAPConnectorConfigFromSource(t *testing.T) {
 	}
 	if config.AccountID != "account-1" || config.TLS.ServerName != "imap.example.test" || !reflect.DeepEqual(config.Mailboxes.Include, []string{"INBOX"}) {
 		t.Fatalf("translated config = %#v", config)
+	}
+	if config.ReconnectBackoff != 2*time.Second || config.MaxReconnectBackoff != 30*time.Second || config.IdleReissueInterval != 20*time.Minute {
+		t.Fatalf("listener timing config = %#v", config)
 	}
 }
 

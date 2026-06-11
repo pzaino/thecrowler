@@ -109,11 +109,13 @@ type AttachmentPolicy struct {
 // ListenerConfig controls optional change-hint listening. Notifications only
 // request reconciliation and never advance durable progress.
 type ListenerConfig struct {
-	Enabled          bool           `json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	BufferSize       int            `json:"buffer_size,omitempty" yaml:"buffer_size,omitempty"`
-	CoalesceWindow   time.Duration  `json:"coalesce_window,omitempty" yaml:"coalesce_window,omitempty"`
-	ReconnectBackoff time.Duration  `json:"reconnect_backoff,omitempty" yaml:"reconnect_backoff,omitempty"`
-	Extensions       map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
+	Enabled             bool           `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	BufferSize          int            `json:"buffer_size,omitempty" yaml:"buffer_size,omitempty"`
+	CoalesceWindow      time.Duration  `json:"coalesce_window,omitempty" yaml:"coalesce_window,omitempty"`
+	ReconnectBackoff    time.Duration  `json:"reconnect_backoff,omitempty" yaml:"reconnect_backoff,omitempty"`
+	MaxReconnectBackoff time.Duration  `json:"max_reconnect_backoff,omitempty" yaml:"max_reconnect_backoff,omitempty"`
+	IdleReissueInterval time.Duration  `json:"idle_reissue_interval,omitempty" yaml:"idle_reissue_interval,omitempty"`
+	Extensions          map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 }
 
 // ReconciliationConfig controls the authoritative convergence loop.

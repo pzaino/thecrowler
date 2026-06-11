@@ -48,14 +48,17 @@ type IMAPAuth struct {
 // IMAPConnectorConfig configures an IMAPConnector. Secrets belong in Auth only
 // after resolving SourceConfig.Auth.CredentialRef and must not be logged.
 type IMAPConnectorConfig struct {
-	Host      string
-	Port      int
-	TLSPolicy IMAPTLSPolicy
-	TLS       TLSConfig
-	Timeout   time.Duration
-	AccountID string
-	Auth      IMAPAuth
-	Mailboxes MailboxSelector
+	Host                string
+	Port                int
+	TLSPolicy           IMAPTLSPolicy
+	TLS                 TLSConfig
+	Timeout             time.Duration
+	AccountID           string
+	Auth                IMAPAuth
+	Mailboxes           MailboxSelector
+	ReconnectBackoff    time.Duration
+	MaxReconnectBackoff time.Duration
+	IdleReissueInterval time.Duration
 }
 
 // IMAPConnector is a read-only, UID-based implementation of Connector. IMAP
@@ -153,14 +156,17 @@ func IMAPConnectorConfigFromSource(config SourceConfig, auth IMAPAuth) (IMAPConn
 		policy = IMAPTLSImplicit
 	}
 	return IMAPConnectorConfig{
-		Host:      endpoint.Hostname(),
-		Port:      port,
-		TLSPolicy: policy,
-		TLS:       config.Connector.TLS,
-		Timeout:   config.Connector.Timeout,
-		AccountID: config.Auth.Identity,
-		Auth:      auth,
-		Mailboxes: MailboxSelector{Include: config.Mailboxes.Include, Exclude: config.Mailboxes.Exclude},
+		Host:                endpoint.Hostname(),
+		Port:                port,
+		TLSPolicy:           policy,
+		TLS:                 config.Connector.TLS,
+		Timeout:             config.Connector.Timeout,
+		AccountID:           config.Auth.Identity,
+		Auth:                auth,
+		Mailboxes:           MailboxSelector{Include: config.Mailboxes.Include, Exclude: config.Mailboxes.Exclude},
+		ReconnectBackoff:    config.Listener.ReconnectBackoff,
+		MaxReconnectBackoff: config.Listener.MaxReconnectBackoff,
+		IdleReissueInterval: config.Listener.IdleReissueInterval,
 	}, nil
 }
 
@@ -183,6 +189,15 @@ func normalizeIMAPConfig(config IMAPConnectorConfig) IMAPConnectorConfig {
 	}
 	if config.Timeout <= 0 {
 		config.Timeout = 30 * time.Second
+	}
+	if config.ReconnectBackoff <= 0 {
+		config.ReconnectBackoff = 5 * time.Second
+	}
+	if config.MaxReconnectBackoff <= 0 {
+		config.MaxReconnectBackoff = time.Minute
+	}
+	if config.IdleReissueInterval <= 0 {
+		config.IdleReissueInterval = 25 * time.Minute
 	}
 	return config
 }
@@ -207,6 +222,12 @@ func validateIMAPConfig(config IMAPConnectorConfig) error {
 	}
 	if (config.Auth.Password == "") == (config.Auth.Token == "") {
 		return errors.New("mail: IMAP authentication requires exactly one of password or token")
+	}
+	if config.MaxReconnectBackoff < config.ReconnectBackoff {
+		return errors.New("mail: IMAP maximum reconnect backoff must be at least the initial reconnect backoff")
+	}
+	if config.IdleReissueInterval <= 0 {
+		return errors.New("mail: IMAP IDLE reissue interval must be greater than zero")
 	}
 	return nil
 }
