@@ -385,3 +385,31 @@ Validation error text is diagnostic and may evolve; clients should branch on
 the HTTP status and `error_code`, not exact string matching. Request diagnostics
 are redacted before being returned, but clients must still avoid sending
 secrets in source payloads.
+
+## Listener ownership and scaled engine dispatch
+
+Provider listeners are process-wide lifecycle owners, not crawler-worker tasks.
+When multiple `events` replicas are deployed, only the replica selected by
+`events.master_events_manager` starts email listeners. Clone Events Managers
+continue to serve the Events API but do not open duplicate provider sessions.
+
+A listener notification does not broadcast work to crawler engines and does not
+select an engine itself. For an idle source, it changes the existing source
+status to `pending`. The normal `update_sources` claim function then selects and
+changes that source to `processing` in the same transaction. Its `FOR UPDATE
+SKIP LOCKED` row locking ensures exactly one engine replica receives it.
+Repeated notifications for an already-pending source naturally coalesce through
+the existing status.
+
+A notification never changes a `processing` source back to `pending`, because
+that would make an actively owned source eligible for a second engine. Such a
+notification is only an advisory hint: the active reconciliation may already
+discover the change, and the configured reconciliation polling remains the
+safety net for a change that races with the end of the active run. Durable mail
+checkpoints, rather than notification payloads, remain authoritative.
+
+IMAP listener mode uses an IDLE session for each included mailbox. Gmail and
+Microsoft Graph sources currently use the configured reconciliation poll
+interval on the master listener owner as their safety-net trigger; externally
+reachable push/webhook ingress and subscription renewal remain separate
+provider integration work.

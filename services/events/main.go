@@ -268,6 +268,12 @@ func main() {
 		// Start the event listener (on a separate go routine)
 		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
+		// Provider listeners are singleton lifecycle owners. Their durable crawl
+		// requests are claimed atomically by one of the scalable crawler engines.
+		if config.Email.Enabled {
+			go newEmailListenerManager(&dbHandler, config.Email).Run(context.Background())
+		}
+
 		// Start events scheduler and isolated time-series maintenance.
 		cdb.StartScheduler(&dbHandler, config)
 		startTimeSeriesAggregationScheduler(&dbHandler, config.TimeSeries)

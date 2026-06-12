@@ -304,3 +304,24 @@ func TestEmailStateSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 		})
 	}
 }
+
+func TestPostgresSourceClaimFunctionIsAtomic(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatalf("read PostgreSQL setup: %v", err)
+	}
+	upperContent := strings.ToUpper(string(content))
+	for _, fragment := range []string{
+		"CREATE OR REPLACE FUNCTION update_sources(",
+		"LOWER(TRIM(s.status)) = 'pending'",
+		"FOR UPDATE SKIP LOCKED",
+		"SET status = 'processing'",
+		"engine = p_engineID",
+		"RETURNING Sources.source_id",
+	} {
+		if !strings.Contains(upperContent, strings.ToUpper(fragment)) {
+			t.Fatalf("PostgreSQL source claim function missing atomic fragment %q", fragment)
+		}
+	}
+}
