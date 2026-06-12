@@ -57,6 +57,16 @@ type Pipeline struct {
 	// implementation; nil uses a context-aware timer.
 	Sleep func(context.Context, time.Duration) error
 
+	// LifecycleEventSink receives closed, redacted operational lifecycle
+	// events. Delivery is observational and never participates in document or
+	// checkpoint durability. Transient failures are retried according to
+	// LifecycleEventRetryPolicy; exhausted failures and sink panics are dropped.
+	LifecycleEventSink LifecycleEventSink
+
+	// LifecycleEventRetryPolicy bounds retries of lifecycle event delivery.
+	// A zero value performs one best-effort attempt without delaying ingestion.
+	LifecycleEventRetryPolicy RetryPolicy
+
 	// LogHook receives structured, redacted lifecycle events. Logging is
 	// observational: a nil hook is a no-op and hook panics do not stop ingestion.
 	LogHook LogHook
@@ -110,8 +120,35 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr error) {
 	started := p.now()
+	stats := &reconciliationLifecycleStats{}
+	identity := NewEmailEventIdentity(p.SourceID, p.Provider, p.AccountID, mailbox)
 	p.emitLog(ctx, p.mailboxLogEvent(mailbox, LogStateStarted, time.Time{}, nil))
+	p.emitLifecycleEvent(ctx, EmailEventListenerStarted, ListenerStartedEventPayload{
+		SchemaVersion:      EmailEventSchemaVersion,
+		EmailEventIdentity: identity,
+		ListenerCount:      1,
+	})
 	defer func() {
+		if runErr != nil && stats.failed == 0 {
+			stats.failed++
+		}
+		p.emitLifecycleEvent(ctx, EmailEventReconciliationCompleted, ReconciliationCompletedEventPayload{
+			SchemaVersion:      EmailEventSchemaVersion,
+			EmailEventIdentity: identity,
+			DiscoveredCount:    stats.discovered,
+			FetchedCount:       stats.fetched,
+			ParsedCount:        stats.parsed,
+			FailedCount:        stats.failed,
+			CompletedCount:     stats.completed,
+			SkippedCount:       stats.skipped,
+			QuarantinedCount:   stats.quarantined,
+			RetryCount:         stats.retries,
+		})
+		p.emitLifecycleEvent(ctx, EmailEventListenerStopped, ListenerStoppedEventPayload{
+			SchemaVersion:      EmailEventSchemaVersion,
+			EmailEventIdentity: identity,
+			ListenerCount:      1,
+		})
 		state := LogStateSucceeded
 		if runErr != nil {
 			state = LogStateFailed
@@ -185,7 +222,7 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 			return fmt.Errorf("list changes for mailbox %q: provider returned %d changes for reset rescan limit %d", mailboxIdentity(mailbox), len(page.Changes), rescanRemaining)
 		}
 
-		messageErrors := p.processPage(ctx, page, seen)
+		messageErrors := p.processPage(ctx, page, seen, stats)
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(messageErrors, err)...)
 		}
@@ -248,42 +285,100 @@ func uidValidityReset(cursor Cursor, page ChangePage) (uint32, bool) {
 	return 0, false
 }
 
-func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[string]struct{}) []error {
+type reconciliationLifecycleStats struct {
+	discovered  uint64
+	fetched     uint64
+	parsed      uint64
+	failed      uint64
+	completed   uint64
+	skipped     uint64
+	quarantined uint64
+	retries     uint64
+}
+
+type messageLifecycleOutcome struct {
+	fetched     bool
+	parsed      bool
+	completed   bool
+	failed      bool
+	quarantined bool
+	retries     uint64
+}
+
+func (stats *reconciliationLifecycleStats) add(outcome messageLifecycleOutcome) {
+	if outcome.fetched {
+		stats.fetched++
+	}
+	if outcome.parsed {
+		stats.parsed++
+	}
+	if outcome.completed {
+		stats.completed++
+	}
+	if outcome.failed {
+		stats.failed++
+	}
+	if outcome.quarantined {
+		stats.quarantined++
+	}
+	stats.retries += outcome.retries
+}
+
+func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[string]struct{}, stats *reconciliationLifecycleStats) []error {
 	var messageErrors []error
 	for _, change := range page.Changes {
 		if err := ctx.Err(); err != nil {
 			return append(messageErrors, err)
 		}
 		if change.Kind != ChangeUpsert {
+			stats.skipped++
 			continue
 		}
 
 		identity := pipelineChangeIdentity(change.Ref)
 		if _, duplicate := seen[identity]; duplicate {
+			stats.skipped++
 			continue
 		}
 		seen[identity] = struct{}{}
+		stats.discovered++
 
-		if err := p.processMessage(ctx, change.Ref); err != nil {
+		ref := change.Ref
+		messageIdentity := NewEmailMessageEventIdentity(p.SourceID, p.lifecycleMessageRef(ref))
+		p.emitLifecycleEvent(ctx, EmailEventMessageDiscovered, MessageDiscoveredEventPayload{
+			SchemaVersion:             EmailEventSchemaVersion,
+			EmailMessageEventIdentity: messageIdentity,
+			DiscoveredCount:           1,
+		})
+
+		outcome, err := p.processMessage(ctx, ref, messageIdentity)
+		stats.add(outcome)
+		if err != nil {
 			messageErrors = append(messageErrors, err)
 		}
 	}
 	return messageErrors
 }
 
-func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef) (processErr error) {
+func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef, identity EmailMessageEventIdentity) (outcome messageLifecycleOutcome, processErr error) {
 	started := p.now()
 	terminalState := LogStateSucceeded
 	var terminalErr error
+	attempts := 0
 	p.emitLog(ctx, p.messageLogEvent(ref, LogStateStarted, time.Time{}, nil))
 	defer func() {
+		if attempts > 1 {
+			outcome.retries = uint64(attempts - 1)
+		}
 		if processErr != nil {
+			outcome.failed = true
 			terminalState = LogStateFailed
 			terminalErr = processErr
 		}
 		p.emitLog(ctx, p.messageLogEvent(ref, terminalState, started, terminalErr))
 	}()
 	_, decision, err := retryValue(ctx, p.RetryPolicy, p.sleep, func() (struct{}, error) {
+		attempts++
 		options := p.FetchOptions
 		options.IncludeBody = true
 		raw, err := p.Connector.OpenMessage(ctx, ref, options)
@@ -294,22 +389,71 @@ func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef) (processE
 			return struct{}{}, errors.New("fetch mailbox message: connector returned a nil message stream")
 		}
 
+		outcome.fetched = true
+		fetchedBytes := ref.Size
+		if raw.Ref.Size > 0 {
+			fetchedBytes = raw.Ref.Size
+		}
+		if fetchedBytes < 0 {
+			fetchedBytes = 0
+		}
+		p.emitLifecycleEvent(ctx, EmailEventMessageFetched, MessageFetchedEventPayload{
+			SchemaVersion:             EmailEventSchemaVersion,
+			EmailMessageEventIdentity: identity,
+			FetchedCount:              1,
+			FetchedBytes:              uint64(fetchedBytes),
+		})
+
 		document, processErr := p.Processor.Process(ctx, raw)
 		_ = raw.RFC822.Close()
 		if processErr != nil {
 			return struct{}{}, fmt.Errorf("process mailbox message: %w", processErr)
 		}
+		outcome.parsed = true
+		p.emitLifecycleEvent(ctx, EmailEventMessageParsed, MessageParsedEventPayload{
+			SchemaVersion:             EmailEventSchemaVersion,
+			EmailMessageEventIdentity: identity,
+			ParsedCount:               1,
+			RecipientCount:            uint64(len(document.To) + len(document.CC) + len(document.BCC)),
+			HeaderCount:               uint64(len(document.Headers.Values)),
+			AttachmentCount:           uint64(len(document.Attachments)),
+		})
 		if err := p.Emitter.Emit(ctx, document); err != nil {
 			return struct{}{}, fmt.Errorf("emit mailbox message: %w", err)
 		}
+		outcome.completed = true
+		p.emitLifecycleEvent(ctx, EmailEventMessageCompleted, MessageCompletedEventPayload{
+			SchemaVersion:             EmailEventSchemaVersion,
+			EmailMessageEventIdentity: identity,
+			CompletedCount:            1,
+		})
 		return struct{}{}, nil
 	})
+	if attempts > 1 {
+		outcome.retries = uint64(attempts - 1)
+	}
 	if decision.Action == RetryActionDiscard {
+		outcome.failed = true
+		outcome.quarantined = true
 		terminalState = LogStateDiscarded
 		terminalErr = err
-		return nil
+		p.emitMessageFailedEvent(ctx, identity, outcome.retries)
+		return outcome, nil
 	}
-	return err
+	if err != nil {
+		outcome.failed = true
+		p.emitMessageFailedEvent(ctx, identity, outcome.retries)
+	}
+	return outcome, err
+}
+
+func (p *Pipeline) emitMessageFailedEvent(ctx context.Context, identity EmailMessageEventIdentity, retries uint64) {
+	p.emitLifecycleEvent(ctx, EmailEventMessageFailed, MessageFailedEventPayload{
+		SchemaVersion:             EmailEventSchemaVersion,
+		EmailMessageEventIdentity: identity,
+		FailedCount:               1,
+		RetryCount:                retries,
+	})
 }
 
 func retryValue[T any](ctx context.Context, policy RetryPolicy, sleep func(context.Context, time.Duration) error, operation func() (T, error)) (T, RetryDecision, error) {

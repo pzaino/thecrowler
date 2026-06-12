@@ -42,14 +42,16 @@ func (factory ConnectorFactoryFunc) NewConnector(ctx context.Context, config Sou
 // construct a Pipeline for a source. Connector may be injected directly for a
 // single source; otherwise ConnectorFactory constructs it from SourceConfig.
 type PipelineDependencies struct {
-	Connector        Connector
-	ConnectorFactory ConnectorFactory
-	StateStore       StateStore
-	Processor        Processor
-	RetryPolicy      RetryPolicy
-	Sleep            func(context.Context, time.Duration) error
-	LogHook          LogHook
-	Now              func() time.Time
+	Connector                 Connector
+	ConnectorFactory          ConnectorFactory
+	StateStore                StateStore
+	Processor                 Processor
+	RetryPolicy               RetryPolicy
+	Sleep                     func(context.Context, time.Duration) error
+	LifecycleEventSink        LifecycleEventSink
+	LifecycleEventRetryPolicy RetryPolicy
+	LogHook                   LogHook
+	Now                       func() time.Time
 }
 
 // PipelineRunner constructs and runs Pipeline instances from source config.
@@ -116,6 +118,8 @@ func (runner *PipelineRunner) RunSource(ctx context.Context, request SourceRunRe
 	}
 	pipeline.RetryPolicy = runner.Dependencies.RetryPolicy
 	pipeline.Sleep = runner.Dependencies.Sleep
+	pipeline.LifecycleEventSink = runner.Dependencies.LifecycleEventSink
+	pipeline.LifecycleEventRetryPolicy = runner.Dependencies.LifecycleEventRetryPolicy
 	pipeline.LogHook = runner.Dependencies.LogHook
 	pipeline.Now = runner.Dependencies.Now
 
