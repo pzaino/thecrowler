@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
@@ -110,14 +111,37 @@ type ListenerStoppedEventPayload struct {
 type ReconciliationCompletedEventPayload struct {
 	SchemaVersion string `json:"schema_version"`
 	EmailEventIdentity
-	DiscoveredCount  uint64 `json:"discovered_count"`
-	FetchedCount     uint64 `json:"fetched_count"`
-	ParsedCount      uint64 `json:"parsed_count"`
-	FailedCount      uint64 `json:"failed_count"`
-	CompletedCount   uint64 `json:"completed_count"`
-	SkippedCount     uint64 `json:"skipped_count"`
-	QuarantinedCount uint64 `json:"quarantined_count"`
-	RetryCount       uint64 `json:"retry_count"`
+	DiscoveredCount  uint64             `json:"discovered_count"`
+	FetchedCount     uint64             `json:"fetched_count"`
+	ParsedCount      uint64             `json:"parsed_count"`
+	FailedCount      uint64             `json:"failed_count"`
+	CompletedCount   uint64             `json:"completed_count"`
+	SkippedCount     uint64             `json:"skipped_count"`
+	QuarantinedCount uint64             `json:"quarantined_count"`
+	RetryCount       uint64             `json:"retry_count"`
+	WarningCount     uint64             `json:"warning_count"`
+	PageCount        uint64             `json:"page_count"`
+	Checkpoint       CheckpointOutcomes `json:"checkpoint"`
+	Duration         time.Duration      `json:"duration"`
+}
+
+func reconciliationCompletedPayload(identity EmailEventIdentity, summary RunSummary) ReconciliationCompletedEventPayload {
+	return ReconciliationCompletedEventPayload{
+		SchemaVersion:      EmailEventSchemaVersion,
+		EmailEventIdentity: identity,
+		DiscoveredCount:    summary.Counts.Discovered,
+		FetchedCount:       summary.Counts.Fetched,
+		ParsedCount:        summary.Counts.Parsed,
+		FailedCount:        summary.Counts.Failures,
+		CompletedCount:     summary.Counts.Completed,
+		SkippedCount:       summary.Counts.Skipped,
+		QuarantinedCount:   summary.Counts.Quarantined,
+		RetryCount:         summary.Counts.Retries,
+		WarningCount:       summary.Counts.Warnings,
+		PageCount:          summary.Counts.Pages,
+		Checkpoint:         summary.Checkpoints,
+		Duration:           summary.Timing.Duration,
+	}
 }
 
 // NewEmailEventIdentity derives the opaque account and mailbox identities used

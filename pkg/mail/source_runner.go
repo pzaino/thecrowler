@@ -23,6 +23,13 @@ type SourceRunner interface {
 	RunSource(ctx context.Context, request SourceRunRequest) error
 }
 
+// SummarizingSourceRunner additionally exposes the aggregate outcome of a
+// source reconciliation while preserving SourceRunner compatibility.
+type SummarizingSourceRunner interface {
+	SourceRunner
+	RunSourceWithSummary(ctx context.Context, request SourceRunRequest) (RunSummary, error)
+}
+
 // ConnectorFactory constructs the connector selected by SourceConfig. Provider
 // dispatch, credentials, and protocol-specific construction remain in package
 // mail implementations of this interface.
@@ -67,34 +74,40 @@ func NewPipelineRunner(dependencies PipelineDependencies) *PipelineRunner {
 // RunSource resolves injected or constructed dependencies, configures the
 // provider-neutral pipeline, and performs one authoritative reconciliation.
 func (runner *PipelineRunner) RunSource(ctx context.Context, request SourceRunRequest) error {
+	_, err := runner.RunSourceWithSummary(ctx, request)
+	return err
+}
+
+// RunSourceWithSummary performs RunSource and returns its aggregate run summary.
+func (runner *PipelineRunner) RunSourceWithSummary(ctx context.Context, request SourceRunRequest) (RunSummary, error) {
 	if runner == nil {
-		return errors.New("mail: pipeline runner is nil")
+		return RunSummary{}, errors.New("mail: pipeline runner is nil")
 	}
 	if err := ValidateSourceConfig(request.Config); err != nil {
-		return fmt.Errorf("mail: validate source config: %w", err)
+		return RunSummary{}, fmt.Errorf("mail: validate source config: %w", err)
 	}
 	if strings.TrimSpace(request.SourceID) == "" {
-		return errors.New("mail: source ID is required")
+		return RunSummary{}, errors.New("mail: source ID is required")
 	}
 	if request.Emitter == nil {
-		return errors.New("mail: document emitter is required")
+		return RunSummary{}, errors.New("mail: document emitter is required")
 	}
 	if runner.Dependencies.StateStore == nil {
-		return errors.New("mail: state store is required")
+		return RunSummary{}, errors.New("mail: state store is required")
 	}
 
 	connector := runner.Dependencies.Connector
 	if connector == nil {
 		if runner.Dependencies.ConnectorFactory == nil {
-			return errors.New("mail: connector or connector factory is required")
+			return RunSummary{}, errors.New("mail: connector or connector factory is required")
 		}
 		var err error
 		connector, err = runner.Dependencies.ConnectorFactory.NewConnector(ctx, request.Config)
 		if err != nil {
-			return fmt.Errorf("mail: construct connector: %w", err)
+			return RunSummary{}, fmt.Errorf("mail: construct connector: %w", err)
 		}
 		if connector == nil {
-			return errors.New("mail: connector factory returned nil connector")
+			return RunSummary{}, errors.New("mail: connector factory returned nil connector")
 		}
 	}
 
@@ -123,10 +136,12 @@ func (runner *PipelineRunner) RunSource(ctx context.Context, request SourceRunRe
 	pipeline.LogHook = runner.Dependencies.LogHook
 	pipeline.Now = runner.Dependencies.Now
 
-	if err := pipeline.Run(ctx); err != nil {
-		return fmt.Errorf("mail: reconcile source %s: %w", request.SourceID, err)
+	summary, err := pipeline.RunWithSummary(ctx)
+	if err != nil {
+		return summary, fmt.Errorf("mail: reconcile source %s: %w", request.SourceID, err)
 	}
-	return nil
+	return summary, nil
 }
 
 var _ SourceRunner = (*PipelineRunner)(nil)
+var _ SummarizingSourceRunner = (*PipelineRunner)(nil)

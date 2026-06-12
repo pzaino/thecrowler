@@ -90,6 +90,9 @@ func TestPipelineEmitsLifecycleEventsInOrder(t *testing.T) {
 	if completed.DiscoveredCount != 1 || completed.FetchedCount != 1 || completed.ParsedCount != 1 || completed.CompletedCount != 1 || completed.FailedCount != 0 {
 		t.Fatalf("reconciliation payload = %#v, want one successful message", completed)
 	}
+	if completed.PageCount != 1 || completed.Checkpoint.Committed != 1 || completed.Checkpoint.Advanced != 1 || completed.Duration < 0 {
+		t.Fatalf("reconciliation summary payload = %#v", completed)
+	}
 }
 
 func TestPipelineLifecycleSinkFailureDoesNotCorruptIngestion(t *testing.T) {

@@ -78,6 +78,7 @@ type LogEvent struct {
 	State         LogState         `json:"state"`
 	Duration      time.Duration    `json:"duration"`
 	ErrorCategory LogErrorCategory `json:"error_category,omitempty"`
+	Summary       *RunSummary      `json:"summary,omitempty"`
 }
 
 // MarshalJSON enforces redaction even when callers serialize a LogEvent

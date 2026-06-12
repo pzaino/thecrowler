@@ -632,3 +632,38 @@ func TestEmailDocumentPageDoesNotCreateArtifactsForSkippedAttachments(t *testing
 		t.Errorf("parent artifact = %#v, want warning without attachment child", artifact)
 	}
 }
+
+type fakeSummarizingEmailRunner struct {
+	fakeEmailRunner
+	summary mail.RunSummary
+}
+
+func (runner *fakeSummarizingEmailRunner) RunSourceWithSummary(ctx context.Context, request mail.SourceRunRequest) (mail.RunSummary, error) {
+	err := runner.fakeEmailRunner.RunSource(ctx, request)
+	return runner.summary, err
+}
+
+func TestCrawlEmailPublishesSummarizedRunToCrawlerStatus(t *testing.T) {
+	config := testMailSourceConfig()
+	want := mail.RunSummary{
+		Counts:      mail.RunCounts{Mailboxes: 2, Completed: 4, Warnings: 1, Failures: 1},
+		Checkpoints: mail.CheckpointOutcomes{Committed: 2, Advanced: 1, Retained: 1},
+		Timing:      mail.RunTiming{Duration: 3 * time.Second},
+	}
+	runner := &fakeSummarizingEmailRunner{summary: want}
+	status := &Status{}
+
+	err := crawlEmail(context.Background(), &Pars{
+		Src:                cdb.Source{ID: 42, URL: "email://account"},
+		Status:             status,
+		EmailConfig:        &config,
+		EmailRunner:        runner,
+		EmailResultHandler: &recordingEmailResultHandler{},
+	})
+	if err != nil {
+		t.Fatalf("crawlEmail() error = %v", err)
+	}
+	if status.EmailSummary == nil || *status.EmailSummary != want {
+		t.Fatalf("crawler email summary = %#v, want %#v", status.EmailSummary, want)
+	}
+}

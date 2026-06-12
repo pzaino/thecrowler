@@ -74,6 +74,7 @@ type Status struct {
 	LastWait        float64
 	LastDelay       float64
 	LastError       string
+	EmailSummary    *mail.RunSummary
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 	NetInfoRunning  atomic.Int32 // Flag to check if network info is already gathered
 	HTTPInfoRunning atomic.Int32 // Flag to check if HTTP info is already gathered
@@ -102,6 +103,7 @@ type NonAtomicStatus struct {
 	LastWait        float64
 	LastDelay       float64
 	LastError       string
+	EmailSummary    *mail.RunSummary
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 	NetInfoRunning  int32 // Flag to check if network info is already gathered
 	HTTPInfoRunning int32 // Flag to check if HTTP info is already gathered

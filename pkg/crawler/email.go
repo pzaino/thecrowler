@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	mail "github.com/pzaino/thecrowler/pkg/mail"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
@@ -272,11 +273,22 @@ func crawlEmailWithResultHandler(ctx context.Context, args *Pars, resultHandler 
 		queue:            args.WebCrawlQueue,
 		next:             resultHandler,
 	}
-	return runner.RunSource(ctx, mail.SourceRunRequest{
+	request := mail.SourceRunRequest{
 		SourceID: strconv.FormatUint(args.Src.ID, 10),
 		Config:   config,
 		Emitter:  emailResultEmitter{source: args.Src, handler: policyHandler},
-	})
+	}
+	if summarizingRunner, ok := runner.(mail.SummarizingSourceRunner); ok {
+		summary, runErr := summarizingRunner.RunSourceWithSummary(ctx, request)
+		if args.Status != nil {
+			args.Status.EmailSummary = &summary
+		}
+		if encoded, marshalErr := json.Marshal(summary); marshalErr == nil {
+			cmn.DebugMsg(cmn.DbgLvlInfo, "mail_pipeline_summary=%s", encoded)
+		}
+		return runErr
+	}
+	return runner.RunSource(ctx, request)
 }
 
 func emailDocumentPage(source cdb.Source, document mail.Document) PageInfo {

@@ -92,34 +92,55 @@ func NewPipeline(connector Connector, stateStore StateStore, processor Processor
 // joined and returned after the remaining messages in the same page have had a
 // chance to run. Cancellation stops new work immediately.
 func (p *Pipeline) Run(ctx context.Context) error {
+	_, err := p.RunWithSummary(ctx)
+	return err
+}
+
+// RunWithSummary performs Run and returns a privacy-safe aggregate summary for
+// the complete pipeline run, including empty and partially failed runs.
+func (p *Pipeline) RunWithSummary(ctx context.Context) (summary RunSummary, runErr error) {
+	started := p.now()
+	summary = startRunSummary(started)
+	defer func() {
+		finishRunSummary(&summary, p.now())
+	}()
+
 	if err := p.validate(); err != nil {
-		return err
+		summary.Counts.Failures++
+		return summary, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		summary.Counts.Failures++
+		return summary, err
 	}
 
 	mailboxes, _, err := retryValue(ctx, p.RetryPolicy, p.sleep, func() ([]Mailbox, error) {
 		return p.Connector.ListMailboxes(ctx)
 	})
 	if err != nil {
-		return fmt.Errorf("list mailboxes: %w", err)
+		summary.Counts.Failures++
+		return summary, fmt.Errorf("list mailboxes: %w", err)
 	}
 
 	var runErrors []error
 	for _, mailbox := range mailboxes {
 		if err := ctx.Err(); err != nil {
-			return errors.Join(append(runErrors, err)...)
+			summary.Counts.Failures++
+			return summary, errors.Join(append(runErrors, err)...)
 		}
-		if err := p.runMailbox(ctx, mailbox); err != nil {
+		reconciliation, err := p.runMailbox(ctx, mailbox)
+		summary.Add(reconciliation)
+		if err != nil {
 			runErrors = append(runErrors, err)
 		}
 	}
-	return errors.Join(runErrors...)
+	return summary, errors.Join(runErrors...)
 }
 
-func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr error) {
+func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (summary RunSummary, runErr error) {
 	started := p.now()
+	summary = startRunSummary(started)
+	summary.Counts.Mailboxes = 1
 	stats := &reconciliationLifecycleStats{}
 	identity := NewEmailEventIdentity(p.SourceID, p.Provider, p.AccountID, mailbox)
 	p.emitLog(ctx, p.mailboxLogEvent(mailbox, LogStateStarted, time.Time{}, nil))
@@ -133,18 +154,9 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 		if runErr != nil && stats.failed == 0 {
 			stats.failed++
 		}
-		p.emitLifecycleEvent(ctx, EmailEventReconciliationCompleted, ReconciliationCompletedEventPayload{
-			SchemaVersion:      EmailEventSchemaVersion,
-			EmailEventIdentity: identity,
-			DiscoveredCount:    stats.discovered,
-			FetchedCount:       stats.fetched,
-			ParsedCount:        stats.parsed,
-			FailedCount:        stats.failed,
-			CompletedCount:     stats.completed,
-			SkippedCount:       stats.skipped,
-			QuarantinedCount:   stats.quarantined,
-			RetryCount:         stats.retries,
-		})
+		stats.applyTo(&summary)
+		finishRunSummary(&summary, p.now())
+		p.emitLifecycleEvent(ctx, EmailEventReconciliationCompleted, reconciliationCompletedPayload(identity, summary))
 		p.emitLifecycleEvent(ctx, EmailEventListenerStopped, ListenerStoppedEventPayload{
 			SchemaVersion:      EmailEventSchemaVersion,
 			EmailEventIdentity: identity,
@@ -154,7 +166,10 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 		if runErr != nil {
 			state = LogStateFailed
 		}
-		p.emitLog(ctx, p.mailboxLogEvent(mailbox, state, started, runErr))
+		event := p.mailboxLogEvent(mailbox, state, time.Time{}, runErr)
+		event.Duration = summary.Timing.Duration
+		event.Summary = &summary
+		p.emitLog(ctx, event)
 	}()
 	key := MailboxKey{
 		SourceID:  p.SourceID,
@@ -164,15 +179,17 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 	}
 	checkpoint, err := p.StateStore.LoadCheckpoint(ctx, key)
 	if err != nil {
-		return fmt.Errorf("load checkpoint for mailbox %q: %w", mailboxIdentity(mailbox), err)
+		summary.Checkpoints.Failed++
+		return summary, fmt.Errorf("load checkpoint for mailbox %q: %w", mailboxIdentity(mailbox), err)
 	}
+	summary.Checkpoints.Loaded++
 
 	cursor := checkpoint.Cursor
 	seen := make(map[string]struct{})
 	rescanRemaining := 0
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return summary, err
 		}
 
 		limit := p.pageSize()
@@ -183,19 +200,19 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 			return p.Connector.ListChanges(ctx, mailbox, cursor, limit)
 		})
 		if err != nil {
-			return fmt.Errorf("list changes for mailbox %q: %w", mailboxIdentity(mailbox), err)
+			return summary, fmt.Errorf("list changes for mailbox %q: %w", mailboxIdentity(mailbox), err)
 		}
 
 		if resetValidity, reset := uidValidityReset(cursor, page); reset {
 			if resetValidity == 0 {
-				return &Error{
+				return summary, &Error{
 					Kind:      ErrorCheckpointReset,
 					Operation: "reconcile mailbox",
 					Message:   fmt.Sprintf("mailbox %q reset did not provide a new UIDVALIDITY", mailboxIdentity(mailbox)),
 				}
 			}
 			if cursor.UID == 0 && cursor.UIDValidity == resetValidity {
-				return &Error{
+				return summary, &Error{
 					Kind:      ErrorCheckpointReset,
 					Operation: "reconcile mailbox",
 					Message:   fmt.Sprintf("mailbox %q repeated UIDVALIDITY reset %d", mailboxIdentity(mailbox), resetValidity),
@@ -207,25 +224,32 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 			next.ErrorCount = 0
 			next.LastError = ""
 			if err := p.StateStore.CommitCheckpoint(ctx, key, checkpoint.Version, next); err != nil {
-				return fmt.Errorf("commit UIDVALIDITY reset for mailbox %q: %w", mailboxIdentity(mailbox), err)
+				summary.Checkpoints.Failed++
+				return summary, fmt.Errorf("commit UIDVALIDITY reset for mailbox %q: %w", mailboxIdentity(mailbox), err)
 			}
+			summary.Checkpoints.Committed++
+			summary.Checkpoints.Reset++
 			checkpoint, err = p.StateStore.LoadCheckpoint(ctx, key)
 			if err != nil {
-				return fmt.Errorf("reload checkpoint for mailbox %q after UIDVALIDITY reset: %w", mailboxIdentity(mailbox), err)
+				summary.Checkpoints.Failed++
+				return summary, fmt.Errorf("reload checkpoint for mailbox %q after UIDVALIDITY reset: %w", mailboxIdentity(mailbox), err)
 			}
+			summary.Checkpoints.Loaded++
 			cursor = checkpoint.Cursor
 			rescanRemaining = p.uidValidityRescanWindow()
 			clear(seen)
 			continue
 		}
 
+		summary.Counts.Pages++
+
 		if rescanRemaining > 0 && len(page.Changes) > rescanRemaining {
-			return fmt.Errorf("list changes for mailbox %q: provider returned %d changes for reset rescan limit %d", mailboxIdentity(mailbox), len(page.Changes), rescanRemaining)
+			return summary, fmt.Errorf("list changes for mailbox %q: provider returned %d changes for reset rescan limit %d", mailboxIdentity(mailbox), len(page.Changes), rescanRemaining)
 		}
 
 		messageErrors := p.processPage(ctx, page, seen, stats)
 		if err := ctx.Err(); err != nil {
-			return errors.Join(append(messageErrors, err)...)
+			return summary, errors.Join(append(messageErrors, err)...)
 		}
 
 		next := checkpoint
@@ -238,31 +262,40 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 			next.LastError = boundedPipelineError(errors.Join(messageErrors...))
 		}
 		if err := p.StateStore.CommitCheckpoint(ctx, key, checkpoint.Version, next); err != nil {
+			summary.Checkpoints.Failed++
 			messageErrors = append(messageErrors, fmt.Errorf("commit checkpoint for mailbox %q: %w", mailboxIdentity(mailbox), err))
-			return errors.Join(messageErrors...)
+			return summary, errors.Join(messageErrors...)
+		}
+		summary.Checkpoints.Committed++
+		if len(messageErrors) == 0 && page.Next != checkpoint.Cursor {
+			summary.Checkpoints.Advanced++
+		} else {
+			summary.Checkpoints.Retained++
 		}
 
 		committed, err := p.StateStore.LoadCheckpoint(ctx, key)
 		if err != nil {
+			summary.Checkpoints.Failed++
 			messageErrors = append(messageErrors, fmt.Errorf("reload checkpoint for mailbox %q: %w", mailboxIdentity(mailbox), err))
-			return errors.Join(messageErrors...)
+			return summary, errors.Join(messageErrors...)
 		}
+		summary.Checkpoints.Loaded++
 		checkpoint = committed
 
 		if len(messageErrors) != 0 {
-			return errors.Join(messageErrors...)
+			return summary, errors.Join(messageErrors...)
 		}
 		if !page.More {
-			return nil
+			return summary, nil
 		}
 		if page.Next == cursor {
-			return fmt.Errorf("list changes for mailbox %q: provider returned a non-advancing cursor", mailboxIdentity(mailbox))
+			return summary, fmt.Errorf("list changes for mailbox %q: provider returned a non-advancing cursor", mailboxIdentity(mailbox))
 		}
 		cursor = page.Next
 		if rescanRemaining > 0 {
 			rescanRemaining -= len(page.Changes)
 			if rescanRemaining <= 0 {
-				return nil
+				return summary, nil
 			}
 		}
 	}
@@ -295,6 +328,7 @@ type reconciliationLifecycleStats struct {
 	skipped     uint64
 	quarantined uint64
 	retries     uint64
+	warnings    uint64
 }
 
 type messageLifecycleOutcome struct {
@@ -307,6 +341,7 @@ type messageLifecycleOutcome struct {
 	attachments        uint64
 	skippedAttachments uint64
 	extractedLinks     uint64
+	warnings           uint64
 }
 
 func (stats *reconciliationLifecycleStats) add(outcome messageLifecycleOutcome) {
@@ -327,6 +362,22 @@ func (stats *reconciliationLifecycleStats) add(outcome messageLifecycleOutcome) 
 		stats.quarantined++
 	}
 	stats.retries += outcome.retries
+	stats.warnings += outcome.warnings
+}
+
+func (stats *reconciliationLifecycleStats) applyTo(summary *RunSummary) {
+	if stats == nil || summary == nil {
+		return
+	}
+	summary.Counts.Discovered += stats.discovered
+	summary.Counts.Fetched += stats.fetched
+	summary.Counts.Parsed += stats.parsed
+	summary.Counts.Completed += stats.completed
+	summary.Counts.Skipped += stats.skipped
+	summary.Counts.Quarantined += stats.quarantined
+	summary.Counts.Retries += stats.retries
+	summary.Counts.Warnings += stats.warnings
+	summary.Counts.Failures += stats.failed
 }
 
 func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[string]struct{}, stats *reconciliationLifecycleStats) []error {
@@ -418,6 +469,7 @@ func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef, identity 
 			return struct{}{}, fmt.Errorf("process mailbox message: %w", processErr)
 		}
 		outcome.parsed = true
+		outcome.warnings = uint64(len(document.Warnings))
 		outcome.attachments, outcome.skippedAttachments, outcome.extractedLinks = documentExtractionMetricCounts(document)
 		p.emitLifecycleEvent(ctx, EmailEventMessageParsed, MessageParsedEventPayload{
 			SchemaVersion:             EmailEventSchemaVersion,

@@ -47,6 +47,7 @@ import (
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	infoseed "github.com/pzaino/thecrowler/pkg/infoseed"
+	mail "github.com/pzaino/thecrowler/pkg/mail"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 	"golang.org/x/time/rate"
@@ -56,28 +57,29 @@ import (
 
 // PipelineStatusReport is a struct that holds the status report of a crawling pipeline.
 type PipelineStatusReport struct {
-	PipelineID      uint64  `json:"pipeline_id"`
-	Source          string  `json:"source"`
-	SourceID        uint64  `json:"source_id"`
-	VDIID           string  `json:"vdi_id"`
-	ContextID       string  `json:"context_id"`
-	PipelineStatus  string  `json:"pipeline_status"`
-	CrawlingStatus  string  `json:"crawling_status"`
-	NetInfoStatus   string  `json:"netinfo_status"`
-	HTTPInfoStatus  string  `json:"httpinfo_status"`
-	RunningTime     string  `json:"running_time"`
-	TotalPages      int64   `json:"total_pages"`
-	TotalErrors     int64   `json:"total_errors"`
-	TotalLinks      int64   `json:"total_links"`
-	TotalSkipped    int64   `json:"total_skipped"`
-	TotalDuplicates int64   `json:"total_duplicates"`
-	TotalLinksToGo  int64   `json:"total_links_to_go"`
-	TotalScrapes    int64   `json:"total_scrapes"`
-	TotalActions    int64   `json:"total_actions"`
-	LastRetry       int64   `json:"last_retry"`
-	LastWait        float64 `json:"last_wait"`
-	LastDelay       float64 `json:"last_delay"`
-	CollectionState string  `json:"collection_state"`
+	PipelineID      uint64           `json:"pipeline_id"`
+	Source          string           `json:"source"`
+	SourceID        uint64           `json:"source_id"`
+	VDIID           string           `json:"vdi_id"`
+	ContextID       string           `json:"context_id"`
+	PipelineStatus  string           `json:"pipeline_status"`
+	CrawlingStatus  string           `json:"crawling_status"`
+	NetInfoStatus   string           `json:"netinfo_status"`
+	HTTPInfoStatus  string           `json:"httpinfo_status"`
+	RunningTime     string           `json:"running_time"`
+	TotalPages      int64            `json:"total_pages"`
+	TotalErrors     int64            `json:"total_errors"`
+	TotalLinks      int64            `json:"total_links"`
+	TotalSkipped    int64            `json:"total_skipped"`
+	TotalDuplicates int64            `json:"total_duplicates"`
+	TotalLinksToGo  int64            `json:"total_links_to_go"`
+	TotalScrapes    int64            `json:"total_scrapes"`
+	TotalActions    int64            `json:"total_actions"`
+	LastRetry       int64            `json:"last_retry"`
+	LastWait        float64          `json:"last_wait"`
+	LastDelay       float64          `json:"last_delay"`
+	CollectionState string           `json:"collection_state"`
+	EmailSummary    *mail.RunSummary `json:"email_summary,omitempty"`
 }
 
 var (
@@ -1701,6 +1703,7 @@ func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport
 			LastWait:        status.LastWait,
 			LastDelay:       status.LastDelay,
 			CollectionState: CollectionState(int(status.DetectedState.Load())),
+			EmailSummary:    status.EmailSummary,
 		})
 
 		if status.PipelineRunning.Load() >= 2 {

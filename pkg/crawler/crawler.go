@@ -721,6 +721,7 @@ func CreateCrawlCompletedEvent(db cdb.Handler, sourceID uint64, status *Status) 
 		LastWait:        status.LastWait,
 		LastDelay:       status.LastDelay,
 		LastError:       status.LastError,
+		EmailSummary:    status.EmailSummary,
 		// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 		NetInfoRunning:  status.NetInfoRunning.Load(),  // Flag to check if network info is already gathered
 		HTTPInfoRunning: status.HTTPInfoRunning.Load(), // Flag to check if HTTP info is already gathered

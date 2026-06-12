@@ -81,6 +81,9 @@ func TestPipelineLogHookEmitsStructuredRedactedEvents(t *testing.T) {
 	if events[3].Operation != logOperationMailbox || events[3].State != LogStateSucceeded || events[3].Duration <= 0 {
 		t.Fatalf("mailbox finished event = %#v", events[3])
 	}
+	if events[3].Summary == nil || events[3].Summary.Counts.Failures != 1 || events[3].Summary.Counts.Quarantined != 1 {
+		t.Fatalf("mailbox log summary = %#v, want one quarantined failure", events[3].Summary)
+	}
 
 	encoded, err := json.Marshal(events)
 	if err != nil {
