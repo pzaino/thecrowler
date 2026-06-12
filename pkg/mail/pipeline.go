@@ -129,6 +129,7 @@ func (p *Pipeline) runMailbox(ctx context.Context, mailbox Mailbox) (runErr erro
 		ListenerCount:      1,
 	})
 	defer func() {
+		recordMailReconciliationRun()
 		if runErr != nil && stats.failed == 0 {
 			stats.failed++
 		}
@@ -297,15 +298,19 @@ type reconciliationLifecycleStats struct {
 }
 
 type messageLifecycleOutcome struct {
-	fetched     bool
-	parsed      bool
-	completed   bool
-	failed      bool
-	quarantined bool
-	retries     uint64
+	fetched            bool
+	parsed             bool
+	completed          bool
+	failed             bool
+	quarantined        bool
+	retries            uint64
+	attachments        uint64
+	skippedAttachments uint64
+	extractedLinks     uint64
 }
 
 func (stats *reconciliationLifecycleStats) add(outcome messageLifecycleOutcome) {
+	recordMailMessageOutcome(outcome)
 	if outcome.fetched {
 		stats.fetched++
 	}
@@ -332,16 +337,19 @@ func (p *Pipeline) processPage(ctx context.Context, page ChangePage, seen map[st
 		}
 		if change.Kind != ChangeUpsert {
 			stats.skipped++
+			recordMailMessageSkipped()
 			continue
 		}
 
 		identity := pipelineChangeIdentity(change.Ref)
 		if _, duplicate := seen[identity]; duplicate {
 			stats.skipped++
+			recordMailMessageSkipped()
 			continue
 		}
 		seen[identity] = struct{}{}
 		stats.discovered++
+		recordMailMessageDiscovered()
 
 		ref := change.Ref
 		messageIdentity := NewEmailMessageEventIdentity(p.SourceID, p.lifecycleMessageRef(ref))
@@ -410,6 +418,7 @@ func (p *Pipeline) processMessage(ctx context.Context, ref MessageRef, identity 
 			return struct{}{}, fmt.Errorf("process mailbox message: %w", processErr)
 		}
 		outcome.parsed = true
+		outcome.attachments, outcome.skippedAttachments, outcome.extractedLinks = documentExtractionMetricCounts(document)
 		p.emitLifecycleEvent(ctx, EmailEventMessageParsed, MessageParsedEventPayload{
 			SchemaVersion:             EmailEventSchemaVersion,
 			EmailMessageEventIdentity: identity,

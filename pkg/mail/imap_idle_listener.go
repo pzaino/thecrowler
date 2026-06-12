@@ -331,6 +331,7 @@ func safeIMAPIdleStatusError(err error) string {
 }
 
 func (listener *IMAPIdleListener) recordReconnect() {
+	recordMailListenerReconnect()
 	listener.mu.Lock()
 	listener.reconnectCount++
 	listener.mu.Unlock()
