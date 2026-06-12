@@ -59,9 +59,9 @@ Internet.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET/POST | `/v1/source/add` | Add a new source. See [addsource](./api/addsource.md). |
+| GET/POST | `/v1/source/add` | Add a new source. See [addsource](./api/addsource.md) and [email source payloads](./api/email-sources.md). |
 | GET | `/v1/source/remove` | Remove a source and related crawled data. |
-| POST | `/v1/source/update` | Update a source. |
+| POST | `/v1/source/update` | Update a source. Email payloads are documented in [email source payloads](./api/email-sources.md). |
 | GET | `/v1/source/vacuum` | Delete crawled/collected data for a source without removing the source row. |
 | GET | `/v1/source/status` | Return status for one URL/source. |
 | GET | `/v1/source/statuses` | Return statuses for all known URLs/sources. |
