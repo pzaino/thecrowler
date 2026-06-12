@@ -30,21 +30,72 @@ var (
 type ListenerStatus string
 
 const (
-	ListenerStatusStarting     ListenerStatus = "starting"
-	ListenerStatusActive       ListenerStatus = "active"
-	ListenerStatusReconnecting ListenerStatus = "reconnecting"
-	ListenerStatusDegraded     ListenerStatus = "degraded"
 	ListenerStatusStopped      ListenerStatus = "stopped"
+	ListenerStatusStarting     ListenerStatus = "starting"
+	ListenerStatusRunning      ListenerStatus = "running"
+	ListenerStatusDegraded     ListenerStatus = "degraded"
+	ListenerStatusReconnecting ListenerStatus = "reconnecting"
+	ListenerStatusFailed       ListenerStatus = "failed"
+
+	// ListenerStatusActive is retained as a source-compatible alias. New event
+	// producers should use ListenerStatusRunning.
+	ListenerStatusActive = ListenerStatusRunning
 )
 
 // Valid reports whether status is a defined listener lifecycle status.
 func (status ListenerStatus) Valid() bool {
 	switch status {
-	case ListenerStatusStarting, ListenerStatusActive, ListenerStatusReconnecting, ListenerStatusDegraded, ListenerStatusStopped:
+	case ListenerStatusStopped, ListenerStatusStarting, ListenerStatusRunning, ListenerStatusDegraded, ListenerStatusReconnecting, ListenerStatusFailed:
 		return true
 	default:
 		return false
 	}
+}
+
+var listenerStatusTransitions = map[ListenerStatus]map[ListenerStatus]struct{}{
+	ListenerStatusStopped: {
+		ListenerStatusStarting: {},
+	},
+	ListenerStatusStarting: {
+		ListenerStatusRunning: {}, ListenerStatusDegraded: {}, ListenerStatusReconnecting: {},
+		ListenerStatusFailed: {}, ListenerStatusStopped: {},
+	},
+	ListenerStatusRunning: {
+		ListenerStatusDegraded: {}, ListenerStatusReconnecting: {}, ListenerStatusFailed: {}, ListenerStatusStopped: {},
+	},
+	ListenerStatusDegraded: {
+		ListenerStatusRunning: {}, ListenerStatusReconnecting: {}, ListenerStatusFailed: {}, ListenerStatusStopped: {},
+	},
+	ListenerStatusReconnecting: {
+		ListenerStatusRunning: {}, ListenerStatusDegraded: {}, ListenerStatusFailed: {}, ListenerStatusStopped: {},
+	},
+	ListenerStatusFailed: {
+		ListenerStatusStarting: {}, ListenerStatusStopped: {},
+	},
+}
+
+// CanTransitionTo reports whether next is an allowed lifecycle successor.
+func (status ListenerStatus) CanTransitionTo(next ListenerStatus) bool {
+	if !status.Valid() || !next.Valid() || status == next {
+		return false
+	}
+	_, ok := listenerStatusTransitions[status][next]
+	return ok
+}
+
+// ValidateListenerStatusTransition validates both statuses and their edge in
+// the listener lifecycle graph.
+func ValidateListenerStatusTransition(current, next ListenerStatus) error {
+	if !current.Valid() {
+		return fmt.Errorf("%w: current status %q", ErrInvalidListenerStatus, current)
+	}
+	if !next.Valid() {
+		return fmt.Errorf("%w: next status %q", ErrInvalidListenerStatus, next)
+	}
+	if !current.CanTransitionTo(next) {
+		return fmt.Errorf("%w: %q to %q", ErrInvalidListenerStatusTransition, current, next)
+	}
+	return nil
 }
 
 // ListenerMode identifies how a change hint reached the reconciler.

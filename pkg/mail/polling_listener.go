@@ -61,6 +61,7 @@ type PollingListener struct {
 
 	mu      sync.Mutex
 	running bool
+	state   *ListenerStateTracker
 }
 
 // NewPollingListener constructs a polling listener. scheduler is optional; if
@@ -85,6 +86,7 @@ func NewPollingListener(reconciler Reconciler, interval time.Duration, scheduler
 		Reconciler: reconciler,
 		Interval:   interval,
 		Scheduler:  selected,
+		state:      NewListenerStateTracker(),
 	}, nil
 }
 
@@ -96,7 +98,7 @@ func (listener *PollingListener) Run(ctx context.Context, mailboxes []MailboxKey
 	if listener == nil || listener.Reconciler == nil {
 		return fmt.Errorf("%w: reconciler is required", ErrInvalidPollingListener)
 	}
-	return listener.run(ctx, mailboxes, listener.Reconciler.Reconcile)
+	return listener.run(ctx, mailboxes, listener.Reconciler.Reconcile, true)
 }
 
 // Listen implements Listener for polling-only connectors. Each polling pass
@@ -107,10 +109,10 @@ func (listener *PollingListener) Listen(ctx context.Context, mailboxes []Mailbox
 	if sink == nil {
 		return fmt.Errorf("%w: event sink is required", ErrInvalidPollingListener)
 	}
-	return listener.run(ctx, mailboxes, sink.Notify)
+	return listener.run(ctx, mailboxes, sink.Notify, false)
 }
 
-func (listener *PollingListener) run(ctx context.Context, mailboxes []MailboxKey, reconcile func(context.Context, MailboxKey) error) error {
+func (listener *PollingListener) run(ctx context.Context, mailboxes []MailboxKey, reconcile func(context.Context, MailboxKey) error, recordsReconciliation bool) (result error) {
 	if listener == nil {
 		return fmt.Errorf("%w: listener is required", ErrInvalidPollingListener)
 	}
@@ -129,7 +131,7 @@ func (listener *PollingListener) run(ctx context.Context, mailboxes []MailboxKey
 	if !listener.start() {
 		return ErrPollingListenerRunning
 	}
-	defer listener.stop()
+	defer func() { listener.stop(result) }()
 
 	// Own a stable snapshot for the lifetime of this long-running loop so a
 	// caller cannot race polling by reusing or modifying the input slice.
@@ -139,13 +141,18 @@ func (listener *PollingListener) run(ctx context.Context, mailboxes []MailboxKey
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			listener.listenerState().RecordEvent()
 			if err := reconcile(ctx, mailbox); err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return ctxErr
 				}
 				return fmt.Errorf("mail: poll reconcile mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
 			}
+			if recordsReconciliation {
+				listener.listenerState().RecordSuccessfulReconciliation()
+			}
 		}
+		listener.transitionState(ListenerStatusRunning, nil)
 
 		if err := listener.Scheduler.Wait(ctx, listener.Interval); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -158,18 +165,50 @@ func (listener *PollingListener) run(ctx context.Context, mailboxes []MailboxKey
 
 func (listener *PollingListener) start() bool {
 	listener.mu.Lock()
-	defer listener.mu.Unlock()
 	if listener.running {
+		listener.mu.Unlock()
 		return false
 	}
 	listener.running = true
+	listener.mu.Unlock()
+	listener.transitionState(ListenerStatusStarting, nil)
 	return true
 }
 
-func (listener *PollingListener) stop() {
+func (listener *PollingListener) stop(result error) {
 	listener.mu.Lock()
 	listener.running = false
 	listener.mu.Unlock()
+	if result != nil && !errors.Is(result, context.Canceled) {
+		listener.transitionState(ListenerStatusFailed, result)
+		return
+	}
+	listener.transitionState(ListenerStatusStopped, nil)
+}
+
+// Status returns a concurrency-safe listener lifecycle snapshot.
+func (listener *PollingListener) Status() ListenerStateSnapshot {
+	if listener == nil {
+		return ListenerStateSnapshot{State: ListenerStatusStopped}
+	}
+	return listener.listenerState().Snapshot()
+}
+
+func (listener *PollingListener) listenerState() *ListenerStateTracker {
+	listener.mu.Lock()
+	defer listener.mu.Unlock()
+	if listener.state == nil {
+		listener.state = NewListenerStateTracker()
+	}
+	return listener.state
+}
+
+func (listener *PollingListener) transitionState(next ListenerStatus, err error) {
+	state := listener.listenerState()
+	if state.Snapshot().State == next {
+		return
+	}
+	_ = state.Transition(next, err)
 }
 
 var _ Listener = (*PollingListener)(nil)

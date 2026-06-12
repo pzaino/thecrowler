@@ -337,8 +337,10 @@ usual source row plus `email_status` when durable email state exists:
 - `active`: a healthy-listener timestamp is recorded;
 - `degraded`: at least one latest message outcome is a failure.
 
-The underlying listener event lifecycle also defines `reconnecting`, but the
-current aggregate source status query derives only the four values above.
+The underlying listener event lifecycle uses `stopped`, `starting`, `running`,
+`degraded`, `reconnecting`, and `failed`. The current aggregate source status
+query derives only the four values above and retains `active` for its healthy
+aggregate value.
 `last_error_category` is `transient`, `permanent`, or `unknown`, and is omitted
 when there is no latest failure. `email_status` itself is omitted until email
 state has been persisted.

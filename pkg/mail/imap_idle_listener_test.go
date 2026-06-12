@@ -89,6 +89,10 @@ func TestIMAPIdleListenerLeavesIdleEnqueuesAndResumes(t *testing.T) {
 		t.Fatalf("Notify() mailbox = %#v, want %#v", got, mailbox)
 	}
 	client.awaitIdle(t, 2)
+	status := listener.Status()
+	if status.State != ListenerStatusRunning || status.LastEventAt.IsZero() || !status.LastSuccessfulReconciliationAt.IsZero() {
+		t.Fatalf("status after reconciliation hint = %#v, want an event timestamp without claiming reconciliation", status)
+	}
 
 	cancel()
 	if err := awaitValue(t, done, "IMAP IDLE listener shutdown"); !errors.Is(err, context.Canceled) {
@@ -210,8 +214,8 @@ func TestIMAPIdleListenerRecoversAfterAuthenticationFailure(t *testing.T) {
 	recovered := factory.awaitClients(t, 2)[1]
 	recovered.awaitIdle(t, 1)
 	status := listener.Status()
-	if status.Degraded || status.ActiveSessions != 1 || status.LastError != "" {
-		t.Fatalf("status after authentication recovery = %#v, want healthy", status)
+	if status.State != ListenerStatusRunning || status.Degraded || status.ActiveSessions != 1 || status.LastError != "" || status.ErrorCategory != "" || status.TransitionedAt.IsZero() {
+		t.Fatalf("status after authentication recovery = %#v, want healthy running state", status)
 	}
 
 	cancel()

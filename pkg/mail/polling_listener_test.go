@@ -209,6 +209,54 @@ func TestPollingListenerListenEmitsReconciliationHints(t *testing.T) {
 	}
 }
 
+func TestPollingListenerStatusTracksSuccessAndFailure(t *testing.T) {
+	t.Run("successful pass", func(t *testing.T) {
+		scheduler := newControlledPollingScheduler()
+		listener, err := NewPollingListener(pollingReconcilerFunc(func(context.Context, MailboxKey) error {
+			return nil
+		}), time.Minute, scheduler)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- listener.Run(ctx, []MailboxKey{{Mailbox: Mailbox{Name: "INBOX"}}}) }()
+		awaitValue(t, scheduler.waits, "successful polling pass")
+		status := listener.Status()
+		if status.State != ListenerStatusRunning || status.LastEventAt.IsZero() || status.LastSuccessfulReconciliationAt.IsZero() || status.ErrorCategory != "" {
+			t.Fatalf("successful polling status = %#v", status)
+		}
+
+		cancel()
+		if err := awaitValue(t, done, "polling cancellation"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v, want context.Canceled", err)
+		}
+		if status := listener.Status(); status.State != ListenerStatusStopped {
+			t.Fatalf("status after cancellation = %#v, want stopped", status)
+		}
+	})
+
+	t.Run("failed reconciliation", func(t *testing.T) {
+		wantErr := errors.New("provider details must remain private")
+		listener, err := NewPollingListener(pollingReconcilerFunc(func(context.Context, MailboxKey) error {
+			return wantErr
+		}), time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = listener.Run(context.Background(), []MailboxKey{{Mailbox: Mailbox{Name: "INBOX"}}})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("Run() error = %v, want wrapped reconciliation error", err)
+		}
+		status := listener.Status()
+		if status.State != ListenerStatusFailed || status.ErrorCategory != LogErrorUnknown || status.LastEventAt.IsZero() || !status.LastSuccessfulReconciliationAt.IsZero() {
+			t.Fatalf("failed polling status = %#v", status)
+		}
+	})
+}
+
 func TestNewPollingListenerValidation(t *testing.T) {
 	reconciler := pollingReconcilerFunc(func(context.Context, MailboxKey) error { return nil })
 	for _, test := range []struct {

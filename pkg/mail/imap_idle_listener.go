@@ -25,12 +25,13 @@ var (
 // A running listener is degraded while any selected mailbox is disconnected or
 // retrying. LastError is cleared after every mailbox has recovered.
 type IMAPIdleListenerStatus struct {
-	Running          bool   `json:"running" yaml:"running"`
-	Degraded         bool   `json:"degraded" yaml:"degraded"`
-	ActiveSessions   int    `json:"active_sessions" yaml:"active_sessions"`
-	ExpectedSessions int    `json:"expected_sessions" yaml:"expected_sessions"`
-	ReconnectCount   uint64 `json:"reconnect_count" yaml:"reconnect_count"`
-	LastError        string `json:"last_error,omitempty" yaml:"last_error,omitempty"`
+	ListenerStateSnapshot `json:",inline" yaml:",inline"`
+	Running               bool   `json:"running" yaml:"running"`
+	Degraded              bool   `json:"degraded" yaml:"degraded"`
+	ActiveSessions        int    `json:"active_sessions" yaml:"active_sessions"`
+	ExpectedSessions      int    `json:"expected_sessions" yaml:"expected_sessions"`
+	ReconnectCount        uint64 `json:"reconnect_count" yaml:"reconnect_count"`
+	LastError             string `json:"last_error,omitempty" yaml:"last_error,omitempty"`
 }
 
 type imapIdleMailboxState struct {
@@ -63,6 +64,7 @@ type IMAPIdleListener struct {
 	mailboxStates  map[string]imapIdleMailboxState
 	reconnectCount uint64
 	lastError      string
+	state          *ListenerStateTracker
 }
 
 // NewIMAPIdleListener constructs a listener using the mailbox include order as
@@ -80,7 +82,7 @@ func newIMAPIdleListener(config IMAPConnectorConfig, factory imapIdleClientFacto
 	if factory == nil {
 		return nil, fmt.Errorf("%w: client factory is required", ErrInvalidIMAPIdleListener)
 	}
-	return &IMAPIdleListener{config: config, factory: factory}, nil
+	return &IMAPIdleListener{config: config, factory: factory, state: NewListenerStateTracker()}, nil
 }
 
 // Status returns a point-in-time health snapshot without exposing credentials
@@ -89,14 +91,16 @@ func (listener *IMAPIdleListener) Status() IMAPIdleListenerStatus {
 	if listener == nil {
 		return IMAPIdleListenerStatus{}
 	}
+	stateSnapshot := listener.listenerState().Snapshot()
 	listener.mu.Lock()
 	defer listener.mu.Unlock()
 
 	status := IMAPIdleListenerStatus{
-		Running:          listener.running,
-		ExpectedSessions: len(listener.mailboxStates),
-		ReconnectCount:   listener.reconnectCount,
-		LastError:        listener.lastError,
+		ListenerStateSnapshot: stateSnapshot,
+		Running:               listener.running,
+		ExpectedSessions:      len(listener.mailboxStates),
+		ReconnectCount:        listener.reconnectCount,
+		LastError:             listener.lastError,
 	}
 	for _, state := range listener.mailboxStates {
 		if state.active {
@@ -110,7 +114,7 @@ func (listener *IMAPIdleListener) Status() IMAPIdleListenerStatus {
 // Listen implements Listener. Each mailbox reconnects independently after
 // connection, authentication, selection, or IDLE failures. A fatal sink error
 // still cancels all sessions because hints can no longer be delivered.
-func (listener *IMAPIdleListener) Listen(ctx context.Context, mailboxes []MailboxKey, sink EventSink) error {
+func (listener *IMAPIdleListener) Listen(ctx context.Context, mailboxes []MailboxKey, sink EventSink) (result error) {
 	if listener == nil || listener.factory == nil {
 		return fmt.Errorf("%w: listener is not initialized", ErrInvalidIMAPIdleListener)
 	}
@@ -125,7 +129,7 @@ func (listener *IMAPIdleListener) Listen(ctx context.Context, mailboxes []Mailbo
 	if !listener.start(selected) {
 		return ErrIMAPIdleListenerRunning
 	}
-	defer listener.stop()
+	defer func() { listener.stop(result) }()
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	for _, mailbox := range selected {
@@ -233,6 +237,7 @@ func (listener *IMAPIdleListener) runIdleSession(ctx context.Context, client ima
 				return fmt.Errorf("mail: reissue IDLE mailbox %q: %w", mailboxIdentity(mailbox.Mailbox), err)
 			}
 		case <-changes:
+			listener.listenerState().RecordEvent()
 			stopTimer(timer)
 			close(stop)
 			if err := <-idleDone; err != nil {
@@ -280,8 +285,8 @@ func stopTimer(timer *time.Timer) {
 
 func (listener *IMAPIdleListener) start(mailboxes []MailboxKey) bool {
 	listener.mu.Lock()
-	defer listener.mu.Unlock()
 	if listener.running {
+		listener.mu.Unlock()
 		return false
 	}
 	listener.running = true
@@ -291,13 +296,20 @@ func (listener *IMAPIdleListener) start(mailboxes []MailboxKey) bool {
 	for _, mailbox := range mailboxes {
 		listener.mailboxStates[imapMailboxStateKey(mailbox)] = imapIdleMailboxState{}
 	}
+	listener.mu.Unlock()
+	listener.transitionState(ListenerStatusStarting, nil)
 	return true
 }
 
-func (listener *IMAPIdleListener) stop() {
+func (listener *IMAPIdleListener) stop(result error) {
 	listener.mu.Lock()
 	listener.running = false
 	listener.mu.Unlock()
+	if result != nil && !errors.Is(result, context.Canceled) {
+		listener.transitionState(ListenerStatusFailed, result)
+		return
+	}
+	listener.transitionState(ListenerStatusStopped, nil)
 }
 
 func (listener *IMAPIdleListener) markConnected(key string) {
@@ -307,7 +319,14 @@ func (listener *IMAPIdleListener) markConnected(key string) {
 	state.lastError = ""
 	listener.mailboxStates[key] = state
 	listener.refreshLastErrorLocked()
+	active := listener.activeSessionsLocked()
+	expected := len(listener.mailboxStates)
 	listener.mu.Unlock()
+	if active == expected {
+		listener.transitionState(ListenerStatusRunning, nil)
+	} else {
+		listener.transitionState(ListenerStatusDegraded, nil)
+	}
 }
 
 func (listener *IMAPIdleListener) markDisconnected(key string, err error) {
@@ -319,7 +338,13 @@ func (listener *IMAPIdleListener) markDisconnected(key string, err error) {
 	}
 	listener.mailboxStates[key] = state
 	listener.refreshLastErrorLocked()
+	active := listener.activeSessionsLocked()
 	listener.mu.Unlock()
+	if active > 0 {
+		listener.transitionState(ListenerStatusDegraded, err)
+	} else {
+		listener.transitionState(ListenerStatusReconnecting, err)
+	}
 }
 
 func safeIMAPIdleStatusError(err error) string {
@@ -345,6 +370,33 @@ func (listener *IMAPIdleListener) refreshLastErrorLocked() {
 			return
 		}
 	}
+}
+
+func (listener *IMAPIdleListener) activeSessionsLocked() int {
+	active := 0
+	for _, state := range listener.mailboxStates {
+		if state.active {
+			active++
+		}
+	}
+	return active
+}
+
+func (listener *IMAPIdleListener) listenerState() *ListenerStateTracker {
+	listener.mu.Lock()
+	defer listener.mu.Unlock()
+	if listener.state == nil {
+		listener.state = NewListenerStateTracker()
+	}
+	return listener.state
+}
+
+func (listener *IMAPIdleListener) transitionState(next ListenerStatus, err error) {
+	state := listener.listenerState()
+	if state.Snapshot().State == next {
+		return
+	}
+	_ = state.Transition(next, err)
 }
 
 func imapMailboxStateKey(mailbox MailboxKey) string {

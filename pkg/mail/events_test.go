@@ -138,7 +138,7 @@ func TestSafeEmailEventIdentityIsDeterministicAndOpaque(t *testing.T) {
 func TestListenerEnums(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []ListenerStatus{ListenerStatusStarting, ListenerStatusActive, ListenerStatusReconnecting, ListenerStatusDegraded, ListenerStatusStopped} {
+	for _, status := range []ListenerStatus{ListenerStatusStopped, ListenerStatusStarting, ListenerStatusRunning, ListenerStatusDegraded, ListenerStatusReconnecting, ListenerStatusFailed} {
 		if !status.Valid() {
 			t.Errorf("ListenerStatus(%q).Valid() = false", status)
 		}
