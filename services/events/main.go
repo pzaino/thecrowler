@@ -792,6 +792,10 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
 		return
 	}
+	if err := validateEmailLifecycleEvent(event); err != nil {
+		http.Error(w, "Invalid event payload", http.StatusBadRequest)
+		return
+	}
 
 	eventID := cdb.GenerateEventUID(event)
 	event.Action = actionInsert
