@@ -2,9 +2,12 @@ package mail
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
 
 // ErrorKind classifies failures without exposing provider-specific or secret
@@ -64,13 +67,39 @@ func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
-	if e.Operation == "" {
-		return e.Message
+	operation := mailconfig.RedactString(e.Operation)
+	message := mailconfig.RedactString(e.Message)
+	if operation == "" {
+		return message
 	}
-	if e.Message == "" {
-		return e.Operation
+	if message == "" {
+		return operation
 	}
-	return fmt.Sprintf("%s: %s", e.Operation, e.Message)
+	return fmt.Sprintf("%s: %s", operation, message)
+}
+
+// Format ensures every fmt representation uses the redacted Error string.
+func (e *Error) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, e.Error())
+}
+
+// MarshalJSON exposes only redacted, provider-neutral error fields and never
+// serializes Cause.
+func (e *Error) MarshalJSON() ([]byte, error) {
+	if e == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(struct {
+		Kind       ErrorKind     `json:"kind"`
+		Operation  string        `json:"operation,omitempty"`
+		Message    string        `json:"message,omitempty"`
+		RetryAfter time.Duration `json:"retry_after,omitempty"`
+	}{
+		Kind:       e.Kind,
+		Operation:  mailconfig.RedactString(e.Operation),
+		Message:    mailconfig.RedactString(e.Message),
+		RetryAfter: e.RetryAfter,
+	})
 }
 
 // Unwrap exposes the internal cause to errors.Is and errors.As without adding

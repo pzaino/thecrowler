@@ -69,7 +69,7 @@ func (factory configuredEmailConnectorFactory) credential(reference string) (cfg
 	reference = strings.TrimSpace(reference)
 	credential, ok := factory.credentials[reference]
 	if !ok {
-		return cfg.EmailCredentialConfig{}, fmt.Errorf("email credential reference %q is not configured", reference)
+		return cfg.EmailCredentialConfig{}, fmt.Errorf("email credential reference %q is not configured", mail.RedactedValue)
 	}
 	return credential, nil
 }

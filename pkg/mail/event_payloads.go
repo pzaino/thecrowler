@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
 
 const (
@@ -191,7 +193,11 @@ func marshalLifecyclePayload(value any, validate func() error) ([]byte, error) {
 	if err := validate(); err != nil {
 		return nil, err
 	}
-	return json.Marshal(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return mailconfig.RedactJSON(encoded)
 }
 
 func (payload MessageDiscoveredEventPayload) Validate() error {

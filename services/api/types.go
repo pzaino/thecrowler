@@ -254,7 +254,7 @@ type SourceConfigRequest = cfg.SourceConfig
 
 // SourceConfigResponse is the source configuration returned by
 // source-management endpoints. Its JSON shape matches cfg.SourceConfig, while
-// MarshalJSON redacts secret values contained in email configuration extensions.
+// MarshalJSON redacts secret values and secret references contained in email configuration.
 type SourceConfigResponse cfg.SourceConfig
 
 // MarshalJSON returns the existing source configuration shape with email

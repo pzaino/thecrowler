@@ -57,3 +57,16 @@ func TestProviderConfigTranslationUsesSourcePolicy(t *testing.T) {
 		t.Fatalf("graph config = %#v", graph)
 	}
 }
+
+func TestConfiguredEmailConnectorFactoryRedactsMissingCredentialReference(t *testing.T) {
+	t.Parallel()
+
+	const reference = "secret/mail/archive"
+	_, err := (configuredEmailConnectorFactory{}).credential(reference)
+	if err == nil {
+		t.Fatal("credential() error = nil, want missing credential error")
+	}
+	if strings.Contains(err.Error(), reference) || !strings.Contains(err.Error(), mail.RedactedValue) {
+		t.Fatalf("credential() error was not redacted: %v", err)
+	}
+}

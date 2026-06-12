@@ -2,8 +2,10 @@ package mail
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,6 +91,28 @@ func TestRetryableRecognizesAllRetryClasses(t *testing.T) {
 	} {
 		if Retryable(err) {
 			t.Errorf("Retryable(%#v) = true, want false", err)
+		}
+	}
+}
+
+func TestErrorStringRedactsAuthenticationMaterial(t *testing.T) {
+	t.Parallel()
+
+	err := &Error{
+		Operation: "authorize credential_ref=secret/mail/archive",
+		Message:   "password=hunter2 access_token=access-value refresh_token=refresh-value client_secret=client-value Authorization: Bearer bearer-value",
+	}
+	representations := []string{err.Error(), fmt.Sprintf("%v", err), fmt.Sprintf("%+v", err), fmt.Sprintf("%#v", err)}
+	encoded, marshalErr := json.Marshal(err)
+	if marshalErr != nil {
+		t.Fatalf("json.Marshal(error) error = %v", marshalErr)
+	}
+	representations = append(representations, string(encoded))
+	for _, got := range representations {
+		for _, secret := range []string{"secret/mail/archive", "hunter2", "access-value", "refresh-value", "client-value", "bearer-value"} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("error representation leaked %q: %s", secret, got)
+			}
 		}
 	}
 }

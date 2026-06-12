@@ -19,6 +19,8 @@ import mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 // Mode controls how mailbox changes trigger reconciliation.
 type Mode = mailconfig.Mode
 
+const RedactedValue = mailconfig.RedactedValue
+
 const (
 	// ModePoll discovers changes on a schedule.
 	ModePoll = mailconfig.ModePoll

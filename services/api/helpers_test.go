@@ -136,6 +136,20 @@ func TestHandleErrorAndRespond(t *testing.T) {
 		// You can also read and check the response body if needed
 	})
 
+	t.Run("redacts mail authentication material", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		testErr := fmt.Errorf("password=hunter2 access_token=access-value refresh_token=refresh-value client_secret=client-value Authorization: Bearer bearer-value credential_ref=secret/mail/archive")
+
+		handleErrorAndRespond(rec, testErr, nil, "request failed: %v", http.StatusBadRequest, http.StatusOK)
+
+		body := rec.Body.String()
+		for _, secret := range []string{"hunter2", "access-value", "refresh-value", "client-value", "bearer-value", "secret/mail/archive"} {
+			if strings.Contains(body, secret) {
+				t.Fatalf("API error response leaked %q: %s", secret, body)
+			}
+		}
+	})
+
 	t.Run("success with results", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		results := ExampleResults{Message: "success"}

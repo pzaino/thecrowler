@@ -169,3 +169,29 @@ func TestSafeLogIdentitiesAreDeterministicAndOpaque(t *testing.T) {
 		}
 	}
 }
+
+func TestEmitLogRedactsStringFieldsBeforeCallingHook(t *testing.T) {
+	t.Parallel()
+
+	pipeline := &Pipeline{}
+	var got LogEvent
+	pipeline.LogHook = func(_ context.Context, event LogEvent) { got = event }
+	pipeline.emitLog(context.Background(), LogEvent{
+		Operation:     "sync password=operation-secret",
+		SourceID:      "credential_ref=secret/mail/archive",
+		MailboxID:     "authorization: Bearer mailbox-secret",
+		MessageID:     "access_token=message-secret",
+		State:         LogState("refresh_token=state-secret"),
+		ErrorCategory: LogErrorCategory("client_secret=category-secret"),
+	})
+
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal redacted log event: %v", err)
+	}
+	for _, secret := range []string{"operation-secret", "secret/mail/archive", "mailbox-secret", "message-secret", "state-secret", "category-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("log hook received %q: %s", secret, encoded)
+		}
+	}
+}

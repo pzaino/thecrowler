@@ -79,18 +79,18 @@ func TestSourceConfigResponseRedactsEmailSecrets(t *testing.T) {
 	}
 
 	body := string(encoded)
-	for _, secret := range []string{"access-secret", "password-secret", "oauth-secret", "client-secret", "private-key"} {
+	for _, secret := range []string{"secret/archive", "access-secret", "password-secret", "oauth-secret", "client-secret", "private-key"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("response leaked %q: %s", secret, body)
 		}
 	}
-	for _, retained := range []string{"secret/archive", "reader@example.test", "archive", "unrelated-source-value"} {
+	for _, retained := range []string{"reader@example.test", "archive", "unrelated-source-value"} {
 		if !strings.Contains(body, retained) {
 			t.Fatalf("response removed non-secret value %q: %s", retained, body)
 		}
 	}
-	if got := strings.Count(body, sourceConfigRedactionMarker); got != 5 {
-		t.Fatalf("redaction marker count = %d, want 5: %s", got, body)
+	if got := strings.Count(body, sourceConfigRedactionMarker); got != 6 {
+		t.Fatalf("redaction marker count = %d, want 6: %s", got, body)
 	}
 	if request.Email.Extensions["password"] != "password-secret" {
 		t.Fatalf("response serialization mutated request configuration: %#v", request.Email.Extensions)
@@ -124,8 +124,8 @@ func TestStatusResponseSerializesRedactedEmailConfiguration(t *testing.T) {
 		t.Fatalf("marshal status response: %v", err)
 	}
 	body := string(encoded)
-	if strings.Contains(body, "refresh-secret") {
-		t.Fatalf("status response leaked email secret: %s", body)
+	if strings.Contains(body, "refresh-secret") || strings.Contains(body, "secret/gmail") {
+		t.Fatalf("status response leaked email secret or reference: %s", body)
 	}
 	if !strings.Contains(body, `"refresh_token":"[REDACTED]"`) || !strings.Contains(body, `"source_id":42`) {
 		t.Fatalf("status response lost its compatible shape: %s", body)

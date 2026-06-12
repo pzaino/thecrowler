@@ -209,3 +209,36 @@ func assertNoEmailLifecycleSecret(t *testing.T, serialized string) {
 		}
 	}
 }
+
+func TestLifecycleEventRedactsStructuredAndEmbeddedSecrets(t *testing.T) {
+	t.Parallel()
+
+	payload := struct {
+		Password      string         `json:"password"`
+		AccessToken   string         `json:"access_token"`
+		RefreshToken  string         `json:"refresh_token"`
+		ClientSecret  string         `json:"client_secret"`
+		Authorization string         `json:"authorization"`
+		CredentialRef string         `json:"credential_ref"`
+		Metadata      map[string]any `json:"metadata"`
+	}{
+		Password:      "password-secret",
+		AccessToken:   "access-secret",
+		RefreshToken:  "refresh-secret",
+		ClientSecret:  "client-secret",
+		Authorization: "Bearer authorization-secret",
+		CredentialRef: "secret/mail/archive",
+		Metadata: map[string]any{
+			"diagnostic": "Authorization: Bearer embedded-secret",
+		},
+	}
+	event, err := newLifecycleEvent(EmailEventMessageFailed, payload)
+	if err != nil {
+		t.Fatalf("newLifecycleEvent() error = %v", err)
+	}
+	for _, secret := range []string{"password-secret", "access-secret", "refresh-secret", "client-secret", "authorization-secret", "secret/mail/archive", "embedded-secret"} {
+		if strings.Contains(string(event.Details), secret) {
+			t.Fatalf("lifecycle event leaked %q: %s", secret, event.Details)
+		}
+	}
+}

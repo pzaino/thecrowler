@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
 
 // LifecycleEvent is the validated, serialized boundary passed to a
@@ -31,7 +33,11 @@ func newLifecycleEvent(eventType string, payload any) (LifecycleEvent, error) {
 	if err != nil {
 		return LifecycleEvent{}, fmt.Errorf("mail: marshal lifecycle event %q: %w", eventType, err)
 	}
-	return LifecycleEvent{Type: eventType, Details: details}, nil
+	details, err = mailconfig.RedactJSON(details)
+	if err != nil {
+		return LifecycleEvent{}, fmt.Errorf("mail: redact lifecycle event %q: %w", eventType, err)
+	}
+	return LifecycleEvent{Type: mailconfig.RedactString(eventType), Details: details}, nil
 }
 
 func validEmailLifecycleEventType(eventType string) bool {

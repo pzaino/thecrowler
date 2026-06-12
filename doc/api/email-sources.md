@@ -179,12 +179,13 @@ email:
 The values above are placeholders. Store real secrets in the deployment's
 secret manager or environment interpolation path. Do not put literal secrets in
 API examples, source `extensions`, logs, or version control. Status/config
-responses redact secret-looking values found in email extension maps, but that
-redaction is a last line of defense, not a supported secret transport.
+responses redact secret-looking values found in email extension maps and redact
+`auth.credential_ref` so secret-store naming conventions are not disclosed.
+That redaction is a last line of defense, not a supported secret transport.
 
 `auth.credential_ref` is mandatory for network providers and optional for
-`maildir` and `mbox`. It may be returned by status APIs because it is an opaque
-reference, not secret material.
+`maildir` and `mbox`. Status APIs return the stable `[REDACTED]` marker in place
+of a configured reference.
 
 ## Polling and listener modes
 

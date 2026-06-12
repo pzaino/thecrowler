@@ -15,77 +15,30 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
 
-const sourceConfigRedactionMarker = "[REDACTED]"
+const sourceConfigRedactionMarker = mailconfig.RedactedValue
 
 // marshalRedactedSourceConfig serializes a source configuration after replacing
-// secret values in its email envelope. Email extensions are intentionally
-// recursive because provider-specific settings can nest authentication material.
+// secret values and secret-store references in its email envelope. Email
+// extensions are recursive because provider-specific settings can nest
+// authentication material.
 func marshalRedactedSourceConfig(sourceConfig cfg.SourceConfig) ([]byte, error) {
 	encoded, err := json.Marshal(sourceConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	var document map[string]interface{}
+	var document map[string]any
 	if err := json.Unmarshal(encoded, &document); err != nil {
 		return nil, err
 	}
 	if email, ok := document["email"]; ok {
-		document["email"] = redactEmailSecretValues(email)
+		document["email"] = mailconfig.RedactValue(email)
 	}
 	return json.Marshal(document)
-}
-
-func redactEmailSecretValues(value interface{}) interface{} {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		redacted := make(map[string]interface{}, len(typed))
-		for key, nested := range typed {
-			if isEmailSecretKey(key) && hasSecretValue(nested) {
-				redacted[key] = sourceConfigRedactionMarker
-				continue
-			}
-			redacted[key] = redactEmailSecretValues(nested)
-		}
-		return redacted
-	case []interface{}:
-		redacted := make([]interface{}, len(typed))
-		for index, nested := range typed {
-			redacted[index] = redactEmailSecretValues(nested)
-		}
-		return redacted
-	default:
-		return value
-	}
-}
-
-func isEmailSecretKey(key string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(key))
-	switch normalized {
-	case "password", "passphrase", "secret", "api_key", "api_secret", "api_token",
-		"token", "access_token", "refresh_token", "bearer_token", "oauth_json",
-		"client_secret", "private_key":
-		return true
-	default:
-		return strings.HasSuffix(normalized, "_password") ||
-			strings.HasSuffix(normalized, "_secret") ||
-			strings.HasSuffix(normalized, "_token") ||
-			strings.HasSuffix(normalized, "_private_key")
-	}
-}
-
-func hasSecretValue(value interface{}) bool {
-	switch typed := value.(type) {
-	case nil:
-		return false
-	case string:
-		return typed != ""
-	default:
-		return true
-	}
 }
 
 func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
@@ -124,7 +77,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// Log the error and prepare an error response
-		redactedErr := infoseeddiag.RedactDiagnosticString(err.Error())
+		redactedErr := mailconfig.RedactString(infoseeddiag.RedactDiagnosticString(err.Error()))
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, redactedErr)
 		response = cmn.StdAPIError{
 			ErrCode: errCode,
@@ -149,7 +102,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log the error and send a fallback error response
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON response: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "Original Results: %+v", results)
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "Original Results: %s", mailconfig.RedactString(fmt.Sprintf("%+v", results)))
 
 		fallbackResponse := cmn.StdAPIError{
 			ErrCode: http.StatusInternalServerError,

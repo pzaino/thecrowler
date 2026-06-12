@@ -11,6 +11,7 @@ import (
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
 
 // LogHook receives allowlisted, provider-neutral mail ingestion events.
@@ -79,6 +80,13 @@ type LogEvent struct {
 	ErrorCategory LogErrorCategory `json:"error_category,omitempty"`
 }
 
+// MarshalJSON enforces redaction even when callers serialize a LogEvent
+// directly instead of passing it through Pipeline.emitLog.
+func (event LogEvent) MarshalJSON() ([]byte, error) {
+	type wireLogEvent LogEvent
+	return json.Marshal(wireLogEvent(redactLogEvent(event)))
+}
+
 func setDefaultLogFacility(p *Pipeline) {
 	p.LogHook = func(_ context.Context, event LogEvent) {
 		encoded, err := json.Marshal(event)
@@ -109,7 +117,17 @@ func (p *Pipeline) emitLog(ctx context.Context, event LogEvent) {
 	if p.LogHook == nil {
 		setDefaultLogFacility(p)
 	}
-	p.LogHook(ctx, event)
+	p.LogHook(ctx, redactLogEvent(event))
+}
+
+func redactLogEvent(event LogEvent) LogEvent {
+	event.Operation = mailconfig.RedactString(event.Operation)
+	event.SourceID = mailconfig.RedactString(event.SourceID)
+	event.MailboxID = mailconfig.RedactString(event.MailboxID)
+	event.MessageID = mailconfig.RedactString(event.MessageID)
+	event.State = LogState(mailconfig.RedactString(string(event.State)))
+	event.ErrorCategory = LogErrorCategory(mailconfig.RedactString(string(event.ErrorCategory)))
+	return event
 }
 
 func (p *Pipeline) now() time.Time {
