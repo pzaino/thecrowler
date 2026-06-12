@@ -209,13 +209,15 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- source is disabled.
     flags INTEGER DEFAULT 0 NOT NULL,           -- Bitwise flags for the source (used for various
                                                 -- purposes, included but not limited to the Rules).
-    config JSONB,                               -- Stores JSON document with all details about
-                                                -- the source configuration for the crawler.
-    details JSONB                               -- Stores JSON document with all details about
-                                                -- the source. This is different than the config!
+    config JSONB,                               -- Source config payload, stores JSON document with
+                                                -- all details about the source configuration for 
+                                                -- the crawling process.
+    details JSONB                               -- Source payload, stores JSON document with 
+                                                -- all details about the source state. 
+                                                -- This is different than the config!
                                                 -- For instance, in here the CROWler itself stores
-                                                -- data like the stage of the crawling for multi-stage
-                                                -- crawls etc.
+                                                -- data like the stage of the crawling for 
+                                                -- multi-stage crawls etc.
 );
 --------------------------------------------------------------------------------
 -- Durable email ingestion checkpoints and bounded message reconciliation state.
@@ -752,7 +754,7 @@ CREATE TABLE IF NOT EXISTS Events (
     event_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     event_recurrence VARCHAR(64),
     expires_at TIMESTAMPTZ,
-    details JSONB NOT NULL
+    details JSONB NOT NULL -- Events payload (data-model agnostic), for everything, from system events to agent observations, decisions, errors, email events, crawl events, etc.
 );
 
 -- EventSchedules table stores the schedules for the events
