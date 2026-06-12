@@ -36,8 +36,10 @@ type StaticHTMLLink struct {
 }
 
 // ExtractStaticHTML parses source without a browser and extracts visible-ish
-// text and hyperlinks. It does not navigate, execute JavaScript, apply external
-// stylesheets, or load any referenced resource.
+// text and hyperlinks. It has no HTTP client or resource loader: URLs in images,
+// stylesheets, scripts, fonts, media, frames, tracking pixels, CSS, and other
+// resource-bearing markup remain inert. Hyperlink targets are returned as data
+// but are never followed.
 //
 // Text in non-rendered containers (for example script, style, template, and
 // embedded-resource elements) and elements hidden by common inline markers is

@@ -109,6 +109,8 @@ func documentFromParsedMessage(sourceID string, parsed ParsedMessage, extraction
 			htmlForExtraction = cleanedHTML
 		}
 
+		// Email HTML is untrusted. Keep normalization on the static parser so
+		// embedded resources and active content can never trigger a fetch.
 		content, err := browser.ExtractStaticHTML(htmlForExtraction)
 		if err != nil {
 			return Document{}, fmt.Errorf("mail: normalize HTML body: %w", err)

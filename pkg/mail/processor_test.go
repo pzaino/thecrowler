@@ -2,10 +2,9 @@ package mail
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -80,23 +79,34 @@ func TestProcessorDecodesTextPlainBodies(t *testing.T) {
 	}
 }
 
-func TestProcessorStaticallyNormalizesHTMLBodyWithoutNetworkAccess(t *testing.T) {
-	t.Parallel()
+func TestProcessorDoesNotFetchHTMLExternalResourcesByDefault(t *testing.T) {
+	transport := installMailFailOnRequestTransport(t)
+	const external = "https://mail-resources.example.invalid"
 
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
-	defer server.Close()
-
-	htmlBody := fmt.Sprintf(`<html><body>
+	htmlBody := strings.ReplaceAll(`<html>
+	<head>
+		<meta http-equiv="refresh" content="0; url=EXTERNAL/redirect">
+		<link rel="stylesheet" href="EXTERNAL/styles.css">
+		<link rel="preload" as="font" href="EXTERNAL/font.woff2">
+		<style>
+			@import url("EXTERNAL/imported.css");
+			@font-face { font-family: remote; src: url("EXTERNAL/font.woff2"); }
+			.hero { background-image: url("EXTERNAL/background.png"); }
+		</style>
+		<script src="EXTERNAL/script.js">fetch("EXTERNAL/script-fetch")</script>
+	</head>
+	<body background="EXTERNAL/body.png">
 		<h1>Hello</h1>
-		<script>fetch(%q); document.write("injected")</script>
-		<img src="%s/tracking.png" alt="remote image">
-		<iframe src="%s/frame.html">frame fallback</iframe>
-		<a href="%s/safe?one=1&amp;two=2" onclick="fetch('/clicked')">safe link</a>
-		<div hidden><a href="%s/hidden">hidden link</a></div>
-	</body></html>`, server.URL+"/script", server.URL, server.URL, server.URL, server.URL)
+		<img src="EXTERNAL/image.png" srcset="EXTERNAL/image-2x.png 2x" alt="remote image">
+		<picture><source srcset="EXTERNAL/picture.webp"><img src="EXTERNAL/fallback.png"></picture>
+		<iframe src="EXTERNAL/frame.html">frame fallback</iframe>
+		<object data="EXTERNAL/object.bin">object fallback</object>
+		<video src="EXTERNAL/video.mp4" poster="EXTERNAL/poster.jpg"></video>
+		<img width="1" height="1" src="EXTERNAL/tracking.gif">
+		<a href="EXTERNAL/safe?one=1&amp;two=2" onclick="fetch('EXTERNAL/clicked')">safe link</a>
+		<div hidden><a href="EXTERNAL/hidden">hidden link</a></div>
+	</body>
+</html>`, "EXTERNAL", external)
 
 	raw := strings.Join([]string{
 		"From: sender@example.test",
@@ -118,32 +128,72 @@ func TestProcessorStaticallyNormalizesHTMLBodyWithoutNetworkAccess(t *testing.T)
 		"",
 	}, "\r\n")
 
-	document, err := NewProcessor("source-html").Process(context.Background(), RawMessage{
-		Ref:    MessageRef{Provider: "fixture", AccountID: "account-html", UID: 7},
-		RFC822: io.NopCloser(strings.NewReader(raw)),
-	})
-	if err != nil {
-		t.Fatalf("Process() error = %v", err)
+	for _, test := range []struct {
+		name       string
+		extraction []ExtractionConfig
+	}{
+		{name: "default"},
+		{name: "cleanup enabled", extraction: []ExtractionConfig{{CleanupHTML: true}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := NewProcessor("source-html", test.extraction...).Process(context.Background(), RawMessage{
+				Ref:    MessageRef{Provider: "fixture", AccountID: "account-html", UID: 7},
+				RFC822: io.NopCloser(strings.NewReader(raw)),
+			})
+			if err != nil {
+				t.Fatalf("Process() error = %v", err)
+			}
+
+			if document.HTMLBody != htmlBody {
+				t.Errorf("HTMLBody changed during normalization:\n got: %q\nwant: %q", document.HTMLBody, htmlBody)
+			}
+			if document.ExtractedText != "Hello safe link" {
+				t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, "Hello safe link")
+			}
+			wantLinks := []Link{{
+				URL:            external + "/safe?one=1&two=2",
+				Text:           "safe link",
+				Source:         "html",
+				Classification: LinkNormal,
+			}}
+			if !reflect.DeepEqual(document.Links, wantLinks) {
+				t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
+			}
+		})
 	}
 
-	if document.HTMLBody != htmlBody {
-		t.Errorf("HTMLBody changed during normalization:\n got: %q\nwant: %q", document.HTMLBody, htmlBody)
+	transport.assertUnused(t)
+}
+
+type mailFailOnRequestTransport struct {
+	requests atomic.Int32
+}
+
+func (transport *mailFailOnRequestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.requests.Add(1)
+	return nil, errors.New("unexpected network request: " + request.URL.String())
+}
+
+func (transport *mailFailOnRequestTransport) assertUnused(t *testing.T) {
+	t.Helper()
+	if requests := transport.requests.Load(); requests != 0 {
+		t.Fatalf("network requests = %d, want 0", requests)
 	}
-	if document.ExtractedText != "Hello safe link" {
-		t.Errorf("ExtractedText = %q, want %q", document.ExtractedText, "Hello safe link")
-	}
-	wantLinks := []Link{{
-		URL:            server.URL + "/safe?one=1&two=2",
-		Text:           "safe link",
-		Source:         "html",
-		Classification: LinkNormal,
-	}}
-	if !reflect.DeepEqual(document.Links, wantLinks) {
-		t.Errorf("Links = %#v, want %#v", document.Links, wantLinks)
-	}
-	if got := requests.Load(); got != 0 {
-		t.Errorf("network requests during normalization = %d, want 0", got)
-	}
+}
+
+func installMailFailOnRequestTransport(t *testing.T) *mailFailOnRequestTransport {
+	t.Helper()
+
+	transport := &mailFailOnRequestTransport{}
+	previousDefaultTransport := http.DefaultTransport
+	previousClientTransport := http.DefaultClient.Transport
+	http.DefaultTransport = transport
+	http.DefaultClient.Transport = transport
+	t.Cleanup(func() {
+		http.DefaultTransport = previousDefaultTransport
+		http.DefaultClient.Transport = previousClientTransport
+	})
+	return transport
 }
 
 func TestProcessorNormalizesMalformedHTMLOnlyMessage(t *testing.T) {

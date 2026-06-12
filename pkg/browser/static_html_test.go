@@ -15,9 +15,9 @@
 package browser
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -77,33 +77,85 @@ func TestExtractStaticHTMLPreservesRelativeLinks(t *testing.T) {
 	})
 }
 
-func TestExtractStaticHTMLDoesNotLoadEmbeddedResources(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
-	defer server.Close()
+func TestExtractStaticHTMLDoesNotFetchExternalResources(t *testing.T) {
+	transport := installFailOnRequestTransport(t)
+	const external = "https://resources.example.invalid"
 
-	source := fmt.Sprintf(`
-		<link rel="stylesheet" href="%[1]s/styles.css">
-		<img src="%[1]s/image.png" alt="Remote image">
-		<iframe src="%[1]s/frame.html">Frame fallback</iframe>
-		<object data="%[1]s/object.bin">Object fallback</object>
-		<embed src="%[1]s/embed.bin">
-		<a href="%[1]s/destination">Ordinary link</a>`, server.URL)
+	source := strings.ReplaceAll(`
+		<html>
+		<head>
+			<base href="EXTERNAL/base/">
+			<meta http-equiv="refresh" content="0; url=EXTERNAL/redirect">
+			<link rel="stylesheet" href="EXTERNAL/styles.css">
+			<link rel="preload" as="font" href="EXTERNAL/font.woff2">
+			<link rel="icon" href="EXTERNAL/favicon.ico">
+			<style>
+				@import url("EXTERNAL/imported.css");
+				@font-face { font-family: remote; src: url("EXTERNAL/font.woff2"); }
+				.hero { background-image: url("EXTERNAL/background.png"); }
+			</style>
+			<script src="EXTERNAL/script.js"></script>
+		</head>
+		<body background="EXTERNAL/body-background.png">
+			<div class="hero" style="background: url('EXTERNAL/inline.png')">Visible text</div>
+			<img src="EXTERNAL/image.png" srcset="EXTERNAL/image-2x.png 2x" alt="Remote image">
+			<picture><source srcset="EXTERNAL/picture.webp"><img src="EXTERNAL/fallback.png"></picture>
+			<input type="image" src="EXTERNAL/button.png">
+			<iframe src="EXTERNAL/frame.html">Frame fallback</iframe>
+			<object data="EXTERNAL/object.bin">Object fallback</object>
+			<embed src="EXTERNAL/embed.bin">
+			<audio src="EXTERNAL/audio.mp3"><source src="EXTERNAL/audio.ogg"></audio>
+			<video src="EXTERNAL/video.mp4" poster="EXTERNAL/poster.jpg">
+				<source src="EXTERNAL/video.webm"><track src="EXTERNAL/captions.vtt">
+			</video>
+			<svg><image href="EXTERNAL/vector.png"/><use href="EXTERNAL/sprite.svg#icon"/></svg>
+			<form action="EXTERNAL/submit"><button>Submit</button></form>
+			<img width="1" height="1" src="EXTERNAL/tracking.gif">
+			<a href="EXTERNAL/destination">Ordinary link</a>
+		</body>
+		</html>`, "EXTERNAL", external)
 
 	content, err := ExtractStaticHTML(source)
 	if err != nil {
 		t.Fatalf("ExtractStaticHTML() error = %v", err)
 	}
 
-	if got := requests.Load(); got != 0 {
-		t.Fatalf("embedded resource requests = %d, want 0", got)
+	transport.assertUnused(t)
+	if content.Text != "Visible text Submit Ordinary link" {
+		t.Fatalf("Text = %q, want %q", content.Text, "Visible text Submit Ordinary link")
 	}
-	if content.Text != "Ordinary link" {
-		t.Fatalf("Text = %q, want %q", content.Text, "Ordinary link")
+	assertStaticHTMLLinks(t, content.Links, []StaticHTMLLink{{Href: external + "/destination", Text: "Ordinary link"}})
+}
+
+type failOnRequestTransport struct {
+	requests atomic.Int32
+}
+
+func (transport *failOnRequestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.requests.Add(1)
+	return nil, errors.New("unexpected network request: " + request.URL.String())
+}
+
+func (transport *failOnRequestTransport) assertUnused(t *testing.T) {
+	t.Helper()
+	if requests := transport.requests.Load(); requests != 0 {
+		t.Fatalf("network requests = %d, want 0", requests)
 	}
-	assertStaticHTMLLinks(t, content.Links, []StaticHTMLLink{{Href: server.URL + "/destination", Text: "Ordinary link"}})
+}
+
+func installFailOnRequestTransport(t *testing.T) *failOnRequestTransport {
+	t.Helper()
+
+	transport := &failOnRequestTransport{}
+	previousDefaultTransport := http.DefaultTransport
+	previousClientTransport := http.DefaultClient.Transport
+	http.DefaultTransport = transport
+	http.DefaultClient.Transport = transport
+	t.Cleanup(func() {
+		http.DefaultTransport = previousDefaultTransport
+		http.DefaultClient.Transport = previousClientTransport
+	})
+	return transport
 }
 
 func assertStaticHTMLLinks(t *testing.T, got, want []StaticHTMLLink) {
