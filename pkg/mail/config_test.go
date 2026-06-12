@@ -32,7 +32,7 @@ func TestSourceConfigSerializesToJSONAndYAML(t *testing.T) {
 		Extraction: ExtractionConfig{
 			CleanupHTML: true,
 			Links:       LinkPolicy{Extract: true, AllowedSchemes: []string{"https"}},
-			Attachments: AttachmentPolicy{Include: true, IncludeInline: true},
+			Attachments: AttachmentPolicy{Include: true, IncludeInline: true, Download: true},
 		},
 		Listener:       ListenerConfig{Enabled: true, CoalesceWindow: time.Second},
 		Reconciliation: ReconciliationConfig{PollInterval: 5 * time.Minute, PageSize: 100},
@@ -42,7 +42,7 @@ func TestSourceConfigSerializesToJSONAndYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal JSON source config: %v", err)
 	}
-	for _, field := range []string{`"connector"`, `"credential_ref"`, `"mailboxes"`, `"cleanup_html"`, `"reconciliation"`, `"extensions"`} {
+	for _, field := range []string{`"connector"`, `"credential_ref"`, `"mailboxes"`, `"cleanup_html"`, `"download"`, `"reconciliation"`, `"extensions"`} {
 		if !strings.Contains(string(jsonData), field) {
 			t.Errorf("JSON source config does not contain %s: %s", field, jsonData)
 		}
@@ -52,7 +52,7 @@ func TestSourceConfigSerializesToJSONAndYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal YAML source config: %v", err)
 	}
-	for _, field := range []string{"connector:", "credential_ref:", "mailboxes:", "cleanup_html:", "reconciliation:", "extensions:"} {
+	for _, field := range []string{"connector:", "credential_ref:", "mailboxes:", "cleanup_html:", "download:", "reconciliation:", "extensions:"} {
 		if !strings.Contains(string(yamlData), field) {
 			t.Errorf("YAML source config does not contain %q: %s", field, yamlData)
 		}
@@ -115,6 +115,7 @@ func TestDefaultSourceConfig(t *testing.T) {
 		{name: "allowed link schemes", got: got.Extraction.Links.AllowedSchemes, want: []string{"http", "https"}},
 		{name: "maximum links per message", got: got.Extraction.Links.MaxLinksPerMessage, want: 100},
 		{name: "include attachments", got: got.Extraction.Attachments.Include, want: false},
+		{name: "download attachments", got: got.Extraction.Attachments.Download, want: false},
 		{name: "listener enabled", got: got.Listener.Enabled, want: false},
 		{name: "listener buffer", got: got.Listener.BufferSize, want: 128},
 		{name: "coalesce window", got: got.Listener.CoalesceWindow, want: time.Second},
@@ -266,6 +267,9 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 		}, wantErr: "max_header_bytes"},
 		{name: "inline attachment without attachments", mutate: func(c *SourceConfig) {
 			c.Extraction.Attachments.IncludeInline = true
+		}, wantErr: "requires extraction.attachments.include"},
+		{name: "attachment download without attachments", mutate: func(c *SourceConfig) {
+			c.Extraction.Attachments.Download = true
 		}, wantErr: "requires extraction.attachments.include"},
 		{name: "zero total attachment bytes", mutate: func(c *SourceConfig) {
 			c.Crawl.Limits.MaxTotalAttachmentBytes = 0

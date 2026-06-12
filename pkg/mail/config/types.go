@@ -110,8 +110,12 @@ type LinkPolicy struct {
 // AttachmentPolicy controls attachment emission and optional downstream text
 // extraction. MIME types and filename extensions remain untrusted input.
 type AttachmentPolicy struct {
-	Include           bool           `json:"include,omitempty" yaml:"include,omitempty"`
-	IncludeInline     bool           `json:"include_inline,omitempty" yaml:"include_inline,omitempty"`
+	Include       bool `json:"include,omitempty" yaml:"include,omitempty"`
+	IncludeInline bool `json:"include_inline,omitempty" yaml:"include_inline,omitempty"`
+	// Download exposes policy-approved attachment bytes to crawler artifacts as
+	// base64. It is opt-in because binary payloads increase index size and may
+	// contain malicious content.
+	Download          bool           `json:"download,omitempty" yaml:"download,omitempty"`
 	ExtractText       bool           `json:"extract_text,omitempty" yaml:"extract_text,omitempty"`
 	AllowedMediaTypes []string       `json:"allowed_media_types,omitempty" yaml:"allowed_media_types,omitempty"`
 	BlockedMediaTypes []string       `json:"blocked_media_types,omitempty" yaml:"blocked_media_types,omitempty"`

@@ -146,6 +146,12 @@ email:
       max_total_attachment_bytes: 26214400
       max_attachments: 50
       max_embedded_message_depth: 3
+  extraction:
+    attachments:
+      include: true
+      download: true
+      include_inline: false
+      allowed_media_types: [application/pdf, application/octet-stream]
   listener:
     enabled: false
   reconciliation:
@@ -635,10 +641,14 @@ Responsibilities:
 - generate stable document and attachment IDs;
 - distinguish an empty message from a parse failure or policy skip.
 
-Attachments should be emitted as child records or blobs through an explicit
-index/storage interface. General text extraction from an attachment may be a
-later pipeline stage, but raw attachment bytes must never be passed through the
-web crawler merely to reuse page processing.
+Attachments are emitted as child records through the crawler indexing boundary.
+By default those records contain metadata and hashes only. When the source
+explicitly enables `extraction.attachments.download`, policy-approved bytes are
+base64-encoded in the parent artifact's `downloaded_attachments` collection and
+its corresponding child artifact so rules, plugins, and external-analysis
+integrations can consume them without dereferencing untrusted content. General
+text extraction remains a separate opt-in. The parser's count, size, aggregate
+size, inline-part, and media-type policies apply before any bytes are exposed.
 
 ### Listener
 

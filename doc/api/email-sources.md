@@ -258,6 +258,43 @@ These defaults keep mailbox access read-only, disable JavaScript and remote
 message resources, do not fetch links, do not emit attachments, bound parser
 resource use, and retain periodic reconciliation.
 
+### Downloading attachments for automated analysis
+
+Attachment collection is disabled by default. To make policy-approved binary
+content available to rules, plugins, or external-analysis integrations, enable
+both attachment inclusion and downloading on the source:
+
+```yaml
+email:
+  extraction:
+    attachments:
+      include: true
+      download: true
+      include_inline: false
+      allowed_media_types:
+        - application/pdf
+        - application/octet-stream
+  crawl:
+    limits:
+      max_attachment_bytes: 10485760
+      max_total_attachment_bytes: 26214400
+      max_attachments: 50
+```
+
+Each downloaded attachment is emitted in the parent email artifact's
+`downloaded_attachments` array and in its child `email_attachment` artifact.
+The `content_base64` field contains the decoded MIME payload, while `filename`,
+`content_type`, `size`, and `sha256` support routing and integrity checks before
+submitting the bytes to services such as malware scanners or sandboxes. Decode
+`content_base64` before constructing a service's binary or multipart upload.
+
+The existing attachment count, per-file size, aggregate size, inline-part, and
+media-type policies are applied before content is exposed. A blocked or
+oversized attachment therefore has no binary artifact. Keep `download: false`
+(or omit it) when metadata and hashes are sufficient, because storing base64
+increases index size by roughly one third and the content must be treated as
+untrusted. `download: true` without `include: true` is rejected.
+
 Remote link fetching requires all of the following:
 
 1. `extraction.links.extract: true`;
@@ -335,7 +372,7 @@ Representative failures include:
 - `crawl.mode` other than `poll` or `listen`, or disagreement between
   `crawl.mode` and `listener.enabled`;
 - listener mode for `pop3`, `maildir`, or `mbox`;
-- attachment inline/text extraction without attachment inclusion;
+- attachment inline/download/text extraction without attachment inclusion;
 - remote link following without extraction and an allowlist/explicit
   unrestricted opt-in;
 - enabling unsupported remote resources, JavaScript, or mailbox mutation; and

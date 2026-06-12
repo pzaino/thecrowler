@@ -287,8 +287,8 @@ func validateExtraction(config ExtractionConfig) error {
 	if config.Links.MaxLinksPerMessage <= 0 {
 		return fmt.Errorf("extraction.links.max_links_per_message must be greater than zero")
 	}
-	if (config.Attachments.IncludeInline || config.Attachments.ExtractText) && !config.Attachments.Include {
-		return fmt.Errorf("attachment inline or text extraction requires extraction.attachments.include")
+	if (config.Attachments.IncludeInline || config.Attachments.Download || config.Attachments.ExtractText) && !config.Attachments.Include {
+		return fmt.Errorf("attachment inline, download, or text extraction requires extraction.attachments.include")
 	}
 
 	for _, mediaType := range config.Attachments.AllowedMediaTypes {

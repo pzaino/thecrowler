@@ -15,10 +15,13 @@
 package crawler
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -74,28 +77,29 @@ type EmailCrawlResult struct {
 }
 
 // EmailArtifact is the stable crawler artifact projection of a normalized mail
-// document. It deliberately contains attachment metadata rather than attachment
-// content, while retaining the parser and transport observations needed by
-// indexing, audit, and policy consumers.
+// document. Attachment bytes are omitted by default and are present in
+// DownloadedAttachments only when the source explicitly enables attachment
+// downloads.
 type EmailArtifact struct {
-	SourceType      string                         `json:"source_type"`
-	CanonicalURI    string                         `json:"canonical_uri"`
-	Subject         string                         `json:"subject,omitempty"`
-	SenderDomain    string                         `json:"sender_domain,omitempty"`
-	Date            string                         `json:"date,omitempty"`
-	ContentType     string                         `json:"content_type"`
-	ExtractedText   string                         `json:"extracted_text,omitempty"`
-	Links           []mail.Link                    `json:"links,omitempty"`
-	Attachments     []mail.ChildDocumentDescriptor `json:"attachments,omitempty"`
-	Provenance      EmailArtifactProvenance        `json:"provenance"`
-	Warnings        []mail.ParserWarning           `json:"warnings,omitempty"`
-	SecuritySignals mail.SecuritySignals           `json:"security_signals"`
-	Parent          *EmailArtifactRelationship     `json:"parent,omitempty"`
+	SourceType            string                         `json:"source_type"`
+	CanonicalURI          string                         `json:"canonical_uri"`
+	Subject               string                         `json:"subject,omitempty"`
+	SenderDomain          string                         `json:"sender_domain,omitempty"`
+	Date                  string                         `json:"date,omitempty"`
+	ContentType           string                         `json:"content_type"`
+	ExtractedText         string                         `json:"extracted_text,omitempty"`
+	Links                 []mail.Link                    `json:"links,omitempty"`
+	Attachments           []mail.ChildDocumentDescriptor `json:"attachments,omitempty"`
+	DownloadedAttachments []EmailAttachmentArtifact      `json:"downloaded_attachments,omitempty"`
+	Provenance            EmailArtifactProvenance        `json:"provenance"`
+	Warnings              []mail.ParserWarning           `json:"warnings,omitempty"`
+	SecuritySignals       mail.SecuritySignals           `json:"security_signals"`
+	Parent                *EmailArtifactRelationship     `json:"parent,omitempty"`
 }
 
-// EmailAttachmentArtifact is a metadata-only crawler artifact for one
-// policy-approved attachment. Content is deliberately excluded; ExtractedText
-// is populated only when deep attachment extraction is explicitly enabled.
+// EmailAttachmentArtifact represents one policy-approved attachment.
+// ContentBase64 is populated only when extraction.attachments.download is
+// enabled; ExtractedText requires the separate extract_text opt-in.
 type EmailAttachmentArtifact struct {
 	SourceType    string                    `json:"source_type"`
 	CanonicalURI  string                    `json:"canonical_uri"`
@@ -110,6 +114,7 @@ type EmailAttachmentArtifact struct {
 	Disposition   string                    `json:"disposition,omitempty"`
 	Relationship  mail.DocumentRelationship `json:"relationship"`
 	ExtractedText string                    `json:"extracted_text,omitempty"`
+	ContentBase64 string                    `json:"content_base64,omitempty"`
 }
 
 // EmailArtifactRelationship records the stable parent artifact for a deeply
@@ -308,8 +313,10 @@ func emailDocumentPageWithAttachmentPolicy(source cdb.Source, document mail.Docu
 func emailDocumentCrawlerArtifacts(source cdb.Source, canonicalURI string, document mail.Document, extractedText string, policy mail.AttachmentPolicy, parent *EmailArtifactRelationship) []ScrapedItem {
 	emailArtifact := emailDocumentArtifact(source, canonicalURI, document, extractedText)
 	emailArtifact.Parent = parent
-	artifacts := []ScrapedItem{{"email": emailArtifact}}
 	descriptors := document.AttachmentDocumentDescriptors(canonicalURI)
+	downloaded := emailDownloadedAttachments(canonicalURI, document.Attachments, descriptors, policy)
+	emailArtifact.DownloadedAttachments = downloaded
+	artifacts := []ScrapedItem{{"email": emailArtifact}}
 	usedChildren := make([]bool, len(document.ChildDocuments))
 	for index, descriptor := range descriptors {
 		attachmentURI := emailChildArtifactURL(canonicalURI, "attachment", descriptor.ID)
@@ -329,6 +336,9 @@ func emailDocumentCrawlerArtifacts(source cdb.Source, canonicalURI string, docum
 		}
 		if policy.Include && policy.ExtractText && index < len(document.Attachments) {
 			attachmentArtifact.ExtractedText = document.Attachments[index].ExtractedText
+		}
+		if download, ok := emailDownloadedAttachment(downloaded, descriptor.ID); ok {
+			attachmentArtifact.ContentBase64 = download.ContentBase64
 		}
 		artifacts = append(artifacts, ScrapedItem{"email_attachment": attachmentArtifact})
 
@@ -354,6 +364,50 @@ func emailDocumentCrawlerArtifacts(source cdb.Source, canonicalURI string, docum
 		})...)
 	}
 	return artifacts
+}
+
+func emailDownloadedAttachments(parentURI string, attachments []mail.Attachment, descriptors []mail.ChildDocumentDescriptor, policy mail.AttachmentPolicy) []EmailAttachmentArtifact {
+	if !policy.Include || !policy.Download || len(attachments) == 0 {
+		return nil
+	}
+
+	downloads := make([]EmailAttachmentArtifact, 0, len(attachments))
+	for index := range attachments {
+		if index >= len(descriptors) || attachments[index].Content == nil {
+			continue
+		}
+		content, err := io.ReadAll(attachments[index].Content)
+		if err != nil {
+			continue
+		}
+		attachments[index].Content = io.NopCloser(bytes.NewReader(content))
+		descriptor := descriptors[index]
+		downloads = append(downloads, EmailAttachmentArtifact{
+			SourceType:    "email_attachment",
+			CanonicalURI:  emailChildArtifactURL(parentURI, "attachment", descriptor.ID),
+			ID:            descriptor.ID,
+			ParentID:      descriptor.ParentID,
+			ParentURI:     descriptor.ParentURI,
+			PartID:        descriptor.PartID,
+			Filename:      descriptor.Filename,
+			SHA256:        descriptor.SHA256,
+			ContentType:   descriptor.ContentType,
+			Size:          descriptor.Size,
+			Disposition:   descriptor.Disposition,
+			Relationship:  descriptor.Relationship,
+			ContentBase64: base64.StdEncoding.EncodeToString(content),
+		})
+	}
+	return downloads
+}
+
+func emailDownloadedAttachment(downloads []EmailAttachmentArtifact, id string) (EmailAttachmentArtifact, bool) {
+	for _, download := range downloads {
+		if download.ID == id {
+			return download, true
+		}
+	}
+	return EmailAttachmentArtifact{}, false
 }
 
 func emailChildDocumentForAttachment(children []mail.Document, used []bool, partID string) (mail.Document, bool) {

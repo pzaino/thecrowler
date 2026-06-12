@@ -15,6 +15,7 @@
 package crawler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -511,6 +512,69 @@ func TestEmailDocumentPageMapsAttachmentsToStableChildArtifacts(t *testing.T) {
 	unnamed := first.ScrapedData[4]["email_attachment"].(EmailAttachmentArtifact)
 	if unnamed.Filename != "" || unnamed.SHA256 != strings.Repeat("c", 64) {
 		t.Errorf("unnamed attachment artifact = %#v", unnamed)
+	}
+}
+
+func TestEmailDocumentPageDownloadsAttachmentContentWhenEnabled(t *testing.T) {
+	content := []byte{0x00, 0xff, 0x10, 'M', 'Z'}
+	document := mail.Document{
+		ID: "download-parent",
+		Attachments: []mail.Attachment{{
+			PartID:            "1.2",
+			Filename:          "sample.bin",
+			DetectedMediaType: "application/octet-stream",
+			Size:              int64(len(content)),
+			SHA256:            strings.Repeat("d", 64),
+			Content:           io.NopCloser(bytes.NewReader(content)),
+		}},
+	}
+	policy := mail.AttachmentPolicy{Include: true, Download: true}
+
+	page := emailDocumentPageWithAttachmentPolicy(cdb.Source{ID: 7, URL: "imap://account"}, document, policy)
+	parent := page.ScrapedData[0]["email"].(EmailArtifact)
+	if len(parent.DownloadedAttachments) != 1 {
+		t.Fatalf("downloaded attachments = %#v, want one", parent.DownloadedAttachments)
+	}
+	download := parent.DownloadedAttachments[0]
+	if download.ContentBase64 != "AP8QTVo=" {
+		t.Errorf("ContentBase64 = %q, want AP8QTVo=", download.ContentBase64)
+	}
+	if download.Filename != "sample.bin" || download.ContentType != "application/octet-stream" || download.CanonicalURI == "" {
+		t.Errorf("download metadata = %#v", download)
+	}
+	child := page.ScrapedData[1]["email_attachment"].(EmailAttachmentArtifact)
+	if child.ContentBase64 != download.ContentBase64 {
+		t.Errorf("child ContentBase64 = %q, want %q", child.ContentBase64, download.ContentBase64)
+	}
+
+	restored, err := io.ReadAll(document.Attachments[0].Content)
+	if err != nil {
+		t.Fatalf("read restored attachment: %v", err)
+	}
+	if !bytes.Equal(restored, content) {
+		t.Errorf("restored attachment = %v, want %v", restored, content)
+	}
+}
+
+func TestEmailDocumentPageDoesNotDownloadAttachmentContentByDefault(t *testing.T) {
+	document := mail.Document{
+		ID: "metadata-only-parent",
+		Attachments: []mail.Attachment{{
+			PartID:   "1.2",
+			Filename: "sample.bin",
+			Size:     3,
+			Content:  io.NopCloser(bytes.NewReader([]byte{1, 2, 3})),
+		}},
+	}
+
+	page := emailDocumentPageWithAttachmentPolicy(cdb.Source{ID: 7, URL: "imap://account"}, document, mail.AttachmentPolicy{Include: true})
+	parent := page.ScrapedData[0]["email"].(EmailArtifact)
+	if len(parent.DownloadedAttachments) != 0 {
+		t.Fatalf("DownloadedAttachments = %#v, want none", parent.DownloadedAttachments)
+	}
+	child := page.ScrapedData[1]["email_attachment"].(EmailAttachmentArtifact)
+	if child.ContentBase64 != "" {
+		t.Errorf("ContentBase64 = %q, want empty", child.ContentBase64)
 	}
 }
 
