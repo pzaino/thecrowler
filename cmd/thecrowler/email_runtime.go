@@ -104,6 +104,7 @@ func gmailConnectorConfig(source mail.SourceConfig) mail.GmailConnectorConfig {
 		AccountID:     source.Auth.Identity,
 		UserID:        userID,
 		CredentialRef: source.Auth.CredentialRef,
+		ProxyURL:      source.Connector.ProxyURL,
 		Mailboxes:     mail.MailboxSelector{Include: source.Mailboxes.Include, Exclude: source.Mailboxes.Exclude},
 		Query:         extensionString(source.Connector.Extensions, "query"),
 	}
@@ -115,6 +116,7 @@ func graphConnectorConfig(source mail.SourceConfig) mail.GraphConnectorConfig {
 		TenantID:      extensionString(source.Connector.Extensions, "tenant_id"),
 		UserID:        extensionString(source.Connector.Extensions, "user_id"),
 		CredentialRef: source.Auth.CredentialRef,
+		ProxyURL:      source.Connector.ProxyURL,
 		Mailboxes:     mail.MailboxSelector{Include: source.Mailboxes.Include, Exclude: source.Mailboxes.Exclude},
 		BaseURL:       extensionString(source.Connector.Extensions, "base_url"),
 	}

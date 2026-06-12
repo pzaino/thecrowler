@@ -437,7 +437,8 @@ func TestIMAPConnectorConfigFromSource(t *testing.T) {
 	config, err := IMAPConnectorConfigFromSource(SourceConfig{
 		Connector: ConnectorConfig{
 			Provider: "IMAP", Endpoint: "imaps://mail.example.test:1993", Timeout: time.Minute,
-			TLS: TLSConfig{ServerName: "imap.example.test"},
+			ProxyURL: "socks5://proxy.example.test:1080",
+			TLS:      TLSConfig{ServerName: "imap.example.test"},
 		},
 		Auth:      AuthConfig{Identity: "account-1"},
 		Mailboxes: MailboxConfig{Include: []string{"INBOX"}},
@@ -453,7 +454,7 @@ func TestIMAPConnectorConfigFromSource(t *testing.T) {
 	if config.Host != "mail.example.test" || config.Port != 1993 || config.TLSPolicy != IMAPTLSImplicit {
 		t.Fatalf("endpoint config = %#v", config)
 	}
-	if config.AccountID != "account-1" || config.TLS.ServerName != "imap.example.test" || !reflect.DeepEqual(config.Mailboxes.Include, []string{"INBOX"}) {
+	if config.AccountID != "account-1" || config.ProxyURL != "socks5://proxy.example.test:1080" || config.TLS.ServerName != "imap.example.test" || !reflect.DeepEqual(config.Mailboxes.Include, []string{"INBOX"}) {
 		t.Fatalf("translated config = %#v", config)
 	}
 	if config.ReconnectBackoff != 2*time.Second || config.MaxReconnectBackoff != 30*time.Second || config.IdleReissueInterval != 20*time.Minute {

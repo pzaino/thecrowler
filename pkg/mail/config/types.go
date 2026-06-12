@@ -45,6 +45,7 @@ type SafetyConfig struct {
 type ConnectorConfig struct {
 	Provider   string         `json:"provider" yaml:"provider"`
 	Endpoint   string         `json:"endpoint" yaml:"endpoint"`
+	ProxyURL   string         `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
 	TLS        TLSConfig      `json:"tls,omitempty" yaml:"tls,omitempty"`
 	Timeout    time.Duration  `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	Extensions map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`

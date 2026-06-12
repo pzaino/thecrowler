@@ -21,6 +21,7 @@ func TestRedactValueProtectsStructuredAuthenticationMaterial(t *testing.T) {
 			"Authorization": []any{"Bearer bearer-value"},
 		},
 		"credential_ref": "secret/mail/archive",
+		"proxy_url":      "http://proxy-user:proxy-password@proxy.example.test:8080",
 		"secret_ref":     "vault/mail/archive",
 		"description":    "password=embedded-value authorization: Bearer embedded-token",
 		"empty_password": "",
@@ -32,7 +33,7 @@ func TestRedactValueProtectsStructuredAuthenticationMaterial(t *testing.T) {
 	for _, secret := range []string{
 		"password-value", "access-value", "refresh-value", "client-value",
 		"bearer-value", "secret/mail/archive", "vault/mail/archive",
-		"embedded-value", "embedded-token",
+		"embedded-value", "embedded-token", "proxy-user", "proxy-password",
 	} {
 		if strings.Contains(encoded, secret) {
 			t.Fatalf("structured redaction leaked %q: %s", secret, encoded)

@@ -125,6 +125,7 @@ email:
   connector:
     provider: imap
     endpoint: imaps://mail.example.com:993
+    proxy_url: http://proxy.example.com:8080
     timeout: 30s
     tls:
       server_name: mail.example.com
@@ -168,6 +169,7 @@ boundaries:
 - `source_type: email` declares intent. A recognized retrieval scheme may help
   validation, but should not silently turn an unrelated source into email.
 - The endpoint contains no password, OAuth token, or client secret.
+- `connector.proxy_url` is optional for network providers. HTTP, HTTPS, and SOCKS5 proxies are supported; the same proxy is used for crawling, OAuth token/API traffic, IMAP/POP3 sessions, and IMAP IDLE listener reconnects. Proxy credentials may be supplied in URL userinfo and are redacted from diagnostics.
 - `auth.credential_ref` resolves through the process-wide `email.credentials`
   map in `config.yaml`. Environment interpolation or the remote configuration
   distribution system can provide the credential values; secret material must

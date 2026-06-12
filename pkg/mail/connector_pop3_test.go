@@ -481,13 +481,14 @@ func TestPOP3ConnectorConfigFromSource(t *testing.T) {
 	source.Connector.Provider = "pop3"
 	source.Connector.Endpoint = "pop3s://mail.example.test:1995"
 	source.Connector.TLS.ServerName = "tls.example.test"
+	source.Connector.ProxyURL = "socks5://proxy.example.test:1080"
 	source.Auth.Identity = "account-1"
 	auth := POP3Auth{Username: "user", Password: "secret"}
 	config, err := POP3ConnectorConfigFromSource(source, auth)
 	if err != nil {
 		t.Fatalf("POP3ConnectorConfigFromSource() error = %v", err)
 	}
-	if config.Host != "mail.example.test" || config.Port != 1995 || config.TLSPolicy != POP3TLSImplicit || config.Auth != auth || config.AccountID != "account-1" || config.MaxMessageBytes != source.Crawl.Limits.MaxMessageBytes {
+	if config.Host != "mail.example.test" || config.Port != 1995 || config.TLSPolicy != POP3TLSImplicit || config.Auth != auth || config.AccountID != "account-1" || config.MaxMessageBytes != source.Crawl.Limits.MaxMessageBytes || config.ProxyURL != source.Connector.ProxyURL {
 		t.Fatalf("POP3 config = %#v", config)
 	}
 }

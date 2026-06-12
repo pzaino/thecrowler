@@ -93,6 +93,9 @@ func ValidateSourceConfig(config SourceConfig) error {
 	if err := validateEndpoint(config.Connector.Endpoint, provider, expectedScheme, config.Connector.TLS); err != nil {
 		return err
 	}
+	if err := validateProxyURL(config.Connector.ProxyURL, provider); err != nil {
+		return err
+	}
 
 	if config.Connector.Timeout <= 0 {
 		return fmt.Errorf("connector.timeout must be greater than zero")
@@ -117,6 +120,50 @@ func ValidateSourceConfig(config SourceConfig) error {
 	}
 	if err := validateReconciliation(config.Reconciliation); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateProxyURL(rawProxyURL, provider string) error {
+	rawProxyURL = strings.TrimSpace(rawProxyURL)
+	if rawProxyURL == "" {
+		return nil
+	}
+	if provider == "maildir" || provider == "mbox" {
+		return fmt.Errorf("connector.proxy_url is not valid for provider %q", provider)
+	}
+	if strings.ContainsAny(rawProxyURL, "\r\n\t ") {
+		return fmt.Errorf("connector.proxy_url must not contain whitespace")
+	}
+	proxyURL, err := url.Parse(rawProxyURL)
+	if err != nil {
+		return fmt.Errorf("connector.proxy_url is invalid: %w", err)
+	}
+	switch strings.ToLower(proxyURL.Scheme) {
+	case "http", "https", "socks5":
+	default:
+		return fmt.Errorf("connector.proxy_url scheme must be http, https, or socks5")
+	}
+	if proxyURL.Host == "" || proxyURL.Hostname() == "" {
+		return fmt.Errorf("connector.proxy_url must contain a host")
+	}
+	if proxyURL.Path != "" || proxyURL.RawQuery != "" || proxyURL.Fragment != "" {
+		return fmt.Errorf("connector.proxy_url must not contain a path, query, or fragment")
+	}
+	if err := validateProxyPort(proxyURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProxyPort(proxyURL *url.URL) error {
+	port := proxyURL.Port()
+	if port == "" {
+		return nil
+	}
+	value, err := strconv.Atoi(port)
+	if err != nil || value < 1 || value > 65535 {
+		return fmt.Errorf("connector.proxy_url port must be between 1 and 65535")
 	}
 	return nil
 }

@@ -37,6 +37,7 @@ type GmailConnectorConfig struct {
 	AccountID     string
 	UserID        string
 	CredentialRef string
+	ProxyURL      string
 	Mailboxes     MailboxSelector
 	Query         string
 }
@@ -195,6 +196,12 @@ func NewGmailConnector(ctx context.Context, config GmailConnectorConfig, depende
 	config.UserID = strings.TrimSpace(config.UserID)
 	config.CredentialRef = strings.TrimSpace(config.CredentialRef)
 	config.Query = strings.TrimSpace(config.Query)
+	config.ProxyURL = strings.TrimSpace(config.ProxyURL)
+	var err error
+	ctx, err = contextWithMailProxy(ctx, config.ProxyURL)
+	if err != nil {
+		return nil, err
+	}
 	if config.AccountID == "" {
 		return nil, errors.New("mail: Gmail account ID is required")
 	}

@@ -33,6 +33,7 @@ type GraphConnectorConfig struct {
 	TenantID      string
 	UserID        string
 	CredentialRef string
+	ProxyURL      string
 	Mailboxes     MailboxSelector
 	BaseURL       string
 }
@@ -176,6 +177,12 @@ func NewGraphConnector(ctx context.Context, config GraphConnectorConfig, depende
 	config.UserID = strings.TrimSpace(config.UserID)
 	config.CredentialRef = strings.TrimSpace(config.CredentialRef)
 	config.BaseURL = strings.TrimSpace(config.BaseURL)
+	config.ProxyURL = strings.TrimSpace(config.ProxyURL)
+	var err error
+	ctx, err = contextWithMailProxy(ctx, config.ProxyURL)
+	if err != nil {
+		return nil, err
+	}
 	if config.AccountID == "" {
 		return nil, errors.New("mail: Microsoft Graph account ID is required")
 	}

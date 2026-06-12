@@ -70,3 +70,22 @@ func TestConfiguredEmailConnectorFactoryRedactsMissingCredentialReference(t *tes
 		t.Fatalf("credential() error was not redacted: %v", err)
 	}
 }
+
+func TestProviderConnectorConfigsCarrySourceProxy(t *testing.T) {
+	source := mail.DefaultSourceConfig()
+	source.Connector.ProxyURL = "http://proxy.example.test:8080"
+	source.Auth.Identity = "reader@example.test"
+	source.Auth.CredentialRef = "secret/mail"
+	source.Connector.Endpoint = "gmail://reader@example.test"
+	source.Connector.Extensions = map[string]any{
+		"tenant_id": "tenant",
+		"user_id":   "reader@example.test",
+	}
+
+	if got := gmailConnectorConfig(source).ProxyURL; got != source.Connector.ProxyURL {
+		t.Fatalf("Gmail proxy URL = %q, want %q", got, source.Connector.ProxyURL)
+	}
+	if got := graphConnectorConfig(source).ProxyURL; got != source.Connector.ProxyURL {
+		t.Fatalf("Graph proxy URL = %q, want %q", got, source.Connector.ProxyURL)
+	}
+}

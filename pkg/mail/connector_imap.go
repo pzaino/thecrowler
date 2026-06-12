@@ -53,6 +53,7 @@ type IMAPConnectorConfig struct {
 	TLSPolicy           IMAPTLSPolicy
 	TLS                 TLSConfig
 	Timeout             time.Duration
+	ProxyURL            string
 	AccountID           string
 	Auth                IMAPAuth
 	Mailboxes           MailboxSelector
@@ -161,6 +162,7 @@ func IMAPConnectorConfigFromSource(config SourceConfig, auth IMAPAuth) (IMAPConn
 		TLSPolicy:           policy,
 		TLS:                 config.Connector.TLS,
 		Timeout:             config.Connector.Timeout,
+		ProxyURL:            config.Connector.ProxyURL,
 		AccountID:           config.Auth.Identity,
 		Auth:                auth,
 		Mailboxes:           MailboxSelector{Include: config.Mailboxes.Include, Exclude: config.Mailboxes.Exclude},
@@ -472,7 +474,6 @@ type goIMAPClient struct {
 
 func dialGoIMAPClient(ctx context.Context, config IMAPConnectorConfig) (imapClient, error) {
 	address := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
-	dialer := &net.Dialer{Timeout: config.Timeout}
 	var conn net.Conn
 	var err error
 	tlsConfig := &tls.Config{
@@ -483,13 +484,25 @@ func dialGoIMAPClient(ctx context.Context, config IMAPConnectorConfig) (imapClie
 	if tlsConfig.ServerName == "" {
 		tlsConfig.ServerName = config.Host
 	}
-	if config.TLSPolicy == IMAPTLSImplicit {
-		conn, err = (&tls.Dialer{NetDialer: dialer, Config: tlsConfig}).DialContext(ctx, "tcp", address)
-	} else {
-		conn, err = dialer.DialContext(ctx, "tcp", address)
-	}
+	conn, err = dialMailContext(ctx, config.ProxyURL, config.Timeout, "tcp", address)
 	if err != nil {
 		return nil, err
+	}
+	if config.TLSPolicy == IMAPTLSImplicit {
+		setupDeadline := time.Now().Add(config.Timeout)
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(setupDeadline) {
+			setupDeadline = contextDeadline
+		}
+		if err := conn.SetDeadline(setupDeadline); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		conn = tlsConn
 	}
 	setupDeadline := time.Now().Add(config.Timeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(setupDeadline) {

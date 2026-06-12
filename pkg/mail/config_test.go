@@ -182,6 +182,20 @@ func TestValidateSourceConfigProviders(t *testing.T) {
 	}
 }
 
+func TestValidateSourceConfigAcceptsNetworkProxy(t *testing.T) {
+	for _, proxyURL := range []string{
+		"http://proxy.example.com:8080",
+		"https://user:password@proxy.example.com:8443",
+		"socks5://proxy.example.com:1080",
+	} {
+		config := validSourceConfig()
+		config.Connector.ProxyURL = proxyURL
+		if err := ValidateSourceConfig(config); err != nil {
+			t.Fatalf("ValidateSourceConfig() proxy %q error = %v", proxyURL, err)
+		}
+	}
+}
+
 func TestValidateSourceConfigAllowsAttachmentDenylistToOverrideAllowlist(t *testing.T) {
 	config := DefaultSourceConfig()
 	config.Connector.Provider = "imap"
@@ -250,6 +264,13 @@ func TestValidateSourceConfigRejectsInvalidConfigurations(t *testing.T) {
 			c.Connector.Endpoint = "maildir:///var/mail/user"
 			c.Connector.TLS.ServerName = "mail.example.com"
 		}, wantErr: "not valid"},
+		{name: "unsupported proxy scheme", mutate: func(c *SourceConfig) { c.Connector.ProxyURL = "ftp://proxy.example.com" }, wantErr: "proxy_url scheme"},
+		{name: "proxy path", mutate: func(c *SourceConfig) { c.Connector.ProxyURL = "http://proxy.example.com/path" }, wantErr: "path, query, or fragment"},
+		{name: "proxy on local provider", mutate: func(c *SourceConfig) {
+			c.Connector.Provider = "maildir"
+			c.Connector.Endpoint = "maildir:///var/mail/user"
+			c.Connector.ProxyURL = "http://proxy.example.com"
+		}, wantErr: "proxy_url is not valid"},
 		{name: "missing credential reference", mutate: func(c *SourceConfig) { c.Auth.CredentialRef = "" }, wantErr: "credential_ref"},
 		{name: "mailbox conflict", mutate: func(c *SourceConfig) { c.Mailboxes.Exclude = []string{" inbox "} }, wantErr: "both included and excluded"},
 		{name: "empty included mailbox", mutate: func(c *SourceConfig) { c.Mailboxes.Include = []string{""} }, wantErr: "empty mailbox"},

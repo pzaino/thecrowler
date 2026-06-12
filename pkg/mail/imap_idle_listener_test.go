@@ -484,3 +484,17 @@ func (f *fakeIMAPIdleClient) awaitIdle(t *testing.T, call int) fakeIdleSession {
 func (f *fakeIMAPIdleClient) awaitClosed(t *testing.T) {
 	awaitSignal(t, f.closed, "IMAP IDLE client close")
 }
+
+func TestIMAPIdleListenerUsesConfiguredProxy(t *testing.T) {
+	config := testIMAPConfig()
+	config.ProxyURL = "socks5://proxy.example.test:1080"
+	listener, err := newIMAPIdleListener(config, func(context.Context, IMAPConnectorConfig) (imapIdleClient, error) {
+		return nil, errors.New("not called during construction")
+	})
+	if err != nil {
+		t.Fatalf("newIMAPIdleListener() error = %v", err)
+	}
+	if listener.config.ProxyURL != config.ProxyURL {
+		t.Fatalf("listener proxy URL = %q, want %q", listener.config.ProxyURL, config.ProxyURL)
+	}
+}

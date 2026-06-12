@@ -29,14 +29,14 @@ func IsSensitiveKey(key string) bool {
 	case "password", "passphrase", "secret", "apikey", "apisecret", "apitoken", "token",
 		"accesstoken", "refreshtoken", "bearertoken", "oauthjson", "clientsecret", "privatekey",
 		"authorization", "authorizationheader", "credentialref", "credentialreference",
-		"secretref", "secretreference":
+		"secretref", "secretreference", "proxyurl":
 		return true
 	}
 	switch normalized {
 	case "password", "passphrase", "secret", "api_key", "api_secret", "api_token", "token",
 		"access_token", "refresh_token", "bearer_token", "oauth_json", "client_secret", "private_key",
 		"authorization", "authorization_header", "credential_ref", "credential_reference",
-		"secret_ref", "secret_reference":
+		"secret_ref", "secret_reference", "proxy_url":
 		return true
 	default:
 		return strings.HasSuffix(normalized, "_password") ||

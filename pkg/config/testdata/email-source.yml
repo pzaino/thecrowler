@@ -9,6 +9,7 @@ email:
   connector:
     provider: imap
     endpoint: imaps://mail.example.test:993
+    proxy_url: http://proxy.example.test:8080
     tls:
       server_name: mail.example.test
       insecure_skip_verify: false

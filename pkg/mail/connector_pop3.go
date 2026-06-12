@@ -51,6 +51,7 @@ type POP3ConnectorConfig struct {
 	TLSPolicy       POP3TLSPolicy
 	TLS             TLSConfig
 	Timeout         time.Duration
+	ProxyURL        string
 	AccountID       string
 	MaxMessageBytes int64
 	Auth            POP3Auth
@@ -140,7 +141,7 @@ func POP3ConnectorConfigFromSource(config SourceConfig, auth POP3Auth) (POP3Conn
 	}
 	return POP3ConnectorConfig{
 		Host: endpoint.Hostname(), Port: port, TLSPolicy: policy,
-		TLS: config.Connector.TLS, Timeout: config.Connector.Timeout,
+		TLS: config.Connector.TLS, Timeout: config.Connector.Timeout, ProxyURL: config.Connector.ProxyURL,
 		AccountID: config.Auth.Identity, MaxMessageBytes: config.Crawl.Limits.MaxMessageBytes, Auth: auth,
 	}, nil
 }
@@ -579,20 +580,31 @@ type wirePOP3Client struct {
 
 func dialWirePOP3Client(ctx context.Context, config POP3ConnectorConfig) (pop3Client, error) {
 	address := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
-	dialer := &net.Dialer{Timeout: config.Timeout}
 	var conn net.Conn
 	var err error
 	tlsConfig := &tls.Config{ServerName: config.TLS.ServerName, InsecureSkipVerify: config.TLS.InsecureSkipVerify, MinVersion: tls.VersionTLS12} //nolint:gosec
 	if tlsConfig.ServerName == "" {
 		tlsConfig.ServerName = config.Host
 	}
-	if config.TLSPolicy == POP3TLSImplicit {
-		conn, err = (&tls.Dialer{NetDialer: dialer, Config: tlsConfig}).DialContext(ctx, "tcp", address)
-	} else {
-		conn, err = dialer.DialContext(ctx, "tcp", address)
-	}
+	conn, err = dialMailContext(ctx, config.ProxyURL, config.Timeout, "tcp", address)
 	if err != nil {
 		return nil, err
+	}
+	if config.TLSPolicy == POP3TLSImplicit {
+		setupDeadline := time.Now().Add(config.Timeout)
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(setupDeadline) {
+			setupDeadline = contextDeadline
+		}
+		if err := conn.SetDeadline(setupDeadline); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		conn = tlsConn
 	}
 	client := newWirePOP3Client(conn, config.Timeout)
 	if _, err := client.command(ctx, false, ""); err != nil {

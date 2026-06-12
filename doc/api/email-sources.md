@@ -38,7 +38,8 @@ Fields omitted from `email` receive the [safe defaults](#safe-defaults).
     "email": {
       "connector": {
         "provider": "imap",
-        "endpoint": "imaps://mail.example.test:993"
+        "endpoint": "imaps://mail.example.test:993",
+        "proxy_url": "http://proxy.example.test:8080"
       },
       "auth": {
         "method": "password",
@@ -149,6 +150,13 @@ contain query strings, fragments, whitespace, or embedded passwords. A Gmail
 URI may use its user component as the mailbox identity, but it must not include
 a password. `maildir` and `mbox` endpoints require an absolute local path, no
 host, and no TLS options.
+
+Network providers may set the optional `connector.proxy_url` to an `http://`,
+`https://`, or `socks5://` URL. The proxy applies to provider crawling and to
+provider-facing listener activity, including IMAP IDLE connections and
+reconnects. Gmail and Microsoft Graph OAuth and API requests use the same
+proxy. Proxy URL userinfo may carry proxy credentials, but responses and
+configuration diagnostics redact the complete value.
 
 Prefer encrypted `imaps://` and `pop3s://` endpoints. Connector TLS certificate
 verification is enabled by default. `connector.tls.insecure_skip_verify` is an
