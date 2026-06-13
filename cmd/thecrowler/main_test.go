@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
 	mail "github.com/pzaino/thecrowler/pkg/mail"
-	"golang.org/x/time/rate"
 )
 
 func TestInitAPIv1RegistersControlRoutes(t *testing.T) {

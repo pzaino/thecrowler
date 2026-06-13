@@ -8,8 +8,9 @@ import (
 	"strings"
 	"unicode"
 
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 	"golang.org/x/text/unicode/norm"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // ParsedQuery represents the result of a processed search query.

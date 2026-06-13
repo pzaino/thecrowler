@@ -18,9 +18,10 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/antchfx/htmlquery"
+	"golang.org/x/net/html"
+
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-	"golang.org/x/net/html"
 )
 
 // ValueMatcher resolves and matches selector.Value against an element.

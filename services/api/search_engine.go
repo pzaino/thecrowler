@@ -24,10 +24,11 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/text/unicode/norm"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	search "github.com/pzaino/thecrowler/pkg/search"
-	"golang.org/x/text/unicode/norm"
 
 	_ "github.com/lib/pq"
 )

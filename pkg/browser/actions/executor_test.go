@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-auxiliaries/selenium"
+
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )

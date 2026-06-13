@@ -10,9 +10,10 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"gopkg.in/yaml.v2"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
-	"gopkg.in/yaml.v2"
 )
 
 const insertSourceQuery = `INSERT INTO Sources \(`

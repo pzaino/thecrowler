@@ -14,7 +14,11 @@ repos:
     rev: v0.5.1
     hooks:
       - id: go-fmt
-      #- id: go-imports
+      - id: go-imports
+        name: goimports
+        entry: goimports -w -local github.com/pzaino/thecrowler
+        language: system
+        types: [go]
       - id: no-go-testing
       #- id: golangci-lint
       #  args: [ "--config", ".golangci.yml" ]

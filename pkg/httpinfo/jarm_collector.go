@@ -28,9 +28,10 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/proxy"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	"golang.org/x/net/proxy"
 )
 
 const (

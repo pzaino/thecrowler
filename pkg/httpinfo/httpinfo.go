@@ -23,11 +23,12 @@ import (
 	"net/url"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	detect "github.com/pzaino/thecrowler/pkg/detection"
 	ruleset "github.com/pzaino/thecrowler/pkg/ruleset"
-	"golang.org/x/net/publicsuffix"
 )
 
 // CreateConfig creates a default Config

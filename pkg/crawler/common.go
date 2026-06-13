@@ -23,10 +23,11 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-	"golang.org/x/net/html"
 )
 
 func matchValue(ctx *ProcessContext, item interface{}, selector rules.Selector) bool {

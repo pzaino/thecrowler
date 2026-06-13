@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-auxiliaries/selenium"
 	"github.com/go-auxiliaries/selenium/chrome"
+
 	"github.com/pzaino/thecrowler/pkg/infoseed/searchproviders"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	nmap "github.com/Ullaakut/nmap/v3"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	exi "github.com/pzaino/thecrowler/pkg/exprterpreter"

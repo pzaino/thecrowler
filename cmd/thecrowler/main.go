@@ -42,6 +42,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 
+	"golang.org/x/time/rate"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	crowler "github.com/pzaino/thecrowler/pkg/crawler"
@@ -50,7 +52,6 @@ import (
 	mail "github.com/pzaino/thecrowler/pkg/mail"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-	"golang.org/x/time/rate"
 
 	_ "github.com/lib/pq"
 )

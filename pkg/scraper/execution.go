@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"golang.org/x/net/html"
+
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
-	"golang.org/x/net/html"
 )
 
 // ExecuteRule runs the complete scraping-rule lifecycle and returns the legacy

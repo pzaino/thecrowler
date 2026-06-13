@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
+
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 

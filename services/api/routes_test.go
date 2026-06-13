@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/time/rate"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	"golang.org/x/time/rate"
 )
 
 func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {

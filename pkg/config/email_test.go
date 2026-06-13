@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 	"gopkg.in/yaml.v2"
+
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 )
 
 func TestEmailSourceConfigDecodesJSONAndYAMLWithDefaults(t *testing.T) {

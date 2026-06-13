@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 

@@ -26,8 +26,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	cfg "github.com/pzaino/thecrowler/pkg/config"
 	"golang.org/x/text/unicode/norm"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 var pathCache sync.Map

@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qri-io/jsonschema"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
-	"github.com/qri-io/jsonschema"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
