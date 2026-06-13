@@ -26,6 +26,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	search "github.com/pzaino/thecrowler/pkg/search"
 	"golang.org/x/text/unicode/norm"
 
 	_ "github.com/lib/pq"
@@ -673,67 +674,14 @@ func transformQueryParams(likeParams, equParams []QueryParam) []interface{} {
 
 func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
+	engine := search.NewSearcher(db, config)
 
-	// Prepare the query body
-	var queryBody string
-	if config.API.ReturnContent {
-		queryBody = `
-		SELECT DISTINCT
-			si.title, si.page_url, si.summary, si.detected_type, si.detected_lang, wo.object_content AS content
-		FROM
-			SearchIndex si
-		LEFT JOIN
-			WebObjectsIndex woi ON si.index_id = woi.index_id
-		LEFT JOIN
-			WebObjects wo ON woi.object_id = wo.object_id
-		LEFT JOIN
-			KeywordIndex ki ON si.index_id = ki.index_id
-		LEFT JOIN
-			Keywords k ON ki.keyword_id = k.keyword_id
-		WHERE
-		`
-	} else {
-		queryBody = `
-		SELECT DISTINCT
-			si.title, si.page_url, si.summary, si.detected_type, si.detected_lang, '' AS content
-		FROM
-			SearchIndex si
-		LEFT JOIN
-			WebObjectsIndex woi ON si.index_id = woi.index_id
-		LEFT JOIN
-			WebObjects wo ON woi.object_id = wo.object_id
-		LEFT JOIN
-			KeywordIndex ki ON si.index_id = ki.index_id
-		LEFT JOIN
-			Keywords k ON ki.keyword_id = k.keyword_id
-		WHERE
-		`
-	}
-
-	// Parse the user input
-	SQLQuery, err := parseAdvancedQuery(queryBody, query, "")
-	sqlQuery := SQLQuery.sqlQuery
-	sqlParams := transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
-	if err != nil {
-		return SearchResult{}, err
-	}
-
-	//sqlQuery = sqlQuery + " ORDER BY si.created_at DESC"
-	limit := len(sqlParams) - 1
-	offset := len(sqlParams)
-	sqlQuery = sqlQuery + " LIMIT $" + strconv.Itoa(limit) + " OFFSET $" + strconv.Itoa(offset) + ";"
-
-	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
-	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
-
-	// Take the current timer (to monitor query performance)
 	start := time.Now()
-
-	// Execute the query
-	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
+	queryResult, err := engine.Search(query)
 	if err != nil {
 		return SearchResult{}, err
 	}
+	rows := queryResult.Rows
 	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
@@ -771,8 +719,8 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	elapsed = time.Since(start)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
-	results.Queries.Limit = SQLQuery.limit
-	results.Queries.Offset = SQLQuery.offset
+	results.Queries.Limit = queryResult.Limit
+	results.Queries.Offset = queryResult.Offset
 	return results, nil
 }
 

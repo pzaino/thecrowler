@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	"golang.org/x/text/unicode/norm"
 )
 
 // ParsedQuery represents the result of a processed search query.
@@ -20,6 +21,18 @@ type ParsedQuery struct {
 	offset    int
 	details   Details
 }
+
+// SQL returns the generated SQL statement.
+func (p ParsedQuery) SQL() string { return p.sqlQuery }
+
+// Params returns a copy of the generated SQL parameters.
+func (p ParsedQuery) Params() []any { return append([]any(nil), p.sqlParams...) }
+
+// Limit returns the requested result limit.
+func (p ParsedQuery) Limit() int { return p.limit }
+
+// Offset returns the requested result offset.
+func (p ParsedQuery) Offset() int { return p.offset }
 
 // tokens is a slice of tokens
 type tokens []token
@@ -270,6 +283,7 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 	// Parse the tokens and generate the query parts and query params:
 	var queryParts [][]string
 	var queryParams []interface{}
+	var queryEqParams []interface{}
 	var generalParamCounter = 1 // For general fields like example
 	const jObjAccOp = "->"
 	const jObjTxtAccOp = "->>"
@@ -496,7 +510,9 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 				// Handle JSON field value (use a separate jsonParamCounter)
 				condition := fmt.Sprintf("%s LIKE $%d", currentField, generalParamCounter)
 				addCondition(condition)
-				queryParams = append(queryParams, "%"+tokenData.tValue+"%")
+				normalized := strings.ToLower(norm.NFC.String(tokenData.tValue))
+				queryParams = append(queryParams, "%"+normalized+"%")
+				queryEqParams = append(queryEqParams, normalized)
 				generalParamCounter++ // Increase the JSON parameter counter
 			} else {
 				// Handle non-JSON field value
@@ -507,7 +523,9 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 				}
 				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
 				addCondition(combinedCondition)
-				queryParams = append(queryParams, "%"+strings.ToLower(tokenData.tValue)+"%")
+				normalized := strings.ToLower(norm.NFC.String(tokenData.tValue))
+				queryParams = append(queryParams, "%"+normalized+"%")
+				queryEqParams = append(queryEqParams, normalized)
 				generalParamCounter++ // Increase the parameter counter for general fields
 			}
 		}
@@ -516,7 +534,8 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 	// Add a separate group for keyword conditions (only use the first parameter set for keywords)
 	var keywordConditions []string
 	for i := 1; i < generalParamCounter; i++ {
-		keywordCondition := fmt.Sprintf("k.keyword LIKE $%d", i)
+		queryParams = append(queryParams, queryEqParams[i-1])
+		keywordCondition := fmt.Sprintf("k.keyword = $%d", len(queryParams))
 		keywordConditions = append(keywordConditions, keywordCondition)
 	}
 

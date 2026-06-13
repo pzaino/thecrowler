@@ -27,6 +27,7 @@ import (
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	search "github.com/pzaino/thecrowler/pkg/search"
 )
 
 const defaultSearchFunctionLanguage = "english"
@@ -169,7 +170,7 @@ func searchCorrelatedSourcesByDomainHandler(w http.ResponseWriter, r *http.Reque
 		if strings.TrimSpace(query.Domain) == "" {
 			return nil, newSearchFunctionBadRequest("query parameter 'domain' is required")
 		}
-		results, err := cdb.FindCorrelatedSourcesByDomain(ctx, db, query.Domain, searchFunctionOptions(query))
+		results, err := search.FindCorrelatedSourcesByDomain(ctx, db, query.Domain, searchFunctionOptions(query))
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +187,7 @@ func searchPagesFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		if lang == "" {
 			lang = defaultSearchFunctionLanguage
 		}
-		results, err := cdb.SearchPages(ctx, db, query.Q, lang, searchFunctionOptions(query))
+		results, err := search.SearchPages(ctx, db, query.Q, lang, searchFunctionOptions(query))
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +200,7 @@ func searchScrapedDataFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(query.Q) == "" {
 			return nil, newSearchFunctionBadRequest("query parameter 'q' is required")
 		}
-		results, err := cdb.SearchScrapedData(ctx, db, query.Q, searchFunctionOptions(query))
+		results, err := search.SearchScrapedDataFunction(ctx, db, query.Q, searchFunctionOptions(query))
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +217,7 @@ func searchArtifactsFunctionHandler(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(query.Q) == "" {
 			return nil, newSearchFunctionBadRequest("query parameter 'q' is required")
 		}
-		results, err := cdb.SearchArtifacts(ctx, db, query.Q, searchFunctionOptions(query))
+		results, err := search.SearchArtifacts(ctx, db, query.Q, searchFunctionOptions(query))
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +235,7 @@ func searchArtifactsFieldsFunctionHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			return nil, err
 		}
-		results, err := cdb.SearchArtifactsFields(ctx, db, filters, searchFunctionOptions(query))
+		results, err := search.SearchArtifactsFields(ctx, db, filters, searchFunctionOptions(query))
 		if err != nil {
 			return nil, err
 		}
@@ -256,7 +257,7 @@ func searchObjectsByAttributesFunctionHandler(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			return nil, err
 		}
-		results, err := cdb.SearchObjectsByAttributes(ctx, db, filters, searchFunctionOptions(query))
+		results, err := search.SearchObjectsByAttributes(ctx, db, filters, searchFunctionOptions(query))
 		if err != nil {
 			return nil, err
 		}
@@ -268,7 +269,7 @@ func executeScrapedDataFieldSearch(ctx context.Context, query SearchFunctionQuer
 	if err := requireFieldSearchParams(query); err != nil {
 		return nil, err
 	}
-	results, err := cdb.SearchScrapedDataField(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
+	results, err := search.SearchScrapedDataField(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +280,7 @@ func executeArtifactFieldSearch(ctx context.Context, query SearchFunctionQuery, 
 	if err := requireFieldSearchParams(query); err != nil {
 		return nil, err
 	}
-	results, err := cdb.SearchArtifactsField(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
+	results, err := search.SearchArtifactsField(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +291,7 @@ func executeArtifactAttributeSearch(ctx context.Context, query SearchFunctionQue
 	if err := requireFieldSearchParams(query); err != nil {
 		return nil, err
 	}
-	results, err := cdb.SearchArtifactsByAttribute(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
+	results, err := search.SearchArtifactsByAttribute(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +302,7 @@ func executeObjectAttributeSearch(ctx context.Context, query SearchFunctionQuery
 	if err := requireFieldSearchParams(query); err != nil {
 		return nil, err
 	}
-	results, err := cdb.SearchObjectsByAttribute(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
+	results, err := search.SearchObjectsByAttribute(ctx, db, query.FieldName, query.FieldValue, searchFunctionOptions(query))
 	if err != nil {
 		return nil, err
 	}
@@ -392,8 +393,8 @@ func validateSearchFunctionPagination(query SearchFunctionQuery) (SearchFunction
 	return query, nil
 }
 
-func searchFunctionOptions(query SearchFunctionQuery) cdb.SearchFunctionOptions {
-	return cdb.SearchFunctionOptions{Limit: query.Limit, Offset: query.Offset}
+func searchFunctionOptions(query SearchFunctionQuery) search.FunctionOptions {
+	return search.FunctionOptions{Limit: query.Limit, Offset: query.Offset}
 }
 
 func requireFieldSearchParams(query SearchFunctionQuery) error {

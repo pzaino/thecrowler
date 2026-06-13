@@ -31,3 +31,42 @@ func NewSearcher(db *cdb.Handler, cfg cfg.Config) *Searcher {
 		Config: cfg,
 	}
 }
+
+// Search performs the standard SearchIndex search.
+func (s *Searcher) Search(query string) (*QueryResult, error) {
+	body := sqlSearchIndexBodyNoContent
+	if s.Config.API.ReturnContent {
+		body = sqlSearchIndexBody
+	}
+	return s.Execute(body, query, "")
+}
+
+// SearchScreenshots searches screenshot metadata.
+func (s *Searcher) SearchScreenshots(query string) (*QueryResult, error) {
+	return s.ExecuteOrdered(sqlScreenshotBody, query, "", "ORDER BY s.created_at DESC")
+}
+
+// SearchWebObjects searches stored web objects.
+func (s *Searcher) SearchWebObjects(query string) (*QueryResult, error) {
+	return s.ExecuteOrdered(sqlWebObjectsBody, query, "", "ORDER BY wo.created_at DESC")
+}
+
+// SearchScrapedData searches scraped-data JSON documents.
+func (s *Searcher) SearchScrapedData(query string) (*QueryResult, error) {
+	return s.ExecuteOrdered(sqlScrapedDataBody+" (", query, "", ") ORDER BY sd.last_updated_at DESC")
+}
+
+// SearchCorrelatedSites searches correlated sites for a domain.
+func (s *Searcher) SearchCorrelatedSites(query string) (*QueryResult, error) {
+	return s.ExecuteOrdered(sqlCorrelatedSitesBody, query, "self-contained", "ORDER BY created_at DESC")
+}
+
+// SearchNetInfo searches collected network information.
+func (s *Searcher) SearchNetInfo(query string) (*QueryResult, error) {
+	return s.ExecuteOrdered(sqlNetInfoBody, query, "", "ORDER BY ni.created_at DESC")
+}
+
+// SearchHTTPInfo searches collected HTTP information.
+func (s *Searcher) SearchHTTPInfo(query string) (*QueryResult, error) {
+	return s.ExecuteOrdered(sqlHTTPInfoBody, query, "", "ORDER BY hi.created_at DESC")
+}
