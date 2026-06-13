@@ -544,7 +544,8 @@ events:
   host: 0.0.0.0 
   # Port for events API
   port: 8082 
-  # Request timeout (seconds)
+  # Maximum time to durably insert an event before returning 503 (seconds).
+  # This is automatically capped below write_timeout so a response can be sent.
   timeout: 30 
   # "" | enable | disable TLS for Events Manager API
   sslmode: disable 

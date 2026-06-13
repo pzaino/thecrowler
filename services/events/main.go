@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -60,6 +61,12 @@ var (
 	sysReadyMtx sync.RWMutex // Mutex to protect the SysReady variable
 	sysReady    int          // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
 
+	eventsHTTPServerMtx    sync.RWMutex
+	eventsHTTPServer       *http.Server
+	eventsShutdownComplete = make(chan struct{})
+	apiEventJobs           sync.WaitGroup
+	apiEventsAccepting     atomic.Bool
+
 	// dbHandler is the database handler
 	dbHandler cdb.Handler
 
@@ -71,8 +78,9 @@ var (
 
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
-	jobQueue       = make(chan cdb.Event, 160_000) // buffered requests queue
-	internalQ      = make(chan cdb.Event, 160_000) // buffered small; DB-only work
+	jobQueue       = make(chan cdb.Event, 160_000) // buffered notification queue
+	apiEventQ      = make(chan cdb.Event, 160_000) // API create requests; DB-only work
+	internalQ      = make(chan cdb.Event, 160_000) // other internal DB-only work
 	externalQ      = make(chan cdb.Event, 160_000) // buffered larger; JS+DB work
 
 	mainInstance = []string{"crowler-events", "crowler-events-0"}
@@ -183,7 +191,8 @@ func main() {
 	for i := 0; i < runtime.NumCPU(); i++ {
 		go eventWorker()
 	}
-	startInternalWorkers(runtime.NumCPU())     // internal events workers
+	startAPICreateWorkers(runtime.NumCPU())    // latency-sensitive API persistence workers
+	startInternalWorkers(runtime.NumCPU())     // other internal events workers
 	startExternalWorkers(runtime.NumCPU() * 2) // external events workers
 
 	// Setup prometheus push gateway if enabled
@@ -237,6 +246,9 @@ func main() {
 		// zero, there is no timeout.
 		IdleTimeout: time.Duration(config.Events.IdleTimeout) * time.Second,
 	}
+	eventsHTTPServerMtx.Lock()
+	eventsHTTPServer = srv
+	eventsHTTPServerMtx.Unlock()
 
 	_ = runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -285,14 +297,48 @@ func main() {
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
+	apiEventsAccepting.Store(true)
+	setSysReady(2) // Indicate system is ready
+	var serveErr error
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
-		setSysReady(2) // Indicate system is ready
-		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServeTLS(config.Events.CertFile, config.Events.KeyFile))
+		serveErr = srv.ListenAndServeTLS(config.Events.CertFile, config.Events.KeyFile)
 	} else {
-		setSysReady(2) // Indicate system is ready
-		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
+		serveErr = srv.ListenAndServe()
 	}
 	setSysReady(0) // Indicate system is NOT ready
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		<-eventsShutdownComplete
+		return
+	}
+	if serveErr != nil {
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", serveErr)
+	}
+}
+
+func shutdownEventsHTTPServer(sig os.Signal) {
+	defer close(eventsShutdownComplete)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "%s received, draining accepted API events...", sig)
+	apiEventsAccepting.Store(false)
+	setSysReady(0)
+
+	eventsHTTPServerMtx.RLock()
+	srv := eventsHTTPServer
+	eventsHTTPServerMtx.RUnlock()
+	if srv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := srv.Shutdown(ctx); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Graceful HTTP shutdown failed: %v", err)
+			_ = srv.Close()
+		}
+		cancel()
+	}
+
+	// Do not terminate while an acknowledged in-memory request is outstanding.
+	// If the database is temporarily unavailable, workers continue retrying and
+	// shutdown waits rather than discarding accepted events.
+	apiEventJobs.Wait()
+	cmn.DebugMsg(cmn.DbgLvlInfo, "All accepted API events were persisted")
+	updateMetrics()
 }
 
 func cloudRunAddr(cfg cfg.Config) string {
@@ -793,6 +839,12 @@ type EventResponse struct {
 }
 
 func createEventHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var event cdb.Event
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
@@ -802,23 +854,39 @@ func createEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid event payload", http.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(event.Type) == "" {
+		http.Error(w, "Missing event_type", http.StatusBadRequest)
+		return
+	}
+	if !apiEventsAccepting.Load() {
+		http.Error(w, "Events manager is shutting down", http.StatusServiceUnavailable)
+		return
+	}
 
-	eventID := cdb.GenerateEventUID(event)
+	if event.Timestamp == "" {
+		event.Timestamp = time.Now().Format(time.RFC3339Nano)
+	}
+	event.ID = cdb.GenerateEventUID(event)
 	event.Action = actionInsert
 	if event.ExpiresAt == "" {
 		event.ExpiresAt = time.Now().Add(5 * time.Minute).Format(time.RFC3339)
 	}
 
-	// Async process
-	//jobQueue <- event
-	if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
+	// Admission is deliberately non-blocking. The 160k buffer absorbs bursts; if
+	// it is exhausted, reply immediately so clients can retry instead of adding
+	// unbounded latency or memory pressure.
+	apiEventJobs.Add(1)
+	select {
+	case apiEventQ <- event:
+	default:
+		apiEventJobs.Done()
+		w.Header().Set("Retry-After", "1")
 		http.Error(w, "Events queue is full", http.StatusServiceUnavailable)
 		return
 	}
 
-	//response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	response := EventResponse{
-		ID:  eventID,
+		ID:  event.ID,
 		Msg: "Event creation scheduled successfully",
 	}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
@@ -1071,6 +1139,55 @@ func handleNotification(payload string) {
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
+	}
+}
+
+func startAPICreateWorkers(n int) {
+	for i := 0; i < n; i++ {
+		go func() {
+			for event := range apiEventQ {
+				persistQueuedAPIEvent(event)
+				apiEventJobs.Done()
+			}
+		}()
+	}
+}
+
+var createQueuedAPIEvent = func(ctx context.Context, event cdb.Event) error {
+	_, err := cdb.CreateEvent(ctx, &dbHandler, event)
+	return err
+}
+
+func persistQueuedAPIEvent(event cdb.Event) {
+	for !persistQueuedAPIEventUntilSuccess(event) {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func persistQueuedAPIEventUntilSuccess(event cdb.Event) (completed bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "API event worker panic on event %s: %v\n%s", event.ID, rec, debug.Stack())
+			completed = false
+		}
+	}()
+
+	const callTimeout = 5 * time.Second
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		err := createQueuedAPIEvent(ctx, event)
+		cancel()
+		if err == nil {
+			return true
+		}
+
+		delay := time.Duration(1<<min(attempt-1, 7)) * 20 * time.Millisecond
+		jitter := time.Duration(rand.Int63n(int64(delay / 2))) //nolint:gosec // jitter, not cryptography
+		if attempt == 1 || attempt%10 == 0 {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Queued API event %s insert failed (attempt %d): %v; retrying in %s",
+				event.ID, attempt, err, delay+jitter)
+		}
+		time.Sleep(delay + jitter)
 	}
 }
 
@@ -1861,6 +1978,14 @@ var (
 		[]string{"engine"},
 	)
 
+	mQueueAPILength = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_queue_api_create",
+			Help: "Current number of accepted API create requests waiting for a DB worker",
+		},
+		[]string{"engine"},
+	)
+
 	mQueueInternalLength = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "crowler_events_queue_internal",
@@ -1910,6 +2035,7 @@ func registerMetrics() {
 		mEventsTotalErrors,
 		mEventsTotalDropped,
 		mQueueJobLength,
+		mQueueAPILength,
 		mQueueInternalLength,
 		mQueueExternalLength,
 		mWorkersRunning,
@@ -1928,6 +2054,7 @@ func updateMetrics() {
 
 	// Queue sizes
 	mQueueJobLength.With(labels).Set(float64(len(jobQueue)))
+	mQueueAPILength.With(labels).Set(float64(len(apiEventQ)))
 	mQueueInternalLength.With(labels).Set(float64(len(internalQ)))
 	mQueueExternalLength.With(labels).Set(float64(len(externalQ)))
 
@@ -1942,6 +2069,7 @@ func updateMetrics() {
 
 	p := push.New(url, "crowler_events").
 		Collector(mQueueJobLength).
+		Collector(mQueueAPILength).
 		Collector(mQueueInternalLength).
 		Collector(mQueueExternalLength).
 		Collector(mWorkersRunning).

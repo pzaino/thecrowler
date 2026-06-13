@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,7 +28,7 @@ func TestCreateEventHandlerAcceptsEmailLifecycleEventTypes(t *testing.T) {
 
 	for _, eventType := range eventTypes {
 		t.Run(eventType, func(t *testing.T) {
-			queued := withTestEventQueue(t)
+			queued := withTestAPIEventQueue(t, 1)
 			body := `{
 				"event_type": "` + eventType + `",
 				"details": {
@@ -46,6 +48,7 @@ func TestCreateEventHandlerAcceptsEmailLifecycleEventTypes(t *testing.T) {
 			}
 			select {
 			case event := <-queued:
+				completeTestAPIEvent()
 				if event.Type != eventType {
 					t.Fatalf("queued event type = %q, want %q", event.Type, eventType)
 				}
@@ -84,7 +87,7 @@ func TestCreateEventHandlerRejectsMalformedEmailLifecyclePayloads(t *testing.T) 
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			queued := withTestEventQueue(t)
+			queued := withTestAPIEventQueue(t, 1)
 			response := httptest.NewRecorder()
 			createEventHandler(response, httptest.NewRequest(http.MethodPost, "/v1/event/create", strings.NewReader(test.body)))
 
@@ -101,7 +104,7 @@ func TestCreateEventHandlerRejectsMalformedEmailLifecyclePayloads(t *testing.T) 
 func TestCreateEventHandlerPreservesGenericEventCompatibility(t *testing.T) {
 	for _, eventType := range []string{"legacy.custom_event", "email.custom_event"} {
 		t.Run(eventType, func(t *testing.T) {
-			queued := withTestEventQueue(t)
+			queued := withTestAPIEventQueue(t, 1)
 			body := `{"event_type":"` + eventType + `","details":{"schema_version":"legacy","payload":"unchanged"}}`
 			response := httptest.NewRecorder()
 			createEventHandler(response, httptest.NewRequest(http.MethodPost, "/v1/event/create", strings.NewReader(body)))
@@ -116,13 +119,58 @@ func TestCreateEventHandlerPreservesGenericEventCompatibility(t *testing.T) {
 	}
 }
 
-func withTestEventQueue(t *testing.T) chan cdb.Event {
+func TestCreateEventHandlerRepliesImmediatelyWhenQueueIsFull(t *testing.T) {
+	withTestAPIEventQueue(t, 0)
+
+	response := httptest.NewRecorder()
+	createEventHandler(response, httptest.NewRequest(http.MethodPost, "/v1/event/create", strings.NewReader(`{"event_type":"new"}`)))
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusServiceUnavailable, response.Body.String())
+	}
+	if response.Header().Get("Retry-After") == "" {
+		t.Fatal("missing Retry-After header")
+	}
+}
+
+func withTestAPIEventQueue(t *testing.T, capacity int) chan cdb.Event {
 	t.Helper()
-	previous := jobQueue
-	queue := make(chan cdb.Event, 1)
-	jobQueue = queue
+	previousQueue := apiEventQ
+	previousAccepting := apiEventsAccepting.Load()
+	queue := make(chan cdb.Event, capacity)
+	apiEventQ = queue
+	apiEventsAccepting.Store(true)
 	t.Cleanup(func() {
-		jobQueue = previous
+		for len(queue) > 0 {
+			<-queue
+			completeTestAPIEvent()
+		}
+		apiEventQ = previousQueue
+		apiEventsAccepting.Store(previousAccepting)
 	})
 	return queue
+}
+
+func completeTestAPIEvent() {
+	apiEventJobs.Done()
+}
+
+func TestPersistQueuedAPIEventRetriesUntilSuccess(t *testing.T) {
+	previous := createQueuedAPIEvent
+	attempts := 0
+	createQueuedAPIEvent = func(context.Context, cdb.Event) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("temporary database failure")
+		}
+		return nil
+	}
+	t.Cleanup(func() { createQueuedAPIEvent = previous })
+
+	if !persistQueuedAPIEventUntilSuccess(cdb.Event{ID: "event-id", Type: "test"}) {
+		t.Fatal("event was not persisted")
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
 }
