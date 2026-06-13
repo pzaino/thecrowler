@@ -8,4 +8,4 @@ then
         engine="1"
 fi
 
-docker logs crowler-engine-${engine} 2>&1 | sed -n '/^=====/,/^=====/p'
+docker logs "crowler-engine-${engine}" 2>&1 | sed -n '/^=====/,/^=====/p'
