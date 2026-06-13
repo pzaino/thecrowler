@@ -34,31 +34,46 @@ import (
 
 var config cfg.Config
 
+var (
+	loadConfig   = cfg.LoadConfig
+	openDatabase = sql.Open
+	now          = time.Now
+)
+
 func main() {
-	configFile := flag.String("config", "config.yaml", "Path to configuration file")
-	url := flag.String("url", "", "Single source URL to update")
-	sourceID := flag.Uint64("id", 0, "Single source ID to update")
-	bulk := flag.String("bulk", "", "CSV file containing URLs to update")
-	all := flag.Bool("all", false, "Update ALL sources")
-	status := flag.String("status", "", "New status string (required)")
+	if err := run(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(args []string) error {
+	flags := flag.NewFlagSet("updateSourceStatus", flag.ContinueOnError)
+	configFile := flags.String("config", "config.yaml", "Path to configuration file")
+	url := flags.String("url", "", "Single source URL to update")
+	sourceID := flags.Uint64("id", 0, "Single source ID to update")
+	bulk := flags.String("bulk", "", "CSV file containing URLs to update")
+	all := flags.Bool("all", false, "Update ALL sources")
+	status := flags.String("status", "", "New status string (required)")
 
 	// Time based options
-	updatedWithin := flag.String("updated-within", "", "Update sources last updated within this duration (e.g. 24h, 48h, 30m)")
-	yesterday := flag.Bool("yesterday", false, "Update sources last updated yesterday (Europe/London)")
-	updatedAfter := flag.String("updated-after", "", "Update sources last updated at/after this RFC3339 timestamp (e.g. 2026-02-23T00:00:00Z)")
-	updatedBefore := flag.String("updated-before", "", "Update sources last updated before this RFC3339 timestamp (optional)")
+	updatedWithin := flags.String("updated-within", "", "Update sources last updated within this duration (e.g. 24h, 48h, 30m)")
+	yesterday := flags.Bool("yesterday", false, "Update sources last updated yesterday (Europe/London)")
+	updatedAfter := flags.String("updated-after", "", "Update sources last updated at/after this RFC3339 timestamp (e.g. 2026-02-23T00:00:00Z)")
+	updatedBefore := flags.String("updated-before", "", "Update sources last updated before this RFC3339 timestamp (optional)")
 
-	flag.Parse()
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 
-	if *status == "" {
-		log.Fatal("You must provide -status")
+	if strings.TrimSpace(*status) == "" {
+		return fmt.Errorf("you must provide -status")
 	}
 
 	// Load config
 	var err error
-	config, err = cfg.LoadConfig(*configFile)
+	config, err = loadConfig(*configFile)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	psqlInfo := fmt.Sprintf(
@@ -70,9 +85,9 @@ func main() {
 		config.Database.DBName,
 	)
 
-	db, err := sql.Open(cdb.DBPostgresStr, psqlInfo)
+	db, err := openDatabase(cdb.DBPostgresStr, psqlInfo)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close() // nolint: errcheck // we don't need to check the error here it would be on program exit
 
@@ -80,13 +95,13 @@ func main() {
 	if *yesterday || *updatedWithin != "" || *updatedAfter != "" || *updatedBefore != "" {
 		start, end, err := computeTimeWindow(*yesterday, *updatedWithin, *updatedAfter, *updatedBefore)
 		if err != nil {
-			log.Fatalf("Invalid time window: %v", err)
+			return fmt.Errorf("invalid time window: %w", err)
 		}
 		if err := updateSourcesByUpdatedAtRange(db, *status, start, end); err != nil {
-			log.Fatalf("Update failed: %v", err)
+			return fmt.Errorf("update failed: %w", err)
 		}
 		fmt.Println("Update completed successfully.")
-		return
+		return nil
 	}
 
 	switch {
@@ -103,14 +118,15 @@ func main() {
 		err = updateSourcesFromCSV(db, *bulk, *status)
 
 	default:
-		log.Fatal("Specify -url, -id, -bulk, -all, or one of: -yesterday, -updated-within, -updated-after/-updated-before")
+		return fmt.Errorf("specify -url, -id, -bulk, -all, or one of: -yesterday, -updated-within, -updated-after/-updated-before")
 	}
 
 	if err != nil {
-		log.Fatalf("Update failed: %v", err)
+		return fmt.Errorf("update failed: %w", err)
 	}
 
 	fmt.Println("Update completed successfully.")
+	return nil
 }
 
 // computeTimeWindow returns [start, end) bounds.
@@ -123,8 +139,8 @@ func computeTimeWindow(useYesterday bool, withinStr, afterStr, beforeStr string)
 
 	// yesterday: [yesterday 00:00, today 00:00)
 	if useYesterday {
-		now := time.Now().In(loc)
-		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+		current := now().In(loc)
+		todayStart := time.Date(current.Year(), current.Month(), current.Day(), 0, 0, 0, 0, loc)
 		yesterdayStart := todayStart.AddDate(0, 0, -1)
 		end := todayStart
 		return yesterdayStart, &end, nil
@@ -136,9 +152,12 @@ func computeTimeWindow(useYesterday bool, withinStr, afterStr, beforeStr string)
 		if err != nil {
 			return time.Time{}, nil, err
 		}
-		now := time.Now().In(loc)
-		start := now.Add(-d)
-		end := now
+		if d <= 0 {
+			return time.Time{}, nil, fmt.Errorf("updated-within duration must be greater than zero")
+		}
+		current := now().In(loc)
+		start := current.Add(-d)
+		end := current
 		return start, &end, nil
 	}
 
@@ -159,6 +178,9 @@ func computeTimeWindow(useYesterday bool, withinStr, afterStr, beforeStr string)
 	end, err := time.Parse(time.RFC3339, beforeStr)
 	if err != nil {
 		return time.Time{}, nil, err
+	}
+	if !end.After(start) {
+		return time.Time{}, nil, fmt.Errorf("updated-before must be after updated-after")
 	}
 	return start, &end, nil
 }
@@ -238,6 +260,8 @@ func updateSourcesFromCSV(db *sql.DB, filename, status string) error {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
+	// Only the first column is used, so allow optional metadata columns.
+	reader.FieldsPerRecord = -1
 
 	for {
 		record, err := reader.Read()
