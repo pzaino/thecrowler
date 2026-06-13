@@ -26,6 +26,12 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 
+Please consider supporting this project! The CROWler is empowering thousands of users (mostly professionals and enterprises) to build their own content discovery and intelligence based solutions, and it's growing fast. If you want to support the project, you can do it by:
+
+- Clicking the support button on the GitHub page
+- Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
+- Contacting the author for consultancies, paid support, or custom development.
+
 ## What is it?
 
 The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform
