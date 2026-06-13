@@ -18,9 +18,11 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"os"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -29,7 +31,9 @@ import (
 )
 
 var (
-	config cfg.Config
+	config       cfg.Config
+	loadConfig   = cfg.LoadConfig
+	openDatabase = sql.Open
 )
 
 // ConsoleResponse represents the structure of the response
@@ -52,26 +56,14 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	// Proceed with deleting the source using the obtained source_id
 	_, err = tx.Exec("DELETE FROM Sources WHERE source_id = $1", sourceID)
 	if err != nil {
-		err2 := tx.Rollback() // Rollback in case of error
-		if err2 != nil {
-			return ConsoleResponse{Message: "Failed to delete source"}, err2
-		}
 		return ConsoleResponse{Message: "Failed to delete source and related data"}, err
 	}
 	_, err = tx.Exec("SELECT cleanup_orphaned_httpinfo();")
 	if err != nil {
-		err2 := tx.Rollback() // Rollback in case of error
-		if err2 != nil {
-			return ConsoleResponse{Message: "Failed to cleanup orphaned httpinfo"}, err2
-		}
 		return ConsoleResponse{Message: "Failed to cleanup orphaned httpinfo"}, err
 	}
 	_, err = tx.Exec("SELECT cleanup_orphaned_netinfo();")
 	if err != nil {
-		err2 := tx.Rollback() // Rollback in case of error
-		if err2 != nil {
-			return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err2
-		}
 		return ConsoleResponse{Message: "Failed to cleanup orphaned netinfo"}, err
 	}
 
@@ -91,50 +83,53 @@ func removeSite(db *sql.DB, siteURL string) error {
 		return err
 	}
 
-	_, err = removeSource(tx, siteURL)
-	if err != nil {
+	if _, err = removeSource(tx, siteURL); err != nil {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback transaction: %w", rollbackErr))
+		}
 		return err
 	}
 
 	// Commit the transaction
-	err = tx.Commit()
+	return tx.Commit()
+}
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(args []string) error {
+	flags := flag.NewFlagSet("removeSource", flag.ContinueOnError)
+	configFile := flags.String("config", "config.yaml", "Path to the configuration file")
+	siteURL := flags.String("url", "", "URL of the website to remove")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	// Read the configuration file
+	var err error
+	config, err = loadConfig(*configFile)
 	if err != nil {
 		return err
 	}
 
-	return nil
-}
-
-func main() {
-	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
-	siteURL := flag.String("url", "", "URL of the website to remove")
-	flag.Parse()
-
-	// Read the configuration file
-	var err error
-	config, err = cfg.LoadConfig(*configFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// Check if the URL is provided
 	if *siteURL == "" {
-		log.Fatal("Please provide a URL of the website to remove.")
+		return errors.New("please provide a URL of the website to remove")
 	}
 
 	// Database connection setup (replace with your actual database configuration)
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		config.Database.Host, config.Database.Port,
 		config.Database.User, config.Database.Password, config.Database.DBName)
-	db, err := sql.Open(cdb.DBPostgresStr, psqlInfo)
+	db, err := openDatabase(cdb.DBPostgresStr, psqlInfo)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close() //nolint:errcheck // We can't check the error in a defer statement
 
 	// Remove the website
-	err = removeSite(db, *siteURL)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return removeSite(db, *siteURL)
 }
