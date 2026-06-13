@@ -1,3 +1,9 @@
+# IDEs
+cspell.json
+.cspell/
+.vscode/
+.idea/
+
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
@@ -7,7 +13,6 @@
 *.dll
 *.so
 *.dylib
-cspell.json
 
 # Test binary, built with `go test -c`
 *.test
@@ -29,12 +34,23 @@ config.sh
 .DS_Store
 
 # build artefacts
-.vscode/
 docker-selenium/
 Rbee/
 bin/
 images/*.png
-/do.patch
+do.patch
+**/*.old
+**/*.old1
+**/*.old2
+**/*.old3
+**/*.old4
+**/*.old5
+docker-compose.yml
+images/old_screenshots/
+old-*.*
+out/
+test*.xml
+test*.json
 
 # Testing environments
 sonar-project.properties
@@ -44,3 +60,7 @@ test*.json
 /cmd/bench
 /test_url.csv
 coverage.out
+
+# Keep AI PRs away
+**/TASKS.md
+**/AGENTS.md
