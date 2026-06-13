@@ -17,7 +17,7 @@ created_at: "2025-09-07T12:00:00"
 remote:
   # The protocol to use for the connection (http | https)
   type: "http"
-  # The host that serves the config.yaml file 
+  # The host that serves the config.yaml file
   host: "${CROWLER_DISTRIBUTION_HOST}"
   # The path on the host where the config.yaml file is located
   path: "${CROWLER_DISTRIBUTION_PATH}"

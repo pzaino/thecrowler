@@ -375,7 +375,7 @@ The **CROWler** is a comprehensive a self-hosted, event-driven Content Discovery
   - late-data overlap
   - explicit reaggregation
   - retention
-  - delayed entity assignment for persisted crawler/discovery facts. 
+  - delayed entity assignment for persisted crawler/discovery facts.
   -It supports PostgreSQL, MySQL, and SQLite storage. It intentionally excludes worker/VDI health, API latency, queues, scheduler/database health, and process telemetry.
-  
+
 ---

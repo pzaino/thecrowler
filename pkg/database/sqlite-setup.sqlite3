@@ -114,11 +114,11 @@ CREATE TABLE IF NOT EXISTS Sources (
     config TEXT,                                -- Source config payload, stores TEXT document with
                                                 -- all details about the source configuration for
                                                 -- the crawling process.
-    details TEXT                                -- Source payload, stores TEXT document with 
-                                                -- all details about the source state. 
+    details TEXT                                -- Source payload, stores TEXT document with
+                                                -- all details about the source state.
                                                 -- This is different than the config!
                                                 -- For instance, in here the CROWler itself stores
-                                                -- data like the stage of the crawling for 
+                                                -- data like the stage of the crawling for
                                                 -- multi-stage crawls etc.
 );
 --------------------------------------------------------------------------------
@@ -424,8 +424,8 @@ CREATE TABLE IF NOT EXISTS Events (
     event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     event_recurrence VARCHAR(64),
     expires_at TIMESTAMP,
-    details TEXT NOT NULL -- Events payload (data-model agnostic), for everything, 
-                          -- from system events to agent observations, decisions, 
+    details TEXT NOT NULL -- Events payload (data-model agnostic), for everything,
+                          -- from system events to agent observations, decisions,
                           -- errors, email events, crawl events, etc.
 );
 

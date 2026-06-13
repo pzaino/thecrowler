@@ -394,7 +394,7 @@ indexes.
 
 ## Support this project!
 
-The CROWler now counts thousands of git clones and downloads every week, and it's growing fast. 
+The CROWler now counts thousands of git clones and downloads every week, and it's growing fast.
 It's great to see how many people are using it already, and I'm really happy about that. If you want to support the project, you can do it by:
 
 - Clicking the support button on the GitHub page

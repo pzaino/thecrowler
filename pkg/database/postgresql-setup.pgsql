@@ -196,9 +196,9 @@ CREATE TABLE IF NOT EXISTS Sources (
     priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source (e.g., 'low', 'medium', 'high', or even custom strings).
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
-    last_crawled_at TIMESTAMPTZ,                  -- The last time the source was crawled.
+    last_crawled_at TIMESTAMPTZ,                -- The last time the source was crawled.
     last_error TEXT,                            -- Last error message that occurred during crawling.
-    last_error_at TIMESTAMPTZ,                    -- The date/time of the last error occurred.
+    last_error_at TIMESTAMPTZ,                  -- The date/time of the last error occurred.
     restricted INTEGER DEFAULT 0 NOT NULL,      -- 0 = fully restricted (just this URL - default)
                                                 -- 1 = l3 domain restricted (everything within this
                                                 --     URL l3 domain)
@@ -210,13 +210,13 @@ CREATE TABLE IF NOT EXISTS Sources (
     flags INTEGER DEFAULT 0 NOT NULL,           -- Bitwise flags for the source (used for various
                                                 -- purposes, included but not limited to the Rules).
     config JSONB,                               -- Source config payload, stores JSON document with
-                                                -- all details about the source configuration for 
+                                                -- all details about the source configuration for
                                                 -- the crawling process.
-    details JSONB                               -- Source payload, stores JSON document with 
-                                                -- all details about the source state. 
+    details JSONB                               -- Source payload, stores JSON document with
+                                                -- all details about the source state.
                                                 -- This is different than the config!
                                                 -- For instance, in here the CROWler itself stores
-                                                -- data like the stage of the crawling for 
+                                                -- data like the stage of the crawling for
                                                 -- multi-stage crawls etc.
 );
 --------------------------------------------------------------------------------
