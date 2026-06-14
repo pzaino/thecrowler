@@ -3,6 +3,8 @@ package search
 
 import (
 	"strconv"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // ExecParsed executes a parsed query and returns the results.
@@ -15,6 +17,7 @@ func (s *Searcher) ExecParsed(p *ParsedQuery) (*QueryResult, error) {
 
 	sqlQuery += " LIMIT $" + strconv.Itoa(limitIndex) +
 		" OFFSET $" + strconv.Itoa(offsetIndex) + ";"
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Generated SQL query: %s; parameters: %v", sqlQuery, params)
 
 	rows, err := (*s.DB).ExecuteQuery(sqlQuery, params...)
 	if err != nil {

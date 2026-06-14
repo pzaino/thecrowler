@@ -65,3 +65,48 @@ func TestParsedQueryAccessorsReturnDefensiveParamsCopy(t *testing.T) {
 		t.Fatalf("pagination = (%d, %d), want (10, 0)", parsed.Limit(), parsed.Offset())
 	}
 }
+
+func TestParseAdvancedQueryPaginationModifiers(t *testing.T) {
+	engine := NewSearcher(nil, cfg.Config{})
+	tests := []struct {
+		name       string
+		query      string
+		wantLimit  int
+		wantOffset int
+	}{
+		{name: "colon modifiers with spaces", query: "login &limit:25 &offset:2", wantLimit: 25, wantOffset: 2},
+		{name: "equals modifiers with spaces", query: "login &limit=30 &offset=3", wantLimit: 30, wantOffset: 3},
+		{name: "colon modifiers attached", query: "login&limit:35&offset:4", wantLimit: 35, wantOffset: 4},
+		{name: "equals modifiers attached", query: "login&limit=40&offset=5", wantLimit: 40, wantOffset: 5},
+		{name: "offset only", query: "login &offset:2", wantLimit: 10, wantOffset: 2},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := engine.ParseAdvancedQuery("SELECT * FROM table WHERE ", test.query, "")
+			if err != nil {
+				t.Fatalf("ParseAdvancedQuery() error = %v", err)
+			}
+			if parsed.Limit() != test.wantLimit || parsed.Offset() != test.wantOffset {
+				t.Fatalf(
+					"pagination = (%d, %d), want (%d, %d)",
+					parsed.Limit(),
+					parsed.Offset(),
+					test.wantLimit,
+					test.wantOffset,
+				)
+			}
+
+			params := parsed.Params()
+			if got := params[len(params)-2]; got != test.wantLimit {
+				t.Errorf("limit parameter = %v, want %d", got, test.wantLimit)
+			}
+			if got := params[len(params)-1]; got != test.wantOffset {
+				t.Errorf("offset parameter = %v, want %d", got, test.wantOffset)
+			}
+			if strings.Contains(parsed.SQL(), "offset") || strings.Contains(parsed.SQL(), "limit") {
+				t.Errorf("SQL() contains pagination modifier as a search term: %q", parsed.SQL())
+			}
+		})
+	}
+}

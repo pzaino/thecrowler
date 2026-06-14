@@ -304,36 +304,12 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 			continue
 		}
 
-		// Normalize combined tokens like "term&limit:20"
-		if strings.Contains(tokenData.tValue, "&limit:") || strings.Contains(tokenData.tValue, "&offset=") {
-			var parts []string
-			if strings.Contains(tokenData.tValue, "&limit=") {
-				parts = strings.SplitN(tokenData.tValue, "&limit=", 2)
-			} else {
-				parts = strings.SplitN(tokenData.tValue, "&limit:", 2)
-			}
-			tokenData.tValue = parts[0] // update the real slice element
-			if len(parts) == 2 {
-				if n, err := strconv.Atoi(parts[1]); err == nil {
-					limit = n
-				}
-			}
-		}
-
-		if strings.Contains(tokenData.tValue, "&offset:") || strings.Contains(tokenData.tValue, "&offset=") {
-			var parts []string
-			if strings.Contains(tokenData.tValue, "&offset=") {
-				parts = strings.SplitN(tokenData.tValue, "&offset=", 2)
-			} else {
-				parts = strings.SplitN(tokenData.tValue, "&offset:", 2)
-			}
-			tokenData.tValue = parts[0]
-			if len(parts) == 2 {
-				if n, err := strconv.Atoi(parts[1]); err == nil {
-					offset = n
-				}
-			}
-		}
+		// Extract control modifiers before treating the remainder as search
+		// text. The tokenizer emits both spaced ("term &offset:2") and
+		// attached ("term&offset=2") forms as a token containing the complete
+		// modifier.
+		tokenData.tValue, limit = extractControlModifier(tokenData.tValue, "limit", limit)
+		tokenData.tValue, offset = extractControlModifier(tokenData.tValue, "offset", offset)
 
 		// Split numeric+specifier combos like "3&limit:5"
 		if strings.Contains(tokenData.tValue, "&") && !strings.HasPrefix(tokenData.tValue, "&") {
@@ -571,6 +547,21 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 	SQLQuery.details = details
 
 	return SQLQuery, nil
+}
+
+func extractControlModifier(value, name string, current int) (string, int) {
+	for _, separator := range []string{":", "="} {
+		marker := "&" + name + separator
+		if index := strings.Index(value, marker); index >= 0 {
+			modifierValue := value[index+len(marker):]
+			if parsed, err := strconv.Atoi(modifierValue); err == nil {
+				current = parsed
+				value = value[:index]
+			}
+			break
+		}
+	}
+	return value, current
 }
 
 func buildCombinedQuery(queryBody string, queryParts [][]string) string {
