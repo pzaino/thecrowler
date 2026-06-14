@@ -298,16 +298,6 @@ func isFieldSpecifier(input string) bool {
 	return ok
 }
 
-/*
-func isQuotedString(input string) bool {
-	matched, err := regexp.MatchString(`^".*"$`, input)
-	if err != nil {
-		return false
-	}
-	return matched
-}
-*/
-
 func getDefaultFields() []string {
 	var defaultFields []string
 	if config.API.ContentSearch {
