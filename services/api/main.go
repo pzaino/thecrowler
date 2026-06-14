@@ -631,6 +631,8 @@ func initAPIv1() {
 
 		registerSearchFunctionRoute("/v1/search/pages", searchPagesFunctionHandler, "Typed PostgreSQL page search endpoint")
 
+		registerSearchFunctionRoute("/v1/search/webobjects_by_source", searchWebObjectsBySourceIDHandler, "Web objects collected for a source ID")
+
 		registerSearchFunctionRoute("/v1/search/scraped_data", searchScrapedDataFunctionHandler, "Typed PostgreSQL scraped-data search endpoint")
 
 		registerSearchFunctionRoute("/v1/search/scraped_data_field", searchScrapedDataFieldFunctionHandler, "Typed PostgreSQL scraped-data field search endpoint")

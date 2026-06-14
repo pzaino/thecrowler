@@ -976,6 +976,34 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 	return results, nil
 }
 
+func performWebObjectSearchBySourceID(sourceID int64, db *cdb.Handler) (WebObjectResponse, error) {
+	engine := search.NewSearcher(db, config)
+	queryResult, err := engine.SearchWebObjectsBySourceID(sourceID)
+	if err != nil {
+		return WebObjectResponse{}, err
+	}
+	rows := queryResult.Rows
+	defer rows.Close() //nolint:errcheck
+
+	var results WebObjectResponse
+	for rows.Next() {
+		var row WebObjectRow
+		var detailsJSON []byte
+		if err := rows.Scan(&row.ObjectLink, &row.CreatedAt, &row.LastUpdatedAt, &row.ObjectType, &row.ObjectHash, &row.ObjectContent, &row.ObjectHTML, &detailsJSON); err != nil {
+			return WebObjectResponse{}, err
+		}
+		if !json.Valid(detailsJSON) {
+			return WebObjectResponse{}, fmt.Errorf("invalid WebObjects.details JSON for %q", row.ObjectLink)
+		}
+		row.Details = append(json.RawMessage(nil), detailsJSON...)
+		results.Items = append(results.Items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return WebObjectResponse{}, err
+	}
+	return results, nil
+}
+
 func parseWebObjectGetQuery(input string) (SearchQuery, error) {
 	// Prepare the query body
 	queryBody := `

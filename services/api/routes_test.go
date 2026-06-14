@@ -52,6 +52,7 @@ func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {
 		"/v1/search/collected_data",
 		"/v1/search/correlated_sources",
 		"/v1/search/pages",
+		"/v1/search/webobjects_by_source",
 		"/v1/search/scraped_data",
 		"/v1/search/scraped_data_field",
 		"/v1/search/artifacts",

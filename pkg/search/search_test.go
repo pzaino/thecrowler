@@ -50,6 +50,15 @@ func TestSearchSelectsContentTemplateFromConfig(t *testing.T) {
 	}
 }
 
+func TestWebObjectsBySourceIDQueryUsesBIGINTParameter(t *testing.T) {
+	if !strings.Contains(sqlWebObjectsBySourceID, "ssi.source_id = $1") {
+		t.Fatalf("query does not filter source_id with a parameter: %q", sqlWebObjectsBySourceID)
+	}
+	if !strings.Contains(sqlWebObjectsBySourceID, "SourceSearchIndex AS ssi") {
+		t.Fatalf("query does not join SourceSearchIndex: %q", sqlWebObjectsBySourceID)
+	}
+}
+
 func TestParsedQueryAccessorsReturnDefensiveParamsCopy(t *testing.T) {
 	engine := NewSearcher(nil, cfg.Config{})
 	parsed, err := engine.ParseAdvancedQuery("SELECT 1 WHERE ", "crowler", "")

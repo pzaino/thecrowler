@@ -91,6 +91,28 @@ WHERE
     wo.object_link != '' AND wo.object_link IS NOT NULL AND
 `
 
+var sqlWebObjectsBySourceID = `
+SELECT DISTINCT
+    wo.object_link,
+    wo.created_at,
+    wo.last_updated_at,
+    wo.object_type,
+    wo.object_hash,
+    wo.object_content,
+    wo.object_html,
+    wo.details
+FROM
+    WebObjects AS wo
+JOIN
+    WebObjectsIndex AS woi ON wo.object_id = woi.object_id
+JOIN
+    SourceSearchIndex AS ssi ON woi.index_id = ssi.index_id
+WHERE
+    ssi.source_id = $1
+ORDER BY
+    wo.created_at DESC;
+`
+
 var sqlScrapedDataBody = `
 SELECT DISTINCT
     ss.source_id,

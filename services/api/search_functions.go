@@ -37,6 +37,7 @@ const defaultSearchFunctionLanguage = "english"
 type SearchFunctionQuery struct {
 	Q          string `json:"q,omitempty" yaml:"q,omitempty" desc:"Full-text search query for endpoints backed by search_pages, search_scraped_data, or search_artifacts."`
 	Domain     string `json:"domain,omitempty" yaml:"domain,omitempty" desc:"Domain used by the correlated-source search endpoint."`
+	SourceID   int64  `json:"source_id,omitempty" yaml:"source_id,omitempty" desc:"BIGINT source identifier used to retrieve all associated web objects."`
 	Lang       string `json:"lang,omitempty" yaml:"lang,omitempty" desc:"PostgreSQL text-search configuration for page search. Defaults to english."`
 	FieldName  string `json:"field_name,omitempty" yaml:"field_name,omitempty" desc:"Attribute or JSON field name used by field search endpoints."`
 	FieldValue string `json:"field_value,omitempty" yaml:"field_value,omitempty" desc:"Attribute or JSON field value used by field search endpoints."`
@@ -192,6 +193,19 @@ func searchPagesFunctionHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		return mapPageSearchResults(results), nil
+	})
+}
+
+func searchWebObjectsBySourceIDHandler(w http.ResponseWriter, r *http.Request) {
+	handleSearchFunctionEndpoint(w, r, "webobjects_by_source#search", "webobjects_by_source", "source_id", func(_ context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+		if query.SourceID <= 0 {
+			return nil, newSearchFunctionBadRequest("query parameter 'source_id' is required and must be a positive BIGINT")
+		}
+		results, err := performWebObjectSearchBySourceID(query.SourceID, db)
+		if err != nil {
+			return nil, err
+		}
+		return results.Items, nil
 	})
 }
 
@@ -355,6 +369,14 @@ func parseSearchFunctionQuery(r *http.Request) (SearchFunctionQuery, error) {
 	values := r.URL.Query()
 	query.Q = values.Get("q")
 	query.Domain = values.Get("domain")
+	sourceID := strings.TrimSpace(values.Get("source_id"))
+	if sourceID != "" {
+		var err error
+		query.SourceID, err = strconv.ParseInt(sourceID, 10, 64)
+		if err != nil {
+			return query, fmt.Errorf("invalid source_id value: must be a BIGINT")
+		}
+	}
 	query.Lang = values.Get("lang")
 	query.FieldName = values.Get("field_name")
 	query.FieldValue = values.Get("field_value")
@@ -447,6 +469,8 @@ func searchFunctionSearchTerms(query SearchFunctionQuery, searchParam string) st
 	switch searchParam {
 	case "domain":
 		return query.Domain
+	case "source_id":
+		return strconv.FormatInt(query.SourceID, 10)
 	case "field_name":
 		return query.FieldName + ":" + query.FieldValue
 	case "filters":
@@ -473,6 +497,8 @@ func searchFunctionItemCount(items interface{}) int {
 	case []apiObjectAttributeSearchResult:
 		return len(value)
 	case []apiObjectAttributesSearchResult:
+		return len(value)
+	case []WebObjectRow:
 		return len(value)
 	default:
 		return 0
