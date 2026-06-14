@@ -479,6 +479,10 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 					queryGroup = 0
 					queryParts = append(queryParts, []string{condition})
 				} else {
+					group := queryParts[queryGroup]
+					if len(group) > 0 && !isLogicalOperator(group[len(group)-1]) {
+						queryParts[queryGroup] = append(group, "AND")
+					}
 					queryParts[queryGroup] = append(queryParts[queryGroup], condition)
 				}
 			}

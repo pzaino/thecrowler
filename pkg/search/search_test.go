@@ -110,3 +110,24 @@ func TestParseAdvancedQueryPaginationModifiers(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAdvancedQueryJoinsAdjacentURLConditions(t *testing.T) {
+	engine := NewSearcher(nil, cfg.Config{})
+	input := "https://www.cyaraportal.us/cyarawebidentity/login?ReturnUrl=/cyarawebidentity/connect/authorize/callback?client_id=cyara.web.portal&response_type=id_token%20token&scope=accounts%20openid%20profile&state=authentication-properties"
+
+	parsed, err := engine.ParseAdvancedQuery("SELECT * FROM table WHERE ", input, "")
+	if err != nil {
+		t.Fatalf("ParseAdvancedQuery() error = %v", err)
+	}
+
+	sqlQuery := parsed.SQL()
+	if strings.Contains(sqlQuery, ") (") {
+		t.Fatalf("SQL() contains adjacent conditions without an operator: %q", sqlQuery)
+	}
+	if got := strings.Count(sqlQuery, ") AND ("); got != 3 {
+		t.Fatalf("SQL() has %d implicit AND operators, want 3: %q", got, sqlQuery)
+	}
+	if !strings.Contains(sqlQuery, ") OR ((k.keyword = ") {
+		t.Fatalf("SQL() does not preserve the keyword-group OR: %q", sqlQuery)
+	}
+}
