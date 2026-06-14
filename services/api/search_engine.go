@@ -907,37 +907,37 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 	cmn.DebugMsg(cmn.DbgLvlDebug, searchLabel, query)
 
 	// Parse the user input
-	var sqlQuery string
-	var sqlParams []interface{}
-	var SQLQuery SearchQuery
-	if qType == getQuery {
-		// it's a GET request, so we need to interpret the q parameter
-		SQLQuery, err = parseWebObjectGetQuery(query)
-		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
-		if err != nil {
+	searchQuery := query
+	if qType != getQuery {
+		var req WebObjectRequest
+		if err = json.Unmarshal([]byte(PrepareInput(query)), &req); err != nil {
 			return WebObjectResponse{}, err
 		}
-	} else {
-		// It's a POST request, so we can use the standard JSON parsing
-		SQLQuery, err = parseWebObjectQuery(query)
-		sqlQuery = SQLQuery.sqlQuery
-		sqlParams = transformQueryParams(SQLQuery.sqlParams, SQLQuery.sqlEqParams)
-		if err != nil {
-			return WebObjectResponse{}, err
+		if req.URL == "" {
+			return WebObjectResponse{}, errors.New(noQueryProvided)
+		}
+		if req.Limit < 0 || req.Offset < 0 {
+			return WebObjectResponse{}, errors.New("limit and offset must be non-negative")
+		}
+		searchQuery = req.URL
+		if req.Limit > 0 {
+			searchQuery += "&limit:" + strconv.Itoa(req.Limit)
+		}
+		if req.Offset > 0 {
+			searchQuery += "&offset:" + strconv.Itoa(req.Offset)
 		}
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryLabel, sqlQuery)
-	cmn.DebugMsg(cmn.DbgLvlDebug1, sqlQueryParamsLabel, sqlParams)
 
 	// Take current timer (to monitor query performance)
 	start := time.Now()
 
 	// Execute the query
-	rows, err := (*db).ExecuteQuery(sqlQuery, sqlParams...)
+	engine := search.NewSearcher(db, config)
+	queryResult, err := engine.SearchWebObjects(searchQuery)
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
+	rows := queryResult.Rows
 	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
 	// Calculate the query execution time
@@ -957,9 +957,10 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 		if err := rows.Scan(&row.ObjectLink, &row.CreatedAt, &row.LastUpdatedAt, &row.ObjectType, &row.ObjectHash, &row.ObjectContent, &row.ObjectHTML, &detailsJSON); err != nil {
 			return WebObjectResponse{}, err
 		}
-		if err := json.Unmarshal(detailsJSON, &row.Details); err != nil {
-			return WebObjectResponse{}, err
+		if !json.Valid(detailsJSON) {
+			return WebObjectResponse{}, fmt.Errorf("invalid WebObjects.details JSON for %q", row.ObjectLink)
 		}
+		row.Details = append(json.RawMessage(nil), detailsJSON...)
 
 		// Append the row to the results
 		results.Items = append(results.Items, row)
@@ -969,8 +970,8 @@ func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObject
 	elapsed = time.Since(start)
 	cmn.DebugMsg(cmn.DbgLvlDebug1, dataEncapTime, elapsed)
 
-	results.Queries.Limit = SQLQuery.limit
-	results.Queries.Offset = SQLQuery.offset
+	results.Queries.Limit = queryResult.Limit
+	results.Queries.Offset = queryResult.Offset
 
 	return results, nil
 }

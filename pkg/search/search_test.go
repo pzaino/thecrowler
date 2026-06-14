@@ -111,7 +111,7 @@ func TestParseAdvancedQueryPaginationModifiers(t *testing.T) {
 	}
 }
 
-func TestParseAdvancedQueryJoinsAdjacentURLConditions(t *testing.T) {
+func TestParseAdvancedQueryKeepsURLQueryStringTogether(t *testing.T) {
 	engine := NewSearcher(nil, cfg.Config{})
 	input := "https://www.cyaraportal.us/cyarawebidentity/login?ReturnUrl=/cyarawebidentity/connect/authorize/callback?client_id=cyara.web.portal&response_type=id_token%20token&scope=accounts%20openid%20profile&state=authentication-properties"
 
@@ -120,14 +120,29 @@ func TestParseAdvancedQueryJoinsAdjacentURLConditions(t *testing.T) {
 		t.Fatalf("ParseAdvancedQuery() error = %v", err)
 	}
 
-	sqlQuery := parsed.SQL()
-	if strings.Contains(sqlQuery, ") (") {
-		t.Fatalf("SQL() contains adjacent conditions without an operator: %q", sqlQuery)
+	params := parsed.Params()
+	if got, want := params[0], "%"+strings.ToLower(input)+"%"; got != want {
+		t.Fatalf("search parameter = %#v, want %#v", got, want)
 	}
-	if got := strings.Count(sqlQuery, ") AND ("); got != 3 {
-		t.Fatalf("SQL() has %d implicit AND operators, want 3: %q", got, sqlQuery)
+	if got := strings.Count(parsed.SQL(), "LOWER(page_url) LIKE"); got != 1 {
+		t.Fatalf("SQL() has %d URL conditions, want 1: %q", got, parsed.SQL())
 	}
-	if !strings.Contains(sqlQuery, ") OR ((k.keyword = ") {
-		t.Fatalf("SQL() does not preserve the keyword-group OR: %q", sqlQuery)
+}
+
+func TestParseAdvancedQueryPreservesURLQueryParametersAndPagination(t *testing.T) {
+	engine := NewSearcher(nil, cfg.Config{})
+	input := "https://example.com/login?first=one&second=two&limit:7&offset:3"
+
+	parsed, err := engine.ParseAdvancedQuery("SELECT * FROM table WHERE ", input, "")
+	if err != nil {
+		t.Fatalf("ParseAdvancedQuery() error = %v", err)
+	}
+
+	params := parsed.Params()
+	if got, want := params[0], "%https://example.com/login?first=one&second=two%"; got != want {
+		t.Fatalf("search parameter = %#v, want %#v", got, want)
+	}
+	if parsed.Limit() != 7 || parsed.Offset() != 3 {
+		t.Fatalf("pagination = (%d, %d), want (7, 3)", parsed.Limit(), parsed.Offset())
 	}
 }

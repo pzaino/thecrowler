@@ -113,7 +113,16 @@ func tokenize(input string) tokens {
 				continue
 			}
 
-			// Otherwise, treat as control specifier (e.g. &limit:10)
+			// Only reserved search modifiers start a control token. Other
+			// ampersands commonly occur in URL query strings and must remain
+			// part of the search value.
+			remainder := string(runes[i:])
+			if !hasControlModifierPrefix(remainder) {
+				currentToken.WriteRune(r)
+				continue
+			}
+
+			// Treat reserved modifiers as control specifiers (e.g. &limit:10).
 			handleRemainingToken(&tokens, &currentToken, specType)
 			currentToken.Reset()
 			currentToken.WriteRune(r)
@@ -143,6 +152,15 @@ func tokenize(input string) tokens {
 	handleRemainingToken(&tokens, &currentToken, specType)
 
 	return tokens
+}
+
+func hasControlModifierPrefix(value string) bool {
+	for _, name := range []string{"limit", "offset", "details"} {
+		if strings.HasPrefix(value, "&"+name+":") || strings.HasPrefix(value, "&"+name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // toggleQuotes toggles the inQuotes flag and appends the current token to the tokens slice.
@@ -310,19 +328,6 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 		// modifier.
 		tokenData.tValue, limit = extractControlModifier(tokenData.tValue, "limit", limit)
 		tokenData.tValue, offset = extractControlModifier(tokenData.tValue, "offset", offset)
-
-		// Split numeric+specifier combos like "3&limit:5"
-		if strings.Contains(tokenData.tValue, "&") && !strings.HasPrefix(tokenData.tValue, "&") {
-			parts := strings.SplitN(tokenData.tValue, "&", 2)
-			tokenData.tValue = parts[0]
-			if len(parts) > 1 {
-				newToken := token{tValue: "&" + parts[1]}
-				// Safe insert: extend slice with the new token
-				tokensData = append(tokensData[:i+1], append([]token{newToken}, tokensData[i+1:]...)...)
-				// Re-run loop for the new token
-				continue
-			}
-		}
 
 		// Process the token
 		switch {

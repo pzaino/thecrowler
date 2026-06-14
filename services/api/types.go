@@ -22,7 +22,6 @@ import (
 	"strconv"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
-	crawler "github.com/pzaino/thecrowler/pkg/crawler"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 )
@@ -443,7 +442,9 @@ type HTTPInfoResponse struct {
 
 // WebObjectRequest represents the structure of the WebObject request POST
 type WebObjectRequest struct {
-	URL string `json:"url"`
+	URL    string `json:"url"`
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
 }
 
 // WebObjectResponse represents the structure of the WebObject response
@@ -464,14 +465,14 @@ type WebObjectResponse struct {
 
 // WebObjectRow represents the structure of the WebObject response
 type WebObjectRow struct {
-	CreatedAt     string                   `json:"created_at"`
-	LastUpdatedAt string                   `json:"last_updated_at"`
-	ObjectLink    string                   `json:"link"`
-	ObjectType    string                   `json:"type"`
-	ObjectHash    string                   `json:"hash"`
-	ObjectContent string                   `json:"content"`
-	ObjectHTML    string                   `json:"html"`
-	Details       crawler.WebObjectDetails `json:"details"`
+	CreatedAt     string          `json:"created_at"`
+	LastUpdatedAt string          `json:"last_updated_at"`
+	ObjectLink    string          `json:"link"`
+	ObjectType    string          `json:"type"`
+	ObjectHash    string          `json:"hash"`
+	ObjectContent string          `json:"content"`
+	ObjectHTML    string          `json:"html"`
+	Details       json.RawMessage `json:"details"`
 }
 
 // CorrelatedSitesRequest represents the structure of the Correlated Sites request POST
