@@ -59,6 +59,17 @@ func TestWebObjectsBySourceIDQueryUsesBIGINTParameter(t *testing.T) {
 	}
 }
 
+func TestCorrelatedSitesQueryDoesNotAppendDanglingWhere(t *testing.T) {
+	engine := NewSearcher(nil, cfg.Config{})
+	parsed, err := engine.ParseAdvancedQuery(sqlCorrelatedSitesBody, "example.com", "self-contained")
+	if err != nil {
+		t.Fatalf("ParseAdvancedQuery returned error: %v", err)
+	}
+	if strings.HasSuffix(strings.TrimSpace(parsed.SQL()), "WHERE") {
+		t.Fatalf("correlated-sites query has a dangling WHERE clause: %q", parsed.SQL())
+	}
+}
+
 func TestParsedQueryAccessorsReturnDefensiveParamsCopy(t *testing.T) {
 	engine := NewSearcher(nil, cfg.Config{})
 	parsed, err := engine.ParseAdvancedQuery("SELECT 1 WHERE ", "crowler", "")

@@ -169,7 +169,6 @@ SELECT DISTINCT
     ssl_info
 FROM
     WhoisAndSSLInfo
-WHERE
 `
 
 var sqlNetInfoBody = `
