@@ -99,6 +99,86 @@ func TestCreateSourceSQLiteUpsertPreservesProcessingRows(t *testing.T) {
 	assertSourceRow(t, db, firstID, "second", "low", 10, 20, 30, 40, true, "processing")
 }
 
+func TestNormalizeSourceURLMakesNestedURLsSearchable(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "decodes nested URL scheme and path separators",
+			raw:  " https://auth.aircall.io/login?redirect=https%3A%2F%2Fdashboard.aircall.io%2F ",
+			want: "https://auth.aircall.io/login?redirect=https://dashboard.aircall.io/",
+		},
+		{
+			name: "supports lowercase percent escapes",
+			raw:  "https://example.test/?next=https%3a%2f%2fother.test%2fpath",
+			want: "https://example.test/?next=https://other.test/path",
+		},
+		{
+			name: "preserves encoded query delimiters",
+			raw:  "https://example.test/?next=https%3A%2F%2Fother.test%2F%3Fa%3D1%26b%3D2%23fragment&token=a%2Bb",
+			want: "https://example.test/?next=https://other.test/%3Fa%3D1%26b%3D2%23fragment&token=a%2Bb",
+		},
+		{
+			name: "leaves malformed URLs trimmed",
+			raw:  "  https://example.test/%zz  ",
+			want: "https://example.test/%zz",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeSourceURL(tt.raw); got != tt.want {
+				t.Fatalf("NormalizeSourceURL(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateSourceNormalizesNestedURLBeforeStorage(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite database: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE Sources (
+			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			url TEXT NOT NULL UNIQUE,
+			name TEXT,
+			priority TEXT NOT NULL DEFAULT '',
+			category_id INTEGER NOT NULL DEFAULT 0,
+			usr_id INTEGER NOT NULL DEFAULT 0,
+			restricted INTEGER NOT NULL DEFAULT 2,
+			flags INTEGER NOT NULL DEFAULT 0,
+			config TEXT,
+			disabled BOOLEAN NOT NULL DEFAULT FALSE,
+			status TEXT NOT NULL DEFAULT 'new',
+			last_updated_at TIMESTAMP
+		)`)
+	if err != nil {
+		t.Fatalf("create Sources table: %v", err)
+	}
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	sourceID, err := CreateSource(&handler, &Source{
+		URL: "https://auth.aircall.io/login?redirect=https%3A%2F%2Fdashboard.aircall.io%2F",
+	}, cfg.SourceConfig{})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+
+	var storedURL string
+	if err := db.QueryRow(`SELECT url FROM Sources WHERE source_id = ?`, sourceID).Scan(&storedURL); err != nil {
+		t.Fatalf("select stored source URL: %v", err)
+	}
+	if want := "https://auth.aircall.io/login?redirect=https://dashboard.aircall.io/"; storedURL != want {
+		t.Fatalf("stored URL = %q, want %q", storedURL, want)
+	}
+}
+
 func assertSourceRow(t *testing.T, db *sql.DB, id uint64, expectedName, expectedPriority string, expectedCategoryID, expectedUsrID, expectedRestricted, expectedFlags uint64, expectedDisabled bool, expectedStatus string) {
 	t.Helper()
 

@@ -62,7 +62,7 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 	}
 
 	prepared := preparedSourceInsert{
-		URL:        strings.TrimSpace(source.URL),
+		URL:        NormalizeSourceURL(source.URL),
 		Name:       strings.TrimSpace(source.Name),
 		Priority:   strings.TrimSpace(source.Priority),
 		CategoryID: source.CategoryID,
@@ -83,6 +83,38 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 	default:
 		return 0, fmt.Errorf("unsupported database type for source creation: %s", (*db).DBMS())
 	}
+}
+
+// NormalizeSourceURL prepares a source URL for storage and text-based search.
+//
+// URL producers commonly percent-encode the ":" and "/" characters in nested
+// URLs used as query parameter values. Those characters do not need escaping
+// inside a query, and keeping them escaped prevents searches for the nested URL
+// from matching the stored source. Delimiters such as '&', '=', '#', and '+'
+// remain escaped so normalization does not change the query's meaning.
+func NormalizeSourceURL(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return ""
+	}
+
+	parsedURL, err := url.Parse(trimmed)
+	if err != nil || parsedURL.RawQuery == "" {
+		return trimmed
+	}
+
+	parsedURL.RawQuery = decodeSearchableQueryCharacters(parsedURL.RawQuery)
+	return parsedURL.String()
+}
+
+func decodeSearchableQueryCharacters(rawQuery string) string {
+	replacer := strings.NewReplacer(
+		"%2F", "/",
+		"%2f", "/",
+		"%3A", ":",
+		"%3a", ":",
+	)
+	return replacer.Replace(rawQuery)
 }
 
 type preparedSourceInsert struct {
@@ -398,7 +430,7 @@ func UpdateSource(db *Handler, source *Source) error {
         SET url = $1, name = $2, category_id = $3, usr_id = $4, restricted = $5, flags = $6, config = $7, last_updated_at = NOW()
         WHERE source_id = $8
     `
-	_, err := (*db).Exec(query, source.URL, source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
+	_, err := (*db).Exec(query, NormalizeSourceURL(source.URL), source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update source with ID %d: %v", source.ID, err)
 	}

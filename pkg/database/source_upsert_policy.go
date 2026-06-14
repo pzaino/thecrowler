@@ -51,7 +51,7 @@ func UpsertSourceWithPolicy(db *Handler, source *Source, config cfg.SourceConfig
 	}
 
 	prepared := preparedSourceInsert{
-		URL:        strings.TrimSpace(source.URL),
+		URL:        NormalizeSourceURL(source.URL),
 		Name:       strings.TrimSpace(source.Name),
 		Priority:   strings.TrimSpace(source.Priority),
 		CategoryID: source.CategoryID,
