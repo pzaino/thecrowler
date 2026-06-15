@@ -572,8 +572,8 @@ func initAPIv1() {
 	tagsDocs := []string{"Documentation"}
 
 	// Health check
-	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
-	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
+	healthCheckWithMiddlewares := withPublicMiddlewares(healthCheckHandler)
+	readyCheckWithMiddlewares := withPublicMiddlewares(readyCheckHandler)
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
