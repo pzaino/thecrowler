@@ -304,12 +304,13 @@ type SearchResult struct {
 		Offset   int            `json:"offset"`   // Offset of results
 	} `json:"queries"`
 	Items []struct {
-		Title   string `json:"title"`   // Title of the page
-		Link    string `json:"link"`    // URL of the page
-		Summary string `json:"summary"` // Summary of the page
-		DocType string `json:"type"`    // Type of the document (e.g., "text/html")
-		Lang    string `json:"lang"`    // Language of the document (e.g., "en")
-		Snippet string `json:"snippet"` // Snippet of the page
+		SourceUID string `json:"source_uid"`
+		Title     string `json:"title"`   // Title of the page
+		Link      string `json:"link"`    // URL of the page
+		Summary   string `json:"summary"` // Summary of the page
+		DocType   string `json:"type"`    // Type of the document (e.g., "text/html")
+		Lang      string `json:"lang"`    // Language of the document (e.g., "en")
+		Snippet   string `json:"snippet"` // Snippet of the page
 	} `json:"items"` // List of results
 }
 
@@ -378,6 +379,7 @@ type ScreenshotRequest struct {
 
 // ScreenshotResponse represents the structure of the screenshot response
 type ScreenshotResponse struct {
+	SourceUID     string `json:"source_uid"`
 	Link          string `json:"screenshot_link"`
 	CreatedAt     string `json:"created_at"`
 	LastUpdatedAt string `json:"updated_at"`
@@ -392,6 +394,7 @@ type ScreenshotResponse struct {
 
 // NetInfoRow represents the structure of the network information response
 type NetInfoRow struct {
+	SourceUID     string       `json:"source_uid"`
 	CreatedAt     string       `json:"created_at"`
 	LastUpdatedAt string       `json:"last_updated_at"`
 	Details       neti.NetInfo `json:"details"`
@@ -419,6 +422,7 @@ func (r *NetInfoResponse) isEmpty() bool {
 
 // HTTPInfoRow represents the structure of the HTTP information response
 type HTTPInfoRow struct {
+	SourceUID     string            `json:"source_uid"`
 	CreatedAt     string            `json:"created_at"`
 	LastUpdatedAt string            `json:"last_updated_at"`
 	Details       httpi.HTTPDetails `json:"details"`
@@ -465,6 +469,7 @@ type WebObjectResponse struct {
 
 // WebObjectRow represents the structure of the WebObject response
 type WebObjectRow struct {
+	SourceUID     string          `json:"source_uid"`
 	CreatedAt     string          `json:"created_at"`
 	LastUpdatedAt string          `json:"last_updated_at"`
 	ObjectLink    string          `json:"link"`
@@ -498,10 +503,11 @@ type CorrelatedSitesResponse struct {
 
 // CorrelatedSitesRow represents the structure of the correlated sites response
 type CorrelatedSitesRow struct {
-	SourceID uint64           `json:"source_id"`
-	URL      string           `json:"url"`
-	WHOIS    []neti.WHOISData `json:"whois"`
-	SSLInfo  httpi.SSLInfo    `json:"ssl_info"`
+	SourceID  uint64           `json:"source_id"`
+	SourceUID string           `json:"source_uid"`
+	URL       string           `json:"url"`
+	WHOIS     []neti.WHOISData `json:"whois"`
+	SSLInfo   httpi.SSLInfo    `json:"ssl_info"`
 }
 
 // ScrapedDataRequest represents the structure of the Correlated Sites request POST
@@ -528,6 +534,7 @@ type ScrapedDataResponse struct {
 // ScrapedDataRow represents the structure of the correlated sites response
 type ScrapedDataRow struct {
 	SourceID    uint64                 `json:"source_id"`
+	SourceUID   string                 `json:"source_uid"`
 	URL         string                 `json:"url"`
 	CollectedAt string                 `json:"collected_at"`
 	Details     map[string]interface{} `json:"details"`

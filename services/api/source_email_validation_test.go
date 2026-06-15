@@ -184,6 +184,7 @@ func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 	if _, err := db.Exec(`
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			name TEXT,
 			priority TEXT,

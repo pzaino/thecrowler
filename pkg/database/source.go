@@ -16,6 +16,7 @@
 package database
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -31,7 +32,7 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 	source := &Source{}
 
 	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
 	}
@@ -72,6 +73,8 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 		Config:     details,
 		Disabled:   source.Disabled,
 	}
+	prepared.UID = CalculateSourceUID(prepared.Name, prepared.URL)
+	source.UID = prepared.UID
 
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
 	case DBPostgresStr:
@@ -83,6 +86,14 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 	default:
 		return 0, fmt.Errorf("unsupported database type for source creation: %s", (*db).DBMS())
 	}
+}
+
+// CalculateSourceUID returns a stable SHA-256 identifier for a source.
+func CalculateSourceUID(name, sourceURL string) string {
+	normalizedName := strings.TrimSpace(name)
+	normalizedURL := NormalizeSourceURL(sourceURL)
+	payload := fmt.Sprintf("%d:%s%d:%s", len(normalizedName), normalizedName, len(normalizedURL), normalizedURL)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 }
 
 // NormalizeSourceURL prepares a source URL for storage and text-based search.
@@ -118,6 +129,7 @@ func decodeSearchableQueryCharacters(rawQuery string) string {
 }
 
 type preparedSourceInsert struct {
+	UID        string
 	URL        string
 	Name       string
 	Priority   string
@@ -141,6 +153,7 @@ func (source preparedSourceInsert) args() []interface{} {
 		source.Flags,
 		source.Config,
 		source.Disabled,
+		source.UID,
 	}
 }
 
@@ -154,8 +167,8 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
 
 	query := `
         INSERT INTO Sources
-            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new')
+            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
         ON CONFLICT (url) DO UPDATE
         SET
             -- update name only if not processing AND non-empty trimmed string
@@ -164,6 +177,11 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
                      AND BTRIM(EXCLUDED.name) <> ''
                 THEN EXCLUDED.name
                 ELSE Sources.name
+            END,
+            source_uid = CASE
+                WHEN Sources.status <> 'processing' AND BTRIM(EXCLUDED.name) <> ''
+                THEN EXCLUDED.source_uid
+                ELSE Sources.source_uid
             END,
 
             -- update priority only if not processing AND non-empty trimmed string
@@ -241,14 +259,19 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 
 	query := `
 		INSERT INTO Sources
-			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new')
+			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
 		ON CONFLICT (url) DO UPDATE SET
 			name = CASE
 				WHEN Sources.status <> 'processing'
 					 AND TRIM(excluded.name) <> ''
 				THEN excluded.name
 				ELSE Sources.name
+			END,
+			source_uid = CASE
+				WHEN Sources.status <> 'processing' AND TRIM(excluded.name) <> ''
+				THEN excluded.source_uid
+				ELSE Sources.source_uid
 			END,
 			priority = CASE
 				WHEN Sources.status <> 'processing'
@@ -309,8 +332,8 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error) {
 	query := `
 		INSERT INTO Sources
-			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
 		ON DUPLICATE KEY UPDATE
 			source_id = LAST_INSERT_ID(source_id),
 			name = CASE
@@ -318,6 +341,11 @@ func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error)
 					 AND TRIM(VALUES(name)) <> ''
 				THEN VALUES(name)
 				ELSE name
+			END,
+			source_uid = CASE
+				WHEN status <> 'processing' AND TRIM(VALUES(name)) <> ''
+				THEN VALUES(source_uid)
+				ELSE source_uid
 			END,
 			priority = CASE
 				WHEN status <> 'processing'
@@ -539,7 +567,7 @@ func VacuumSource(db *Handler, sourceID uint64) error {
 // ListSources retrieves all sources from the database with optional filters.
 func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, error) {
 	sources := []Source{}
-	query := `SELECT source_id, url, name, category_id, usr_id, restricted, flags, config FROM Sources`
+	query := `SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config FROM Sources`
 	var args []interface{}
 	var conditions []string
 
@@ -562,7 +590,7 @@ func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, err
 
 	for rows.Next() {
 		var source Source
-		err := rows.Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+		err := rows.Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan source: %v", err)
 		}
@@ -575,7 +603,7 @@ func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, err
 func GetSourcesByStatus(db *Handler, status string) ([]Source, error) {
 	sources := []Source{}
 	query := `
-        SELECT source_id, url, name, category_id, usr_id, restricted, flags, config
+        SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config
         FROM Sources
         WHERE status = $1
     `
@@ -587,7 +615,7 @@ func GetSourcesByStatus(db *Handler, status string) ([]Source, error) {
 
 	for rows.Next() {
 		var source Source
-		err := rows.Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+		err := rows.Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan source: %v", err)
 		}

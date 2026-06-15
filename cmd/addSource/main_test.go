@@ -139,7 +139,7 @@ func TestInsertWebsite(t *testing.T) {
 		}
 
 		mock.ExpectQuery(insertSourceQuery).
-			WithArgs("https://Example.com", uint64(12), uint64(34), uint(1), uint(5), &rawConfig).
+			WithArgs(sqlmock.AnyArg(), "https://Example.com", uint64(12), uint64(34), uint(1), uint(5), &rawConfig).
 			WillReturnRows(sqlmock.NewRows([]string{"source_id"}).AddRow(uint64(99)))
 
 		if err := insertWebsite(db, &source); err != nil {
@@ -154,7 +154,7 @@ func TestInsertWebsite(t *testing.T) {
 	t.Run("returns query error", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		mock.ExpectQuery(insertSourceQuery).
-			WithArgs("https://example.com", uint64(0), uint64(0), uint(0), uint(0), nil).
+			WithArgs(sqlmock.AnyArg(), "https://example.com", uint64(0), uint64(0), uint(0), uint(0), nil).
 			WillReturnError(errors.New("insert failed"))
 
 		err := insertWebsite(db, &cdb.Source{URL: "https://example.com"})
@@ -189,13 +189,13 @@ func TestInsertWebsitesFromFile(t *testing.T) {
 
 		db, mock := newMockDB(t)
 		mock.ExpectQuery(insertSourceQuery).
-			WithArgs("https://one.example", uint64(2), uint64(3), uint(0), uint(7), sqlmock.AnyArg()).
+			WithArgs(sqlmock.AnyArg(), "https://one.example", uint64(2), uint64(3), uint(0), uint(7), sqlmock.AnyArg()).
 			WillReturnRows(sourceIDRow(1))
 		mock.ExpectQuery(insertSourceQuery).
-			WithArgs("https://two.example", uint64(4), uint64(0), uint(1), uint(0), nil).
+			WithArgs(sqlmock.AnyArg(), "https://two.example", uint64(4), uint64(0), uint(1), uint(0), nil).
 			WillReturnRows(sourceIDRow(2))
 		mock.ExpectQuery(insertSourceQuery).
-			WithArgs("https://five-columns.example", uint64(5), uint64(6), uint(1), uint(9), nil).
+			WithArgs(sqlmock.AnyArg(), "https://five-columns.example", uint64(5), uint64(6), uint(1), uint(9), nil).
 			WillReturnRows(sourceIDRow(3))
 
 		forceInsert = false
@@ -259,7 +259,7 @@ func TestInsertWebsitesFromFile(t *testing.T) {
 
 		db, mock := newMockDB(t)
 		mock.ExpectQuery(insertSourceQuery).
-			WithArgs("https://example.com", uint64(1), uint64(2), uint(1), uint(0), nil).
+			WithArgs(sqlmock.AnyArg(), "https://example.com", uint64(1), uint64(2), uint(1), uint(0), nil).
 			WillReturnRows(sourceIDRow(1))
 		forceInsert = true
 		t.Cleanup(func() { forceInsert = false })

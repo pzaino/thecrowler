@@ -20,6 +20,7 @@ func TestCreateSourceSQLiteUpsertPreservesProcessingRows(t *testing.T) {
 	_, err = db.Exec(`
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			name VARCHAR(255),
 			priority VARCHAR(64) DEFAULT '' NOT NULL,
@@ -136,6 +137,22 @@ func TestNormalizeSourceURLMakesNestedURLsSearchable(t *testing.T) {
 	}
 }
 
+func TestCalculateSourceUIDIsStableAndSensitiveToSourceIdentity(t *testing.T) {
+	got := CalculateSourceUID(" Example ", " https://example.test/path ")
+	if len(got) != 64 {
+		t.Fatalf("UID length = %d, want 64", len(got))
+	}
+	if got != CalculateSourceUID("Example", "https://example.test/path") {
+		t.Fatal("UID should use trimmed name and normalized URL")
+	}
+	if got == CalculateSourceUID("Other", "https://example.test/path") {
+		t.Fatal("UID should change when the source name changes")
+	}
+	if got == CalculateSourceUID("Example", "https://other.test/path") {
+		t.Fatal("UID should change when the source URL changes")
+	}
+}
+
 func TestCreateSourceNormalizesNestedURLBeforeStorage(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
@@ -146,6 +163,7 @@ func TestCreateSourceNormalizesNestedURLBeforeStorage(t *testing.T) {
 	_, err = db.Exec(`
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			name TEXT,
 			priority TEXT NOT NULL DEFAULT '',
@@ -211,6 +229,7 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 	_, err = db.Exec(`
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL DEFAULT '',
 			url TEXT NOT NULL UNIQUE,
 			status TEXT,
 			priority TEXT,

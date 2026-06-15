@@ -185,7 +185,7 @@ ON InformationSeedCandidate(normalized_url);
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
-    --source_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the source
+    source_uid VARCHAR(64) NOT NULL,            -- SHA-256 identifier derived from source name and URL.
     name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMPTZ,
@@ -666,6 +666,8 @@ BEGIN
     END IF;
 END
 $$;
+
+CREATE INDEX IF NOT EXISTS idx_sources_source_uid ON Sources(source_uid);
 
 DO $$
 BEGIN

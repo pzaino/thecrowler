@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
 
 CREATE TABLE IF NOT EXISTS Sources (
     source_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    --source_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the source
+    source_uid VARCHAR(64) NOT NULL,            -- SHA-256 identifier derived from source name and URL.
     name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
@@ -727,6 +727,7 @@ CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue
 CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status
     ON InformationSeed(engine, status, last_processed_at);
 CREATE INDEX IF NOT EXISTS idx_sources_url ON Sources(url);
+CREATE INDEX IF NOT EXISTS idx_sources_source_uid ON Sources(source_uid);
 CREATE INDEX IF NOT EXISTS idx_sources_category_id ON Sources(category_id);
 CREATE INDEX IF NOT EXISTS idx_sources_usr_id ON Sources(usr_id);
 CREATE INDEX IF NOT EXISTS idx_sources_priority ON Sources(priority);

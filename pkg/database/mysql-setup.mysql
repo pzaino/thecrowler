@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    source_uid VARCHAR(64) NOT NULL,             -- SHA-256 identifier derived from source name and URL.
     name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -596,6 +597,7 @@ CREATE INDEX IF NOT EXISTS idx_keywordindex_index_id ON KeywordIndex (index_id);
 
 -- Creates an index for the Sources url column
 CREATE INDEX IF NOT EXISTS idx_sources_url ON Sources(url);
+CREATE INDEX IF NOT EXISTS idx_sources_source_uid ON Sources(source_uid);
 
 -- Creates an index for the Sources status column
 CREATE INDEX IF NOT EXISTS idx_sources_status ON Sources(status);

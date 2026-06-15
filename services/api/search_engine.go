@@ -67,14 +67,15 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	var response SearchResult
 	for result.Rows.Next() {
 		var item struct {
-			Title   string `json:"title"`
-			Link    string `json:"link"`
-			Summary string `json:"summary"`
-			DocType string `json:"type"`
-			Lang    string `json:"lang"`
-			Snippet string `json:"snippet"`
+			SourceUID string `json:"source_uid"`
+			Title     string `json:"title"`
+			Link      string `json:"link"`
+			Summary   string `json:"summary"`
+			DocType   string `json:"type"`
+			Lang      string `json:"lang"`
+			Snippet   string `json:"snippet"`
 		}
-		if err := result.Rows.Scan(&item.Title, &item.Link, &item.Summary, &item.DocType, &item.Lang, &item.Snippet); err != nil {
+		if err := result.Rows.Scan(&item.SourceUID, &item.Title, &item.Link, &item.Summary, &item.DocType, &item.Lang, &item.Snippet); err != nil {
 			return SearchResult{}, err
 		}
 		response.Items = append(response.Items, item)
@@ -100,7 +101,7 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 
 	response := ScreenshotResponse{Limit: result.Limit, Offset: result.Offset}
 	for result.Rows.Next() {
-		if err := result.Rows.Scan(&response.Link, &response.CreatedAt, &response.LastUpdatedAt, &response.Type, &response.Format, &response.Width, &response.Height, &response.ByteSize); err != nil {
+		if err := result.Rows.Scan(&response.SourceUID, &response.Link, &response.CreatedAt, &response.LastUpdatedAt, &response.Type, &response.Format, &response.Width, &response.Height, &response.ByteSize); err != nil {
 			return ScreenshotResponse{}, err
 		}
 	}
@@ -137,7 +138,7 @@ func readWebObjects(result *search.QueryResult) (WebObjectResponse, error) {
 	for result.Rows.Next() {
 		var row WebObjectRow
 		var details []byte
-		if err := result.Rows.Scan(&row.ObjectLink, &row.CreatedAt, &row.LastUpdatedAt, &row.ObjectType, &row.ObjectHash, &row.ObjectContent, &row.ObjectHTML, &details); err != nil {
+		if err := result.Rows.Scan(&row.SourceUID, &row.ObjectLink, &row.CreatedAt, &row.LastUpdatedAt, &row.ObjectType, &row.ObjectHash, &row.ObjectContent, &row.ObjectHTML, &details); err != nil {
 			return WebObjectResponse{}, err
 		}
 		if !json.Valid(details) {
@@ -168,7 +169,7 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 	for result.Rows.Next() {
 		var row ScrapedDataRow
 		var details []byte
-		if err := result.Rows.Scan(&row.SourceID, &row.URL, &row.CollectedAt, &details); err != nil {
+		if err := result.Rows.Scan(&row.SourceID, &row.SourceUID, &row.URL, &row.CollectedAt, &details); err != nil {
 			return ScrapedDataResponse{}, err
 		}
 		if len(details) > 0 {
@@ -201,7 +202,7 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 		var row CorrelatedSitesRow
 		var createdAt string
 		var whois, ssl []byte
-		if err := result.Rows.Scan(&row.SourceID, &row.URL, &createdAt, &whois, &ssl); err != nil {
+		if err := result.Rows.Scan(&row.SourceID, &row.SourceUID, &row.URL, &createdAt, &whois, &ssl); err != nil {
 			return CorrelatedSitesResponse{}, err
 		}
 		if whois != nil {
@@ -238,7 +239,7 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 	for result.Rows.Next() {
 		var row NetInfoRow
 		var details []byte
-		if err := result.Rows.Scan(&row.CreatedAt, &row.LastUpdatedAt, &details); err != nil {
+		if err := result.Rows.Scan(&row.SourceUID, &row.CreatedAt, &row.LastUpdatedAt, &details); err != nil {
 			return NetInfoResponse{}, err
 		}
 		if details != nil {
@@ -270,7 +271,7 @@ func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoRe
 	for result.Rows.Next() {
 		var row HTTPInfoRow
 		var details []byte
-		if err := result.Rows.Scan(&row.CreatedAt, &row.LastUpdatedAt, &details); err != nil {
+		if err := result.Rows.Scan(&row.SourceUID, &row.CreatedAt, &row.LastUpdatedAt, &details); err != nil {
 			return HTTPInfoResponse{}, err
 		}
 		if details != nil {

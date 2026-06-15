@@ -43,6 +43,7 @@ var (
 func insertWebsite(db *sql.DB, source *cdb.Source) error {
 	// SQL statement to insert a new website
 	stmt := `INSERT INTO Sources (
+				source_uid,
 				url,
 				last_crawled_at,
 				status,
@@ -53,13 +54,14 @@ func insertWebsite(db *sql.DB, source *cdb.Source) error {
 				config
 			) VALUES (
 				$1,
+				$2,
 				NULL,
 				'pending',
-				$2,
 				$3,
 				$4,
 				$5,
-				$6
+				$6,
+				$7
 			) RETURNING source_id;
 		`
 
@@ -70,6 +72,7 @@ func insertWebsite(db *sql.DB, source *cdb.Source) error {
 	var id uint64
 	if err := db.QueryRow(
 		stmt,
+		cdb.CalculateSourceUID(source.Name, source.URL),
 		source.URL,
 		source.CategoryID,
 		source.UsrID,

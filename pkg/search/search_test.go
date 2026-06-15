@@ -57,6 +57,29 @@ func TestWebObjectsBySourceIDQueryUsesBIGINTParameter(t *testing.T) {
 	if !strings.Contains(sqlWebObjectsBySourceID, "SourceSearchIndex AS ssi") {
 		t.Fatalf("query does not join SourceSearchIndex: %q", sqlWebObjectsBySourceID)
 	}
+	if !strings.Contains(sqlWebObjectsBySourceID, "s.source_uid") {
+		t.Fatalf("query does not return source_uid: %q", sqlWebObjectsBySourceID)
+	}
+}
+
+func TestTrackableSearchQueriesReturnSourceUID(t *testing.T) {
+	queries := map[string]string{
+		"pages":            sqlSearchIndexBody,
+		"pages_no_content": sqlSearchIndexBodyNoContent,
+		"screenshots":      sqlScreenshotBody,
+		"web_objects":      sqlWebObjectsBody,
+		"scraped_data":     sqlScrapedDataBody,
+		"correlated_sites": sqlCorrelatedSitesBody,
+		"net_info":         sqlNetInfoBody,
+		"http_info":        sqlHTTPInfoBody,
+	}
+	for name, query := range queries {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(query, "source_uid") {
+				t.Fatalf("query does not return source_uid: %q", query)
+			}
+		})
+	}
 }
 
 func TestCorrelatedSitesQueryDoesNotAppendDanglingWhere(t *testing.T) {
