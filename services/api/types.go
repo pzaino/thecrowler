@@ -209,6 +209,7 @@ type StatusResponse struct {
 // StatusResponseRow represents the structure of the status response row
 type StatusResponseRow struct {
 	SourceID      uint64               `json:"source_id"`
+	SourceUID     string               `json:"source_uid"`
 	URL           sql.NullString       `json:"url"`
 	Status        sql.NullString       `json:"status"`
 	Priority      sql.NullString       `json:"priority"`

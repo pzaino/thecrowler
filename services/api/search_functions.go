@@ -38,6 +38,9 @@ type SearchFunctionQuery struct {
 	Q          string `json:"q,omitempty" yaml:"q,omitempty" desc:"Full-text search query for endpoints backed by search_pages, search_scraped_data, or search_artifacts."`
 	Domain     string `json:"domain,omitempty" yaml:"domain,omitempty" desc:"Domain used by the correlated-source search endpoint."`
 	SourceID   int64  `json:"source_id,omitempty" yaml:"source_id,omitempty" desc:"BIGINT source identifier used to retrieve all associated web objects."`
+	SourceUID  string `json:"source_uid,omitempty" yaml:"source_uid,omitempty" desc:"Stable source identifier."`
+	SourceName string `json:"source_name,omitempty" yaml:"source_name,omitempty" desc:"Source name used to find its stable identifier."`
+	SourceURL  string `json:"source_url,omitempty" yaml:"source_url,omitempty" desc:"Source URL used to find its stable identifier."`
 	Lang       string `json:"lang,omitempty" yaml:"lang,omitempty" desc:"PostgreSQL text-search configuration for page search. Defaults to english."`
 	FieldName  string `json:"field_name,omitempty" yaml:"field_name,omitempty" desc:"Attribute or JSON field name used by field search endpoints."`
 	FieldValue string `json:"field_value,omitempty" yaml:"field_value,omitempty" desc:"Attribute or JSON field value used by field search endpoints."`
@@ -65,6 +68,12 @@ type SearchFunctionResponse struct {
 type apiCorrelatedSourceSearchResult struct {
 	SourceID uint64 `json:"source_id"`
 	URL      string `json:"url"`
+}
+
+type apiSourceUIDResult struct {
+	SourceUID string `json:"source_uid"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
 }
 
 type apiPageSearchResult struct {
@@ -206,6 +215,62 @@ func searchWebObjectsBySourceIDHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		return results.Items, nil
+	})
+}
+
+func searchWebObjectsBySourceUIDHandler(w http.ResponseWriter, r *http.Request) {
+	handleSearchFunctionEndpoint(w, r, "webobjects_by_source_uid#search", "webobjects_by_source_uid", "source_uid", func(_ context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+		sourceUID := strings.TrimSpace(query.SourceUID)
+		if sourceUID == "" {
+			return nil, newSearchFunctionBadRequest("query parameter 'source_uid' is required")
+		}
+		results, err := performWebObjectSearchBySourceUID(sourceUID, db)
+		if err != nil {
+			return nil, err
+		}
+		return results.Items, nil
+	})
+}
+
+func searchSourceStatusByUIDHandler(w http.ResponseWriter, r *http.Request) {
+	handleSearchFunctionEndpoint(w, r, "source_status_by_uid#search", "source_status_by_uid", "source_uid", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+		sourceUID := strings.TrimSpace(query.SourceUID)
+		if sourceUID == "" {
+			return nil, newSearchFunctionBadRequest("query parameter 'source_uid' is required")
+		}
+		results, err := search.GetSourceStatusByUID(ctx, db, sourceUID)
+		if err != nil {
+			return nil, err
+		}
+		return sourceStatusRowsFromDB(results), nil
+	})
+}
+
+func searchSourceUIDByNameHandler(w http.ResponseWriter, r *http.Request) {
+	handleSearchFunctionEndpoint(w, r, "source_uid_by_name#search", "source_uid_by_name", "source_name", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+		name := strings.TrimSpace(query.SourceName)
+		if name == "" {
+			return nil, newSearchFunctionBadRequest("query parameter 'source_name' is required")
+		}
+		results, err := search.FindSourceUIDsByName(ctx, db, name)
+		if err != nil {
+			return nil, err
+		}
+		return mapSourceUIDResults(results), nil
+	})
+}
+
+func searchSourceUIDByURLHandler(w http.ResponseWriter, r *http.Request) {
+	handleSearchFunctionEndpoint(w, r, "source_uid_by_url#search", "source_uid_by_url", "source_url", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+		sourceURL := strings.TrimSpace(query.SourceURL)
+		if sourceURL == "" {
+			return nil, newSearchFunctionBadRequest("query parameter 'source_url' is required")
+		}
+		results, err := search.FindSourceUIDsByURL(ctx, db, sourceURL)
+		if err != nil {
+			return nil, err
+		}
+		return mapSourceUIDResults(results), nil
 	})
 }
 
@@ -369,6 +434,9 @@ func parseSearchFunctionQuery(r *http.Request) (SearchFunctionQuery, error) {
 	values := r.URL.Query()
 	query.Q = values.Get("q")
 	query.Domain = values.Get("domain")
+	query.SourceUID = values.Get("source_uid")
+	query.SourceName = values.Get("source_name")
+	query.SourceURL = values.Get("source_url")
 	sourceID := strings.TrimSpace(values.Get("source_id"))
 	if sourceID != "" {
 		var err error
@@ -471,6 +539,12 @@ func searchFunctionSearchTerms(query SearchFunctionQuery, searchParam string) st
 		return query.Domain
 	case "source_id":
 		return strconv.FormatInt(query.SourceID, 10)
+	case "source_uid":
+		return query.SourceUID
+	case "source_name":
+		return query.SourceName
+	case "source_url":
+		return query.SourceURL
 	case "field_name":
 		return query.FieldName + ":" + query.FieldValue
 	case "filters":
@@ -500,9 +574,25 @@ func searchFunctionItemCount(items interface{}) int {
 		return len(value)
 	case []WebObjectRow:
 		return len(value)
+	case []StatusResponseRow:
+		return len(value)
+	case []apiSourceUIDResult:
+		return len(value)
 	default:
 		return 0
 	}
+}
+
+func mapSourceUIDResults(results []search.SourceUIDResult) []apiSourceUIDResult {
+	items := make([]apiSourceUIDResult, 0, len(results))
+	for _, result := range results {
+		items = append(items, apiSourceUIDResult{
+			SourceUID: result.SourceUID,
+			Name:      result.Name,
+			URL:       result.URL,
+		})
+	}
+	return items
 }
 
 func mapCorrelatedSourceResults(results []cdb.CorrelatedSourceSearchResult) []apiCorrelatedSourceSearchResult {

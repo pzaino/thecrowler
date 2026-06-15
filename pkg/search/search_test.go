@@ -62,6 +62,43 @@ func TestWebObjectsBySourceIDQueryUsesBIGINTParameter(t *testing.T) {
 	}
 }
 
+func TestSourceUIDQueriesUseParametersAndReturnStableIdentifier(t *testing.T) {
+	queries := map[string]struct {
+		query     string
+		filter    string
+		wantJoin  string
+		wantOrder string
+	}{
+		"web objects": {
+			query:     sqlWebObjectsBySourceUID,
+			filter:    "s.source_uid = $1",
+			wantJoin:  "SourceSearchIndex AS ssi",
+			wantOrder: "wo.created_at DESC",
+		},
+		"name lookup": {
+			query:     sqlSourceUIDByName,
+			filter:    "LOWER(name) = LOWER($1)",
+			wantJoin:  "source_uid, name, url",
+			wantOrder: "source_id",
+		},
+		"URL lookup": {
+			query:     sqlSourceUIDByURL,
+			filter:    "LOWER(url) = LOWER($1)",
+			wantJoin:  "source_uid, name, url",
+			wantOrder: "source_id",
+		},
+	}
+	for name, test := range queries {
+		t.Run(name, func(t *testing.T) {
+			for _, fragment := range []string{test.filter, test.wantJoin, test.wantOrder} {
+				if !strings.Contains(test.query, fragment) {
+					t.Fatalf("query %q does not contain %q", test.query, fragment)
+				}
+			}
+		})
+	}
+}
+
 func TestTrackableSearchQueriesReturnSourceUID(t *testing.T) {
 	queries := map[string]string{
 		"pages":            sqlSearchIndexBody,

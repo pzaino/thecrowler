@@ -633,6 +633,14 @@ func initAPIv1() {
 
 		registerSearchFunctionRoute("/v1/search/webobjects_by_source", searchWebObjectsBySourceIDHandler, "Web objects collected for a source ID")
 
+		registerSearchFunctionRoute("/v1/search/webobjects_by_source_uid", searchWebObjectsBySourceUIDHandler, "Web objects collected for a source UID")
+
+		registerSearchFunctionRoute("/v1/search/source_status_by_uid", searchSourceStatusByUIDHandler, "Source status lookup by source UID")
+
+		registerSearchFunctionRoute("/v1/search/source_uid_by_name", searchSourceUIDByNameHandler, "Source UID lookup by source name")
+
+		registerSearchFunctionRoute("/v1/search/source_uid_by_url", searchSourceUIDByURLHandler, "Source UID lookup by source URL")
+
 		registerSearchFunctionRoute("/v1/search/scraped_data", searchScrapedDataFunctionHandler, "Typed PostgreSQL scraped-data search endpoint")
 
 		registerSearchFunctionRoute("/v1/search/scraped_data_field", searchScrapedDataFieldFunctionHandler, "Typed PostgreSQL scraped-data field search endpoint")

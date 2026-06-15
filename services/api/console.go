@@ -889,6 +889,7 @@ type SourcesStatusResponse struct {
 // SourceStatus represents one item in the "items" array.
 type SourceStatus struct {
 	SourceID      int                  `json:"source_id"`
+	SourceUID     string               `json:"source_uid"`
 	URL           DBString             `json:"url"`
 	Status        DBString             `json:"status"`
 	Priority      DBString             `json:"priority"`
@@ -979,6 +980,7 @@ func sourceStatusRowsFromDB(rows []cdb.SourceStatusRow) []StatusResponseRow {
 	for _, row := range rows {
 		statuses = append(statuses, StatusResponseRow{
 			SourceID:      row.SourceID,
+			SourceUID:     row.SourceUID,
 			URL:           row.URL,
 			Status:        row.Status,
 			Priority:      row.Priority,

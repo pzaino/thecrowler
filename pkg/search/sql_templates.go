@@ -136,6 +136,45 @@ ORDER BY
     wo.created_at DESC;
 `
 
+var sqlWebObjectsBySourceUID = `
+SELECT DISTINCT
+    s.source_uid,
+    wo.object_link,
+    wo.created_at,
+    wo.last_updated_at,
+    wo.object_type,
+    wo.object_hash,
+    wo.object_content,
+    wo.object_html,
+    wo.details
+FROM
+    WebObjects AS wo
+JOIN
+    WebObjectsIndex AS woi ON wo.object_id = woi.object_id
+JOIN
+    SourceSearchIndex AS ssi ON woi.index_id = ssi.index_id
+JOIN
+    Sources AS s ON ssi.source_id = s.source_id
+WHERE
+    s.source_uid = $1
+ORDER BY
+    wo.created_at DESC;
+`
+
+var sqlSourceUIDByName = `
+SELECT source_uid, name, url
+FROM Sources
+WHERE LOWER(name) = LOWER($1)
+ORDER BY source_id;
+`
+
+var sqlSourceUIDByURL = `
+SELECT source_uid, name, url
+FROM Sources
+WHERE LOWER(url) = LOWER($1)
+ORDER BY source_id;
+`
+
 var sqlScrapedDataBody = `
 SELECT DISTINCT
     ss.source_id,

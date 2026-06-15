@@ -132,6 +132,14 @@ func performWebObjectSearchBySourceID(sourceID int64, db *cdb.Handler) (WebObjec
 	return readWebObjects(result)
 }
 
+func performWebObjectSearchBySourceUID(sourceUID string, db *cdb.Handler) (WebObjectResponse, error) {
+	result, err := searchEngine(db).SearchWebObjectsBySourceUID(sourceUID)
+	if err != nil {
+		return WebObjectResponse{}, err
+	}
+	return readWebObjects(result)
+}
+
 func readWebObjects(result *search.QueryResult) (WebObjectResponse, error) {
 	defer result.Rows.Close() //nolint:errcheck
 	var response WebObjectResponse

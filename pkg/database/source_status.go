@@ -26,6 +26,7 @@ import (
 // SourceStatusRow represents the source status fields exposed by status lookups.
 type SourceStatusRow struct {
 	SourceID      uint64
+	SourceUID     string
 	URL           sql.NullString
 	Status        sql.NullString
 	Priority      sql.NullString
@@ -60,6 +61,7 @@ type SourceEmailStatusRow struct {
 
 const sourceStatusSelect = `
 	SELECT source_id,
+	       source_uid,
 	       url,
 	       status,
 	       priority,
@@ -74,6 +76,29 @@ const sourceStatusSelect = `
 	       flags,
 	       config
 	FROM Sources`
+
+// GetSourceStatusByUID retrieves the source status row matching sourceUID.
+func GetSourceStatusByUID(db *Handler, sourceUID string) ([]SourceStatusRow, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+
+	query := sourceStatusSelect + "\n\tWHERE source_uid = " + sourceStatusPlaceholder(db)
+	rows, err := (*db).ExecuteQuery(query, sourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve source status by UID: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // We can't check return value on defer
+
+	statuses, err := scanSourceStatusRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
 
 // GetSourceStatusByURL retrieves source status rows matching sourceURL.
 // The helper owns URL normalization so callers may pass raw user input.
@@ -138,7 +163,7 @@ func scanSourceStatusRows(rows *sql.Rows) ([]SourceStatusRow, error) {
 	for rows.Next() {
 		var row SourceStatusRow
 		var configJSON []byte
-		if err := rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON); err != nil {
+		if err := rows.Scan(&row.SourceID, &row.SourceUID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON); err != nil {
 			return nil, fmt.Errorf("failed to scan source status: %w", err)
 		}
 		if len(configJSON) > 0 {

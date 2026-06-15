@@ -65,6 +65,20 @@ func (s *Searcher) SearchWebObjectsBySourceID(sourceID int64) (*QueryResult, err
 	}, nil
 }
 
+// SearchWebObjectsBySourceUID returns every stored web object associated with
+// the stable public identifier of a source.
+func (s *Searcher) SearchWebObjectsBySourceUID(sourceUID string) (*QueryResult, error) {
+	rows, err := (*s.DB).ExecuteQuery(sqlWebObjectsBySourceUID, sourceUID)
+	if err != nil {
+		return nil, err
+	}
+	return &QueryResult{
+		Rows:   rows,
+		SQL:    sqlWebObjectsBySourceUID,
+		Params: []any{sourceUID},
+	}, nil
+}
+
 // SearchScrapedData searches scraped-data JSON documents.
 func (s *Searcher) SearchScrapedData(query string) (*QueryResult, error) {
 	return s.ExecuteOrdered(sqlScrapedDataBody+" (", query, "", ") ORDER BY sd.last_updated_at DESC")
