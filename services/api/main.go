@@ -659,23 +659,23 @@ func initAPIv1() {
 	}
 
 	if config.API.EnableConsole {
-		addSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addSourceHandler)))
-		removeSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeSourceHandler)))
-		updateSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateSourceHandler)))
-		vacuumSourceHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(vacuumSourceHandler)))
-		singleURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(singleURLstatusHandler)))
-		allURLstatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(allURLstatusHandler)))
-		informationSeedAddHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedAddHandler)))
-		informationSeedStatusHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedStatusHandler)))
-		informationSeedListHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedListHandler)))
-		informationSeedSourcesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedSourcesHandler)))
-		informationSeedCandidatesHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedCandidateDecisionsHandler)))
-		informationSeedRetryHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedRetryHandler)))
-		informationSeedRerunHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedRerunHandler)))
-		informationSeedDisableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedDisableHandler)))
-		informationSeedPathDisableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedPathDisableHandler)))
-		informationSeedEnableHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedEnableHandler)))
-		informationSeedEventsHandlerWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(informationSeedEventsHandler)))
+		addSourceHandlerWithMiddlewares := withPublicMiddlewares(addSourceHandler)
+		removeSourceHandlerWithMiddlewares := withPublicMiddlewares(removeSourceHandler)
+		updateSourceHandlerWithMiddlewares := withPublicMiddlewares(updateSourceHandler)
+		vacuumSourceHandlerWithMiddlewares := withPublicMiddlewares(vacuumSourceHandler)
+		singleURLstatusHandlerWithMiddlewares := withPublicMiddlewares(singleURLstatusHandler)
+		allURLstatusHandlerWithMiddlewares := withPublicMiddlewares(allURLstatusHandler)
+		informationSeedAddHandlerWithMiddlewares := withPublicMiddlewares(informationSeedAddHandler)
+		informationSeedStatusHandlerWithMiddlewares := withPublicMiddlewares(informationSeedStatusHandler)
+		informationSeedListHandlerWithMiddlewares := withPublicMiddlewares(informationSeedListHandler)
+		informationSeedSourcesHandlerWithMiddlewares := withPublicMiddlewares(informationSeedSourcesHandler)
+		informationSeedCandidatesHandlerWithMiddlewares := withPublicMiddlewares(informationSeedCandidateDecisionsHandler)
+		informationSeedRetryHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRetryHandler)
+		informationSeedRerunHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRerunHandler)
+		informationSeedDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedDisableHandler)
+		informationSeedPathDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedPathDisableHandler)
+		informationSeedEnableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedEnableHandler)
+		informationSeedEventsHandlerWithMiddlewares := withPublicMiddlewares(informationSeedEventsHandler)
 
 		// Source management endpoints
 
@@ -741,24 +741,24 @@ func initAPIv1() {
 
 		// Owner endpoints
 
-		http.Handle("/v1/owner/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addOwnerHandler))))
+		http.Handle("/v1/owner/add", withPublicMiddlewares(addOwnerHandler))
 		cmn.RegisterAPIRoute("/v1/owner/add", []string{"POST"}, "Add owner endpoint (console)", tagsNone, true, false, 201, cdb.OwnerRequest{}, nil, nil)
 
-		http.Handle("/v1/owner/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateOwnerHandler))))
+		http.Handle("/v1/owner/update", withPublicMiddlewares(updateOwnerHandler))
 		cmn.RegisterAPIRoute("/v1/owner/update", []string{"POST"}, "Update owner endpoint (console)", tagsNone, true, false, 204, cdb.OwnerRequest{}, nil, nil)
 
-		http.Handle("/v1/owner/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeOwnerHandler))))
+		http.Handle("/v1/owner/remove", withPublicMiddlewares(removeOwnerHandler))
 		cmn.RegisterAPIRoute("/v1/owner/remove", []string{"POST"}, "Remove owner endpoint (console)", tagsNone, true, false, 204, map[string]int64{}, nil, nil)
 
 		// Category endpoints
 
-		http.Handle("/v1/category/add", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(addCategoryHandler))))
+		http.Handle("/v1/category/add", withPublicMiddlewares(addCategoryHandler))
 		cmn.RegisterAPIRoute("/v1/category/add", []string{"POST"}, "Add category endpoint (console)", tagsNone, true, false, 201, cdb.CategoryRequest{}, nil, nil)
 
-		http.Handle("/v1/category/update", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(updateCategoryHandler))))
+		http.Handle("/v1/category/update", withPublicMiddlewares(updateCategoryHandler))
 		cmn.RegisterAPIRoute("/v1/category/update", []string{"POST"}, "Update category endpoint (console)", tagsNone, true, false, 204, cdb.CategoryRequest{}, nil, nil)
 
-		http.Handle("/v1/category/remove", SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(removeCategoryHandler))))
+		http.Handle("/v1/category/remove", withPublicMiddlewares(removeCategoryHandler))
 		cmn.RegisterAPIRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", tagsNone, true, false, 204, map[string]int64{}, nil, nil)
 	}
 
