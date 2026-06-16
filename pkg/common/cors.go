@@ -32,12 +32,16 @@ func CORSHeadersMiddleware(options CORSOptions) func(http.Handler) http.Handler 
 			}
 
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			originAllowed := false
+
 			if origin != "" {
 				if allowAllOrigins {
 					w.Header().Set("Access-Control-Allow-Origin", "*")
+					originAllowed = true
 				} else if _, ok := allowedOrigins[origin]; ok {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					appendVaryHeader(w.Header(), "Origin")
+					originAllowed = true
 				}
 			}
 
@@ -46,6 +50,11 @@ func CORSHeadersMiddleware(options CORSOptions) func(http.Handler) http.Handler 
 			w.Header().Set("Access-Control-Max-Age", corsMaxAge)
 
 			if r.Method == http.MethodOptions {
+				if origin != "" && !originAllowed {
+					http.Error(w, "CORS origin not allowed", http.StatusForbidden)
+					return
+				}
+
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -57,17 +66,20 @@ func CORSHeadersMiddleware(options CORSOptions) func(http.Handler) http.Handler 
 
 func normalizeAllowedOrigins(origins []string) (map[string]struct{}, bool) {
 	allowedOrigins := make(map[string]struct{}, len(origins))
+
 	for _, origin := range origins {
 		origin = strings.TrimSpace(origin)
 		if origin == "" {
 			continue
 		}
+
 		if origin == "*" {
-			// User wants everything, so create a map with a single entry and return true for allowAllOrigins.
-			return map[string]struct{}{"*": {}}, true
+			return nil, true
 		}
+
 		allowedOrigins[origin] = struct{}{}
 	}
+
 	return allowedOrigins, false
 }
 
@@ -77,5 +89,6 @@ func appendVaryHeader(header http.Header, value string) {
 			return
 		}
 	}
+
 	header.Add("Vary", value)
 }
